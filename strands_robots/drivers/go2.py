@@ -75,6 +75,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -798,6 +799,22 @@ class Go2Driver:
         :attr:`_sport_mode_client_error` and surfaced by :meth:`get_status`
         rather than raised: the driver stays usable for reads, and the write gate
         refuses on its own terms.
+
+        The client is opened under
+        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`. ``Init()``
+        builds the client's DDS request/response endpoints, and the CycloneDDS
+        bindings segfault when an endpoint is constructed concurrently with
+        another - which this driver does on its own threads, because
+        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` creates
+        every subscriber under that same lock. A segfault is not catchable by the
+        "record the error and stay usable for reads" boundary above: the process
+        dies, possibly while the robot stands under its own controller.
+
+        The lock covers the injected-factory branch too. The driver cannot know
+        whether a factory builds a real client, and one that does owes the same
+        serialisation; a factory that instead reaches back through the engine
+        would deadlock, since the shared lock is not reentrant, so a factory must
+        construct its client directly.
         """
         if self._msc is not None:
             return self._msc
@@ -806,12 +823,17 @@ class Go2Driver:
             if factory is None:
                 from strands_robots.tools.g1._motion_switcher import _load_motion_switcher_client
 
+                # The import stays outside the lock: it creates no endpoint, and
+                # holding the shared lock across a lazy SDK import would stall
+                # every subscriber construction in the process for its duration.
                 msc_class = _load_motion_switcher_client()
-                client = msc_class()
-                client.SetTimeout(3.0)
-                client.Init()
+                with _DDS_INIT_LOCK:
+                    client = msc_class()
+                    client.SetTimeout(3.0)
+                    client.Init()
             else:
-                client = factory(self._network_interface)
+                with _DDS_INIT_LOCK:
+                    client = factory(self._network_interface)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport failure is one reason
             self._sport_mode_client_error = f"cannot open MotionSwitcherClient: {exc}"
             logger.debug("%s: %s", self._tool_name, self._sport_mode_client_error, exc_info=True)
