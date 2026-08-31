@@ -235,6 +235,15 @@ microduck = [
     # docs/policies/microduck.md.
     "onnxruntime>=1.17.0,<2.0.0",
 ]
+crazyflie = [
+    # Bitcraze client library for the Crazyflie 2.x native driver: CRTP over a
+    # Crazyradio dongle (or the USB cable), the commander/high-level-commander
+    # setpoint surface, and the log framework the driver's telemetry block uses.
+    # A pure-Python package plus pyusb; no build step, no CUDA, so it installs
+    # on the aarch64 edge machines that fly these. See
+    # strands_robots/drivers/crazyflie.py and docs/robots/mobile.md.
+    "cflib>=0.1.25,<0.2.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -591,6 +600,7 @@ all = [
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",
     "strands-robots[device-connect]",
+    "strands-robots[crazyflie]",
     "strands-robots[wbc]",
     "strands-robots[motionbricks]",
     "strands-robots[kimodo]",

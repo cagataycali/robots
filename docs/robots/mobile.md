@@ -36,6 +36,46 @@ sim = Robot("crazyflie")        # Bitcraze Crazyflie 2 quadcopter
 | `unitree_a1` | Unitree A1 Quadruped | 13 | `a1` |
 | `unitree_go2` | Unitree Go2 Quadruped | 40 | `go2` |
 
+## Flying a real Crazyflie
+
+`crazyflie` declares `hardware.driver = "strands"`, so `mode="real"` builds the native
+CRTP driver over a [Crazyradio](https://www.bitcraze.io/products/crazyradio-2-0/) dongle.
+lerobot has no robot type for a Crazyflie, so this is the only way to fly one from here.
+
+```python
+from strands_robots import Robot
+
+cf = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")
+cf.connect_eagerly()          # opens the link, ARMS the platform, starts telemetry
+
+cf.takeoff(height=0.5, duration=2.0)
+cf.set_twist(vx=0.2, wz=1.0, z=0.5)   # 0.2 m/s forward, 1.0 rad/s yaw, holding 0.5 m
+cf.land()                              # descends under control
+cf.cleanup()
+```
+
+Install the client library with the `crazyflie` extra: `pip install "strands-robots[crazyflie]"`.
+
+Three things behave differently from a ground robot, and each one is a way to break the
+aircraft if you assume otherwise:
+
+| | What to know |
+|---|---|
+| **Units** | `wz` is **rad/s**, as everywhere else in this package. `cflib` wants deg/s, and the driver is the only place that conversion happens. |
+| **Setpoints are a stream** | The firmware supervisor cuts thrust when the setpoint stream goes quiet, so one `send_action` latches a setpoint and a background repeater keeps it alive at `setpoint_hz` (default 20 Hz). It returns when the setpoint is latched, not when the motion is done. |
+| **`stop` lands** | `stop()` / `stop_task()` / `cleanup()` all perform a controlled descent. Cutting the motors - an airborne aircraft *falls* - is the separately named `emergency_stop()`, and the agent tool schema cannot reach it. |
+
+The flight envelope is the driver's, not the SDK's: `cflib` imposes no ceiling and the
+firmware attempts whatever arrives. A setpoint outside it is **refused by name**, never
+clamped, so a caller who asked for 5 m/s never silently flies 1 m/s. Read the bounds with
+`strands_robots.drivers.crazyflie.twist_envelope()`.
+
+Commands go through `send_action` / `set_twist` / `takeoff` / `land`; `start_task` and
+`run_policy` refuse, because this package registers no aerial policy provider and a
+quadcopter has no joints for a manipulation policy's action to land on. Telemetry
+(`stateEstimate` position, `stabilizer` attitude, `pm.vbat`) is cached for the mesh; a bare
+Crazyflie has no ranger deck, so no lidar topic is published.
+
 ## Featured renders
 
 ### `spot`
