@@ -141,7 +141,7 @@ def live_handle_refusal(
     The judgement keeps four invariants for every verb: the answer is an error
     *envelope* and never an exception, it names the verb, it names ``driver``,
     and it names the type it received. ``accessor`` must be *callable* on the
-    handle, not merely present — a namespace built from a cache dump carries the
+    handle, not merely present - a namespace built from a cache dump carries the
     name as data and would fail on the call.
 
     Args:
