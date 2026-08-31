@@ -769,7 +769,8 @@ format = ["ruff check --fix strands_robots tests tests_integ", "ruff format stra
 # Whole-tree graders a diff-scoped selector cannot see. Runs the tests whose
 # input is the rest of the repository rather than the file under change
 # (docstring xref roles, host-path literals, dependency audit, agent-tool
-# parameter descriptions, del-precedes-body). Fixed roster, no arguments -
+# parameter descriptions, del-precedes-body, test-module names). Fixed roster,
+# no arguments -
 # the script is the safety net for a narrow local pytest run that would
 # otherwise ship a defect one of these graders would catch on CI. See
 # scripts/check_whole_tree_graders.py and issue #2940.
