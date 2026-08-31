@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 
 from strands_robots.bus_access import bus_lock
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
+from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
 
@@ -244,20 +245,26 @@ class FeetechDriver:
             envelope = self.send_action((tool_use.get("input") or {}).get("targets") or {})
         elif action == "set_torque":
             enabled = (tool_use.get("input") or {}).get("enabled", True)
-            # Not coerced with bool(): the schema says boolean, and every
-            # non-boolean an agent actually emits for this field coerces to
-            # the WRONG state. "false", "no" and "0" are all truthy strings, so
-            # a caller asking to release an arm would energize it instead, and
-            # the envelope would report torque_enabled=True as a success. A
-            # refusal naming the field is recoverable; a silently inverted
-            # torque command on a loaded arm is not.
-            if not isinstance(enabled, bool):
-                envelope = _refuse(
-                    f"set_torque: enabled must be a boolean, got {type(enabled).__name__} {enabled!r}; "
-                    "true energizes, false releases",
-                )
+            # Checked before use, never coerced into one: every non-boolean an
+            # agent actually emits for this field reads as the WRONG state.
+            # "false", "no" and "0" are all truthy strings, so a caller asking
+            # to release an arm would energize it instead while the envelope
+            # reported torque_enabled=True as a success. A refusal naming the
+            # field is recoverable; a silently inverted torque command on a
+            # loaded arm is not.
+            #
+            # Through `boolean_flag_error` rather than `isinstance(x, bool)` so
+            # the accepted domain matches every other posture flag in the
+            # package: that helper also admits a numpy boolean, which an
+            # `isinstance` check refuses. A policy or array path handing over
+            # `np.bool_(False)` is a legitimate release request, and turning it
+            # into a refusal would leave an operator unable to de-energize.
+            # `bool()` below narrows the accepted value for the type checker;
+            # it runs only after the check has already ruled the value in.
+            if text := boolean_flag_error(enabled, "enabled", "set_torque"):
+                envelope = _refuse(text)
             else:
-                envelope = self._set_torque_envelope(enabled)
+                envelope = self._set_torque_envelope(bool(enabled))
         elif action == "stop":
             envelope = self._set_torque_envelope(False)
         else:

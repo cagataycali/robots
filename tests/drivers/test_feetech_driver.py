@@ -25,6 +25,7 @@ import asyncio
 import threading
 from typing import Any
 
+import numpy as np
 import pytest
 from strands.types.tools import ToolSpec, ToolUse
 
@@ -592,6 +593,28 @@ class TestStream:
         result = _run_stream(_wired(), {"toolUseId": "tid-5", "name": "so101", "input": action_input})
         assert result["status"] == "success"
         assert result["content"][0]["json"] == {"torque_enabled": expected}
+
+    @pytest.mark.parametrize("flag", [True, False])
+    def test_a_numpy_boolean_is_honoured_rather_than_refused(self, flag: bool) -> None:
+        """A numpy boolean is a boolean, and refusing one strands the operator.
+
+        The check goes through ``boolean_flag_error`` rather than
+        ``isinstance(x, bool)`` precisely so this passes: ``np.bool_`` is not a
+        subclass of ``bool``, and every action that reaches this driver from a
+        policy or an array path carries numpy scalars. Refusing
+        ``np.bool_(False)`` would leave a caller with no way to de-energize the
+        arm, which is the failure the refusal exists to prevent, inverted.
+        """
+        numpy_flag = np.bool_(flag)
+        assert not isinstance(numpy_flag, bool), "np.bool_ must not be a bool subclass, or this pins nothing"
+
+        result = _run_stream(
+            _wired(),
+            {"toolUseId": "tid-np", "name": "so101", "input": {"action": "set_torque", "enabled": numpy_flag}},
+        )
+
+        assert result["status"] == "success", result
+        assert result["content"][0]["json"] == {"torque_enabled": flag}
 
     @pytest.mark.parametrize("enabled", ["false", "true", "no", 0, 1, None, [], {}])
     def test_a_non_boolean_enabled_is_refused_rather_than_coerced(self, enabled: Any) -> None:
