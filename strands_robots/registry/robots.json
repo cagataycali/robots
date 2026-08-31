@@ -1042,7 +1042,10 @@
       },
       "aliases": [
         "go2"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "google_robot": {
       "description": "Google Robot (mobile base + arm, RT-X)",
