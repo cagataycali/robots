@@ -987,13 +987,20 @@ def validate_mesh_identifier(value: Any, param: str) -> str:
     ``peer_id`` or a teleop ``device_name`` interpolated into
     ``strands/{peer_id}/input/{device_name}`` by
     :class:`~strands_robots.mesh.input.InputPublisher` and
-    :class:`~strands_robots.mesh.input.InputReceiver`.
+    :class:`~strands_robots.mesh.input.InputReceiver`, or the ``sender_id`` and
+    ``turn_id`` of an inbound command envelope, which
+    :class:`~strands_robots.mesh.core.Mesh` interpolates into
+    ``strands/{sender_id}/response/{responder}/{turn_id}`` to answer it.
 
     Zenoh treats ``*`` and ``**`` as key-expression wildcards, so an
     unvalidated segment silently widens a point-to-point subscription into a
     match-any one: a receiver built with ``source_peer_id="**"`` subscribes to
     ``strands/**/input/leader`` and applies joint commands from *every* peer on
-    the mesh, not just the configured leader. The remaining rejected shapes
+    the mesh, not just the configured leader. Publishing is exposed the same way,
+    because Zenoh accepts a wildcard on a ``put`` and routes it by intersection:
+    a reply key holding one is delivered to every peer's
+    ``strands/{peer}/response/**`` subscription rather than to the peer that
+    asked. The remaining rejected shapes
     (whitespace, NULs, C0 controls, shell metacharacters, ``/``) keep an
     identifier from smuggling extra key segments or corrupting the log lines
     and per-device state keys it also lands in.
@@ -1037,10 +1044,14 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
       action, not per-action: each must be a str of at most
       :data:`MAX_PASSTHROUGH_LEN` characters, printable ASCII only (no C0/DEL
       or non-printable byte). They are wire-routing fields rather than action
-      payload -- ``Mesh`` correlates an RPC turn on ``turn_id`` and keys its
-      command-replay cache on ``(sender_id, turn_id)`` -- so a publisher
-      minting them needs the bound, and a control byte must not reach the
-      audit trail through either. Any other unvalidated key is dropped from
+      payload, so a publisher minting them needs the bound and a control byte
+      must not reach the audit trail through either. These are the *command's*
+      copies: what :class:`~strands_robots.mesh.core.Mesh` routes on is the
+      enclosing envelope's own ``sender_id`` / ``turn_id`` one level up, which it
+      correlates a turn on, keys its command-replay cache on, and interpolates
+      into the reply key -- so those are held to the stricter
+      :func:`validate_mesh_identifier` charset where they are read, and this
+      check is not the routing gate. Any other unvalidated key is dropped from
       the sanitised copy rather than refused.
     * ``execute`` and ``start`` actions require:
         - ``instruction``: non-empty str up to :data:`MAX_INSTRUCTION_LEN`,
