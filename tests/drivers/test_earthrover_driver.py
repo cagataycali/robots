@@ -456,7 +456,12 @@ class TestCameraFrames:
 class TestTheAgentSurface:
     def _events(self, driver: EarthRoverDriver, action: str) -> list[Any]:
         async def collect() -> list[Any]:
-            return [event async for event in driver.stream({"toolUseId": "t-1", "name": "earthrover", "input": {"action": action}}, {})]
+            return [
+                event
+                async for event in driver.stream(
+                    {"toolUseId": "t-1", "name": "earthrover", "input": {"action": action}}, {}
+                )
+            ]
 
         return asyncio.run(collect())
 
