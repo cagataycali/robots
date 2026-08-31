@@ -48,6 +48,18 @@ def _wired(**kwargs: Any) -> FeetechDriver:
     return driver
 
 
+def _port(driver: FeetechDriver) -> FakeServoPort:
+    """The fake port behind ``driver``'s bus, narrowed to its recording surface.
+
+    The bus holds its connection as ``Any | None`` because a real one is a
+    ``serial.Serial``; asserting the type here is what lets a test read
+    ``writes`` without the checker guessing.
+    """
+    port = driver.bus._conn
+    assert isinstance(port, FakeServoPort)
+    return port
+
+
 # ============================================================================
 # Surface.
 # ============================================================================
@@ -206,7 +218,7 @@ class TestWrites:
     def test_one_sync_write_frame_carries_the_whole_command(self) -> None:
         """Six joints, one frame - decoded back out of the wire bytes."""
         driver = _wired()
-        port = driver.bus._conn
+        port = _port(driver)
         port.writes.clear()
         driver.send_action({name: 0.0 for name in SO_ARM_MOTORS})
         (frame,) = port.writes
@@ -364,7 +376,7 @@ class TestLifecycle:
     def test_stop_releases_torque_on_every_motor(self) -> None:
         """``stop`` de-energizes the arm - the whole arm, in one pass."""
         driver = _wired()
-        port = driver.bus._conn
+        port = _port(driver)
         port.writes.clear()
         asyncio.run(driver.stop())
         assert len(port.writes) == len(SO_ARM_MOTORS)
