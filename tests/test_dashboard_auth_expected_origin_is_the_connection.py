@@ -35,6 +35,7 @@ from strands_robots.dashboard import auth
 SERVED_AT = "https://dash.example.com"
 CRED_ID = b"\x03" * 16
 CRED_ID_B64 = bytes_to_base64url(CRED_ID)
+BOOTSTRAP = "a-token-for-a-remote-first-enrollment"
 
 
 def request(scheme: str = "https", **headers: str) -> Request:
@@ -203,6 +204,13 @@ def _enrolled_credential() -> None:
 
 def _finish_registration(monkeypatch, begin_on: Request, finish_on: Request) -> dict:
     seen: dict = {}
+    # The first enrollment seals the dashboard, so it is limited to the machine itself
+    # unless a bootstrap token is configured to check it against. These cells model a
+    # REMOTE browser reaching a served origin -- that is the scenario under test -- so
+    # the socket peer is deliberately not loopback, and the token is what holds that
+    # gate constant and leaves the origin the only variable. Without it the enrollment
+    # gate refuses first, and a test about an origin reports on enrollment instead.
+    monkeypatch.setenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", BOOTSTRAP)
     monkeypatch.setattr(
         auth,
         "verify_registration_response",
@@ -210,7 +218,7 @@ def _finish_registration(monkeypatch, begin_on: Request, finish_on: Request) -> 
             seen.update(kw) or SimpleNamespace(credential_id=CRED_ID, credential_public_key=b"\x02" * 32, sign_count=1)
         ),
     )
-    begun = auth.begin_registration(begin_on, label="phone")
+    begun = auth.begin_registration(begin_on, label="phone", bootstrap=BOOTSTRAP)
     auth.finish_registration(finish_on, begun["challenge_id"], {"id": CRED_ID_B64})
     return seen
 
