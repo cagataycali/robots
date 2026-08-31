@@ -602,6 +602,21 @@ class TestTheSeamCanBuildIt:
         with pytest.raises(ValueError, match=expected):
             BoosterDriver(**kwargs)
 
+    @pytest.mark.parametrize("domain", [0, 1, 7, 101, MAX_DDS_DOMAIN_ID], ids=repr)
+    def test_a_domain_that_names_one_is_stored_verbatim(self, domain: int) -> None:
+        """The accepted end of the domain, including the ceiling itself.
+
+        Two things are pinned here that a refusal test cannot reach. The bound
+        is inclusive, so ``MAX_DDS_DOMAIN_ID`` is a domain and not the first
+        value past one - a guard written with the wrong comparison would refuse
+        it and every refusal cell would still pass. And the value is kept as it
+        arrived: ``_domain_id`` is what reaches
+        ``ChannelFactory.Init(domain_id, ip)``, so a coercion here is what opens
+        channels on a domain the caller never named, silently and with nothing
+        to report. Neither is observable from the refusal side.
+        """
+        assert BoosterDriver(domain_id=domain)._domain_id == domain
+
     def test_a_named_robot_opens_named_channels(self, sdk: _FakeSdk) -> None:
         """Two T1s on one network must not share a topic."""
         driver = BoosterDriver(robot_name="t1_left", port="10.0.0.2", domain_id=3)
