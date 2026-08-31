@@ -193,8 +193,17 @@ def _simulation_surface() -> set[str]:
     return _instance_surface(Simulation) | _factory_bound_names()
 
 
-def _documented_reads(source: str, origin: str) -> list[tuple[str, str, str | None, str]]:
-    """Return ``(origin, robot_name, mode, attribute)`` for each read in ``source``."""
+#: One documented read: ``(origin, robot_name, mode, driver, attribute)``. ``mode``
+#: and ``driver`` are the keywords the documented ``Robot(...)`` call passed, or
+#: ``None`` where it passed neither - both are needed to resolve the read, because
+#: the factory's precedence reads an explicit ``driver`` before the registry. Named
+#: once because the shape drifted when ``driver`` was added: six annotations still
+#: described four fields while the scan itself produced five.
+_Read = tuple[str, str, str | None, str | None, str]
+
+
+def _documented_reads(source: str, origin: str) -> list[_Read]:
+    """Return a :data:`_Read` for each attribute read on a ``Robot()`` in ``source``."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -220,7 +229,7 @@ def _documented_reads(source: str, origin: str) -> list[tuple[str, str, str | No
                 if isinstance(target, ast.Name):
                     bound[target.id] = (name, mode, driver)
 
-    reads: list[tuple[str, str, str | None, str]] = []
+    reads: list[_Read] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Attribute):
             continue
@@ -238,15 +247,15 @@ def _documented_reads(source: str, origin: str) -> list[tuple[str, str, str | No
     return reads
 
 
-def _all_documented_reads() -> list[tuple[str, str, str | None, str]]:
+def _all_documented_reads() -> list[_Read]:
     """Every distinct attribute read on a documented ``Robot()`` result."""
-    reads: list[tuple[str, str, str | None, str]] = []
+    reads: list[_Read] = []
     for path in _docs_sources():
         origin = str(path.relative_to(_REPO_ROOT))
         for match in _PYTHON_FENCE.finditer(path.read_text(encoding="utf-8")):
             reads.extend(_documented_reads(_runnable(match.group(1)), origin))
-    seen: set[tuple[str, str, str | None, str]] = set()
-    distinct: list[tuple[str, str, str | None, str]] = []
+    seen: set[_Read] = set()
+    distinct: list[_Read] = []
     for read in reads:
         if read not in seen:
             seen.add(read)
@@ -254,7 +263,7 @@ def _all_documented_reads() -> list[tuple[str, str, str | None, str]]:
     return distinct
 
 
-def _unresolved(reads: list[tuple[str, str, str | None, str | None, str]]) -> list[str]:
+def _unresolved(reads: list[_Read]) -> list[str]:
     """Return a report line for each read the returned type cannot answer."""
     offenders: list[str] = []
     for origin, name, mode, driver, attribute in reads:
@@ -282,9 +291,7 @@ _MINIMUM_HARDWARE_SOURCES = 4
 _MINIMUM_SIMULATION_SOURCES = 10
 
 
-def _assert_the_scan_reaches_the_docs_tree(
-    reads: list[tuple[str, str, str | None, str | None, str]], minimum: int
-) -> None:
+def _assert_the_scan_reaches_the_docs_tree(reads: list[_Read], minimum: int) -> None:
     """Refuse a corpus small enough that the guard could be passing vacuously."""
     assert reads, "no documented attribute read was found - the scan stopped seeing the docs"
     sources = {read[0] for read in reads}
