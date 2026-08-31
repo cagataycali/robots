@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import logging
 import math
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -316,16 +318,50 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
 
 
 def _write_file(data: dict[str, Any]) -> None:
+    """Replace the settings file atomically, and never let it be world-readable.
+
+    This file holds ``security.auth_token`` -- the bearer every ``/api`` and
+    ``/ws`` request must present -- so its mode is part of the deployment's
+    security posture rather than tidiness. Writing the path and tightening it
+    afterwards got that wrong in two ways, both measured:
+
+    * The payload was written at the umask default and chmod-ed only *after* the
+      rename, so at ``umask 022`` the token sat in a ``0o644`` file for the
+      length of the write, and in a ``0o644`` sibling ``.tmp`` before that.
+    * The ``chmod`` was best-effort under a silent ``except OSError``, so where it
+      could not be applied the token stayed world-readable **permanently**, with
+      no log line to say so.
+
+    ``mkstemp`` opens at ``0o600`` and ``os.replace`` carries those bits onto the
+    destination, so the mode is a property of how the file is created rather than
+    a call that may or may not land -- which also tightens a settings file left
+    at ``0o644`` by an earlier build the next time it is written. The rename is
+    atomic within a directory, so a concurrent reader sees either the whole
+    previous file or the whole new one, never a prefix; the old fixed-name
+    ``.tmp`` sibling was also shared by every writer that reached it.
+
+    This is the sequence :func:`strands_robots.dashboard.auth._save_locked` uses
+    for the credential store, for the same reasons and deliberately not imported
+    from it: ``settings`` imports no dashboard sibling, which is what lets it be
+    reviewed and used on its own.
+    """
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SETTINGS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True, allow_nan=False))
-    tmp.replace(SETTINGS_FILE)
-    # settings.json holds no secrets, but it does hold the auth token - so
-    # keep it owner-only like the .env file.
+    payload = json.dumps(data, indent=2, sort_keys=True, allow_nan=False)
+    fd, tmp = tempfile.mkstemp(prefix=f"{SETTINGS_FILE.name}.", suffix=".tmp", dir=SETTINGS_FILE.parent)
     try:
-        os.chmod(SETTINGS_FILE, 0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w") as handle:
+            handle.write(payload)
+        os.replace(tmp, SETTINGS_FILE)
+    except BaseException:
+        # Leave no debris behind a failed write: the file on disk is still the
+        # previous good one, and a stray .tmp beside it holds the auth token while
+        # being read by nothing. BaseException rather than Exception because
+        # KeyboardInterrupt is the one signal an operator sends by hand, and it is
+        # not an Exception - narrowing this clause would leak the token file on
+        # exactly that.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 # ----------------------------------------------------------------------
