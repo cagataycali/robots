@@ -74,9 +74,21 @@ hatch run format            # ruff check --fix, ruff format
 7. **Use `require_optional()`** - from `strands_robots/utils.py` for all optional deps.
    It reports the absent module in `ImportError.name`, so a caller can tell an absent
    extra from a broken package path without parsing the message. A hand-rolled
-   `raise ImportError(...)` that reports an absent dependency must pass `name=` for the
-   same reason; `tests/test_absent_dependency_reports_name_the_module.py` refuses one
-   that leaves the module readable only in prose
+   `raise ImportError(...)` that reports an absent dependency must leave that module
+   recoverable from the exception for the same reason, and
+   `tests/test_absent_dependency_reports_name_the_module.py` refuses one that leaves it
+   readable only in prose. Three shapes satisfy it and the test grades them one by one:
+   `name=`, `raise ... from exc`, or raising lexically inside the `except` handler, which
+   sets `__context__` - `from None` suppresses the *rendering* of that chain but not the
+   attribute. `name=` is the only shape left once the raise moves out of the handler,
+   which is why `require_optionals` passes it explicitly. So this is not "every site
+   spells `name=`". Measured over the package with that test's own AST grader: 28
+   constructed sites, 7 spelling `name=`, 19 carrying the module on the chain instead
+   (18 `from exc`, one raising inside the handler), 2 exempt because they report a
+   rejected argument rather than an absent install, 0 blind. Adding the keyword to the
+   19 is not a compliance fix. Reach for the grader and not `grep -v name=` when
+   auditing this: `name=` on a continuation line of a multi-line `raise` is invisible to
+   a line-oriented grep, which reports those 7 as 5 and the 19 as 23
 8. **Integration tests required** - each policy needs `tests_integ/` tests with real inference
 9. **Test behavior, not implementation** - assert on outputs, not internal state
 10. **No dead code** - if it's not called and not part of base class, delete it
