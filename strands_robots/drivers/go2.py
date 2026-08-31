@@ -804,9 +804,10 @@ class Go2Driver:
         factory = self._motion_switcher_client_factory
         try:
             if factory is None:
-                from unitree_sdk2py.go2.sport.sport_client import MotionSwitcherClient
+                from strands_robots.tools.g1._motion_switcher import _load_motion_switcher_client
 
-                client = MotionSwitcherClient()
+                msc_class = _load_motion_switcher_client()
+                client = msc_class()
                 client.SetTimeout(3.0)
                 client.Init()
             else:

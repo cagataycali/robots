@@ -754,3 +754,49 @@ def test_sportmode_state_is_cached_for_a_rollout_cross_check() -> None:
     assert sport["body_height"] == pytest.approx(0.32)
     assert sport["velocity"] == [0.4, 0.0, 0.0]
     assert sport["foot_force"] == [12, 14, 13, 11]
+
+
+# -- regression pin: the default MotionSwitcherClient import path is the shared
+#    helper, not a direct SDK import from a module that never contained the class
+
+
+class TestMotionSwitcherClientImportPath:
+    """Pin that ``_open_motion_switcher_client`` delegates to the shared helper.
+
+    The Go2 sport-mode gate depends on ``MotionSwitcherClient``, which lives in
+    ``unitree_sdk2py.comm.motion_switcher.motion_switcher_client`` -- NOT in
+    ``unitree_sdk2py.go2.sport.sport_client`` (that module ships only
+    ``SportClient``).  A wrong import path is swallowed by the ``except
+    Exception`` and silently gates shut every write surface on real hardware.
+
+    This test reads the source AST to verify the import target without needing
+    the SDK installed, so it runs on every CI host.
+    """
+
+    def test_default_path_delegates_to_the_shared_helper(self) -> None:
+        import ast
+        import inspect
+        import textwrap
+
+        source = inspect.getsource(Go2Driver._open_motion_switcher_client)
+        tree = ast.parse(textwrap.dedent(source))
+
+        # Collect every ImportFrom node inside the method
+        imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+
+        # The method must import from the shared helper module, not directly
+        # from the SDK
+        helper_imports = [node for node in imports if node.module and "g1._motion_switcher" in node.module]
+        sdk_direct_imports = [node for node in imports if node.module and "unitree_sdk2py" in node.module]
+
+        assert helper_imports, (
+            "_open_motion_switcher_client must delegate to the shared "
+            "strands_robots.tools.g1._motion_switcher helper (one-owner "
+            "pattern for the SDK module path); found no such import"
+        )
+        assert not sdk_direct_imports, (
+            "_open_motion_switcher_client must not import directly from "
+            f"unitree_sdk2py; found: {[n.module for n in sdk_direct_imports]}. "
+            "The correct import path lives in "
+            "strands_robots.tools.g1._motion_switcher._SDK_MODULE"
+        )
