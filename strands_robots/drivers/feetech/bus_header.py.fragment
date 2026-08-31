@@ -1,0 +1,45 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The SCS/STS serial bus :class:`FeetechDriver` writes through.
+
+:mod:`~strands_robots.drivers.feetech.protocol` builds and parses the frames;
+this module puts them on a wire and turns the two byte values a servo speaks
+into the units a caller uses. It is the half :issue:`360` scope 1 named as
+deferred when the driver landed as a stub.
+
+Units, stated once because a wrong unit is a wrong motion and not an error:
+every joint is **degrees**, and ``gripper`` is **percent open** (0 closed,
+100 open). That is the domain :mod:`strands_robots.tools.pose_tool` already
+established for this arm family, and its ``MotorConfig`` ranges are the
+source of truth :data:`SO_ARM_MOTORS` is distilled from - the same six IDs in
+the same wire order that lerobot's ``SOFollower`` drives.
+
+A target outside a joint's range is **refused, not clamped**. A clamp turns a
+caller's 400-degree command into a 180-degree motion and reports success, so
+the caller learns nothing and the arm goes somewhere it was not told to go.
+
+Nothing here imports :mod:`serial` at module load: the import happens in
+:meth:`FeetechBus.connect`, so the package stays importable - and its codec
+gradeable - on a box with no serial stack at all.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import numbers
+import time
+from typing import Any, Final
+
+from strands_robots.drivers.feetech.protocol import (
+    Instruction,
+    ProtocolError,
+    Register,
+    build_packet,
+    parse_status_packet,
+    read_packet,
+    sync_write_packet,
+)
+from strands_robots.utils import require_optional
+
+logger = logging.getLogger(__name__)
