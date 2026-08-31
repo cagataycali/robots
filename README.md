@@ -1178,6 +1178,7 @@ touches ROS 2.
 | `STRANDS_MESH_TLS_KEY` | Path to this peer's private key (PEM). Enforced mode `0600` on POSIX; on Windows the mode gate is skipped with a one-shot WARNING, so restrict it by NTFS ACL. Required under `AUTH_MODE=mtls` | unset |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
+| `STRANDS_MESH_FALLBACK_MODE` | Zenoh mode for a process that did NOT win the `STRANDS_MESH_PORT` listener and so connects to that hub: `client` (the hub relays, so siblings hear each other) or `peer` (direct links only, which the operator must then arrange). A Zenoh 1.x peer refuses relayed traffic, so `peer` children hear nothing a sibling child publishes. An unrecognized value warns and uses the default | `client` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
 | `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
