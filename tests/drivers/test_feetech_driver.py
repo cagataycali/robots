@@ -22,12 +22,13 @@ a stub, so its refusals cover verbs this driver now honours.
 from __future__ import annotations
 
 import asyncio
+import threading
 from typing import Any
 
 import pytest
 from strands.types.tools import ToolSpec, ToolUse
 
-from strands_robots.bus_access import joint_read_source, read_joints
+from strands_robots.bus_access import bus_lock, joint_read_source, read_joints
 from strands_robots.drivers import (
     HardwareDriver,
     get_native_driver_class,
@@ -389,6 +390,65 @@ class TestLifecycle:
         asyncio.run(FeetechDriver(tool_name="so101").stop())
 
 
+class TestBusLockParity:
+    """Driver-side bus traffic takes the SAME lock as :mod:`bus_access`.
+
+    The bus is half duplex: one frame at a time in either direction. The mesh
+    reads joints through :func:`read_joints`, which holds
+    :func:`bus_lock` on the driver; an agent commands the arm through the
+    driver's own methods. If those do not share that lock, a 30Hz joints
+    publisher and a move land on the wire together and both frames are lost -
+    the read answers with the tail of the write.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "call"),
+        [
+            ("send_action", lambda d: d.send_action({"elbow_flex": 10.0})),
+            ("sensors", lambda d: _run_stream(d, {"toolUseId": "t", "input": {"action": "sensors"}})),
+            ("set_torque", lambda d: _run_stream(d, {"toolUseId": "t", "input": {"action": "stop"}})),
+        ],
+    )
+    def test_a_bus_path_waits_for_the_lock_a_reader_holds(self, name: str, call: Any) -> None:
+        """While a reader holds the lock, the driver writes nothing.
+
+        Deterministic rather than timed: the lock is taken before the worker
+        starts and released only once the worker has been observed to make no
+        progress, so a driver that ignores the lock fails every run rather
+        than on an unlucky interleaving.
+        """
+        driver = _wired()
+        finished = threading.Event()
+
+        def _worker() -> None:
+            call(driver)
+            finished.set()
+
+        with bus_lock(driver):  # stand in for a mesh-side read_joints
+            worker = threading.Thread(target=_worker, daemon=True)
+            worker.start()
+            assert not finished.wait(timeout=0.5), f"{name} touched the bus while a reader held the lock"
+            assert _port(driver).writes == [], f"{name} wrote a frame while a reader held the lock"
+        worker.join(timeout=5.0)
+        assert finished.is_set(), f"{name} did not proceed once the lock was released"
+        assert _port(driver).writes, f"{name} never reached the wire"
+
+    def test_a_read_through_bus_access_and_a_driver_write_share_one_lock(self) -> None:
+        """The lock is keyed on the driver, so both halves serialise.
+
+        Pins the key, not just the presence of a lock: a driver locking some
+        other object would pass the wait test above while still colliding
+        with :func:`read_joints`.
+        """
+        driver = _wired()
+        assert joint_read_source(driver) is driver
+        # Re-entrant on one thread: a caller already holding the lock can read
+        # and command without deadlocking itself.
+        with bus_lock(driver):
+            assert read_joints(driver)
+            assert driver.send_action({"elbow_flex": 5.0})["status"] == "success"
+
+
 class TestJointTelemetry:
     """The ``bus`` / ``is_connected`` pair is how an SO-arm reaches the mesh.
 
@@ -509,6 +569,24 @@ class TestStream:
         result = _run_stream(_wired(), {"toolUseId": "tid-5", "name": "so101", "input": action_input})
         assert result["status"] == "success"
         assert result["content"][0]["json"] == {"torque_enabled": expected}
+
+    @pytest.mark.parametrize("enabled", ["false", "true", "no", 0, 1, None, [], {}])
+    def test_a_non_boolean_enabled_is_refused_rather_than_coerced(self, enabled: Any) -> None:
+        """``enabled`` is read as a boolean, never coerced into one.
+
+        ``bool("false")`` is ``True``, so coercion turns a request to RELEASE
+        an arm into a request to energize it - and answers
+        ``torque_enabled: True`` as a success, so nothing downstream can tell.
+        Every value here is one an agent emits for a boolean field.
+        """
+        driver = _wired()
+        result = _run_stream(
+            driver,
+            {"toolUseId": "tid-9", "name": "so101", "input": {"action": "set_torque", "enabled": enabled}},
+        )
+        assert result["status"] == "error", f"enabled={enabled!r} must be refused, got {result}"
+        assert "enabled" in result["content"][0]["text"]
+        assert _port(driver).writes == [], f"enabled={enabled!r} reached the wire"
 
     def test_stream_default_action_is_status(self) -> None:
         """A ``stream`` call without an ``action`` field defaults to status.

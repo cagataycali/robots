@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from strands_robots.policies import Policy
 
+from strands_robots.bus_access import bus_lock
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
 
 logger = logging.getLogger(__name__)
@@ -242,7 +243,21 @@ class FeetechDriver:
         elif action == "move_to":
             envelope = self.send_action((tool_use.get("input") or {}).get("targets") or {})
         elif action == "set_torque":
-            envelope = self._set_torque_envelope(bool((tool_use.get("input") or {}).get("enabled", True)))
+            enabled = (tool_use.get("input") or {}).get("enabled", True)
+            # Not coerced with bool(): the schema says boolean, and every
+            # non-boolean an agent actually emits for this field coerces to
+            # the WRONG state. "false", "no" and "0" are all truthy strings, so
+            # a caller asking to release an arm would energize it instead, and
+            # the envelope would report torque_enabled=True as a success. A
+            # refusal naming the field is recoverable; a silently inverted
+            # torque command on a loaded arm is not.
+            if not isinstance(enabled, bool):
+                envelope = _refuse(
+                    f"set_torque: enabled must be a boolean, got {type(enabled).__name__} {enabled!r}; "
+                    "true energizes, false releases",
+                )
+            else:
+                envelope = self._set_torque_envelope(enabled)
         elif action == "stop":
             envelope = self._set_torque_envelope(False)
         else:
@@ -274,8 +289,9 @@ class FeetechDriver:
             return _refuse("send_action: pass a non-empty mapping of joint targets")
         targets = {str(key).removesuffix(".pos"): value for key, value in action.items()}
         try:
-            self._connect_if_needed()
-            self._bus.write_goal_positions(targets)
+            with bus_lock(self):
+                self._connect_if_needed()
+                self._bus.write_goal_positions(targets)
         except (ValueError, RuntimeError, OSError) as e:
             return _refuse(f"send_action: {e}")
         return {
@@ -328,7 +344,8 @@ class FeetechDriver:
         releasing it here would drop an arm holding a payload when a caller
         merely tore down a process; ``stop`` is the verb that de-energizes.
         """
-        self._bus.disconnect()
+        with bus_lock(self):
+            self._bus.disconnect()
 
     # ------------------------------------------------------------------ #
     # Lifecycle and status.                                               #
@@ -343,6 +360,13 @@ class FeetechDriver:
         state topic - see :func:`strands_robots.bus_access.read_joints`, which
         prefers this over a full observation so a dead camera cannot hide the
         joint positions.
+
+        Every path in this class that touches the bus holds
+        :func:`~strands_robots.bus_access.bus_lock` on ``self`` - the same lock
+        :func:`~strands_robots.bus_access.read_joints` takes for the read it
+        does through this property. A driver-side write outside that lock would
+        interleave with a mesh-side read on a half-duplex bus and corrupt both
+        frames, which is the collision that module exists to prevent.
         """
         return self._bus
 
@@ -365,8 +389,9 @@ class FeetechDriver:
     def _read_joints_envelope(self) -> dict[str, Any]:
         """Read joint positions into a tool envelope."""
         try:
-            self._connect_if_needed()
-            joints = self._bus.sync_read()
+            with bus_lock(self):
+                self._connect_if_needed()
+                joints = self._bus.sync_read()
         except (ValueError, RuntimeError, OSError) as e:
             return _refuse(f"sensors: {e}")
         return {
@@ -377,8 +402,9 @@ class FeetechDriver:
     def _set_torque_envelope(self, enabled: bool) -> dict[str, Any]:
         """Energize or release the arm, reporting any motor that stayed driven."""
         try:
-            self._connect_if_needed()
-            failed = self._bus.set_torque(enabled)
+            with bus_lock(self):
+                self._connect_if_needed()
+                failed = self._bus.set_torque(enabled)
         except (ValueError, RuntimeError, OSError) as e:
             return _refuse(f"set_torque: {e}")
         if failed:
