@@ -12,8 +12,8 @@ and leaves the source rule green because that rule derives its vocabulary of
 endpoint-creating operations from the Unitree infrastructure modules: it knows
 `Init` and not the Booster SDK's `InitChannel`, `InitChannelWithName`,
 `InitWithName`, or its `B1LowStateSubscriber` / `B1LowCmdPublisher` /
-`B1BatteryStateSubscriber` / `B1FallDownStateSubscriber` constructors. Eight of
-the ten construction sites are outside what it can report.
+`B1BatteryStateSubscriber` / `B1FallDownStateSubscriber` constructors. Nine of
+the eleven constructions this method performs are outside what it can report.
 
 The lock state is now recorded at every one of them, for both the unnamed and the
 named-robot spelling, so an endpoint opened outside the critical section is named
