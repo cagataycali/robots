@@ -333,7 +333,6 @@ sim.run_policy(
 ## See also
 
 - [Policy overview](overview.md)
-- [GR00T](groot.md)
 - [LeRobot Local](lerobot-local.md)
 - [Custom policies](custom-policies.md)
 - [cuRobo](curobo.md)

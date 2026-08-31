@@ -14,7 +14,6 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | `[sim]` | `robot_descriptions>=1.23.0,<2.0.0` | Sim asset resolution without MuJoCo |
 | `[sim-mujoco]` | `sim` + `mujoco`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0` | `LerobotLocalPolicy` + dataset recording |
-| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (ZMQ to a GR00T container) |
 | `[cosmos3-service]` | `msgpack`, `websockets>=13.0` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
 | `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
@@ -123,7 +122,6 @@ Assets cache under `~/.strands_robots/assets/`.
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
 | `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
 | `STRANDS_MESH` | Set to `true` to opt a bare `Robot()` into the mesh; `false` disables it globally | unset (mesh off) |
-| `GROOT_API_TOKEN` | GR00T service API token (falls back from `api_token=` kwarg) | unset |
 
 ## See also
 

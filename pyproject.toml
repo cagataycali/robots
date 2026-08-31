@@ -15,7 +15,7 @@ authors = [
 keywords = [
     "robots", "agents", "strands", "sdk",
     "mujoco", "simulation", "lerobot", "reinforcement-learning",
-    "gr00t", "isaac-sim", "vla",
+    "isaac-sim", "vla",
     "robot-learning", "imitation-learning",
     "teleoperation", "manipulation", "strands-agents",
 ]
@@ -53,10 +53,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-groot-service = [
-    "pyzmq>=27.0.0,<28.0.0",
-    "msgpack>=1.0.0,<2.0.0",
-]
 cosmos3-service = [
     # Self-contained msgpack+NumPy WebSocket client for the Cosmos 3 RoboLab
     # policy server (cosmos_framework.scripts.action_policy_server_robolab).
@@ -616,7 +612,6 @@ dashboard = [
     "PyJWT>=2.0,<3.0",
 ]
 all = [
-    "strands-robots[groot-service]",
     "strands-robots[moveit2]",
     "strands-robots[lerobot]",
     "strands-robots[lerobot-async]",
@@ -820,7 +815,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*"]
+module = ["lerobot.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

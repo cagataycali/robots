@@ -6,7 +6,7 @@ description: NVIDIA cuRobo collision-aware motion planning - in-process CUDA, no
 
 [`CuroboPolicy`](https://github.com/strands-labs/robots/blob/main/strands_robots/policies/curobo/policy.py)
 wraps NVIDIA [cuRobo](https://curobo.org/)'s `MotionPlanner`. Unlike the
-sidecar VLA providers (GR00T, Cosmos 3), cuRobo runs **in the same process**
+sidecar VLA providers (Cosmos 3), cuRobo runs **in the same process**
 as a CUDA library: there is no network round-trip, but a CUDA-capable GPU is
 required. It is a non-VLA, collision-aware motion planner - it reads its goal
 from `**kwargs` (`target_pose` / `target_joints`), ignores camera frames
@@ -136,7 +136,6 @@ dispatch collects from the wire command.
 
 - [Policy overview](overview.md)
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA).
-- [GR00T](groot.md) - ZMQ service VLA.
 - [Cosmos 3](cosmos3.md) - WebSocket VLA.
 - [LeRobot Local](lerobot-local.md) - in-process HF models.
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.

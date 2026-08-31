@@ -24,7 +24,7 @@ By default each composited frame is written as a PNG still. When more
 than one frame is rendered (``--frames > 1`` or ``--wave``) the frames
 are *also* assembled into a video clip, so the example delivers the
 "short-clip" its name promises — at output parity with
-``examples/mujoco_gs/libero_groot.py`` (``imageio`` libx264, matching
+``examples/mujoco_gs/app.py`` (``imageio`` libx264, matching
 ``mimsave(..., codec="libx264", quality=7, macro_block_size=8)``).
 ``--mp4`` / ``--gif`` pick the clip container (default: MP4 for a
 multi-frame run); ``--out-video`` overrides the path; ``--fps`` sets the
@@ -176,7 +176,7 @@ def _want_video(args: argparse.Namespace) -> bool:
     A clip is produced when (a) the user asked for one explicitly
     (``--mp4`` / ``--gif`` / ``--out-video``), or (b) the run is
     multi-frame (``--frames > 1`` or ``--wave``) — mirroring
-    ``mujoco_gs/libero_groot.py``'s always-a-video output. A single
+    ``mujoco_gs/app.py``'s always-a-video output. A single
     still has nothing to animate, so a bare ``--frames 1`` stays
     PNG-only unless a clip flag is passed.
     """

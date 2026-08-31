@@ -19,7 +19,7 @@ robot = Robot(
 
 robot.start_task(
     instruction="pick up the cube",
-    policy_provider="groot",
+    policy_provider="cosmos3",
     policy_port=5555,
     duration=30.0,
 )
@@ -37,7 +37,7 @@ robot.cleanup()
 | `robot` | LeRobot `Robot` instance, `RobotConfig`, or string (e.g. `"so100"`). |
 | `cameras` | `{name: config_dict}`. Config keys are `type` (backend selector, `opencv`) plus the fields of lerobot's `OpenCVCameraConfig`: `index_or_path` (required), `fps`, `width`, `height`, `color_mode`, `rotation`, `warmup_s`, `fourcc`, `backend`. An unknown key raises `ValueError`. |
 | `action_horizon` | Actions per inference step (default 8; must be a positive integer). |
-| `data_config` | GR00T data_config name. |
+| `data_config` | Provider embodiment-schema name. |
 | `control_frequency` | Control loop Hz (default 50). |
 | `**kwargs` | Forwarded to LeRobot backend (`port`, `robot_ip`, `kp`, `kd`, …). Unknown kwargs raise `ValueError`. |
 

@@ -464,7 +464,7 @@ class Robot(TeleopMixin, AgentTool):
                 ``ValueError`` here rather than being silently clamped to a
                 horizon the caller never asked for, or aborting the task mid-run
                 once the arm is already connected.
-            data_config: Data configuration (for GR00T compatibility)
+            data_config: Data configuration naming the provider's embodiment schema
             control_frequency: Control loop frequency in Hz (default: 50Hz).
                 Must be a positive finite number - it is the divisor of the
                 loop's per-action period (``1 / control_frequency``), the only
@@ -1292,7 +1292,7 @@ class Robot(TeleopMixin, AgentTool):
         self,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         **policy_kwargs: Any,
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters.
@@ -1307,7 +1307,7 @@ class Robot(TeleopMixin, AgentTool):
         from .policies import create_policy
 
         # Per-provider port requirement: the registry's "requires"
-        # field is the source of truth - groot/lerobot_async dial a server
+        # field is the source of truth - cosmos3/lerobot_async dial a server
         # and need a port, while mock/lerobot_local build in-process and
         # need none. Hardcoding the port demand here made every port-less
         # provider unrunnable on hardware through the mesh execute path.
@@ -1604,7 +1604,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -1931,7 +1931,7 @@ class Robot(TeleopMixin, AgentTool):
         ``policy_object`` there is nothing to build a policy from. Every other
         value is checked against
         :func:`~strands_robots.utils.tcp_port_error`, the shared domain whose
-        docstring already names "the policy providers that dial one (``groot``,
+        docstring already names "the policy providers that dial one (``cosmos3``,
         ``moveit2``, ``cosmos3``, ``lerobot_async``, ``vera``)" - the very
         providers this path forwards to - so the same port cannot be accepted by
         the arm's task entry points and refused by the provider they hand it to.
@@ -2088,7 +2088,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -2154,7 +2154,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -2189,7 +2189,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
@@ -2267,7 +2267,7 @@ class Robot(TeleopMixin, AgentTool):
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
@@ -2600,8 +2600,8 @@ class Robot(TeleopMixin, AgentTool):
                         },
                         "policy_provider": {
                             "type": "string",
-                            "description": "Policy provider (groot, openai, etc.)",
-                            "default": "groot",
+                            "description": "Policy provider that dials a service port (cosmos3, lerobot_async, remote, ...)",
+                            "default": "cosmos3",
                         },
                         "duration": {
                             "type": "number",
@@ -2639,7 +2639,7 @@ class Robot(TeleopMixin, AgentTool):
                 instruction = input_data.get("instruction", "")
                 policy_port = input_data.get("policy_port")
                 policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
+                policy_provider = input_data.get("policy_provider", "cosmos3")
                 duration = input_data.get("duration", 30.0)
 
                 if not instruction or not policy_port:
@@ -2663,7 +2663,7 @@ class Robot(TeleopMixin, AgentTool):
                 instruction = input_data.get("instruction", "")
                 policy_port = input_data.get("policy_port")
                 policy_host = input_data.get("policy_host", "localhost")
-                policy_provider = input_data.get("policy_provider", "groot")
+                policy_provider = input_data.get("policy_provider", "cosmos3")
                 duration = input_data.get("duration", 30.0)
 
                 if not instruction or not policy_port:

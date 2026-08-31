@@ -162,7 +162,6 @@ static list (see [Discovering supported policy types](#discovering-supported-pol
 | `tdmpc` | TD-MPC model-based control |
 | `smolvla` | SmolVLA - HuggingFace small VLA |
 | `pi0` / `pi05` / `pi0_fast` | Physical Intelligence VLA family |
-| `groot` | NVIDIA GR00T |
 | `molmoact2` | transformers-native SO100/SO101 VLA; `pip install 'strands-robots[molmoact2]'` (see below) |
 | `eo1` | EO-1 VLA |
 | `xvla` | X-VLA |
@@ -732,6 +731,5 @@ part-way through a rollout.
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics
 - [Policy providers](../policies/overview.md)
 - [Training](../training/overview.md)
-- [GR00T](groot.md)
 - [cuRobo](curobo.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)

@@ -1,12 +1,15 @@
 ---
-description: End-to-end VLA workflow on the Unitree G1 - collect teleop data, fine-tune Isaac-GR00T N1.7, deploy with SONIC whole-body control.
+description: VLA workflow on the Unitree G1 - collect teleop data in sim, then deploy a SONIC whole-body-control checkpoint.
 ---
 
 # VLA-on-G1 Workflow
 
-The full Vision-Language-Action (VLA) pipeline on the Unitree G1 humanoid:
-**collect teleop data** (LeRobot recording) -> **fine-tune Isaac-GR00T N1.7**
-(GR00T Trainer) -> **deploy with SONIC whole-body control** (WBC provider).
+The Vision-Language-Action (VLA) pipeline on the Unitree G1 humanoid:
+**collect teleop data** (LeRobot recording) -> **deploy with SONIC whole-body
+control** (WBC provider). Post-training the base VLA between those two stages is
+run with upstream Isaac-GR00T's own tooling; this package does not vendor that
+trainer, and the checkpoint it produces deploys through the WBC provider
+unchanged.
 
 Each piece ships individually in `strands-robots`; this page documents how they
 compose into one coherent pipeline. The companion example script runs the chain
@@ -15,9 +18,6 @@ end-to-end:
 ```bash
 # Quick demo (record + deploy with mock, ~10s on CPU):
 python examples/locomotion/vla_g1_workflow.py
-
-# Full pipeline with real fine-tuning (Docker + GPU):
-python examples/locomotion/vla_g1_workflow.py --tune --base-model nvidia/GR00T-N1.7-3B
 
 # Deploy-only with downloaded SONIC weights:
 python examples/locomotion/vla_g1_workflow.py --checkpoint /path/to/grootwbc-g1
@@ -90,36 +90,19 @@ or hardware - the quick-demo default). The dataset format is identical either wa
 To train a **language-conditioned (steerable)** policy, annotate the recorded
 dataset with language columns first - see [Steerable annotation](../data/annotation.md).
 
-### 2. Fine-tune  - post-train Isaac-GR00T N1.7
+### 2. Post-train (outside this package)
 
-Use the [`Trainer` abstraction](overview.md) with the `"groot"` provider to
-post-train a GR00T N1.7 base model on the recorded G1 data:
+Post-training a base VLA on the recorded dataset is run with the upstream
+Isaac-GR00T tooling linked below. The recorded dataset is a standard
+`LeRobotDataset`, so it is consumed as-is, and the checkpoint that comes out is
+what stage 3 deploys.
 
-```python
-from strands_robots.training import create_trainer, TrainSpec
-
-trainer = create_trainer("groot")
-spec = TrainSpec(
-    dataset_root="/tmp/g1_dataset",
-    base_model="nvidia/GR00T-N1.7-3B",
-    output_dir="/tmp/g1_finetuned",
-    steps=1000,
-    extra={"embodiment": "unitree_g1", "data_config": "unitree_g1"},
-)
-result = trainer.train(spec)
-checkpoint = trainer.export(spec, result.checkpoint_dir)
-```
-
-Under the hood, `Gr00tTrainer` orchestrates the `gr00t_inference` Docker tool's
-training pipeline. This stage requires Docker + a GPU and takes minutes to hours
-depending on dataset size and step count.
-
-> **Note:** The `gr00t_inference` tool's `unitree_g1` embodiment is marked
-> `[posttrain]`  - meaning it requires a fine-tuned checkpoint, not the base
-> model directly. The base model (`nvidia/GR00T-N1.7-3B`) is the starting point
-> for fine-tuning; the output is the checkpoint you deploy.
+For arm manipulation the equivalent step *is* in-package: the
+[`Trainer` abstraction](overview.md) post-tunes a LeRobot policy on a recorded
+dataset - see [`07_post_tune_any_policy.py`](https://github.com/strands-labs/robots/blob/main/examples/07_post_tune_any_policy.py).
 
 ### 3. Deploy  - SONIC whole-body control
+
 
 Load the fine-tuned (or pre-trained SONIC) checkpoint with the `wbc` provider
 and drive the G1's 15 leg+waist DOFs:
@@ -154,7 +137,7 @@ python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 
 | Stage | Install | External |
 |-------|---------|----------|
 | Record | `pip install "strands-robots[sim-mujoco,lerobot]"` | None (sim) |
-| Fine-tune | `pip install "strands-robots[groot-service]"` | Docker + GPU |
+| Post-train | upstream Isaac-GR00T tooling | Docker + GPU |
 | Deploy | `pip install "strands-robots[wbc,sim-mujoco]"` | None (CPU ONNX) |
 
 ## Upstream references
@@ -169,4 +152,3 @@ python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 
 
 - [`07_post_tune_any_policy.py`](https://github.com/strands-labs/robots/blob/main/examples/07_post_tune_any_policy.py)  - the same record->train->deploy loop for arm manipulation (SO-100 + LeRobot ACT)
 - [WBC provider](../policies/wbc.md)  - the deploy-stage policy (observation layout, command kwargs, torque harness)
-- [GR00T provider](../policies/groot.md)  - the inference-stage policy (ZMQ + Docker)

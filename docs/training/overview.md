@@ -1,5 +1,5 @@
 ---
-description: Post-tune any policy natively with the Trainer abstraction - one interface over LeRobot, Isaac-GR00T, and Cosmos3 pipelines.
+description: Post-tune any policy natively with the Trainer abstraction - one interface over LeRobot and Cosmos3 pipelines.
 ---
 
 # Training
@@ -31,7 +31,6 @@ and a single `--policy.type` flag can't express them:
 | Provider | Upstream entry point | Config surface | Launcher | HW floor |
 |----------|---------------------|----------------|----------|----------|
 | `lerobot_local` | `lerobot.scripts.lerobot_train` | draccus `--dotted.flags` | `python` / `accelerate launch` | CPU for a toy run; 1 consumer GPU in practice |
-| `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
 | `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
 | `sagemaker` | none - the container image's own trainer | the same `TrainSpec`, as job hyperparameters | `CreateTrainingJob` (managed) | none locally; the job brings its own |
 
@@ -50,7 +49,7 @@ The `Trainer` ABC hides all of that behind one lifecycle:
 validate()  ->  prepare()  ->  train()  ->  export()
                    ▲                           ▲
             (cosmos: DCP convert,        (cosmos: DCP -> safetensors;
-             groot: modality cfg)         lerobot/groot: passthrough)
+                                          lerobot: passthrough)
 ```
 
 plus `status()` for a "RUNNING ≠ learning" verdict on an in-flight job.
@@ -78,7 +77,7 @@ spec = TrainSpec(dataset_root="/tmp/demo_ds", base_model="",
                  global_batch_size=2, extra={"policy_type": "act"})
 result = trainer.train(spec)
 
-# 3. EXPORT - loadable artifact (HF-native passthrough for lerobot/groot)
+# 3. EXPORT - loadable artifact (HF-native passthrough for lerobot)
 ckpt = trainer.export(spec, result.checkpoint_dir)
 
 # 4. DEPLOY - load the freshly-trained checkpoint back as a Policy
@@ -87,7 +86,7 @@ sim.run_policy(robot_name="so100", policy_object=policy,
                instruction="pick up the red cube", n_steps=15)
 ```
 
-Swap `create_trainer("lerobot_local")` → `"groot"` or `"cosmos3"` and **only the
+Swap `create_trainer("lerobot_local")` → `"cosmos3"` and **only the
 provider string changes** - exactly how `Robot("so100", mode="real")` swaps
 sim↔hardware.
 
@@ -102,15 +101,13 @@ supports and **ignores the rest** (the same tolerance rule as
 | `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
 | `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes` |
-| `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
+| `base_model` | HF id / local ckpt to tune from | required for Cosmos |
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
-| `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
 | `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); mutually exclusive with `streaming` |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
-| `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
 | `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `cfg.sample_weighting` (`--sample_weighting.*`) |
@@ -433,15 +430,6 @@ what `streaming` exists to avoid, and nothing reports it: an annulled stream is
 indistinguishable from `streaming=False`. Set `streaming=False` to keep the
 validation split, or `val_episodes=None` to keep the stream.
 
-### GR00T (`groot`)
-
-```python
-TrainSpec(..., embodiment="GR1",
-          tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
-          extra={"groot_root": "/path/to/Isaac-GR00T"})
-# -> launch_finetune.py --embodiment_tag=GR1 --tune_projector=true ...
-```
-
 ### Cosmos3 (`cosmos3`)
 
 ```python
@@ -486,7 +474,6 @@ on an L40S GPU:
 | `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | `[lerobot]` supplies torch + torchcodec + datasets; it does **not** supply `accelerate` |
 | `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | `[smolvla]` layers lerobot's own `[smolvla]` extra (`transformers>=5.4.0,<5.6.0` + num2words) on top of `[lerobot]`. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
 | `lerobot_local` + `pi0` / `pi05` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[pi]'` | lerobot 0.6's `[pi]` extra (same `transformers>=5.4.0,<5.6.0` range + scipy) |
-| `groot` | Isaac-GR00T checkout, installed with `pip install -e` into the **same** environment as `strands_robots` (it pulls `omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at the checkout | `gr00t` is imported in the calling interpreter, so it has to be importable there; `GR00T_ROOT` resolves relative configs, not the interpreter |
 | `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), installed into the **same** environment as `strands_robots`; point `extra["cosmos_root"]` / `COSMOS_ROOT` at the checkout | `cosmos_framework` is imported in the calling interpreter; multi-GPU goes through torch's programmatic `elastic_launch`, not a `torchrun` binary |
 
 > **torchcodec / torch ABI:** the lerobot training dataloader decodes video via
@@ -497,14 +484,14 @@ on an L40S GPU:
 > training fails with a generic non-zero exit. Pin `torch` + `torchcodec`
 > together (verified-good combo: `torch==2.10.0+cu128` + `torchcodec==0.10.0`).
 
-> **One interpreter:** `LerobotTrainer` / `Gr00tTrainer` / `Cosmos3Trainer` call their
+> **One interpreter:** `LerobotTrainer` / `Cosmos3Trainer` call their
 > backend as a library in the **same** interpreter that imports `strands_robots`, so
 > there is no second interpreter to point them at. There is no `python_executable=`
 > argument either, and because each constructor absorbs unknown keywords, passing one
 > is silently a no-op rather than an error. Install the provider's deps into the
 > environment your agent process runs in; otherwise `train()` reports
 > `<package> is not importable from this interpreter` in `TrainResult.message`.
-> `GR00T_ROOT` / `COSMOS_ROOT` (and `extra["groot_root"]` / `extra["cosmos_root"]`)
+> `COSMOS_ROOT` (and `extra["cosmos_root"]`)
 > resolve the checkout so relative configs load - they are not interpreter paths.
 
 ## See also

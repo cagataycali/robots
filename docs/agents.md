@@ -24,11 +24,10 @@ uv pip install strands-agents "strands-robots[sim-mujoco]"
 ## Add more tools
 
 ```python
-from strands_robots.tools import gr00t_inference, pose_tool
+from strands_robots.tools import pose_tool
 
-agent = Agent(tools=[robot, gr00t_inference, pose_tool])
-agent("Start a GR00T server on port 5555 with so100_dualcam, "
-      "then pick up the cube using groot")
+agent = Agent(tools=[robot, pose_tool])
+agent("Pick up the cube with the cosmos3 policy on port 8000")
 ```
 
 Everything in `strands_robots/tools/` is a `@tool` the agent can call directly.

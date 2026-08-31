@@ -10,7 +10,6 @@ Strands Robots actuates machines in physical space, pulls models and datasets fr
 2. [Robot mesh authentication](#robot-mesh-authentication)
 3. [Operator approval for fleet-wide actions](#operator-approval-for-fleet-wide-actions)
 4. [HuggingFace policy code execution](#huggingface-policy-code-execution-trust_remote_code)
-5. [GR00T inference containers](#gr00t-inference-containers)
 6. [Hardware and serial access](#hardware-and-serial-access)
 7. [Credentials and secrets](#credentials-and-secrets)
 8. [Telemetry exposure to the agent context](#telemetry-exposure-to-the-agent-context)
@@ -192,20 +191,10 @@ Operator guidance:
 
 - Only set `STRANDS_TRUST_REMOTE_CODE=1` when you are loading checkpoints from organizations you trust - ideally your own org, or a small allowlist of vendors you have vetted (e.g. `lerobot/`, `nvidia/`). The opt-in is a per-process, whole-environment switch: once set, it trusts every model the process loads for the life of that process, not just the one you had in mind. Scope it tightly (set it on the specific command, not globally in a shell profile) and pin checkpoints to a known revision where the loader supports it.
 - Where a provider exposes a per-call `trust_remote_code` setting, use it rather than relying on the environment variable alone. `KimodoPolicy` takes `trust_remote_code` (default `False`), so a process that has opted in to the provider can still refuse to execute a given repository's code. The two are independent: the environment variable decides whether the provider may be built, the setting decides whether a checkpoint's code runs.
-- Prefer providers that do not require remote code where you can. The default Mock policy, the GR00T container path, and many LeRobot policy families do not need this flag. Reach for `lerobot_local` with `trust_remote_code` only when a specific model genuinely requires it.
+- Prefer providers that do not require remote code where you can. The default Mock policy and many LeRobot policy families do not need this flag. Reach for `lerobot_local` with `trust_remote_code` only when a specific model genuinely requires it.
 - A mesh peer can request a model load too. When the mesh forwards a `pretrained_name_or_path` in an `execute`/`start` command, it is additionally constrained to an org allowlist (`STRANDS_MESH_HF_REPO_ALLOW`, default `nvidia,huggingface,lerobot`) so an authenticated peer cannot steer a robot into loading an arbitrary repo. Keep that allowlist as narrow as your fleet allows, and remember it is independent of the per-process `STRANDS_TRUST_REMOTE_CODE` opt-in - both gates apply.
 
 Reference: `strands_robots.policies.factory` (`_check_trust_remote_code`, `UntrustedRemoteCodeError`).
-
-## GR00T inference containers
-
-The `gr00t_inference` tool pulls a Docker image, downloads a checkpoint, and starts a container. The agent-facing surface is intentionally constrained, and you should keep it that way:
-
-- The agent cannot choose the image, bind-mount host paths, or inject a container command - those are operator-config-driven only. The image is resolved from `STRANDS_GR00T_IMAGE` and checked against an allowlist (`STRANDS_GR00T_IMAGE_ALLOW`), and a guard blocks dangerous bind mounts (`/`, `/etc`, the Docker socket, `/proc`, `/sys`, credential dirs, ...) that would amount to host takeover.
-- Keep `STRANDS_GR00T_IMAGE_ALLOW` and `STRANDS_GR00T_REPO_URL_ALLOW` narrow and exact; the SDK matches repo URLs exactly (no wildcard) specifically so a look-alike repo (`...Isaac-GR00T-evil`) cannot slip past.
-- Running the container still grants it a GPU and network. Run inference hosts with least privilege, on isolated networks where practical, and tear containers down when done (`gr00t_inference(action="stop", ...)` or `lifecycle="teardown"`).
-
-Reference: `strands_robots.tools.gr00t_inference`.
 
 ## Hardware and serial access
 

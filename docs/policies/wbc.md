@@ -17,7 +17,7 @@ locomotion `**kwargs` (`target_velocity`), ignores camera frames
 (`requires_images = False`), and never parses the instruction string for
 control. The controller drives the **15 leg+waist DOFs** of the G1; the arm
 joints are held at their nominal defaults. To drive the arms as well, layer an
-upper-body manipulation policy (e.g. GR00T) on top of WBC locomotion with
+upper-body manipulation policy (e.g. Cosmos 3) on top of WBC locomotion with
 [`CompositePolicy`](#composing-an-upper-body-manipulation-on-top-of-wbc): WBC
 keeps the robot balanced and walking while the upper policy owns the arm joints.
 
@@ -298,7 +298,7 @@ from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOIN
 ARM_JOINTS = WBC_G1_ALL_JOINTS[len(WBC_G1_LEG_WAIST_JOINTS):]  # the 14 arm DOFs
 
 lower = create_policy("wbc", checkpoint="/path/to/grootwbc-g1")
-upper = create_policy("groot", port=5555)        # or pi0 / MolmoAct / any Policy
+upper = create_policy("cosmos3", port=8000)      # or pi0 / MolmoAct / any Policy
 policy = CompositePolicy(
     lower=lower,
     upper=upper,
@@ -339,7 +339,7 @@ passed to `run_policy`.
 
 [`examples/wbc/wbc_g1_composite.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc/wbc_g1_composite.py)
 runs the composite in the torque-deploy loop with a zero-dependency scripted
-arm-wave as the upper body (swap in `--upper-port` for a real GR00T server):
+arm-wave as the upper body (swap in `--upper-port` for a real Cosmos 3 server):
 
 ```bash
 python examples/wbc/wbc_g1_composite.py --checkpoint /path/to/grootwbc-g1 \
@@ -368,6 +368,5 @@ implemented by `WBCGaitPolicy` (provider `wbc_gait`). See
 - [Policy overview](overview.md)
 - [cuRobo](curobo.md) - in-process CUDA collision-aware planning (non-VLA).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA).
-- [GR00T](groot.md) - ZMQ service VLA (manipulation upper body).
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.
 - [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)

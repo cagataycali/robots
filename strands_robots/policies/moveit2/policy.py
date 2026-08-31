@@ -6,8 +6,7 @@ the request to a sidecar ROS 2 node via ZMQ + msgpack, and unpacks the
 returned joint trajectory into the per-step action dicts that
 :class:`~strands_robots.robot.Robot` consumes.
 
-Construction mirrors :class:`~strands_robots.policies.groot.policy.Gr00tPolicy`'s
-service mode:
+Construction names the sidecar's endpoint:
 
 .. code-block:: python
 

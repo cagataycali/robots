@@ -68,7 +68,6 @@ _IDS = [f"{mod}.{name}" for mod, name, _ in _BOUND_TOOLS]
 _EXPECTED_TOOLS = frozenset(
     {
         "download_assets",
-        "gr00t_inference",
         "harness_memory",
         "lerobot_calibrate",
         "lerobot_camera",
@@ -203,43 +202,3 @@ class TestTheGuardWouldNoticeARegression:
         parsed = docstring_parser.parse("Short.\n\n    Args:\n        real: Fine.\n        one, two: Both at once.\n")
         unmatched = [p.arg_name for p in parsed.params if p.arg_name not in {"real", "one", "two"}]
         assert unmatched == ["one, two"]
-
-
-class TestTheLifecycleParametersAreDiscoverable:
-    """The seven options the container-lifecycle actions read (see #148).
-
-    Their descriptions existed in the source under a ``Container lifecycle
-    args`` header, which the parser drops, so none of them reached the model.
-    """
-
-    LIFECYCLE_PARAMETERS = (
-        "hf_repo",
-        "hf_subfolder",
-        "hf_local_dir",
-        "hf_token",
-        "lifecycle",
-        "remove_volumes",
-        "force",
-    )
-
-    def test_each_lifecycle_option_describes_itself(self) -> None:
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        properties = gr00t_inference.tool_spec["inputSchema"]["json"]["properties"]
-        for name in self.LIFECYCLE_PARAMETERS:
-            description = properties[name].get("description", "").strip()
-            assert description != _placeholder(name)
-            assert len(description) > len(_placeholder(name))
-
-    def test_a_destructive_option_says_what_it_destroys(self) -> None:
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        properties = gr00t_inference.tool_spec["inputSchema"]["json"]["properties"]
-        assert "checkpoint" in properties["remove_volumes"]["description"]
-
-    def test_the_operator_configured_note_reaches_the_description(self) -> None:
-        from strands_robots.tools.gr00t_inference import gr00t_inference
-
-        description = gr00t_inference.tool_spec["description"]
-        assert "host RCE" in description
-        assert "STRANDS_GR00T_REPO_URL_ALLOW" in description

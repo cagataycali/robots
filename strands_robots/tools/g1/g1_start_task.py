@@ -98,7 +98,7 @@ def g1_start_task(
     instruction: str = "",
     policy_port: int | None = None,
     policy_host: str = "localhost",
-    policy_provider: str = "groot",
+    policy_provider: str = "cosmos3",
     duration: float = 30.0,
 ) -> dict[str, Any]:
     """Start a provider-driven task on the driver's 500 Hz control loop.

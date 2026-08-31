@@ -21,10 +21,6 @@ strands_robots/
 │   ├── base.py            # Abstract Policy base class
 │   ├── factory.py         # create_policy() factory + registry
 │   ├── mock.py            # MockPolicy for testing
-│   ├── groot/             # NVIDIA GR00T N1.5/N1.6/N1.7 inference
-│   │   ├── policy.py      # Gr00tPolicy (ZMQ + HTTP modes)
-│   │   ├── client.py      # Gr00tInferenceClient
-│   │   ├── data_config.py # Gr00tDataConfig + ModalityConfig
 │   │   └── data_configs.json  # 25 robot embodiment configs
 │   └── lerobot_local/     # HuggingFace LeRobot direct inference
 │       ├── policy.py      # LerobotLocalPolicy (RTC support)
@@ -32,7 +28,6 @@ strands_robots/
 │       └── resolution.py  # Policy class resolution (v0.4/v0.5)
 ├── registry/              # JSON registry for policy discovery
 ├── tools/                 # Strands @tool functions
-│   ├── gr00t_inference.py # GR00T inference tool
 │   ├── lerobot_calibrate.py
 │   ├── lerobot_camera.py
 │   ├── lerobot_teleoperate.py

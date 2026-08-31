@@ -7,7 +7,7 @@ ONE Unitree G1 with two stacked policies, each tick:
 * **lower** = :class:`WBCPolicy` (the real ``GR00T-WholeBodyControl-{Balance,
   Walk}.onnx`` weights) owns the 15 leg+waist joints and walks the robot.
 * **upper** = a manipulation policy owns the 14 arm joints. Swap in
-  ``create_policy("groot", port=5555)`` / pi0 / MolmoAct for a real VLA; this
+  ``create_policy("cosmos3", port=8000)`` / pi0 / MolmoAct for a real VLA; this
   example ships a tiny scripted arm-wave so it runs fully in sim with no server.
 
 The composite queries both children, routes leg+waist targets to the WBC torque
@@ -58,7 +58,7 @@ ARM_JOINTS: tuple[str, ...] = WBC_G1_ALL_JOINTS[len(WBC_G1_LEG_WAIST_JOINTS) :]
 class ScriptedArmWavePolicy(Policy):
     """A zero-dependency upper-body policy that waves both shoulders.
 
-    Stands in for a real manipulation VLA (GR00T / pi0 / MolmoAct) so the
+    Stands in for a real manipulation VLA (Cosmos 3 / pi0 / MolmoAct) so the
     composite example runs fully offline. Emits absolute position targets for
     the arm joints only; every other joint is left to the lower policy.
     """
@@ -195,7 +195,7 @@ def run(args: argparse.Namespace) -> int:
     assert isinstance(lower, WBCPolicy)
     upper: Policy
     if args.upper_port:
-        upper = create_policy("groot", port=args.upper_port)
+        upper = create_policy("cosmos3", port=args.upper_port)
     else:
         upper = ScriptedArmWavePolicy()
 
@@ -245,7 +245,7 @@ def main() -> None:
         "--upper-port",
         type=int,
         default=0,
-        help="if set, use create_policy('groot', port=...) for the arms instead of the scripted wave",
+        help="if set, use create_policy('cosmos3', port=...) for the arms instead of the scripted wave",
     )
     p.add_argument("--mp4", default="", help="write an MP4 of the rollout to this path")
     p.add_argument("--mp4-fps", type=int, default=30)

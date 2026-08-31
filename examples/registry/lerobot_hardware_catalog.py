@@ -83,7 +83,6 @@ def show_g1() -> int:
     print("\n  Drive it for real (locomotion + agent-controlled arms):")
     print("    g1 = Robot('g1', mode='real',")
     print("               robot_ip='192.168.123.164',")
-    print("               controller='GrootLocomotionController')")
     print("    # Background thread owns legs+waist; send_action() publishes arm targets.")
     return 0
 

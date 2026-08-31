@@ -31,12 +31,10 @@ graph TB
     subgraph policies[Policy layer  -  strands_robots/policies]
         POLICY_ABC["Policy ABC<br/>policies/base.py"]
         MOCK["MockPolicy"]
-        GROOT["Gr00tPolicy"]
         LEROBOT["LerobotLocalPolicy"]
         COSMOS3["Cosmos3Policy"]
         FACTORY_FN["create_policy()"]
         MOCK -.implements.-> POLICY_ABC
-        GROOT -.implements.-> POLICY_ABC
         LEROBOT -.implements.-> POLICY_ABC
         COSMOS3 -.implements.-> POLICY_ABC
         FACTORY_FN --> POLICY_ABC
@@ -68,7 +66,7 @@ graph TB
     class AGENT,FACTORY user
     class ROBOT,REGISTRY factory
     class SIM,HW,SIM_ABC backend
-    class POLICY_ABC,MOCK,GROOT,LEROBOT,COSMOS3,FACTORY_FN policy
+    class POLICY_ABC,MOCK,LEROBOT,COSMOS3,FACTORY_FN policy
     class TOOLS,RECORDER cross
 ```
 
@@ -95,7 +93,7 @@ graph TB
 
 ## The one rule
 
-**Lazy imports everywhere.** `strands_robots/__init__.py` exports `Policy`, `MockPolicy`, `create_policy` eagerly. Everything else (`Robot`, `Simulation`, `Gr00tPolicy`, the tools) is behind `__getattr__`. Enforced by `tests/test_init.py`.
+**Lazy imports everywhere.** `strands_robots/__init__.py` exports `Policy`, `MockPolicy`, `create_policy` eagerly. Everything else (`Robot`, `Simulation`, the tools) is behind `__getattr__`. Enforced by `tests/test_init.py`.
 
 ## Extras
 
@@ -103,7 +101,6 @@ graph TB
 |-------|----------|------|
 | `[sim-mujoco]` | `mujoco`, `numpy`, `imageio`, `imageio-ffmpeg`, `mink`, `qpsolvers[daqp]` | `Robot(mode="sim")`; `mink`/`qpsolvers` solve IK for the `move_to` primitive (the `[daqp]` backend extra is what makes the solve runnable - `qpsolvers` alone ships no solver) |
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
-| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` ZMQ |
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |

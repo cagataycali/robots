@@ -1,37 +1,34 @@
 #!/usr/bin/env python3
-"""End-to-end VLA-on-G1 workflow: record -> fine-tune -> deploy.
+"""VLA-on-G1 workflow: record in sim, then deploy with whole-body control.
 
-Chains the three stages of the humanoid VLA pipeline on the Unitree G1:
+Chains the two in-package stages of the humanoid VLA pipeline on the Unitree G1:
 
 1. RECORD  - drive the G1 in sim, capture a LeRobotDataset (teleop data).
-2. TUNE    - post-train Isaac-GR00T N1.7 on the recorded data (optional/gated).
-3. DEPLOY  - deploy the (fine-tuned or pre-trained) checkpoint with WBC
-             (SONIC whole-body control) for locomotion.
+2. DEPLOY  - deploy a SONIC whole-body-control checkpoint with the WBC provider.
 
 Each stage is self-contained and gated:
-- By default only stages 1 + 3 run (record + deploy with a mock/pre-trained
+- By default both stages run (record + deploy with a mock/pre-trained
   checkpoint). This completes in ~10 seconds on CPU with no external services.
-- Pass ``--tune`` to enable stage 2 (requires Docker + a GPU for Isaac-GR00T
-  fine-tuning; takes ~hours). The deploy stage then uses the fine-tuned output.
-- Pass ``--checkpoint /path/to/grootwbc-g1`` to skip recording + fine-tuning and
-  jump straight to deploy with an existing SONIC checkpoint.
+- Pass ``--checkpoint /path/to/grootwbc-g1`` to skip recording and jump straight
+  to deploy with an existing SONIC checkpoint.
 
-This example proves the three pieces compose - dataset_recorder, GR00T Trainer,
-and WBCPolicy - as one coherent pipeline, the deploy stage of issue #471.
+Post-training a base VLA on the recorded dataset is run with the upstream
+Isaac-GR00T tooling (see the reference below); this package does not vendor that
+trainer. The resulting checkpoint deploys through stage 2 unchanged, which is
+what makes the recorded dataset useful here.
+
+This example proves the two pieces compose - dataset_recorder and WBCPolicy - as
+one coherent pipeline, the deploy stage of issue #471.
 
 Upstream reference:
     https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/vla_workflow.html
 
 Dependencies:
     pip install "strands-robots[sim-mujoco,lerobot,wbc]"
-    # For stage 2 (fine-tuning): Docker + GPU + pip install "strands-robots[groot-service]"
 
 Usage:
     # Quick demo (record + deploy with mock policy, ~10s):
     python examples/locomotion/vla_g1_workflow.py
-
-    # Full pipeline with real fine-tuning:
-    python examples/locomotion/vla_g1_workflow.py --tune --base-model nvidia/GR00T-N1.7-3B
 
     # Deploy-only with an existing SONIC checkpoint:
     python examples/locomotion/vla_g1_workflow.py --checkpoint /path/to/grootwbc-g1
@@ -143,61 +140,7 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int, che
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: FINE-TUNE (optional) - post-train GR00T N1.7 on the recorded data
-# ---------------------------------------------------------------------------
-
-
-def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: int) -> str:
-    """Post-train Isaac-GR00T N1.7 on the recorded G1 locomotion data.
-
-    Uses the ``Trainer`` abstraction (``create_trainer("groot")``) which wraps
-    the ``gr00t_inference`` Docker tool's training pipeline under the hood.
-    This is the same interface ``07_post_tune_any_policy.py`` uses for any
-    provider - just with ``"groot"`` and a G1 dataset.
-
-    Returns the fine-tuned checkpoint directory.
-    """
-    from strands_robots.training import TrainSpec, create_trainer
-
-    print("\n=== Stage 2: FINE-TUNE (GR00T N1.7) ===")
-    print(f"  Base model:  {base_model}")
-    print(f"  Dataset:     {dataset_root}")
-    print(f"  Output:      {output_dir}")
-    print(f"  Steps:       {steps}")
-
-    trainer = create_trainer("groot")
-    spec = TrainSpec(
-        dataset_root=dataset_root,
-        base_model=base_model,
-        output_dir=output_dir,
-        steps=steps,
-        save_freq=max(1, steps // 4),
-        extra={
-            "embodiment": "unitree_g1",
-            "data_config": "unitree_g1",
-        },
-    )
-
-    problems = trainer.validate(spec)
-    if problems:
-        print("  Spec validation failed:", file=sys.stderr)
-        for p in problems:
-            print(f"    - {p}", file=sys.stderr)
-        raise SystemExit(1)
-
-    result = trainer.train(spec)
-    print(f"  Train result: {result.status}")
-    if result.status != "success":
-        print(f"  ERROR: {result.message}", file=sys.stderr)
-        raise SystemExit(1)
-
-    exported = trainer.export(spec, result.checkpoint_dir)
-    print(f"  Exported checkpoint -> {exported}")
-    return str(exported)
-
-
-# ---------------------------------------------------------------------------
-# Stage 3: DEPLOY - run the G1 with WBC (SONIC whole-body control)
+# Stage 2: DEPLOY - run the G1 with WBC (SONIC whole-body control)
 # ---------------------------------------------------------------------------
 
 
@@ -265,21 +208,11 @@ def stage_deploy(checkpoint: str | None, duration: float, vx: float) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="End-to-end VLA-on-G1 workflow: record -> fine-tune -> deploy.")
-    p.add_argument(
-        "--tune",
-        action="store_true",
-        help="Enable stage 2 (fine-tuning). Requires Docker + GPU.",
-    )
-    p.add_argument(
-        "--base-model",
-        default="nvidia/GR00T-N1.7-3B",
-        help="Base model for fine-tuning (default: nvidia/GR00T-N1.7-3B).",
-    )
+    p = argparse.ArgumentParser(description="VLA-on-G1 workflow: record in sim, then deploy with whole-body control.")
     p.add_argument(
         "--checkpoint",
         default="",
-        help="Skip record+tune; deploy this existing SONIC checkpoint directly.",
+        help="Skip recording; deploy this existing SONIC checkpoint directly.",
     )
     p.add_argument(
         "--record-checkpoint",
@@ -288,8 +221,6 @@ def main() -> None:
         "(real locomotion data) instead of a MockPolicy.",
     )
     p.add_argument("--dataset-root", default="/tmp/strands_vla_g1_dataset")
-    p.add_argument("--output-dir", default="/tmp/strands_vla_g1_ft")
-    p.add_argument("--tune-steps", type=int, default=1000)
     p.add_argument("--episodes", type=int, default=2)
     p.add_argument("--steps-per-episode", type=int, default=100)
     p.add_argument("--deploy-duration", type=float, default=5.0)
@@ -297,7 +228,7 @@ def main() -> None:
     args = p.parse_args()
 
     if args.checkpoint:
-        # Deploy-only shortcut: skip record + tune.
+        # Deploy-only shortcut: skip recording.
         stage_deploy(args.checkpoint, args.deploy_duration, args.vx)
     else:
         # Stage 1: Record (WBC-driven if --record-checkpoint given, else mock)
@@ -308,15 +239,8 @@ def main() -> None:
             checkpoint=args.record_checkpoint or None,
         )
 
-        # Stage 2: Fine-tune (optional, gated behind --tune)
-        checkpoint = None
-        if args.tune:
-            checkpoint = stage_finetune(dataset_root, args.base_model, args.output_dir, args.tune_steps)
-        else:
-            print("\n  [stage 2 skipped - pass --tune to enable fine-tuning]")
-
-        # Stage 3: Deploy
-        stage_deploy(checkpoint, args.deploy_duration, args.vx)
+        # Stage 2: Deploy
+        stage_deploy(None, args.deploy_duration, args.vx)
 
     print("\n=== VLA-on-G1 workflow complete ===")
 

@@ -1,5 +1,5 @@
 ---
-description: Strands @tool helpers for hardware bring-up - calibrate, camera, teleop, train, pose, serial, gr00t inference, mesh, download assets.
+description: Strands @tool helpers for hardware bring-up - calibrate, camera, teleop, train, pose, serial, mesh, download assets.
 ---
 
 # Hardware tools
@@ -8,7 +8,6 @@ description: Strands @tool helpers for hardware bring-up - calibrate, camera, te
 from strands_robots.tools import (
     lerobot_calibrate, lerobot_camera, lerobot_teleoperate, lerobot_train,
     pose_tool, serial_tool, download_assets,
-    gr00t_inference,   # see GR00T page
     robot_mesh,        # see multi-robot page
     use_ros,           # see ROS 2 integration page
     use_rtps,          # see Pure-RTPS ROS 2 page
@@ -27,7 +26,6 @@ from strands_robots.tools import (
 | `pose_tool` | `"store_pose"`, `"load_pose"`, `"read_all"`, `"move_motor"` | Store, recall and replay named servo poses on a real bus, and read or move one motor at a time. This tool is joint-space only - Cartesian IK is `Simulation.move_to` |
 | `serial_tool` | `"list_ports"`, `"send"` | Enumerate serial ports, send raw commands |
 | `download_assets` | - | Pre-fetch MJCF assets to `~/.strands_robots/assets/` |
-| `gr00t_inference` | `"start_container"`, … | GR00T container lifecycle - see [GR00T](../policies/groot.md) |
 | `robot_mesh` | `"tell"`, `"broadcast"`, `"emergency_stop"` | Agent-driven mesh ops - see [Multi-robot](../mesh.md) |
 | `use_ros` | `"list_topics"`, `"echo"`, `"publish"`, `"service_call"`, `"info"` | Bridge to any ROS 2 robot/sim - see [ROS 2 integration](../ros2-integration.md) |
 | `use_rtps` | `"types"`, `"advertise"`, `"publish"`, `"subscribe"`, `"echo"` | Join a ROS 2 graph over pure RTPS (no rclpy) - see [Pure-RTPS ROS 2](../rtps-integration.md) |
@@ -201,4 +199,3 @@ agent("Find a connected so100, calibrate it, then stream the wrist camera for 10
 
 - [Robot control](robot-control.md) - the `HardwareRobot` class.
 - [Real hardware](../hardware/robot-control.md) - when each tool runs.
-- [GR00T](../policies/groot.md) - `gr00t_inference` container lifecycle.
