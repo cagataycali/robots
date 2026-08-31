@@ -261,11 +261,27 @@ def test_a_ceremony_is_verified_against_the_served_origin(label, run, monkeypatc
     assert seen["expected_rp_id"] == "dash.example.com"
 
 
-@pytest.mark.parametrize(("label", "run"), CEREMONIES, ids=[c[0] for c in CEREMONIES])
-def test_a_ceremony_finished_from_a_claimed_origin_is_refused(label, run, monkeypatch):
+#: Every ceremony crossed with every claim the served origin contradicts. The claim
+#: is the FINISHING request's, so these rows grade the ceremony path rather than
+#: :func:`auth._derive_origin` on its own: a finish that decided the expectation
+#: from the credential's stored ``rp_id`` -- which is a HOST -- still refuses the
+#: rows whose host differs, and admits the two that share ``dash.example.com``. A
+#: single differing-host row cannot tell those two situations apart, however the
+#: refusal it does get is compared.
+REFUSED_CEREMONIES = [
+    (f"{ceremony}/{shape}", run, claimed) for ceremony, run in CEREMONIES for shape, claimed in CONTRADICTING
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "run", "claimed"),
+    REFUSED_CEREMONIES,
+    ids=[row[0] for row in REFUSED_CEREMONIES],
+)
+def test_a_ceremony_finished_from_a_claimed_origin_is_refused(label, run, claimed, monkeypatch):
     served = request(host="dash.example.com", origin=SERVED_AT)
-    claimed = request(host="dash.example.com", origin=ELSEWHERE)
+    finished_from = request(host="dash.example.com", origin=claimed)
     with pytest.raises(HTTPException) as e:
-        run(monkeypatch, served, claimed)
+        run(monkeypatch, served, finished_from)
     assert e.value.status_code == 400
-    assert e.value.detail["detail"] == contradiction(ELSEWHERE)
+    assert e.value.detail["detail"] == contradiction(claimed)
