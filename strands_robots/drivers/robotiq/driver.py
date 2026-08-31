@@ -524,7 +524,7 @@ class RobotiqDriver:
 
         normalised = [key for key in _NORMALISED_KEYS if key in action]
         aperture = [key for key in _APERTURE_KEYS if key in action]
-        if normalised and aperture:
+        if len(normalised) + len(aperture) > 1:
             return _refuse(
                 f"send_action: {sorted(normalised + aperture)} are two spellings of the same command - "
                 f"pass a closed fraction ({' or '.join(_NORMALISED_KEYS)}) or millimetres "

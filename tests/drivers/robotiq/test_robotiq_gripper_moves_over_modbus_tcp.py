@@ -293,3 +293,31 @@ def test_real_mode_reaches_this_driver_without_naming_it(name: str, gripper: Cal
     assert built.send_action({"gripper": 1.0})["status"] == "success"
     assert fake.commanded == [255]
     built.cleanup()
+
+
+# ---------- regression: intra-category duplicate keys ----------
+
+
+class TestSendActionRefusesIntraCategoryDuplicateKeys:
+    """Pin the guard widened to ``len(normalised) + len(aperture) > 1``.
+
+    Two keys inside *one* category (e.g. ``{"gripper": 0.0, "gripper.pos": 1.0}``)
+    are contradictory.  Before the fix, the guard checked only for cross-category
+    conflicts and the first tuple element won silently -- a close command could be
+    dropped while the driver reported success.
+    """
+
+    @pytest.mark.parametrize(
+        "action",
+        [
+            pytest.param({"gripper": 0.0, "gripper.pos": 1.0}, id="two-normalised"),
+            pytest.param({"position": 85.0, "aperture_mm": 0.0}, id="two-aperture"),
+        ],
+    )
+    def test_intra_category_duplicate_keys_are_refused(self, connected: Connected, action: dict[str, float]) -> None:
+        driver, _fake = connected()
+        result = driver.send_action(action)
+        assert result["status"] == "error", (
+            f"Intra-category duplicate keys {sorted(action)} must be refused; got {result}"
+        )
+        assert "two spellings" in result["content"][0]["text"].lower()
