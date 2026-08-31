@@ -27,34 +27,51 @@ dispatcher's "return an envelope, never raise" boundary cannot catch it. The
 process dies, possibly mid-motion on a live robot.
 
 **The rule derives its own subject.** The set of endpoint-creating operations
-is read out of the modules that *own* the contract - the private
-infrastructure modules under ``tools/g1`` (``_``-prefixed, and containing a
-``with _DDS_INIT_LOCK`` block), which are where the lock is defined and where
-the package decides what "creating an endpoint" means. An operation counts as
-endpoint-creating when those modules only ever perform it under the lock.
-Deriving from the infrastructure layer rather than package-wide is
-deliberate: were the set derived from every module, the very violation this
-file exists to catch would remove its own operation from the set and the rule
-would pass on the broken tree.
+is read out of the modules that *own* the contract - every module holding a
+``with _DDS_INIT_LOCK`` block, which is where the package decides what
+"creating an endpoint" means. An operation counts as endpoint-creating when
+those modules only ever perform it under the lock; one performed both inside
+and outside is not, which is what keeps ``CloseChannel``, ``ChangeMode``,
+``GetMode`` and ``Write`` out of the set while they sit legitimately outside.
 
-Only SDK-shaped calls are considered - the ``unitree_sdk2py`` surface is
-PascalCase and everything written in this repo is snake_case, so the case of
-the callee separates a bus operation from a local helper without a hand-kept
-list of either. ``Init`` is a generic name; a future unrelated ``.Init()``
-being flagged here is intended, because on this tree that name has only ever
-meant a DDS endpoint.
+The owner population is every lock-holder rather than only the ``tools/g1``
+infrastructure because the derived vocabulary is an *SDK's spelling*, not a
+concept. The infrastructure speaks ``unitree_sdk2py``, so deriving from it
+alone graded a second DDS vendor only on the callee names the two SDKs happen
+to share: when ``strands_robots.drivers.booster`` arrived, 9 of its 11
+endpoint constructions - ``B1LowStateSubscriber``, ``B1LowCmdPublisher``,
+``InitChannel``, ``InitChannelWithName`` and their siblings - were invisible
+to this rule, and the two it did see were both spelled ``Init``. Every
+lock-holder contributing its own vocabulary is what makes a new vendor's
+endpoints graded by the act of taking the lock, with no hand-kept list of
+either the vendors or their spellings.
+
+Widening the population reintroduces the hazard the narrow one avoided: a
+module performing an endpoint operation outside the lock puts that operation
+into the "performed outside" set, cancelling it, so the rule alone would pass
+on the broken tree. That is why :class:`TestTheRuleHasASubject` pins the
+derived operations by name. The guarantee is the *pair* - the rule catches an
+unguarded call to a derived operation, and the pin catches an operation that
+stopped being derived. A driver that never takes the lock at all still
+contributes nothing, and that remains a review-time concern.
+
+Only SDK-shaped calls are considered - the vendor surfaces are PascalCase and
+everything written in this repo is snake_case, so the case of the callee
+separates a bus operation from a local helper without a hand-kept list of
+either. ``Init`` is a generic name; a future unrelated ``.Init()`` being
+flagged here is intended, because on this tree that name has only ever meant a
+DDS endpoint.
 
 The graded set is the whole ``strands_robots`` package, not just
 ``tools/g1``: the lock's second consumer is the tools, but its first is the
-driver, and nothing stops a future mesh or driver module from constructing an
-endpoint directly. Today none do - they reach the bus through
-``_dds_engine`` - so grading the whole tree costs nothing and catches the
-next one.
+driver, and a native driver builds its vendor's endpoints itself rather than
+reaching the bus through ``_dds_engine``.
 """
 
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import pathlib
 import threading
@@ -63,7 +80,6 @@ from typing import Any
 import pytest
 
 import strands_robots
-import strands_robots.tools.g1 as g1_pkg
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 
 # ``strands_robots.tools.g1`` lazy-exports a ``use_unitree`` *tool* under the
@@ -73,7 +89,6 @@ use_unitree = importlib.import_module("strands_robots.tools.g1.use_unitree")
 
 _LOCK_NAME = "_DDS_INIT_LOCK"
 _PKG_ROOT = pathlib.Path(strands_robots.__file__).parent
-_G1_TOOLS_DIR = pathlib.Path(g1_pkg.__file__).parent
 
 
 def _is_the_shared_lock(node: ast.expr) -> bool:
@@ -140,7 +155,7 @@ def _sdk_calls_by_guard(source: str) -> tuple[set[str], set[str]]:
     return guarded, unguarded
 
 
-def _unguarded_sites(source: str, operations: set[str]) -> list[tuple[str, int]]:
+def _unguarded_sites(source: str, operations: frozenset[str]) -> list[tuple[str, int]]:
     """Every call to one of ``operations`` that sits outside the shared lock."""
     sites: list[tuple[str, int]] = []
 
@@ -157,19 +172,37 @@ def _unguarded_sites(source: str, operations: set[str]) -> list[tuple[str, int]]
     return sites
 
 
+@functools.cache
+def _package_sources() -> dict[str, str]:
+    """Every module in ``strands_robots``, keyed by path relative to the package.
+
+    Cached: the cells below read the whole package several times over, and a
+    re-read plus re-parse of every module per cell dominates their runtime.
+    """
+    return {
+        str(path.relative_to(_PKG_ROOT)): path.read_text(encoding="utf-8") for path in sorted(_PKG_ROOT.rglob("*.py"))
+    }
+
+
 def _contract_owner_sources() -> dict[str, str]:
-    """The private ``tools/g1`` modules that hold the lock - the contract owners."""
-    owners: dict[str, str] = {}
-    for path in sorted(_G1_TOOLS_DIR.glob("_*.py")):
-        if path.name == "__init__.py":
-            continue
-        source = path.read_text(encoding="utf-8")
-        if any(_guards_the_shared_lock(node) for node in ast.walk(ast.parse(source))):
-            owners[path.name] = source
-    return owners
+    """Every module holding the shared lock - the owners of the contract.
+
+    Returns:
+        Source text keyed by path relative to the package, for each module
+        containing a ``with _DDS_INIT_LOCK`` block. Both the ``tools/g1``
+        infrastructure and any native driver that opens its own vendor's
+        endpoints are owners, so each contributes its own SDK's spelling to
+        the derived vocabulary.
+    """
+    return {
+        rel: source
+        for rel, source in _package_sources().items()
+        if any(_guards_the_shared_lock(node) for node in ast.walk(ast.parse(source)))
+    }
 
 
-def _endpoint_creating_operations() -> set[str]:
+@functools.cache
+def _endpoint_creating_operations() -> frozenset[str]:
     """Operations the contract owners only ever perform under the shared lock."""
     inside: set[str] = set()
     outside: set[str] = set()
@@ -177,36 +210,81 @@ def _endpoint_creating_operations() -> set[str]:
         guarded, unguarded = _sdk_calls_by_guard(source)
         inside |= guarded
         outside |= unguarded
-    return inside - outside
-
-
-def _package_sources() -> dict[str, str]:
-    """Every module in ``strands_robots``, keyed by path relative to the package."""
-    return {
-        str(path.relative_to(_PKG_ROOT)): path.read_text(encoding="utf-8") for path in sorted(_PKG_ROOT.rglob("*.py"))
-    }
+    return frozenset(inside - outside)
 
 
 class TestTheRuleHasASubject:
     """The derivation must not silently yield nothing, which would pass always."""
 
-    def test_the_contract_owners_are_found(self) -> None:
-        owners = _contract_owner_sources()
-        assert "_g1_common.py" in owners, (
-            "the module defining _DDS_INIT_LOCK no longer holds it; the "
-            "derivation below reads the contract out of these modules"
+    @pytest.mark.parametrize(
+        "module",
+        [
+            "tools/g1/_g1_common.py",
+            "tools/g1/_dds_engine.py",
+            "drivers/booster.py",
+        ],
+    )
+    def test_the_contract_owners_are_found(self, module: str) -> None:
+        """Each vendor's vocabulary reaches the rule only via its own owner.
+
+        ``_g1_common`` defines the lock and ``_dds_engine`` is its second
+        consumer; ``drivers/booster`` is the first non-Unitree owner, and the
+        only source of the ``B1*`` / ``InitChannel`` spellings below.
+        """
+        assert module in _contract_owner_sources(), (
+            f"{module} no longer holds _DDS_INIT_LOCK, so the derivation no "
+            "longer reads its SDK's spelling of an endpoint out of it"
         )
-        assert "_dds_engine.py" in owners
 
     @pytest.mark.parametrize(
         "operation",
-        ["ChannelSubscriber", "ChannelPublisher", "ChannelFactoryInitialize", "Init"],
+        [
+            # unitree_sdk2py, from the tools/g1 infrastructure.
+            "ChannelSubscriber",
+            "ChannelPublisher",
+            "ChannelFactoryInitialize",
+            "Init",
+            # booster_robotics_sdk_python, from the T1 driver.
+            "B1LocoClient",
+            "B1LowStateSubscriber",
+            "B1LowCmdPublisher",
+            "B1BatteryStateSubscriber",
+            "B1FallDownStateSubscriber",
+            "InitChannel",
+            "InitChannelWithName",
+            "InitWithName",
+        ],
     )
     def test_the_known_endpoint_operations_are_derived(self, operation: str) -> None:
+        """The pin that makes a cancelled operation loud rather than invisible.
+
+        An operation performed outside the lock lands in the "performed
+        outside" set and cancels itself out of the derivation, which would
+        silently narrow the rule. Naming the operations here turns that into a
+        failure that says which one stopped being graded.
+        """
         assert operation in _endpoint_creating_operations(), (
             f"{operation} dropped out of the derived set, so the rule below no "
             "longer grades it. Either it is now performed outside the lock in "
-            "an infrastructure module, or it is gone."
+            "an owner module, or it is gone."
+        )
+
+    @pytest.mark.parametrize(
+        "operation",
+        ["CloseChannel", "ChangeMode", "GetMode", "Write", "UpperBodyCustomControl"],
+    )
+    def test_an_operation_used_outside_the_lock_is_not_derived(self, operation: str) -> None:
+        """The other half of the gap - releasing and commanding are not creating.
+
+        These are SDK-shaped calls in the same owner modules that legitimately
+        sit outside the lock: the lock serialises construction, not release or
+        command. Deriving one of them would make the rule refuse correct code,
+        so the subtraction that excludes them is pinned too.
+        """
+        assert operation not in _endpoint_creating_operations(), (
+            f"{operation} is now derived as endpoint-creating, so the rule "
+            "refuses the call sites that legitimately perform it outside the "
+            "lock; the lock serialises construction, not release or command"
         )
 
 
@@ -242,6 +320,26 @@ class TestEveryEndpointConstructionIsUnderTheSharedLock:
             "the rule no longer flags an Init() taking only a private lock, "
             "which is the exact shape it exists to refuse"
         )
+
+    def test_the_rule_reports_a_second_vendors_unguarded_construction(self) -> None:
+        """The reach this rule lacked while its vocabulary came from one SDK.
+
+        Neither name appears anywhere in ``unitree_sdk2py``, so a derivation
+        that reads only the ``tools/g1`` infrastructure cannot see either call
+        and reports this bring-up as clean.
+        """
+        a_second_vendors_driver = (
+            "def connect_eagerly(self):\n"
+            "    import booster_robotics_sdk_python as sdk\n"
+            "    subscriber = sdk.B1LowStateSubscriber(self._on_low_state)\n"
+            "    subscriber.InitChannel()\n"
+        )
+        sites = _unguarded_sites(a_second_vendors_driver, _endpoint_creating_operations())
+        assert ("B1LowStateSubscriber", 3) in sites, (
+            "the rule does not see a second DDS vendor's subscriber "
+            f"construction, so it grades that vendor on nothing: {sites}"
+        )
+        assert ("InitChannel", 4) in sites
 
     def test_the_rule_accepts_a_guarded_construction(self) -> None:
         after_the_fix = (
