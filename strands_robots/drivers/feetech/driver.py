@@ -422,7 +422,12 @@ class FeetechDriver:
             raise here from a real hardware fault mid-session.
         """
         try:
-            self._connect_if_needed()
+            # Under the lock like every other bus path: opening the port writes
+            # to it (a torque-enable sweep on first contact), and this is the
+            # one `_connect_if_needed` caller outside an already-locked block.
+            # A lock only guarantees anything where EVERY caller takes it.
+            with bus_lock(self):
+                self._connect_if_needed()
         except (ValueError, OSError) as e:
             return str(e)
         return None

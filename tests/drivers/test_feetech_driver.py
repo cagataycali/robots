@@ -433,6 +433,29 @@ class TestBusLockParity:
         assert finished.is_set(), f"{name} did not proceed once the lock was released"
         assert _port(driver).writes, f"{name} never reached the wire"
 
+    def test_connect_eagerly_waits_for_the_lock_a_reader_holds(self) -> None:
+        """The fourth bus path, graded apart because it writes no goal frame.
+
+        ``connect_eagerly`` is the one ``_connect_if_needed`` caller that is not
+        already inside a locked block, and opening the port is bus traffic of
+        its own. It cannot join the parametrised cases above because those end
+        by asserting a frame reached the wire, which this verb never produces -
+        so an unlocked ``connect_eagerly`` would otherwise be graded by nothing.
+        """
+        driver = _wired()
+        finished = threading.Event()
+
+        def _worker() -> None:
+            driver.connect_eagerly()
+            finished.set()
+
+        with bus_lock(driver):  # stand in for a mesh-side read_joints
+            worker = threading.Thread(target=_worker, daemon=True)
+            worker.start()
+            assert not finished.wait(timeout=0.5), "connect_eagerly touched the bus while a reader held the lock"
+        worker.join(timeout=5.0)
+        assert finished.is_set(), "connect_eagerly did not proceed once the lock was released"
+
     def test_a_read_through_bus_access_and_a_driver_write_share_one_lock(self) -> None:
         """The lock is keyed on the driver, so both halves serialise.
 
