@@ -7,12 +7,22 @@ namespace goes with it, along with the `[benchmark-libero]` extra, its
 modules and the `libero` dependency subtree in `uv.lock` (`wandb`,
 `tensorboard`, `sentry-sdk`, `thop` and the `robosuite` 1.4.0 fork among them).
 `robosuite` stays at 1.4.1 through `[vera-sim]`, which still needs it. Net
-change: 94 files, -32,925 lines.
+change: 96 files, +336/-33,213 lines.
 
 LIBERO is an external benchmark. Vendoring an adapter for it made this package
 the owner of a second simulator stack - robosuite plus bddl plus an OSC
 controller, a BDDL parser and a suite loader - whose only consumer was that
 benchmark.
+
+One removed path is worth naming for anyone who mounted it by hand:
+`examples/libero/gr00t_server_deterministic_wrapper.py` was a shim that
+re-exported `main()` from the wheel-shipped determinism wrapper at
+`strands_robots/policies/groot/server_wrapper.py`. Mount that packaged file
+instead, or pass `deterministic=True` to the `gr00t_inference` lifecycle, which
+resolves and mounts it for you. The wrapper itself is unchanged and still
+pinned: it ships inside the package, imports on the host without torch or
+gr00t, and stays free of `strands_robots` imports so it can run alone inside
+the container.
 
 The declarative benchmark surface is untouched:
 `strands_robots.simulation.benchmark` (the `BenchmarkProtocol` and its
