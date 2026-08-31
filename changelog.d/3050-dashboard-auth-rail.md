@@ -36,3 +36,18 @@ dashboard in their favour. The header read was wrong in both directions: it also
 refused the genuine local owner whenever a proxy had set one of those headers to
 a non-loopback address. `_client_ip` keeps its header chain for the per-ip
 fairness cap it documents, which is accounting rather than trust.
+The store is now replaced rather than rewritten in place. `_save_locked` wrote
+the credential file directly, which truncates it before the new bytes land, and
+it is the rail's highest-frequency writer - every successful login persists
+`sign_count` through it, as does every enrollment and the corruption re-seed. So
+a process killed during a routine login was itself the most likely producer of
+the unparseable store the recovery posture above exists to rescue, and that
+posture bounds the security damage rather than the loss: the passkey records and
+the `jwt_secret` do not come back. The payload now lands in a sibling temp file
+and is moved into place with `os.replace`, which is atomic within a directory, so
+a reader sees either the whole previous store or the whole new one. Creating it
+through `mkstemp` also closes a narrower gap: the file opens at `0o600`, where
+writing the path directly created a new store at the umask default and only then
+chmod-ed it, leaving a freshly generated `jwt_secret` briefly world-readable -
+and because `os.replace` carries those bits onto the store, a store left wider
+open by an earlier build is tightened the next time it is written.

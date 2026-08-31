@@ -4,11 +4,13 @@ real hardware (SO-101 arms).
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import logging
 import os
 import secrets
+import tempfile
 import threading
 import time
 from collections.abc import Mapping
@@ -163,19 +165,59 @@ def _load() -> dict[str, Any]:
 
 
 def _save_locked(store: dict[str, Any]) -> None:
+    """Replace the store atomically, so no interrupted write can truncate it.
+
+    This is the deployment's only credential record, and this is its
+    highest-frequency writer: every successful authentication persists
+    ``sign_count`` through here, as does every enrollment and the corruption
+    re-seed. Writing the path in place therefore made this function the most
+    likely *producer* of the unparseable store :func:`_preserve_corrupt`
+    exists to rescue - a kill or power loss inside the write window leaves
+    exactly the truncated JSON that path handles. That rescue bounds the
+    security damage, not the loss: the passkey records and the ``jwt_secret``
+    are gone for good, every session dies with them, and the operator is put
+    through the machine-local re-seal.
+
+    So the payload lands in a sibling temp file and is moved into position
+    with ``os.replace`` - the same primitive :func:`_preserve_corrupt` uses a
+    few lines up, and atomic within a directory, so a concurrent reader sees
+    either the whole previous store or the whole new one and never a prefix
+    of either. Creating it through ``mkstemp`` closes a second, smaller gap
+    as a side effect: ``mkstemp`` opens at ``0o600``, whereas writing the
+    path directly created a new store at the umask default and only then
+    chmod-ed it, which left a fresh ``jwt_secret`` briefly world-readable.
+    The replace carries those bits onto the store, so a store left at ``0o644``
+    by an older build is tightened the next time it is written.
+
+    :func:`strands_robots.simulation.safe_output.atomic_write_bytes`
+    implements this same sequence and is deliberately *not* imported: it
+    would make the ``[dashboard]`` extra pull in the simulation package to
+    save a passkey. Lift that helper into ``strands_robots.utils`` if a third
+    caller ever wants it.
+    """
     global _cache, _cache_key
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(store, indent=2))
+    fd, tmp = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(store, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        # Leave no debris behind a failed save: the store on disk is still
+        # the previous good one, and a stray .tmp beside it would be read by
+        # nothing but would outlive the process that abandoned it.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     _cache = store
     try:
         stat = path.stat()
         _cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
     except OSError:
+        # The key is a cache-invalidation hint rather than state: leaving it
+        # None makes the next _load re-read from disk instead of trusting
+        # _cache, which is the safe direction to fail in.
         _cache_key = None
 
 

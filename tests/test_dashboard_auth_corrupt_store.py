@@ -128,11 +128,19 @@ class TestTheLastNineLines:
         best-effort and the FLAG is mandatory.
         """
         _corrupt_store(tmp_path)
-        monkeypatch.setattr(
-            auth.os,
-            "replace",
-            lambda *a, **k: (_ for _ in ()).throw(OSError(30, "Read-only file system")),
-        )
+        # Scoped to the quarantine rename. `_save_locked` replaces the store through
+        # `os.replace` too, and failing that one as well would be a different scenario
+        # from the one this cell is about - a volume where the re-seed cannot land is a
+        # volume where there is no working store to come up on, which the enclosing
+        # `_load` is right to raise about rather than paper over.
+        real_replace = auth.os.replace
+
+        def replace_unless_it_is_the_quarantine(src, dst, *a, **k):
+            if ".corrupt-" in str(dst):
+                raise OSError(30, "Read-only file system")
+            return real_replace(src, dst, *a, **k)
+
+        monkeypatch.setattr(auth.os, "replace", replace_unless_it_is_the_quarantine)
         auth._cache_key = None
         auth._load()
         damage = auth.store_corruption()
@@ -147,11 +155,15 @@ class TestTheLastNineLines:
             "the refusal must read sensibly when there is no backup path to name"
         )
 
-    def test_a_store_that_cannot_be_chmodded_is_still_saved(self, tmp_path, monkeypatch):
-        """0600 is a wish, not a precondition - some filesystems have no such concept.
+    def test_a_store_on_a_volume_that_cannot_chmod_is_saved_and_still_owner_only(self, tmp_path, monkeypatch):
+        """Refusing to save would leave such a volume unable to enroll a passkey at all.
 
-        Refusing to save would mean a dashboard that cannot enroll a passkey at all on such a
-        volume, which is a worse outcome than a file with the volume's own permissions.
+        The store used to be written at the umask default and chmod-ed afterwards, so
+        owner-only was a wish that a volume with no chmod concept could not grant. It is
+        now a property of creation - `mkstemp` opens at 0600 and `os.replace` carries
+        those bits onto the store - so this cell asserts both halves: the save still
+        succeeds with `chmod` unavailable, and the result is *still* 0600 because
+        nothing on the path needed the call that failed.
         """
         monkeypatch.setattr(
             auth.os,
@@ -159,7 +171,9 @@ class TestTheLastNineLines:
             lambda *a, **k: (_ for _ in ()).throw(OSError(45, "Operation not supported")),
         )
         auth._save({"credentials": [], "note": "kept"})
-        assert json.loads((tmp_path / "auth.json").read_text())["note"] == "kept"
+        path = tmp_path / "auth.json"
+        assert json.loads(path.read_text())["note"] == "kept"
+        assert path.stat().st_mode & 0o777 == 0o600, "owner-only comes from mkstemp, not from a chmod"
 
     def test_a_store_that_vanishes_between_write_and_stat_invalidates_the_cache(self, tmp_path, monkeypatch):
         """The cache key is (path, mtime, size). If stat fails there is no key to trust.
