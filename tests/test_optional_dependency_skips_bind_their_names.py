@@ -4,10 +4,10 @@ The suite gates on optional dependencies constantly, and the shortest way to
 write that gate is a ``try`` whose handler calls :func:`pytest.skip`::
 
     try:
-        from libero.libero.envs.robots.mounted_panda import MountedPanda
+        from robot_descriptions.loaders.mujoco import load_robot_description
     except ImportError:
-        pytest.skip("libero does not expose MountedPanda")
-    qpos = MountedPanda().init_qpos          # <- bound only on the try path
+        pytest.skip("robot_descriptions does not expose the mujoco loader")
+    model = load_robot_description("panda_mj_description")  # <- bound only on the try path
 
 That runs correctly, because ``pytest.skip`` raises. But the binding's
 liveness is then a property of pytest's control flow rather than of the
@@ -49,27 +49,25 @@ A guard has a second obligation, checked here too because it is the same
 construct and the same mistake: **the reason handed to the guard must not be
 the first thing to read what the guard is unsure about.**::
 
-    libero = pytest.importorskip("libero")
-    mounted_panda = pytest.importorskip(
-        "libero.libero.envs.robots.mounted_panda",
-        reason=f"libero {libero.__version__} ...",   # <- evaluated eagerly
+    lerobot = pytest.importorskip("lerobot")
+    molmoact2 = pytest.importorskip(
+        "lerobot.policies.molmoact2",
+        reason=f"lerobot {lerobot.__version__} ...",   # <- evaluated eagerly
     )
 
 An f-string argument is built before the call it is passed to, so a module
 attribute read there runs on every host where the module imports -- that is,
-on exactly the hosts the test exists for. ``libero`` is the case that makes it
-concrete: the distribution the ``benchmark-libero`` extra resolves to ships an
-empty top-level ``libero/__init__.py``, so that read raises ``AttributeError``
-and a passing test becomes an error. No behavioural gate can catch it, because
-a host without the dependency skips at the first ``importorskip`` and never
-reaches the reason, which is why the check is on the source. Resolve the value
-into a local first (see ``_installed_version`` in
-``tests/benchmarks/libero/test_libero_adapter.py``) and quote that.
+on exactly the hosts the test exists for. A distribution that ships an empty
+top-level ``__init__.py`` makes it concrete: the version read raises
+``AttributeError`` and a passing test becomes an error. No behavioural gate can
+catch it, because a host without the dependency skips at the first
+``importorskip`` and never reaches the reason, which is why the check is on the
+source. Resolve the value into a local first with an
+``importlib.metadata.version`` lookup that tolerates absence, and quote that.
 
 A read that already happened on the way to the diagnostic is not reported: the
 attribute is then a proven input to the test's own decision rather than a bet
-the message is making. ``tests/benchmarks/libero/test_numba_coverage_clash_remedy.py``
-is that shape and is deliberately left alone.
+the message is making.
 """
 
 from __future__ import annotations
@@ -484,9 +482,8 @@ class TestASkipReasonCannotBeWhatFails:
     def test_an_attribute_read_before_the_diagnostic_is_not_reported(self) -> None:
         """A read the test already depends on is proven, not a bet.
 
-        ``tests/benchmarks/libero/test_numba_coverage_clash_remedy.py`` is this
-        shape: it reads ``coverage.__version__`` to decide whether to skip, so
-        quoting it in the reason cannot introduce a new failure.
+        A test that reads ``dep.__version__`` to decide whether to skip is this
+        shape, so quoting it in the reason cannot introduce a new failure.
         """
         source = (
             "import pytest\n"

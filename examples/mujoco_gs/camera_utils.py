@@ -31,13 +31,13 @@ if TYPE_CHECKING:  # avoid hard import at module load -- sim deps are optional
 __all__ = ["CameraParams", "get_camera_params", "render_rgb_and_depth"]
 
 
-def get_camera_params(sim: "Simulation", camera_name: str, width: int, height: int) -> CameraParams:
+def get_camera_params(sim: Simulation, camera_name: str, width: int, height: int) -> CameraParams:
     """Return :class:`CameraParams` for ``camera_name`` (library delegation)."""
     return sim.get_camera_params(camera_name, width=width, height=height)
 
 
 def render_rgb_and_depth(
-    sim: "Simulation", camera_name: str, width: int, height: int
+    sim: Simulation, camera_name: str, width: int, height: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render one frame as ``(rgb_uint8, depth_metric_float32)`` (library delegation)."""
     rgb, depth = sim.get_frame(camera_name, width=width, height=height)

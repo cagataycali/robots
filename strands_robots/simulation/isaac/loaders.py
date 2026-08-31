@@ -922,8 +922,8 @@ def load_usd(path: str) -> ProceduralRobot:
 # task scenes are different: a robosuite-compiled MJCF carrying a ground
 # plane, the Panda robot, one or more table/fixture bodies, and the task's
 # movable objects (mugs, plates, bowls ...). ``IsaacSimulation.load_scene``
-# needs to realize those *objects* (not the robot - the LiberoAdapter loads
-# the Panda separately via ``add_robot``) as USD prims on the stage so the
+# needs to realize those *objects* (not the robot - the benchmark adapter
+# loads the Panda separately via ``add_robot``) as USD prims on the stage so the
 # Isaac LIBERO eval renders a populated scene instead of an empty one.
 #
 # COLLISION stays a box proxy: each object's physics footprint is the

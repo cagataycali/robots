@@ -3,7 +3,7 @@
 ``strands_robots.registry.policies.resolve_policy`` documents a five-step
 resolution order (URL patterns -> shorthands -> HF model IDs -> registered
 provider name -> lerobot_local fallback). The shipped ``policies.json`` declares
-five URL patterns - ``^zmq://``, ``^grpc://``, ``^cosmos3://``, ``^vera://`` and
+four URL patterns - ``^grpc://``, ``^cosmos3://``, ``^vera://`` and
 ``^wss?://`` - so only the generic scheme-less ``host:port`` branch, part of the
 public resolution contract and reachable by a provider that declares a
 scheme-less pattern, has no exercising input from the shipped registry.
@@ -79,7 +79,7 @@ class TestHuggingFaceOrgRouting:
     """HF model IDs route by hf_orgs when no model_id_override matches."""
 
     def test_allenai_org_routes_to_lerobot_local(self):
-        """allenai/* is a lerobot_local hf_org (not a groot override)."""
+        """allenai/* is a lerobot_local hf_org (not a model_id_override)."""
         provider, kwargs = resolve_policy("allenai/MolmoAct2-SO100_101")
         assert provider == "lerobot_local"
         assert kwargs["pretrained_name_or_path"] == "allenai/MolmoAct2-SO100_101"
@@ -163,7 +163,6 @@ class TestImportPolicyClassAutoDiscovery:
 #: below pins that this tuple still covers every declared pattern, so a scheme
 #: added to the registry cannot slip past the case-invariance guard.
 _SCHEME_URLS = (
-    "zmq://gpu-box:5555",
     "ws://gpu-box:8765",
     "wss://gpu-box:8765",
     "cosmos3://prod-server:9000",
@@ -189,9 +188,9 @@ class TestSchemeCaseDoesNotChangeResolution:
 
     Stage 1 matched the raw string against ``url_patterns`` that are all spelled
     lowercase, while every later stage lowercased what it compared. So ``MOCK``
-    resolved to ``mock`` and ``NVIDIA/GR00T`` routed to groot, but ``ZMQ://...``
-    matched nothing, fell through to the HuggingFace fallback, and became
-    ``lerobot_local(pretrained_name_or_path="ZMQ://gpu-box:5555")`` -- a request
+    resolved to ``mock``, but ``COSMOS3://...`` matched nothing, fell through to
+    the HuggingFace fallback, and became
+    ``lerobot_local(pretrained_name_or_path="COSMOS3://gpu-box:9000")`` -- a request
     to download a repo by that literal name instead of dialing the sidecar, with
     only a warning. The failure surfaced as a HuggingFace error, nowhere near
     the server the caller named.
@@ -229,16 +228,16 @@ class TestOnlyTheSchemeIsFolded:
 
     def test_a_huggingface_repo_id_is_forwarded_with_its_case_intact(self):
         """Repo ids are case-sensitive, so the id must survive byte for byte."""
-        repo = "NVIDIA/GR00T-N1.5-3B"
+        repo = "NVIDIA/Cosmos3-Nano-Policy"
         provider, kwargs = resolve_policy(repo)
-        assert provider == "groot"
+        assert provider == "cosmos3"
         assert kwargs["pretrained_name_or_path"] == repo
 
     def test_the_host_and_port_of_a_url_are_not_folded(self):
         """Only the scheme is folded - the authority keeps the caller's spelling."""
-        _, kwargs = resolve_policy("ZMQ://GPU-Box:5555")
+        _, kwargs = resolve_policy("COSMOS3://GPU-Box:9000")
         assert kwargs["host"] == "GPU-Box"
-        assert kwargs["port"] == 5555
+        assert kwargs["port"] == 9000
 
     def test_a_string_with_no_scheme_is_untouched(self, monkeypatch):
         """A bare host:port has no ``scheme://``, so nothing is rewritten."""
@@ -251,9 +250,9 @@ class TestOnlyTheSchemeIsFolded:
         """The helper rewrites a leading scheme and nothing else."""
         from strands_robots.registry.policies import _with_lowercase_url_scheme
 
-        for unchanged in ("mock", "NVIDIA/GR00T-N1.5-3B", "MyServer:8080", "a/B://c"):
+        for unchanged in ("mock", "NVIDIA/Cosmos3-Nano-Policy", "MyServer:8080", "a/B://c"):
             assert _with_lowercase_url_scheme(unchanged) == unchanged
-        assert _with_lowercase_url_scheme("ZMQ://Host/Path") == "zmq://Host/Path"
+        assert _with_lowercase_url_scheme("COSMOS3://Host/Path") == "cosmos3://Host/Path"
 
 
 class TestEveryDeclaredSchemeHasASample:

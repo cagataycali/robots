@@ -21,18 +21,15 @@ strands_robots/
 │   ├── base.py            # Abstract Policy base class
 │   ├── factory.py         # create_policy() factory + registry
 │   ├── mock.py            # MockPolicy for testing
-│   ├── groot/             # NVIDIA GR00T N1.5/N1.6/N1.7 inference
-│   │   ├── policy.py      # Gr00tPolicy (ZMQ + HTTP modes)
-│   │   ├── client.py      # Gr00tInferenceClient
-│   │   ├── data_config.py # Gr00tDataConfig + ModalityConfig
-│   │   └── data_configs.json  # 25 robot embodiment configs
+│   ├── cosmos3/           # NVIDIA Cosmos 3 RoboLab inference
+│   │   ├── policy.py      # Cosmos3Policy (WebSocket + msgpack)
+│   │   └── client.py      # Cosmos3WebsocketClient
 │   └── lerobot_local/     # HuggingFace LeRobot direct inference
 │       ├── policy.py      # LerobotLocalPolicy (RTC support)
 │       ├── processor.py   # ProcessorBridge (pre/post pipelines)
 │       └── resolution.py  # Policy class resolution (v0.4/v0.5)
 ├── registry/              # JSON registry for policy discovery
 ├── tools/                 # Strands @tool functions
-│   ├── gr00t_inference.py # GR00T inference tool
 │   ├── lerobot_calibrate.py
 │   ├── lerobot_camera.py
 │   ├── lerobot_teleoperate.py
@@ -2097,19 +2094,18 @@ Corrections from code review that apply to all future contributions:
   *kind* of value, called before any expensive work starts, returning the reason for
   the dispatcher to fold into its error dict. Keying it on the action means a caller
   is never refused for a value the requested action ignores.
-  `gr00t_inference._numeric_option_error` and its enum-valued sibling
+  `lerobot_camera._numeric_option_error` and its enum-valued sibling
   `_enumerable_option_error` are the shipped pair: both cover options that are
-  interpolated into a `docker exec` command line run **detached**, where a value the
-  server's own flag parser rejects surfaces minutes later in the container log
-  instead of as the call's result. Note the shape returns rather than raises, so
+  interpolated into a subprocess command line, where a value the underlying tool's
+  own flag parser rejects surfaces late in a log instead of as the call's result. Note the shape returns rather than raises, so
   **Return error dicts, never raise** above still holds at the tool surface.
 - **Allowlist enumerable values** - `data_config`, `embodiment_tag`, dtype strings,
   container names: all match `^[a-z][a-z0-9_]+$` or an explicit `{"fp16", "fp8", ...}`
   set. Never accept arbitrary strings into enumerable surfaces. Derive the
   "refuses nothing real" half from a shipped catalogue rather than a copied list -
-  `data_configs.json` names every valid `data_config`, so a config added there is
-  admitted by construction. Pinned by
-  `tests/tools/test_gr00t_enumerable_option_guards.py`.
+  `registry/policies.json` names every valid provider spelling, so a provider added
+  there is admitted by construction. Pinned by
+  `tests/tools/test_lerobot_camera_vocabulary_options.py`.
 - **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.

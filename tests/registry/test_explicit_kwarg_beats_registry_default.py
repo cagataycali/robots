@@ -117,7 +117,7 @@ class TestTheProviderSpecificSpellingBeatsTheGenericParameter:
 
     def test_extra_host_beats_the_generic_policy_host(self):
         """The provider's own spelling wins over the generic one."""
-        kwargs = build_policy_kwargs("groot", host="gpu-box")
+        kwargs = build_policy_kwargs("cosmos3", host="gpu-box")
         assert kwargs["host"] == "gpu-box"
 
     def test_extra_port_beats_the_registry_default(self):
@@ -127,7 +127,7 @@ class TestTheProviderSpecificSpellingBeatsTheGenericParameter:
 
     def test_extra_wins_when_both_spellings_are_supplied(self):
         """Both are explicit; the provider's own key is the more specific."""
-        kwargs = build_policy_kwargs("groot", policy_host="generic", host="specific")
+        kwargs = build_policy_kwargs("cosmos3", policy_host="generic", host="specific")
         assert kwargs["host"] == "specific"
 
 
@@ -139,7 +139,7 @@ class TestTheGenericParameterStillBeatsTheDefault:
         assert build_policy_kwargs("cosmos3", policy_host="gpu-box")["host"] == "gpu-box"
 
     def test_policy_port_still_reaches_a_provider_that_declares_port(self):
-        assert build_policy_kwargs("groot", policy_port=5555)["port"] == 5555
+        assert build_policy_kwargs("cosmos3", policy_port=5555)["port"] == 5555
 
 
 class TestADefaultStillFillsAnUnsetKey:
@@ -165,7 +165,7 @@ class TestUnknownExtraKeysAreStillDropped:
 
     def test_a_key_outside_config_keys_is_not_forwarded(self):
         """Deciding what is forwardable is what ``config_keys`` is for."""
-        assert "not_a_real_key" not in build_policy_kwargs("groot", not_a_real_key="x")
+        assert "not_a_real_key" not in build_policy_kwargs("cosmos3", not_a_real_key="x")
 
     def test_an_unknown_provider_still_returns_no_kwargs(self):
         assert build_policy_kwargs("nonexistent_xyz", host="x") == {}

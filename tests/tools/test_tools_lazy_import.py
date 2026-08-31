@@ -28,7 +28,6 @@ def test_all_lists_every_lazy_import_name() -> None:
     assert set(tools_pkg.__all__) == {
         "create_judge_agent",
         "download_assets",
-        "gr00t_inference",
         "harness_memory",
         "lerobot_calibrate",
         "lerobot_camera",

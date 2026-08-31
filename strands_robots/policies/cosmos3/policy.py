@@ -9,7 +9,7 @@ contract. We talk to the Cosmos Framework RoboLab WebSocket policy server
 (``cosmos_framework.scripts.action_policy_server_robolab``) over a
 self-contained msgpack+NumPy WebSocket protocol (no ``openpi-client``
 dependency - see :mod:`strands_robots.policies.cosmos3.client`), mirroring
-:class:`~strands_robots.policies.groot.Gr00tPolicy` service mode.
+the service-mode VLA policies in :mod:`strands_robots.policies`.
 
 Observation flow
 ----------------
@@ -387,7 +387,7 @@ class Cosmos3Policy(Policy):
             assert self._client is not None
             self._client.reset()
         # #331: reseed via the shared helper so Cosmos3Policy reaches RNG parity
-        # with Gr00tPolicy (Python random + NumPy + torch CPU/CUDA + cuDNN
+        # across providers (Python random + NumPy + torch CPU/CUDA + cuDNN
         # determinism), not just the global NumPy RNG. Same set_eval_seed
         # behaviour across both providers for #187 reproducibility.
         from strands_robots.policies._rng import reseed_client_rngs

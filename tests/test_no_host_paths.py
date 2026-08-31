@@ -64,11 +64,9 @@ ALLOWED_FILES = {
     "tests/tools/test_path_validation.py",
     # Container volume-safety tests contain protected host paths as test data
     # (the test asserts that the production code REJECTS these paths).
-    "tests/tools/test_gr00t_container_hardening.py",
     # Protected host paths (incl. //home/<u>/.aws as a
     # leading-double-slash bypass vector) as attack input; each assertion proves
     # the production guard REJECTS the path rather than using it.
-    "tests/tools/test_gr00t_pentest_regressions.py",
 }
 
 

@@ -466,7 +466,7 @@ class TestARefusedDefaultRobotIsReportedNotScored:
     ``default_robot`` naming a hardware-only registry entry, an asset that is
     not on disk - the episode has no robot at all.
 
-    That is the distinction ``LiberoAdapter`` already documents for its own
+    That is the distinction a benchmark adapter already documents for its own
     controller install: a failure in *setup* must not read as a *policy* that
     scored zero on an exit-0 run. So the refusal has to arrive as the structured
     error :class:`TestSpecLifecycleHookFailures` pins, not as a success payload
@@ -1082,7 +1082,7 @@ class TestEvalSeeding:
 
 class TestPolicyResetIntegration:
     """#187: ``_evaluate_with_spec`` calls ``policy.reset(seed=episode_seed)``
-    at the top of every episode so SERVICE-mode policies (e.g. Gr00tPolicy
+    at the top of every episode so SERVICE-mode policies (e.g. Cosmos3Policy
     over ZMQ) can forward the seed to a remote inference server.
 
     Without this hook the server's diffusion sampler RNG drifts across

@@ -225,7 +225,7 @@
     },
     "policy_provider": {
       "type": "string",
-      "description": "Policy provider name (e.g. groot, lerobot_local, lerobot_async, cosmos3, mock). See list_providers()."
+      "description": "Policy provider name (e.g. lerobot_local, lerobot_async, cosmos3, mock). See list_providers()."
     },
     "instruction": {
       "type": "string"
@@ -477,7 +477,7 @@
     },
     "policy_config": {
       "type": "object",
-      "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'groot': host, port, api_token, observation_mapping, action_mapping. For 'lerobot_local': pretrained_name_or_path, policy_type, device, actions_per_step, use_processor, processor_overrides, camera_key_map, obs_rename_override. For 'mock': {} is fine.",
+      "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'cosmos3': host, port, embodiment. For 'lerobot_local': pretrained_name_or_path, policy_type, device, actions_per_step, use_processor, processor_overrides, camera_key_map, obs_rename_override. For 'mock': {} is fine.",
       "additionalProperties": true
     },
     "stop_when": {

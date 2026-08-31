@@ -59,7 +59,7 @@ class _FakeRobot:
         instruction: str,
         policy_port: Any = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         **kw: Any,
     ) -> dict[str, Any]:
@@ -71,7 +71,7 @@ class _FakeRobot:
         instruction: str,
         policy_port: Any = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         **kw: Any,
     ) -> dict[str, Any]:

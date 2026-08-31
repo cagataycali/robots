@@ -39,7 +39,6 @@ import pytest
 from strands_robots.training._validate import seed_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from tests.training._spec_field_reads import reads_spec_field
@@ -180,7 +179,7 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     made universal like the learning-rate one.
     """
 
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Gr00tTrainer))
+    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_it_seeds_from_nothing(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
         spec.seed = value

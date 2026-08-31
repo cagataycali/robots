@@ -5,7 +5,7 @@ sidecar ROS 2 node running ``moveit_py``. ROS 2 lives entirely out of
 process, so users without ROS 2 sourced are unaffected - the only
 client-side dependencies are ``pyzmq`` and ``msgpack`` (extra ``[moveit2]``).
 
-Wire protocol (mirrors :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`)::
+Wire protocol (mirrors the msgpack request/response service clients)::
 
     request  = {
         "joint_state": list[float] | None,

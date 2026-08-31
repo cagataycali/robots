@@ -160,11 +160,11 @@ def create_trainer(provider: str, **kwargs: Any) -> Trainer:
     """Create a :class:`Trainer` for a policy provider.
 
     The training-side peer of ``create_policy``. The provider name is the SAME
-    one used for inference, so ``create_policy("groot")`` and
-    ``create_trainer("groot")`` address one family.
+    one used for inference, so ``create_policy("cosmos3")`` and
+    ``create_trainer("cosmos3")`` address one family.
 
     Args:
-        provider: Provider name or alias (``"lerobot_local"``, ``"groot"``,
+        provider: Provider name or alias (``"lerobot_local"``, ``"cosmos3"``,
             ``"cosmos3"``, or a runtime-registered name).
         **kwargs: Forwarded to the trainer constructor.
 

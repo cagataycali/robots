@@ -31,12 +31,10 @@ graph TB
     subgraph policies[Policy layer  -  strands_robots/policies]
         POLICY_ABC["Policy ABC<br/>policies/base.py"]
         MOCK["MockPolicy"]
-        GROOT["Gr00tPolicy"]
         LEROBOT["LerobotLocalPolicy"]
         COSMOS3["Cosmos3Policy"]
         FACTORY_FN["create_policy()"]
         MOCK -.implements.-> POLICY_ABC
-        GROOT -.implements.-> POLICY_ABC
         LEROBOT -.implements.-> POLICY_ABC
         COSMOS3 -.implements.-> POLICY_ABC
         FACTORY_FN --> POLICY_ABC
@@ -45,7 +43,6 @@ graph TB
     subgraph extras[Cross-cutting]
         TOOLS["Tools<br/>tools/*.py"]
         RECORDER["DatasetRecorder<br/>dataset_recorder.py"]
-        BENCH["Benchmarks<br/>benchmarks/libero"]
     end
 
     AGENT --> FACTORY
@@ -69,7 +66,7 @@ graph TB
     class AGENT,FACTORY user
     class ROBOT,REGISTRY factory
     class SIM,HW,SIM_ABC backend
-    class POLICY_ABC,MOCK,GROOT,LEROBOT,COSMOS3,FACTORY_FN policy
+    class POLICY_ABC,MOCK,LEROBOT,COSMOS3,FACTORY_FN policy
     class TOOLS,RECORDER,BENCH cross
 ```
 
@@ -82,14 +79,13 @@ graph TB
 | `strands_robots/simulation/` | MuJoCo `AgentTool` - 77 actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend ABC for future Isaac/Newton backends. | `SimEngine` |
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
-| `strands_robots/policies/` | ABC + 15 providers + factory + JSON registry. | `Policy`, `create_policy()` |
+| `strands_robots/policies/` | ABC + 14 providers + factory + JSON registry. | `Policy`, `create_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 writer. | `DatasetRecorder` |
-| `strands_robots/tools/` | 20 `@tool`-decorated helpers. | `lerobot_calibrate`, `serial_tool`, etc. |
-| `strands_robots/benchmarks/libero/` | LIBERO benchmark adapter. | `LiberoSuite` |
+| `strands_robots/tools/` | 19 `@tool`-decorated helpers. | `lerobot_calibrate`, `serial_tool`, etc. |
 
 ## ABCs
 
-**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 17 implementations ship; [Policies](policies/overview.md) is the provider table.
+**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 16 implementations ship; [Policies](policies/overview.md) is the provider table.
 
 **`SimEngine`** - `create_world()`, `step()`, 30+ abstract actions. Today: MuJoCo CPU. Roadmap: Isaac Sim, Newton.
 
@@ -97,7 +93,7 @@ graph TB
 
 ## The one rule
 
-**Lazy imports everywhere.** `strands_robots/__init__.py` exports `Policy`, `MockPolicy`, `create_policy` eagerly. Everything else (`Robot`, `Simulation`, `Gr00tPolicy`, the tools) is behind `__getattr__`. Enforced by `tests/test_init.py`.
+**Lazy imports everywhere.** `strands_robots/__init__.py` exports `Policy`, `MockPolicy`, `create_policy` eagerly. Everything else (`Robot`, `Simulation`, the tools) is behind `__getattr__`. Enforced by `tests/test_init.py`.
 
 ## Extras
 
@@ -105,11 +101,10 @@ graph TB
 |-------|----------|------|
 | `[sim-mujoco]` | `mujoco`, `numpy`, `imageio`, `imageio-ffmpeg`, `mink`, `qpsolvers[daqp]` | `Robot(mode="sim")`; `mink`/`qpsolvers` solve IK for the `move_to` primitive (the `[daqp]` backend extra is what makes the solve runnable - `qpsolvers` alone ships no solver) |
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
-| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` ZMQ |
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |
-| `[all]` | 19 of the 31 extras - not a union; see [installation](getting-started/installation.md) for the 11 it leaves opt-in | CI / exploration |
+| `[all]` | 18 of the 29 extras - not a union; see [installation](getting-started/installation.md) for the 10 it leaves opt-in | CI / exploration |
 
 ## See also
 

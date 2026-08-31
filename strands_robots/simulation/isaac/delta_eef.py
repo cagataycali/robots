@@ -1,9 +1,9 @@
 """Task-space delta-EEF to joint-position-target controller for Isaac.
 
 :class:`IsaacDeltaEEFController` is the Isaac-side counterpart of the
-MuJoCo/robosuite ``OSC_POSE`` controller that
-``LiberoAdapter._install_action_controller`` builds against a compiled
-MuJoCo model. GR00T-LIBERO checkpoints emit 7-dim Cartesian **delta-EEF**
+MuJoCo/robosuite ``OSC_POSE`` controller a benchmark adapter builds
+against a compiled MuJoCo model. LIBERO-trained VLA checkpoints emit
+7-dim Cartesian **delta-EEF**
 actions (``{x, y, z, roll, pitch, yaw, gripper}``); on Isaac there is no
 compiled MuJoCo model, so without this controller every action key lands in
 ``send_action``'s ``unresolved_keys`` and the robot never moves (#1812).

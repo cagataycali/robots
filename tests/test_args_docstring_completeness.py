@@ -214,7 +214,6 @@ class TestTheScanIsNonVacuous:
             "strands_robots/dataset_recorder.py::DatasetRecorder.create",
             "strands_robots/policies/cosmos3/policy.py::Cosmos3Policy.get_actions",
             "strands_robots/policies/lerobot_local/policy.py::LerobotLocalPolicy.get_actions",
-            "strands_robots/benchmarks/libero/adapter.py::LiberoAdapter.__init__",
         ],
         ids=lambda expected: expected.rsplit("::", 1)[-1],
     )

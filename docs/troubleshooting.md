@@ -53,8 +53,6 @@ description: Error → fix table for the most common gotchas across install, sim
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `UntrustedRemoteCodeError` | `lerobot_local` needs HF exec | `export STRANDS_TRUST_REMOTE_CODE=1` |
-| `Gr00tPolicy` connection refused | Container not running | `gr00t_inference(action="start_container", ...)` |
-| `Gr00tPolicy` returns garbage | `data_config` mismatch | Use same `data_config` as training |
 | `Cosmos3Policy` connection refused | Service not running | `uv pip install 'strands-robots[cosmos3-service]'` + start server |
 | Policy import slow | Heavy dep at module top | Defer to `__init__` or `get_actions` |
 

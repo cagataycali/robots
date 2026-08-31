@@ -4,19 +4,19 @@
 Chains the three stages of the humanoid VLA pipeline on the Unitree G1:
 
 1. RECORD  - drive the G1 in sim, capture a LeRobotDataset (teleop data).
-2. TUNE    - post-train Isaac-GR00T N1.7 on the recorded data (optional/gated).
+2. TUNE    - post-train a LeRobot policy on the recorded data (optional/gated).
 3. DEPLOY  - deploy the (fine-tuned or pre-trained) checkpoint with WBC
              (SONIC whole-body control) for locomotion.
 
 Each stage is self-contained and gated:
 - By default only stages 1 + 3 run (record + deploy with a mock/pre-trained
   checkpoint). This completes in ~10 seconds on CPU with no external services.
-- Pass ``--tune`` to enable stage 2 (requires Docker + a GPU for Isaac-GR00T
+- Pass ``--tune`` to enable stage 2 (requires a GPU for the LeRobot
   fine-tuning; takes ~hours). The deploy stage then uses the fine-tuned output.
 - Pass ``--checkpoint /path/to/grootwbc-g1`` to skip recording + fine-tuning and
   jump straight to deploy with an existing SONIC checkpoint.
 
-This example proves the three pieces compose - dataset_recorder, GR00T Trainer,
+This example proves the three pieces compose - dataset_recorder, Trainer,
 and WBCPolicy - as one coherent pipeline, the deploy stage of issue #471.
 
 Upstream reference:
@@ -24,14 +24,14 @@ Upstream reference:
 
 Dependencies:
     pip install "strands-robots[sim-mujoco,lerobot,wbc]"
-    # For stage 2 (fine-tuning): Docker + GPU + pip install "strands-robots[groot-service]"
+    # For stage 2 (fine-tuning): GPU + pip install "strands-robots[lerobot]"
 
 Usage:
     # Quick demo (record + deploy with mock policy, ~10s):
     python examples/locomotion/vla_g1_workflow.py
 
     # Full pipeline with real fine-tuning:
-    python examples/locomotion/vla_g1_workflow.py --tune --base-model nvidia/GR00T-N1.7-3B
+    python examples/locomotion/vla_g1_workflow.py --tune --base-model lerobot/smolvla_base
 
     # Deploy-only with an existing SONIC checkpoint:
     python examples/locomotion/vla_g1_workflow.py --checkpoint /path/to/grootwbc-g1
@@ -143,29 +143,28 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int, che
 
 
 # ---------------------------------------------------------------------------
-# Stage 2: FINE-TUNE (optional) - post-train GR00T N1.7 on the recorded data
+# Stage 2: FINE-TUNE (optional) - post-train a LeRobot policy on the recorded data
 # ---------------------------------------------------------------------------
 
 
 def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: int) -> str:
-    """Post-train Isaac-GR00T N1.7 on the recorded G1 locomotion data.
+    """Post-train a LeRobot policy on the recorded G1 locomotion data.
 
-    Uses the ``Trainer`` abstraction (``create_trainer("groot")``) which wraps
-    the ``gr00t_inference`` Docker tool's training pipeline under the hood.
+    Uses the ``Trainer`` abstraction (``create_trainer("lerobot_local")``).
     This is the same interface ``07_post_tune_any_policy.py`` uses for any
-    provider - just with ``"groot"`` and a G1 dataset.
+    provider - just with a G1 dataset.
 
     Returns the fine-tuned checkpoint directory.
     """
     from strands_robots.training import TrainSpec, create_trainer
 
-    print("\n=== Stage 2: FINE-TUNE (GR00T N1.7) ===")
+    print("\n=== Stage 2: FINE-TUNE (LeRobot) ===")
     print(f"  Base model:  {base_model}")
     print(f"  Dataset:     {dataset_root}")
     print(f"  Output:      {output_dir}")
     print(f"  Steps:       {steps}")
 
-    trainer = create_trainer("groot")
+    trainer = create_trainer("lerobot_local")
     spec = TrainSpec(
         dataset_root=dataset_root,
         base_model=base_model,
@@ -273,8 +272,8 @@ def main() -> None:
     )
     p.add_argument(
         "--base-model",
-        default="nvidia/GR00T-N1.7-3B",
-        help="Base model for fine-tuning (default: nvidia/GR00T-N1.7-3B).",
+        default="lerobot/smolvla_base",
+        help="Base model for fine-tuning (default: lerobot/smolvla_base).",
     )
     p.add_argument(
         "--checkpoint",

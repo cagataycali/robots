@@ -223,10 +223,10 @@ def test_execute_forwards_constructor_extras_via_policy_config() -> None:
         {
             "action": "execute",
             "instruction": "task",
-            "policy_provider": "groot",
+            "policy_provider": "cosmos3",
             "model_path": "nvidia/GR00T-N1.5",
             "server_address": "127.0.0.1:5555",
-            "policy_type": "groot",
+            "policy_type": "cosmos3",
             "pretrained_name_or_path": "nvidia/GR00T-N1.5",
         }
     )
@@ -234,7 +234,7 @@ def test_execute_forwards_constructor_extras_via_policy_config() -> None:
     pc = kwargs["policy_config"]
     assert pc["model_path"] == "nvidia/GR00T-N1.5"
     assert pc["server_address"] == "127.0.0.1:5555"
-    assert pc["policy_type"] == "groot"
+    assert pc["policy_type"] == "cosmos3"
     assert pc["pretrained_name_or_path"] == "nvidia/GR00T-N1.5"
     # A constructor extra is not a per-call goal: it must not be re-sent to
     # get_actions on every tick.

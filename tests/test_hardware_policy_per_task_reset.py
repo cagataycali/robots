@@ -152,7 +152,7 @@ class TestPerTaskPolicyReset:
 
         monkeypatch.setattr(hw, "_get_policy", _fake_get_policy)
 
-        hw._execute_task_sync("stack the cups", 5555, "localhost", "groot", 5.0)
+        hw._execute_task_sync("stack the cups", 5555, "localhost", "cosmos3", 5.0)
 
         assert policy.reset_calls == 1
         assert fake.sent_actions

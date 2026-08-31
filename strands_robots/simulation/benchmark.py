@@ -11,7 +11,7 @@ and declares the robots it is compatible with. The evaluation loop
 (:meth:`~strands_robots.simulation.policy_runner.PolicyRunner.evaluate`) drives
 the protocol without knowing anything about the underlying benchmark.
 
-Adapters live in optional extras (``strands-robots[benchmark-libero]`` etc.);
+Adapters live in optional extras;
 the core package stays dependency-free. A reference :class:`DeclarativeBenchmark`
 shipped in :mod:`strands_robots.simulation.benchmark_spec` turns a YAML/JSON
 spec into a fully functional ``BenchmarkProtocol`` instance - LLMs can author
@@ -264,7 +264,8 @@ class BenchmarkProtocol(ABC):
 
         Errors are caught by the eval loop and surfaced as a structured
         error dict; raising here aborts the episode without further policy
-        calls. See :class:`~strands_robots.benchmarks.libero.LiberoAdapter`
+        calls. See the built-in locomotion adapters in
+        :mod:`strands_robots.simulation.builtin_benchmarks`
         for an example that injects ``x`` / ``y`` / ``z`` / ``roll`` / ``pitch``
         / ``yaw`` / ``gripper`` for the LIBERO ``state.*`` schema.
         """

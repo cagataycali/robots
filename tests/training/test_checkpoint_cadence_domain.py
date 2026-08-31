@@ -2,7 +2,7 @@
 
 :attr:`~strands_robots.training.base.TrainSpec.save_freq` is how often a run
 writes a checkpoint, and four backends read it - LeRobot (``cfg.save_freq``
-in-process and a ``--save_freq=`` argv token), GR00T (``--save_steps=``), Cosmos
+in-process and a ``--save_freq=`` argv token), Cosmos
 (a ``checkpoint.save_iter=`` Hydra override) and SageMaker (a JSON-encoded
 hyperparameter the job's container reads). Before this contract none of them
 checked it, and the destinations do not agree about a single value:
@@ -47,14 +47,13 @@ import pytest
 from strands_robots.training._validate import checkpoint_cadence_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
 from tests.training._spec_field_reads import reads_spec_field
 
 # The backends that checkpoint from the field.
-CHECKPOINTING_BACKENDS = (LerobotTrainer, Gr00tTrainer, Cosmos3Trainer, SagemakerTrainer)
+CHECKPOINTING_BACKENDS = (LerobotTrainer, Cosmos3Trainer, SagemakerTrainer)
 
 # Values no consumer can honor, split by how each one failed before the gate.
 
@@ -344,7 +343,7 @@ class TestOneOwnerForTheCheckpointCadenceDomain:
     def test_the_scan_finds_the_checkpointing_backends(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
         readers = {p.name for p in _trainer_modules() if _reads_the_cadence(p.read_text())}
-        assert readers == {"cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py"}
+        assert readers == {"cosmos3.py", "lerobot.py", "sagemaker.py"}
 
     def test_every_backend_that_checkpoints_routes_through_the_shared_gate(self) -> None:
         adrift = sorted(

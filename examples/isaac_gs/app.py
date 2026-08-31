@@ -56,7 +56,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -103,7 +102,7 @@ def _live_img_html(camera: str) -> str:
 """
 
 
-def _mjpeg_frames(app: "IsaacGsApp", camera: str):
+def _mjpeg_frames(app: IsaacGsApp, camera: str):
     """Yield ``multipart/x-mixed-replace`` JPEG chunks of the live composite.
 
     Byte framing + pacing come from the shared library generator
@@ -146,8 +145,8 @@ class _RenderRequest:
         self.wave = wave
         self.op = op
         self.done = threading.Event()
-        self.result: "object | None" = None
-        self.error: "Exception | None" = None
+        self.result: object | None = None
+        self.error: Exception | None = None
 
 
 class IsaacGsApp:
@@ -161,13 +160,13 @@ class IsaacGsApp:
     def __init__(
         self,
         default_camera: str = "oblique",
-        panorama_path: Optional[str] = None,
-        gsplat_ply: Optional[str] = None,
-        gsplat_scene: Optional[str] = None,
+        panorama_path: str | None = None,
+        gsplat_ply: str | None = None,
+        gsplat_scene: str | None = None,
         width: int = 640,
         height: int = 480,
-        robot_usd: Optional[str] = None,
-        camera_presets: Optional[dict] = None,
+        robot_usd: str | None = None,
+        camera_presets: dict | None = None,
         allow_fallback: bool = False,
     ) -> None:
         self.default_camera = default_camera
@@ -184,9 +183,9 @@ class IsaacGsApp:
         self.robot_usd = robot_usd
         self.camera_presets = camera_presets
 
-        self._queue: "queue.Queue[_RenderRequest]" = queue.Queue()
+        self._queue: queue.Queue[_RenderRequest] = queue.Queue()
         self._bg_lock = threading.Lock()
-        self._pending_bg: "dict | None" = None
+        self._pending_bg: dict | None = None
         self._sim = None
         self._compositor = None
         self._build = None
@@ -216,7 +215,6 @@ class IsaacGsApp:
     def boot(self) -> None:
         """Create SimulationApp + build the scene. **Main thread only.**"""
         from strands_robots.simulation import create_simulation
-
         from strands_robots.simulation.isaac import IsaacSimulation
 
         available, reason = IsaacSimulation.is_available()
@@ -293,7 +291,7 @@ class IsaacGsApp:
     def stop(self) -> None:
         self._stop.set()
 
-    def _render_on_main(self, camera: str, wave: bool) -> "tuple[np.ndarray, str]":
+    def _render_on_main(self, camera: str, wave: bool) -> tuple[np.ndarray, str]:
         camera = camera if camera in self._cameras else (self._cameras[0] if self._cameras else "front")
         if wave and self._build and self._build.robot_joint_count > 0:
             self._wave_arm()
@@ -381,7 +379,7 @@ class IsaacGsApp:
 
     def render_once(
         self, camera: str = "oblique", wave: bool = False, timeout: float = 600.0
-    ) -> "tuple[np.ndarray, str]":
+    ) -> tuple[np.ndarray, str]:
         """Enqueue a render for the main thread and block for the result.
 
         When no :meth:`serve_forever` loop is active (e.g. a headless
@@ -418,7 +416,7 @@ class IsaacGsApp:
             raise req.error
         return req.result
 
-    def spawn_cube(self, color: str = "red", position: "list[float] | None" = None, size: float = 0.04) -> str:
+    def spawn_cube(self, color: str = "red", position: list[float] | None = None, size: float = 0.04) -> str:
         """Add a small **static** colored cube to the live scene.
 
         Marshalled onto the main thread via :meth:`_run_on_main`. The cube is
@@ -477,7 +475,7 @@ class IsaacGsApp:
             return f"Couldn't add the cube: {text}"
         return f"Added a {cname} cube ({name}) at {[round(p, 2) for p in pos]}."
 
-    def _default_object_pos(self) -> "list[float]":
+    def _default_object_pos(self) -> list[float]:
         """A validated, in-frame spawn point on the workspace surface.
 
         The 3DGS "counter" the arm sits on is at z~=0.09 (not the world floor),
@@ -492,7 +490,7 @@ class IsaacGsApp:
         jitter = 0.05 * ((self._spawn_count - 1) % 3 - 1)
         return [base[0] + jitter, base[1], base[2]]
 
-    def set_background(self, choice: str, ply_upload: Optional[str] = None) -> str:
+    def set_background(self, choice: str, ply_upload: str | None = None) -> str:
         """Queue a background swap; applied on the main thread before the next render.
 
         ``choice`` is a UI dropdown value: a 3DGS preset scene name, the
@@ -521,7 +519,7 @@ class IsaacGsApp:
                 pass
 
 
-def build_ui(app: IsaacGsApp, agent: "object | None" = None, robot_label: str = "robot arm"):
+def build_ui(app: IsaacGsApp, agent: object | None = None, robot_label: str = "robot arm"):
     """Construct the Gradio Blocks UI bound to an :class:`IsaacGsApp`.
 
     If ``agent`` (a Strands ``Agent``) is provided, a chat panel drives the
@@ -645,7 +643,7 @@ def build_ui(app: IsaacGsApp, agent: "object | None" = None, robot_label: str = 
     return demo
 
 
-def main(argv: "list[str] | None" = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--panorama", default=None, help="Equirectangular panorama image for the background.")
     parser.add_argument("--gsplat-ply", default=None, help="3DGS .ply for the background (needs gsplat).")

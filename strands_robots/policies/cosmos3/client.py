@@ -87,7 +87,7 @@ class Cosmos3WebsocketClient:
 
     The connection is established lazily on the first :meth:`infer` (or
     :meth:`get_server_metadata`) call so constructing a policy does not
-    require the server to already be up - matching ``Gr00tInferenceClient``.
+    require the server to already be up - matching the other service clients.
     """
 
     def __init__(
@@ -169,7 +169,7 @@ class Cosmos3WebsocketClient:
 
         The raw transport is stateless on the client side - reset is a
         soft hint, never a correctness requirement (mirrors
-        ``Gr00tPolicy.reset``). Any failure is swallowed.
+        any service-mode ``Policy.reset``). Any failure is swallowed.
         """
         try:
             client = self._ensure_client()

@@ -12,7 +12,7 @@ from strands_robots.policies import (
     create_policy,
 )
 
-# Detect groot-service availability for conditional test grouping.
+# Detect zmq/msgpack availability for conditional test grouping.
 try:
     import msgpack  # noqa: F401
     import zmq  # noqa: F401

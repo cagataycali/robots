@@ -59,7 +59,7 @@ class _StubG1Driver:
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         **_policy_kwargs: Any,
     ) -> dict[str, Any]:
@@ -73,7 +73,7 @@ def _call(
     instruction: str = "",
     policy_port: int | None = None,
     policy_host: str = "localhost",
-    policy_provider: str = "groot",
+    policy_provider: str = "cosmos3",
     duration: float = 30.0,
 ) -> dict[str, Any]:
     """Call the ``@tool``-decorated verb and return its dict.
@@ -266,11 +266,11 @@ def test_the_verb_passes_the_arguments_through_unchanged() -> None:
         instruction="pick up the red cube",
         policy_port=8082,
         policy_host="10.10.4.42",
-        policy_provider="groot",
+        policy_provider="cosmos3",
         duration=12.5,
     )
     assert driver.calls == [
-        ("pick up the red cube", 8082, "10.10.4.42", "groot", 12.5),
+        ("pick up the red cube", 8082, "10.10.4.42", "cosmos3", 12.5),
     ]
 
 
@@ -279,7 +279,7 @@ def test_a_default_call_passes_the_signature_defaults_to_the_driver() -> None:
 
     The verb's parameter defaults (``instruction=""``,
     ``policy_port=None``, ``policy_host="localhost"``,
-    ``policy_provider="groot"``, ``duration=30.0``) match the
+    ``policy_provider="cosmos3"``, ``duration=30.0``) match the
     driver's method signature.  A caller that names only ``driver``
     reaches the driver with the same defaults the driver would have
     filled in on its own; this cell holds the parity so a driver-side
@@ -290,7 +290,7 @@ def test_a_default_call_passes_the_signature_defaults_to_the_driver() -> None:
     result = g1_start_task(driver=driver)
 
     assert result["status"] == "error"
-    assert driver.calls == [("", None, "localhost", "groot", 30.0)]
+    assert driver.calls == [("", None, "localhost", "cosmos3", 30.0)]
 
 
 def test_the_wrong_shape_driver_is_not_called() -> None:

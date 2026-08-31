@@ -6,7 +6,7 @@ A unified Python interface for controlling diverse robot hardware through
 any VLA provider with clean policy abstraction architecture.
 
 Key features:
-- Policy abstraction for any VLA provider (GR00T, ACT, SmolVLA, etc.)
+- Policy abstraction for any VLA provider (ACT, SmolVLA, Cosmos3, etc.)
 - Universal robot support through LeRobot integration
 - Clean separation between robot control and policy inference
 - Direct policy injection for maximum flexibility
@@ -14,7 +14,7 @@ Key features:
 - MuJoCo simulation backend (no GPU required)
 
 Lazy Loading:
-    Heavy imports (Robot, tools, Gr00tPolicy, Simulation) are deferred until
+    Heavy imports (Robot, tools, Simulation) are deferred until
     first access. Heavy imports are deferred so ``import strands_robots`` stays
     fast when lerobot/torch/mujoco are installed but not yet needed.
 
@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     )
     from strands_robots.hardware_ros_bridge import HardwareRosBridge
     from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
-    from strands_robots.policies.groot import Gr00tPolicy
     from strands_robots.policies.lerobot_local.resolution import list_policy_types
     from strands_robots.registry import (
         get_robot,
@@ -69,7 +68,6 @@ if TYPE_CHECKING:
         sample_frames,
         write_label,
     )
-    from strands_robots.tools.gr00t_inference import gr00t_inference
     from strands_robots.tools.harness_memory import harness_memory
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera
@@ -111,7 +109,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "list_discoverable": ("strands_robots.registry", "list_discoverable"),
     "is_discoverable": ("strands_robots.registry", "is_discoverable"),
     # Policies
-    "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
     # lerobot_local policy-type discovery surface. Lazy (unlike list_providers,
     # whose factory is torch-free) because the lerobot_local package import
     # chain pulls in torch; resolving on first access keeps "import
@@ -128,7 +125,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "SimCamera": ("strands_robots.simulation", "SimCamera"),
     # Tools
     "download_assets": ("strands_robots.tools.download_assets", "download_assets"),
-    "gr00t_inference": ("strands_robots.tools.gr00t_inference", "gr00t_inference"),
     "harness_memory": ("strands_robots.tools.harness_memory", "harness_memory"),
     # Episode-judge labeling tools (deterministic-verdict precedence lives in
     # strands_robots.episode_labels; these are the agent-facing surface).
@@ -178,7 +174,6 @@ __all__ = [
     "HardwareRosBridge",
     "HardwareRtpsBridge",
     "Teleoperator",
-    "Gr00tPolicy",
     "list_policy_types",
     "Simulation",
     "SimWorld",
@@ -193,7 +188,6 @@ __all__ = [
     "list_backends",
     "register_backend",
     "download_assets",
-    "gr00t_inference",
     "harness_memory",
     "create_judge_agent",
     "load_episode",

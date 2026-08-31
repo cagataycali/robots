@@ -2,7 +2,7 @@
 
 ``65535`` is a legal TCP port. The shared owner of the 16-bit domain
 (:func:`strands_robots.utils.tcp_port_error`) accepts it, the kernel binds it,
-and ``gr00t_inference`` connects to it - but the WebSocket transport behind
+and the agent tools connect to it - but the WebSocket transport behind
 roslibpy builds its URL with
 
     assert port is None or (type(port) == int and port in range(0, 65535))
@@ -151,7 +151,7 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         """A transport bound that leaked onto another surface would be a bug.
 
         Same scan shape as the shared-owner check in
-        ``test_gr00t_numeric_option_guards.py``: read the caller-facing modules
+        ``test_lerobot_camera_numeric_options.py``: read the caller-facing modules
         that take a port and assert which of them apply this bound. The
         inference-service tool talks to a plain socket and must keep the whole
         port space.

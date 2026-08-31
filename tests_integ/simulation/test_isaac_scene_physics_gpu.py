@@ -5,7 +5,7 @@ LIBERO dynamic objects via constructors that stop the timeline (#159), and
 before #1820 nothing restarted it: the whole episode rendered without
 integrating physics - joint reads went stale, ``send_action`` targeted a
 view that never integrates, and every envelope still reported success, so a
-5-episode groot eval read green with a motionless robot. The eval-level
+a 5-episode policy eval read green with a motionless robot. The eval-level
 signals (state keys present, no PhysX errors) were all satisfiable without
 integration, which is exactly how the defect shipped; this test asserts the
 one thing frozen physics cannot fake: a joint-target ``send_action`` after
@@ -14,7 +14,7 @@ one thing frozen physics cannot fake: a joint-target ``send_action`` after
 Also pins part 2 of #1820: the scene MJCF places dynamic objects at
 *placeholder* poses (LIBERO's real per-episode poses live in BDDL init
 states), so the objects are teleported to legal poses via ``move_object``
-(the engine half of ``LiberoAdapter._apply_object_pose_state``) BEFORE the
+(the engine half of a benchmark adapter's per-episode pose apply) BEFORE the
 first integrating step, and the articulation must stay finite afterwards -
 no "Illegal BroadPhaseUpdateData - non-finite bounds" NaN storm.
 
@@ -168,7 +168,7 @@ class TestIsaacScenePhysicsGPU:
                 # Part 2: the dynamic bodies sit at coincident placeholder
                 # poses inside the robot base. Teleport them to legal poses
                 # BEFORE the first integrating step (the engine half of
-                # LiberoAdapter._apply_object_pose_state), then settle.
+                # a benchmark adapter's per-episode pose apply), then settle.
                 for name, pos in _LEGAL_POSES.items():
                     r = sim.move_object(name=name, position=pos, orientation=[1.0, 0.0, 0.0, 0.0])
                     assert r["status"] == "success", f"{label}: move_object({name}): {r}"

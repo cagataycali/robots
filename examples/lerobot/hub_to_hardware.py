@@ -43,12 +43,6 @@ The AWS region resolves from your AWS environment (AWS_REGION /
 AWS_DEFAULT_REGION env vars, ~/.aws/config, or instance metadata). To
 override per-run, pass --aws-region <region>.
 
-Run with the GR00T container as the policy (requires Docker + NVIDIA GPU):
-
-    python hub_to_hardware.py \\
-        --policy groot \\
-        --checkpoint nvidia/GR00T-N1.7-LIBERO
-
 Run on physical hardware (assumes SO-101 already calibrated via lerobot calibrate):
 
     python hub_to_hardware.py \\
@@ -184,11 +178,6 @@ def build_agent(
     robot = Robot("so100", mode=mode, **robot_kwargs)
     tools: list[Any] = [robot, robot_mesh]
 
-    if policy == "groot":
-        from strands_robots import gr00t_inference
-
-        tools.append(gr00t_inference)
-
     resolved_model_id = model_id or os.environ.get("STRANDS_BEDROCK_MODEL_ID") or DEFAULT_MODEL_ID
     resolved_region = aws_region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
     model = _build_bedrock_model(resolved_model_id, resolved_region)
@@ -278,16 +267,6 @@ def run_policy(
             f"instruction '{instruction}'. Render the final frame."
         )
 
-    elif policy == "groot":
-        if not checkpoint:
-            raise SystemExit("--policy groot requires --checkpoint <hf_repo>, e.g. nvidia/GR00T-N1.7-LIBERO")
-        prompt = (
-            f"Use gr00t_inference lifecycle='full' to bring up the GR00T "
-            f"container on port 5555 with checkpoint {checkpoint}. Then "
-            f"run the policy on the robot with the instruction "
-            f"'{instruction}' for 200 steps. Render the final frame."
-        )
-
     elif policy == "lerobot_local":
         if not checkpoint:
             raise SystemExit(
@@ -336,12 +315,6 @@ def broadcast_to_mesh(agent: Any, instruction: str = "go to home pose") -> Any:
 
 def cleanup(agent: Any, *, policy: str) -> None:
     """Tear down any long-running resources the workflow started."""
-    if policy == "groot":
-        try:
-            agent("Stop the GR00T inference service on port 5555.")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("GR00T stop reported: %s", exc)
-
     # Release the robot's sim world / hardware connection and its Zenoh mesh
     # session. Both Simulation and HardwareRobot expose cleanup(); these own
     # non-daemon threads (the mesh listener, the MuJoCo executor) that would
@@ -375,14 +348,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument(
         "--policy",
-        choices=("mock", "groot", "lerobot_local"),
+        choices=("mock", "lerobot_local"),
         default="mock",
         help="Policy provider (default: mock, no GPU required).",
     )
     p.add_argument(
         "--checkpoint",
         default=None,
-        help="HF repo for the policy checkpoint (required for --policy groot or lerobot_local).",
+        help="HF repo for the policy checkpoint (required for --policy lerobot_local).",
     )
 
     # LLM knobs

@@ -16,7 +16,7 @@ process count failed was silent or late:
   (``nan`` compares false against everything), so the selector routed them to
   the single-process path and the run proceeded on one process under a
   successful result. For ``num_nodes`` that also slipped past the multi-node
-  refusal LeRobot and GR00T raise for a topology they cannot run.
+  refusal LeRobot raises for a topology it cannot run.
 * ``2.7`` and ``inf`` *are* greater than one, so they selected the multi-process
   path and reached ``elastic_launch`` as the worker count.
   ``torch.distributed.launcher.api.LaunchConfig`` accepts both without
@@ -46,14 +46,13 @@ import pytest
 from strands_robots.training._validate import launch_topology_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from tests.training._spec_field_reads import reads_spec_field
 
 # The two fields, and the backends that launch from them.
 TOPOLOGY_FIELDS = ("num_gpus", "num_nodes")
-LAUNCHING_BACKENDS = (LerobotTrainer, Gr00tTrainer, Cosmos3Trainer)
+LAUNCHING_BACKENDS = (LerobotTrainer, Cosmos3Trainer)
 
 # Values no launcher can honor, split by how each one failed before the gate.
 
@@ -73,7 +72,7 @@ UNUSABLE = SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER + tuple(RAISED_OUT_OF_VA
 def spec(tmp_path: pathlib.Path) -> TrainSpec:
     """A spec whose topology fields are the only thing under test.
 
-    ``validate`` may well report unrelated problems (GR00T wants a checkout,
+    ``validate`` may well report unrelated problems (a backend wants a checkout,
     Cosmos a recipe TOML); every assertion below filters for the field name, so
     an unrelated problem cannot mask - or fake - a topology verdict.
     """
@@ -139,13 +138,13 @@ class TestAUsableTopologyIsUntouched:
         spec.num_nodes = 1
         assert _problems_about(trainer_cls(), spec, "num_nodes") == []
 
-    @pytest.mark.parametrize("trainer_cls", (LerobotTrainer, Gr00tTrainer))
+    @pytest.mark.parametrize("trainer_cls", (LerobotTrainer,))
     def test_the_multi_node_refusal_still_fires_for_a_usable_count(
         self, spec: TrainSpec, trainer_cls: type[Trainer]
     ) -> None:
         """The guarded comparison must still run once the count IS a count.
 
-        LeRobot and GR00T cannot launch multi-node in-process and say so. That
+        LeRobot cannot launch multi-node in-process and says so. That
         comparison is now reached only when the shared domain has established
         ``num_nodes`` is a count - so this pins that gating it did not disable
         it.
@@ -273,7 +272,7 @@ class TestOneOwnerForTheLaunchTopologyDomain:
     def test_the_scan_finds_the_launching_backends(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
         readers = {p.name for p in _trainer_modules() if _reads_a_topology_field(p.read_text())}
-        assert readers == {"cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py"}
+        assert readers == {"cosmos3.py", "lerobot.py", "sagemaker.py"}
 
     def test_every_backend_that_launches_routes_through_the_shared_gate(self) -> None:
         adrift = sorted(

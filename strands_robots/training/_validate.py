@@ -141,7 +141,7 @@ from strands_robots.utils import (
 if TYPE_CHECKING:
     from strands_robots.training.base import TrainSpec
 
-# ``extra`` keys are interpolated into argv as ``--{key}=...`` (lerobot/groot)
+# ``extra`` keys are interpolated into argv as ``--{key}=...`` (lerobot)
 # or ``{key}=...`` (cosmos hydra). Allowlist the key FORMAT only: lowercase,
 # dotted (lerobot ``dataset.episodes`` / cosmos ``model.x.y``), no leading dash,
 # no ``=``, no whitespace or shell metacharacters. We deliberately do NOT try to

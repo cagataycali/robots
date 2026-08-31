@@ -14,17 +14,15 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | `[sim]` | `robot_descriptions>=1.23.0,<2.0.0` | Sim asset resolution without MuJoCo |
 | `[sim-mujoco]` | `sim` + `mujoco`, `imageio`, `imageio-ffmpeg` | Any `Robot()` with default `mode="sim"` |
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0` | `LerobotLocalPolicy` + dataset recording |
-| `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (ZMQ to a GR00T container) |
 | `[cosmos3-service]` | `msgpack`, `websockets>=13.0` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
 | `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
-| `[benchmark-libero]` | `libero` eval deps | LIBERO benchmark suite |
-| `[all]` | 19 of the 31 extras - **not** a union. `[benchmark-libero]`, `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[vera-sim]` stay opt-in | Demos, CI, exploration |
+| `[all]` | 18 of the 29 extras - **not** a union. `[cosmos3-diffusers]`, `[cosmos3-service]`, `[cosmos3-sim]`, `[curobo]`, `[microduck]`, `[ros2]`, `[sim-gs]`, `[sim-isaac]`, `[sim-newton]` and `[vera-sim]` stay opt-in | Demos, CI, exploration |
 | `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ```bash
 uv pip install "strands-robots[sim-mujoco]"                  # sim only
-uv pip install "strands-robots[all]"                         # the 19-extra bundle
+uv pip install "strands-robots[all]"                         # the 18-extra bundle
 uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
 uv pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
 ```
@@ -124,7 +122,6 @@ Assets cache under `~/.strands_robots/assets/`.
 | `STRANDS_TRUST_REMOTE_CODE` | Allow HF `trust_remote_code=True` | `false` |
 | `STRANDS_ROBOT_MODE` | Default `Robot()` mode | `sim` |
 | `STRANDS_MESH` | Set to `true` to opt a bare `Robot()` into the mesh; `false` disables it globally | unset (mesh off) |
-| `GROOT_API_TOKEN` | GR00T service API token (falls back from `api_token=` kwarg) | unset |
 
 ## See also
 

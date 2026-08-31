@@ -3,11 +3,11 @@
 """Every public class across ``strands_robots.policies`` must document its public members.
 
 :mod:`tests.policies.test_provider_policy_docstrings` already pins the docstring
-contract for the backend *provider* Policy classes (GR00T, cuRobo, cosmos3, the
+contract for the backend *provider* Policy classes (cuRobo, cosmos3, the
 two lerobot providers, MotionBricks, MoveIt2, VERA, the two WBC controllers) and
 :mod:`tests.policies.test_builtin_policy_docstrings` pins the dependency-free
 built-ins. Neither reaches the *ancillary* public classes the providers lean on:
-the ZMQ ``MsgSerializer`` wire codecs, the VERA websocket client / config /
+the MoveIt2 ZMQ wire codec, the VERA websocket client / config /
 server runners, and the LeRobot :class:`ProcessorStep` subclasses that pack and
 normalize observations. An agent reading the tree to drive a provider blind
 still lands on those helpers, so each of their public methods and properties
@@ -77,7 +77,7 @@ def test_policies_tree_has_ancillary_public_classes() -> None:
     """Guard: the scan walked the tree and reached the helper classes the provider guard misses."""
     found = set(_public_classes())
     for expected in (
-        "groot/client.py::MsgSerializer",
+        "moveit2/client.py::MoveIt2InferenceClient",
         "vera/client.py::VeraWebsocketClient",
         "vera/server_runner.py::VeraServerRunner",
     ):

@@ -127,12 +127,12 @@ class TestDispatcherForwardsPolicyConfig:
                 "start_policy",
                 {
                     "robot_name": "so100",
-                    "policy_provider": "groot",
+                    "policy_provider": "cosmos3",
                     "instruction": "tidy the desk",
                     "policy_config": cfg,
                 },
             )
-        assert captured["policy_provider"] == "groot"
+        assert captured["policy_provider"] == "cosmos3"
         assert captured["instruction"] == "tidy the desk"
         assert captured["policy_config"] == cfg
 

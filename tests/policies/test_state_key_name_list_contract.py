@@ -133,7 +133,6 @@ _MUST_VALIDATE = {
     "inference/client.py::RemotePolicy",
     "policies/cosmos3/policy.py::Cosmos3Policy",
     "policies/curobo/policy.py::CuroboPolicy",
-    "policies/groot/policy.py::Gr00tPolicy",
     "policies/lerobot_async/policy.py::LerobotAsyncPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
     "policies/mock.py::MockPolicy",
@@ -789,13 +788,6 @@ def _curobo() -> Any:
     return CuroboPolicy(motion_gen=object(), warmup=False)
 
 
-def _groot() -> Any:
-    """Service mode: the ZMQ socket is opened on first inference, not here."""
-    from strands_robots.policies.groot.policy import Gr00tPolicy
-
-    return Gr00tPolicy()
-
-
 def _lerobot_async() -> Any:
     """Both required kwargs supplied; the inference client connects lazily."""
     from strands_robots.policies.lerobot_async.policy import LerobotAsyncPolicy
@@ -840,7 +832,6 @@ _Surface = tuple[str, Callable[[], Any], str | None, str | None]
 _OWNING_SURFACES: list[_Surface] = [
     ("policies/cosmos3/policy.py::Cosmos3Policy", _cosmos3, "robot_state_keys", None),
     ("policies/curobo/policy.py::CuroboPolicy", _curobo, "_robot_state_keys", None),
-    ("policies/groot/policy.py::Gr00tPolicy", _groot, None, "zmq"),
     ("policies/lerobot_async/policy.py::LerobotAsyncPolicy", _lerobot_async, "robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
@@ -903,19 +894,6 @@ def test_a_refusal_leaves_the_previously_bound_layout(entry: _Surface) -> None:
     with pytest.raises(ValueError):
         policy.set_robot_state_keys("gripper")
     assert getattr(policy, attribute) == ["elbow", "wrist"]
-
-
-def test_the_validate_only_provider_stores_nothing_either_way() -> None:
-    """Gr00t translates keys through its own mappings, so it binds none of them.
-
-    Its setter exists to reach the same verdict as the others rather than to
-    record anything, which is why it has no attribute to check above.
-    """
-    policy = _build(("", _groot, None, "zmq"))
-    with pytest.raises(ValueError, match="robot_state_keys"):
-        policy.set_robot_state_keys("shoulder_pan.pos")
-    policy.set_robot_state_keys(["elbow", "wrist"])
-    assert not hasattr(policy, "robot_state_keys")
 
 
 @pytest.mark.parametrize("entry", _OWNING_SURFACES, ids=_OWNING_IDS)

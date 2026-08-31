@@ -2,7 +2,7 @@
 
 ``G1Driver.start_task`` is the provider-registry entry point for the
 driver's 500 Hz control loop: a caller passes an ``instruction`` and a
-``policy_provider`` name (``"groot"`` today, more to come) and the
+``policy_provider`` name (``"cosmos3"`` today, more to come) and the
 driver looks the provider up in :mod:`strands_robots.policies`, builds
 the policy inline and hands it to the same
 :meth:`~strands_robots.drivers.g1.G1Driver.run_policy` path.  The
@@ -98,7 +98,7 @@ def g1_start_task(
     instruction: str = "",
     policy_port: int | None = None,
     policy_host: str = "localhost",
-    policy_provider: str = "groot",
+    policy_provider: str = "cosmos3",
     duration: float = 30.0,
 ) -> dict[str, Any]:
     """Start a provider-driven task on the driver's 500 Hz control loop.
@@ -154,7 +154,7 @@ def g1_start_task(
             the registry lands, discarded on today's driver.
         policy_provider: Provider name looked up in
             :mod:`strands_robots.policies` once the registry lands.
-            ``"groot"`` is the neon reference stack's default and
+            ``"cosmos3"`` is this verb's default and
             matches the driver's own signature default.  The
             registry is the source of truth for the admission set;
             this verb does not gate the name on this side (see the

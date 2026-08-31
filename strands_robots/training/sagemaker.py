@@ -2,7 +2,7 @@
 
 Transport-only provider: unlike the local backends
 (:class:`~strands_robots.training.lerobot.LerobotTrainer`,
-:class:`~strands_robots.training.groot.Gr00tTrainer`,
+:class:`~strands_robots.training.lerobot.LerobotTrainer`,
 :class:`~strands_robots.training.cosmos3.Cosmos3Trainer`), which import a
 training library and drive it in-process, this trainer submits the SAME
 :class:`~strands_robots.training.base.TrainSpec` to Amazon SageMaker as one

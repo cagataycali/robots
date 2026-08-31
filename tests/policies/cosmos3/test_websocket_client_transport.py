@@ -191,7 +191,7 @@ def test_client_reset_forwards_to_transport(monkeypatch):
 
 def test_client_reset_swallows_transport_failure(monkeypatch):
     """reset() is a best-effort hint: a transport whose reset raises must not
-    propagate (mirrors Gr00tPolicy.reset)."""
+    propagate (mirrors any service-mode Policy.reset)."""
 
     class _AngryClient:
         def reset(self):

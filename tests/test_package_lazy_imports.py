@@ -1,7 +1,7 @@
 """Tests for the package-root lazy-import contract in ``strands_robots/__init__.py``.
 
 ``import strands_robots`` must stay cheap: heavy symbols (Robot, Simulation,
-Gr00tPolicy, tools, ...) are resolved on first attribute access via PEP 562
+Simulation, tools, ...) are resolved on first attribute access via PEP 562
 ``__getattr__``, while light symbols (Policy, MockPolicy, create_policy) import
 eagerly. These tests pin the observable behavior of that loader:
 

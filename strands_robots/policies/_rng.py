@@ -1,6 +1,6 @@
 """Shared RNG reseed helper for Policy providers.
 
-#331: ``Gr00tPolicy.reset`` reseeds Python ``random``, NumPy, torch CPU + CUDA,
+#331: a service-mode ``Policy.reset`` reseeds Python ``random``, NumPy, torch CPU + CUDA,
 and toggles cuDNN determinism, while ``Cosmos3Policy.reset`` only mutated the
 global NumPy RNG. Two providers conforming to the same ``Policy`` contract must
 behave identically for ``set_eval_seed``-style reproducibility (#187). This

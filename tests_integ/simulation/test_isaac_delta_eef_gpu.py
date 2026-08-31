@@ -1,7 +1,7 @@
 """GPU integration tests for the Isaac delta-EEF action controller (#1812).
 
 Verifies, against a real Isaac Sim articulation, the acceptance criterion
-that a scripted delta sequence MOVES the robot: GR00T-style task-space
+that a scripted delta sequence MOVES the robot: VLA-style task-space
 deltas installed via ``install_action_controller`` +
 ``IsaacDeltaEEFController`` must displace ``panda_hand`` in the commanded
 world direction. Pre-#1812 the same action dicts landed 100% in
@@ -69,7 +69,7 @@ def _assets_root_path() -> str:
 def _add_franka(sim) -> None:
     """Load the bundled Franka, trying the 6.0 asset layout then the 4.x one.
 
-    Same dual-subpath fallback as ``examples/libero/run.py``'s
+    Same dual-subpath fallback as the Isaac benchmark examples'
     ``_FRANKA_USD_SUBPATHS``: the Franka moved to
     ``Isaac/Robots/FrankaRobotics/FrankaPanda/`` in Isaac Sim 6.0.
     """
@@ -101,7 +101,7 @@ def _panda_hand_world_position(sim) -> np.ndarray:
 
 
 def _build_controller(sim, robot_name: str):
-    """Mirror LiberoAdapter._try_install_isaac_action_controller's wiring."""
+    """Mirror a benchmark adapter's Isaac action-controller wiring."""
     from strands_robots.simulation.isaac import IsaacDeltaEEFController
 
     joint_names = sim.robot_joint_names(robot_name)

@@ -56,7 +56,7 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     """Get policy provider config by name or alias.
 
     Args:
-        name: Provider name or alias (e.g. "groot", "lerobot", "cosmos").
+        name: Provider name or alias (e.g. "cosmos3", "lerobot", "mock").
 
     Returns:
         Provider dict with module, class, config_keys, defaults, etc.
@@ -93,7 +93,7 @@ def list_policy_aliases() -> dict[str, str]:
     return {alias: canonical for alias, canonical in _build_alias_map().items() if alias != canonical}
 
 
-#: A leading URL scheme, e.g. the ``zmq`` in ``zmq://gpu-box:5555``. The scheme
+#: A leading URL scheme, e.g. the ``cosmos3`` in ``cosmos3://gpu-box:8000``. The scheme
 #: grammar is RFC 3986 section 3.1: an ALPHA followed by ALPHA / DIGIT / "+" /
 #: "-" / ".".
 _URL_SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*)://")
@@ -103,7 +103,7 @@ def _with_lowercase_url_scheme(policy: str) -> str:
     """Fold a leading ``scheme://`` to lowercase, leaving the rest untouched.
 
     URL schemes are case-insensitive (RFC 3986 section 3.1), so ``ZMQ://`` and
-    ``zmq://`` name the same transport. Stage 1 of :func:`resolve_policy`
+    ``cosmos3://`` name the same transport. Stage 1 of :func:`resolve_policy`
     matches the ``url_patterns`` each provider declares in ``policies.json`` --
     every one of them spelled lowercase -- and the per-scheme branches then
     re-read the same string for host and port. Folding the scheme once, here,
@@ -131,9 +131,9 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     and returns the canonical provider + ready-to-use kwargs.
 
     Resolution order:
-        1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
+        1. URL patterns declared in ``policies.json`` (ws://, wss://, cosmos3://,
            grpc://, cosmos3://, vera://)
-        2. Shorthand names (mock, groot, lerobot_local, ...)
+        2. Shorthand names (mock, cosmos3, lerobot_local, ...)
         3. HuggingFace model IDs (org/model)
         4. Registered provider name
         5. Fallback to lerobot_local
@@ -148,7 +148,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     ``lerobot_local`` as a checkpoint id rather than dialled as an address.
 
     Every stage matches case-insensitively. A URL scheme is folded per RFC 3986
-    section 3.1 (``ZMQ://gpu:5555`` resolves exactly as ``zmq://gpu:5555``, and
+    section 3.1 (``COSMOS3://gpu:8000`` resolves exactly as ``cosmos3://gpu:8000``, and
     the emitted URL carries the lowercased scheme); shorthands and provider
     names are lowercased; a HuggingFace org is matched lowercased while the repo
     id itself is forwarded exactly as given, since repo ids are case-sensitive.
@@ -164,8 +164,8 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
         resolve_policy("lerobot/act_aloha_sim")
         # → ("lerobot_local", {"pretrained_name_or_path": "lerobot/act_aloha_sim"})
 
-        resolve_policy("zmq://localhost:5555")
-        # → ("groot", {"host": "localhost", "port": 5555})
+        resolve_policy("cosmos3://localhost:8000")
+        # → ("cosmos3", {"host": "localhost", "port": 8000})
 
         resolve_policy("grpc://gpu-box:8080")
         # → ("lerobot_async", {"server_address": "gpu-box:8080"})
@@ -218,11 +218,6 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                         kwargs["host"] = match.group(1)
                         if match.group(2):
                             kwargs["server_port"] = int(match.group(2))
-                elif pattern.startswith("^zmq://"):
-                    match = re.match(r"zmq://([^:]+):(\d+)", url)
-                    if match:
-                        kwargs["host"] = match.group(1)
-                        kwargs["port"] = int(match.group(2))
                 elif pattern.startswith("^grpc://"):
                     kwargs["server_address"] = url.removeprefix("grpc://")
                 elif ":" in url and "/" not in url:
@@ -402,14 +397,14 @@ def build_policy_kwargs(
 
     Args:
         provider: Policy provider name.
-        policy_port: Port number (groot, cosmos3, moveit2, remote).
+        policy_port: Port number (cosmos3, moveit2, remote).
         policy_host: Hostname.  ``None`` leaves the key unset so the
             provider's registry default -- or, failing that, its own
             constructor default -- applies.
         model_path: Local model path or HF ID.
         server_address: Full server address host:port (grpc:// URLs, remote providers).
         policy_type: Sub-type (pi0, act, smolvla, ...).
-        data_config: Data configuration for groot.
+        data_config: Provider-specific data configuration.
         **extra: Any additional provider-specific kwargs.  A key declared in
             the provider's ``config_keys`` is forwarded; any other key is
             dropped, which is what ``config_keys`` exists to decide.

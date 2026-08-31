@@ -135,7 +135,7 @@ def test_get_viz_option_returns_none_when_unset() -> None:
 
 
 def test_get_viz_option_reads_from_backend_state() -> None:
-    """When an adapter (e.g. LiberoAdapter) sets
+    """When a benchmark adapter sets
     ``world._backend_state['viz_option']``, the rendering layer reads it
     via ``_get_viz_option`` and threads it through to
     ``Renderer.update_scene(scene_option=...)``."""

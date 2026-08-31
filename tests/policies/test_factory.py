@@ -17,15 +17,6 @@ from strands_robots.policies import (
     register_policy,
 )
 
-# Detect groot-service availability for conditional test grouping.
-try:
-    import msgpack  # noqa: F401
-    import zmq  # noqa: F401
-
-    _groot_available = True
-except ImportError:
-    _groot_available = False
-
 
 class TestCreatePolicy:
     """create_policy() should resolve shorthands, URLs, and custom registrations."""
@@ -43,7 +34,7 @@ class TestCreatePolicy:
         register_policy("runtime_only_provider", loader=lambda: MockPolicy)
         providers = list_providers()
         assert "mock" in providers
-        assert "groot" in providers
+        assert "cosmos3" in providers
         assert "runtime_only_provider" in providers
 
     def test_unknown_provider_raises(self):
@@ -84,45 +75,6 @@ class TestCreatePolicy:
         policy = create_policy("ws://localhost:8080")
         assert isinstance(policy, RemotePolicy)
         assert policy.uri == "ws://localhost:8080"
-
-
-@pytest.mark.skipif(not _groot_available, reason="groot-service extras not installed")
-class TestFactoryGrootIntegration:
-    """Factory tests that require groot-service extras (zmq, msgpack).
-
-    Grouped into a single class with a class-level skip marker so future
-    contributors don't need to remember per-test decorators.
-    """
-
-    def test_create_via_zmq_url_resolves_to_groot(self):
-        """A zmq:// URL should resolve to a Gr00tPolicy via smart-string resolution."""
-        from strands_robots.policies.groot import Gr00tPolicy
-
-        p = create_policy("zmq://localhost:5555")
-        assert isinstance(p, Gr00tPolicy)
-
-    def test_groot_strict_and_api_token_passthrough(self):
-        """strict and api_token kwargs should reach Gr00tPolicy constructor."""
-        from strands_robots.policies.groot import Gr00tPolicy
-
-        p = create_policy("zmq://localhost:5555", strict=True, api_token="test-token")
-        assert isinstance(p, Gr00tPolicy)
-        assert p._strict is True
-        assert p._client.api_token == "test-token"
-
-    def test_groot_defaults_strict_false(self):
-        """strict should default to False for production use."""
-        p = create_policy("zmq://localhost:5555")
-        assert p._strict is False
-
-    def test_groot_direct_construction_with_new_params(self):
-        """Direct Gr00tPolicy() should accept strict and api_token."""
-        from strands_robots.policies.groot import Gr00tPolicy
-
-        p = Gr00tPolicy(host="localhost", port=5555, strict=True, api_token="s3cret")
-        assert p._strict is True
-        assert p._mode == "service"
-        assert p._client.api_token == "s3cret"
 
 
 class TestTrustRemoteCodeGate:

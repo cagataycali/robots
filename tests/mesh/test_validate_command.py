@@ -315,7 +315,7 @@ class TestSafeHostAndModel:
         assert sec.is_safe_model_path("/local/path", hf_only=True) is False
 
     def test_safe_policy_type_builtins(self):
-        for pt in ("mock", "groot", "lerobot", "act", "diffusion"):
+        for pt in ("mock", "cosmos3", "lerobot", "act", "diffusion"):
             assert sec.is_safe_policy_type(pt) is True
 
     def test_safe_policy_type_rejects_unknown(self):

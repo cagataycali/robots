@@ -7,7 +7,7 @@ ONE Unitree G1 with two stacked policies, each tick:
 * **lower** = :class:`WBCPolicy` (the real ``GR00T-WholeBodyControl-{Balance,
   Walk}.onnx`` weights) owns the 15 leg+waist joints and walks the robot.
 * **upper** = a manipulation policy owns the 14 arm joints. Swap in
-  ``create_policy("groot", port=5555)`` / pi0 / MolmoAct for a real VLA; this
+  ``create_policy("cosmos3", port=8000)`` / pi0 for a real VLA; this
   example ships a tiny scripted arm-wave so it runs fully in sim with no server.
 
 The composite queries both children, routes leg+waist targets to the WBC torque
@@ -195,7 +195,7 @@ def run(args: argparse.Namespace) -> int:
     assert isinstance(lower, WBCPolicy)
     upper: Policy
     if args.upper_port:
-        upper = create_policy("groot", port=args.upper_port)
+        upper = create_policy("cosmos3", port=args.upper_port)
     else:
         upper = ScriptedArmWavePolicy()
 

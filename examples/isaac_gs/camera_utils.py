@@ -27,12 +27,12 @@ from strands_robots.rendering import CameraParams as IsaacCameraParams
 __all__ = ["IsaacCameraParams", "get_camera_params", "render_rgb_and_depth"]
 
 
-def get_camera_params(sim: "object", camera_name: str) -> IsaacCameraParams:
+def get_camera_params(sim: object, camera_name: str) -> IsaacCameraParams:
     """Build :class:`IsaacCameraParams` for a camera added via ``add_camera``."""
     return sim.get_camera_params(camera_name)  # type: ignore[attr-defined]
 
 
-def render_rgb_and_depth(sim: "object", camera_name: str) -> "tuple[np.ndarray, np.ndarray]":
+def render_rgb_and_depth(sim: object, camera_name: str) -> tuple[np.ndarray, np.ndarray]:
     """Render the Isaac RTX foreground RGB + metric depth for a camera.
 
     Pixels with no geometry (sky / background) come back from Isaac as

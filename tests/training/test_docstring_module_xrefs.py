@@ -15,7 +15,7 @@ This guard walks every module/class/function docstring in the *top-level*
 ``reward.py``, ...) and fails if any embeds a ``<name>.py`` token that names an
 actual sibling module. It is intentionally sibling-aware rather than flagging
 every ``.py`` token: the provider trainers legitimately cite *upstream*
-reference scripts by filename (``launch_finetune.py`` from GR00T, ``train.py``
+reference scripts by filename (``train.py``
 from the Cosmos framework, ``parser.py`` from lerobot), which name real files in
 other repositories and are not internal siblings.
 """

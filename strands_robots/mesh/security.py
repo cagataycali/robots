@@ -290,8 +290,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "mock",
         "random",
         "test",
-        # Gr00tPolicy
-        "groot",
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",

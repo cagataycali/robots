@@ -500,7 +500,7 @@ class TestAShutdownDuringBringUpStopsBeforeTheNextEffect:
         async def recording_get_policy(
             policy_port: int | None = None,
             policy_host: str = "localhost",
-            policy_provider: str = "groot",
+            policy_provider: str = "cosmos3",
             **kwargs: Any,
         ) -> Any:
             # The real one is called positionally, so the stand-in has to accept

@@ -2,7 +2,7 @@
   "__doc__": "Declarative robot/sim -> LeRobot-model key maps for the local policy. state_keys/action_keys MUST match the keys the runtime observation actually emits. Two key conventions exist: (1) SIM entries use the bare MuJoCo joint names from each robot's XML (what _get_sim_observation returns); (2) *_real entries use LeRobot driver motor-feature names with the '.pos' suffix (robot._motors_ft, see lerobot/robots/*). obs_rename maps the runtime camera key -> the model's declared observation.images.* feature. dim_policy: strict|pad|truncate. Ground truth: lerobot-src/src/lerobot/robots + robot_descriptions MuJoCo XMLs.",
   "configs": {
     "panda_libero": {
-      "__note__": "EEF/task-space schema for LIBERO-trained VLAs (MolmoAct2-LIBERO etc.). NOT joint-space. action_keys are 7-dof delta-EEF consumed by LiberoAdapter's OSC controller.",
+      "__note__": "EEF/task-space schema for LIBERO-trained VLAs. NOT joint-space. action_keys are 7-dof delta-EEF consumed by an operational-space controller.",
       "obs_rename": {
         "image": "observation.images.image",
         "wrist_image": "observation.images.wrist_image"

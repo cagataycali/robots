@@ -232,7 +232,7 @@
        <animate attributeName="opacity" from="0" to="1" begin="0.1s" dur="0.5s" fill="freeze"/></g>
     <g><rect x="60" y="212" width="150" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="80" y="235">MolmoAct2</text>
        <animate attributeName="opacity" from="0" to="1" begin="0.2s" dur="0.5s" fill="freeze"/></g>
-    <g><rect x="60" y="258" width="150" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="80" y="281">GR00T N1.7</text>
+    <g><rect x="60" y="258" width="150" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="80" y="281">Cosmos 3</text>
        <animate attributeName="opacity" from="0" to="1" begin="0.3s" dur="0.5s" fill="freeze"/></g>
     <g><rect x="60" y="304" width="150" height="36" rx="18" fill="#ffffff" fill-opacity="0.05" stroke="#00FF77" stroke-opacity="0.4"/><text x="80" y="327">Pi0.6</text>
        <animate attributeName="opacity" from="0" to="1" begin="0.4s" dur="0.5s" fill="freeze"/></g>

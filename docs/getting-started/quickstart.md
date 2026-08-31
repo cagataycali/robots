@@ -32,7 +32,7 @@ sim.add_object(
 sim.run_policy(
     robot_name="so100",
     instruction="pick up the red cube",
-    policy_provider="mock",   # no GPU; swap "groot" or "lerobot_local" with a real model
+    policy_provider="mock",   # no GPU; swap "cosmos3" or "lerobot_local" with a real model
     duration=10.0,
 )
 ```
@@ -58,6 +58,6 @@ training a policy, and the full streaming data loop, each building on the last.
 
 ## See also
 
-- [Policy providers](../policies/overview.md) - GR00T, LeRobot Local, Cosmos 3.
+- [Policy providers](../policies/overview.md) - LeRobot Local, Cosmos 3, mock.
 - [Robot catalog](../robots/index.md) - all 73 robots.
 - [Real hardware](../hardware/robot-control.md) - same code, `mode="real"`.

@@ -6,7 +6,7 @@ diffusers backend), this test exercises the WebSocket service path
 (:mod:`strands_robots.policies.cosmos3.client`) with a real msgpack+NumPy
 round-trip against a **pre-running** Cosmos Framework RoboLab policy server.
 That makes it cheap: it can run from a non-GPU box pointed at a GPU host,
-mirroring tests_integ/groot/test_n17_live_server.py.
+mirroring the other live-server integration modules.
 
 Start the server first (holds the GPU) from a Cosmos Framework checkout:
 

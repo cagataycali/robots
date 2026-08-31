@@ -110,8 +110,7 @@ the still preview shows the composited result afterwards.
 >
 > Because the policy is `mock`, the arm performs *exploratory* motion (it moves
 > and sweeps its joints) rather than a trained skill — that's what the stock
-> API produces without a trained policy. For a real trained policy driving a
-> real task, see the GR00T + LIBERO demo below.
+> API produces without a trained policy.
 
 ### Try these prompts
 
@@ -124,75 +123,6 @@ the still preview shows the composited result afterwards.
 * *“Apply a 5 N upward force to the cube and render.”* —
   `apply_force` + `step` + `render`.
 * *“Pose the elbow at 1.2 rad.”* — `set_joint_positions` + `step`.
-
-## Real GR00T policy (Panda + LIBERO) — separate, agentic demo
-
-The scripted wave is great for showing the rendering pipeline, but you can
-also hand control to a **real NVIDIA GR00T vision-language-action policy**
-driving a **Franka Panda** through a **LIBERO** manipulation task. This is a
-**separate demo** — the SO-101 hybrid-render app above is untouched by it.
-
-It's **agentic**: a Strands `Agent` is given the `Simulation` tool and a
-natural-language instruction, and it picks `evaluate_benchmark` off the tool's
-action surface, fills the kwargs, runs the eval, and reports the
-`success_rate` in plain language (the pattern from
-`examples/libero/run_mujoco_agent.py`). A background thread renders the scene
-through the `HybridCompositor` into the `/live` MJPEG buffer so you watch the
-arm in near-real-time, and a clip is recorded.
-
-**Standalone Gradio app** — `app_groot_libero.py` (its own UI on port 7861, so
-it runs alongside the SO-101 app on 7860):
-
-```bash
-python -m examples.mujoco_gs.app_groot_libero --groot-port 8000
-# open http://127.0.0.1:7861
-```
-
-Pick a task, press **Run GR00T policy**, and the agent runs it — live view +
-clip + success rate.
-
-**Headless script** — `libero_groot.py` (run one episode → MP4):
-
-```bash
-# Needs a GR00T inference server reachable over ZMQ + libero + robosuite.
-python -m examples.mujoco_gs.libero_groot --suite libero_10 --task 0 --port 8000
-
-# Validate the pipeline without a policy server:
-python -m examples.mujoco_gs.libero_groot --provider mock
-```
-
-### Getting a *successful* episode (verified recipe)
-
-Measured **`success_rate=1.00`** against `nvidia/GR00T-N1.7-LIBERO`
-(`libero_10` checkpoint) on
-`libero-10-LIVING_ROOM_SCENE5_put_the_white_mug_…`. The recipe:
-
-* **Match the task suite to the served checkpoint.** The bundled container
-  serves `/data/checkpoints/libero_10`, so run **`libero_10`** tasks. A
-  different suite against it is a skill mismatch → ~0% success. (Bring up a
-  suite-matched checkpoint with `gr00t_inference(action="lifecycle", …,
-  hf_subfolder=<suite>)` — see `examples/libero/run.py`.)
-* **Don't cap `max_steps`.** LIBERO-Long needs ~500 steps; capping truncates
-  the episode before completion. The runner/script use the adapter default.
-* **Pre-warm the scene** (generate BDDL scene → `load_scene` → `prewarm`) so
-  the `image`/`wrist_image` cameras + Panda exist before inference.
-* **Let `evaluate_benchmark` auto-pick the robot** (omit `robot_name`) and use
-  its **default `action_horizon`**.
-
-Other facts / caveats:
-
-* **GR00T is embodiment-locked.** This checkpoint is `LIBERO_PANDA` — it can't
-  drive the SO-101 wave scene (wrong robot/cameras/action space).
-* **ZMQ only.** strands-robots' GR00T client speaks ZMQ (not HTTP). Point
-  `--port` at the ZMQ server (NVIDIA's `gr00t.eval.run_gr00t_server`).
-* **N1.7 wire format.** N1.7 servers expect a time axis on observations; the
-  runner passes `groot_version="n1.7"`. Use `n1.5`/`n1.6` for older servers.
-* **`libero` + `robosuite` required** (they ship the BDDL tasks + scenes).
-* **The panorama backdrop is mostly hidden for LIBERO.** LIBERO scenes are
-  enclosed (table/walls/floor), so there's little "sky" for the GS/panorama to
-  show through; the GS backdrop shines on open scenes like the SO-101 cube
-  demo. The compositor is still used (it also applies the LIBERO `viz_option`
-  that hides collision-geom/site debug markers, so the arm renders clean).
 
 ## Architecture
 

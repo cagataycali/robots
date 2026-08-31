@@ -685,7 +685,7 @@ class ProcessorBridge:
         except Exception as exc:  # noqa: BLE001 - recovery is best-effort
             # The helpers may be genuinely absent (older lerobot -> ImportError)
             # or unimportable because an unrelated sibling policy module fails at
-            # definition time (e.g. a broken dataclass in lerobot.policies.groot
+            # definition time (e.g. a broken dataclass in a lerobot policy package
             # raises TypeError while importing the policies package). Either way
             # reconstruction is impossible, so degrade to passthrough instead of
             # letting an unrelated lerobot defect crash ACT/diffusion loads.

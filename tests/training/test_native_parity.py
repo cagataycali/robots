@@ -2,13 +2,12 @@
 
 These assert that every ``--flag`` our trainers emit in ``build_command`` is a
 flag the *real* native pipeline actually accepts -- catching drift between our
-wrapper and Isaac-GR00T / cosmos-framework without launching a full finetune.
+wrapper and cosmos-framework without launching a full finetune.
 
-Skipped automatically unless GR00T_ROOT / COSMOS_ROOT point at real checkouts
+Skipped automatically unless COSMOS_ROOT points at a real checkout
 (set by CI on a GPU box; absent on laptops -> skipped, never failing).
 """
 
-import ast
 import os
 import re
 
@@ -16,7 +15,6 @@ import pytest
 
 from strands_robots.training import TrainSpec, create_trainer
 
-GR00T_ROOT = os.environ.get("GR00T_ROOT")
 COSMOS_ROOT = os.environ.get("COSMOS_ROOT")
 
 
@@ -30,43 +28,6 @@ def _flag_names(cmd):
         elif tok.startswith("--"):
             names.add(tok[2:])
     return names
-
-
-@pytest.mark.skipif(
-    not (GR00T_ROOT and os.path.isfile(os.path.join(GR00T_ROOT, "gr00t", "configs", "finetune_config.py"))),
-    reason="GR00T_ROOT not set to a real Isaac-GR00T checkout",
-)
-def test_groot_flags_match_real_finetune_config():
-    """Every --flag we emit must be a real FinetuneConfig dataclass field."""
-    cfg_path = os.path.join(GR00T_ROOT, "gr00t", "configs", "finetune_config.py")
-    with open(cfg_path) as f:
-        src = f.read()
-    tree = ast.parse(src)
-    fields = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "FinetuneConfig":
-            for stmt in node.body:
-                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-                    fields.add(stmt.target.id)
-    assert fields, "could not parse FinetuneConfig fields"
-
-    spec = TrainSpec(
-        dataset_root="/tmp/ds",
-        base_model="nvidia/GR00T-N1.5-3B",
-        output_dir="/tmp/out",
-        embodiment="GR1",
-        steps=500,
-        save_freq=250,
-        global_batch_size=8,
-        learning_rate=1e-4,
-        extra={"groot_root": GR00T_ROOT},
-    )
-    cmd = create_trainer("groot").build_command(spec)
-    emitted = _flag_names(cmd)
-    # Drop the torchrun/launcher meta-flags that aren't FinetuneConfig fields.
-    emitted -= {"nproc_per_node", "master_port"}
-    unknown = emitted - fields
-    assert not unknown, f"flags not in real FinetuneConfig: {sorted(unknown)}"
 
 
 @pytest.mark.skipif(

@@ -732,6 +732,5 @@ part-way through a rollout.
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics
 - [Policy providers](../policies/overview.md)
 - [Training](../training/overview.md)
-- [GR00T](groot.md)
 - [cuRobo](curobo.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)

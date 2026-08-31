@@ -8,7 +8,7 @@ post-tuned* - and those pipelines genuinely differ per provider:
 * **LeRobot** - build a ``TrainPipelineConfig`` and call
   ``lerobot.scripts.lerobot_train.train(cfg)`` in-process. HF-native checkpoints.
 * **GR00T N1.7** - build a ``FinetuneConfig`` -> ``Config`` and call
-  ``gr00t.experiment.experiment.run(config)``; ``tune_llm/visual/projector/
+  the backend's own in-process entry point; ``tune_llm/visual/projector/
   diffusion`` knobs + a modality-config ``.py``.
 * **Cosmos3** - build the SFT ``Config`` via ``load_experiment_from_toml`` and
   call ``cosmos_framework.scripts.train.launch(config, args)``; with an explicit
@@ -33,7 +33,7 @@ All of them nonetheless converge on:
 2. the same **lifecycle** - ``validate -> prepare -> train -> export``.
 
 A ``Trainer`` is selected by the SAME provider name as its ``Policy``
-(``groot`` / ``lerobot_local`` / ``cosmos3``), so a single registry identity
+(``lerobot_local`` / ``cosmos3``), so a single registry identity
 owns both the inference class and the training class. Adding a new policy =
 add a ``Policy`` + a ``Trainer`` under one provider entry.
 

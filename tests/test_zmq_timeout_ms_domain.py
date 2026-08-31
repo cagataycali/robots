@@ -42,8 +42,6 @@ from typing import Any
 import pytest
 
 import strands_robots
-from strands_robots.policies.groot.client import Gr00tInferenceClient
-from strands_robots.policies.groot.client import MsgSerializer as GrootSerializer
 from strands_robots.policies.moveit2.client import MoveIt2InferenceClient
 from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms, positive_whole_number_error
 
@@ -52,7 +50,7 @@ from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms, posi
 # it. Both clients load ZMQ lazily (``_load_zmq``) and refuse an unusable
 # ``timeout_ms`` *before* that call, so the domain verdicts, the refusal path,
 # the constructor ordering and the structural drift guard are all answerable on
-# an install without the ``[groot]`` / ``[moveit2]`` extra. A module-level skip
+# an install without the ``[moveit2]`` extra. A module-level skip
 # would have taken the drift guard with it - which is the one check here whose
 # whole job is to still be running when someone changes something unrelated.
 try:
@@ -123,7 +121,7 @@ MIN_ROUND_TRIP_BUDGET_MS = 1000
 #: and a tight one cannot be given one by hand.
 ROUND_TRIP: list[tuple[str, Any, int]] = [row for row in USABLE if row[2] >= MIN_ROUND_TRIP_BUDGET_MS]
 
-CLIENTS = [Gr00tInferenceClient, MoveIt2InferenceClient]
+CLIENTS = [MoveIt2InferenceClient]
 
 
 def _numpy_spellings() -> list[tuple[str, Any, int]]:
@@ -200,8 +198,6 @@ def _free_port() -> int:
 
 
 def _encoder_for(cls: type) -> Any:
-    if cls is Gr00tInferenceClient:
-        return GrootSerializer.to_bytes
     return lambda payload: msgpack.packb(payload, use_bin_type=True)
 
 
@@ -273,9 +269,9 @@ class TestTheSharedDomain:
         assert type(coerced) is int
 
     def test_the_message_names_the_surface_and_the_parameter(self) -> None:
-        _, reason = coerce_zmq_timeout_ms("Gr00tInferenceClient", "timeout_ms", 0)
+        _, reason = coerce_zmq_timeout_ms("MoveIt2InferenceClient", "timeout_ms", 0)
         assert reason is not None
-        assert "Gr00tInferenceClient" in reason
+        assert "MoveIt2InferenceClient" in reason
         assert "timeout_ms" in reason
 
     def test_the_ceiling_refusal_states_the_bound_rather_than_the_floor(self) -> None:
@@ -730,7 +726,6 @@ class TestNoZmqTimeoutSurfaceDrifts:
     def test_the_scan_finds_every_known_zmq_timeout_surface(self) -> None:
         """Non-vacuity: a scan that found nothing would pass everything below."""
         assert set(self._modules_setting_a_timeout()) == {
-            "policies/groot/client.py",
             "policies/moveit2/client.py",
         }
 
@@ -833,7 +828,7 @@ class TestTheCoercionReadsTheValueOnce:
     helper that stopped converting at all would satisfy the first alone.
     """
 
-    METHOD = "Gr00tInferenceClient"
+    METHOD = "MoveIt2InferenceClient"
     PARAM = "timeout_ms"
 
     @staticmethod

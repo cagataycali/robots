@@ -35,7 +35,7 @@ graph LR
     class F policy
 ```
 
-The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) decides *how*. The backend - physics or servos - does it.
+The agent decides *what* to do. The policy (Mock, LeRobot, or Cosmos 3) decides *how*. The backend - physics or servos - does it.
 
 ## Start here
 

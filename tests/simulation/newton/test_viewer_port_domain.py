@@ -290,7 +290,7 @@ class TestNoSimulationSurfaceShipsAnUnguardedPort:
     been just as unreported. This closes that shape for the simulation package.
 
     Scoped to the simulation backends rather than the whole package on purpose:
-    the internal transport clients (``Gr00tInferenceClient`` and its siblings)
+    the internal transport clients (``MoveIt2InferenceClient`` and its siblings)
     take a ``port`` they deliberately do not re-validate, because their dialing
     provider refuses it first and ``TestRefusalPrecedesTheTransport`` pins that
     ordering. Widening this scan would demand a second, redundant guard there.

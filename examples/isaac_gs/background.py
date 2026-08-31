@@ -20,7 +20,6 @@ options.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger("isaac_gs.background")
 
@@ -52,10 +51,10 @@ ENV_BAKE_ORIGIN = (0.0, 0.0, 0.4)
 
 def resolve_ibl_env_map(
     background: object,
-    gsplat_ply: Optional[str] = None,
-    gsplat_scene: Optional[str] = None,
-    panorama: Optional[str] = None,
-) -> Optional[str]:
+    gsplat_ply: str | None = None,
+    gsplat_scene: str | None = None,
+    panorama: str | None = None,
+) -> str | None:
     """Resolve the equirect environment map that should light the robot.
 
     Companion to :func:`resolve_background` (issue #2323, stage 1): given the
@@ -106,9 +105,9 @@ def resolve_ibl_env_map(
 
 
 def resolve_background(
-    gsplat_ply: Optional[str] = None,
-    gsplat_scene: Optional[str] = None,
-    panorama: Optional[str] = None,
+    gsplat_ply: str | None = None,
+    gsplat_scene: str | None = None,
+    panorama: str | None = None,
     prefer_gs: bool = True,
     allow_fallback: bool = False,
 ):

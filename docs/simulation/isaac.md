@@ -85,7 +85,7 @@ Known collateral (observed with isaacsim 6.0.0.1 and 6.0.1.0):
   warnings against lerobot's `torchvision` pin. Expect those warnings; they do
   not by themselves indicate breakage. Validated combination as of 2026-07-31:
   isaacsim 6.0.x with torch 2.11 / torchvision 0.26.0 alongside lerobot 0.5.1 -
-  GR00T-on-MuJoCo re-verified green post-install. The environment is outside
+  the MuJoCo backend re-verified green post-install. The environment is outside
   lerobot's declared support, so re-verify your own policy path after
   installing.
 - **EULA prompt on first import.** Any non-interactive first import fails with
@@ -95,7 +95,7 @@ Known collateral (observed with isaacsim 6.0.0.1 and 6.0.1.0):
   segfault that makes otherwise-clean scripts exit 134 *after* completing
   successfully. The drivers in this repo guard with `os._exit(...)` after
   SimulationApp teardown (see the `isaac` subcommand epilogue in
-  `examples/libero/run.py`); user scripts
+  the benchmark examples); user scripts
   that boot SimulationApp should do the same.
 
 ## Usage

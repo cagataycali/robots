@@ -38,7 +38,7 @@ _TRAINING_OVERVIEW = _DOCS / "training" / "overview.md"
 
 # Providers the dependency table has to speak about. Their backends are third-party
 # checkouts, so *which interpreter imports them* is the operator-visible question.
-_THIRD_PARTY_BACKENDS = ("groot", "cosmos3")
+_THIRD_PARTY_BACKENDS = ("cosmos3",)
 
 # An acceptance claim: a verb of acceptance and a `name=` token in one sentence.
 _ACCEPTS_ARGUMENT = re.compile(
@@ -266,20 +266,20 @@ def test_a_planted_claim_is_reported_and_a_denial_is_not(tmp_path: Path) -> None
     """An acceptance claim is graded; saying the argument does not exist is not a claim."""
     claim = tmp_path / "claim.md"
     claim.write_text(
-        "`Gr00tTrainer` accepts a `python_executable=` argument (defaults to `sys.executable`).\n",
+        "`Cosmos3Trainer` accepts a `python_executable=` argument (defaults to `sys.executable`).\n",
         encoding="utf-8",
     )
     reported = _unbacked_argument_claims([claim])
     assert reported, "a planted claim about an undeclared argument was not reported"
-    assert "python_executable= on Gr00tTrainer" in next(iter(reported.values()))
+    assert "python_executable= on Cosmos3Trainer" in next(iter(reported.values()))
 
     denial = tmp_path / "denial.md"
     denial.write_text(
-        "`Gr00tTrainer` calls its backend in the same interpreter. There is no `python_executable=` argument to set.\n",
+        "`Cosmos3Trainer` calls its backend in the same interpreter. There is no `python_executable=` argument to set.\n",
         encoding="utf-8",
     )
     assert not _unbacked_argument_claims([denial]), "a denial was mistaken for a claim"
 
     real = tmp_path / "real.md"
-    real.write_text("`Gr00tTrainer` accepts a `groot_root=` argument.\n", encoding="utf-8")
+    real.write_text("`Cosmos3Trainer` accepts a `cosmos_root=` argument.\n", encoding="utf-8")
     assert not _unbacked_argument_claims([real]), "a declared argument was reported"

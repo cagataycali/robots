@@ -5,7 +5,6 @@ contract (``validate`` / ``prepare`` / ``train`` / ``export`` / ``status`` /
 ``provider_name`` / ``hardware_floor``) with rich docstrings, and the reference
 :class:`~strands_robots.training.mock.MockTrainer` follows suit. The real
 providers (:class:`~strands_robots.training.cosmos3.Cosmos3Trainer`,
-:class:`~strands_robots.training.groot.Gr00tTrainer`,
 :class:`~strands_robots.training.lerobot.LerobotTrainer`,
 :class:`~strands_robots.training.sagemaker.SagemakerTrainer`) genuinely differ
 per backend - each ``validate`` checks backend-specific inputs, and each
@@ -28,7 +27,7 @@ _PACKAGE_DIR = Path(training_pkg.__file__).parent
 
 # Provider modules that define a concrete Trainer subclass (mock is the
 # dependency-free reference; the others are the real backends).
-_PROVIDER_MODULES = ("mock.py", "cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py")
+_PROVIDER_MODULES = ("mock.py", "cosmos3.py", "lerobot.py", "sagemaker.py")
 
 
 def _public_members_without_docstring(class_node: ast.ClassDef) -> list[str]:
@@ -62,7 +61,6 @@ def test_provider_modules_define_concrete_trainers() -> None:
     assert found == {
         "mock.py::MockTrainer",
         "cosmos3.py::Cosmos3Trainer",
-        "groot.py::Gr00tTrainer",
         "lerobot.py::LerobotTrainer",
         "sagemaker.py::SagemakerTrainer",
     }, found

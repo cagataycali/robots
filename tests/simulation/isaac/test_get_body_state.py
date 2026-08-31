@@ -2,7 +2,7 @@
 
 The method is the read primitive under BOTH consumers #1802 unblocked on the
 Isaac backend: the predicate DSL (``_body_position`` / ``_body_quaternion``)
-and ``LiberoAdapter._read_eef_pose``'s body-state fallback (the source of the
+and a benchmark adapter's EEF-pose body-state fallback (the source of the
 ``state.x/y/z/roll/pitch/yaw`` keys the ``libero_panda`` GR00T data-config
 requires). These unit tests exercise it through a skeleton ``IsaacSimulation``
 built with ``__new__`` (same pattern as ``test_dataset_recording.py``) so the

@@ -298,7 +298,7 @@ from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOIN
 ARM_JOINTS = WBC_G1_ALL_JOINTS[len(WBC_G1_LEG_WAIST_JOINTS):]  # the 14 arm DOFs
 
 lower = create_policy("wbc", checkpoint="/path/to/grootwbc-g1")
-upper = create_policy("groot", port=5555)        # or pi0 / MolmoAct / any Policy
+upper = create_policy("cosmos3", port=8000)      # or pi0 / any Policy
 policy = CompositePolicy(
     lower=lower,
     upper=upper,
@@ -368,6 +368,5 @@ implemented by `WBCGaitPolicy` (provider `wbc_gait`). See
 - [Policy overview](overview.md)
 - [cuRobo](curobo.md) - in-process CUDA collision-aware planning (non-VLA).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA).
-- [GR00T](groot.md) - ZMQ service VLA (manipulation upper body).
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.
 - [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)

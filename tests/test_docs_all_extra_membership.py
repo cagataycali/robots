@@ -7,7 +7,7 @@ they describe is a fact about ``[project.optional-dependencies]`` rather than
 prose - so it is derivable, and it drifted.
 
 ``docs/getting-started/installation.md`` enumerated ``[all]`` as five extras
-(``groot-service`` + ``lerobot`` + ``sim-mujoco`` + ``mesh`` + ``mesh-iot``)
+(``moveit2`` + ``lerobot`` + ``sim-mujoco`` + ``mesh`` + ``mesh-iot``)
 while the bundle had grown to nineteen. The enumeration was a strict subset, so
 a reader deciding whether ``[all]`` covered the policy they wanted was told it
 did not for fourteen extras it does install - and the code block five lines

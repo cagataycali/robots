@@ -3,7 +3,7 @@
 Unlike tests/policies/cosmos3/test_policy_diffusers.py (fully mocked), this test
 actually loads the native diffusers ``Cosmos3OmniPipeline`` weights and runs a
 real in-process forward pass. It needs a CUDA GPU + the model weights, so it is
-skipped by default. Parallel to tests_integ/groot/test_n17_live_server.py.
+skipped by default. Parallel to the other live-server integration modules.
 
 Enable with:
 

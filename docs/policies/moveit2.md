@@ -196,7 +196,6 @@ dispatch collects from the wire command.
 
 - [Policy overview](overview.md)
 - [cuRobo](curobo.md) - in-process collision-aware planning (non-VLA, GPU).
-- [GR00T](groot.md) - ZMQ service VLA.
 - [Cosmos 3](cosmos3.md) - WebSocket VLA.
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.
 - [MoveIt2 project](https://moveit.ai/)

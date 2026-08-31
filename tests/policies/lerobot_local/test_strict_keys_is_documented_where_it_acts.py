@@ -14,7 +14,7 @@ report: ``strict_keys=False`` warns once and returns a 7-value vector, and
 ``strict_keys=True`` refuses.
 
 The sibling that got the flag in the same PR is the counter-evidence.
-``Gr00tPolicy``'s entry says "if auto-inferred observation/action keys cannot be
+the service providers' entry says "if auto-inferred observation/action keys cannot be
 matched", naming the whole key surface, and is still accurate. Both joint-state
 methods document their own ``strict_keys`` condition (``_resolve_state_order``
 ships an explicit two-bullet list of the True and False branches), and

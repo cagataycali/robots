@@ -22,7 +22,6 @@ import strands_robots
 | `list_providers()` | Known policy providers | [Policies](policies/overview.md) |
 | `list_policy_types()` (lazy) | Resolvable `lerobot_local` `policy_type` strings | [LeRobot local](policies/lerobot-local.md) |
 | `Simulation` (lazy) | MuJoCo-backed AgentTool | [Simulation overview](simulation/overview.md) |
-| `Gr00tPolicy` (lazy) | NVIDIA GR00T client | [GR00T](policies/groot.md) |
 
 ## `strands_robots.registry`
 
@@ -43,7 +42,7 @@ from strands_robots.registry import (
 | `has_sim(name)` / `has_hardware(name)` | Sim / real support flags. |
 | `get_hardware_type(name)` | LeRobot type string for `mode="real"`. |
 | `list_robots_by_category()` | `{category: [names]}`. |
-| `list_aliases()` | All 119 aliases, including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
+| `list_aliases()` | All 119 aliases, including every VLA `data_config` spelling (so `data_config` names resolve as robot names). |
 | `format_robot_table()` | Pretty-printed robot table. |
 | `register_robot(name, entry)` | Add user-defined robot at runtime. |
 | `unregister_robot(name)` | Remove a runtime-registered robot. |
@@ -110,7 +109,6 @@ from strands_robots.hardware_robot import Robot, TaskStatus, RobotTaskState
 from strands_robots.policies import (
     Policy, MockPolicy, create_policy, register_policy, list_providers, UntrustedRemoteCodeError,
 )
-from strands_robots.policies.groot import Gr00tPolicy
 from strands_robots.policies.lerobot_local import LerobotLocalPolicy
 from strands_robots.policies.cosmos3 import Cosmos3Policy
 ```
@@ -125,7 +123,6 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 | `list_aliases()` | Every provider alias and the canonical name it resolves to, across both registries. Together with `list_providers()` they are every *registered* spelling - not every spelling `create_policy` resolves. A module under `strands_robots.policies` exporting a `Policy` subclass also resolves under its own module name: `composite` (builds through the factory) and `persistent` (resolves; constructed directly). |
 | `list_policy_types()` | `policy_type` strings the installed lerobot resolves; `[]` without lerobot. Discovery peer of `list_providers`. |
 | `UntrustedRemoteCodeError` | Raised when `STRANDS_TRUST_REMOTE_CODE` is required but unset. |
-| `Gr00tPolicy` | GR00T N1.5/N1.6/N1.7 via ZMQ (service) or in-process. |
 | `LerobotLocalPolicy` | HF LeRobot inference (ACT, Pi0, Pi0.5, SmolVLA, …). Needs `STRANDS_TRUST_REMOTE_CODE=1`. |
 | `Cosmos3Policy` | NVIDIA Cosmos 3 VLA over WebSocket. |
 
@@ -133,7 +130,7 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 
 ```python
 from strands_robots.tools import (
-    download_assets, gr00t_inference, lerobot_calibrate, lerobot_camera,
+    download_assets, lerobot_calibrate, lerobot_camera,
     lerobot_teleoperate, lerobot_train, pose_tool, robot_mesh, run_policy,
     serial_tool, train_policy, use_lerobot, use_ros, use_rtps,
 )
@@ -179,14 +176,6 @@ from strands_robots.mesh import init_mesh, Mesh, InputPublisher, InputReceiver
 
 See [Multi-robot mesh](mesh.md).
 
-## `strands_robots.benchmarks.libero`
-
-```python
-from strands_robots.benchmarks.libero import LiberoSuite
-```
-
-LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchmark-libero]"`.
-
 ## Environment variables
 
 | Variable | Purpose | Default |
@@ -197,8 +186,6 @@ LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchm
 | `STRANDS_MESH` | `true` opts a bare `Robot()` into the mesh; `false` is a hard kill switch | unset (mesh off) |
 | `STRANDS_MESH_AUDIT_DIR` | Safety event audit log | `~/.strands_robots/` |
 | `MUJOCO_GL` | GL backend for MuJoCo | auto |
-| `GROOT_API_TOKEN` | GR00T cloud inference token | (unset) |
-| `STRANDS_GROOT_WIRE_LOG` | Directory to dump pre/post-inference payloads to, e.g. `/tmp/groot-wire`; covers the in-process path as well as the service path, capped by `STRANDS_GROOT_WIRE_LOG_MAX_CALLS` | (unset) |
 
 ## See also
 

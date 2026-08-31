@@ -70,8 +70,8 @@ class TestPolicyTypeProviderGuards:
 
 class TestExecutePayloadFields:
     def test_safe_model_path_accepted(self):
-        out = sec.validate_command(_execute(model_path="nvidia/gr00t-n1.5"))
-        assert out["model_path"] == "nvidia/gr00t-n1.5"
+        out = sec.validate_command(_execute(model_path="nvidia/cosmos3-nano-policy"))
+        assert out["model_path"] == "nvidia/cosmos3-nano-policy"
 
     def test_target_joints_key_over_peer_id_len_rejected(self):
         joints = {"j" * (sec.MAX_PEER_ID_LEN + 1): 0.0}

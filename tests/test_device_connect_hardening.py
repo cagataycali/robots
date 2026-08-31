@@ -72,7 +72,7 @@ class _FakeRobot:
         instruction,
         policy_port=None,
         policy_host="localhost",
-        policy_provider="groot",
+        policy_provider="cosmos3",
         duration=30.0,
         **kw,
     ):

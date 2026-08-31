@@ -139,4 +139,3 @@ way on a wrist link (`g1/left_wrist_yaw_link`).
 
 - [Mobile](mobile.md) - quadrupeds and wheeled bases.
 - [Bimanual](bimanual.md) - two-arm rigs without the legs.
-- [GR00T](../policies/groot.md) - many GR00T data_configs target humanoids.

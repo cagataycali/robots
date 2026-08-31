@@ -355,8 +355,7 @@ class RenderingMixin:
     def _get_viz_option(self) -> Any:
         """Return an ``mujoco.MjvOption`` from ``world._backend_state["viz_option"]``, or ``None``.
 
-        The optional ``viz_option`` override lets benchmark adapters (e.g.
-        :class:`~strands_robots.benchmarks.libero.adapter.LiberoAdapter`)
+        The optional ``viz_option`` override lets benchmark adapters
         configure render-time visualisation flags - things like
         ``mjvOption.geomgroup[0] = 0`` to hide collision geoms,
         ``sitegroup[*] = 0`` to hide site markers, ``mjVIS_JOINT/mjVIS_ACTUATOR/mjVIS_COM = 0``
@@ -670,8 +669,8 @@ class RenderingMixin:
         has installed a custom action controller via
         ``world._backend_state["action_controller"]`` (mirroring the
         ``viz_option`` pattern from #168), dispatch to it
-        instead of the actuator/joint-name lookup loop. Used by
-        :class:`LiberoAdapter` to convert GR00T's task-space delta-EEF
+        instead of the actuator/joint-name lookup loop. Used by a
+        LIBERO-style adapter to convert task-space delta-EEF
         actions (7-dim ``{x, y, z, roll, pitch, yaw, gripper}``) into
         the LIBERO scene's torque-mode joint actuators (9-dim
         ``robot0_torq_j1..7`` + gripper) via RoboSuite's
@@ -761,8 +760,8 @@ class RenderingMixin:
         is set by a benchmark adapter via
         ``world._backend_state["action_controller"]`` and is expected
         to expose an ``apply(action_dict, model, data, robot_name)``
-        method that writes to ``data.ctrl``. See
-        :meth:`LiberoAdapter._install_action_controller` for the
+        method that writes to ``data.ctrl``. A benchmark adapter that
+        drives torque-mode actuators from task-space actions is the
         canonical use case.
 
         Returns ``None`` (the default) when no adapter has set the
@@ -2519,7 +2518,7 @@ class RenderingMixin:
                     benchmark_name=task,
                     n_episodes=5,
                     seed=42,
-                    policy_provider="groot",
+                    policy_provider="cosmos3",
                     policy_config={...},
                     on_frame=on_frame,
                 )

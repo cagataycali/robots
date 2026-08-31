@@ -2,7 +2,7 @@
 
 Exposes the :class:`~strands_robots.training.base.Trainer` abstraction to an
 agent. One tool, provider-agnostic: the ``provider`` argument selects the
-backend (``lerobot_local`` / ``groot`` / ``cosmos3`` / ``mock``) and the SAME
+backend (``lerobot_local`` / ``cosmos3`` / ``mock``) and the SAME
 arguments map onto each backend's native pipeline via ``create_trainer`` +
 ``TrainSpec``.
 
@@ -119,8 +119,8 @@ def train_policy(
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
         provider: Training backend / policy family - ``"lerobot_local"`` (act,
-            diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T),
-            ``"cosmos3"`` (NVIDIA Cosmos3), or ``"mock"``. Same name as the
+            diffusion, smolvla, pi0, pi05, ...), ``"cosmos3"`` (NVIDIA Cosmos3),
+            or ``"mock"``. Same name as the
             inference provider in ``create_policy``.
         dataset_root: Path to a LeRobotDataset v3 root (has ``meta/info.json``) -
             exactly what ``Robot.stop_recording`` writes. Optional when
@@ -181,8 +181,7 @@ def train_policy(
         augmentation: Backend-specific augmentation dict.
         fps: Dataset control rate (when a backend needs it).
         extra: Backend-specific passthrough. lerobot: ``policy_type``,
-            ``job_name``, any ``--key=value``. GR00T: ``groot_root``,
-            ``modality_config_path``. Cosmos: ``cosmos_root``, ``sft_toml``.
+            ``job_name``, any ``--key=value``. Cosmos: ``cosmos_root``, ``sft_toml``.
         job_id: Job identifier for ``action="status"``.
 
     Returns:
@@ -201,11 +200,10 @@ def train_policy(
           ``transformers>=5.4.0,<5.6.0`` (plus num2words / scipy); do NOT pin
           ``transformers==5.3.0`` - it conflicts with lerobot 0.6's transformers
           floor.
-        - ``groot``/``cosmos3``: install the upstream package into THIS
-          interpreter (the trainer imports it and calls its library functions
-          in-process - no subprocess). Point ``extra['groot_root']``/``GR00T_ROOT``
-          or ``extra['cosmos_root']``/``COSMOS_ROOT`` at the checkout for runtime
-          config/recipe resolution.
+        - ``cosmos3``: install the upstream package into THIS interpreter (the
+          trainer imports it and calls its library functions in-process - no
+          subprocess). Point ``extra['cosmos_root']``/``COSMOS_ROOT`` at the
+          checkout for runtime config/recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/training/overview.md.

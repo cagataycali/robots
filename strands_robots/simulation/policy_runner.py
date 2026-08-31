@@ -3211,13 +3211,13 @@ class PolicyRunner:
                 # it the same eval is bit-stable (same successes every run).
                 set_eval_seed(episode_seed)
 
-                # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
+                # #187 - for SERVICE-mode policies (e.g. Cosmos3Policy over
                 # ZMQ), set_eval_seed only seeds the client process. The
                 # remote inference server has its own torch/CUDA RNG that
                 # drifts across calls. Forward the per-episode seed via
                 # policy.reset(seed=...) so server-side state can be
                 # re-initialised. Default Policy.reset is a no-op; concrete
-                # policies override (Gr00tPolicy forwards to the server's
+                # policies override (a service policy forwards to the server's
                 # `reset` endpoint).
                 try:
                     policy.reset(seed=episode_seed)

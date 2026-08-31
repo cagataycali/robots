@@ -167,16 +167,16 @@ class TestResolvePolicy:
             assert provider == "mock", f"'{alias}' should resolve to 'mock'"
 
     def test_huggingface_model_id_nvidia(self):
-        """NVIDIA model IDs should resolve to groot via hf_orgs."""
-        provider, kwargs = resolve_policy("nvidia/gr00t-n1.5-3b")
-        assert provider == "groot"
-        assert kwargs["pretrained_name_or_path"] == "nvidia/gr00t-n1.5-3b"
+        """An unlisted NVIDIA model ID falls back to lerobot_local."""
+        provider, kwargs = resolve_policy("nvidia/some-unlisted-vla")
+        assert provider == "lerobot_local"
+        assert kwargs["pretrained_name_or_path"] == "nvidia/some-unlisted-vla"
 
     def test_huggingface_model_id_override(self):
         """model_id_overrides should match before hf_orgs."""
-        provider, kwargs = resolve_policy("nvidia/groot-something-new")
-        assert provider == "groot"
-        assert kwargs["pretrained_name_or_path"] == "nvidia/groot-something-new"
+        provider, kwargs = resolve_policy("nvidia/cosmos3-nano-policy")
+        assert provider == "cosmos3"
+        assert kwargs["pretrained_name_or_path"] == "nvidia/cosmos3-nano-policy"
 
     def test_unknown_hf_org_falls_back_to_lerobot_local(self):
         """Unknown HF org should fall back to lerobot_local."""
@@ -184,10 +184,10 @@ class TestResolvePolicy:
         assert provider == "lerobot_local"
         assert kwargs["pretrained_name_or_path"] == "unknownorg/somemodel"
 
-    def test_zmq_url_extracts_host_and_port(self):
-        """ZMQ URLs should resolve to groot with parsed host/port."""
-        provider, kwargs = resolve_policy("zmq://myhost:9999")
-        assert provider == "groot"
+    def test_service_url_extracts_host_and_port(self):
+        """Service URLs should resolve to their provider with parsed host/port."""
+        provider, kwargs = resolve_policy("cosmos3://myhost:9999")
+        assert provider == "cosmos3"
         assert kwargs["host"] == "myhost"
         assert kwargs["port"] == 9999
 
@@ -198,12 +198,12 @@ class TestResolvePolicy:
 
     def test_extra_kwargs_forwarded_on_hf_model(self):
         """Extra kwargs should pass through on HF model resolution."""
-        _, kwargs = resolve_policy("nvidia/gr00t-n1.5-3b", batch_size=4)
+        _, kwargs = resolve_policy("nvidia/cosmos3", batch_size=4)
         assert kwargs["batch_size"] == 4
 
-    def test_extra_kwargs_forwarded_on_zmq_url(self):
+    def test_extra_kwargs_forwarded_on_service_url(self):
         """Extra kwargs should pass through on URL resolution."""
-        _, kwargs = resolve_policy("zmq://host:1234", data_config="abc")
+        _, kwargs = resolve_policy("cosmos3://host:1234", data_config="abc")
         assert kwargs["data_config"] == "abc"
 
     def test_unrecognised_string_falls_back(self):
@@ -219,16 +219,16 @@ class TestResolvePolicy:
 
     def test_registered_provider_name_resolves(self):
         """A canonical provider name should resolve directly."""
-        provider, _ = resolve_policy("groot")
-        assert provider == "groot"
+        provider, _ = resolve_policy("cosmos3")
+        assert provider == "cosmos3"
 
     def test_case_insensitive_shorthand(self):
         """Shorthands should match case-insensitively."""
         provider, _ = resolve_policy("Mock")
         assert provider == "mock"
 
-        provider, _ = resolve_policy("GROOT")
-        assert provider == "groot"
+        provider, _ = resolve_policy("COSMOS3")
+        assert provider == "cosmos3"
 
 
 # ─── Provider lookup tests ────────────────────────────────────────────
@@ -238,10 +238,10 @@ class TestProviderLookup:
     """JSON-based provider config should be queryable."""
 
     def test_known_provider_returns_config(self):
-        config = get_policy_provider("groot")
+        config = get_policy_provider("cosmos3")
         assert config is not None
         assert "port" in config["config_keys"]
-        assert config["class"] == "Gr00tPolicy"
+        assert config["class"] == "Cosmos3Policy"
 
     def test_unknown_provider_returns_none(self):
         assert get_policy_provider("nonexistent_xyz") is None
@@ -249,7 +249,7 @@ class TestProviderLookup:
     def test_list_providers_includes_all_json_entries(self):
         providers = list_policy_providers()
         assert "mock" in providers
-        assert "groot" in providers
+        assert "cosmos3" in providers
 
     def test_provider_has_required_keys(self):
         """Every provider entry should have module, class, and config_keys."""
@@ -299,21 +299,21 @@ class TestImportPolicyClass:
 class TestBuildPolicyKwargs:
     """build_policy_kwargs() should map generic params to provider-specific keys."""
 
-    def test_groot_port_and_host(self):
-        """groot provider should accept port and host."""
-        kwargs = build_policy_kwargs("groot", policy_port=5555, policy_host="gpu-box")
+    def test_cosmos3_port_and_host(self):
+        """cosmos3 provider should accept port and host."""
+        kwargs = build_policy_kwargs("cosmos3", policy_port=5555, policy_host="gpu-box")
         assert kwargs["port"] == 5555
         assert kwargs["host"] == "gpu-box"
 
-    def test_groot_defaults_host(self):
-        """groot should default host to 'localhost' when not provided."""
-        kwargs = build_policy_kwargs("groot", policy_port=5555)
+    def test_cosmos3_defaults_host(self):
+        """cosmos3 should default host to 'localhost' when not provided."""
+        kwargs = build_policy_kwargs("cosmos3", policy_port=5555)
         assert kwargs["host"] == "localhost"
 
-    def test_groot_data_config(self):
-        """groot should accept data_config when provided."""
-        kwargs = build_policy_kwargs("groot", data_config={"key": "val"})
-        assert kwargs["data_config"] == {"key": "val"}
+    def test_cosmos3_embodiment(self):
+        """cosmos3 should accept embodiment when provided."""
+        kwargs = build_policy_kwargs("cosmos3", embodiment="droid")
+        assert kwargs["embodiment"] == "droid"
 
     def test_unknown_provider_returns_empty(self):
         """Unknown provider should return empty kwargs."""
@@ -322,17 +322,17 @@ class TestBuildPolicyKwargs:
 
     def test_extra_kwargs_for_allowed_keys(self):
         """Extra kwargs matching config_keys should be included."""
-        kwargs = build_policy_kwargs("groot", data_config={"some": "config"})
-        assert kwargs["data_config"] == {"some": "config"}
+        kwargs = build_policy_kwargs("cosmos3", embodiment="umi")
+        assert kwargs["embodiment"] == "umi"
 
     def test_extra_kwargs_not_in_allowed_keys_ignored(self):
         """Extra kwargs NOT in config_keys should be ignored."""
-        kwargs = build_policy_kwargs("groot", not_a_real_key="ignored")
+        kwargs = build_policy_kwargs("cosmos3", not_a_real_key="ignored")
         assert "not_a_real_key" not in kwargs
 
-    def test_groot_only_port_no_host_gets_default(self):
+    def test_cosmos3_only_port_no_host_gets_default(self):
         """When only port is given, host should default from JSON defaults."""
-        kwargs = build_policy_kwargs("groot", policy_port=9999)
+        kwargs = build_policy_kwargs("cosmos3", policy_port=9999)
         assert kwargs["port"] == 9999
         assert kwargs["host"] == "localhost"  # from defaults
 

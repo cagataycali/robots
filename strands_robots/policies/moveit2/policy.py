@@ -6,7 +6,7 @@ the request to a sidecar ROS 2 node via ZMQ + msgpack, and unpacks the
 returned joint trajectory into the per-step action dicts that
 :class:`~strands_robots.robot.Robot` consumes.
 
-Construction mirrors :class:`~strands_robots.policies.groot.policy.Gr00tPolicy`'s
+Construction mirrors :class:`~strands_robots.policies.cosmos3.policy.Cosmos3Policy`'s
 service mode:
 
 .. code-block:: python
@@ -77,7 +77,7 @@ class MoveIt2Policy(Policy):
             to the ``MOVEIT2_API_TOKEN`` environment variable if not
             provided.
         **kwargs: Forward-compatibility absorber for the smart-string
-            resolution path (e.g. ``zmq://host:port`` extras the factory
+            resolution path (e.g. ``ws://host:port`` extras the factory
             adds). Per the #300 contract, providers MUST ignore unknown
             kwargs rather than raising.
 
@@ -94,7 +94,7 @@ class MoveIt2Policy(Policy):
 
             policy = create_policy("moveit2", host="127.0.0.1", port=5556)
             policy = create_policy("moveit", port=5556)  # alias
-            policy = create_policy("zmq://127.0.0.1:5556", planning_group="arm")
+            policy = create_policy("moveit2", port=5556, planning_group="arm")
     """
 
     def __init__(
@@ -127,7 +127,7 @@ class MoveIt2Policy(Policy):
         )
 
         # Per the #300 contract: silently ignore unknown kwargs. The
-        # smart-string resolver (``zmq://...``) and ``register_policy``
+        # smart-string resolver (``ws://...``) and ``register_policy``
         # may fan extra kwargs through this constructor; the policy
         # only needs ``host`` / ``port`` / ``planning_group`` / etc.
         if kwargs:

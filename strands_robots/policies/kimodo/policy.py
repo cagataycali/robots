@@ -122,7 +122,7 @@ def _quat_mul(a: NDArray[np.float32], b: NDArray[np.float32]) -> NDArray[np.floa
 
     Local for the same reason the MJCF loader and the Newton backend keep their
     own copies: the two other wxyz products in the tree are private to
-    :mod:`strands_robots.simulation.isaac.loaders` and the LIBERO adapter, and
+    :mod:`strands_robots.simulation.isaac.loaders`, and
     reaching across a package for a private symbol is worse than a four-line
     product. The public one in
     :mod:`strands_robots.policies.protomotions.state_utils` is xyzw, so using it

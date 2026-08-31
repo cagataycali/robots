@@ -4,7 +4,7 @@
 numeric on a spec that decides whether a run *learns* rather than how much work
 it does, and unlike the run-size fields **every** backend reads it: the three
 supervised trainers assign it to their config's optimizer field (LeRobot
-``policy.optimizer_lr``, GR00T ``FinetuneConfig.learning_rate``, Cosmos
+``policy.optimizer_lr``, Cosmos
 ``optimizer.lr``) and the RL trainers pass it straight to
 ``torch.optim.Adam(..., lr=...)``. ``rl/base_algo.py`` calls it one of the
 "universal" spec fields.
@@ -50,7 +50,6 @@ import pytest
 from strands_robots.training._validate import learning_rate_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
@@ -74,7 +73,7 @@ NOT_A_NUMBER = ("1e-4", [1e-4], {"lr": 1e-4})
 
 UNUSABLE = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
 
-SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
+SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, SagemakerTrainer)
 RL_TRAINER_NAMES = ("FastSacTrainer", "PpoTrainer")
 ALL_TRAINER_NAMES = tuple(t.__name__ for t in SUPERVISED_TRAINERS) + RL_TRAINER_NAMES
 

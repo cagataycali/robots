@@ -1,7 +1,7 @@
 """Default Isaac scene for the 3DGS hybrid-render demo.
 
 A real Franka Panda (loaded from Isaac's bundled USD, *not* the
-procedural stick-figure -- see ``examples/libero/run.py`` (the
+procedural stick-figure (the
 ``isaac`` subcommand) for
 why) plus a small red cube on the ground, and an over-the-shoulder
 RTX camera. The robot + cube are the RTX foreground the compositor
@@ -27,7 +27,7 @@ class SceneBuild:
     # World-frame z of the shadow-catcher plane's top surface, when one was
     # added -- pass it to ``HybridCompositor(shadow_plane_z=...)`` so the
     # compositor reads the plane as a shadow catcher instead of geometry.
-    shadow_plane_z: "float | None" = None
+    shadow_plane_z: float | None = None
 
 
 # Hero camera presets (pos, target, fov_deg) framing the Franka in the 3DGS
@@ -46,7 +46,7 @@ class SceneBuild:
 # sweep). Eyes stay INSIDE the ~2 m captured shell (z < the ~1.6 m ceiling) so
 # the splat still fills the frame; aiming higher captures the arm without
 # grazing the unobserved ceiling.
-CAMERA_PRESETS: "dict[str, tuple[list[float], list[float], float]]" = {
+CAMERA_PRESETS: dict[str, tuple[list[float], list[float], float]] = {
     "oblique": ([0.96, -0.93, 0.88], [0.05, 0.05, 0.40], 55.0),
     "front": ([0.05, -1.95, 1.05], [0.05, 0.05, 0.55], 48.0),
     # A high, slightly-offset eye (a perfectly vertical look-at is degenerate
@@ -74,14 +74,14 @@ CAMERA_PRESETS: "dict[str, tuple[list[float], list[float], float]]" = {
 # "topdown" is an ELEVATED BROADSIDE view (oblique's +X,-Y azimuth, raised to
 # z~0.70): high enough to read as looking down, but it still sees the whole arm
 # base->gripper grounded on the counter.
-SO101_CAMERA_PRESETS: "dict[str, tuple[list[float], list[float], float]]" = {
+SO101_CAMERA_PRESETS: dict[str, tuple[list[float], list[float], float]] = {
     "oblique": ([0.8, -0.9, 0.58], [0.0, -0.12, 0.12], 34.0),
     "front": ([-0.6, -1.0, 0.46], [0.0, -0.12, 0.12], 33.0),
     "topdown": ([0.84, -0.88, 0.70], [0.0, -0.11, 0.15], 36.0),
 }
 
 
-def _add_lighting(sim: "object", env_map_path: "str | None" = None) -> None:
+def _add_lighting(sim: object, env_map_path: str | None = None) -> None:
     """Add key + dome lights to the stage, optionally derived from the scene.
 
     The digital-twin composite uses ``ground_plane=False`` (so the
@@ -177,7 +177,7 @@ _SHADOW_CATCHER_THICKNESS = 0.01
 _SHADOW_CATCHER_SIZE = 3.0
 
 
-def _add_shadow_catcher(sim: "object") -> "float | None":
+def _add_shadow_catcher(sim: object) -> float | None:
     """Add a matte white plane for the robot's contact shadow (issue #2323).
 
     The plane is ordinary RTX geometry -- untextured, white, static -- so the
@@ -218,7 +218,7 @@ _FRANKA_USD_SUBPATHS: tuple[str, ...] = (
 )
 
 
-def _asset_exists(url: str) -> "bool | None":
+def _asset_exists(url: str) -> bool | None:
     """Best-effort HEAD-probe for an asset URL.
 
     Returns ``True`` / ``False`` when the probe is conclusive, or
@@ -271,11 +271,11 @@ def _resolve_franka_usd(assets_root: str) -> str:
     return candidates[0]
 
 
-def _default_franka_usd(sim: "object") -> str:
+def _default_franka_usd(sim: object) -> str:
     """Resolve Isaac's bundled Franka Panda USD from the assets root.
 
     Reachable over HTTPS from the Omniverse CDN (no local Nucleus
-    required). Same default as ``examples/libero/run.py isaac``.
+    required).
 
     Tries the modern ``isaacsim.storage.native`` namespace first (Isaac
     Sim 6.0 supported path) and falls back to the legacy
@@ -301,15 +301,15 @@ def _default_franka_usd(sim: "object") -> str:
 
 
 def build_default_scene(
-    sim: "object",
-    robot_usd: "str | None" = None,
+    sim: object,
+    robot_usd: str | None = None,
     camera_name: str = "front",
-    camera_position: "list[float] | None" = None,
-    camera_target: "list[float] | None" = None,
+    camera_position: list[float] | None = None,
+    camera_target: list[float] | None = None,
     camera_width: int = 640,
     camera_height: int = 480,
     camera_fov: float = 48.0,
-    env_map_path: "str | None" = None,
+    env_map_path: str | None = None,
     shadow_catcher: bool = False,
 ) -> SceneBuild:
     """Build the demo scene on a fresh ``IsaacSimulation``.
@@ -426,11 +426,11 @@ def build_default_scene(
 
 
 def add_preset_cameras(
-    sim: "object",
+    sim: object,
     width: int = 640,
     height: int = 480,
-    presets: "dict[str, tuple[list[float], list[float]]] | None" = None,
-) -> "list[str]":
+    presets: dict[str, tuple[list[float], list[float]]] | None = None,
+) -> list[str]:
     """Add the hero camera presets (``CAMERA_PRESETS``) to a built scene.
 
     Used by the Gradio app so the camera dropdown can switch angles

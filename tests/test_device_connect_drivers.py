@@ -248,18 +248,18 @@ class TestRobotDeviceDriver(unittest.TestCase):
     def test_execute_rpc(self):
         robot = _make_mock_robot()
         driver = RobotDeviceDriver(robot)
-        result = asyncio.run(driver.execute("pick up cube", "groot", 30.0, 0))
+        result = asyncio.run(driver.execute("pick up cube", "cosmos3", 30.0, 0))
         robot.start_task.assert_called_once_with(
-            "pick up cube", policy_port=None, policy_host="localhost", policy_provider="groot", duration=30.0
+            "pick up cube", policy_port=None, policy_host="localhost", policy_provider="cosmos3", duration=30.0
         )
         self.assertEqual(result["status"], "success")
 
     def test_execute_rpc_with_port(self):
         robot = _make_mock_robot()
         driver = RobotDeviceDriver(robot)
-        asyncio.run(driver.execute("wave", "groot", 10.0, 50051))
+        asyncio.run(driver.execute("wave", "cosmos3", 10.0, 50051))
         robot.start_task.assert_called_once_with(
-            "wave", policy_port=50051, policy_host="localhost", policy_provider="groot", duration=10.0
+            "wave", policy_port=50051, policy_host="localhost", policy_provider="cosmos3", duration=10.0
         )
 
     def test_stop_rpc(self):
@@ -1026,7 +1026,7 @@ class TestRobotMeshToolDeviceConnect(unittest.TestCase):
             "so100-lab-1",
             "pick up cube",
             "",
-            "groot",
+            "cosmos3",
             0,
             30.0,
             30.0,
@@ -1134,7 +1134,7 @@ class TestRobotDriverStartTaskArgBinding(unittest.TestCase):
             instruction,
             policy_port=None,
             policy_host="localhost",
-            policy_provider="groot",
+            policy_provider="cosmos3",
             duration=30.0,
             **policy_kwargs,
         ):

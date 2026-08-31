@@ -119,7 +119,7 @@ class VeraWebsocketClient:
             ws = self._ensure()
         except ConnectionError:
             # Reset is best-effort - never a correctness requirement (mirrors
-            # Cosmos3WebsocketClient.reset / Gr00tPolicy.reset).
+            # Cosmos3WebsocketClient.reset).
             return
         msg = {**(reset_info or {}), "endpoint": "reset"}
         ws.send(self._packer.pack(msg))

@@ -589,14 +589,14 @@ class ReachyDriver:
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "cosmos3",
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Refuse a policy-driven task: the Mini has no policy path.
 
         Not a stub awaiting wiring like a manipulator's would be. The Mini has
-        no arms and no gait, so there is no action space a ``groot`` or lerobot
+        no arms and no gait, so there is no action space a ``cosmos3`` or lerobot
         policy is trained against; its expressive behaviour is a *recorded move*
         played by the daemon, which the ``reachy_*`` tool bundle plays by name.
         The refusal says so, rather than implying a rollout is coming.

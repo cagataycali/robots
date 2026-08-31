@@ -260,7 +260,7 @@ def test_the_policy_paragraph_states_the_number_of_implementations_that_ship() -
 def test_the_paragraph_does_not_enumerate_a_strict_subset_as_the_implementations() -> None:
     """Naming implementations is fine; naming some of them as *the* set is not.
 
-    The paragraph previously read "Four implementations: MockPolicy, Gr00tPolicy,
+    The paragraph previously read "Four implementations: MockPolicy, Cosmos3Policy,
     LerobotLocalPolicy, Cosmos3Policy" - a closed list of four of fifteen, and
     the four for which the omitted seams happen to be invisible.
     """

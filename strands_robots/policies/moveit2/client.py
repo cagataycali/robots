@@ -1,6 +1,6 @@
 """MoveIt2 ZMQ client - msgpack-encoded REQ/REP transport.
 
-Mirrors the shape of :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`
+Mirrors the shape of the ZMQ service clients in :mod:`strands_robots.policies`
 so users familiar with the GR00T service-mode pattern can use the same mental
 model. The only wire types are JSON-equivalent values plus 1-D / 2-D float
 arrays (joint state and trajectory rows), so we keep msgpack handling
@@ -84,7 +84,7 @@ class MoveIt2InferenceClient:
             authentication. When unset, no auth is sent. Sent in
             plaintext over TCP - use a TLS tunnel or SSH port-forward
             for non-localhost deployments (same caveat as
-            :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`).
+            the other service-mode policy clients).
 
     Raises:
         ValueError: If ``timeout_ms`` does not name a usable wait budget - see

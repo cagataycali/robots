@@ -306,7 +306,7 @@ def test_load_scene_leaves_data_forward_evaluated(sim: Simulation, scene_path: s
     returns a skybox-only gradient on every call (the bug-D pattern).
 
     Round 14 attempted to fix this by calling ``mj_forward`` in
-    :meth:`LiberoAdapter.prewarm`, but ``LiberoAdapter.on_episode_start``
+    a benchmark adapter's ``prewarm``, but its ``on_episode_start``
     immediately calls ``load_scene`` again, which resets the MjData
     via ``mj.MjData(model)``. The race window between the second
     ``load_scene`` and ``_apply_canonical_state`` (which forwards) is

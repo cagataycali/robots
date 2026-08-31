@@ -12,7 +12,7 @@ from strands_robots.training.base import TrainResult
 # DecoratedFunctionTool), which CodeQL's points-to treats as a non-callable
 # class instance, flagging every ``train_policy(...)`` call. import_module
 # returns the module and we bind the callable via attribute access -- the same
-# idiom used by tests/tools/test_gr00t_container_hardening.py.
+# idiom used by the other tool test modules.
 _tp = importlib.import_module("strands_robots.tools.train_policy")
 train_policy = _tp.train_policy
 
@@ -46,7 +46,7 @@ class TestActions:
     def test_list(self):
         res = train_policy(action="list")
         assert res["status"] == "success"
-        for p in ("mock", "lerobot_local", "groot", "cosmos3"):
+        for p in ("mock", "lerobot_local", "cosmos3"):
             assert p in _text(res)
 
     def test_validate_clean(self, dataset_root, tmp_path):
@@ -169,19 +169,6 @@ class TestProviderRouting:
         )
         assert res["status"] == "error"
         assert "not LeRobot-native" in _text(res)
-
-    def test_groot_requires_embodiment(self, dataset_root, tmp_path):
-        res = train_policy(
-            action="validate",
-            provider="groot",
-            dataset_root=dataset_root,
-            base_model="nvidia/GR00T-N1.5-3B",
-            output_dir=str(tmp_path / "o"),
-            steps=10,
-            extra={"groot_root": "/tmp"},  # missing launch script -> also errors, but embodiment first
-        )
-        assert res["status"] == "error"
-        assert "embodiment is required" in _text(res)
 
 
 class TestInputSafety:

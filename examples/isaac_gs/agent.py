@@ -17,7 +17,7 @@ available, :func:`build_agent` returns ``None`` and the app runs without chat.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("isaac_gs.agent")
 
@@ -31,7 +31,7 @@ def _scene_names() -> list:
         return []
 
 
-def build_agent(app, model_id: Optional[str] = None, robot_label: str = "robot arm") -> Any:
+def build_agent(app, model_id: str | None = None, robot_label: str = "robot arm") -> Any:
     """Build a Strands ``Agent`` bound to an :class:`IsaacGsApp`.
 
     ``robot_label`` names the loaded arm (e.g. "SO-101" or "Franka") so the

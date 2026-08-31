@@ -54,7 +54,7 @@ def test_single_segment_rejected_under_hf_only(single_segment):
 @pytest.mark.parametrize(
     "two_segment",
     [
-        "nvidia/gr00t-n1.5",
+        "nvidia/cosmos3-nano-policy",
         "huggingface/my-model",
         "lerobot/act-base",
         "nvidia/Eagle-VLA-7B",

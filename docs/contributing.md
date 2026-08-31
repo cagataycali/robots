@@ -29,7 +29,7 @@ CI runs `hatch run test -x --strict-markers`.
 
 **Lazy imports** - heavy modules (`mujoco`, `lerobot`, `torch`, `zenoh`) must not load at top-level. Use PEP 562 `__getattr__`. Enforced by `tests/test_init.py`.
 
-**Tests mirror source** - `tests/policies/test_groot.py` mirrors `strands_robots/policies/groot/`. Keep 1:1.
+**Tests mirror source** - `tests/policies/cosmos3/` mirrors `strands_robots/policies/cosmos3/`. Keep 1:1.
 
 **No host paths** - `/Users/...` is CI-blocked. Use `tmp_path`, `~/.cache`, or env vars.
 

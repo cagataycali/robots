@@ -15,11 +15,10 @@ This guard walks every module/class/function docstring in the top-level
 :mod:`strands_robots.tools` modules and fails if any embeds a
 ``<something>.py`` filename token *that names a real internal module*. Unlike
 the sibling guards, it is deliberately scoped to internal stems: the
-:mod:`strands_robots.tools.gr00t_inference` tool documents the upstream
-Isaac-GR00T launcher scripts it shells out to (``inference_service.py``,
-``embodiment_tags.py``) by filename. Those name real files in another
-repository - not internal siblings - so a checkable module xref does not
-exist for them and they are correctly left untouched.
+:mod:`strands_robots.tools.lerobot_train` tool documents the upstream lerobot
+scripts it shells out to (``lerobot_train.py``) by filename. Those name real
+files in another repository - not internal siblings - so a checkable module
+xref does not exist for them and they are correctly left untouched.
 
 It would have failed while ``tools/robot_mesh.py`` still cited the mesh
 command handler as ``core.py:_on_cmd`` instead of
@@ -74,7 +73,7 @@ def _docstrings_with_offenders(internal_stems: set[str]) -> dict[str, list[str]]
 def test_tool_modules_scanned() -> None:
     """Guard the guard: the scan walked the top-level tool modules."""
     scanned = {p.name for p in _TOOLS_DIR.glob("*.py")}
-    assert {"robot_mesh.py", "gr00t_inference.py", "run_policy.py"} <= scanned
+    assert {"robot_mesh.py", "lerobot_train.py", "run_policy.py"} <= scanned
 
 
 def test_internal_stem_set_is_populated() -> None:
@@ -85,11 +84,11 @@ def test_internal_stem_set_is_populated() -> None:
 
 
 def test_external_launcher_scripts_are_not_flagged() -> None:
-    """Upstream Isaac-GR00T script filenames have no internal stem, so the
-    internal-only rule must not flag them even though they end in ``.py``."""
+    """Upstream script filenames have no internal stem, so the internal-only
+    rule must not flag them even though they end in ``.py``."""
     internal = _internal_module_stems()
-    assert "inference_service" not in internal
-    assert "embodiment_tags" not in internal
+    assert "configuration_pi0" not in internal
+    assert "modeling_smolvla" not in internal
 
 
 def test_tool_docstrings_reference_modules_not_filenames() -> None:

@@ -1,7 +1,7 @@
 """#331: shared client-side RNG reseed helper + provider parity.
 
 Pins that ``reseed_client_rngs`` reseeds Python ``random`` + NumPy (and torch
-when present) deterministically, and that both Gr00tPolicy and Cosmos3Policy
+when present) deterministically, and that Cosmos3Policy
 route their reset reseed through it so they behave identically for #187
 reproducibility.
 """
@@ -49,18 +49,15 @@ def test_distinct_seeds_diverge():
     assert a != b
 
 
-def test_both_providers_route_reset_through_shared_helper():
-    """Source-level parity pin: both reset() methods call reseed_client_rngs
-    so they cannot drift apart again (the #331 root cause)."""
+def test_the_service_provider_routes_reset_through_shared_helper():
+    """Source-level pin: reset() calls reseed_client_rngs rather than reseeding
+    only the global NumPy RNG (the #331 root cause)."""
     import inspect
 
     from strands_robots.policies.cosmos3 import policy as cosmos_mod
-    from strands_robots.policies.groot import policy as groot_mod
 
     cosmos_src = inspect.getsource(cosmos_mod.Cosmos3Policy.reset)
-    groot_src = inspect.getsource(groot_mod.Gr00tPolicy.reset)
     assert "reseed_client_rngs" in cosmos_src, "Cosmos3Policy.reset must use the shared reseed helper (#331)"
-    assert "reseed_client_rngs" in groot_src, "Gr00tPolicy.reset must use the shared reseed helper (#331)"
     # The old global-only mutation must be gone from cosmos3.
     assert "np.random.seed(seed)" not in cosmos_src, (
         "Cosmos3Policy.reset must not reseed only the global NumPy RNG anymore (#331)"

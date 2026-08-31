@@ -13,8 +13,8 @@ That left the horizon reachable through four paths, only one of which checked it
   rejected a non-positive-integer horizon.
 * ``DeclarativeBenchmark(...)`` coerced with a bare ``int()``, so ``2.7`` became
   ``2``, ``True`` became ``1``, and ``0`` / ``-5`` were stored verbatim.
-* ``LiberoAdapter(max_steps=...)`` (and its ``from_file`` / ``from_text``
-  classmethods and ``load_libero_suite``) did the same, one line below a
+* a benchmark adapter's ``max_steps=...`` (and its ``from_file`` /
+  ``from_text`` classmethods) did the same, one line below a
   validated ``init_jitter``.
 * A plain :class:`BenchmarkProtocol` subclass setting the documented
   ``max_steps`` attribute - the extension point the base class invites - was not

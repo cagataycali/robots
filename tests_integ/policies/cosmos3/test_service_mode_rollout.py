@@ -3,7 +3,7 @@
 The sibling file (tests_integ/policies/cosmos3/test_service_mode_live.py)
 consumes a **pre-running** RoboLab policy server, so a non-GPU box can point
 at a GPU host. This file is the other half of that split - the cosmos3
-analogue of tests_integ/groot/test_groot_integration.py: a module-scoped
+shape of the other service-mode integration modules: a module-scoped
 fixture **spawns** the Cosmos Framework RoboLab policy server itself, so a
 single GPU box runs the whole thing with one command, and a short MuJoCo
 Panda rollout is driven closed-loop by real server actions.

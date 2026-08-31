@@ -278,9 +278,9 @@ class TestRobotDriverAllRobots:
     def test_execute_delegates(self, robot_name, robot_info):
         robot = _make_mock_robot(robot_name, robot_info)
         driver = RobotDeviceDriver(robot)
-        result = asyncio.run(driver.execute("pick up cube", "groot", 30.0, 0))
+        result = asyncio.run(driver.execute("pick up cube", "cosmos3", 30.0, 0))
         robot.start_task.assert_called_once_with(
-            "pick up cube", policy_port=None, policy_host="localhost", policy_provider="groot", duration=30.0
+            "pick up cube", policy_port=None, policy_host="localhost", policy_provider="cosmos3", duration=30.0
         )
         assert result["status"] == "success"
 

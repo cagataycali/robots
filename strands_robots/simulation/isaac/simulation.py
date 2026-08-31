@@ -2728,7 +2728,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         The ``SimEngine`` contract lets each backend realize a complete
         scene (objects, poses, fixtures) from a file. The MuJoCo backend
         parses a LIBERO/BDDL-generated MJCF and recompiles the live spec;
-        ``LiberoAdapter.on_episode_start`` relies on this to instantiate
+        a benchmark adapter relies on this to instantiate
         each task's scene. This Isaac override translates the same
         robosuite-compiled MJCF into Isaac stage prims so the LIBERO eval
         runs end-to-end on the Isaac backend (closes the substantive
@@ -2773,7 +2773,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         without integrating a physics tick), so on success the episode
         integrates physics. No settle step runs here -- the objects sit
         at MJCF *placeholder* poses until
-        ``LiberoAdapter._apply_object_pose_state`` teleports them to the
+        the adapter teleports them to the
         episode's init poses, and integrating from the placeholder
         configuration explodes PhysX (coincident bodies at the robot
         base). A failed or non-landing restart returns
@@ -2790,7 +2790,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         dict
             Standard ``{"status", "content": [{"text", "json"}]}``
             envelope. On success ``json`` carries the realized object
-            count and names so ``LiberoAdapter.on_episode_start`` proceeds.
+            count and names so the adapter's episode start proceeds.
             On a recoverable failure (no world, missing/malformed file)
             returns ``{"status": "error", ...}``; the adapter converts that
             into a descriptive ``RuntimeError``.
@@ -2994,8 +2994,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 # configuration storms PhysX "Illegal BroadPhaseUpdateData
                 # - non-finite bounds" and NaNs the joint state. That is
                 # also why there is deliberately NO settle step here:
-                # `LiberoAdapter._apply_object_pose_state` teleports the
-                # objects to their episode init poses and owns the settle.
+                # the benchmark adapter teleports the objects to their
+                # episode init poses and owns the settle.
                 #
                 # Ordering: play comes AFTER the STOP-event flush +
                 # `initialize_physics()` + `articulation.initialize()`
@@ -3510,7 +3510,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         normal name-resolution / ``ArticulationAction`` path. This is the
         Isaac counterpart of the MuJoCo backend's
         ``world._backend_state["action_controller"]`` seam that
-        ``LiberoAdapter._install_action_controller`` uses to route GR00T's
+        a benchmark adapter uses to route task-space
         delta-EEF actions (#1812) -- see
         :class:`~strands_robots.simulation.isaac.delta_eef.IsaacDeltaEEFController`.
 
@@ -6359,7 +6359,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             "that created SimulationApp, so this call would block forever. Either call "
             "it from the owning thread, or have the owning thread run "
             "`run_pump_forever(stop_event=...)` and submit the call from the worker via "
-            "`run_on_main(lambda: ...)` (see examples/libero/run_isaac_agent.py for the "
+            "`run_on_main(lambda: ...)` (see the Isaac examples for the "
             "agent-driven shape)."
         )
 
@@ -6526,7 +6526,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ``robot0_base`` at ``(-0.66, 0, 0.912)``); on Isaac the robot is a
         separately-loaded USD articulation spawned at the origin -- inside
         the footprint of the scene's origin-anchored static fixtures.
-        ``LiberoAdapter._apply_object_pose_state`` reads the scene's robot
+        A benchmark adapter reads the scene's robot
         base pose and aligns the articulation through this method so live
         physics doesn't start with the robot interpenetrating a fixture
         (PhysX "Illegal BroadPhaseUpdateData - non-finite bounds").
@@ -6803,9 +6803,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         * the predicate DSL (:mod:`strands_robots.simulation.predicates`
           ``_body_position`` / ``_body_quaternion``, so ``body_above_z`` /
           ``body_on`` / ``distance_less_than`` / ... evaluate on Isaac), and
-        * :meth:`LiberoAdapter._read_eef_pose`'s body-state fallback, which
-          injects the ``state.x/y/z/roll/pitch/yaw`` keys the ``libero_panda``
-          GR00T data-config requires.
+        * a benchmark adapter's EEF-pose body-state fallback, which
+          injects the ``state.x/y/z/roll/pitch/yaw`` keys a task-space
+          VLA data-config requires.
 
         Name resolution, in order (namespace-aware, mirroring MuJoCo's
         "unambiguous or explicit" contract):

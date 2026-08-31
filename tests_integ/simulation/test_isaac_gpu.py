@@ -179,11 +179,11 @@ class TestIsaacGPUIntegration:
     def test_usd_articulation_lifecycle_smoke(self):
         """Boot -> world -> bundled Franka USD -> RTX camera -> step -> teardown.
 
-        Ports the ``examples/libero/run.py isaac`` lifecycle contract: an
+        Ports the Isaac benchmark lifecycle contract: an
         ``IsaacSimulation`` boots ``SimulationApp``, creates a world, loads a
         bundled Franka USD via ``add_robot(usd_path=...)``, attaches an RTX
         camera, steps physics, and tears down cleanly. Deliberately stops short
-        of ``evaluate_benchmark`` (which needs the LIBERO suite importable
+        of ``evaluate_benchmark`` (which needs a benchmark suite importable
         inside Isaac's bundled Python - a separate concern).
         """
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation

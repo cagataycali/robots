@@ -19,8 +19,6 @@ Note the composite frame's foreground mask is ``frame.foreground_mask``
 
 from __future__ import annotations
 
-from typing import Optional
-
 from strands_robots.rendering import BackgroundRenderer, CompositeFrame
 from strands_robots.rendering import HybridCompositor as _LibraryHybridCompositor
 
@@ -49,8 +47,8 @@ class IsaacHybridCompositor(_LibraryHybridCompositor):
 
     def __init__(
         self,
-        sim: "object",
-        background: Optional[BackgroundRenderer] = None,
+        sim: object,
+        background: BackgroundRenderer | None = None,
         feather_pixels: int = 1,
         depth_epsilon: float = 1e-4,
         **kwargs: object,

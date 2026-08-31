@@ -109,7 +109,7 @@ def _parse_json5(raw: str, path: Path) -> Any:
     # Use the project-standard
     # ``require_optional`` helper so the operator-facing import error
     # carries the canonical install-hint format used elsewhere in the
-    # SDK (groot, libero, etc.). This still lazy-imports
+    # SDK. This still lazy-imports
     # (only operators with an ACL file pay the cost).
     from strands_robots.utils import require_optional
 

@@ -9,7 +9,7 @@ fraction of a second.
 
 This module provides the missing piece - a controller installed via the same
 ``world._backend_state["action_controller"]`` hook the LIBERO adapter uses
-(see :class:`strands_robots.benchmarks.libero.adapter._LiberoOSCController`).
+(the operational-space control convention used by LIBERO / robosuite).
 When installed it:
 
 1. Flips the G1's leg+waist+arm actuators to **torque (motor) mode** in the

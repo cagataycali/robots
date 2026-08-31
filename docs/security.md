@@ -10,10 +10,9 @@ Strands Robots actuates machines in physical space, pulls models and datasets fr
 2. [Robot mesh authentication](#robot-mesh-authentication)
 3. [Operator approval for fleet-wide actions](#operator-approval-for-fleet-wide-actions)
 4. [HuggingFace policy code execution](#huggingface-policy-code-execution-trust_remote_code)
-5. [GR00T inference containers](#gr00t-inference-containers)
-6. [Hardware and serial access](#hardware-and-serial-access)
-7. [Credentials and secrets](#credentials-and-secrets)
-8. [Telemetry exposure to the agent context](#telemetry-exposure-to-the-agent-context)
+5. [Hardware and serial access](#hardware-and-serial-access)
+6. [Credentials and secrets](#credentials-and-secrets)
+7. [Telemetry exposure to the agent context](#telemetry-exposure-to-the-agent-context)
 
 !!! danger "Do not report vulnerabilities here"
     Do not open a public GitHub issue for security concerns. Report via the AWS Vulnerability Disclosure Program on [HackerOne](https://hackerone.com/aws_vdp) or email [aws-security@amazon.com](mailto:aws-security@amazon.com). See [SECURITY.md](https://github.com/strands-labs/robots/blob/main/SECURITY.md).
@@ -113,7 +112,7 @@ Reference: `strands_robots.mesh._acl_config._load_acl_file`, `strands_robots.mes
 
 ### Policy vocabulary allowlist (policy_type / policy_provider)
 
-`validate_command` gates every mesh `execute` / `start` payload's `policy_type` and `policy_provider` fields against a built-in allowlist. The two vocabularies share one allowlist by design: `policy_type` names a LeRobot policy *family* (`act`, `diffusion`, `pi0`, `smolvla`, ...) that some payloads carry, and `policy_provider` names a spelling this package's `create_policy` resolves (`groot`, `wbc`, `moveit`, `microduck`, ...). A provider or family that is not in the built-in list is refused on the mesh path -- the operator does not get the availability bug silently, they get a refusal naming the offending value.
+`validate_command` gates every mesh `execute` / `start` payload's `policy_type` and `policy_provider` fields against a built-in allowlist. The two vocabularies share one allowlist by design: `policy_type` names a LeRobot policy *family* (`act`, `diffusion`, `pi0`, `smolvla`, ...) that some payloads carry, and `policy_provider` names a spelling this package's `create_policy` resolves (`cosmos3`, `wbc`, `moveit`, `microduck`, ...). A provider or family that is not in the built-in list is refused on the mesh path -- the operator does not get the availability bug silently, they get a refusal naming the offending value.
 
 - `STRANDS_MESH_POLICY_TYPE_ALLOW` - optional; comma-separated extras appended to the built-in list. Widens both `policy_type` *and* `policy_provider` at once (the two share one allowlist), because a payload naming a new provider generally also names a new family. Each entry is charset-validated against `^[a-z][a-z0-9_]*$` at parse time; a malformed entry (embedded punctuation, whitespace, uppercase that survives normalisation) drops with a WARNING naming both this variable and the offending token, rather than widening the allowlist silently. Case-variant spellings are normalised through `.lower()` before the compare, so `STRANDS_MESH_POLICY_TYPE_ALLOW="FOO,BAR"` matches a payload naming `foo`.
 - Widening this set does not relax any other gate. `policy_host` (host / CIDR allowlist for the inference server), `server_address` (the address on that host), `pretrained_name_or_path` (HuggingFace repo allowlist under `trust_remote_code`) and `model_path` (path-traversal charset) are still enforced against every widened payload. This variable answers *which providers the mesh knows about*, not *which endpoints they may reach*.
@@ -192,20 +191,10 @@ Operator guidance:
 
 - Only set `STRANDS_TRUST_REMOTE_CODE=1` when you are loading checkpoints from organizations you trust - ideally your own org, or a small allowlist of vendors you have vetted (e.g. `lerobot/`, `nvidia/`). The opt-in is a per-process, whole-environment switch: once set, it trusts every model the process loads for the life of that process, not just the one you had in mind. Scope it tightly (set it on the specific command, not globally in a shell profile) and pin checkpoints to a known revision where the loader supports it.
 - Where a provider exposes a per-call `trust_remote_code` setting, use it rather than relying on the environment variable alone. `KimodoPolicy` takes `trust_remote_code` (default `False`), so a process that has opted in to the provider can still refuse to execute a given repository's code. The two are independent: the environment variable decides whether the provider may be built, the setting decides whether a checkpoint's code runs.
-- Prefer providers that do not require remote code where you can. The default Mock policy, the GR00T container path, and many LeRobot policy families do not need this flag. Reach for `lerobot_local` with `trust_remote_code` only when a specific model genuinely requires it.
+- Prefer providers that do not require remote code where you can. The default Mock policy and many LeRobot policy families do not need this flag. Reach for `lerobot_local` with `trust_remote_code` only when a specific model genuinely requires it.
 - A mesh peer can request a model load too. When the mesh forwards a `pretrained_name_or_path` in an `execute`/`start` command, it is additionally constrained to an org allowlist (`STRANDS_MESH_HF_REPO_ALLOW`, default `nvidia,huggingface,lerobot`) so an authenticated peer cannot steer a robot into loading an arbitrary repo. Keep that allowlist as narrow as your fleet allows, and remember it is independent of the per-process `STRANDS_TRUST_REMOTE_CODE` opt-in - both gates apply.
 
 Reference: `strands_robots.policies.factory` (`_check_trust_remote_code`, `UntrustedRemoteCodeError`).
-
-## GR00T inference containers
-
-The `gr00t_inference` tool pulls a Docker image, downloads a checkpoint, and starts a container. The agent-facing surface is intentionally constrained, and you should keep it that way:
-
-- The agent cannot choose the image, bind-mount host paths, or inject a container command - those are operator-config-driven only. The image is resolved from `STRANDS_GR00T_IMAGE` and checked against an allowlist (`STRANDS_GR00T_IMAGE_ALLOW`), and a guard blocks dangerous bind mounts (`/`, `/etc`, the Docker socket, `/proc`, `/sys`, credential dirs, ...) that would amount to host takeover.
-- Keep `STRANDS_GR00T_IMAGE_ALLOW` and `STRANDS_GR00T_REPO_URL_ALLOW` narrow and exact; the SDK matches repo URLs exactly (no wildcard) specifically so a look-alike repo (`...Isaac-GR00T-evil`) cannot slip past.
-- Running the container still grants it a GPU and network. Run inference hosts with least privilege, on isolated networks where practical, and tear containers down when done (`gr00t_inference(action="stop", ...)` or `lifecycle="teardown"`).
-
-Reference: `strands_robots.tools.gr00t_inference`.
 
 ## Hardware and serial access
 

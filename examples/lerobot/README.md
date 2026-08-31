@@ -70,16 +70,7 @@ If `BedrockModel` init fails (model not enabled in your account, wrong region, s
 |Flag                                           |Requirements                       |When to use                                                                                                                                                                                                              |
 |-----------------------------------------------|-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |`--policy mock` *(default)*                    |None                               |Workflow sanity-check. Random/placeholder actions, no real grasp behaviour.                                                                                                                                             |
-|`--policy groot --checkpoint <hf_repo>`        |Docker + NVIDIA GPU                |NVIDIA GR00T container; brings up a ZMQ inference service alongside the agent.                                                                                                                                           |
 |`--policy lerobot_local --checkpoint <hf_repo>`|GPU + `STRANDS_TRUST_REMOTE_CODE=1`|In-process LeRobot policy (ACT, Pi0, SmolVLA, Diffusion, MolmoAct2). MolmoAct2 checkpoints (e.g. `allenai/MolmoAct2-SO100_101`) are auto-detected via the checkpoint's `config.json` and routed through the right loader.|
-
-Example with GR00T:
-
-```bash
-python hub_to_hardware.py \
-    --policy groot \
-    --checkpoint nvidia/GR00T-N1.7-LIBERO
-```
 
 Example with LerobotLocal:
 
@@ -126,8 +117,8 @@ The calibration files land under `~/.cache/huggingface/lerobot/calibration/` and
 
 ```
 --mode {sim,real}                  Execution mode (default: sim)
---policy {mock,groot,lerobot_local}  Policy provider (default: mock)
---checkpoint <hf_repo>             Required for groot / lerobot_local
+--policy {mock,lerobot_local}        Policy provider (default: mock)
+--checkpoint <hf_repo>             Required for lerobot_local
 --model-id <bedrock_id>            Override the LLM
 --aws-region <region>              Override the Bedrock region
 --port <device>                    SO-101 follower (--mode real)
@@ -227,7 +218,7 @@ LLMs sometimes confabulate in narration. The dataset on disk is the ground truth
 ## What's next
 
 - **Train a policy** on the recorded dataset using upstream LeRobot's `lerobot-train` CLI.
-- **Swap the Mock policy** for a real one: `groot` for the NVIDIA container, `lerobot_local` for ACT/Pi0/SmolVLA/Diffusion/MolmoAct2 checkpoints.
+- **Swap the Mock policy** for a real one: `lerobot_local` for ACT/Pi0/SmolVLA/Diffusion checkpoints, `cosmos3` for the NVIDIA Cosmos 3 policy server.
 - **Run on physical hardware** by flipping `--mode real`.
 - **Read the blog post** for the design background and the full architecture diagram: *From Hugging Face Hub to robot hardware with Strands Agents and LeRobot*.
 

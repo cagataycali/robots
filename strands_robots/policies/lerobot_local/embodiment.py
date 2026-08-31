@@ -8,7 +8,7 @@ mapping that plugs straight into LeRobot's own processor pipeline.
   native observation keys map onto the model's declared LeRobot feature keys
   (``observation.images.*`` / ``observation.state``) and how the model's action
   tensor maps back onto named robot actuators. It mirrors the GR00T
-  ``Gr00tDataConfig`` pattern that already works in this codebase.
+  declarative data-config pattern that already works in this codebase.
 
 * :class:`PackStateProcessorStep` is the ONE new registered pipeline step: it
   composes the robot's scalar joint observations into ``observation.state`` in a
@@ -20,7 +20,7 @@ mapping that plugs straight into LeRobot's own processor pipeline.
 
 Embodiment definitions live in ``embodiments.json`` next to this module and
 support ``_extends`` inheritance + ``aliases`` (same loader shape as
-``groot/data_configs.json``).
+an upstream VLA's data-config catalogue).
 """
 
 from __future__ import annotations

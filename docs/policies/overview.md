@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
+description: The Policy ABC and every provider that ships - mock, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
 ---
 
 # Policy providers
@@ -9,7 +9,7 @@ truth - list the providers with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'vera', 'wbc', 'wbc_gait']
+# ['cosmos3', 'curobo', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'vera', 'wbc', 'wbc_gait']
 ```
 
 `create_policy` also accepts each provider's declared aliases and shorthands,
@@ -31,7 +31,6 @@ print(list_aliases())       # alias -> canonical, e.g. {'sonic': 'wbc', 'lerobot
 print(list_policy_types())  # lerobot_local policy_type strings: ['act', 'diffusion', 'smolvla', ...]
 
 policy = create_policy("mock")                                                     # always works, no model
-policy = create_policy("groot", port=5555, data_config="so100_dualcam")
 policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so100")
 policy = create_policy("cosmos3", embodiment="droid", port=8000)
 policy = create_policy("remote", endpoint="ws://gpu-box:8765")
@@ -64,7 +63,6 @@ its client needs only core deps plus the git-installed `vera` package, so
 | Provider | Class | Install extra | When to use |
 |----------|-------|---------------|-------------|
 | [`mock`](custom-policies.md) | `MockPolicy` | _(core)_ | Tests, smoke checks; sinusoidal joints, no GPU. Reference minimal `Policy` (documented inline + custom-policies) |
-| [`groot`](groot.md) | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
@@ -107,20 +105,20 @@ register_policy("my_prov", lambda: MyPolicyClass, aliases=["mp"])
 policy = create_policy("my_prov")
 ```
 
-Smart URI strings also resolve: `"zmq://localhost:5555"` → groot; `"cosmos3://host:8000"` → cosmos3.
+Smart URI strings also resolve: `"cosmos3://host:8000"` → cosmos3.
 
 ## In simulation
 
 ```python
 # Provider name + kwargs in policy_config={}
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
-               policy_provider="groot",
-               policy_config={"port": 5555, "data_config": "so100_dualcam"},
+               policy_provider="cosmos3",
+               policy_config={"port": 8000, "embodiment": "droid"},
                duration=10.0)
 
 # Pre-built instance via policy_object=
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
-               policy_object=create_policy("groot", port=5555, data_config="so100_dualcam"),
+               policy_object=create_policy("cosmos3", port=8000, embodiment="droid"),
                duration=10.0)
 ```
 
@@ -133,7 +131,6 @@ structured error naming the parameter, before any policy is created.
 
 ## See also
 
-- [GR00T](groot.md) - ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) - in-process HF models, RTC.
 - [LeRobot Async](lerobot-async.md) - offload a LeRobot policy to a gRPC `PolicyServer` (edge offload).
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action/observation contract for the SO-arm checkpoints.

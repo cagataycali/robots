@@ -1555,7 +1555,8 @@ def robot_mesh(
         # subscribing to every peer's stream (the cross-peer telemetry-leak
         # this surface exists to close). Require a literal peer id BEFORE
         # interpolating, mirroring the ``_REPO_TAG_RE`` shape-validation
-        # pattern in ``gr00t_inference.py`` for the same class of attack.
+        # pattern used by the other subprocess-spawning tools for the same
+        # class of attack.
         if not _PEER_ID_RE.match(target):
             _audit_tool_action(action, target, False, "watch target not a literal peer id")
             return _err(

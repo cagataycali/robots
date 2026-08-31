@@ -202,7 +202,6 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
         or (":" in provider and not provider.replace("_", "").isalpha())
         or provider.startswith("ws://")
         or provider.startswith("grpc://")
-        or provider.startswith("zmq://")
     )
     if _needs_resolution:
         try:
@@ -272,8 +271,8 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     Accepts either a provider name or a smart string:
 
-    - Provider name: ``create_policy("groot", port=5555)``
-    - ZMQ URL: ``create_policy("zmq://localhost:5555")``
+    - Provider name: ``create_policy("cosmos3", port=8000)``
+    - Service URL: ``create_policy("cosmos3://localhost:8000")``
     - Shorthand: ``create_policy("mock")``
 
     All provider definitions live in ``registry/policies.json``.
@@ -343,7 +342,7 @@ def policy_provider_error(provider: str, **kwargs) -> str | None:
 
     Probes the SAME resolution path :func:`create_policy` uses, without
     instantiating anything, so every spelling that provider accepts -- a
-    registered name, a HuggingFace model ID, a ``zmq://`` / ``ws://`` URL --
+    registered name, a HuggingFace model ID, a ``cosmos3://`` / ``ws://`` URL --
     resolves here too. Only a name no spelling can reach yields a reason. A
     scheme-less ``host:port`` is not among them: no shipped provider declares a
     scheme-less ``url_patterns`` entry, so such a string is resolvable only as a

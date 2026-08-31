@@ -32,7 +32,7 @@ Example::
     from strands_robots.policies.wbc import WBC_G1_LEG_WAIST_JOINTS
 
     lower = create_policy("wbc", checkpoint="/path/to/grootwbc-g1")
-    upper = create_policy("groot", port=5555)
+    upper = create_policy("cosmos3", port=8000)
     policy = CompositePolicy(
         lower=lower,
         upper=upper,
