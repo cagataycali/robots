@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 # : Ceiling for an ack wait, seconds.
 DEFAULT_ACK_CAP_S = 120.0
 #: Margin over ``duration`` for a blocking ``execute``.
@@ -23,9 +25,12 @@ def task_ack_budget(
         dur = float(duration) if duration is not None else 0.0
     except (TypeError, ValueError):
         dur = 0.0
-    if dur < 0 or dur != dur:  # negative or NaN
+    # NaN is rejected by name rather than by ``x != x``: both are correct, but a
+    # self-comparison reads as a typo at a glance and a static analyser flags it
+    # as one, so the intent is spelled out instead.
+    if dur < 0 or math.isnan(dur):
         dur = 0.0
-    if asked < 0 or asked != asked:
+    if asked < 0 or math.isnan(asked):
         asked = 0.0
 
     if str(action).lower() == "execute":

@@ -59,6 +59,26 @@ def test_junk_numbers_cannot_produce_a_nonsense_wait() -> None:
     assert task_ack_budget("start", None, 0.0)[0] == 10.0
 
 
+def test_a_nan_in_either_position_is_rejected_on_its_own() -> None:
+    # The existing junk-number cell passes the same value in both positions, so a
+    # guard that dropped one of the two would still read green there. These pin
+    # each position while the other carries a good number.
+    nan = float("nan")
+
+    timeout_s, kind = task_ack_budget("start", nan, 30.0)
+    assert math.isfinite(timeout_s) and timeout_s == 40.0, "a NaN ask falls back to the duration floor"
+    assert kind == "ack"
+
+    # A NaN duration has to be caught here rather than left to ``max``: unguarded
+    # it reaches ``min(max(nan + 10, 0.0), cap)`` as NaN, every comparison against
+    # it is False, and the budget comes back as 0.0 -- an instant timeout on a
+    # robot that was just told to move, which is the reading this module exists to
+    # refuse. Guarded, the duration reads as 0.0 and the ack floor applies.
+    timeout_s, kind = task_ack_budget("start", None, nan)
+    assert math.isfinite(timeout_s) and timeout_s == 10.0, "a NaN duration must not zero the wait"
+    assert kind == "ack"
+
+
 def test_ack_cap_is_injectable() -> None:
     assert task_ack_budget("start", None, 3600.0, ack_cap_s=45.0)[0] == 45.0
 
