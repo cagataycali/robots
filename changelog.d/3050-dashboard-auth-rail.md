@@ -25,3 +25,14 @@ resolved to auth-OFF *in preference to* the credential store, silently dropping
 passkey auth from every guarded route on a dashboard that commands real
 hardware. An unrecognized value now leaves the store as the source of truth, so
 an enrolled passkey still guards the API.
+
+The re-seal guard that lets "the person at the machine" enroll over a corrupted
+store now reads the connection's own socket peer through `_socket_peer` rather
+than `_client_ip`. `_client_ip` reads `cf-connecting-ip`, `x-forwarded-for` and
+`x-real-ip` ahead of the peer - values the caller sets - so a stranger who
+reached a dashboard whose store had just been corrupted could send
+`CF-Connecting-IP: 127.0.0.1` and enroll the first passkey, which seals the
+dashboard in their favour. The header read was wrong in both directions: it also
+refused the genuine local owner whenever a proxy had set one of those headers to
+a non-loopback address. `_client_ip` keeps its header chain for the per-ip
+fairness cap it documents, which is accounting rather than trust.

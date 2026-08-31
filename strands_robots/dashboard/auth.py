@@ -380,6 +380,21 @@ def _client_ip(request_or_ws: Any) -> str | None:
         return None
 
 
+def _socket_peer(request_or_ws: Any) -> str | None:
+    """The peer address of the connection itself. This is the one safe to trust.
+
+    Deliberately does not consult ``cf-connecting-ip`` / ``x-forwarded-for`` /
+    ``x-real-ip`` the way :func:`_client_ip` does: those are set by whoever is
+    calling, so a stranger can spell any of them ``127.0.0.1``. Only the socket
+    peer is a fact about who actually connected, so a decision that grants
+    something -- rather than merely accounting for it -- reads this.
+    """
+    try:
+        return getattr(getattr(request_or_ws, "client", None), "host", None)
+    except Exception:
+        return None
+
+
 def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
     with _chal_lock:
         rec = _challenges.pop(cid, None)
@@ -581,7 +596,7 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     # the dashboard on the strength of a disk error.
     damage = store_corruption()
     if first_time and damage and not required:
-        if not client_is_loopback(_client_ip(request)):
+        if not client_is_loopback(_socket_peer(request)):
             raise HTTPException(
                 403,
                 "the credential store was unreadable and has been kept as "
