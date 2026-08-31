@@ -122,8 +122,13 @@ _AgileX Piper (6-DOF + gripper)_
 
     Read `arm.joint_names` rather than assuming them: each Franka's joints are named
     the way *its own* MuJoCo model names them, so a Panda's are `joint1..joint7`
-    while an FR3's are `fr3_joint1..fr3_joint7`. That is what lets an action dict
-    authored against the simulated arm command the real one unchanged.
+    while an FR3's are `fr3_joint1..fr3_joint7`. That is what lets one action dict
+    drive the simulated arm and the real one:
+
+    ![panda driven by the driver's own action dict](../assets/franka/franka_sim_to_real.gif){ width=400 }
+
+    _The same dict, keyed by `arm.joint_names` and passed through the driver's own
+    `action_to_targets` gate, stepping the simulated `panda`._
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 
