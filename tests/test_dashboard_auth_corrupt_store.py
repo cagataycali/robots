@@ -11,6 +11,7 @@ machine re-enroll while a stranger who merely benefited from a disk error cannot
 """
 
 import json
+import logging
 
 import pytest
 from fastapi import HTTPException
@@ -204,3 +205,34 @@ class TestTheLastNineLines:
         out = auth.status(Hostile())
         assert out["setup_required"] is True and out["enabled"] is False
         assert "rp_id" not in out, "an undiscoverable rp_id is absent, never guessed"
+
+    def test_an_advisory_that_fails_halfway_contributes_nothing(self, tmp_path, monkeypatch, caplog):
+        """The rp_id hints arrive together or not at all.
+
+        `rp_id` says which relying-party id to use and `rpid_usable` says whether it
+        can be used. Emitting the first without the second would tell the login
+        screen to attempt an id that this module never approved, which is the one
+        combination worse than having no hints - so the block is assembled aside and
+        merged only once complete. Here the host resolves and the verdict then
+        explodes, which is exactly the halfway point.
+        """
+        monkeypatch.setattr(
+            auth,
+            "rpid_is_usable",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("verdict unavailable")),
+        )
+        caplog.set_level(logging.DEBUG, logger="strands_robots.dashboard.auth")
+        out = auth.status(FakeRequest())
+        assert "rp_id" not in out, "a half-derived advisory must not be published"
+        assert "rpid_usable" not in out and "warning" not in out
+        # ... and the skip is attributable rather than silent: an operator staring at a
+        # login screen with no hints has no other way to learn that deriving them failed.
+        skipped = [r for r in caplog.records if "rp_id advisory" in r.getMessage()]
+        assert len(skipped) == 1, "the skipped advisory must be logged once"
+        assert skipped[0].exc_info is not None, "and carry the cause, not just the fact"
+
+    def test_a_healthy_request_still_gets_its_advisory(self, tmp_path):
+        """The control: the merge must not have cost the working path its hints."""
+        out = auth.status(FakeRequest())
+        assert out["rp_id"] == "localhost"
+        assert out["rpid_usable"] is True

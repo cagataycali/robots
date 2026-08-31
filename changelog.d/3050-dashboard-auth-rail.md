@@ -51,3 +51,12 @@ writing the path directly created a new store at the umask default and only then
 chmod-ed it, leaving a freshly generated `jwt_secret` briefly world-readable -
 and because `os.replace` carries those bits onto the store, a store left wider
 open by an earlier build is tightened the next time it is written.
+
+The rp_id advisory in `status()` is now all-or-nothing and says when it is
+skipped. It wrote `rp_id`, `secure_context` and `rpid_usable` straight into the
+response as each was derived, so a failure between them - `rpid_is_usable`
+raising, say - published an `rp_id` for the login screen to attempt with no
+verdict on whether this module considered it usable, and the surrounding
+`except` recorded nothing at all. The fields are assembled aside and merged only
+once complete, so an undiscoverable rp_id stays absent rather than half-guessed,
+and the skip is logged with its cause.

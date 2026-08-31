@@ -756,17 +756,35 @@ def status(request: Any = None) -> dict[str, Any]:
         "bootstrap_required": bool(_bootstrap_token()) and len(store.get("credentials", [])) == 0,
     }
     if request is not None:
+        # The rp_id block is advisory: it tells the login screen which relying-party
+        # id this origin can use and why it might not work. It is derived from the
+        # request, so any transport that answers `headers` or `url` differently than
+        # expected can make it raise - and a diagnostic that raises would take the
+        # login screen down with it, which is strictly worse than a screen missing
+        # its hints. Hence the broad catch.
+        #
+        # It is assembled into its own dict and merged only once complete, so a
+        # failure halfway cannot leave a caller with an `rp_id` and no verdict on
+        # whether it is usable: the fields arrive together or not at all. An
+        # undiscoverable rp_id is therefore absent, never guessed.
+        advisory: dict[str, Any] = {}
         try:
             host = _host_only(request.headers.get("host", ""))
             origin = _derive_origin(request)
             forced = _forced_rp_id()
-            out["rp_id"] = forced or host
-            out["secure_context"] = origin.startswith("https://") or host == "localhost"
-            out["rpid_usable"] = True if forced else rpid_is_usable(host)
-            if not out["secure_context"]:
-                out["warning"] = "This origin is not a secure context. WebAuthn needs HTTPS or http://localhost."
-            elif not out["rpid_usable"]:
-                out["warning"] = f"'{host}' cannot be a WebAuthn rpId - use a hostname or set STRANDS_DASH_AUTH_RP_ID."
+            advisory["rp_id"] = forced or host
+            advisory["secure_context"] = origin.startswith("https://") or host == "localhost"
+            advisory["rpid_usable"] = True if forced else rpid_is_usable(host)
+            if not advisory["secure_context"]:
+                advisory["warning"] = "This origin is not a secure context. WebAuthn needs HTTPS or http://localhost."
+            elif not advisory["rpid_usable"]:
+                advisory["warning"] = (
+                    f"'{host}' cannot be a WebAuthn rpId - use a hostname or set STRANDS_DASH_AUTH_RP_ID."
+                )
         except Exception:
-            pass
+            # Attributable rather than silent: an operator looking at a login screen
+            # with no rp_id hint has no other way to learn that deriving it failed.
+            logger.debug("could not derive the rp_id advisory for this request", exc_info=True)
+        else:
+            out.update(advisory)
     return out
