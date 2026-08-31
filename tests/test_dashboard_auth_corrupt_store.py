@@ -12,6 +12,7 @@ machine re-enroll while a stranger who merely benefited from a disk error cannot
 
 import json
 import logging
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -20,9 +21,18 @@ from strands_robots.dashboard import auth
 
 
 class FakeRequest:
-    def __init__(self, headers=None, client_host="127.0.0.1"):
+    """A request as it arrived: over a SCHEME, carrying headers.
+
+    The scheme is a property of the connection, not of a header, so a stand-in
+    that answers headers alone cannot represent one -- and an expectation
+    derived from it would look right here while being caller-controlled in
+    production.
+    """
+
+    def __init__(self, headers=None, client_host="127.0.0.1", scheme="http"):
         self.headers = headers or {"host": "localhost:8090"}
         self.client = type("C", (), {"host": client_host})()
+        self.url = SimpleNamespace(scheme=scheme)
 
 
 @pytest.fixture(autouse=True)

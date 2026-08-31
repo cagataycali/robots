@@ -1,5 +1,24 @@
 """WebAuthn (passkey) authentication for the dashboard. Why this exists: the dashboard commands
 real hardware (SO-101 arms).
+
+A ceremony is verified against two expectations, and neither may come from the
+caller: ``expected_rp_id`` from the challenge record this process stashed, and
+``expected_origin`` from the connection the request actually arrived on (see
+:func:`origin_verdict`). What the request ASSERTS about itself -- its ``Origin``
+header, ``x-forwarded-proto``, ``x-forwarded-for`` -- is a claim, and a claim is
+only ever compared against an expectation, never promoted into one.
+
+Configuration:
+    ``STRANDS_DASH_AUTH_ORIGIN``: the origin the dashboard is served at, e.g.
+        ``https://robots.example``. Unset by default, in which case it is read off
+        the connection: the transport's own scheme plus the ``Host`` header. Set
+        it when a proxy rewrites ``Host`` or ``Origin``, or when TLS is terminated
+        upstream and the server is not configured to forward that fact (uvicorn's
+        ``--proxy-headers`` with ``--forwarded-allow-ips``, which is where the
+        trusted-proxy decision belongs). WebAuthn compares origins byte-for-byte,
+        so it must carry the scheme and any non-default port.
+    ``STRANDS_DASH_AUTH_RP_ID``: pins the relying-party id when the hostname
+        legitimately changed. See :func:`rp_id_verdict`.
 """
 
 from __future__ import annotations
@@ -356,17 +375,113 @@ def _derive_rp_id(request_or_ws: Any) -> str:
     return cast(str, rp_id)
 
 
-def _derive_origin(request_or_ws: Any) -> str:
+#: How a connection scheme is spelled by the page origin it belongs to. An operator
+#: page served over https opens its sockets as ``wss``, and the browser still spells
+#: that page's ``Origin`` ``https://`` -- so the socket spelling is never the answer.
+_PAGE_SCHEME = {"http": "http", "https": "https", "ws": "http", "wss": "https"}
+
+
+def origin_verdict(offered: str, expected: str) -> tuple:
+    """Decide the origin a ceremony is verified against: ``(origin, reason)``, or ``(None, reason)``.
+
+    ``expected`` is where this deployment is reachable, which is a fact about the
+    connection (or a value the operator configured). ``offered`` is the request's
+    own ``Origin`` header, which is the caller's claim about itself and therefore
+    never the answer: handing it to the WebAuthn library as ``expected_origin``
+    tells the library to expect whatever the caller said, and a comparison
+    against the caller's own claim cannot fail. What that comparison exists to
+    refuse -- an ``http://`` downgrade, a sibling subdomain -- is precisely what
+    adopting the header lets through, because ``rp_id`` binds the registrable
+    domain but nothing below it.
+
+    Args:
+        offered: The request's ``Origin`` header, or ``""`` when it sent none.
+        expected: The origin this deployment is actually reachable at.
+
+    Returns:
+        ``(origin, reason)`` with the origin to verify against, or
+        ``(None, reason)`` when the header contradicts the connection.
+    """
+    if not offered:
+        # A browser sends Origin on the ceremony POSTs, so its absence is odd --
+        # but absence is not a reason to widen the expectation. The connection's
+        # own origin stands, and the authenticator's signed clientData still has
+        # to match it, which is the check that was being bypassed.
+        return (expected, "no Origin header; the connection's own origin stands")
+    if offered.rstrip("/") == expected:
+        return (expected, "Origin matches the connection")
+    return (None, f"Origin {offered!r} is not this deployment's origin {expected!r}")
+
+
+def _connection_scheme(request_or_ws: Any) -> str:
+    """The scheme this deployment was actually reached over, spelled as a page origin.
+
+    Read off the ASGI connection rather than from ``x-forwarded-proto``, for the
+    same reason :func:`_socket_peer` ignores ``x-forwarded-for``: that header is
+    set by whoever is calling, so a stranger can spell it ``https`` and choose
+    the scheme half of an expectation that grants a session. A TLS-terminating
+    proxy is still honoured -- by the SERVER, under the trusted-proxy allowlist
+    the operator configured there (uvicorn's ``--proxy-headers`` with
+    ``--forwarded-allow-ips``), which rewrites the scheme before the app is
+    reached. A deployment that cannot do that sets ``STRANDS_DASH_AUTH_ORIGIN``.
+
+    Raises:
+        HTTPException: 400 when the transport reports no usable scheme, so an
+            expectation is refused rather than guessed.
+    """
+    scheme = str(getattr(getattr(request_or_ws, "url", None), "scheme", "")).lower()
+    page = _PAGE_SCHEME.get(scheme)
+    if page is None:
+        logger.warning("refused WebAuthn ceremony: transport reported scheme %r", scheme)
+        raise HTTPException(
+            400,
+            {
+                "error": "this connection cannot be used for a passkey ceremony",
+                "detail": f"the transport reported no usable scheme ({scheme!r}), so the origin "
+                "a ceremony must be verified against cannot be determined",
+                "hint": "set STRANDS_DASH_AUTH_ORIGIN to the origin the dashboard is served at",
+            },
+        )
+    return page
+
+
+def _served_origin(request_or_ws: Any) -> str:
+    """The origin this deployment is reachable at: configured, or the connection's own.
+
+    The ``Host`` header supplies the authority half, which is the same source
+    :func:`_derive_rp_id` already binds through :func:`rp_id_verdict` -- so the two
+    expectations agree by construction, and a host a stranger made up is refused
+    there rather than reappearing here as a different answer.
+    """
     forced = _forced_origin()
     if forced:
-        return forced
-    headers = _headers(request_or_ws)
-    origin = headers.get("origin")
-    if origin:
-        return cast(str, origin.rstrip("/"))
-    host = headers.get("host", "localhost:8090")
-    scheme = "https" if headers.get("x-forwarded-proto") == "https" else "http"
-    return f"{scheme}://{host}"
+        # Normalised because WebAuthn compares origins byte-for-byte: a trailing
+        # slash in the env var would otherwise fail every ceremony.
+        return forced.rstrip("/")
+    return f"{_connection_scheme(request_or_ws)}://{_headers(request_or_ws).get('host', 'localhost:8090')}"
+
+
+def _derive_origin(request_or_ws: Any) -> str:
+    """The origin a ceremony is verified against, refusing a caller that claims another."""
+    expected = _served_origin(request_or_ws)
+    if _forced_origin():
+        # The operator decided it, and the installs that need this pin are the ones
+        # whose proxy rewrites Host/Origin -- so consulting either header here would
+        # refuse exactly the deployment the pin exists for.
+        return expected
+    origin, reason = origin_verdict(_headers(request_or_ws).get("origin", ""), expected)
+    if origin is None:
+        logger.warning("refused WebAuthn ceremony: %s", reason)
+        raise HTTPException(
+            400,
+            {
+                "error": "this Origin cannot be used for a passkey ceremony",
+                "detail": reason,
+                "hint": "reach the dashboard on the origin it is served at, or set "
+                "STRANDS_DASH_AUTH_ORIGIN if a proxy rewrites Host or Origin",
+            },
+        )
+    return cast(str, origin)
 
 
 def _rpid_error(rp_id: str) -> HTTPException:
@@ -782,7 +897,11 @@ def status(request: Any = None) -> dict[str, Any]:
     }
     if request is not None:
         # The rp_id block is advisory: it tells the login screen which relying-party
-        # id this origin can use and why it might not work. It is derived from the
+        # id this origin can use and why it might not work. It reports the origin the
+        # dashboard is SERVED at rather than the one a ceremony would accept, because
+        # a diagnostic that refuses a mismatched Origin would remove the login
+        # screen's hints exactly when a misconfigured proxy makes them worth
+        # reading. It is derived from the
         # request, so any transport that answers `headers` or `url` differently than
         # expected can make it raise - and a diagnostic that raises would take the
         # login screen down with it, which is strictly worse than a screen missing
@@ -795,7 +914,7 @@ def status(request: Any = None) -> dict[str, Any]:
         advisory: dict[str, Any] = {}
         try:
             host = _host_only(request.headers.get("host", ""))
-            origin = _derive_origin(request)
+            origin = _served_origin(request)
             forced = _forced_rp_id()
             advisory["rp_id"] = forced or host
             advisory["secure_context"] = origin.startswith("https://") or host == "localhost"

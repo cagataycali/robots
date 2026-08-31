@@ -24,8 +24,17 @@ from strands_robots.dashboard import auth
 
 
 class FakeRequest:
-    def __init__(self, headers=None):
+    """A request as it arrived: over a SCHEME, carrying headers.
+
+    The scheme is a property of the connection, not of a header, so a stand-in
+    that answers headers alone cannot represent one -- and an expectation
+    derived from it would look right here while being caller-controlled in
+    production.
+    """
+
+    def __init__(self, headers=None, scheme="http"):
         self.headers = headers or {"host": "localhost:8090"}
+        self.url = SimpleNamespace(scheme=scheme)
 
 
 @pytest.fixture(autouse=True)
@@ -253,8 +262,8 @@ def test_status_warns_on_insecure_context():
 
 
 def test_status_warns_on_unusable_rpid():
-    # https via proxy headers, but the host is an IP: rpId can never work.
-    out = auth.status(FakeRequest({"host": "192.168.1.50:8090", "x-forwarded-proto": "https"}))
+    # Reached over https, but the host is an IP: rpId can never work.
+    out = auth.status(FakeRequest({"host": "192.168.1.50:8090"}, scheme="https"))
     assert out["rpid_usable"] is False
     assert "rpId" in out.get("warning", "")
 

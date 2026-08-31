@@ -7,10 +7,10 @@ that are security behaviour rather than IO error tolerance).
 2. begin_authentication refuses to run a ceremony whose rp_id is a raw IP,
    even when the operator pinned that IP - browsers reject an IP rpId before
    the ceremony starts, so proceeding would mint challenges nothing can answer.
-3. STRANDS_DASH_AUTH_ORIGIN outranks every header (tunnel installs where the
-   proxy rewrites Host/Origin).
-4. Without the pin, the Origin header wins over Host reconstruction, and a
-   trailing slash is normalised - WebAuthn compares origins byte-for-byte.
+
+Expected-origin derivation used to be items 3 and 4 here. It is now a matrix of
+its own in test_dashboard_auth_expected_origin_is_the_connection.py, which needs
+a real Request to observe the transport scheme these edge cases never had.
 """
 
 from __future__ import annotations
@@ -86,26 +86,6 @@ def test_begin_authentication_needs_enrollment_first():
     with pytest.raises(HTTPException) as e:
         auth.begin_authentication(FakeRequest())
     assert "no credentials" in str(e.value.detail)
-
-
-# --- 3+4. expected-origin derivation ------------------------------------------
-
-
-def test_forced_origin_outranks_every_header(monkeypatch):
-    monkeypatch.setenv("STRANDS_DASH_AUTH_ORIGIN", "https://robots.cagatay.my")
-    req = FakeRequest({"host": "evil.example", "origin": "https://evil.example"})
-    assert auth._derive_origin(req) == "https://robots.cagatay.my"
-
-
-def test_origin_header_wins_and_is_normalised():
-    req = FakeRequest({"host": "localhost:8090", "origin": "https://robots.example/"})
-    assert auth._derive_origin(req) == "https://robots.example"
-
-
-def test_origin_falls_back_to_host_with_forwarded_proto():
-    req = FakeRequest({"host": "robots.example", "x-forwarded-proto": "https"})
-    assert auth._derive_origin(req) == "https://robots.example"
-    assert auth._derive_origin(FakeRequest({"host": "localhost:8090"})) == "http://localhost:8090"
 
 
 # --- bonus: a garbage TOKEN_TTL cannot break token minting --------------------
