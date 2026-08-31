@@ -7,7 +7,11 @@ other half of that entry did not: `Robot("crazyflie", mode="real")` raised
 over the driver seam, and the registry entry now declares
 `hardware.driver="strands"` so a caller needs no `driver=` keyword. `cflib`
 arrives with the new `[crazyflie]` extra and is imported lazily, so the module
-loads on a machine with no Crazyradio.
+loads on a machine with no Crazyradio. That extra is deliberately **not** a
+member of `[all]`: `cflib` is GPLv3 and this project is Apache-2.0, so the
+copyleft dependency is only ever installed by a caller who names it. Nothing in
+`[all]`'s CI/exploration role needs it -- without `cflib` the driver still
+imports, registers and reports a reason naming the extra.
 
 A quadcopter is not a servo bus, and three properties of its command surface are
 why this is a driver rather than a lerobot config -- each one a way to break the
@@ -45,12 +49,31 @@ robot connected", and on an airframe that cannot hold still without a setpoint
 stream the only motion-free state is on the ground -- so `stop`, `stop_task` and
 `cleanup` all land, and `cleanup` lands before it closes the link it needs to do
 so. Cutting the motors is the separately named `emergency_stop`, which the agent
-tool schema deliberately cannot reach. The descent also performs a handover the
+tool schema deliberately cannot reach. Both high-level verbs also perform a handover the
 SDK requires and a reader would not guess: while the low-level commander is
-streaming it owns the setpoint priority and a `land` underneath it is ignored, so
-`Commander.send_notify_setpoint_stop` precedes it.
+streaming it owns the setpoint priority and a high-level command underneath it is
+ignored, so `Commander.send_notify_setpoint_stop` precedes `land` *and*
+`takeoff`. The repeater re-sends at `setpoint_hz`, so that priority never decays
+on its own -- skipping the handover is not a race but a permanent refusal, and one
+the firmware reports nowhere.
 
-Two more things are named rather than assumed. Connecting sends
+**A link is only open once the aircraft says so.** `Crazyflie.open_link` is
+asynchronous and never raises: it wraps its body in `except Exception` and routes
+every failure -- no dongle, a switched-off aircraft, a malformed URI -- to the
+`connection_failed` *callback*, reporting success later by calling `connected`
+once the TOCs are down. Reading its return would therefore report a connection
+that does not exist, and nothing downstream would object: `Crazyflie.send_packet`
+is a silent no-op while `link` is `None`, so the arming request and every
+subsequent setpoint would be discarded while each envelope said `success`. So
+`connect_eagerly` waits for `connected` or `connection_failed`, bounded by
+`CONNECT_TIMEOUT_S` (10 s -- bounded unlike `cflib`'s own `SyncCrazyflie`, since
+an agent blocked forever reports nothing at all), returns the SDK's reason
+trimmed to its actionable first line, and releases the link so a retry can have
+the dongle. Waiting is also what makes telemetry work: `connected` fires only
+after the log TOC is downloaded, and `log.add_config` raises `KeyError` for every
+variable until it is.
+
+Two more things are named rather than assumed. Connecting then sends
 `Platform.send_arming_request(True)`, because firmware 2023.02 and later refuse
 to spin the motors until it succeeds -- a driver that skipped it would connect
 cleanly, accept every setpoint and produce no motion, which is the quietest

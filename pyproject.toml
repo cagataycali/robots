@@ -235,13 +235,22 @@ microduck = [
     # docs/policies/microduck.md.
     "onnxruntime>=1.17.0,<2.0.0",
 ]
+# Bitcraze client library for the Crazyflie 2.x native driver: CRTP over a
+# Crazyradio dongle (or the USB cable), the commander/high-level-commander
+# setpoint surface, and the log framework the driver's telemetry block uses. A
+# pure-Python package plus pyusb; no build step, no CUDA, so it installs on the
+# aarch64 edge machines that fly these.
+#
+# cflib is GPLv3 (its wheel METADATA declares `License: GPLv3`), and this project
+# is Apache-2.0. It is therefore deliberately NOT a member of [all]: a copyleft
+# dependency is only ever installed by a caller who names it, the way the NVIDIA
+# Open Model License weights above are only ever fetched by a caller who asked
+# for that policy. Nothing in [all]'s CI/exploration role needs it - the driver
+# degrades cleanly without cflib (_resolve_cflib returns a reason naming this
+# extra), so `pip install strands-robots[all]` still imports, registers and
+# tests the driver. See strands_robots/drivers/crazyflie.py and
+# docs/robots/mobile.md.
 crazyflie = [
-    # Bitcraze client library for the Crazyflie 2.x native driver: CRTP over a
-    # Crazyradio dongle (or the USB cable), the commander/high-level-commander
-    # setpoint surface, and the log framework the driver's telemetry block uses.
-    # A pure-Python package plus pyusb; no build step, no CUDA, so it installs
-    # on the aarch64 edge machines that fly these. See
-    # strands_robots/drivers/crazyflie.py and docs/robots/mobile.md.
     "cflib>=0.1.25,<0.2.0",
 ]
 lerobot = [
@@ -597,7 +606,6 @@ all = [
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",
     "strands-robots[device-connect]",
-    "strands-robots[crazyflie]",
     "strands-robots[wbc]",
     "strands-robots[motionbricks]",
     "strands-robots[kimodo]",

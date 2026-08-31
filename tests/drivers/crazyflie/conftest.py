@@ -8,6 +8,14 @@ orderings (arm before any setpoint, ``send_notify_setpoint_stop`` before
 ``land``), and a per-object call list cannot see an ordering that spans two
 objects.
 
+The link is **asynchronous**, like the real one. ``Crazyflie.open_link`` returns
+as soon as the request is queued and delivers the outcome later on its own link
+thread, as a ``connected`` or ``connection_failed`` callback; it never raises,
+and until ``connected`` has fired ``log.add_config`` cannot find a variable in
+the TOC and ``send_packet`` silently discards every packet. A fake whose
+``open_link`` connected synchronously would hide all of that, so this one
+answers on a thread and refuses the pre-TOC calls the firmware refuses.
+
 Nothing here subclasses or imports ``cflib``: the tests must pass on a machine
 that has never had a Crazyradio plugged in, which is every CI runner.
 """
@@ -15,6 +23,7 @@ that has never had a Crazyradio plugged in, which is every CI runner.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -121,33 +130,105 @@ class _Callbacks:
         self._sink.append(callback)
 
 
-class FakeCrazyflie:
-    """Shaped like ``cflib.crazyflie.Crazyflie``."""
+class _Caller:
+    """Shaped like ``cflib.utils.callbacks.Caller``: subscribe, then fan out."""
 
-    def __init__(self, recorder: _Recorder, *, arming: BaseException | None = None) -> None:
+    def __init__(self) -> None:
+        self.callbacks: list[Any] = []
+
+    def add_callback(self, callback: Any) -> None:
+        self.callbacks.append(callback)
+
+    def call(self, *args: Any) -> None:
+        for callback in list(self.callbacks):
+            callback(*args)
+
+
+class FakeCrazyflie:
+    """Shaped like ``cflib.crazyflie.Crazyflie``, including the async link.
+
+    ``outcome`` chooses what the link thread reports, which is the whole point
+    of the fake:
+
+    * ``"connected"`` - the TOCs come down and ``connected`` fires. The only
+      state in which the aircraft is really reachable.
+    * ``"failed"`` - ``connection_failed`` fires with ``failure``. What a missing
+      Crazyradio, a switched-off aircraft or a malformed URI actually produce:
+      ``open_link`` still returns normally and ``link`` stays ``None``.
+    * ``"silent"`` - nothing ever fires. A dongle that answered the USB probe and
+      then went quiet; only a bounded wait reports it.
+
+    ``settle_delay`` holds the outcome back for that many seconds, so a test can
+    grade *ordering* against the link coming up rather than against a thread
+    race: with a delay, a driver that does not wait provably reaches the wire
+    first, and one that waits provably does not.
+    """
+
+    def __init__(
+        self,
+        recorder: _Recorder,
+        *,
+        arming: BaseException | None = None,
+        outcome: str = "connected",
+        failure: str = "Cannot find a Crazyradio Dongle",
+        settle_delay: float = 0.0,
+    ) -> None:
         self.recorder = recorder
         self.commander = _Stub(recorder, "commander")
         self.high_level_commander = _Stub(recorder, "high_level")
         self.platform = _Stub(recorder, "platform", raises=arming)
         self.log = _FakeLink(recorder)
         self.uri: str | None = None
+        self.connected = _Caller()
+        self.connection_failed = _Caller()
+        #: ``None`` until the link is up, exactly like ``cflib``: while it is
+        #: ``None`` the real ``send_packet`` discards every packet in silence.
+        self.link: object | None = None
+        self._outcome = outcome
+        self._failure = failure
+        self._settle_delay = settle_delay
 
     def open_link(self, uri: str) -> None:
+        """Queue the connection and return, as ``cflib`` does. Never raises."""
         self.uri = uri
         self.recorder.record("open_link", (uri,))
+        threading.Thread(target=self._settle, name="fake-cf-link", daemon=True).start()
+
+    def _settle(self) -> None:
+        """The link thread reporting the outcome, after ``open_link`` returned."""
+        if self._settle_delay:
+            time.sleep(self._settle_delay)
+        if self._outcome == "connected":
+            self.link = object()
+            self.log.toc_ready = True
+            self.recorder.record("connected", (self.uri,))
+            self.connected.call(self.uri)
+        elif self._outcome == "failed":
+            self.recorder.record("connection_failed", (self.uri, self._failure))
+            self.connection_failed.call(self.uri, self._failure)
 
     def close_link(self) -> None:
+        self.link = None
         self.recorder.record("close_link", ())
 
 
 class _FakeLink:
-    """The ``cf.log`` surface: holds the one block the driver adds."""
+    """The ``cf.log`` surface: holds the one block the driver adds.
+
+    ``add_config`` raises until the TOC is down, as the real one does - it looks
+    every variable up in the downloaded TOC and raises ``KeyError`` for a name it
+    has not seen yet. That is what makes "arm and log only after ``connected``"
+    a testable ordering rather than a comment.
+    """
 
     def __init__(self, recorder: _Recorder) -> None:
         self._recorder = recorder
         self.block: _FakeLogConfig | None = None
+        self.toc_ready = False
 
     def add_config(self, block: _FakeLogConfig) -> None:
+        if not self.toc_ready:
+            raise KeyError(f"Variable {block.variables[0][0] if block.variables else '?'} not in TOC")
         self.block = block
         self._recorder.record("log.add_config", (block.name,))
 
@@ -163,12 +244,20 @@ def connected(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder):  # type: ig
     """Build a connected, armed driver over the fake link.
 
     Returns a factory so a test can choose the constructor keywords (a faster
-    ``setpoint_hz``, a failing arming request) and still get the same fake.
+    ``setpoint_hz``, a failing arming request) and the link ``outcome``, and
+    still get the same fake.
     """
     from strands_robots.drivers import crazyflie as module
 
-    def build(*, arming: BaseException | None = None, **kwargs: Any):  # type: ignore[no-untyped-def]
-        fake = FakeCrazyflie(recorder, arming=arming)
+    def build(  # type: ignore[no-untyped-def]
+        *,
+        arming: BaseException | None = None,
+        outcome: str = "connected",
+        failure: str = "Cannot find a Crazyradio Dongle",
+        settle_delay: float = 0.0,
+        **kwargs: Any,
+    ):
+        fake = FakeCrazyflie(recorder, arming=arming, outcome=outcome, failure=failure, settle_delay=settle_delay)
         pieces = type(
             "_Pieces",
             (),

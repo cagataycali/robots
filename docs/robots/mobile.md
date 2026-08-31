@@ -46,7 +46,12 @@ lerobot has no robot type for a Crazyflie, so this is the only way to fly one fr
 from strands_robots import Robot
 
 cf = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")
-cf.connect_eagerly()          # opens the link, ARMS the platform, starts telemetry
+
+# Opens the link and WAITS for the aircraft to answer, then ARMS the platform and
+# starts telemetry. Returns None on success, or a reason - check it: nothing below
+# can fly if the link never came up.
+if (reason := cf.connect_eagerly()) is not None:
+    raise SystemExit(reason)
 
 cf.takeoff(height=0.5, duration=2.0)
 cf.set_twist(vx=0.2, wz=1.0, z=0.5)   # 0.2 m/s forward, 1.0 rad/s yaw, holding 0.5 m
@@ -54,13 +59,18 @@ cf.land()                              # descends under control
 cf.cleanup()
 ```
 
-Install the client library with the `crazyflie` extra: `pip install "strands-robots[crazyflie]"`.
+Install the client library with the `crazyflie` extra:
+`pip install "strands-robots[crazyflie]"`. It is **not** part of `[all]` - `cflib` is
+GPLv3 and this project is Apache-2.0, so the copyleft dependency is only installed by a
+caller who names it. Without it the driver still imports and registers; it reports a
+reason naming this extra instead of connecting.
 
-Three things behave differently from a ground robot, and each one is a way to break the
+Four things behave differently from a ground robot, and each one is a way to break the
 aircraft if you assume otherwise:
 
 | | What to know |
 |---|---|
+| **Connecting waits** | `cflib`'s `open_link` is asynchronous and never raises - it reports failure on a *callback*, so an absent dongle or a switched-off aircraft returns normally. `connect_eagerly()` therefore blocks until the aircraft answers (up to `CONNECT_TIMEOUT_S`, 10 s) and returns the reason if it does not. Check that return: while there is no link `cflib` discards every packet in silence. |
 | **Units** | `wz` is **rad/s**, as everywhere else in this package. `cflib` wants deg/s, and the driver is the only place that conversion happens. |
 | **Setpoints are a stream** | The firmware supervisor cuts thrust when the setpoint stream goes quiet, so one `send_action` latches a setpoint and a background repeater keeps it alive at `setpoint_hz` (default 20 Hz). It returns when the setpoint is latched, not when the motion is done. |
 | **`stop` lands** | `stop()` / `stop_task()` / `cleanup()` all perform a controlled descent. Cutting the motors - an airborne aircraft *falls* - is the separately named `emergency_stop()`, and the agent tool schema cannot reach it. |

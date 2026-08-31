@@ -41,16 +41,22 @@ Crazyflie falls. Descending under control is ``HighLevelCommander.land``. So
 **lands**, and cutting the motors is a separate, explicitly named
 :meth:`~CrazyflieDriver.emergency_stop`. Handing the low-level stream back to
 the high-level commander first is mandatory and easy to miss: ``cflib`` ships
-``Commander.send_notify_setpoint_stop`` for exactly that, and a ``land`` issued
-without it is ignored while the low-level stream still owns the setpoint
-priority. :meth:`~CrazyflieDriver.land` performs that handover in order.
+``Commander.send_notify_setpoint_stop`` for exactly that, and a high-level
+command issued without it is ignored while the low-level stream still owns the
+setpoint priority. Both high-level verbs - :meth:`~CrazyflieDriver.takeoff` and
+:meth:`~CrazyflieDriver.land` - perform that handover in order.
 
 What the driver actually does:
 
-* Opens the radio link in :meth:`~CrazyflieDriver.connect_eagerly`, arms the
-  platform (firmware 2023.02 and later refuse to spin the motors until
-  ``Platform.send_arming_request`` is called) and starts one telemetry log
-  block. Nothing is armed and no propeller turns until that call.
+* Opens the radio link in :meth:`~CrazyflieDriver.connect_eagerly` and **waits
+  for it to come up**. ``cflib``'s ``open_link`` is asynchronous and swallows
+  every error, so an absent dongle otherwise reports success and every later
+  packet is silently discarded; the driver waits for ``connected`` or
+  ``connection_failed`` (bounded by :data:`CONNECT_TIMEOUT_S`) and returns the
+  reason. Only then does it arm the platform (firmware 2023.02 and later refuse
+  to spin the motors until ``Platform.send_arming_request`` is called) and start
+  one telemetry log block. Nothing is armed and no propeller turns until the
+  link is up.
 * Caches what the log block delivers. ``_pose`` is the onboard state estimate
   (``stateEstimate.x/y/z`` plus ``stabilizer.roll/pitch/yaw``), ``_imu`` is the
   attitude triple, ``_battery`` is ``pm.vbat`` in volts alongside the decoded
@@ -130,6 +136,16 @@ DEFAULT_SETPOINT_HZ: int = 20
 #: The one unit conversion in this module. ``wz`` is rad/s everywhere in this
 #: package; ``cflib``'s ``Commander`` takes ``yawrate`` in deg/s.
 RADIANS_TO_DEGREES: float = 180.0 / math.pi
+
+#: How long :meth:`CrazyflieDriver.connect_eagerly` waits for the radio link
+#: before reporting a reason, in seconds. ``Crazyflie.open_link`` is
+#: asynchronous: it returns as soon as the request is queued and delivers the
+#: outcome later on the link thread, so the driver has to wait for that outcome
+#: or it cannot tell a flying aircraft from an absent dongle. Ten seconds covers
+#: the radio handshake plus the log and parameter TOC downloads with a cold
+#: cache. Bounded, unlike ``cflib``'s own ``SyncCrazyflie.open_link``, because an
+#: agent blocked forever on a switched-off aircraft reports nothing at all.
+CONNECT_TIMEOUT_S: float = 10.0
 
 # --------------------------------------------------------------------------- #
 # Flight envelope.                                                            #
@@ -452,6 +468,46 @@ def _resolve_cflib() -> Any:
     )
 
 
+class _LinkOutcome:
+    """Whichever of ``connected`` / ``connection_failed`` arrives first.
+
+    ``Crazyflie.open_link`` never raises. It wraps its whole body in
+    ``except Exception`` and routes every failure - no Crazyradio, a malformed
+    URI, a link driver that will not load - to the ``connection_failed``
+    callback, and it reports success by calling ``connected`` once the log and
+    parameter TOCs are down. Both arrive on ``cflib``'s link thread *after*
+    ``open_link`` has already returned, so a caller that reads the return value
+    learns nothing. This latches the first outcome so
+    :meth:`CrazyflieDriver.connect_eagerly` can wait on it.
+    """
+
+    def __init__(self) -> None:
+        self.settled = threading.Event()
+        self.failure: str | None = None
+
+    def on_connected(self, link_uri: str) -> None:
+        """``cf.connected``: the link is up and both TOCs are downloaded."""
+        del link_uri
+        self.settled.set()
+
+    def on_failed(self, link_uri: str, message: str) -> None:
+        """``cf.connection_failed``: the link never came up, and why.
+
+        Only the first line is kept. ``cflib`` builds this message with
+        ``traceback.format_exc()`` appended, so a missing dongle arrives as a
+        20-line traceback whose first line - ``Couldn't load link driver: Cannot
+        find a Crazyradio Dongle`` - is the whole actionable content. The rest is
+        an internal stack that would be pasted verbatim into an agent-facing
+        error envelope, so it goes to the log instead of the refusal.
+        """
+        del link_uri
+        text = str(message)
+        self.failure = text.strip().splitlines()[0] if text.strip() else text
+        if text.strip() != self.failure:
+            logger.debug("Crazyflie connection_failed detail: %s", text)
+        self.settled.set()
+
+
 class CrazyflieDriver:
     """Native CRTP driver for the Bitcraze Crazyflie 2.x.
 
@@ -675,12 +731,23 @@ class CrazyflieDriver:
         return self.send_action(action)
 
     def takeoff(self, height: float = 0.5, duration: float = 2.0) -> dict[str, Any]:
-        """Climb to ``height`` under the high-level commander.
+        """Climb to ``height`` under the high-level commander, after the handover.
 
         The high-level commander runs the trajectory on board, so the climb
         survives a dropped packet in a way a streamed setpoint does not - which
         is what makes it the right verb for the one manoeuvre where losing the
         stream means falling out of a climb.
+
+        It reaches the firmware through the same priority rule as
+        :meth:`land`, so it performs the same handover first, in the same order:
+        halt the setpoint repeater, ``Commander.send_notify_setpoint_stop()``,
+        then the high-level command. While the low-level stream is running it
+        owns the setpoint priority and a high-level command underneath it is
+        ignored - and because the repeater re-sends at
+        :attr:`setpoint_hz` the priority never decays on its own. Without the
+        handover, a ``takeoff`` commanded during a hover returns success while
+        the aircraft holds its current height, and the caller then plans every
+        later command around an altitude the vehicle never climbed to.
 
         Args:
             height: Absolute target height, m; held to the hover envelope.
@@ -698,6 +765,8 @@ class CrazyflieDriver:
             return _refuse(f"takeoff: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
         if not self._armed:
             return _refuse(f"takeoff: {self._tool_name} is not armed; reconnect to retry the arming request.")
+        self._halt_repeater()
+        self._commander().send_notify_setpoint_stop()
         self._high_level().takeoff(float(height), float(duration))
         return _ok({"commanded": "takeoff", "height": float(height), "duration": float(duration)})
 
@@ -839,14 +908,31 @@ class CrazyflieDriver:
         Crazyradio or an aircraft that is switched off leaves the driver
         constructed and reporting why rather than taking down the caller.
 
-        The arming request is the step a reader is most likely to be surprised
-        by: firmware 2023.02 and later will not spin the motors until
+        Waiting for the link is the step a reader is most likely to be surprised
+        by, and it is why this method is longer than a call to ``open_link``.
+        ``Crazyflie.open_link`` is **asynchronous and never raises**: with no
+        Crazyradio plugged in it returns normally, leaves ``cf.link`` at ``None``
+        and calls ``connection_failed`` on its link thread. Treating that return
+        as success would arm and fly an aircraft that is not there -
+        ``Crazyflie.send_packet`` is a silent no-op while ``link`` is ``None``,
+        so the arming request, every setpoint and every ``takeoff`` would be
+        dropped on the floor while this driver answered ``success``. So the
+        driver waits for ``connected`` or ``connection_failed``, bounded by
+        :data:`CONNECT_TIMEOUT_S`, and returns the failure message as the reason.
+        Waiting is also what makes telemetry work: ``connected`` fires only after
+        the log TOC is downloaded, and ``log.add_config`` raises ``KeyError`` for
+        every variable until it is. ``cflib``'s own
+        ``SyncCrazyflie.open_link`` is the reference for this wait.
+
+        The arming request is the other step worth reading twice: firmware
+        2023.02 and later will not spin the motors until
         ``Platform.send_arming_request(True)`` succeeds, and a driver that
         skipped it would connect cleanly, accept every setpoint, and produce no
         motion at all. Older ``cflib`` releases have no ``platform`` attribute;
         that is reported as the reason rather than ignored, because an unarmed
         aircraft accepting flight commands is the failure mode the check exists
-        to prevent.
+        to prevent. It runs after the link is up, so it cannot be the packet
+        that races the connection setup.
 
         Returns:
             ``None`` on success, or a reason naming what failed.
@@ -858,14 +944,21 @@ class CrazyflieDriver:
             self._connect_error = pieces
             return pieces
 
+        outcome = _LinkOutcome()
         try:
             pieces.crtp.init_drivers()
             cf = pieces.Crazyflie()
+            cf.connected.add_callback(outcome.on_connected)
+            cf.connection_failed.add_callback(outcome.on_failed)
             cf.open_link(self._uri)
         except (OSError, RuntimeError, AttributeError) as exc:
             reason = f"cannot open the Crazyflie link at {self._uri!r}: {exc}"
             self._connect_error = reason
             return reason
+
+        if (link_failure := self._await_link(cf, outcome)) is not None:
+            self._connect_error = link_failure
+            return link_failure
 
         self._cf = cf
         self._connected = True
@@ -880,6 +973,35 @@ class CrazyflieDriver:
             # variable would ground a usable vehicle. Reported, not fatal.
             logger.warning("Crazyflie telemetry unavailable: %s", telemetry_failure)
         return None
+
+    def _await_link(self, cf: Any, outcome: _LinkOutcome) -> str | None:
+        """Block until the link settles, releasing it on anything but success.
+
+        Args:
+            cf: The ``Crazyflie`` whose ``open_link`` is in flight.
+            outcome: The latch the link thread reports into.
+
+        Returns:
+            ``None`` once the link is up, or a reason naming the refusal or the
+            timeout. The link is closed before a reason is returned, so the
+            dongle is free for the next attempt.
+        """
+        if not outcome.settled.wait(CONNECT_TIMEOUT_S):
+            reason = (
+                f"the Crazyflie at {self._uri!r} did not answer within {CONNECT_TIMEOUT_S:g}s; "
+                "check the aircraft is switched on, charged and on the URI's radio channel"
+            )
+        elif outcome.failure is not None:
+            reason = f"cannot open the Crazyflie link at {self._uri!r}: {outcome.failure}"
+        else:
+            return None
+        try:
+            cf.close_link()
+        except (OSError, RuntimeError, AttributeError) as exc:
+            # The reason being returned already names the real failure; a close
+            # that also fails must not replace it with a tidier-looking one.
+            logger.debug("closing the unopened Crazyflie link raised: %s", exc)
+        return reason
 
     def _arm(self, cf: Any) -> str | None:
         """Send the arming request, or report why the motors will stay still."""

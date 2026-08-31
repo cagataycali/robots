@@ -10,10 +10,14 @@ ground - so ``stop`` must land.
 
 The second pin is an ordering the SDK requires and a reader would not guess.
 While the low-level commander is streaming it owns the setpoint priority, and a
-``land`` issued underneath it is ignored: the aircraft keeps flying the last
-twist. ``Commander.send_notify_setpoint_stop`` is what hands priority back, so it
-must precede the ``land``. That is a relation between calls on two different SDK
-objects, which is why the fake records them on one ordered list.
+high-level command issued underneath it is ignored: the aircraft keeps flying the
+last twist. ``Commander.send_notify_setpoint_stop`` is what hands priority back,
+so it must precede *every* high-level command - ``land`` and ``takeoff`` alike,
+which is why the handover rules below are parametrized over both. The repeater
+re-sends at ``setpoint_hz``, so the low-level priority never decays on its own
+and skipping the handover is not a race but a permanent refusal, reported as
+success. That is a relation between calls on two different SDK objects, which is
+why the fake records them on one ordered list.
 """
 
 from __future__ import annotations
@@ -61,25 +65,36 @@ class TestStopLands:
         assert recorder.count("commander.send_stop_setpoint") == 0
 
 
-class TestThePriorityHandoverPrecedesTheLand:
-    """``send_notify_setpoint_stop`` first, or the ``land`` is ignored."""
+#: The high-level verbs, as ``(method name, the SDK call it must reach)``. Both
+#: go through ``HighLevelCommander``, so both are ignored by the firmware while
+#: the low-level stream owns the setpoint priority, and both must hand it back
+#: first. One table rather than a class per verb: the ordering is one rule, and a
+#: third high-level verb should inherit it by being added here.
+_HIGH_LEVEL_VERBS = [("land", "high_level.land"), ("takeoff", "high_level.takeoff")]
 
-    def test_the_handover_is_sent_and_it_is_sent_first(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+
+@pytest.mark.parametrize(("verb", "sdk_call"), _HIGH_LEVEL_VERBS, ids=[v for v, _ in _HIGH_LEVEL_VERBS])
+class TestThePriorityHandoverPrecedesEveryHighLevelCommand:
+    """``send_notify_setpoint_stop`` first, or the command is silently ignored."""
+
+    def test_the_handover_is_sent_and_it_is_sent_first(self, connected, recorder, verb, sdk_call) -> None:  # type: ignore[no-untyped-def]
         driver, _, _ = connected(setpoint_hz=100)
         driver.send_action({"vx": 0.2, "z": 0.5})
-        assert driver.land()["status"] == "success"
+        assert getattr(driver, verb)()["status"] == "success"
 
         names = recorder.names()
         assert "commander.send_notify_setpoint_stop" in names, (
-            "without this the low-level stream keeps the setpoint priority and the land is ignored"
+            f"without this the low-level stream keeps the setpoint priority and the {verb} is ignored, "
+            f"while this driver reports success"
         )
-        assert names.index("commander.send_notify_setpoint_stop") < names.index("high_level.land")
+        assert names.index("commander.send_notify_setpoint_stop") < names.index(sdk_call)
 
-    def test_the_repeater_is_stopped_before_the_handover(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
-        """Otherwise the background thread re-latches a twist mid-descent."""
+    def test_the_repeater_is_stopped_before_the_handover(self, connected, recorder, verb, sdk_call) -> None:  # type: ignore[no-untyped-def]
+        """Otherwise the background thread re-latches a twist and takes priority back."""
+        del sdk_call
         driver, _, _ = connected(setpoint_hz=100)
         driver.send_action({"vx": 0.2, "z": 0.5})
-        driver.land()
+        getattr(driver, verb)()
 
         names = recorder.names()
         handover = names.index("commander.send_notify_setpoint_stop")

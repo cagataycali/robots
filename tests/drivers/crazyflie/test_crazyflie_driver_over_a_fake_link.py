@@ -14,6 +14,11 @@ Four properties that only appear once the driver is driving something:
   start populates the three attributes the mesh reads by ``getattr``.
 * **Release is complete.** After ``cleanup`` the link is closed and the driver
   reports itself disconnected rather than looking live with nothing behind it.
+* **A link is only open once the aircraft says so.** ``cflib``'s ``open_link``
+  is asynchronous and never raises, so its return says nothing; the outcome
+  arrives on the link thread. A driver that read the return would arm and fly a
+  vehicle that is not there, because ``send_packet`` discards every packet in
+  silence while there is no link.
 """
 
 from __future__ import annotations
@@ -81,6 +86,108 @@ class TestConnectingArmsTheAircraft:
         connected()
         names = recorder.names()
         assert names.index("platform.send_arming_request") < names.index("log.start")
+
+
+class TestConnectingWaitsForTheLinkToComeUp:
+    """``open_link`` returning is not the aircraft answering.
+
+    ``Crazyflie.open_link`` wraps its body in ``except Exception`` and routes
+    every failure to the ``connection_failed`` *callback*, so with no Crazyradio
+    plugged in it returns normally and leaves ``cf.link`` at ``None``. Nothing
+    downstream complains either: ``Crazyflie.send_packet`` is a silent no-op
+    while ``link`` is ``None``, so the arming request, every setpoint and every
+    ``takeoff`` would be discarded while this driver answered ``success``. These
+    pin that the driver waits for the outcome and reports it.
+    """
+
+    def test_a_refused_link_is_reported_rather_than_reported_as_connected(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+        """The absent-dongle case: the SDK reports it by callback, not by raising."""
+        driver, _, reason = connected(outcome="failed", failure="Cannot find a Crazyradio Dongle")
+
+        assert reason is not None, (
+            "open_link returned normally but the link never came up; reporting None here would "
+            "leave the caller flying an aircraft that is not there"
+        )
+        assert "Cannot find a Crazyradio Dongle" in reason, f"the SDK's own reason must survive: {reason}"
+        assert module.DEFAULT_URI in reason, f"a reason that does not name the URI is not actionable: {reason}"
+        assert driver.is_connected is False
+
+    def test_the_reason_is_one_actionable_line_not_a_pasted_traceback(self, connected) -> None:  # type: ignore[no-untyped-def]
+        """``cflib`` appends ``traceback.format_exc()`` to this message.
+
+        The first line is the whole actionable content; the rest is an internal
+        stack that would be pasted into an agent-facing error envelope verbatim.
+        """
+        sdk_message = "Couldn't load link driver: Cannot find a Crazyradio Dongle\n\nTraceback (most recent call last):\n  File 'radiodriver.py', line 224\nException: Cannot find a Crazyradio Dongle\n"
+        _, _, reason = connected(outcome="failed", failure=sdk_message)
+
+        assert reason is not None
+        assert "Cannot find a Crazyradio Dongle" in reason, f"the actionable half was dropped: {reason}"
+        assert "Traceback" not in reason, f"an internal stack reached the refusal: {reason}"
+        assert reason.count("\n") == 0, f"a refusal must be one line: {reason!r}"
+
+    def test_a_refused_link_is_never_armed(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+        """Arming a vehicle that is not there is the packet that races the setup."""
+        connected(outcome="failed")
+        assert recorder.count("platform.send_arming_request") == 0, (
+            f"the arming request was sent over a link that never opened: {recorder.names()}"
+        )
+        assert recorder.count("log.add_config") == 0, "a telemetry block cannot be added before the TOC is down"
+
+    def test_a_refused_link_refuses_every_flight_command(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+        """The whole point: no envelope may say success over a dropped packet."""
+        driver, _, _ = connected(outcome="failed")
+
+        for envelope in (driver.send_action({"vx": 0.2, "z": 0.5}), driver.takeoff(), driver.land()):
+            assert envelope["status"] == "error", f"a command was accepted with no link: {envelope}"
+        assert recorder.count("commander.send_hover_setpoint") == 0
+        assert recorder.count("high_level.takeoff") == 0
+
+    def test_a_refused_link_is_released_so_a_retry_can_have_the_dongle(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+        connected(outcome="failed")
+        assert recorder.count("close_link") == 1, (
+            f"the failed link was left open, so the dongle stays claimed: {recorder.names()}"
+        )
+
+    def test_an_aircraft_that_never_answers_is_reported_after_the_bounded_wait(  # type: ignore[no-untyped-def]
+        self, connected, recorder, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dongle that enumerated and then went quiet. Only a timeout sees it.
+
+        ``cflib``'s own ``SyncCrazyflie.open_link`` waits unbounded here, which
+        for an agent is indistinguishable from a hang, so the driver bounds it.
+        """
+        monkeypatch.setattr(module, "CONNECT_TIMEOUT_S", 0.05)
+        driver, _, reason = connected(outcome="silent")
+
+        assert reason is not None, "an aircraft that never answered was reported as connected"
+        assert "did not answer" in reason and module.DEFAULT_URI in reason, reason
+        assert driver.is_connected is False
+        assert recorder.count("platform.send_arming_request") == 0
+        assert recorder.count("close_link") == 1
+
+    def test_the_link_is_up_before_anything_is_sent_over_it(self, connected, recorder) -> None:  # type: ignore[no-untyped-def]
+        """Ordering, on the happy path: ``connected`` precedes arming and the log block.
+
+        The real ``log.add_config`` looks each variable up in the downloaded TOC
+        and raises ``KeyError`` until ``connected`` has fired, so this ordering is
+        also what makes telemetry work at all rather than land in the driver's
+        degraded path on every real connection.
+
+        The link is held back so the ordering is decided by the driver rather
+        than by which thread happens to win: a driver that does not wait reaches
+        the wire during the delay, a driver that waits cannot.
+        """
+        _, _, reason = connected(settle_delay=0.05)
+        assert reason is None
+
+        names = recorder.names()
+        assert names.index("connected") < names.index("platform.send_arming_request"), (
+            f"the arming request preceded the link coming up: {names}"
+        )
+        assert names.index("connected") < names.index("log.add_config"), (
+            f"the telemetry block was added before the TOC was down: {names}"
+        )
 
 
 class TestTheSetpointStreamStaysAlive:
