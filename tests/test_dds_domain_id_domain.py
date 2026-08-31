@@ -1,11 +1,17 @@
 """The DDS domain id every ROS 2 surface publishes on is one shared domain.
 
 A ROS 2 / DDS domain id is an index into the RTPS port map, so only an ``int``
-in ``[0, MAX_DDS_DOMAIN_ID]`` names a domain. Five surfaces take one - the
+in ``[0, MAX_DDS_DOMAIN_ID]`` names a domain. Six surfaces take one - the
 hardware ``Robot``'s ``ros2_domain``, a simulation backend's ``ros2_domain``,
-and the ``domain_id`` of the rclpy telemetry bridge, its hardware subclass and
-the pure-RTPS bridge - and they must not disagree about which values name a
-domain, because the two transports exist to advertise the same topics.
+and the ``domain_id`` of the rclpy telemetry bridge, its hardware subclass, the
+pure-RTPS bridge and the Booster T1 native driver - and they must not disagree
+about which values name a domain, because those transports exist to advertise
+the same topics.
+
+A native driver belongs on that list for the reason the bridges do: it opens a
+DDS participant of its own (``ChannelFactory.Init(domain_id, ip)``), so a
+domain the bridges refuse and a driver accepts is a robot publishing where
+nothing subscribes.
 
 The rclpy bridge is why the range is load-bearing at the boundary rather than
 at the participant: it pins the domain by writing ``ROS_DOMAIN_ID`` into the
@@ -13,9 +19,9 @@ process environment, and that write lands *before* ``rclpy`` is imported. So an
 out-of-range value is never offered to the transport for rejection - it is
 published to the whole process, outliving the call that set it.
 
-``rclpy`` and ``cyclonedds`` are optional, so every refusal test here runs with
-both absent: each guard is placed ahead of its transport probe, which is what
-makes that possible and is asserted directly.
+``rclpy``, ``cyclonedds`` and the vendor SDKs are optional, so every refusal
+test here runs with all of them absent: each guard is placed ahead of its
+transport probe, which is what makes that possible and is asserted directly.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import pytest
 
 import strands_robots
 import strands_robots.hardware_rtps_bridge as rtps_mod
+from strands_robots.drivers.booster import BoosterDriver
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
@@ -120,6 +127,10 @@ SURFACES: list[tuple[str, Any]] = [
     ("HardwareRtpsBridge(domain_id=)", lambda v: HardwareRtpsBridge(domain_id=v)),
     ("Robot._init_ros_bridge(ros2_domain=)", _hardware_robot),
     ("SimEngine._init_ros_bridge(ros2_domain=)", _sim_engine),
+    # A native driver opens its own participant, so it is a domain surface in
+    # the same sense as the bridges - and the only one whose transport is a
+    # vendor wheel, which the constructor never touches.
+    ("BoosterDriver(domain_id=)", lambda v: BoosterDriver(domain_id=v)),
 ]
 SURFACE_IDS = [name.split("(")[0] for name, _ in SURFACES]
 
@@ -319,6 +330,7 @@ class TestEverySurfaceRoutesThroughTheSharedDomain:
     def test_the_scan_finds_every_known_domain_surface(self) -> None:
         """Non-vacuity: a scan rooted elsewhere would report a clean sweep."""
         assert set(self._surfaces()) == {
+            "drivers/booster.py::__init__",
             "hardware_robot.py::__init__",
             "hardware_robot.py::_init_ros_bridge",
             "hardware_ros_bridge.py::__init__",

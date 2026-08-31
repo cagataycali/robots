@@ -53,7 +53,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.utils import boolean_flag_error, finite_number_error
+from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
@@ -313,8 +313,12 @@ class BoosterDriver:
             port: The robot's IP address, handed to ``ChannelFactory.Init`` as
                 the vendor's reference client hands it - an empty string there
                 means "discover on the default interface".
-            domain_id: DDS domain. ``0`` is what the vendor's reference client
-                passes and what the robot ships with.
+            domain_id: DDS domain, ``0`` to
+                :data:`~strands_robots.utils.MAX_DDS_DOMAIN_ID`. ``0`` is what
+                the vendor's reference client passes and what the robot ships
+                with. The ceiling is the RTPS port map's rather than a
+                convention - see
+                :func:`~strands_robots.utils.dds_domain_id_error`.
             robot_name: Multi-robot suffix. When set, the channels are opened
                 with ``InitWithName`` so two T1s on one network do not share a
                 topic; ``None`` selects the single-robot channels.
@@ -326,8 +330,8 @@ class BoosterDriver:
 
         Raises:
             ValueError: If ``cmd_type`` is not one of
-                :data:`CMD_TYPE_STATE_FIELD`, or ``domain_id`` is not a
-                non-negative integer.
+                :data:`CMD_TYPE_STATE_FIELD`, or ``domain_id`` does not name a
+                DDS domain (:func:`~strands_robots.utils.dds_domain_id_error`).
         """
         del cameras, data_config  # accepted for parity; unused here
         if kwargs:
@@ -336,8 +340,12 @@ class BoosterDriver:
             raise ValueError(
                 f"BoosterDriver: cmd_type must be one of {', '.join(sorted(CMD_TYPE_STATE_FIELD))}, got {cmd_type!r}"
             )
-        if not isinstance(domain_id, int) or isinstance(domain_id, bool) or domain_id < 0:
-            raise ValueError(f"BoosterDriver: domain_id must be a non-negative integer, got {domain_id!r}")
+        # Refuse a domain id through the shared domain rather than a local
+        # test. A domain id indexes the RTPS port map, so it has a ceiling as
+        # well as a floor, and the same id must not be accepted here and
+        # refused by the telemetry bridges that advertise this robot's topics.
+        if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
 
         self._tool_name = tool_name
         self._port = port or ""

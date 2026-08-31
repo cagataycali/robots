@@ -39,6 +39,7 @@ from strands_robots.drivers.booster import (
     parse_low_state,
     resolve_targets,
 )
+from strands_robots.utils import MAX_DDS_DOMAIN_ID
 
 # The width a T1 reports. Every frame the driver builds is bounded by what the
 # robot itself said, so the fixtures carry a full-width state rather than a
@@ -592,8 +593,9 @@ class TestTheSeamCanBuildIt:
         ("kwargs", "expected"),
         [
             pytest.param({"cmd_type": "hybrid"}, "cmd_type must be one of", id="unknown-cmd-type"),
-            pytest.param({"domain_id": -1}, "non-negative integer", id="negative-domain"),
-            pytest.param({"domain_id": True}, "non-negative integer", id="bool-domain"),
+            pytest.param({"domain_id": -1}, "invalid domain_id", id="below-the-floor-domain"),
+            pytest.param({"domain_id": True}, "invalid domain_id", id="bool-domain"),
+            pytest.param({"domain_id": MAX_DDS_DOMAIN_ID + 1}, "invalid domain_id", id="above-the-rtps-ceiling-domain"),
         ],
     )
     def test_the_constructor_refuses_an_unusable_knob(self, kwargs: dict[str, Any], expected: str) -> None:

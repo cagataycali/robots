@@ -29,6 +29,15 @@ reaches `get_status()` as the shared `battery_pct` field and gates nothing: the
 SDK names it `soc` and documents no scale, and a floor compared against an
 unverified scale refuses every frame or none while looking like a working check.
 
+The `domain_id` the driver opens its DDS channels on is answered by the shared
+domain every other DDS surface in the project uses (`dds_domain_id_error`), not by
+a check local to the driver. A domain id indexes the RTPS port map, so it has a
+ceiling as well as a floor: the ports for domain 233 do not fit the 16-bit port
+space, and a driver that accepts it hands `ChannelFactory.Init` a domain nothing
+can be reached on while the telemetry bridges that advertise the same robot's
+topics refuse it. Sharing the guard also means one wording for the mistake at
+every surface, and that wording states the range.
+
 The SDK is a vendor wheel rather than a declared dependency - the same footing as
 the G1's `unitree-sdk2` - so it is imported inside function bodies and its
 absence is a named refusal from `connect_eagerly()`, never an `ImportError` at
