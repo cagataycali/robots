@@ -8,7 +8,7 @@ claims about what was *sent*, which only a double that records can grade.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -23,7 +23,7 @@ from strands_robots.tools.earthrover import (
     rover_stop,
 )
 
-_ALL_VERBS = {
+_ALL_VERBS: dict[str, Any] = {
     "rover_move": rover_move,
     "rover_stop": rover_stop,
     "rover_lamp": rover_lamp,
@@ -154,7 +154,7 @@ class TestTheWriteVerbsRecordWhatTheySent:
 
     def test_a_non_boolean_lamp_is_refused(self) -> None:
         driver = _Driver()
-        assert rover_lamp(driver=driver, on="bright")["status"] == "error"
+        assert rover_lamp(driver=driver, on=cast(bool, "bright"))["status"] == "error"
         assert driver.calls == []
 
     def test_speak_passes_the_text_and_the_refusal_back(self) -> None:
