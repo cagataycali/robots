@@ -125,9 +125,8 @@ from strands_robots.tools.g1._g1_common import live_handle_refusal
 def g1_stop_move(driver: Any) -> dict[str, Any]:
     """Stop all G1 locomotion (zero velocity triple, FSM unchanged).
 
-    Calls :meth:`~strands_robots.drivers.g1.G1Driver.stop_move` once
-    and returns the envelope the driver produced verbatim. The
-    driver's method publishes the SDK's
+    Calls ``G1Driver.stop_move`` once and returns the envelope the
+    driver produced verbatim. The driver's method publishes the SDK's
     :meth:`~unitree_sdk2py.g1.loco.g1_loco_client.LocoClient.StopMove`
     call, which the SDK's own handler documents as zeroing the
     last-commanded ``(vx, vy, vyaw)`` velocity triple without
@@ -165,7 +164,7 @@ def g1_stop_move(driver: Any) -> dict[str, Any]:
             call returns the driver's envelope verbatim.
 
     Returns:
-        The envelope :meth:`G1Driver.stop_move` returned. On the
+        The envelope ``G1Driver.stop_move`` returned. On the
         success path the driver's method will surface the SDK's
         ``rc`` inside a ``{"status": "success", "content":
         [{"json": {"rc": 0, "message": "..."}}]}`` envelope; on
