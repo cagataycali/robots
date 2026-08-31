@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.tools.g1._motion_switcher import FSMReading, read_fsm_id
 from strands_robots.utils import (
     finite_number_error,
@@ -748,6 +749,25 @@ class G1Driver:
         would open two clients and leak one.  :meth:`_refresh_fsm_id` is the
         only caller and holds the lock across both the open and the read.
 
+        The open itself additionally holds
+        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`, the lock
+        this driver's own :class:`DDSSubscriberSet` holds while constructing
+        every subscriber.  ``Init()`` builds the client's DDS
+        request/response endpoints and the CycloneDDS bindings segfault on a
+        concurrent endpoint construction, so the two sides of that pair - the
+        streaming subscribers and this open, both driven by one driver
+        instance - must not overlap.  ``_motion_switcher_lock`` cannot supply
+        that: a lock the engine does not take excludes nothing.  The
+        acquisition order is ``_motion_switcher_lock`` then the shared lock,
+        and nothing in the package acquires a driver lock while holding the
+        shared one, so the pair carries no cycle.
+
+        The lock covers the injected-factory branch too: the driver cannot
+        know whether a factory builds a real client, and one that does owes
+        the same serialisation.  A factory must construct its client directly
+        rather than reaching back through the engine, which would deadlock on
+        the non-reentrant shared lock.
+
         Returns:
             The open client, or ``None`` if the factory raised or refused.
         """
@@ -755,7 +775,8 @@ class G1Driver:
             return self._motion_switcher_client
         try:
             if self._motion_switcher_client_factory is not None:
-                client = self._motion_switcher_client_factory(self._network_interface)
+                with _DDS_INIT_LOCK:
+                    client = self._motion_switcher_client_factory(self._network_interface)
             else:
                 # Default: lazy-import the SDK and open a client against the
                 # driver's own NIC.  ``ChannelFactoryInitialize`` has already
@@ -770,18 +791,25 @@ class G1Driver:
                 # room for a domain-id kwarg if the SDK adds one.
                 import importlib
 
+                # The import creates no endpoint, so it stays outside the lock:
+                # holding the shared lock across a lazy SDK import would stall
+                # every subscriber construction in the process for its duration.
                 module = importlib.import_module("unitree_sdk2py.comm.motion_switcher.motion_switcher_client")
                 client_cls = module.MotionSwitcherClient
-                client = client_cls()
-                # ``Init`` is the SDK's own bring-up hook; every G1 example
-                # calls it right after construction.  A client that never
-                # ran ``Init`` returns ``(status != 0, {})`` from
-                # ``CheckMode``, which decodes to a named refusal in
-                # :func:`read_fsm_id` -- so a missing ``Init`` is a
-                # diagnosable failure, not a silent one.
-                init = getattr(client, "Init", None)
-                if callable(init):
-                    init()
+                with _DDS_INIT_LOCK:
+                    client = client_cls()
+                    # ``Init`` is the SDK's own bring-up hook; every G1 example
+                    # calls it right after construction.  A client that never
+                    # ran ``Init`` returns ``(status != 0, {})`` from
+                    # ``CheckMode``, which decodes to a named refusal in
+                    # :func:`read_fsm_id` -- so a missing ``Init`` is a
+                    # diagnosable failure, not a silent one.  Spelled as a
+                    # direct ``client.Init()`` rather than through a local
+                    # alias: a rule that grades endpoint construction over the
+                    # source reads the *callee's* name, and calling through a
+                    # lower-case binding hides this site from it.
+                    if callable(getattr(client, "Init", None)):
+                        client.Init()
         except Exception as exc:  # noqa: BLE001 - the SDK's failures are opaque
             self._motion_switcher_open_error = (
                 f"motion-switcher client could not be opened: {type(exc).__name__}: {exc}"

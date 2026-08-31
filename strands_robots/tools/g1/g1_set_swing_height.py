@@ -14,7 +14,7 @@ bundle's ``g1_set_swing_height`` verb
 lock. The neon bundle's own wrapper narrowed the argument to
 ``max(0.0, min(0.2, float(height)))`` before dispatch; the read-only
 half of that envelope already landed as
-:mod:`~strands_robots.tools.g1.g1_swing_height_envelope` (refs
+``g1_swing_height_envelope`` (removed; envelope constants live inline here) (refs
 strands-labs/robots#358), and this module is the write-side companion
 that hands the target to the driver.
 
@@ -75,7 +75,7 @@ a hand-rolled double.
 What this module does not do.
 
 * Clamp ``height`` into the neon-bundle-observed range. The
-  read-only envelope :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+  read-only envelope ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
   names ``0.0`` and ``0.2`` as the bounds the neon bundle's own
   wrapper enforced; the driver's method is where a wire-side clamp
   lives, not this verb. A caller who passes ``0.5`` reaches the
@@ -113,7 +113,7 @@ What this module does not do.
 * Check whether the driver's live ``_fsm_id`` is inside
   :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`. That
   membership test is the driver's own gate concern; the read-
-  only lookup :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+  only lookup ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
   surfaces the set to a caller planning the write, but this
   verb does not enforce it (the driver's method will).
 """
@@ -170,7 +170,7 @@ def g1_set_swing_height(
     :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` (refs
     strands-labs/robots#2916). A caller planning the write compares
     the driver's live ``fsm_id`` (from ``get_status``) against the
-    ``walk_ready_fsm_ids`` :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+    ``walk_ready_fsm_ids`` ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
     surfaces before reaching this verb; this verb does not re-run
     that check itself.
 
@@ -197,10 +197,10 @@ def g1_set_swing_height(
             and clamped its own wrapper's argument to
             ``max(0.0, min(0.2, float(height)))`` before dispatch;
             the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`
+            ``g1_swing_height_envelope`` (removed; envelope constants live inline here)
             names those bounds as
-            :data:`~strands_robots.tools.g1.g1_swing_height_envelope._SWING_HEIGHT_MIN`
-            and :data:`~strands_robots.tools.g1.g1_swing_height_envelope._SWING_HEIGHT_MAX`.
+            ``_SWING_HEIGHT_MIN``
+            and ``_SWING_HEIGHT_MAX``.
             This verb does not clamp - the driver's method (once
             landed) is where a wire-side clamp lives, and a caller
             who passes an out-of-range value reaches either the
@@ -278,7 +278,7 @@ def g1_set_swing_height(
     # ``height`` is a data parameter the tool schema *does*
     # describe (a finite float target in meters, with the
     # neon-bundle-observed range ``0.0..0.2`` surfaced by
-    # :mod:`~strands_robots.tools.g1.g1_swing_height_envelope`), so
+    # ``g1_swing_height_envelope`` (removed; envelope constants live inline here)), so
     # a model can synthesize the wrong shape here as easily as it
     # can reach the verb with the right one.  The refusals below
     # cover the shapes the driver's own ``set_swing_height`` would

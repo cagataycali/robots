@@ -215,10 +215,8 @@ def test_the_verb_passes_the_argument_through_unchanged_false() -> None:
     not ask for, and does not compose the ``SetTaskId`` payload
     itself.  This cell fixes that ``turn_flag=False`` reaches the
     driver method verbatim - the wave-in-place variant the neon
-    bundle observed, and the ``composed_task_id`` the read-only
-    envelope
-    :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-    surfaces to a caller planning the write.
+    bundle observed, and the ``composed_task_id`` the driver's
+    own write path composes from it.
     """
     envelope = {"status": "success", "content": [{"json": {"rc": 0}}]}
     driver = _StubG1Driver(envelope=envelope)
@@ -232,10 +230,8 @@ def test_the_verb_passes_the_argument_through_unchanged_true() -> None:
     """A ``turn_flag=True`` reaches the driver: wave and turn around.
 
     The neon bundle observed the wave-and-turn-around variant as
-    the second admitted target of ``LocoClient.WaveHand`` and the
-    read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-    names it.  This cell pins that the verb reaches the driver
+    the second admitted target of ``LocoClient.WaveHand``.  This
+    cell pins that the verb reaches the driver
     with ``True`` verbatim (no substitution to the in-place
     default), so a caller upgrading from the neon bundle reaches
     the same behaviour.
@@ -297,8 +293,7 @@ def test_an_int_turn_flag_is_refused_because_bool_coercion_would_be_silent() -> 
     turn around) and ``0`` into ``False`` (wave in place); a
     caller reaching this verb with ``1`` has not named a
     turn-flag variant on purpose.  Refusing the non-``bool``
-    shape explicitly matches the read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`'s
+    shape explicitly matches the neon verb's
     own ``turn_flag must be bool`` refusal, so both paths render
     the same shape a caller can grep for.
     """

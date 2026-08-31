@@ -12,11 +12,9 @@ wave-and-turn-around task (the two variants the neon bundle observed
 in-hand).  The neon bundle's ``g1_wave_hand_loco`` verb
 (``cagataycali/neon-the-g1/tools/g1_locomotion.py``) wrapped the call
 under a single-writer lock and coerced the argument through
-:class:`bool` before dispatch; the read-only half of that envelope
-already landed as
-:mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope` (refs
-strands-labs/robots#358), and this module is the write-side
-companion that hands the target to the driver.
+:class:`bool` before dispatch (refs strands-labs/robots#358), and
+this module is the write-side companion that hands the target to the
+driver.
 
 The driver's method itself is not yet plumbed on
 :class:`~strands_robots.drivers.g1.G1Driver` today (refs
@@ -84,12 +82,11 @@ What this module does not do.
   saw the value, silently transforming ``1`` / ``"yes"`` / ``None``
   into an admitted task id; this verb refuses those shapes
   explicitly because the two admitted values (``False``,
-  ``True``) are the two data points the read-only envelope
-  :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-  names, and a caller passing ``1`` here is not naming a
-  turn-flag variant on purpose.  The in-set admission the
-  envelope module surfaces is the source of truth; the shape
-  refusal here mirrors the envelope's own ``turn_flag must be
+  ``True``) are the only two variants the neon bundle observed,
+  and a caller passing ``1`` here is not naming a
+  turn-flag variant on purpose.  The driver's own write path owns
+  the in-set admission; the shape
+  refusal here mirrors the neon verb's own ``turn_flag must be
   bool`` refusal so the two paths render the same shape a caller
   can grep for.
 * Encode the ``LocoClient.WaveHand`` dispatch.  The SDK's public
@@ -108,11 +105,9 @@ What this module does not do.
   registry-not-wired one) passes through this verb; a verbatim
   quote here would trap the verb to one release's prose (refs
   strands-labs/robots#2874).
-* Compose the ``SetTaskId`` payload id.  The read-only envelope
-  :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-  surfaces the ``composed_task_id`` a caller planning the write
-  wants on hand; the driver's own path is where the composition
-  lives, so a caller reaching this verb passes only the boolean.
+* Compose the ``SetTaskId`` payload id.  The driver's own path is
+  where the composition lives, so a caller reaching this verb
+  passes only the boolean.
 * Chain a companion FSM transition.  The neon bundle's docstring
   named ``WaveHand`` as an FSM-agnostic dispatch (``SetTaskId``
   admits from every FSM) but observed the behaviour varies with
@@ -156,10 +151,8 @@ def g1_wave_hand_loco(
     ``SetTaskId`` payload); a caller who passes ``False`` reaches
     the wave-in-place task the neon bundle observed and a caller
     who passes ``True`` reaches the wave-and-turn-around task.
-    The read-only envelope
-    :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-    names both variants and their composed task ids; a caller
-    planning the write reaches that lookup first and reaches this
+    The ``turn_flag`` entry below names both variants; a caller
+    planning the write reads it first and reaches this
     verb once the target ``turn_flag`` is decided.
 
     ``WaveHand`` dispatches through ``SetTaskId`` rather than the
@@ -195,9 +188,7 @@ def g1_wave_hand_loco(
             same call returns the driver's envelope verbatim.
         turn_flag: The boolean turn-flag argument
             ``LocoClient.WaveHand`` admits.  The neon bundle
-            observed two variants and the read-only envelope
-            :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`
-            names them: ``False`` (wave-in-place, the SDK's
+            observed two variants: ``False`` (wave-in-place, the SDK's
             wave-only ``SetTaskId`` composition) and ``True``
             (wave-and-turn-around).  A non-``bool`` payload is
             refused as a shape error rather than resolved through
@@ -279,10 +270,9 @@ def g1_wave_hand_loco(
     # the four invariants: envelope not exception, names the
     # verb, names the parameter, names the shape received.  The
     # in-set admission is not enforced here - both ``False`` and
-    # ``True`` are admitted today and the envelope module owns
-    # the admission set the same way ``g1_balance_stand``'s
-    # ``{0, 3}`` admission belongs on
-    # :mod:`~strands_robots.tools.g1.g1_balance_modes`.
+    # ``True`` are admitted today and the driver's own write path
+    # owns the admission set the same way ``g1_balance_stand``'s
+    # ``{0, 3}`` admission does.
     if turn_flag is None:
         return _refusal_envelope(
             "g1_wave_hand_loco: `turn_flag` is required. Pass a "
@@ -294,8 +284,7 @@ def g1_wave_hand_loco(
     # it, because a caller passing ``1`` (``int``) reaches the SDK's
     # dispatcher through the neon wrapper's silent ``bool()`` coercion
     # as an admitted task id.  Refusing the non-``bool`` shape
-    # explicitly matches the read-only envelope
-    # :mod:`~strands_robots.tools.g1.g1_wave_hand_turn_flag_envelope`'s
+    # explicitly matches the neon verb's
     # own ``turn_flag must be bool`` refusal, so both paths render the
     # same shape a caller can grep for and the boolean requirement is
     # decidable at the tool surface rather than at wire time.
