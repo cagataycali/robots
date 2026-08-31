@@ -299,7 +299,7 @@ class FeetechDriver:
             with bus_lock(self):
                 self._connect_if_needed()
                 self._bus.write_goal_positions(targets)
-        except (ValueError, RuntimeError, OSError) as e:
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
             return _refuse(f"send_action: {e}")
         return {
             "status": "success",
@@ -399,7 +399,7 @@ class FeetechDriver:
             with bus_lock(self):
                 self._connect_if_needed()
                 joints = self._bus.sync_read()
-        except (ValueError, RuntimeError, OSError) as e:
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
             return _refuse(f"sensors: {e}")
         return {
             "status": "success",
@@ -412,7 +412,7 @@ class FeetechDriver:
             with bus_lock(self):
                 self._connect_if_needed()
                 failed = self._bus.set_torque(enabled)
-        except (ValueError, RuntimeError, OSError) as e:
+        except (ValueError, TypeError, RuntimeError, OSError) as e:
             return _refuse(f"set_torque: {e}")
         if failed:
             # A partial release is a safety fact, not a success: say which

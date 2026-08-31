@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numbers
 import time
 from typing import Any, Final
 
@@ -307,8 +308,12 @@ class FeetechBus:
             spec = self.motors.get(name)
             if spec is None:
                 raise ValueError(f"FeetechBus: unknown motor {name!r}; this bus carries {sorted(self.motors)}")
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                raise ValueError(
+                    f"FeetechBus: {name} target must be a finite number, got {type(value).__name__}: {value!r}"
+                )
             number = float(value)
-            if math.isnan(number) or math.isinf(number):
+            if not math.isfinite(number):
                 raise ValueError(f"FeetechBus: {name} target must be finite, got {value!r}")
             counts = spec.to_counts(number)
             motor_data.append((spec.motor_id, bytes([counts & 0xFF, (counts >> 8) & 0xFF])))
