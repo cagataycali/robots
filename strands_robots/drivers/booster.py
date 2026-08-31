@@ -53,6 +53,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
 if TYPE_CHECKING:
@@ -459,6 +460,24 @@ class BoosterDriver:
         A partially built channel set is released rather than kept: a driver
         holding a live subscriber and no publisher reads fine and refuses every
         write, which is the state hardest to diagnose from the outside.
+
+        Every endpoint is constructed under
+        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`. The channel
+        factory, the loco client's ``Init()`` and each of the four channels build
+        DDS readers and writers, and the CycloneDDS bindings segfault when one
+        endpoint is constructed concurrently with another - which happens as soon
+        as anything else in the process touches DDS, because
+        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` creates
+        every subscriber under that same lock. A segfault is not catchable by the
+        "record the reason and stay usable for reads" boundary below: the process
+        dies, possibly while the robot is standing under its own controller.
+
+        The lazy SDK import stays outside the lock - it creates no endpoint, and
+        holding the shared lock across it would stall every subscriber
+        construction in the process for its duration. So does the teardown of a
+        partial set, matching
+        :meth:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet.close`:
+        the lock serialises construction, not release.
         """
         if self._connected:
             return None
@@ -476,23 +495,24 @@ class BoosterDriver:
         battery: Any | None = None
         fall: Any | None = None
         try:
-            sdk.ChannelFactory.Instance().Init(self._domain_id, self._port)
+            with _DDS_INIT_LOCK:
+                sdk.ChannelFactory.Instance().Init(self._domain_id, self._port)
 
-            client = sdk.B1LocoClient()
-            if self._robot_name is None:
-                client.Init()
-            else:
-                client.InitWithName(self._robot_name)
-
-            subscriber = sdk.B1LowStateSubscriber(self._on_low_state)
-            publisher = sdk.B1LowCmdPublisher()
-            battery = sdk.B1BatteryStateSubscriber(self._on_battery)
-            fall = sdk.B1FallDownStateSubscriber(self._on_fall_state)
-            for channel in (subscriber, publisher, battery, fall):
+                client = sdk.B1LocoClient()
                 if self._robot_name is None:
-                    channel.InitChannel()
+                    client.Init()
                 else:
-                    channel.InitChannelWithName(self._robot_name)
+                    client.InitWithName(self._robot_name)
+
+                subscriber = sdk.B1LowStateSubscriber(self._on_low_state)
+                publisher = sdk.B1LowCmdPublisher()
+                battery = sdk.B1BatteryStateSubscriber(self._on_battery)
+                fall = sdk.B1FallDownStateSubscriber(self._on_fall_state)
+                for channel in (subscriber, publisher, battery, fall):
+                    if self._robot_name is None:
+                        channel.InitChannel()
+                    else:
+                        channel.InitChannelWithName(self._robot_name)
         except (RuntimeError, OSError, ValueError) as exc:
             for channel in (subscriber, publisher, battery, fall):
                 if channel is not None:
