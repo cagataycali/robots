@@ -85,7 +85,9 @@ def _open_g1_over_the_sdk(monkeypatch: pytest.MonkeyPatch) -> Any:
         _SDK_MODULE,
     ):
         module = types.ModuleType(name)
-        module.__path__ = []  # type: ignore[attr-defined] - a stand-in package
+        # A stand-in package: ``importlib.import_module`` walks the parents of a
+        # dotted name, and a parent without ``__path__`` is not importable.
+        module.__path__ = []  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.setattr(sys.modules[_SDK_MODULE], "MotionSwitcherClient", _RecordingClient, raising=False)
     driver = G1Driver()
