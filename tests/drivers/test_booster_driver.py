@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import math
 import sys
+import threading
 from typing import Any
 
 import pytest
@@ -39,6 +40,7 @@ from strands_robots.drivers.booster import (
     parse_low_state,
     resolve_targets,
 )
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import MAX_DDS_DOMAIN_ID
 
 # The width a T1 reports. Every frame the driver builds is bounded by what the
@@ -680,3 +682,60 @@ class TestTheJointTableMatchesTheVendorEnum:
         for name in CMD_TYPE_STATE_FIELD:
             assert hasattr(sdk.LowCmdType, name.upper())
         assert {mode for mode in dir(sdk.RobotMode) if mode.startswith("k")} >= {"kCustom", "kWalking"}
+
+
+# --------------------------------------------------------------------------- #
+# Endpoint construction is serialised against the rest of the process.         #
+# --------------------------------------------------------------------------- #
+
+
+class TestEndpointsAreBuiltUnderTheSharedDdsLock:
+    """The channel set is constructed under the lock every DDS user shares.
+
+    Constructing one CycloneDDS endpoint while another is being constructed
+    segfaults the bindings, and the loss is not catchable: the process dies,
+    possibly while a 1.2 m biped is standing under its own controller. The
+    subscriber set in MODULE ``strands_robots.tools.g1._dds_engine`` builds every
+    subscriber under ``_DDS_INIT_LOCK``, so this driver has to take the *same*
+    lock rather than one of its own - a private lock would exclude nothing.
+
+    That is what these cells measure: the connect blocks while a competing
+    holder owns the shared lock, and no endpoint is built until it is released.
+    """
+
+    @staticmethod
+    def _connect_in_a_thread(driver: BoosterDriver) -> tuple[threading.Thread, threading.Event, list[str | None]]:
+        done = threading.Event()
+        result: list[str | None] = []
+
+        def run() -> None:
+            result.append(driver.connect_eagerly())
+            done.set()
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread, done, result
+
+    def test_connect_waits_for_a_competing_holder_of_the_shared_lock(self, sdk: _FakeSdk) -> None:
+        """Held elsewhere, the connect makes no progress and builds no endpoint."""
+        driver = BoosterDriver()
+        with _DDS_INIT_LOCK:
+            thread, done, result = self._connect_in_a_thread(driver)
+            assert not done.wait(0.5), "connect_eagerly did not wait for the shared DDS lock"
+            assert sdk.factory_init is None, "the channel factory was initialised while another holder had the lock"
+            assert sdk.subscriber is None, "a subscriber was constructed while another holder had the lock"
+            assert not driver.is_connected
+
+        assert done.wait(5.0), "connect_eagerly never completed after the lock was released"
+        thread.join(timeout=5.0)
+        assert result == [None]
+        assert sdk.factory_init is not None
+        assert sdk.subscriber is not None
+        assert driver.is_connected
+
+    def test_the_lock_is_released_for_the_next_endpoint_user(self, sdk: _FakeSdk) -> None:
+        """A connect that owns the lock must not keep it: DDS is process-wide."""
+        driver = BoosterDriver()
+        assert driver.connect_eagerly() is None
+        assert _DDS_INIT_LOCK.acquire(timeout=1.0), "connect_eagerly held the shared DDS lock past its own use"
+        _DDS_INIT_LOCK.release()
