@@ -24,8 +24,12 @@ from strands_robots.dashboard import auth
 
 
 class FakeRequest:
-    def __init__(self, headers=None):
+    # A socket peer is modelled because the first-enrollment gate reads it: with no bootstrap
+    # token set, only the machine itself may enroll the passkey that seals the dashboard. These
+    # cells are the owner at the machine, so the peer is loopback.
+    def __init__(self, headers=None, client_host="127.0.0.1"):
         self.headers = headers or {"host": "localhost:8090"}
+        self.client = type("C", (), {"host": client_host})()
 
 
 @pytest.fixture(autouse=True)

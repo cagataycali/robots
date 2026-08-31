@@ -103,11 +103,21 @@ def test_bootstrap_token_still_works_from_anywhere(tmp_path, monkeypatch):
     assert opts.get("challenge_id")
 
 
-def test_a_genuinely_new_dashboard_is_unaffected(tmp_path):
-    # No corruption: first enrollment from anywhere keeps working exactly as before, so this
-    # change narrows an accident rather than adding a gate to the normal path.
-    opts = auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="fresh")
-    assert opts.get("challenge_id")
+def test_a_genuinely_new_dashboard_is_gated_too_and_says_so_differently(tmp_path):
+    """The fresh-install case is gated on the same predicate, with its own wording.
+
+    This cell used to assert the opposite -- that a first enrollment from anywhere kept
+    working -- which was this file's scope discipline rather than a finding that the normal
+    path was safe. It is not: a fresh store is the case an attacker most wants, because
+    nothing has to break first. Both routes into a first enrollment now refuse a caller who
+    is not at the machine; only the diagnosis differs, and neither mentions the other's cause.
+    """
+    with pytest.raises(HTTPException) as e:
+        auth.begin_registration(FakeRequest(client_host="203.0.113.9"), label="fresh")
+    assert e.value.status_code == 403
+    # The wording must fit the cause: no disk error happened here, so it must not claim one.
+    assert "unreadable" not in e.value.detail and "corrupt-" not in e.value.detail
+    assert "BOOTSTRAP_TOKEN" in e.value.detail
     assert auth.store_corruption() is None
 
 

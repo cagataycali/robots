@@ -19,8 +19,11 @@ from strands_robots.dashboard import auth
 
 
 class FakeRequest:
-    def __init__(self, headers=None):
+    # Carries a loopback socket peer: the first-enrollment gate reads it, and these cells are
+    # the owner enrolling at the machine.
+    def __init__(self, headers=None, client_host="127.0.0.1"):
         self.headers = headers or {"host": "localhost:8090"}
+        self.client = type("C", (), {"host": client_host})()
 
 
 @pytest.fixture(autouse=True)
