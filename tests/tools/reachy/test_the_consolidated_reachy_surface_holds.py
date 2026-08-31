@@ -15,7 +15,9 @@ by a file per fact. Four fact families:
    shipped once and now pins against.
 
 Plus the new ``ReachyDriver`` accessor gates (connected-first, admitted sets,
-URL-safe move names) exercised on a bare instance with no daemon.
+URL-safe move names) exercised on a bare instance with no daemon, and the move
+catalogue's wire shape, which is an array rather than a dict and so cannot be
+read the way every other endpoint's body is.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.drivers.reachy as reachy_driver_module
 import strands_robots.tools.reachy as reachy_package
 from strands_robots.drivers.reachy import ReachyDriver
 from strands_robots.tools.reachy import reachy_actions, reachy_reads
@@ -94,6 +97,8 @@ def _bare_driver(connected: bool = True) -> ReachyDriver:
     driver._battery = None
     driver._link = None
     driver._loop = None
+    driver._host = "localhost"
+    driver._api_port = 8080
     return driver
 
 
@@ -275,3 +280,78 @@ class TestTheDriverAccessorGates:
         assert payload["imu"] is None and payload["pose"] is None
         payload["joints"]["body_yaw"] = 99  # a caller's mutation must not reach the cache
         assert driver._joints["body_yaw"] == 0.5
+
+
+class _FakeTransport:
+    """A transport double that answers ``api`` with one canned body."""
+
+    def __init__(self, body: Any) -> None:
+        self.body = body
+        self.paths: list[str] = []
+
+    def api(self, host: str, port: int, path: str, method: str = "GET", data: Any = None) -> Any:
+        self.paths.append(path)
+        return self.body
+
+
+class TestTheMoveCatalogueIsReadAsAnArray:
+    """Regression: the daemon's catalogue endpoint answers a JSON array.
+
+    ``GET /api/move/recorded-move-datasets/list/{dataset}`` is declared
+    ``-> list[str]`` by the daemon (pollen-robotics/reachy_mini,
+    ``daemon/app/routers/move.py::list_recorded_move_dataset``) and
+    ``reachy_transport.api`` returns the decoded body unreshaped, so on a
+    *successful* read ``list_moves`` holds a ``list``. Reading ``.get("error")``
+    off it raised ``AttributeError`` out through ``reachy_list_emotions``,
+    breaking both halves of the surface's standing contract at once - an
+    envelope back, and never an exception. The gates above could not see it
+    because ``_RecordingHandle`` never returns a list, so these rows drive the
+    transport seam with the shapes the daemon actually produces.
+    """
+
+    @staticmethod
+    def _driver_answering(monkeypatch: pytest.MonkeyPatch, body: Any) -> tuple[ReachyDriver, _FakeTransport]:
+        transport = _FakeTransport(body)
+        monkeypatch.setattr(reachy_driver_module, "_resolve_transport", lambda: transport)
+        return _bare_driver(), transport
+
+    def test_a_catalogue_read_returns_the_array_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, transport = self._driver_answering(monkeypatch, ["happy", "sad", "curious"])
+        result = driver.list_moves("emotions")
+        assert result["status"] == "success"
+        assert result["content"][0]["json"] == {
+            "library": "emotions",
+            "moves": ["happy", "sad", "curious"],
+        }
+        assert transport.paths == ["/api/move/recorded-move-datasets/list/pollen-robotics/reachy-mini-emotions-library"]
+
+    def test_an_empty_catalogue_is_a_success_not_a_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, _ = self._driver_answering(monkeypatch, [])
+        result = driver.list_moves("dances")
+        assert result["status"] == "success"
+        assert result["content"][0]["json"]["moves"] == []
+
+    def test_each_library_reads_its_own_dataset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, transport = self._driver_answering(monkeypatch, [])
+        driver.list_moves("dances")
+        assert transport.paths == ["/api/move/recorded-move-datasets/list/pollen-robotics/reachy-mini-dances-library"]
+
+    def test_an_error_body_is_still_refused_naming_the_cause(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, _ = self._driver_answering(monkeypatch, {"error": "daemon said no"})
+        result = driver.list_moves()
+        assert result["status"] == "error"
+        assert "daemon said no" in result["content"][0]["text"]
+
+    def test_an_unexpected_dict_is_refused_rather_than_served_as_a_catalogue(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver, _ = self._driver_answering(monkeypatch, {"unexpected": "shape"})
+        result = driver.list_moves()
+        assert result["status"] == "error"
+        assert "list_moves: daemon refused" in result["content"][0]["text"]
+
+    def test_the_read_verb_carries_the_array_out_without_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, _ = self._driver_answering(monkeypatch, ["happy"])
+        result = reachy_reads.reachy_list_emotions(driver=driver)
+        assert result["status"] == "success"
+        assert result["content"][0]["json"]["moves"] == ["happy"]

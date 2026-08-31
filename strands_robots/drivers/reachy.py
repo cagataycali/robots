@@ -726,17 +726,20 @@ class ReachyDriver:
             library: Which library, one of ``'emotions'`` or ``'dances'``.
 
         Returns:
-            A success envelope carrying the daemon's catalogue, or an error
-            envelope naming what refused.
+            A success envelope whose ``moves`` is the daemon's array of names,
+            or an error envelope naming what refused.
         """
         if not self._connected:
             return _refuse("list_moves: not connected - call connect_eagerly() first")
         dataset = _MOVE_LIBRARIES.get(library)
         if dataset is None:
             return _refuse(f"list_moves: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
-        result = self._daemon_get(_PATH_MOVE_LIST.format(dataset=dataset))
-        if (error := result.get("error")) is not None:
-            return _refuse(f"list_moves: daemon refused: {error}")
+        result = self._daemon_get_list(_PATH_MOVE_LIST.format(dataset=dataset))
+        # A catalogue read succeeds as a JSON array. The only dict this endpoint
+        # can produce is the transport's {"error": ...} envelope, so a dict here
+        # is a failure whatever key it carries.
+        if isinstance(result, dict):
+            return _refuse(f"list_moves: daemon refused: {result.get('error', result)}")
         return {"status": "success", "content": [{"json": {"library": library, "moves": result}}]}
 
     def wake_up(self) -> dict[str, Any]:
@@ -920,6 +923,34 @@ class ReachyDriver:
             return {"error": transport}
 
         result: dict[str, Any] = transport.api(self._host, self._api_port, path)
+        return result
+
+    def _daemon_get_list(self, path: str) -> list[Any] | dict[str, Any]:
+        """Call a daemon REST endpoint whose success body is a JSON array.
+
+        ``/api/move/recorded-move-datasets/list/{dataset}`` is declared
+        ``-> list[str]`` by the daemon, and
+        :func:`~strands_robots.device_connect.reachy_transport.api` hands the
+        decoded body back unreshaped, so a successful catalogue read is a
+        ``list`` while every failure is still the ``{"error": ...}`` dict.
+
+        Kept separate from :meth:`_daemon_get` rather than widening that
+        return type, so the union stays confined to the one endpoint that can
+        answer with an array and the dict-shaped callers keep narrowing for
+        free. Reading an error key off a catalogue is then a type error at
+        check time rather than an ``AttributeError`` on the happy path.
+
+        Args:
+            path: Request path, one of this module's ``_PATH_*`` constants.
+
+        Returns:
+            The decoded array on success, or ``{"error": ...}``.
+        """
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return {"error": transport}
+
+        result: list[Any] | dict[str, Any] = transport.api(self._host, self._api_port, path)
         return result
 
     def _daemon_post(self, path: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
