@@ -165,10 +165,21 @@ class TestOwnerOnlyIsAPropertyOfCreation:
         assert _mode(tmp_path / "auth.json") == 0o600, "the mode must not be inherited from the umask"
 
     def test_a_store_left_wide_open_by_an_older_build_is_tightened_on_the_next_write(self, tmp_path):
-        """`os.replace` carries the temp file's bits onto the store, so this self-heals."""
-        path, _ = _seed_previous_store(tmp_path)
-        os.chmod(path, 0o644)
-        assert _mode(path) == 0o644
+        """`os.replace` carries the temp file's bits onto the store, so this self-heals.
+
+        The wide-open store is produced the way the older build produced one -- created
+        at the umask default with no chmod afterwards -- rather than chmod-ed into place.
+        The premise is then the defect's own mechanism rather than a mode this tree never
+        writes, and the cell states no literal mode it would have to keep in step with
+        the umask it runs under.
+        """
+        path = tmp_path / "auth.json"
+        previous = os.umask(0o000)
+        try:
+            path.write_text(json.dumps(_PREVIOUS, indent=2))
+        finally:
+            os.umask(previous)
+        assert _mode(path) & 0o077, "the seeded store must be group- or world-reachable to grade anything"
 
         auth._save({"credentials": [], "jwt_secret": "secret"})
 
