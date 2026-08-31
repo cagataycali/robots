@@ -582,6 +582,18 @@ rosbridge = [
 sagemaker = [
     "boto3>=1.34.0,<2.0.0",
 ]
+# The operator dashboard (``strands_robots.dashboard``) is a FastAPI + WebAuthn
+# app served with uvicorn. ``[tool.hatch.build.targets.wheel]`` packages
+# ``strands_robots`` entire, so the dashboard modules ship in every install while
+# these four do not -- this extra is what makes them reachable, and
+# ``strands_robots/dashboard/__init__.py`` names it in the refusal a caller gets
+# without it, rather than letting a bare ModuleNotFoundError read as a broken env.
+dashboard = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn>=0.27,<1.0",
+    "webauthn>=2.0,<4.0",
+    "python-multipart>=0.0.9,<1.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[moveit2]",
@@ -601,6 +613,7 @@ all = [
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
     "strands-robots[sagemaker]",
+    "strands-robots[dashboard]",
 ]
 dev = [
     "pytest>=6.0,<10.0.0",
