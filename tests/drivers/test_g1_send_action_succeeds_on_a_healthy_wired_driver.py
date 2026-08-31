@@ -1,47 +1,30 @@
-"""The acceptance criterion for harness#361 is a positive outcome, not a body.
+"""``send_action`` reaches the wire on a healthy, fully wired driver.
 
-harness#361 has closed early thirteen times because every box on it is
-satisfied by a body existing or by a mocked test passing. A checklist of
-bodies closes early forever. The gap the peer reviewer named directly on
-that issue is one line long:
+A refusal test proves the motion gate closes; it does not prove the gate ever
+opens.  This file grades the positive outcome: a driver whose every field is
+what a real, healthy G1 produces -- a completed ``connect_eagerly``, a decoded
+``LowState_``, a healthy pack, and an ``_fsm_id`` read through the
+motion-switcher wire -- reaches ``send_action`` and gets ``status="success"``.
 
-    ``send_action`` returns ``status="success"`` on a connected driver with a
-    decoded ``LowState_`` and a healthy pack.
+Two boundary contracts keep that verdict honest:
 
-The predecessor of this file (same path, before this PR) added that cell as
-a strict :func:`pytest.mark.xfail` documented against the shipped refusal --
-``FSM id unknown - motion-switcher source has not been wired`` -- so the day
-a producer landed for ``_fsm_id`` the xfail would XPASS and the wiring commit
-would delete the marker in the same change.
+1. The publisher is populated.  A driver whose ``_pubs is None`` refuses for a
+   second reason ("publisher not initialised"), which would leave the success
+   path unreachable for a cause other than the FSM.  The fixture uses a
+   recording publisher whose ``.publish`` returns ``None``, matching production
+   shape.
+2. The wire is actually exercised.  ``result["status"] == "success"`` is
+   necessary but not sufficient; a return that skipped the write would satisfy
+   it silently.  The publisher records its call count, and that count is one
+   after ``send_action`` returns.
 
-That day is this PR.  The xfail is gone, the criterion is a passing cell, and
-the surface still grades what the predecessor promised: a driver whose every
-field is what a real, healthy G1 produces (a completed ``connect_eagerly``,
-a decoded ``LowState_``, a healthy pack) reaches ``send_action`` and gets
-``status="success"``.  The one thing that changed is the FSM producer: the
-driver now takes an injectable ``motion_switcher_client_factory`` and
-:meth:`_refresh_fsm_id` reads through it on every motion-gate check.  The
-fixture below hands in a recording client so the wire runs without the SDK.
+The FSM producer is injectable: the driver takes a
+``motion_switcher_client_factory`` and :meth:`_refresh_fsm_id` reads through it
+on every motion-gate check, so the fixture hands in a recording client and the
+wire runs without the SDK.
 
-Two contracts survive from the predecessor file so the boundary does not
-silently drift:
-
-1. The publisher is populated.  A driver whose ``_pubs is None`` would refuse
-   for a second reason ("publisher not initialised") and the acceptance
-   contract would be unreachable for a cause other than the FSM.  The
-   fixture uses a recording publisher whose ``.publish`` returns ``None``,
-   matching production shape.
-
-2. The wire is actually exercised.  ``result["status"] == "success"`` is a
-   necessary but not sufficient condition; a return that skipped the wire
-   would satisfy it silently.  The publisher records its call count, and
-   that count is one after ``send_action`` returns.
-
-The un-reachability sibling
-(:mod:`test_g1_battery_floor_reaches_with_wired_fsm`) is where the reverse
-reachability -- battery-floor reaches through the gate now -- is graded.  The
-two files complement each other: this file says "success on a healthy pack",
-that one says "refuses for battery on a critical pack".
+:mod:`test_g1_battery_floor_reaches_with_wired_fsm` grades the flipped
+reachability -- the same wired gate refusing for battery on a critical pack.
 """
 
 from __future__ import annotations
@@ -187,9 +170,8 @@ def _healthy_driver(motion_switcher_client: Any | None = None) -> G1Driver:
     """Return a driver whose every field is what a real, healthy G1 produces.
 
     If ``motion_switcher_client`` is supplied the driver's FSM producer runs
-    through it; otherwise the driver is constructed with no factory (which
-    the predecessor xfail was written against, and which the un-reachability
-    sibling grades).
+    through it; otherwise the driver is constructed with no factory, which is
+    the shape the un-wired refusal below is graded against.
     """
     factory: Any = None
     if motion_switcher_client is not None:
@@ -229,7 +211,7 @@ def _healthy_driver(motion_switcher_client: Any | None = None) -> G1Driver:
 def test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lowstate(
     monkeypatch: Any,
 ) -> None:
-    """The one line the harness#361 checklist has been missing -- now passing.
+    """A healthy, wired driver reaches the wire and reports success.
 
     Every field is populated the way a real, healthy G1 populates it:
 
@@ -269,20 +251,19 @@ def test_send_action_returns_success_on_a_healthy_driver_that_has_a_decoded_lows
 
 
 def test_send_action_still_refuses_when_no_motion_switcher_factory_is_configured() -> None:
-    """The predecessor's un-wired refusal survives when no factory is passed.
+    """A driver with no FSM producer configured still refuses, by name.
 
     A driver constructed without ``motion_switcher_client_factory`` (the
     default) on a box with no ``unitree_sdk2py`` falls back to the shipped
     refusal, because :meth:`_open_motion_switcher_client` cannot import the
-    SDK.  The wording is unchanged, so a mesh peer that expected the exact
-    string still gets it.
+    SDK.  Both phrases a mesh peer reads off that refusal are pinned here, so
+    the wording cannot drift silently.
     """
     # No factory, no monkeypatch: the SDK import genuinely fails on CI.
     driver = _healthy_driver(motion_switcher_client=None)
     result = driver.send_action({"left_shoulder_pitch": 0.0})
     assert result["status"] == "error"
     text = result["content"][0]["text"]
-    # Both phrases the predecessor's xfail reason cited.
     assert "FSM id unknown" in text
     assert "motion-switcher" in text
 
@@ -292,9 +273,9 @@ def test_the_publisher_is_populated_and_the_driver_is_otherwise_healthy(
 ) -> None:
     """The success path uses a real publisher; hold the boundary.
 
-    A future refactor that made the driver skip publisher setup on
-    ``_fsm_id is None`` would trip this cell, and the fix is to preserve
-    the current shape rather than to silence the assertion.
+    A refactor that made the driver skip publisher setup on ``_fsm_id is None``
+    would trip this cell, and the fix is to preserve the current shape rather
+    than to silence the assertion.
     """
     _install_lowcmd_stub(monkeypatch)
     client = _RecordingMotionSwitcherClient(fsm_id=_HEALTHY_FSM_ID)
