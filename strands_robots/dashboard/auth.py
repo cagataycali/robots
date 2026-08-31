@@ -773,23 +773,36 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
         if not secrets.compare_digest(bootstrap or "", required):
             raise HTTPException(403, "bootstrap token required for first enrollment")
 
-    # A first enrollment that exists only because the store was unreadable is a DIFFERENT event
-    # from a genuinely new dashboard: nobody chose it, and a stranger must not be able to seize
-    # the dashboard on the strength of a disk error.
-    damage = store_corruption()
-    if first_time and damage and not required:
-        if not client_is_loopback(_socket_peer(request)):
-            raise HTTPException(
-                403,
-                "the credential store was unreadable and has been kept as "
-                f"{damage['backup'] or 'a backup'} ({damage['reason']}). Enrolling a new passkey "
-                "is limited to the machine itself until one exists again - open the dashboard on "
-                "that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
-            )
-
     rp_id = _derive_rp_id(request)
     if not rpid_is_usable(rp_id):
         raise _rpid_error(rp_id)
+
+    # The first enrollment seals the dashboard, so it is the one request that hands out
+    # ownership of the fleet rather than merely using it. With no bootstrap token configured
+    # there is nothing to check it against, so it is limited to the machine itself: whoever is
+    # at the keyboard is the only party who can be presumed to be the owner. A disk error is
+    # one way to arrive here and a genuinely new install is the other; the second is the
+    # commoner one and the more valuable to seize, so both are gated and only the wording
+    # differs. The socket peer is deliberate -- see _socket_peer, and note that an unknown
+    # peer is NOT the machine.
+    damage = store_corruption()
+    if first_time and not required:
+        if not client_is_loopback(_socket_peer(request)):
+            if damage:
+                raise HTTPException(
+                    403,
+                    "the credential store was unreadable and has been kept as "
+                    f"{damage['backup'] or 'a backup'} ({damage['reason']}). Enrolling a new passkey "
+                    "is limited to the machine itself until one exists again - open the dashboard on "
+                    "that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+                )
+            raise HTTPException(
+                403,
+                "the first passkey enrolled becomes the owner of this dashboard, and no "
+                "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN is set for it to be checked against, so it is "
+                "limited to the machine itself - open the dashboard on that machine, or set "
+                "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+            )
 
     user_id = store.get("user_id")
     if not user_id:

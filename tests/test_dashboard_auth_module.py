@@ -20,17 +20,19 @@ from strands_robots.dashboard import auth
 
 
 class FakeRequest:
-    """A request as it arrived: over a SCHEME, carrying headers.
+    """A request as it arrived: over a SCHEME, from a PEER, carrying headers.
 
-    The scheme is a property of the connection, not of a header, so a stand-in
-    that answers headers alone cannot represent one -- and an expectation
-    derived from it would look right here while being caller-controlled in
-    production.
+    Both are properties of the connection rather than of a header, and both are
+    read -- the origin a ceremony is verified against comes from the scheme, and
+    the first-enrollment gate comes from the socket peer. A stand-in answering
+    only one leaves the other reading a default, so it carries both. These cells
+    are the owner enrolling at the machine, so the peer is loopback.
     """
 
-    def __init__(self, headers=None, scheme="http"):
+    def __init__(self, headers=None, scheme="http", client_host="127.0.0.1"):
         self.headers = headers or {"host": "localhost:8090"}
         self.url = SimpleNamespace(scheme=scheme)
+        self.client = type("C", (), {"host": client_host})()
 
 
 @pytest.fixture(autouse=True)
