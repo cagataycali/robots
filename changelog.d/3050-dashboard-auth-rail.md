@@ -16,3 +16,12 @@ fine, because the gate named `fastapi`, `uvicorn` and `webauthn`, and then faile
 on the one module PyJWT backs with a bare `ModuleNotFoundError: No module named
 'jwt'` - exactly the reads-as-a-broken-venv failure the gate exists to prevent.
 PyJWT is now in the extra and `jwt` is now gated.
+
+`STRANDS_DASH_AUTH_ENABLED` recognizes `1`/`true`/`yes`/`on` and
+`0`/`false`/`no`/`off`, and reports anything else instead of acting on it. It
+previously read the variable as membership of the true-vocabulary alone behind a
+non-empty check, so every other spelling - `enabled` and `y` among them -
+resolved to auth-OFF *in preference to* the credential store, silently dropping
+passkey auth from every guarded route on a dashboard that commands real
+hardware. An unrecognized value now leaves the store as the source of truth, so
+an enrolled passkey still guards the API.

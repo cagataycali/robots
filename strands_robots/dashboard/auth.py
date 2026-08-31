@@ -34,14 +34,36 @@ from webauthn.helpers.structs import (
 
 _ENV = "STRANDS_DASH_AUTH_"
 
+# Both directions are spelled out. A value outside either vocabulary must not
+# resolve to auth-OFF: this gate fronts routes that command real hardware, so a
+# typo silently dropping it is the one misparse direction that cannot be
+# tolerated. An unrecognized value is reported and the store decides instead.
+_ENABLED_TRUE = ("1", "true", "yes", "on")
+_ENABLED_FALSE = ("0", "false", "no", "off")
+
 
 def auth_enabled() -> bool:
     """Whether passkey auth guards the API. The STORE is the source of truth: the moment a passkey is
     enrolled, auth is ON.
+
+    ``STRANDS_DASH_AUTH_ENABLED`` overrides the store only when it is spelled as
+    a recognized boolean. Anything else is logged and ignored, so an enrolled
+    passkey still guards the API rather than being dropped by a misspelling.
     """
     raw = os.getenv(_ENV + "ENABLED", "").strip().lower()
+    if raw in _ENABLED_TRUE:
+        return True
+    if raw in _ENABLED_FALSE:
+        return False
     if raw:
-        return raw in ("1", "true", "yes", "on")
+        logging.getLogger(__name__).warning(
+            "%sENABLED=%r is not a recognized boolean (true: %s; false: %s); ignoring the override "
+            "and reading the credential store instead, so an enrolled passkey still guards the API.",
+            _ENV,
+            raw,
+            ", ".join(_ENABLED_TRUE),
+            ", ".join(_ENABLED_FALSE),
+        )
     return has_credentials()
 
 
