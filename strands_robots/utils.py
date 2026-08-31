@@ -44,7 +44,13 @@ def require_optional(
         The imported module object.
 
     Raises:
-        ImportError: With a helpful install instruction.
+        ImportError: With a helpful install instruction, and ``name`` set to
+            *module_name* so a caller can tell an absent optional dependency
+            from a broken package path without parsing the message. The
+            interpreter's own ``ModuleNotFoundError`` stays reachable on
+            ``__context__``, which names the module actually not found - that
+            differs from *module_name* when the requested module is present but
+            something it imports is not.
     """
     if module_name in _lazy_modules:
         return _lazy_modules[module_name]
@@ -67,7 +73,10 @@ def require_optional(
             if extra:
                 parts.append(f"  pip install 'strands-robots[{extra}]'")
             parts.append(f"  pip install {install_hint}")
-        raise ImportError("\n".join(parts)) from None
+        # ``name`` is the module that was attempted, which is what the message
+        # already claims is required; the chained ModuleNotFoundError keeps the
+        # module the interpreter actually could not find.
+        raise ImportError("\n".join(parts), name=module_name) from None
 
 
 def require_optionals(
@@ -106,7 +115,12 @@ def require_optionals(
 
     Raises:
         ImportError: If one or more modules are missing, listing every missing
-            module and an actionable install instruction.
+            module and an actionable install instruction, with ``name`` set to
+            the first missing module in the order given. The interpreter names
+            only the first module an import fails on too, and the full set stays
+            in the message. Nothing else carries it here: the raise is outside
+            the ``except`` block that probed the modules, so ``__context__`` is
+            empty and ``name`` is the only machine-readable report.
     """
     missing: list[str] = []
     for name in module_names:
@@ -130,7 +144,7 @@ def require_optionals(
         parts.append(f"  pip install 'strands-robots[{extra}]'")
     distributions = [(pip_install or {}).get(name, name) for name in missing]
     parts.append(f"  pip install {' '.join(distributions)}")
-    raise ImportError("\n".join(parts)) from None
+    raise ImportError("\n".join(parts), name=missing[0]) from None
 
 
 def lerobot_version() -> str:
