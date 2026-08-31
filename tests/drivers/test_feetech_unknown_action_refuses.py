@@ -40,7 +40,7 @@ def _stream_one(driver: Any, action: str) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
         tool_use = {"toolUseId": "tu_test", "input": {"action": action}}
         envelopes: list[dict[str, Any]] = []
-        async for envelope in driver.stream(tool_use):
+        async for envelope in driver.stream(tool_use, {}):
             envelopes.append(envelope)
         assert len(envelopes) == 1, f"expected one envelope, got {len(envelopes)}"
         return envelopes[0]
