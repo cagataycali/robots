@@ -71,7 +71,12 @@ hatch run format            # ruff check --fix, ruff format
 4. **Imports at file top** - unless lazy-loading heavy deps with documented reason
 5. **Raise on fatal errors** - never warn-and-continue if the system will behave unexpectedly
 6. **No silent defaults on error** - returning zero-valued actions on failure is forbidden
-7. **Use `require_optional()`** - from `strands_robots/utils.py` for all optional deps
+7. **Use `require_optional()`** - from `strands_robots/utils.py` for all optional deps.
+   It reports the absent module in `ImportError.name`, so a caller can tell an absent
+   extra from a broken package path without parsing the message. A hand-rolled
+   `raise ImportError(...)` that reports an absent dependency must pass `name=` for the
+   same reason; `tests/test_absent_dependency_reports_name_the_module.py` refuses one
+   that leaves the module readable only in prose
 8. **Integration tests required** - each policy needs `tests_integ/` tests with real inference
 9. **Test behavior, not implementation** - assert on outputs, not internal state
 10. **No dead code** - if it's not called and not part of base class, delete it
