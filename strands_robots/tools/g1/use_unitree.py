@@ -185,7 +185,7 @@ def _ast_methods_for_class(qualname: str) -> dict[str, list[str]]:
     try:
         with open(src_file, encoding="utf-8") as fh:
             tree = _ast.parse(fh.read(), filename=src_file)
-    except Exception:
+    except Exception:  # parse failure - degrade to empty discovery
         return {}
 
     for node in _ast.walk(tree):
@@ -214,7 +214,7 @@ def list_operations(service_name: str) -> list[str]:
         ops = [name for name, _m in inspect.getmembers(cls, predicate=inspect.isfunction) if not name.startswith("_")]
         if ops:
             return sorted(ops)
-    except Exception:
+    except Exception:  # SDK not importable - fall through to AST discovery
         pass
 
     return sorted(_ast_methods_for_class(qualname).keys())
@@ -248,7 +248,7 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
                         )
                     params.append(entry)
             except (TypeError, ValueError):
-                pass
+                pass  # parameter introspection failed - return what we have
             return {
                 "service_name": service_name,
                 "operation_name": operation_name,
@@ -260,7 +260,7 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
                 "high_danger": (service_name, operation_name) in HIGH_DANGER_OPS,
                 "source": "inspect",
             }
-    except Exception:
+    except Exception:  # SDK not importable - fall through to AST discovery
         pass
 
     ast_methods = _ast_methods_for_class(qualname)
