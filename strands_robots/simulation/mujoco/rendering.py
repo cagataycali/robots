@@ -355,8 +355,7 @@ class RenderingMixin:
     def _get_viz_option(self) -> Any:
         """Return an ``mujoco.MjvOption`` from ``world._backend_state["viz_option"]``, or ``None``.
 
-        The optional ``viz_option`` override lets benchmark adapters (e.g.
-        :class:`~strands_robots.benchmarks.libero.adapter.LiberoAdapter`)
+        The optional ``viz_option`` override lets a benchmark adapter
         configure render-time visualisation flags - things like
         ``mjvOption.geomgroup[0] = 0`` to hide collision geoms,
         ``sitegroup[*] = 0`` to hide site markers, ``mjVIS_JOINT/mjVIS_ACTUATOR/mjVIS_COM = 0``

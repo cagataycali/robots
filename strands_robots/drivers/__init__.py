@@ -26,6 +26,7 @@ from strands_robots.drivers.base import (
 from strands_robots.drivers.registry import (
     driver_choice_error,
     get_native_driver_class,
+    list_driver_coverage,
     list_native_drivers,
     register_native_driver,
     resolve_driver,
@@ -53,6 +54,7 @@ _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
     ("strands_robots.drivers.feetech.driver", "FeetechDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.franka.driver", "FrankaDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.g1", "G1Driver", ("g1", "unitree_g1")),
+    ("strands_robots.drivers.go2", "Go2Driver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.reachy", "ReachyDriver", ("reachy_mini",)),
     ("strands_robots.drivers.microduck", "MicroduckDriver", ("microduck",)),
 )
@@ -121,6 +123,7 @@ __all__ = [
     "HardwareDriver",
     "driver_choice_error",
     "get_native_driver_class",
+    "list_driver_coverage",
     "list_native_drivers",
     "missing_driver_members",
     "register_native_driver",
