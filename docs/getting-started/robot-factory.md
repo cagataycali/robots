@@ -81,8 +81,10 @@ the clamp disabled.
 
 `mode="real"` builds a driver. By default that is the lerobot one - it constructs a lerobot
 `RobotConfig` and wraps a lerobot driver, which is what most robots in the shipped registry
-use. A robot that lerobot cannot model declares a native driver instead; `list_native_drivers()`
-reports which robots those are.
+use. A robot lerobot cannot model needs a native driver, but the two are not exclusive - a
+robot lerobot *can* build may have one as well, and then `driver=` decides which is used.
+`list_native_drivers()` reports every robot that has one, and is the answer to "is my robot
+driven natively" - the refusal below lists them only as of the day it was captured.
 
 `driver=` selects a different one:
 
@@ -112,11 +114,12 @@ URL - because only the driver knows how to read it.
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python
->>> Robot("so101", mode="real", driver="strands")
-ValueError: No native driver is registered for 'so101', so driver='strands' cannot build
-it. Robots with a native driver: reachy_mini, unitree_g1. Either use driver='lerobot'
-(today's default, which builds it through lerobot) or register one with
-strands_robots.drivers.register_native_driver().
+>>> Robot("ur5e", mode="real", driver="strands")
+ValueError: No native driver is registered for 'ur5e', so driver='strands' cannot build
+it. Robots with a native driver: aloha, dynamixel_2r, hope_jr, koch, lekiwi, microduck,
+open_duck_mini, reachy_mini, so100, so101, trossen_wxai, unitree_g1, vx300s, wx250s.
+Either use driver='lerobot' (today's default, which builds it through lerobot) or
+register one with strands_robots.drivers.register_native_driver().
 ```
 
 A robot may also declare its driver in the registry, so a caller needs no `driver=` at all:
