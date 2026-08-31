@@ -58,6 +58,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -82,6 +83,23 @@ DEFAULT_API_PORT: int = 8000
 #: the same constants the driver sends.
 _PATH_STATUS = "/api/daemon/status"
 _PATH_STOP = "/api/move/stop"
+_PATH_WAKE = "/api/move/play/wake_up"
+_PATH_SLEEP = "/api/move/play/goto_sleep"
+_PATH_MOVE_PLAY = "/api/move/play/recorded-move-dataset/{dataset}/{move}"
+_PATH_MOVE_LIST = "/api/move/recorded-move-datasets/list/{dataset}"
+
+#: A recorded move's name goes into a URL path, so the admitted alphabet is the
+#: same one :mod:`strands_robots.device_connect.reachy_mini_driver` enforces -
+#: anything else is refused before a request is built from it.
+_MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+#: The two recorded-move libraries the daemon serves, mapped to their
+#: HuggingFace dataset ids. A dict rather than string surgery so a refusal can
+#: name the admitted set.
+_MOVE_LIBRARIES: dict[str, str] = {
+    "emotions": "pollen-robotics/reachy-mini-emotions-library",
+    "dances": "pollen-robotics/reachy-mini-dances-library",
+}
 
 #: The module every daemon touch here goes through. It is a leaf that imports
 #: nothing but the standard library, and its parent package
@@ -665,6 +683,115 @@ class ReachyDriver:
             return _refuse(f"stop_task: daemon refused the stop: {error}")
         self._stopped = True
         return {"status": "success", "content": [{"text": "asked the daemon to stop any recorded move in progress"}]}
+
+    # ------------------------------------------------------------------ #
+    # Recorded-move and motor paths the reachy_* tools call.             #
+    # ------------------------------------------------------------------ #
+
+    def play_move(self, move_name: str, library: str = "emotions") -> dict[str, Any]:
+        """Play one recorded move (emotion or dance) by name through the daemon.
+
+        The Mini's expressive behaviour is a recorded head+antenna+body
+        choreography served by the daemon from a HuggingFace library - the same
+        rail :meth:`stop_task` halts. Three gates: connected, ``library`` in the
+        admitted set, ``move_name`` in the URL-safe alphabet.
+
+        Args:
+            move_name: The move's name in the library, e.g. ``'happy'``.
+            library: Which library, one of ``'emotions'`` or ``'dances'``.
+
+        Returns:
+            A success envelope naming the move, or an error envelope naming the
+            first gate that refused.
+        """
+        if not self._connected:
+            return _refuse("play_move: not connected - call connect_eagerly() first")
+        dataset = _MOVE_LIBRARIES.get(library)
+        if dataset is None:
+            return _refuse(f"play_move: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
+        if not _MOVE_NAME_RE.fullmatch(move_name or ""):
+            return _refuse(
+                f"play_move: invalid move_name {move_name!r}; expected 1-128 chars of [A-Za-z0-9._-] - "
+                "list_moves() names the library's catalogue"
+            )
+        result = self._daemon_post(_PATH_MOVE_PLAY.format(dataset=dataset, move=move_name))
+        if (error := result.get("error")) is not None:
+            return _refuse(f"play_move: daemon refused {move_name!r}: {error}")
+        return {"status": "success", "content": [{"json": {"played": move_name, "library": library}}]}
+
+    def list_moves(self, library: str = "emotions") -> dict[str, Any]:
+        """List the recorded moves one library serves.
+
+        Args:
+            library: Which library, one of ``'emotions'`` or ``'dances'``.
+
+        Returns:
+            A success envelope carrying the daemon's catalogue, or an error
+            envelope naming what refused.
+        """
+        if not self._connected:
+            return _refuse("list_moves: not connected - call connect_eagerly() first")
+        dataset = _MOVE_LIBRARIES.get(library)
+        if dataset is None:
+            return _refuse(f"list_moves: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
+        result = self._daemon_get(_PATH_MOVE_LIST.format(dataset=dataset))
+        if (error := result.get("error")) is not None:
+            return _refuse(f"list_moves: daemon refused: {error}")
+        return {"status": "success", "content": [{"json": {"library": library, "moves": result}}]}
+
+    def wake_up(self) -> dict[str, Any]:
+        """Play the daemon's built-in wake-up move (init pose, ears up).
+
+        Returns:
+            A success envelope, or an error envelope naming what refused.
+        """
+        if not self._connected:
+            return _refuse("wake_up: not connected - call connect_eagerly() first")
+        result = self._daemon_post(_PATH_WAKE)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"wake_up: daemon refused: {error}")
+        return {"status": "success", "content": [{"text": "asked the daemon to play the wake-up move"}]}
+
+    def goto_sleep(self) -> dict[str, Any]:
+        """Play the daemon's built-in go-to-sleep move (head down, ears rest).
+
+        Returns:
+            A success envelope, or an error envelope naming what refused.
+        """
+        if not self._connected:
+            return _refuse("goto_sleep: not connected - call connect_eagerly() first")
+        result = self._daemon_post(_PATH_SLEEP)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"goto_sleep: daemon refused: {error}")
+        return {"status": "success", "content": [{"text": "asked the daemon to play the go-to-sleep move"}]}
+
+    def set_motors(self, mode: str) -> dict[str, Any]:
+        """Set motor torque for all joints: ``'enabled'`` holds, ``'disabled'`` goes limp.
+
+        Sent on the real-time command link, the same rail
+        :meth:`send_action` writes. The SDK's third mode
+        (``gravity_compensation``) has no daemon-link command, so it is refused
+        by name rather than silently mapped to one of the two that do.
+
+        Args:
+            mode: ``'enabled'`` (torque on) or ``'disabled'`` (safe to move by
+                hand).
+
+        Returns:
+            A success envelope naming the mode, or an error envelope naming
+            what refused.
+        """
+        if not self._connected:
+            return _refuse("set_motors: not connected - call connect_eagerly() first")
+        torque = {"enabled": True, "disabled": False}.get(mode)
+        if torque is None:
+            return _refuse(
+                f"set_motors: unknown mode {mode!r}; expected 'enabled' or 'disabled' "
+                "(the SDK's gravity_compensation mode has no daemon-link command)"
+            )
+        if (error := self._send_cmd({"torque": torque, "ids": None})) is not None:
+            return _refuse(f"set_motors: {error}")
+        return {"status": "success", "content": [{"json": {"motors": mode}}]}
 
     # ------------------------------------------------------------------ #
     # Link callbacks. Each runs on the loop thread; keep fast and pure.  #
