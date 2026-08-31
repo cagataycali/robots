@@ -20,3 +20,21 @@ invention, because the three do not agree - a Panda's joints are
 and the real one. A joint-space command must name all seven joints: FCI commands
 a whole configuration, so completing a partial dict from the arm's present pose
 would turn "move joint4" into a seven-joint motion the caller never wrote.
+
+The halt goes through libfranka's own `Robot::stop()`, reached on the handle
+`panda_py.Panda.get_robot()` returns - the `Panda` wrapper has no halt of its
+own, only `stop_controller()`, which ends a torque controller rather than the
+motion generator this driver commands. It preempts: the blocking motion runs
+outside the driver's state lock, so `stop()` and `stop_task()` reach the arm
+while the control loop they exist to abort is still running, the Franka Hand is
+halted with it, and a telemetry read on another thread is not blanked for the
+motion's duration.
+
+A motion's outcome is read rather than assumed. `panda-py` catches
+`franka::Exception` on its realtime thread and parks it for `raise_error()`, then
+returns a `bool` saying whether the arm ended within the success threshold of the
+goal - so the motion call returns normally after a reflex stop or an out-of-limit
+target. Both are now collected: the parked error is drained after every motion
+and reported verbatim, and a motion that ended away from the goal is refused
+instead of reported as the configuration the arm holds. The Franka Hand's width
+verdict is read the same way.

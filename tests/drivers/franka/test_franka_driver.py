@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
+import time
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
@@ -61,15 +63,66 @@ _TAU = (1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7)
 # ============================================================================
 
 
-class FakePanda:
-    """Stands in for ``panda_py.Panda``: state reads, guarded motion, stop."""
+class FakeRobot:
+    """Stands in for ``panda_py.libfranka.Robot``, the object ``Panda.get_robot()``
+    hands back.
 
-    def __init__(self, hostname: str, *, fail: Exception | None = None) -> None:
+    It carries the halt. ``franka::Robot::stop()`` is bound here and nowhere else
+    in the binding, and it is the call designed to abort a running control loop
+    from another thread - so a driver that halts through anything else is either
+    calling a method that does not exist or ending the wrong thing.
+    """
+
+    def __init__(self, *, fail: Exception | None = None) -> None:
+        self.stops = 0
+        self._fail = fail
+
+    def stop(self) -> None:
+        if self._fail is not None:
+            raise self._fail
+        self.stops += 1
+
+
+class FakePanda:
+    """Stands in for ``panda_py.Panda``: exactly the calls the binding exposes.
+
+    Shaped from the binding's own surface rather than from what the driver
+    happens to call, because the two differing is the drift this fake exists to
+    catch. Three properties of the real object are load-bearing and are all
+    modelled here:
+
+    * **There is no ``stop``.** The wrapper binds ``stop_controller`` (which ends
+      a torque controller) and ``get_robot``; the halt lives on the object the
+      latter returns.
+    * **``move_to_joint_position`` blocks and returns a ``bool``.** It runs the
+      whole trajectory before returning, then reports whether the arm ended
+      within the success threshold of the goal. ``block`` models the first,
+      ``reached`` the second.
+    * **A control error does not propagate.** The realtime thread catches it and
+      parks it for ``raise_error()``, so the motion call returns normally and the
+      error surfaces only when it is collected. ``parked`` models that.
+    """
+
+    def __init__(
+        self,
+        hostname: str,
+        *,
+        fail: Exception | None = None,
+        reached: bool = True,
+        parked: Exception | None = None,
+        block: threading.Event | None = None,
+        entered: threading.Event | None = None,
+    ) -> None:
         self.hostname = hostname
         self.moves: list[tuple[list[float], float]] = []
-        self.stops = 0
         self.closed = False
+        self.robot = FakeRobot(fail=fail)
+        self.raise_error_calls = 0
         self._fail = fail
+        self._reached = reached
+        self._parked = parked
+        self._block = block
+        self._entered = entered
         self.state: Any = SimpleNamespace(q=list(_Q), dq=list(_DQ), tau_J=list(_TAU))
 
     def get_state(self) -> Any:
@@ -77,34 +130,62 @@ class FakePanda:
             raise self._fail
         return self.state
 
-    def move_to_joint_position(self, q: list[float], speed_factor: float = 1.0) -> None:
+    def get_robot(self) -> FakeRobot:
+        return self.robot
+
+    def stop_controller(self) -> None:
+        """Bound by the real wrapper, and not a halt: it ends a torque controller."""
+
+    def move_to_joint_position(self, q: list[float], speed_factor: float = 1.0) -> bool:
         if self._fail is not None:
             raise self._fail
         self.moves.append((list(q), speed_factor))
+        if self._entered is not None:
+            self._entered.set()
+        if self._block is not None:
+            assert self._block.wait(timeout=10), "the blocking motion was never released"
+        return self._reached
 
-    def stop(self) -> None:
-        if self._fail is not None:
-            raise self._fail
-        self.stops += 1
+    def raise_error(self) -> None:
+        """Re-raise the error the realtime thread parked, and clear it.
+
+        Clearing matters: the real call moves the parked exception out before
+        throwing, so an error can only ever be reported once.
+        """
+        self.raise_error_calls += 1
+        error, self._parked = self._parked, None
+        if error is not None:
+            raise error
 
     def close(self) -> None:
         self.closed = True
 
 
 class FakeGripper:
-    """Stands in for ``panda_py.libfranka.Gripper``: one read, one move."""
+    """Stands in for ``panda_py.libfranka.Gripper``: one read, one move, one stop.
 
-    def __init__(self, hostname: str) -> None:
+    ``move`` returns a ``bool`` and ``stop`` exists, both as libfranka declares
+    them - the Hand runs its own motion, so it has its own verdict and its own
+    halt.
+    """
+
+    def __init__(self, hostname: str, *, reached: bool = True) -> None:
         self.hostname = hostname
         self.moves: list[tuple[float, float]] = []
+        self.stops = 0
         self.closed = False
+        self._reached = reached
         self.state: Any = SimpleNamespace(width=0.037, max_width=0.08)
 
     def read_once(self) -> Any:
         return self.state
 
-    def move(self, width: float, speed: float) -> None:
+    def move(self, width: float, speed: float) -> bool:
         self.moves.append((width, speed))
+        return self._reached
+
+    def stop(self) -> None:
+        self.stops += 1
 
     def close(self) -> None:
         self.closed = True
@@ -535,7 +616,7 @@ class TestOverTheLink:
         assert driver.stop_task()["status"] == "success"
         assert _invoke(driver, "stop") == f"stop_task: {driver.tool_name} motion stopped"
         asyncio.run(driver.stop())
-        assert arm.stops == 3
+        assert arm.robot.stops == 3, "all three halts go through libfranka's Robot.stop()"
 
     def test_cleanup_closes_both_devices_and_disconnects(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The control box admits one session: a dropped reference that was
@@ -639,3 +720,204 @@ class TestPolicyPathsRefuse:
         payload = FrankaDriver(tool_name="panda").get_task_status()["content"][0]["json"]
         assert payload["in_flight"] is False
         assert payload["reason"] == _NO_POLICY_PROVIDER
+
+
+# ============================================================================
+# The halt, and the verdict a motion returns. Both are properties of the real
+# binding that a fake shaped from the driver's own calls cannot express, so the
+# fake above is shaped from the binding and these cells hold it there.
+# ============================================================================
+
+
+class TestTheHaltReachesTheArm:
+    """``libfranka``'s ``Robot::stop()`` is the halt, and it must preempt.
+
+    Two separate claims, and the second is the one a fake with an instant motion
+    cannot see: the halt has to reach the *right call*, and it has to reach it
+    *while the motion is still running*. A halt that lands after the motion it
+    was asked to interrupt reports success for an arm that stopped on its own.
+    """
+
+    def test_the_wrapper_has_no_halt_of_its_own(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The premise the other cells rest on.
+
+        ``panda_py.Panda`` binds ``stop_controller`` and ``get_robot``; the halt
+        is on the object the latter returns. A driver calling ``Panda.stop()``
+        raises ``AttributeError`` on a real arm, which no ``except`` on the FCI
+        paths catches - so the fake must not offer one either.
+        """
+        _, arm = _connected(monkeypatch)
+        assert not hasattr(arm, "stop"), "the real wrapper has no stop(); the fake must not invent one"
+        assert hasattr(arm, "stop_controller"), "it has stop_controller, which ends a controller, not a motion"
+        assert hasattr(arm.get_robot(), "stop"), "libfranka's Robot carries the halt"
+
+    def test_the_halt_goes_through_libfrankas_robot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, arm = _connected(monkeypatch)
+        assert driver.stop_task()["status"] == "success"
+        assert arm.robot.stops == 1
+
+    def test_the_hand_is_halted_with_the_arm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The Hand runs its own motion: an arm that stopped while the fingers
+        keep closing is a partial halt."""
+        driver, arm = _connected(monkeypatch)
+        hand = driver._gripper
+        assert driver.stop_task()["status"] == "success"
+        assert arm.robot.stops == 1
+        assert hand.stops == 1
+
+    def test_a_binding_with_no_get_robot_is_a_reason_not_an_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The agent ``stop`` verb is dispatched through ``stream``, where the
+        contract is an error envelope. A binding whose surface differs from the
+        one measured here has to be reported rather than raised: a stop request
+        that produced a traceback left the arm moving."""
+        driver, _ = _connected(monkeypatch)
+        # A binding without it: the surface question, not a fault in this object.
+        monkeypatch.delattr(FakePanda, "get_robot")
+        result = driver.stop_task()
+        assert result["status"] == "error"
+        assert "get_robot()" in result["content"][0]["text"]
+        assert _invoke(driver, "stop").startswith("stop_task: this panda_py binding exposes no get_robot()")
+
+    def test_the_halt_preempts_a_motion_in_flight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``move_to_joint_position`` runs the whole trajectory before returning.
+        The halt must not queue behind it."""
+        entered, release = threading.Event(), threading.Event()
+        arm = FakePanda(_HOST, block=release, entered=entered)
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        mover = threading.Thread(target=driver.send_action, args=(dict(zip(names, _Q, strict=True)),), daemon=True)
+        mover.start()
+        try:
+            assert entered.wait(timeout=5), "the motion never started"
+            started = time.monotonic()
+            result = driver.stop_task()
+            elapsed = time.monotonic() - started
+            assert result["status"] == "success"
+            assert arm.robot.stops == 1, "the halt reached the arm while it was moving"
+            assert elapsed < 2.0, f"the halt waited {elapsed:.2f}s on the motion instead of preempting it"
+            assert mover.is_alive(), "the motion is still in flight, which is the point"
+        finally:
+            release.set()
+            mover.join(timeout=5)
+
+    def test_telemetry_answers_while_the_arm_is_moving(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The mesh reads state on its own thread. A read serialized behind the
+        motion blanks this arm's joints for the motion's full duration, which
+        reads downstream as a healthy arm reporting nothing."""
+        entered, release = threading.Event(), threading.Event()
+        arm = FakePanda(_HOST, block=release, entered=entered)
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        mover = threading.Thread(target=driver.send_action, args=(dict(zip(names, _Q, strict=True)),), daemon=True)
+        mover.start()
+        try:
+            assert entered.wait(timeout=5), "the motion never started"
+            started = time.monotonic()
+            snapshot = driver.read_state()
+            elapsed = time.monotonic() - started
+            assert isinstance(snapshot, dict), f"telemetry stalled behind the motion: {snapshot}"
+            assert snapshot["joints"]["joint1"] == pytest.approx(_Q[0])
+            assert elapsed < 2.0, f"the read waited {elapsed:.2f}s on the motion"
+        finally:
+            release.set()
+            mover.join(timeout=5)
+
+    def test_shutdown_waits_for_a_motion_rather_than_closing_under_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The one path that does wait on the motion lock, and the lock-ordering
+        rule that makes it safe: the command path releases the state lock before
+        taking the motion lock, so ``cleanup`` may take them in the other order.
+        A link closed under a running control loop leaves the control box with a
+        session it never ended."""
+        entered, release = threading.Event(), threading.Event()
+        arm = FakePanda(_HOST, block=release, entered=entered)
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        mover = threading.Thread(target=driver.send_action, args=(dict(zip(names, _Q, strict=True)),), daemon=True)
+        mover.start()
+        assert entered.wait(timeout=5), "the motion never started"
+        closer = threading.Thread(target=driver.cleanup, daemon=True)
+        closer.start()
+        closer.join(timeout=0.5)
+        assert closer.is_alive(), "shutdown must not close the link under a running motion"
+        assert not arm.closed
+        release.set()
+        mover.join(timeout=5)
+        closer.join(timeout=5)
+        assert not closer.is_alive() and arm.closed
+        assert not driver.is_connected
+
+
+class TestTheMotionsVerdictIsRead:
+    """A motion reports its outcome two ways, and neither one raises.
+
+    ``panda_py`` catches ``franka::Exception`` on its realtime thread and parks
+    it for ``raise_error()``, then returns a ``bool`` saying whether the arm
+    ended within the success threshold of the goal. A driver reading neither
+    reports the commanded configuration as though the arm were holding it.
+    """
+
+    def test_a_parked_control_error_is_reported_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        parked = RuntimeError("joint_position_limits_violation: joint4 -2.4000 exceeds -2.3562")
+        arm = FakePanda(_HOST, reached=False, parked=parked)
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        result = driver.send_action(dict(zip(names, _Q, strict=True)))
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "joint_position_limits_violation" in text, "libfranka names the limit; the driver cannot"
+        assert "FCI refused the command" in text
+        assert arm.raise_error_calls == 1, "the parked error has to be collected - it is never thrown at the caller"
+
+    def test_a_parked_error_is_not_charged_to_the_next_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Drained after every motion, so an error is reported against the motion
+        that caused it. A driver that only collected on failure would surface a
+        parked error against whichever command ran next."""
+        arm = FakePanda(_HOST, reached=False, parked=RuntimeError("cartesian_reflex"))
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        action = dict(zip(names, _Q, strict=True))
+        assert "cartesian_reflex" in driver.send_action(action)["content"][0]["text"]
+        arm._reached = True
+        second = driver.send_action(action)
+        assert second["status"] == "success", f"the parked error outlived its own motion: {second}"
+        assert arm.raise_error_calls == 2
+
+    def test_a_motion_that_ended_short_of_the_goal_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No exception, no parked error: the motion generator simply reports the
+        goal was not met. Reporting success here names joints the arm is not
+        holding, which every consumer of the envelope then records as a motion
+        that happened."""
+        arm = FakePanda(_HOST, reached=False)
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        result = driver.send_action(dict(zip(names, _Q, strict=True)))
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "did not reach the commanded configuration" in text
+        assert "joint4" in text, "the refusal names what was asked for"
+        assert arm.moves, "the arm did move - the refusal is about where it ended up"
+
+    def test_a_binding_that_reports_nothing_is_not_read_as_a_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The verdict is compared against ``False``, not falsiness. A binding
+        whose motion returns nothing has not reported a failure, and treating its
+        ``None`` as one would refuse every motion it ever completes."""
+        arm = FakePanda(_HOST)
+        arm._reached = None  # type: ignore[assignment]
+        driver, _ = _connected(monkeypatch, panda=arm)
+        names = joint_names_for("panda")
+        result = driver.send_action(dict(zip(names, _Q, strict=True)))
+        assert result["status"] == "success"
+        assert result["content"][0]["json"]["commanded"]["joints"]["joint1"] == pytest.approx(_Q[0])
+
+    def test_a_hand_that_did_not_reach_its_width_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The Hand has its own verdict for the same reason the arm does: it
+        reports ``False`` for a width it did not reach, which is what a grasp
+        that closed on an object looks like."""
+        arm = FakePanda(_HOST)
+        _install_fake_panda_py(monkeypatch, panda=arm)
+        sys.modules["panda_py"].libfranka.Gripper = lambda host: FakeGripper(host, reached=False)
+        driver = FrankaDriver(tool_name="panda", port=_HOST)
+        assert driver.connect_eagerly() is None
+        result = driver.send_action({GRIPPER_KEY: 0.04})
+        assert result["status"] == "error"
+        assert "did not reach 0.04 m" in result["content"][0]["text"]

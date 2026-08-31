@@ -129,6 +129,20 @@ _AgileX Piper (6-DOF + gripper)_
 
     _The same dict, keyed by `arm.joint_names` and passed through the driver's own
     `action_to_targets` gate, stepping the simulated `panda`._
+
+    A `send_action` that reports success means the arm reached the configuration
+    it was given. `panda-py` runs the trajectory on its own realtime thread and
+    reports the outcome as a return value rather than by raising, so a reflex
+    stop, an out-of-limit target, or a motion that simply ended short of the goal
+    all come back as an error envelope carrying libfranka's own message - not as
+    a success naming joints the arm is not holding.
+
+    `arm.stop()` preempts a motion in flight. It goes through libfranka's own
+    `Robot::stop()`, which is designed to abort a running control loop from
+    another thread, so it does not wait for the motion it was asked to interrupt;
+    the Franka Hand is halted with the arm. Telemetry keeps answering throughout,
+    so `read_state()` on another thread is not blanked for the duration of a
+    motion.
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 

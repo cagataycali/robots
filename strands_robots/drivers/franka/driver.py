@@ -433,10 +433,25 @@ class FrankaDriver:
         self._gripper: Any = None
         self._connected = False
         self._connect_error: str | None = None
-        # One lock over every FCI touch. The mesh reads telemetry on its own
-        # thread while an agent may be commanding a motion, and libfranka's
-        # Robot object is not safe to enter twice at once.
+        # Two locks, because one FCI touch is not like the others.
+        #
+        # ``_lock`` covers the short ones - a state read, a handle swap - since
+        # libfranka's Robot is not safe to enter twice at once and the mesh reads
+        # telemetry on its own thread.
+        #
+        # ``_motion_lock`` is held across the blocking motion alone. It
+        # serialises motions against each other, and it is deliberately not the
+        # lock a halt or a state read takes: ``move_to_joint_position`` runs the
+        # whole trajectory before returning, so a halt that waited on it would
+        # land after the motion it was meant to interrupt, and telemetry would go
+        # blank for the motion's full duration.
+        #
+        # Ordering rule: a thread never waits for ``_motion_lock`` while holding
+        # ``_lock``. The command path snapshots the handles under ``_lock`` and
+        # releases it before taking ``_motion_lock``; ``cleanup`` takes them in
+        # the other order, which is safe only because of that rule.
         self._lock = threading.RLock()
+        self._motion_lock = threading.Lock()
         # Extras are kept rather than refused: a downstream driver package may
         # consume them, and refusing them here would refuse a valid extension.
         self._extras = kwargs
@@ -559,8 +574,9 @@ class FrankaDriver:
     def read_state(self) -> dict[str, Any] | str:
         """Read one FCI state and decode it, or return a reason.
 
-        One read of the arm and one of the Hand, under the driver's lock, then
-        :func:`decode_robot_state`. On demand rather than from a background poll:
+        One read of the arm and one of the Hand, under the driver's state lock -
+        not the motion lock, so telemetry keeps answering while the arm moves -
+        then :func:`decode_robot_state`. On demand rather than from a background poll:
         the 1 kHz loop belongs to libfranka's realtime context, and a Python
         thread standing in for it would be a second, slower copy of the state
         with no way to say how stale it is.
@@ -620,6 +636,18 @@ class FrankaDriver:
         enforces the arm's own joint limits, so those limits are not restated
         here and its refusal is reported verbatim.
 
+        That refusal has to be collected rather than caught. ``panda_py`` runs the
+        trajectory on its own realtime thread and catches ``franka::Exception``
+        there, parking it for ``raise_error()``, so the motion call returns
+        normally after a reflex stop or an out-of-limit target and reports the
+        outcome as a ``bool`` instead. Both are read here: the parked error is
+        drained after every motion, and a motion that ended away from the goal is
+        refused rather than reported as the configuration the arm holds.
+
+        The blocking motion is run outside the state lock, so a halt issued while
+        the arm is moving preempts it instead of queueing behind it - see
+        :meth:`stop_task`.
+
         Args:
             action: Joint targets in radians keyed by :attr:`joint_names`, and/or
                 :data:`GRIPPER_KEY` in metres.
@@ -644,14 +672,45 @@ class FrankaDriver:
                 f"{self._hostname!r} - connect_eagerly() reports which devices are live"
             )
 
+        panda, gripper = self._live_handles()
+        if panda is None:
+            return _refuse(f"send_action: not connected to {self._hostname or 'any FCI host'}")
+
         commanded: dict[str, Any] = {}
         try:
-            with self._lock:
+            with self._motion_lock:
                 if joint_target is not None:
-                    self._panda.move_to_joint_position(joint_target, speed_factor=self._speed_factor)
-                    commanded["joints"] = dict(zip(self._joint_names, joint_target, strict=True))
+                    named = dict(zip(self._joint_names, joint_target, strict=True))
+                    reached = panda.move_to_joint_position(joint_target, speed_factor=self._speed_factor)
+                    # Drain the control thread's parked error first. panda_py's
+                    # controller catches franka::Exception inside the realtime
+                    # loop and holds it for raise_error(), so the motion call
+                    # itself never raises for a reflex stop or an out-of-limit
+                    # target. Drained after every motion, so a parked error is
+                    # reported against the motion that caused it rather than
+                    # against whichever command runs next.
+                    panda.raise_error()
+                    if reached is False:
+                        # The motion generator's own verdict: the arm finished
+                        # away from the goal. Compared against False rather than
+                        # falsiness so a binding that returns nothing is not read
+                        # as a failure it did not report.
+                        return _refuse(
+                            f"send_action: the arm moved but did not reach the commanded configuration "
+                            f"{named} - libfranka's motion generator reports the goal was not met, so "
+                            "the arm is somewhere between where it was and where it was asked to be"
+                        )
+                    commanded["joints"] = named
                 if gripper_width is not None:
-                    self._gripper.move(gripper_width, self._gripper_speed())
+                    # The Hand's own verdict, read for the same reason as the
+                    # arm's: it reports False for a width it did not reach, which
+                    # is what a grasp that closed on an object looks like.
+                    if gripper.move(gripper_width, self._gripper_speed()) is False:
+                        return _refuse(
+                            f"send_action: the Hand did not reach {gripper_width} m - it reports the "
+                            "commanded width was not met, which is what it reports when the fingers "
+                            "closed on an object instead"
+                        )
                     commanded[GRIPPER_KEY] = gripper_width
         except (OSError, RuntimeError) as exc:
             # libfranka's own refusal - an out-of-limit target, a reflex stop, a
@@ -659,6 +718,60 @@ class FrankaDriver:
             # which is more than any envelope in this module could establish.
             return _refuse(f"send_action: FCI refused the command: {exc}")
         return {"status": "success", "content": [{"json": {"commanded": commanded, "robot": self._tool_name}}]}
+
+    def _live_handles(self) -> tuple[Any, Any]:
+        """Snapshot the arm and Hand handles under the short lock.
+
+        Taken so a caller can use them outside the lock: the strong references
+        keep the devices alive even if :meth:`cleanup` clears the attributes
+        meanwhile, which is what lets the blocking motion run without holding a
+        lock a halt would then have to wait for.
+
+        Returns:
+            ``(arm, hand)``, either of which is ``None`` when not connected.
+        """
+        with self._lock:
+            return self._panda, self._gripper
+
+    def _halt(self, panda: Any, gripper: Any) -> str | None:
+        """Interrupt whatever the arm is doing, and the Hand with it.
+
+        Through ``libfranka``'s own ``Robot::stop()`` - the call designed to be
+        made from another thread to abort a running control loop. ``panda_py``
+        exposes it on the object ``Panda.get_robot()`` returns; the ``Panda``
+        wrapper itself has no halt of its own, only ``stop_controller()``, which
+        ends a torque controller rather than the motion generator this driver
+        commands.
+
+        Args:
+            panda: The live arm handle.
+            gripper: The live Hand handle, or ``None`` when none answered.
+
+        Returns:
+            ``None`` on success, or a reason naming what refused. A reason and
+            never an exception: this is the halt path, and every caller of it -
+            the agent ``stop`` verb, a task stop, shutdown - is a place where a
+            raise would replace a stopped arm with a traceback.
+        """
+        try:
+            get_robot = panda.get_robot
+        except AttributeError:
+            return (
+                "this panda_py binding exposes no get_robot(), so libfranka's own "
+                "Robot.stop() cannot be reached and the arm cannot be halted through it"
+            )
+        try:
+            get_robot().stop()
+            if gripper is not None:
+                # The Hand runs its own motion; an arm that stopped while the
+                # fingers keep closing is a partial halt.
+                gripper.stop()
+        except (AttributeError, OSError, RuntimeError) as exc:
+            # AttributeError included on purpose: a binding whose surface differs
+            # from the one measured here must be reported, because a halt verb
+            # that raises is worse than one that says why it could not halt.
+            return f"FCI stop failed: {exc}"
+        return None
 
     def _gripper_speed(self) -> float:
         """Gripper closing speed in m/s, scaled by this driver's speed factor.
@@ -710,14 +823,27 @@ class FrankaDriver:
         Also the agent ``stop`` verb's implementation, so the halt an agent asks
         for and the halt a task stop performs are the same call rather than two
         that can diverge.
+
+        Preempts a motion in flight. It takes the state lock only long enough to
+        read the handles and never the motion lock, so it reaches
+        ``libfranka``'s ``Robot::stop()`` while the control loop that call exists
+        to abort is still running. A halt that waited on the motion would report
+        success for an arm that had already finished moving on its own.
+
+        Returns:
+            A success envelope, or an error envelope naming why the arm could not
+            be halted. Never raises: this verb is reached from ``stream``, and an
+            exception there is a stop request that produced a traceback instead of
+            a stopped arm.
         """
         if not self.is_connected:
             return _refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
-        try:
-            with self._lock:
-                self._panda.stop()
-        except (OSError, RuntimeError) as exc:
-            return _refuse(f"stop_task: FCI stop failed: {exc}")
+        panda, gripper = self._live_handles()
+        if panda is None:
+            return _refuse(f"stop_task: not connected to {self._hostname or 'any FCI host'}")
+        reason = self._halt(panda, gripper)
+        if reason is not None:
+            return _refuse(f"stop_task: {reason}")
         return {"status": "success", "content": [{"text": f"stop_task: {self._tool_name} motion stopped"}]}
 
     # ------------------------------------------------------------------ #
@@ -814,11 +940,12 @@ class FrankaDriver:
         """
         if not self.is_connected:
             return
-        try:
-            with self._lock:
-                self._panda.stop()
-        except (OSError, RuntimeError) as exc:
-            logger.warning("Franka stop failed on %r: %s", self._tool_name, exc)
+        panda, gripper = self._live_handles()
+        if panda is None:
+            return
+        reason = self._halt(panda, gripper)
+        if reason is not None:
+            logger.warning("Franka stop failed on %r: %s", self._tool_name, reason)
 
     def cleanup(self) -> None:
         """Release the FCI link and the Hand.
@@ -828,7 +955,11 @@ class FrankaDriver:
         that dropped its references without closing would leave the arm
         unreachable to the next process until the session timed out.
         """
-        with self._lock:
+        # The motion lock first: a link closed under a running control loop
+        # leaves the control box with a session it never ended, so shutdown waits
+        # for an in-flight motion. This is the one path that waits on it, and it
+        # is not a halt - a caller wanting the motion to end now calls stop().
+        with self._motion_lock, self._lock:
             for device, label in ((self._gripper, "gripper"), (self._panda, "arm")):
                 if device is None:
                     continue
