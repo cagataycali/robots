@@ -38,6 +38,7 @@ from strands_robots.simulation.benchmark import (
     _BENCHMARK_REGISTRY,
     register_benchmark,
 )
+from strands_robots.simulation.models import SimRobot
 from strands_robots.simulation.policy_runner import PolicyRunner
 
 
@@ -4310,10 +4311,9 @@ class TestInstallActionController:
         # ``robot_name not in self._world.robots`` (returns early
         # if missing) and then reads ``robot.namespace`` for the
         # name-lookup fallback (which the controller stub bypasses).
-        class _RobotStub:
-            namespace = ""
-
-        sim._world.robots["arm"] = _RobotStub()  # type: ignore[assignment]
+        # The real record: teardown cooperatively stops every robot through
+        # ``request_policy_stop``, which a bare stub does not answer.
+        sim._world.robots["arm"] = SimRobot(name="arm", urdf_path="")
 
         call_count = [0]
         original = mujoco.mj_step
@@ -4391,10 +4391,9 @@ class TestInstallActionController:
         sim._world._data = mujoco.MjData(sim._world._model)
         mujoco.mj_forward(sim._world._model, sim._world._data)
 
-        class _RobotStub:
-            namespace = ""
-
-        sim._world.robots["arm"] = _RobotStub()  # type: ignore[assignment]
+        # The real record: teardown cooperatively stops every robot through
+        # ``request_policy_stop``, which a bare stub does not answer.
+        sim._world.robots["arm"] = SimRobot(name="arm", urdf_path="")
 
         call_count = [0]
         original = mujoco.mj_step
