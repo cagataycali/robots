@@ -26,3 +26,13 @@ down a process does not drop a held payload. `motor_ids` is now honoured
 (narrowing the arm) instead of recorded and ignored, and an ID with no joint
 name is refused. `start_task`/`run_policy` still refuse — now naming the
 missing policy control loop rather than blaming a bus that works.
+
+Every driver-side path that touches the wire holds the same `bus_lock` on the
+driver that `read_joints` takes for the mesh-side read, so a 30Hz joints
+publisher and an agent move no longer interleave on a half-duplex bus. The
+agent surface refuses rather than coerces: a non-boolean `enabled` on
+`set_torque` is named instead of passed through `bool()`, where `"false"` is
+truthy and a request to *release* a loaded arm energizes it while reporting
+`torque_enabled: True` as a success. An action verb the schema does not declare
+is refused with the verb list read back off the schema, rather than falling
+through to the torque release the fallthrough branch used to be.

@@ -405,8 +405,8 @@ class TestBusLockParity:
         ("name", "call"),
         [
             ("send_action", lambda d: d.send_action({"elbow_flex": 10.0})),
-            ("sensors", lambda d: _run_stream(d, {"toolUseId": "t", "input": {"action": "sensors"}})),
-            ("set_torque", lambda d: _run_stream(d, {"toolUseId": "t", "input": {"action": "stop"}})),
+            ("sensors", lambda d: _run_stream(d, {"toolUseId": "t", "name": "so101", "input": {"action": "sensors"}})),
+            ("set_torque", lambda d: _run_stream(d, {"toolUseId": "t", "name": "so101", "input": {"action": "stop"}})),
         ],
     )
     def test_a_bus_path_waits_for_the_lock_a_reader_holds(self, name: str, call: Any) -> None:
