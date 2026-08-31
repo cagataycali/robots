@@ -247,8 +247,7 @@ class FeetechDriver:
             envelope = self._set_torque_envelope(False)
         else:
             envelope = _refuse(
-                f"FeetechDriver: unknown action {action!r}; "
-                f"declared verbs are {self.declared_verbs}",
+                f"FeetechDriver: unknown action {action!r}; declared verbs are {self.declared_verbs}",
             )
         yield {"toolUseId": tool_use_id, **envelope}
 

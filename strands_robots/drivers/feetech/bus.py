@@ -25,9 +25,8 @@ gradeable - on a box with no serial stack at all.
 
 from __future__ import annotations
 
-import math
-
 import logging
+import math
 import time
 from typing import Any, Final
 

@@ -25,7 +25,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from strands.types.tools import ToolUse
+from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.bus_access import joint_read_source, read_joints
 from strands_robots.drivers import (
