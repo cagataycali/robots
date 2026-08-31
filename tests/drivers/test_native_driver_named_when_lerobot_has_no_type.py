@@ -56,20 +56,24 @@ from strands_robots.registry import get_robot, list_robots
 #: them. Literal rather than derived: a rule narrowed by mistake would
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
-#: rule itself, so a fifth robot arriving in this position is caught there.
+#: rule itself, so a further robot arriving in this position is caught there.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "vx300s",
     "wx250s",
     "trossen_wxai",
     "dynamixel_2r",
     "open_duck_mini",
+    "ur5e",
+    "ur10e",
 )
 
 #: Robots that reach the same site with no native driver, so the listing of
 #: lerobot's robot types is the right answer and must survive. Two grippers and
 #: two arms: every one is a real registry entry with a simulation asset and no
-#: real-mode support of any kind.
-NO_DRIVER_OF_EITHER_KIND = ("robotiq_2f85", "robotiq_2f85_v4", "ur5e", "panda")
+#: real-mode support of any kind. ``xarm7`` stands where ``ur5e`` used to: the UR
+#: arms gained a native driver, so they are now in the population above, and a
+#: control has to be a robot that still has neither route.
+NO_DRIVER_OF_EITHER_KIND = ("robotiq_2f85", "robotiq_2f85_v4", "xarm7", "panda")
 
 #: The generic listing's own words, which must be absent from a refusal that has
 #: a better answer and present from one that does not.
@@ -272,9 +276,9 @@ class TestTheHelperReportsRatherThanRaises:
         class _PlantedDriver:
             pass
 
-        assert _native_driver_refusal("ur5e") is None, "premise: ur5e has no driver today"
-        monkeypatch.setitem(drivers_registry_mod._NATIVE_DRIVERS, "ur5e", _PlantedDriver)
-        reason = _native_driver_refusal("ur5e")
+        assert _native_driver_refusal("kuka_iiwa") is None, "premise: kuka_iiwa has no driver today"
+        monkeypatch.setitem(drivers_registry_mod._NATIVE_DRIVERS, "kuka_iiwa", _PlantedDriver)
+        reason = _native_driver_refusal("kuka_iiwa")
         assert reason is not None
         assert "_PlantedDriver" in reason
 
