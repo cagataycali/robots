@@ -793,6 +793,35 @@ class ReachyDriver:
             return _refuse(f"set_motors: {error}")
         return {"status": "success", "content": [{"json": {"motors": mode}}]}
 
+    def state_snapshot(self) -> dict[str, Any]:
+        """Return the cached sensor state: joints, pose, IMU, battery.
+
+        A synchronous read off the caches the link thread fills - no daemon
+        round-trip, so it is cheap enough to call before and after every
+        motion. A ``None`` field means that stream has not delivered yet (IMU
+        and battery stay ``None`` forever on a Lite, which has neither).
+
+        Returns:
+            A success envelope carrying the four snapshots, or a refusal when
+            the driver was never connected (caches from a link that never ran
+            would be indistinguishable from a robot reporting nothing).
+        """
+        if not self._connected:
+            return _refuse("state_snapshot: not connected - call connect_eagerly() first")
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "joints": self._snapshot("_joints"),
+                        "pose": self._snapshot("_pose"),
+                        "imu": self._snapshot("_imu"),
+                        "battery": self._snapshot("_battery"),
+                    }
+                }
+            ],
+        }
+
     # ------------------------------------------------------------------ #
     # Link callbacks. Each runs on the loop thread; keep fast and pure.  #
     # ------------------------------------------------------------------ #
