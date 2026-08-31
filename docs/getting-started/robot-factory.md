@@ -94,6 +94,25 @@ driven natively" - the refusal below lists them only as of the day it was captur
 | `"lerobot"` | The lerobot driver, explicitly. |
 | `"strands"` | The native driver registered for this robot. |
 
+`list_driver_coverage()` reports the join for every registered robot: which `driver=` values
+can build it, and an empty tuple where neither can.
+
+```python
+from strands_robots.drivers import list_driver_coverage
+
+coverage = list_driver_coverage()
+coverage["so101"], coverage["vx300s"], coverage["panda"]
+# (('lerobot', 'strands'), ('strands',), ())
+
+sim_only = [name for name, drivers in coverage.items() if not drivers]
+```
+
+`so101` is reported as both and `resolve_driver("so101")` returns `"lerobot"` - coverage is
+what *can* build a robot, resolution is what *does*. `vx300s` has no lerobot robot type, so its
+native driver is the only one that can build it. An empty tuple is the driver gap: `sim_only`
+is every robot `mode="real"` has nowhere to go for, derived on each call rather than
+maintained by hand.
+
 A native driver is for a robot lerobot's arm/serial shape cannot model - a humanoid with its
 own state machine, a rover reporting GPS, a base publishing a point cloud. It is a separate
 class satisfying `strands_robots.drivers.HardwareDriver`, registered against a robot name:
