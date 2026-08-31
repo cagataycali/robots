@@ -65,7 +65,18 @@ _LIST_KEYS = {
 }
 
 _lock = threading.RLock()
-_cache: dict[str, dict[str, Any]] | None = None
+# The resolved tree, cached under the path it was resolved from. A `dict | None`
+# rebound through `global` -- and at two of the four write sites through
+# `globals()["_cache"]`, which is the same rebinding spelled so it does not need
+# the declaration -- makes "the cache describes the current SETTINGS_FILE" an
+# invariant maintained by hand at every write, and the two can disagree: a
+# process that repoints SETTINGS_FILE is served the tree resolved from the
+# previous file, and a stale hit is indistinguishable from a fresh one. Keyed
+# this way they cannot, because the path is the dict's key, so a tree is only
+# reachable through the file it came from. `auth.py` keys its store cache on a
+# file identity for the same reason. Cleared before each insert, so it holds at
+# most one entry.
+_cache: dict[str, dict[str, dict[str, Any]]] = {}
 # Process-scoped values that must never reach settings.json - see override().
 _overrides: dict[str, dict[str, Any]] = {}
 
@@ -218,22 +229,26 @@ def override(section: str, key: str, value: Any) -> None:
     """
     with _lock:
         _overrides.setdefault(section, {})[key] = value
-        globals()["_cache"] = None
+        _cache.clear()
 
 
 def clear_overrides() -> None:
     """Drop every process-scoped override (tests, and re-reading from scratch)."""
     with _lock:
         _overrides.clear()
-        globals()["_cache"] = None
+        _cache.clear()
 
 
 def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
     """Full settings tree: overrides over file values over env/defaults."""
-    global _cache
     with _lock:
-        if _cache is not None and not refresh:
-            return copy.deepcopy(_cache)
+        # Not `key`: the merge loops below bind that name to schema keys, so a
+        # cache key called `key` is cached under whichever setting was merged last.
+        origin = str(SETTINGS_FILE)
+        if not refresh:
+            cached = _cache.get(origin)
+            if cached is not None:
+                return copy.deepcopy(cached)
         merged = _defaults()
         stored = _read_file()
         for section, values in stored.items():
@@ -246,7 +261,8 @@ def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
             for key, value in values.items():
                 if section in merged and key in _SCHEMA[section]:
                     merged[section][key] = _coerce(section, key, value)
-        _cache = merged
+        _cache.clear()
+        _cache[origin] = merged
         return copy.deepcopy(merged)
 
 
@@ -311,8 +327,9 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
                 changed.append(f"{section}.{key}")
         if changed:
             _write_file(stored)
-            global _cache
-            _cache = None
+            # Cleared before the reload, not left to it: a reload that raises
+            # must not leave the pre-write tree cached as if it were current.
+            _cache.clear()
             load(refresh=True)
     return changed, errors
 
