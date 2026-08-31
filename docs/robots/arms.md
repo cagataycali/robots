@@ -106,9 +106,24 @@ _AgileX Piper (6-DOF + gripper)_
 - Real hardware through LeRobot, where the registry entry names a `lerobot_type`:
   `hope_jr`, `koch`, `omx`, `openarm`, `rebot_b601`, `so100`, `so101`.
 - Real hardware through a native Strands driver, selected with `driver="strands"`:
-  `dynamixel_2r`, `hope_jr`, `koch`, `so100`, `so101`, `vx300s`, `wx250s`.
+  `dynamixel_2r`, `fr3`, `fr3_v2`, `hope_jr`, `koch`, `panda`, `so100`, `so101`,
+  `vx300s`, `wx250s`.
 - Every other arm is simulation-only: `Robot(name, mode="real")` refuses it and names
   the robots that do have a path, rather than falling back to sim.
+- The Franka arms (`panda`, `fr3`, `fr3_v2`) are driven over the Franka Control
+  Interface, which needs the control box's address and the `panda-py` binding over
+  libfranka (`pip install panda-py`):
+
+    ```python
+    arm = Robot("panda", mode="real", driver="strands", port="172.16.0.2")
+    arm.connect_eagerly()                     # returns None, or a reason
+    arm.send_action({**dict(zip(arm.joint_names, targets)), "gripper_width": 0.04})
+    ```
+
+    Read `arm.joint_names` rather than assuming them: each Franka's joints are named
+    the way *its own* MuJoCo model names them, so a Panda's are `joint1..joint7`
+    while an FR3's are `fr3_joint1..fr3_joint7`. That is what lets an action dict
+    authored against the simulated arm command the real one unchanged.
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 

@@ -56,20 +56,28 @@ from strands_robots.registry import get_robot, list_robots
 #: them. Literal rather than derived: a rule narrowed by mistake would
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
-#: rule itself, so a fifth robot arriving in this position is caught there.
+#: rule itself, so another robot arriving in this position is caught there -
+#: which is how the Franka arms arrived here, having moved out of
+#: :data:`NO_DRIVER_OF_EITHER_KIND` when their FCI driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "vx300s",
     "wx250s",
     "trossen_wxai",
     "dynamixel_2r",
     "open_duck_mini",
+    "panda",
+    "fr3",
+    "fr3_v2",
 )
 
 #: Robots that reach the same site with no native driver, so the listing of
 #: lerobot's robot types is the right answer and must survive. Two grippers and
-#: two arms: every one is a real registry entry with a simulation asset and no
-#: real-mode support of any kind.
-NO_DRIVER_OF_EITHER_KIND = ("robotiq_2f85", "robotiq_2f85_v4", "ur5e", "panda")
+#: an arm: every one is a real registry entry with a simulation asset and no
+#: real-mode support of any kind. ``panda`` was a fourth until
+#: :class:`~strands_robots.drivers.franka.driver.FrankaDriver` gave the Franka
+#: family a real-mode path, which is exactly the transition these two tuples
+#: exist to keep honest.
+NO_DRIVER_OF_EITHER_KIND = ("robotiq_2f85", "robotiq_2f85_v4", "ur5e")
 
 #: The generic listing's own words, which must be absent from a refusal that has
 #: a better answer and present from one that does not.
@@ -160,7 +168,7 @@ class TestANativelyDrivenRobotIsNamed:
 
 
 class TestTheDerivedPopulationIsExactlyThese:
-    """The rule, graded rather than the four names: a fifth robot is caught here."""
+    """The rule, graded rather than the names: a robot arriving here is caught."""
 
     @staticmethod
     def _routed_to_lerobot_with_a_native_driver() -> set[str]:
