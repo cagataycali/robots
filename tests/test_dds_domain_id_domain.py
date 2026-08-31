@@ -35,9 +35,9 @@ import pytest
 
 import strands_robots
 import strands_robots.hardware_rtps_bridge as rtps_mod
+from strands_robots.drivers.booster import BoosterDriver
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
-from strands_robots.drivers.booster import BoosterDriver
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.ros_telemetry import RosTelemetryBridge
 from strands_robots.simulation.base import SimEngine
