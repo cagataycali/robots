@@ -8,6 +8,8 @@ claims about what was *sent*, which only a double that records can grade.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any, cast
 
 import pytest
@@ -199,3 +201,27 @@ class TestTheReadVerbsAnswerHonestly:
         driver = _Driver(capture_frame=refusal)
         assert rover_camera(driver=driver, camera="rear") == refusal
         assert driver.calls == [("capture_frame", ("rear",), {})]
+
+
+class TestTheVerbsImportNoDriver:
+    """The handle contract is the ``_VERBS`` accessor names, not an import.
+
+    The module types ``driver`` as ``Any`` and names ``EarthRoverDriver``
+    literally rather than through a ``:class:`` role, so nothing here promises
+    the reader a resolvable path into ``strands_robots.drivers``. Pinning that
+    keeps the claim load-bearing in both directions: an import added for a type
+    annotation the tool schema never sees would couple this surface - and every
+    agent that loads a rover verb - to a driver module and to the extras that
+    driver needs, and it would put the docstring back into the shape whose
+    pointer only resolves while that module happens to sit in the tree.
+    """
+
+    def test_a_clean_interpreter_loads_the_verbs_and_pulls_no_driver(self) -> None:
+        code = (
+            "import sys, strands_robots.tools.earthrover as m; "
+            "assert callable(m.rover_move), 'the verbs did not load'; "
+            "leaked = sorted(n for n in sys.modules if n.startswith('strands_robots.drivers')); "
+            "assert not leaked, f'importing a rover verb pulled {leaked}'"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
