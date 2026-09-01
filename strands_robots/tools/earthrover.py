@@ -1,9 +1,9 @@
 """EarthRover agent verbs - the rover's whole tool surface in one module.
 
-Six ``@tool`` verbs over :class:`~strands_robots.drivers.earthrover.EarthRoverDriver`,
-ported from ``cagataycali/scout-the-rover`` where the transport ran against the
-real rover. One module, one accessor table, no per-verb files - the shape the
-g1 consolidation (#3037/#3070) locked for tool families.
+Six ``@tool`` verbs over ``EarthRoverDriver`` (#3081), ported from
+``cagataycali/scout-the-rover`` where the transport ran against the real rover.
+One module, one accessor table, no per-verb files - the shape the g1
+consolidation (#3037/#3070) locked for tool families.
 
 Every verb holds the package's ``@tool`` invariants: the answer is an envelope
 and never an exception, the ``driver`` parameter is judged by the shared
@@ -14,7 +14,10 @@ returned verbatim rather than reshaped - the driver already words its refusals
 The ``driver`` handle is a **live Python object** the orchestrator constructed
 (typed :class:`~typing.Any` so no import cycle and no type leaks into the tool
 schema); an agent cannot synthesize it, and a wrong handle is refused naming
-the parameter and the received type.
+the parameter and the received type. That independence is why the driver is
+named above as a literal rather than a ``:class:`` role: a role is a resolvable
+target, and this module must import and grade cleanly in a tree where #3081 has
+not landed yet.
 """
 
 from __future__ import annotations
