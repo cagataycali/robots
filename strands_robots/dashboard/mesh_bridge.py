@@ -859,7 +859,24 @@ class MeshBridge:
             if self._safety is not None and getattr(self._safety, "alive", False):
                 return self._safety
             try:
-                from strands_robots.mesh.core import Mesh
+                from strands_robots.mesh.core import Mesh, mesh_kill_switch_engaged
+
+                # STRANDS_MESH=false is asked HERE and not only in start().
+                # This is the second site in this process that can OPEN a
+                # session, and mesh_kill_switch_engaged() exists because a
+                # direct Mesh(...) construction bypassed the inline test once
+                # already (BUGS.md Q32: a unit-test run became a live
+                # gateway-* peer with six subscriber callback threads).
+                # Reaching it from the e-stop is the worst case of that: a new
+                # peer appears on the fleet at the moment the operator is
+                # trying to halt it, and it is the action they are least
+                # likely to want to debug afterwards.
+                if mesh_kill_switch_engaged():
+                    logger.warning(
+                        "STRANDS_MESH=false - signed safety rail not started; the "
+                        "per-peer broadcast stop is unaffected and still fanned out",
+                    )
+                    return None
 
                 m = Mesh(None, peer_id=f"{self.peer_id}-safety", peer_type="gateway")
                 m.start()
@@ -876,7 +893,20 @@ class MeshBridge:
         """Fleet e-stop over the SIGNED rail."""
         m = self._safety_mesh()
         if m is None:
-            return {"signed": False, "error": "safety mesh unavailable"}
+            # "Switched off" and "broken" are different answers, and the sheet
+            # shows this string: an operator who set STRANDS_MESH=false chose
+            # to have no signed rail, and reading "unavailable" would send them
+            # hunting a fault instead of looking at the switch they set.
+            from strands_robots.mesh.core import mesh_kill_switch_engaged
+
+            return {
+                "signed": False,
+                "error": (
+                    "signed safety rail disabled by STRANDS_MESH=false"
+                    if mesh_kill_switch_engaged()
+                    else "safety mesh unavailable"
+                ),
+            }
         responses = m.emergency_stop()
         return {
             "signed": True,
