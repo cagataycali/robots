@@ -1848,9 +1848,16 @@ which side the enum is on.
   `time.time()`; the mesh keeps `_last_estop_mono` beside `_last_estop_ts` for the same
   reason. If one value is used both to decide and to report, split it rather than picking
   a compromise clock.
-- Pinned by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py` (a scan over the
-  agent-callable tools, no exemption list) and, for the safety subsystem, by
-  `tests/mesh/test_replay_cache_monotonic.py` and
+- **A scan whose walk root is one subsystem grades one subsystem.** The source scan for
+  this idiom walked `strands_robots/tools` alone and read clean while the one offender in
+  the tree sat in `dashboard/auth.py`, where a WebAuthn challenge's TTL was measured on the
+  wall clock. Same predicate, wider root, found it at once: a walk root narrower than the
+  shape being graded reports a clean tree, not an ungraded one.
+- Pinned by `tests/test_expiry_gates_survive_a_clock_step.py` (a scan over the whole
+  package, no exemption list), by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py`
+  for the real `spin_for` behaviour, by
+  `tests/test_dashboard_challenge_expiry_survives_a_clock_step.py` for the challenge store,
+  and, for the safety subsystem, by `tests/mesh/test_replay_cache_monotonic.py` and
   `tests/mesh/test_corroboration_clock_domain.py`. The frame pacer named above is pinned
   by `tests/simulation/test_rollout_durations_survive_a_clock_step.py`, which asserts the
   *achieved* frame interval across a clock step rather than the value the pacer computed,

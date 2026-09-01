@@ -500,6 +500,17 @@ logger = logging.getLogger(__name__)
 _challenges: dict[str, dict[str, Any]] = {}
 _chal_lock = threading.Lock()
 _CHAL_TTL = 300.0
+# : A challenge's age is a DURATION this process decides on its own -- it stamps
+# : the record and it reads it back -- so it is measured on ``time.monotonic()``,
+# : under the ``_mono`` name the safety subsystem uses for the same distinction.
+# : ``time.time()`` is not a clock but the current opinion about the date, and an
+# : NTP correction, a ``date -s`` or a resume from suspend moves it by an
+# : arbitrary amount: backwards, an expired challenge stays replayable for the
+# : size of the step, and the cap's "drop the oldest" drops a newer entry;
+# : forwards, an in-flight ceremony is refused and the next stash sweeps it out.
+# : The absolute stamps in this module -- a session token's ``iat``/``exp``, a
+# : credential's ``created`` -- name a point in time a browser or an operator
+# : correlates with something off this process, and stay on the wall clock.
 
 # : Caps on the challenge table. Both are per-process and generous: a challenge : measures
 # ~0.5KB, so 512 of them is ~256KB.
@@ -511,7 +522,7 @@ _CHAL_MAX_PER_IP = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX_PER_IP", "16"))
 
 def _evict_oldest(where: dict[str, dict[str, Any]], keep: int, ip: str | None = None) -> int:
     """Drop the oldest entries (optionally only one ip's) until ``keep`` remain."""
-    pool = [(v["t"], k) for k, v in where.items() if ip is None or v.get("ip") == ip]
+    pool = [(v["t_mono"], k) for k, v in where.items() if ip is None or v.get("ip") == ip]
     dropped = 0
     for _t, k in sorted(pool)[: max(0, len(pool) - keep)]:
         where.pop(k, None)
@@ -526,9 +537,9 @@ def _stash_challenge(
     ip: str | None = None,
 ) -> str:
     cid = secrets.token_urlsafe(16)
-    now = time.time()
+    now = time.monotonic()
     with _chal_lock:
-        for k in [k for k, v in _challenges.items() if now - v["t"] > _CHAL_TTL]:
+        for k in [k for k, v in _challenges.items() if now - v["t_mono"] > _CHAL_TTL]:
             _challenges.pop(k, None)
         # Evict the flooder's OWN oldest entries first, so one noisy client
         # cannot cost anybody else their in-flight ceremony.
@@ -542,7 +553,7 @@ def _stash_challenge(
         _challenges[cid] = {
             "kind": kind,
             "challenge": challenge,
-            "t": now,
+            "t_mono": now,
             "extra": extra or {},
             "ip": ip,
         }
@@ -582,7 +593,7 @@ def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
         rec = _challenges.pop(cid, None)
     if not rec or rec["kind"] != kind:
         raise HTTPException(400, "invalid or expired challenge")
-    if time.time() - rec["t"] > _CHAL_TTL:
+    if time.monotonic() - rec["t_mono"] > _CHAL_TTL:
         raise HTTPException(400, "challenge expired")
     return rec
 
