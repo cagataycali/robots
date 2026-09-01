@@ -101,7 +101,7 @@ def _envelope_verbs(cls: type) -> set[str]:
     for name, _ in inspect.getmembers(cls, predicate=inspect.isfunction):
         try:
             node = _method_ast(cls, name)
-        except (OSError, TypeError, SyntaxError, IndentationError):  # pragma: no cover - C or builtin
+        except (OSError, TypeError, SyntaxError):  # pragma: no cover - C or builtin
             continue
         returns = getattr(node, "returns", None)
         if returns is not None and ast.unparse(returns) == _ENVELOPE_RETURN:
