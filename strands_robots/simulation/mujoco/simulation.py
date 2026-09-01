@@ -5642,7 +5642,6 @@ class MuJoCoSimEngine(
         skip_images = not (any_needs_images or recording)
 
         total_steps = int(duration * control_frequency)
-        action_sleep = 1.0 / control_frequency if control_frequency > 0 else 0.0
 
         # Mark all robots as running so stop_policy can interrupt the loop.
         for rname in policies:
@@ -5666,7 +5665,23 @@ class MuJoCoSimEngine(
         # chunk) leaves a dangling partial episode we must discard so the next
         # recording starts at frame 0 rather than appending to a half-episode.
         completed_cleanly = False
+        # Pace on a DEADLINE, not a delay: ``time.sleep(1 / control_frequency)``
+        # added each step's work - N policy queries, one camera render, the
+        # recorder's frame write - to the period, so the loop ran at ``1 /
+        # (period + work)`` while ``duration`` is documented in wall-clock
+        # seconds. Missed deadlines are dropped rather than chased, so a slow
+        # step does not fire a burst of back-to-back actions at the robots.
+        # ``_validate_positive_frequency`` above has already refused a
+        # non-positive rate, so the period is always usable and the pace is
+        # unconditional. Constructed inside the try so the finally always closes
+        # it (it owns a selector and a socketpair). Local import: the mesh
+        # package __init__ pulls the fleet stack, the same reason
+        # ``init_mesh`` is imported at its point of use in this module.
+        ticker = None
         try:
+            from strands_robots.mesh.pacing import Ticker
+
+            ticker = Ticker(1.0 / control_frequency)
             while step_count < total_steps:
                 # --- 1. Observe every robot + render cameras ONCE (under lock).
                 # get_observation renders ALL cameras, so we only need to fetch
@@ -5792,8 +5807,8 @@ class MuJoCoSimEngine(
                 for rname in policies:
                     self._world.robots[rname].policy_steps = step_count
 
-                if action_sleep:
-                    time.sleep(action_sleep)
+                if ticker is not None:
+                    ticker.wait()
 
             completed_cleanly = True
         except CooperativeStop:
@@ -5802,6 +5817,8 @@ class MuJoCoSimEngine(
             stopped_early = True
             completed_cleanly = True
         finally:
+            if ticker is not None:
+                ticker.close()
             for rname in policies:
                 if registered(self._world.robots, rname):
                     self._world.robots[rname].policy_running = False

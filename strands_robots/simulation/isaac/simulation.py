@@ -4225,7 +4225,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
 
         total_steps = int(duration * control_frequency)
-        action_sleep = 1.0 / control_frequency if control_frequency > 0 else 0.0
 
         # Mark all robots as running so a cooperative stop can interrupt the
         # loop, and so a concurrent driver is refused by the busy check above.
@@ -4274,7 +4273,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # must discard so the next recording starts at frame 0 rather than
         # appending to a half-episode (MuJoCo parity).
         completed_cleanly = False
+        # Pace on a DEADLINE, not a delay (MuJoCo parity): ``time.sleep(1 /
+        # control_frequency)`` added each step's work - N policy queries, the
+        # main-thread observe hop, the recorder's frame write - to the period, so
+        # the loop ran at ``1 / (period + work)`` while ``duration`` is
+        # documented in wall-clock seconds. Missed deadlines are dropped rather
+        # than chased, so a slow step does not fire a burst of back-to-back
+        # actions at the robots. ``_validate_positive_frequency`` above has
+        # already refused a non-positive rate, so the period is always usable and
+        # the pace is unconditional. Constructed inside the try so the finally
+        # always closes it (it owns a selector and a socketpair).
+        ticker = None
         try:
+            from strands_robots.mesh.pacing import Ticker
+
+            ticker = Ticker(1.0 / control_frequency)
             while step_count < total_steps:
                 # --- 1. Observe every robot (one main-thread hop). No lock is
                 # held across the marshal (#1896); get_observation takes it.
@@ -4359,8 +4372,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 for rname in policies:
                     self._robots[rname].policy_steps = step_count
 
-                if action_sleep:
-                    time.sleep(action_sleep)
+                if ticker is not None:
+                    ticker.wait()
 
             completed_cleanly = True
         except CooperativeStop:
@@ -4368,6 +4381,8 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             stopped_early = True
             completed_cleanly = True
         finally:
+            if ticker is not None:
+                ticker.close()
             for rname in policies:
                 if registered(self._robots, rname):
                     self._robots[rname].policy_running = False
