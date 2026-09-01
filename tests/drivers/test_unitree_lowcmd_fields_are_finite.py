@@ -383,5 +383,15 @@ def test_a_policy_that_diverges_stops_the_loop_instead_of_publishing_nan() -> No
         for slot in range(len(cmd.motor_cmd)):
             motor = cmd.motor_cmd[slot]
             for field in _WIRE_FIELDS:
+                # ``math.isfinite`` and deliberately not the builder's own
+                # :func:`finite_number_error`, which this module reaches for
+                # everywhere else: a scan has to be able to fail when the
+                # shared domain is the thing that regressed, and asking that
+                # helper would make the oracle circular - gate and scan would
+                # then regress together and the wire would read clean with a
+                # ``nan`` on it. Finiteness is the whole domain here anyway,
+                # because only ``float`` can reach a field: the ``float()``
+                # coercion sits downstream of the gate, and a value with no
+                # float64 form makes the builder raise before it writes.
                 value = getattr(motor, field)
                 assert math.isfinite(value), f"a non-finite {field}={value!r} reached the wire"
