@@ -1151,13 +1151,19 @@ def test_send_action_refuses_unknown_per_joint_key() -> None:
 
 
 @pytest.mark.usefixtures("_stub_unitree_sdk")
-def test_send_action_refuses_non_numeric_target() -> None:
-    """A non-numeric target is refused with the joint name in the reason."""
+def test_send_action_refuses_a_target_that_is_not_a_finite_number() -> None:
+    """A target outside the finite-number domain is refused, naming the field.
+
+    The reason comes from the shared
+    :func:`~strands_robots.utils.finite_number_error` domain, so it names the
+    joint *and* the field it was wrong on - a caller commanding five fields per
+    joint needs to know which one.
+    """
     driver, pub = _gated_driver()
     result = driver.send_action({"left_elbow": "hold"})
     assert result["status"] == "error"
-    assert "left_elbow" in result["content"][0]["text"]
-    assert "non-numeric" in result["content"][0]["text"]
+    assert "left_elbow.q" in result["content"][0]["text"]
+    assert "must be a finite number" in result["content"][0]["text"]
     assert pub.writes == []
 
 

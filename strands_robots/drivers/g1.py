@@ -223,6 +223,15 @@ _LEG_KD: tuple[float, ...] = (1.0, 1.0, 1.0, 2.0, 1.0, 1.0)
 _WAIST_KD: tuple[float, ...] = (1.0, 1.0, 1.0)
 _ARM_KD: tuple[float, ...] = (1.0,) * 7
 _SDK_KD: tuple[float, ...] = _LEG_KD + _LEG_KD + _WAIST_KD + _ARM_KD + _ARM_KD
+# The per-joint fields a caller may put on a ``LowCmd_`` motor slot, and the
+# whole set this module reads off an action dict. Every one of them is a
+# physical quantity the frame carries to the motor controller verbatim, so each
+# is held to :func:`~strands_robots.utils.finite_number_error` before it is
+# written: a ``nan`` target serializes as a valid IEEE-754 float and the
+# controller integrates it, which poisons the pose rather than refusing the
+# command. Single-sourced so the fields accepted and the fields checked cannot
+# drift apart.
+_WIRE_FIELDS: tuple[str, ...] = ("q", "kp", "kd", "dq", "tau")
 
 
 class G1Driver:
@@ -1026,6 +1035,10 @@ class G1Driver:
            :meth:`run_policy` owns that loop today; this method is one frame.
         2. A safety filter.  The FSM and battery gates are the safety
            envelope; command-magnitude limits are the arm-SDK client's job.
+           Every commanded field is still required to be a finite number, which
+           is a different question from how large it may be: a ``nan`` target is
+           not a bold move the SDK can clamp, it is a value the motor controller
+           cannot honor at all.
 
         Scope is ``"arm"`` because ``send_action`` writes to ``rt/lowcmd`` for
         arm-SDK-shaped targets; base velocity is not a ``send_action`` verb.
@@ -1650,6 +1663,15 @@ def _build_lowcmd_from_action(
       are optional.  An unknown key inside the inner dict is refused for the
       same reason as an unknown joint name: silent drop is worse than a
       caller-facing error.
+    * Every field a caller supplies is held to
+      :func:`~strands_robots.utils.finite_number_error` before it is written -
+      the same domain the other native drivers put their action values through.
+      A ``nan`` or ``inf`` survives a bare ``float()`` and serializes onto the
+      wire as a valid IEEE-754 float, so the motor controller integrates it
+      instead of rejecting it; ``True`` would land as a silent ``1.0`` rad. This
+      is not a magnitude limit - it is the gate that keeps an unrepresentable
+      target off the wire, and refusing the whole action is the same posture an
+      unknown joint name gets, for the same reason.
 
     Wire-frame contract:
 
@@ -1687,7 +1709,7 @@ def _build_lowcmd_from_action(
     cmd.mode_pr = 0
     if mode_machine is not None:
         cmd.mode_machine = int(mode_machine)
-    known_inner = {"q", "kp", "kd", "dq", "tau"}
+    known_inner = set(_WIRE_FIELDS)
     for name, value in action.items():
         slot = _G1_JOINT_INDEX.get(name)
         if slot is None:
@@ -1707,16 +1729,16 @@ def _build_lowcmd_from_action(
             kd = value.get("kd", _SDK_KD[slot])
             dq = value.get("dq", 0.0)
             tau = value.get("tau", 0.0)
+            supplied = {key: value[key] for key in _WIRE_FIELDS if key in value}
         else:
             q, kp, kd, dq, tau = value, _SDK_KP[slot], _SDK_KD[slot], 0.0, 0.0
-        try:
-            q_f = float(q)
-            kp_f = float(kp)
-            kd_f = float(kd)
-            dq_f = float(dq)
-            tau_f = float(tau)
-        except (TypeError, ValueError) as exc:
-            return None, f"joint {name!r} carries a non-numeric target: {exc}"
+            supplied = {"q": value}
+        for key, raw in supplied.items():
+            reason = finite_number_error(raw, f"{name}.{key}", "send_action")
+            if reason is not None:
+                return None, reason
+        q_f, kp_f, kd_f = float(q), float(kp), float(kd)
+        dq_f, tau_f = float(dq), float(tau)
         motor = cmd.motor_cmd[slot]
         motor.mode = 1  # Enable - a Disable slot commands nothing regardless of CRC.
         motor.q = q_f
