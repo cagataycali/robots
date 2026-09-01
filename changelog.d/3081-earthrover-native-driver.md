@@ -1,12 +1,27 @@
 ### Added: native driver for the EarthRover Mini Plus
 
-`Robot("earthrover", mode="real")` could not be built at all: the rover has a
-`lerobot_type` for dataset purposes but no lerobot robot class, so the default
-driver raised "Unsupported robot type". `EarthRoverDriver` drives it through
-the vendor's `earth-rovers-sdk` - a local HTTP service (default
-`http://localhost:8001`) that proxies to the rover over WebRTC - and the
-registry entry declares `hardware.driver="strands"` so no `driver=` keyword is
-needed.
+`Robot("earthrover", mode="real", driver="strands")` gets a native driver.
+`EarthRoverDriver` drives the rover through the vendor's `earth-rovers-sdk` - a
+local HTTP service (default `http://localhost:8001`) that proxies to the rover
+over WebRTC - and adds what lerobot's own `earthrover_mini_plus` class has no
+seam for: the headlamp, the rear camera, `speak`, and an agent tool surface.
+
+The driver is asked for rather than defaulted to. lerobot 0.6.1 does ship
+`lerobot/robots/earthrover_mini_plus/`, reached over the same SDK, so the bare
+`Robot("earthrover", mode="real")` already worked and three things ride on the
+wrapper it returns which this driver does not carry: `attach_teleop` /
+`teleoperate` (documented on exactly that construction in README.md and
+`docs/hardware/teleoperation.md`), lerobot's action vocabulary
+(`action_features` is `{linear_velocity, angular_velocity}`, while this driver's
+channels are `{linear, angular, lamp}` and an unknown channel is *refused*, so a
+flipped default would strand the documented zero-config `keyboard_rover` recipe
+at its first frame), and dataset recording through `observation_features`. So
+the registry entry is left declaring only `lerobot_type`, and the explicit
+`driver="strands"` - the documented way to reach a driver for a robot whose
+entry declares nothing - selects this one. Making it the default is a separate
+change that has to carry that surface with it, and
+`tests/drivers/test_earthrover_default_resolution.py` fails if the declaration
+lands without it.
 
 A rover is velocity-commanded: unlike an arm it does not hold still when you
 stop talking to it, and whether the firmware times a twist out on its own is
