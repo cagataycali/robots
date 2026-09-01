@@ -25,6 +25,10 @@ The two assertions below are the consumer-side and the producer-side view of
 the same rule: no exposed parameter may carry the placeholder, and no docstring
 entry may name a parameter the function does not have. Both read live objects,
 so neither needs an exemption list.
+
+A third direction - whether the function ever reads the parameter it advertises -
+is graded by ``tests/tools/test_agent_tool_parameters_reach_the_body.py``, over a
+wider population than the ``pkgutil`` walk below reaches.
 """
 
 from __future__ import annotations

@@ -19,6 +19,8 @@ rather than from any single file under change:
   trail the return.
 - ``tests/test_test_module_names_do_not_spell_a_tracker_coordinate.py`` -- no
   test module may be named after the tracker item that birthed it.
+- ``tests/tools/test_agent_tool_parameters_reach_the_body.py`` -- no ``@tool``
+  may advertise a parameter its body never reads.
 
 These have one property in common: their input is the *rest* of the repository,
 not the file under change. A path- or ``-k``-scoped pytest run collects none of
@@ -93,6 +95,7 @@ WHOLE_TREE_GRADERS: tuple[str, ...] = (
     "tests/tools/test_agent_tool_parameter_descriptions.py",
     "tests/test_parameter_deletes_precede_the_body_they_narrow.py",
     "tests/test_test_module_names_do_not_spell_a_tracker_coordinate.py",
+    "tests/tools/test_agent_tool_parameters_reach_the_body.py",
 )
 
 
