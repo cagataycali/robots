@@ -455,6 +455,27 @@ then only a lower bound, reported in the `unreadable_files` diagnostics.
 | `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
+`stop_cameras_recording` returns a verdict, not just a report. The daemon
+recorder runs in its own thread, so the stop asks that loop to exit and waits
+5 s for it; if the loop is still inside `render` when the budget expires -- a
+wedged GL context, an EGL device that stopped answering -- the call is a
+structured **error** carrying `stopped: False` and the per-camera buffered frame
+counts, and no MP4 is written:
+
+```python
+result = sim.stop_cameras_recording()
+if result["status"] == "error":
+    # The loop is still capturing. Nothing was encoded (an MP4 read from a
+    # buffer that is still growing would not describe either frame list), and
+    # the recording is still registered -- call stop again to re-join it.
+    result = sim.stop_cameras_recording()
+```
+
+While that window is open, `get_cameras_recording_status` reports a third phase,
+`[stopping]`, with `running: False` and `thread_alive: True` in its JSON block,
+and both `start_cameras_recording` and `start_cameras_recording_synchronous`
+refuse a new recording rather than putting a second thread on the same cameras.
+
 `fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
 must be positive whole numbers - the same domain `run_policy(video={...})`,
 `start_recording(fps=...)` and the shared encoder

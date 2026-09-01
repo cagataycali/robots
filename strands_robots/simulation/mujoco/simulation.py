@@ -2918,11 +2918,16 @@ class MuJoCoSimEngine(
         base["methods"]["stop_cameras_recording"] = (
             "() -> dict  # stop start_cameras_recording, flush each camera's "
             "buffer to an MP4, and report per-camera frame counts + paths; "
-            "idempotent. The inverse of start_cameras_recording"
+            "idempotent. The inverse of start_cameras_recording. status='error' "
+            "with stopped=False means the recorder thread outlived the join "
+            "budget: nothing was encoded and the recording is still registered, "
+            "so call it again to re-join that loop"
         )
         base["methods"]["get_cameras_recording_status"] = (
             "() -> dict  # inspect an in-progress start_cameras_recording "
-            "(elapsed time, per-camera frame counts); reports idle when none is active"
+            "(elapsed time, per-camera frame counts, running vs thread_alive); "
+            "reports idle when none is active and stopping while a loop outlives "
+            "the stop that asked it to exit"
         )
 
         # Physics-introspection / grounding surface. The discovery surface
