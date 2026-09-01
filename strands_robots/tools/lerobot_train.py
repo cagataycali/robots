@@ -302,6 +302,10 @@ class SessionManager:
                 # so this probe exists only to surface a denial.
                 psutil.Process(pid).is_running()
             except psutil.NoSuchProcess:
+                # Reaped between the two probes: the same finished run as a pid
+                # that was already gone, and those are retained for their log
+                # tail. Nothing to report, so the denial below stays the only
+                # thing this loop says out loud.
                 pass
             except psutil.AccessDenied:
                 logger.warning(
