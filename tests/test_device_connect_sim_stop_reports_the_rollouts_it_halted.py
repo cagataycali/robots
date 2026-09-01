@@ -61,6 +61,7 @@ import pytest
 from strands_robots.mesh import Mesh
 from strands_robots.mesh.core import _reports_failure_to_stop
 from strands_robots.simulation.models import SimRobot
+from tests._sim_stop_policy_stand_in import stop_policy_stand_in
 
 pytest.importorskip("device_connect_edge")
 
@@ -139,16 +140,12 @@ class _SimPeer:
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         self.stop_policy_calls.append(robot_name)
-        if robot_name in self._refuse or self._world is None or robot_name not in self._world.robots:
+        if robot_name in self._refuse:
             return {"status": "error", "content": [{"text": f"Unknown robot '{robot_name}'."}]}
-        was_running = self._world.robots[robot_name].request_policy_stop() or robot_name in self._active
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        answer = stop_policy_stand_in(self._world)(robot_name)
         if robot_name in self._silent:
-            return {"status": "success", "content": [{"text": msg}]}
-        return {
-            "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
-        }
+            return {"status": answer["status"], "content": [b for b in answer["content"] if "json" not in b]}
+        return answer
 
 
 def _rpc_stop(peer: _SimPeer) -> dict[str, Any]:
@@ -384,6 +381,41 @@ class TestTheStandInMatchesTheRealSimulation:
         assert in_flight(halted) is True, halted
         assert in_flight(idle) is False, idle
         assert _reports_failure_to_stop(refusal) is True, refusal
+
+    @pytest.mark.parametrize("in_flight", [True, False], ids=["rollout-in-flight", "idle"])
+    def test_the_stand_in_answers_what_the_real_verb_answers(self, in_flight: bool) -> None:
+        """Key for key, on the same situation - the premise, not a restatement."""
+        sim = self._real_sim()
+        try:
+            sim._world.robots["so100"].policy_running = in_flight
+            real = sim.stop_policy("so100")
+            sim._world.robots["so100"].policy_running = in_flight
+            stood_in = stop_policy_stand_in(sim._world)("so100")
+        finally:
+            sim.cleanup()
+
+        assert stood_in == real, (stood_in, real)
+
+    def test_the_stand_in_refuses_an_unresolvable_robot_like_the_real_verb(self) -> None:
+        """On the dimensions the consumer reads, which is not the prose.
+
+        The real refusal names the resolvable robots and points at
+        ``list_robots``; the driver reads ``status`` through the shared failure
+        rule and reads no verdict. Copying that sentence into a stand-in would
+        be a claim about production that nothing consumes and that drifts the
+        first time the hint is reworded.
+        """
+        sim = self._real_sim()
+        try:
+            real = sim.stop_policy("no-such-robot")
+            stood_in = stop_policy_stand_in(sim._world)("no-such-robot")
+        finally:
+            sim.cleanup()
+
+        in_flight = _sim_driver()._reported_a_rollout_in_flight
+        assert stood_in["status"] == real["status"] == "error", (stood_in, real)
+        assert _reports_failure_to_stop(stood_in) is _reports_failure_to_stop(real) is True
+        assert in_flight(stood_in) is in_flight(real) is None, (stood_in, real)
 
     def test_the_real_stop_policy_still_leads_with_its_sentence(self) -> None:
         """The text block stays first: existing readers index it positionally."""

@@ -14,10 +14,10 @@ import sys
 import unittest
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from strands_robots.simulation.models import SimRobot
+from tests._sim_stop_policy_stand_in import stop_policy_stand_in
 
 # ── Mock heavy dependencies before importing ──────────────────────
 
@@ -216,22 +216,9 @@ def _make_mock_sim(tool_name="so100_sim"):
 
     # ``stop_policy`` is a dimension of the wrapped simulation, not a call to
     # absorb: ``SimulationDeviceDriver.stop`` routes each robot through it and
-    # reads the ``was_running`` verdict out of the answer. A bare ``MagicMock``
-    # answers ``hasattr`` truthfully-by-fabrication, swallows the stop, and
-    # returns an envelope carrying no verdict -- so a stand-in without this
-    # cannot observe either half of what the verb does. Grounded against the
-    # real method by the sim-stop suite's TestTheStandInMatchesTheRealSimulation.
-    def _stop_policy(robot_name: str = "") -> dict[str, Any]:
-        if not robot_name or robot_name not in world.robots:
-            return {"status": "error", "content": [{"text": f"Unknown robot '{robot_name}'."}]}
-        was_running = world.robots[robot_name].request_policy_stop()
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
-        return {
-            "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
-        }
-
-    sim.stop_policy.side_effect = _stop_policy
+    # reads the verdict out of the answer, so a bare ``MagicMock`` here observes
+    # neither half of what the verb does. See ``tests._sim_stop_policy_stand_in``.
+    sim.stop_policy.side_effect = stop_policy_stand_in(world)
     sim.start_policy.return_value = {"status": "success", "content": [{"text": "Policy started"}]}
     sim.get_state.return_value = {"status": "success", "content": [{"text": "State info"}]}
     sim.get_features.return_value = {"status": "success", "content": [{"json": {"features": {}}}]}
