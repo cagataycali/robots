@@ -308,23 +308,68 @@ def _package_root() -> pathlib.Path:
     return pathlib.Path(inspect.getfile(strands_robots)).parent
 
 
-def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
-    """``(lineno, acquired_with_with)`` for every ``Ticker(...)`` in ``source``."""
-    tree = ast.parse(source)
-    acquired = {
+def _ticker_local_names(tree: ast.Module) -> set[str]:
+    """Every local name a ticker is constructible under in ``tree``.
+
+    Grading the literal name alone makes an aliased import *invisible* rather
+    than merely ungraded: the sweep reports a clean tree while a bare
+    construction sits in it. The alias is not a smell either, which is what
+    makes the hole quiet - a module that binds ``Ticker`` at module scope for an
+    annotation has to import it under another name to use it at runtime, so the
+    call site looks correct and a reader has no reason to pause on it.
+
+    ``"Ticker"`` is always in the set, so a planted source carrying no import
+    statement is still graded.
+    """
+    return {"Ticker"} | {
+        alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name == "Ticker" and alias.asname
+    }
+
+
+def _structurally_acquired(tree: ast.Module) -> set[int]:
+    """``id()`` of every expression in ``tree`` whose release the language owns.
+
+    Two spellings qualify. ``with Ticker(...) as ticker:`` is what a loop whose
+    ticker lives for one block writes. ``stack.enter_context(Ticker(...))`` is
+    the standard library's form for a resource acquired on one branch only, and
+    a *conditional* pacer needs it: a loop that paces on one setting and runs
+    free on another has no single block to bind the ticker to, and a ticker
+    consumed inside a closure outlives the statement that made it. Both hand
+    the release to the interpreter, which is the entire content of the rule -
+    what is banned is a release each loop has to remember, not a syntax.
+    """
+    return {
         id(item.context_expr)
         for node in ast.walk(tree)
         if isinstance(node, ast.With | ast.AsyncWith)
         for item in node.items
+    } | {
+        id(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in ("enter_context", "enter_async_context")
+        and node.args
     }
+
+
+def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
+    """``(lineno, release_is_structural)`` for every ticker built in ``source``."""
+    tree = ast.parse(source)
+    names = _ticker_local_names(tree)
+    acquired = _structurally_acquired(tree)
     return [
         (node.lineno, id(node) in acquired)
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Ticker"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names
     ]
 
 
-class TestEveryPacedLoopAcquiresItsTickerWithWith:
+class TestEveryPacedLoopHandsItsTickerReleaseToTheLanguage:
     """A ticker owns a selector and a self-pipe, so its release is structural.
 
     Every one of these loops first spelled the release as ``try: ... finally:
@@ -332,7 +377,15 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
     writes it -- and this module exists because that is the kind of rule six
     loops get right and the seventh does not. ``with`` moves it from a
     discipline to the language, and it is checked here rather than left to
-    review because the loops live in five files.
+    review because the loops live in six files.
+
+    Two spellings satisfy that, and the rule is the release rather than the
+    keyword: ``with Ticker(...) as ticker:`` for a ticker whose life is one
+    block, and ``stack.enter_context(Ticker(...))`` for one acquired on a
+    branch or consumed inside a closure. The scan resolves import aliases, so a
+    ticker imported under another name is graded rather than skipped - the
+    class was named for the first spelling while the second was already needed
+    by the rollout runner, and the sweep read that runner as an empty file.
     """
 
     def test_no_paced_loop_hand_rolls_the_release(self) -> None:
@@ -348,9 +401,35 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
         )
 
     def test_the_scan_finds_every_paced_loop(self) -> None:
-        """Non-vacuity: a scan that reached nothing would report a clean sweep."""
+        """Non-vacuity: a scan that reached nothing would report a clean sweep.
+
+        The floor tracks the population rather than sitting well under it. It
+        was 7 while 15 loops existed, which is a floor that cannot detect
+        losing half of them - and losing them silently is exactly how the alias
+        hole read: a narrowed scan and a clean sweep are the same output.
+        """
         found = sum(len(_ticker_constructions(path.read_text())) for path in sorted(_package_root().rglob("*.py")))
-        assert found >= 7, f"expected the mesh, teleop and RTPS publish loops, found {found}"
+        assert found >= 15, f"expected the mesh, teleop, RTPS and rollout paced loops, found {found}"
+
+    def test_the_scan_resolves_an_alias_in_the_tree_it_grades(self) -> None:
+        """Non-vacuity for the alias half, which a count alone cannot cover.
+
+        If alias resolution regressed to matching the literal name, every
+        planted-source control below would still pass on its own import
+        statement while the tree lost a construction - so the population is
+        asserted against the package, not against a fixture.
+        """
+        aliased = {
+            str(path.relative_to(_package_root())): sorted(
+                _ticker_local_names(ast.parse(path.read_text())) - {"Ticker"}
+            )
+            for path in sorted(_package_root().rglob("*.py"))
+            if _ticker_local_names(ast.parse(path.read_text())) != {"Ticker"}
+        }
+        assert aliased, (
+            "no module imports the ticker under another name, so the alias resolution "
+            "in the scan is graded only by its own planted sources"
+        )
 
     def test_the_scan_reports_a_hand_rolled_release(self) -> None:
         """A scanner that matched nothing would pass the sweep vacuously."""
@@ -367,6 +446,22 @@ class TestEveryPacedLoopAcquiresItsTickerWithWith:
     def test_the_scan_accepts_an_acquired_ticker(self) -> None:
         planted = "def loop(self):\n    with Ticker(0.02, self._stop) as ticker:\n        pass\n"
         assert _ticker_constructions(planted) == [(2, True)]
+
+    def test_the_scan_reports_a_hand_rolled_release_under_an_alias(self) -> None:
+        """The shape the sweep used to read as an empty file."""
+        planted = (
+            "from strands_robots.mesh.pacing import Ticker as _Ticker\n\ndef loop(self):\n    ticker = _Ticker(0.02)\n"
+        )
+        assert _ticker_constructions(planted) == [(4, False)]
+
+    def test_the_scan_accepts_a_ticker_entered_on_an_exit_stack(self) -> None:
+        """A conditionally-acquired ticker has no single block to bind to."""
+        planted = (
+            "def loop(self, paced):\n"
+            "    with contextlib.ExitStack() as pacing:\n"
+            "        ticker = pacing.enter_context(Ticker(0.02)) if paced else None\n"
+        )
+        assert _ticker_constructions(planted) == [(3, True)]
 
     def test_the_documented_usage_shows_the_shape_the_loops_use(self) -> None:
         """The class docstring taught the hand-rolled release it was flagged for.

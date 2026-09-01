@@ -93,6 +93,17 @@ class Ticker:
                 if ticker.wait():   # True == stopped, same sense as Event.wait
                     break
 
+    A ticker acquired on one branch only - a rollout that paces when asked for
+    real time and runs free otherwise - goes on a ``contextlib.ExitStack``
+    instead, which is also what a ticker read inside a closure needs::
+
+        with contextlib.ExitStack() as pacing:
+            ticker = pacing.enter_context(Ticker(period)) if paced else None
+
+    Either shape hands the release to the interpreter. That is the point of
+    both: the selector and the socketpair below are two descriptors per ticker,
+    so a release each loop has to remember is one every loop eventually forgets.
+
     The return value keeps ``Event.wait``'s sense on purpose (``True`` means
     "stop"), so converting a loop is a one-line change and cannot invert a
     shutdown test by accident.
