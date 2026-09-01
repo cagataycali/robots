@@ -8,6 +8,10 @@ and one shared handle judgement carry the whole family, the shape the g1
 consolidation locked: adding a verb is adding a row plus its function, never
 a new module file.
 
+All six are re-exported at the package root, so a tool loader reaches them at
+the address every other tool answers to (``strands_robots:rover_move``) rather
+than needing a submodule path.
+
 Two contracts are worth naming. A timed ``rover_move`` (twist held for a
 bounded ``duration_s``) ends in a forced stop and reports **both** halves - a
 move whose trailing stop never reached the SDK comes back as an error saying
