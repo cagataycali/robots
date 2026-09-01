@@ -303,10 +303,13 @@ class TestTheCouplingLimitIsNotReachableHere:
 
     Holds before and after the change. It records why the envelope's second
     limit is not part of it, so a reader does not take the omission for an
-    oversight - and grades the one-member case, because "no RPC maps both" is
-    not on its own a reason the limit cannot apply. The native driver does apply
-    it to a lone ``body_yaw``, against the head yaw it last commanded; this
-    surface keeps no record of what it commanded, so it cannot.
+    oversight.
+
+    "No RPC maps both" is not on its own a reason the limit cannot apply, so the
+    one-member case is graded rather than assumed. What decides it is whether the
+    surface knows the counterpart: ``send_action`` records the head pose it last
+    sent and so applies the coupling to a lone ``body_yaw`` too, while this one
+    keeps no such record and stays per-axis. The rows below hold both halves.
     """
 
     def test_no_single_rpc_carries_both_members_of_the_yaw_pair(self, rmd: Any) -> None:
@@ -324,22 +327,44 @@ class TestTheCouplingLimitIsNotReachableHere:
         assert sent == []
         assert "coupling" in _text(result)
 
-    def test_the_native_driver_reaches_it_on_a_lone_body_yaw_as_well(self) -> None:
-        """One member is enough there, because that driver knows the other one.
+    def test_one_member_of_the_pair_alone_clears_the_check_without_a_counterpart(self) -> None:
+        """The single-member case, graded rather than left to be assumed.
 
-        ``tests/test_reachy_a_lone_body_yaw_is_bounded_by_the_head_target.py``
-        owns this behaviour; asserted here so the difference between the two
-        consumers is measured on the same page that documents it.
+        The row above pins that no Device Connect RPC carries both members. That
+        is a property of the *pair*, not of that surface, so an action reaching
+        the envelope with one member reaches the check only if the counterpart is
+        supplied alongside it - which is the edited expectation #3094 asked for.
+        A lone ``head_yaw`` stays cleared on its own terms: the daemon serves it
+        by turning the body under the head, so there is no second value to bound.
         """
-        driver, sent = _native()
-        driver.send_action({"head_pitch": 0.0, "head_yaw": 0.0})
+        far = HEAD_BODY_YAW_DELTA_LIMIT_DEG + 20.0
+        assert envelope_error({"head_yaw": far}, "reachy_look") is None
+        assert envelope_error({"body_yaw": far}, "reachy_body_turn") is None
+        assert envelope_error({"body_yaw": far}, "reachy_body_turn", head_yaw_target=0.0) is not None
+        # The same head value paired with a counterpart is refused, so what
+        # decides the verdict is the action's key set and not the angle.
+        assert envelope_error({"head_yaw": far, "body_yaw": 0.0}, "send_action") is not None
+
+    def test_a_lone_member_reaches_the_wire_until_the_driver_knows_the_counterpart(self) -> None:
+        """End to end: the envelope is consulted by a driver, not obeyed by one.
+
+        The same lone ``body_yaw``, twice: through a driver that has commanded no
+        head pose and so cannot know the twist, and through one that has.
+        """
+        far = HEAD_BODY_YAW_DELTA_LIMIT_DEG + 20.0
+
+        unaware, sent = _native()
+        assert unaware.send_action({"body_yaw": far})["status"] == "success"
+        assert len(sent) == 1
+
+        aware, sent = _native()
+        aware.send_action({"head_pitch": 0.0, "head_yaw": 0.0})
         sent.clear()
+        refused = aware.send_action({"body_yaw": far})
 
-        result = driver.send_action({"body_yaw": MOTION_ENVELOPE_DEG["body_yaw"]})
-
-        assert result["status"] == "error"
+        assert refused["status"] == "error"
         assert sent == []
-        assert "coupling" in _text(result)
+        assert "coupling" in _text(refused)
 
     def test_this_surface_keeps_no_record_of_the_head_yaw_it_commanded(self, rmd: Any) -> None:
         """Why it cannot do the same: the ``look`` RPC stores nothing.

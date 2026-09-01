@@ -112,6 +112,16 @@ def envelope_error(values: dict[str, Any], context: str, head_yaw_target: float 
        limit, so a lone body yaw outside it is substituted exactly as an
        out-of-limit pair is.
 
+    Check (3) is a property of one *action*; check (4) is what makes the limit a
+    property of the robot as well. This module has no robot to ask for a missing
+    half, so the caller supplies it: a surface that knows where the head is
+    pointing passes ``head_yaw_target`` and the coupling is enforced on a
+    body-only action too, which is the shape ``reachy_body_turn`` sends. A
+    surface that does not know - the Device Connect driver's ``body`` RPC, which
+    keeps no record of the pose its ``look`` RPC commanded - passes nothing, and
+    a lone ``body_yaw`` stays per-axis there rather than being judged against a
+    guess.
+
     A key this envelope does not know is ignored entirely - not bounded and not
     even checked for finiteness. The driver's action dict also carries antenna
     positions and other pass-through values, and refusing a name this module has
