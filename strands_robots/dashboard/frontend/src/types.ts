@@ -262,8 +262,18 @@ export interface EstopResult {
   counts: { stopped: number; not_stopped: number; no_answer: number }
   all_stopped: boolean
   stopped: Record<string, StopResult>
-  /** Signed strands/safety/estop rail (fleet-wide lockout). */
-  signed_rail?: { signed: boolean; issuer?: string; error?: string }
+  /** Signed strands/safety/estop rail (fleet-wide lockout).
+   *  `responses_received` counts REPLIES, not confirmed stops, and
+   *  `peers_not_stopped` names responders that reported they did not stop.
+   *  Both optional: a server older than the fields sends nothing, which must
+   *  read as "cannot tell you" rather than as zero. */
+  signed_rail?: {
+    signed: boolean
+    issuer?: string
+    error?: string
+    responses_received?: number
+    peers_not_stopped?: string[]
+  }
   lockout_engaged?: boolean
 }
 

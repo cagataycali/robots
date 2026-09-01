@@ -908,11 +908,34 @@ class MeshBridge:
                 ),
             }
         responses = m.emergency_stop()
+        # Carried through rather than recomputed: _peers_that_did_not_stop
+        # grades the four response shapes that report a stop which did NOT
+        # happen, and Mesh.emergency_stop() already puts its verdict in the
+        # strands/safety/estop envelope and the audit record. A second copy of
+        # that grading on the safety path would be a second thing to keep
+        # right. (Its name is private and this is its second caller; promoting
+        # it is the follow-up if a third appears.)
+        from strands_robots.mesh.core import _peers_that_did_not_stop
+
         return {
             "signed": True,
             "issuer": m.peer_id,
             "responses": responses,
+            # The ISSUER's own latch. emergency_stop() sets it unconditionally
+            # before it broadcasts, so True here is a true statement about THIS
+            # rail -- "a resume is required to clear it" -- and not about the
+            # fleet. The fleet half is the two fields below, and conflating them
+            # is what let one value describe a stop that reached everybody and
+            # one that reached nobody. It must also stay true whenever a resume
+            # is genuinely needed: the operator's resume control is gated on it.
             "lockout_engaged": True,
+            # What the peers actually said. responses_received keeps its
+            # meaning from Mesh.emergency_stop (replies received, not stops
+            # confirmed), so the two numbers can be compared rather than one
+            # absorbing the other; peers that never answered are the gap
+            # between this and the peer count.
+            "responses_received": len(responses),
+            "peers_not_stopped": sorted(_peers_that_did_not_stop(responses)),
         }
 
     def signed_resume(self, override_code: str) -> dict[str, Any]:

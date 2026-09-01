@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { estopNothingTargeted } from '../lib/estopReach'
+import { estopNothingTargeted, signedRailClaim } from '../lib/estopReach'
 import type { EstopResult } from '../types'
 import { post, HttpError } from '../lib/endpoints'
 import { estopFailureVerdict, resumeFailureVerdict, type FailureVerdict } from '../lib/estopOutcome'
@@ -148,11 +148,21 @@ export default function EstopSheet({
               )
             })()}
 
-            {result.lockout_engaged && (
+            {/* `peers refuse all commands until resumed` was rendered from the ISSUER's latch, which
+                is set unconditionally — so it read identically whether the stop reached every peer
+                or none. What the peers said decides the sentence now. */}
+            {result.lockout_engaged && (() => {
+              const claim = signedRailClaim({
+                lockoutEngaged: result.lockout_engaged,
+                issuer: result.signed_rail?.issuer,
+                responsesReceived: result.signed_rail?.responses_received,
+                peersNotStopped: result.signed_rail?.peers_not_stopped,
+              })
+              return (
               <div className="resume-box">
-                <div className="result bad">
-                  🔒 fleet LOCKOUT engaged{result.signed_rail?.issuer ? ` (signed by ${result.signed_rail.issuer})` : ''} —
-                  peers refuse all commands until resumed
+                <div className="result bad" role="alert">
+                  <b>🔒 {claim?.headline}</b>
+                  <div>{claim?.detail}</div>
                 </div>
                 <div className="resume-row">
                   <input
@@ -174,7 +184,8 @@ export default function EstopSheet({
                   on every peer.
                 </p>
               </div>
-            )}
+              )
+            })()}
             {result.signed_rail && !result.signed_rail.signed && (
               <p className="hint warn">
                 ⚠ signed rail unavailable ({result.signed_rail.error}) — only per-peer stops were
