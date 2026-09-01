@@ -54,6 +54,7 @@ value names a pose at all is this one.
 
 from __future__ import annotations
 
+import math
 import sys
 import time
 import types
@@ -383,5 +384,4 @@ def test_a_policy_that_diverges_stops_the_loop_instead_of_publishing_nan() -> No
             motor = cmd.motor_cmd[slot]
             for field in _WIRE_FIELDS:
                 value = getattr(motor, field)
-                assert value == value, f"a nan {field} reached the wire"
-                assert abs(value) != float("inf"), f"an inf {field} reached the wire"
+                assert math.isfinite(value), f"a non-finite {field}={value!r} reached the wire"
