@@ -54,6 +54,7 @@ pip install -e ".[all,dev]"
 # Run tests
 hatch run test              # unit tests
 hatch run test-integ        # integration tests (needs GPU + model weights)
+hatch run whole-tree-check  # the graders whose input is the rest of the repo
 
 # Lint & format
 hatch run lint              # ruff check, ruff format --check, mypy
@@ -363,7 +364,14 @@ hatch run format            # ruff check --fix, ruff format
    why it belongs here and `--issue` belongs above. It still arrives early enough
    to matter - both claim-free pairs opened inside the same ~35-minute window every
    other observed collision shares, 14m 41s and 29m 26s apart.
-2. Make changes, run `hatch run format && hatch run lint && hatch run test`
+2. Make changes, run `hatch run format && hatch run lint && hatch run test`.
+   If you narrow the test run to the area you changed (`pytest tests/drivers/ -k g1`),
+   run `hatch run whole-tree-check` alongside it. A handful of graders take the
+   *rest of the repository* as their input rather than the file under change, so
+   no path or `-k` filter over your own area collects them - and a green narrow
+   run reads in a PR description exactly like a green full one. Two consecutive
+   verb ports cited such a run and both landed with the required check red on the
+   same grader (#2934, #2938, per #2940).
 3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
    (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to
    `## [Unreleased]` in `CHANGELOG.md` directly** - every branch inserts at the
@@ -2074,6 +2082,7 @@ which side the enum is on.
 - **`robot.py` is for the `Robot()` factory**, the user-facing entry point. Hardware-specific code lives in `hardware_robot.py`. Don't have two files both named "robot something" with different responsibilities.
 - **Reference module names, not filenames, in docstrings** - `strands_robots.hardware_robot` not `robot.py`. Filenames change; module paths are the public contract.
 - **Keep a cross-reference target on one line** - a `:class:`/`:func:`/`:meth:` path is only a dotted path while it is contiguous. Wrapping `:class:`~strands_robots.policies.protomotions.motion_utils.MotionPlayer`` over a line break leaves a token carrying a newline and the next line's indentation, which imports nowhere. Break the prose before the role and give the path its own line.
+- **Do not point a qualified role at a module that lives in an open PR** - in a series that adds one sibling module per PR, the target exists in the author's mental model of the series and not in the branch's tree, so the role looks correct while it is being written and is dead on arrival. Write the sibling as a literal (``g1_motion_gates``, ``EarthRoverDriver``) and add the role in the PR that lands the target, or in a later one. Landing the sibling first is not a remedy: CI checks out the pull request head rather than the merge ref (PR Workflow step 8), so the branch stays red until it also absorbs `main` - which costs a re-approval round and imposes a landing order on PRs that are otherwise independent. Demoting to a literal has been the resolution every time it has come up (#2934 and #2938, both naming a module in a still-open sibling; #3084, naming a driver class from #3081). Graded by `tests/test_docstring_xref_roles_resolve.py`, which is one of the graders a narrowed selector cannot collect - see PR Workflow step 2.
 - **A cross-reference in a test docstring is graded too** - the roles in `tests/` and `tests_integ/` are checked against the real API alongside the package's, because a test module's docstring is where a maintainer working on that subsystem starts reading. Name the seam a fixture actually patches (`strands_robots.mesh.core.get_session`), not a local import alias dressed up as a module path.
 
 ### Unicode & String Hygiene
