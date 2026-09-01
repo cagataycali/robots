@@ -5742,8 +5742,9 @@ class MuJoCoSimEngine(
         # non-positive rate, so the period is always usable and the pace is
         # unconditional. Acquired with ``with``: the ticker owns a selector and a
         # socketpair, so releasing it is the language's job rather than this
-        # loop's to remember - ``tests/test_mesh_pacing_ticker.py`` grades every
-        # paced loop in the package on exactly that. Local import: the mesh
+        # loop's to remember. Every paced loop in the package is held to that, so
+        # constructing a bare ``Ticker(...)`` here is a suite failure rather than
+        # one leaked descriptor pair per rollout. Local import: the mesh
         # package __init__ pulls the fleet stack, the same reason ``init_mesh``
         # is imported at its point of use in this module.
         try:
