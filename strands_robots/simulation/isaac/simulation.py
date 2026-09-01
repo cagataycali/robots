@@ -53,6 +53,7 @@ from strands_robots.utils import (
     coerce_rgba,
     coerce_size_vector,
     entity_name_error,
+    finite_number_error,
     name_list_error,
     non_negative_whole_number_error,
     partial_construction_repr,
@@ -116,12 +117,51 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_float(name: str, default: float) -> float:
-    """Read a positive float from the environment (fallback to ``default``)."""
-    try:
-        v = float(os.environ.get(name, ""))
-        return v if v > 0 else default
-    except (TypeError, ValueError):
+    """Read a positive finite float from the environment (fallback to ``default``).
+
+    Finiteness is decided by the shared numeric domain
+    (:func:`~strands_robots.utils.finite_number_error`) rather than left to the
+    positivity bound, which cannot express it: ``inf > 0`` is ``True``, so
+    ``inf``, ``Infinity`` and an overflowing ``1e999`` all resolved to a knob no
+    consumer can honor. ``nan`` was refused only incidentally - ``nan > 0`` is
+    ``False`` - so it reached the default by the route a typo takes.
+
+    That mattered here because the one knob this resolver serves is
+    :attr:`IsaacSimulation._idle_render_period`, read by the idle live-preview
+    gate in :meth:`IsaacSimulation.run_pump_forever` as
+    ``now_mono - last_render_mono >= period``. No elapsed span satisfies that
+    comparison against an infinite period, so the preview refreshed once on the
+    first iteration and then never again while ``pump()`` kept draining the app -
+    a frozen viewport that reads as a stalled simulation rather than as a
+    misconfigured variable.
+
+    Every rejection is reported for that reason, as the analogous mesh resolver
+    :func:`~strands_robots.mesh.core._parse_positive_float_env` reports its own:
+    substituting the default in silence leaves the operator's model of the
+    cadence wrong with nothing to correct it against.
+
+    Args:
+        name: Environment variable to read. Unset, empty or unusable falls back.
+        default: Value applied when the variable names no usable period.
+
+    Returns:
+        The override when it is a positive finite number, else ``default``.
+    """
+    raw = os.environ.get(name, "")
+    if raw.strip() == "":
         return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("%s=%r is not a number; using %r", name, raw, default)
+        return default
+    reason = finite_number_error(value, name, "Isaac simulation")
+    if reason is None and value <= 0:
+        reason = f"Isaac simulation: {name} must be > 0, got {value!r}."
+    if reason is not None:
+        logger.warning("%s; using %r", reason, default)
+        return default
+    return value
 
 
 def _to_float_list(value: Any, n: int) -> list[float] | None:
