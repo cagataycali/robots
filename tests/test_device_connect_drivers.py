@@ -220,8 +220,7 @@ def _make_mock_sim(tool_name="so100_sim"):
     # answers ``hasattr`` truthfully-by-fabrication, swallows the stop, and
     # returns an envelope carrying no verdict -- so a stand-in without this
     # cannot observe either half of what the verb does. Grounded against the
-    # real method by ``tests.test_device_connect_sim_stop_reports_the_rollouts_
-    # it_halted``.
+    # real method by the sim-stop suite's TestTheStandInMatchesTheRealSimulation.
     def _stop_policy(robot_name: str = "") -> dict[str, Any]:
         if not robot_name or robot_name not in world.robots:
             return {"status": "error", "content": [{"text": f"Unknown robot '{robot_name}'."}]}
