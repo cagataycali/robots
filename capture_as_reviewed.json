@@ -1,0 +1,18 @@
+{
+ "label": "as_reviewed",
+ "tree": "/tmp/probe/wtreviewed",
+ "t1_stop_status": "error",
+ "t1_frames_held": 4,
+ "t1_status_text": "[stopping] 'wedge' for 0.7s  @ 30 FPS  (stop requested; the recorder thread has not exited)",
+ "t2_registered": true,
+ "t2_running": false,
+ "t2_thread_alive": false,
+ "t2_frames_held": 5,
+ "t2_status_text": "[idle] No active camera recording.",
+ "t3_start_status": "success",
+ "t3_start_text": "Recording 1 camera(s) @ 30 FPS -> /tmp/probe/cap/as_reviewed",
+ "t3_registered_name": "second",
+ "t3_frames_held": 0,
+ "t3_mp4s": [],
+ "frames_lost": 5
+}
