@@ -63,6 +63,18 @@ print(server.port)
 server.stop()
 ```
 
+Either teardown stops the server *serving*, not just listening: `stop()` (and
+`serve()` returning) closes the listening socket **and** every client connection
+still open, so the wrapped policy is no longer invoked for a client that was
+already connected. A handler inside an inference call cannot notice the close
+until that call returns, so the wait is bounded by `CONNECTION_DRAIN_S` (5s) and
+a connection still being served after it is named in a warning:
+
+```
+PolicyServer: 1 client connection(s) still being served 5.0s after the server was
+told to stop (('127.0.0.1', 51234)); the wrapped policy is still being invoked for them
+```
+
 `port` is an `int` in `[1, 65535]`, plus `0` for the ephemeral bind above. A
 value outside that - a negative, an out-of-range number, a float, a `bool`, a
 string - is refused by the constructor and by `--port`, before any policy is
