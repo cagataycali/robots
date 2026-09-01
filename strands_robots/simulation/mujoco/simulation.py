@@ -39,6 +39,24 @@ call does not work any better than narrowing through a bound method
 dedup).
 
 So: the split is honest about being for file-size, not for decoupling.
+
+Scene mutation and ``self._lock``
+
+A verb that swaps the live scene must hold ``self._lock`` across the swap, not
+merely pass ``_require_no_running_policy()``. The two guards cover different
+readers: the policy gate refuses a *policy* worker, while the camera-recorder
+daemon renders on its own thread and is serialised only by the lock (see
+:mod:`strands_robots.simulation.mujoco.rendering`, whose render path takes the
+lock precisely because it "is NOT covered by the blanket dispatch lock").
+
+The swap is not atomic either. ``scene_ops.install_compiled_model`` rebinds
+``world._model`` and ``world._data`` in two separate assignments, so a reader
+that is not excluded can observe a model from after the swap paired with data
+from before it -- and MuJoCo dereferences that pair natively, indexing the new
+model's body count into the old data's arrays. Holding the lock over the swap is
+what makes the pair a reader observes always a matching one. The lock is an
+``RLock``, so the acquisition is a reentrant no-op on the dispatch path and the
+real guard when the verb is called directly as a Python API.
 """
 
 import contextlib
@@ -939,23 +957,30 @@ class MuJoCoSimEngine(
                 return cast("dict[str, Any]", gravity_error)
             _gravity = normalized
 
-        self._world = SimWorld(
-            timestep=float(effective_timestep),
-            gravity=_gravity,
-            ground_plane=ground_plane,
-            terrain=terrain,
-            terrain_difficulty=float(difficulty),
-        )
+        # Rebinding self._world and compiling a model into it are one
+        # critical section (see "Scene mutation and self._lock" in the module
+        # docstring): a recorder thread still running against the previous
+        # world would otherwise observe the new SimWorld while its ``_model``
+        # is still None. No asset resolution happens here, so the lock is held
+        # only across the spec build and compile.
+        with self._lock:
+            self._world = SimWorld(
+                timestep=float(effective_timestep),
+                gravity=_gravity,
+                ground_plane=ground_plane,
+                terrain=terrain,
+                terrain_difficulty=float(difficulty),
+            )
 
-        self._world.cameras["default"] = SimCamera(
-            name="default",
-            position=[1.5, 1.5, 1.2],
-            target=[0.0, 0.0, 0.3],
-            width=self.default_width,
-            height=self.default_height,
-        )
+            self._world.cameras["default"] = SimCamera(
+                name="default",
+                position=[1.5, 1.5, 1.2],
+                target=[0.0, 0.0, 0.3],
+                width=self.default_width,
+                height=self.default_height,
+            )
 
-        self._compile_world()
+            self._compile_world()
 
         return {
             "status": "success",
@@ -1090,7 +1115,11 @@ class MuJoCoSimEngine(
             return err
 
         try:
-            replace_scene_mjcf(self._world, xml)
+            # Swap the live model under the lock (see "Scene mutation and
+            # self._lock" above): the recorder thread is not covered by the
+            # policy gate, and the rebind is two assignments wide.
+            with self._lock:
+                replace_scene_mjcf(self._world, xml)
         except (ValueError, RuntimeError) as e:
             return {"status": "error", "content": [{"text": f"MJCF compile failed: {e}"}]}
 
@@ -1193,7 +1222,9 @@ class MuJoCoSimEngine(
             return err
 
         try:
-            applied = patch_scene_mjcf(self._world, ops)
+            # Swap the live model under the lock (see the module docstring).
+            with self._lock:
+                applied = patch_scene_mjcf(self._world, ops)
         except (ValueError, RuntimeError) as e:
             return {"status": "error", "content": [{"text": f"MJCF patch failed: {e}"}]}
 
@@ -1229,13 +1260,19 @@ class MuJoCoSimEngine(
         self._world._backend_state["spec"] = spec
         with filter_mujoco_attach_noise():
             model = spec.compile()
-        install_compiled_model(self._world, model, mj.MjData(model))
-        # Forward the freshly-allocated MjData so derived state
-        # (xpos / xquat / xmat) is populated - same rationale as in
-        # ``load_scene`` (#168). Without this, the first
-        # render after ``_compile_world`` returns the skybox-only
-        # gradient because body transforms are zero-initialised.
-        mj.mj_forward(self._world._model, self._world._data)
+        # This function swaps the live model, so it holds the lock itself
+        # rather than relying on its caller (see "Scene mutation and
+        # self._lock" in the module docstring). RLock, so this is a reentrant
+        # no-op under ``create_world``'s acquisition, and it keeps the
+        # invariant local to the function that performs the swap.
+        with self._lock:
+            install_compiled_model(self._world, model, mj.MjData(model))
+            # Forward the freshly-allocated MjData so derived state
+            # (xpos / xquat / xmat) is populated - same rationale as in
+            # ``load_scene`` (#168). Without this, the first
+            # render after ``_compile_world`` returns the skybox-only
+            # gradient because body transforms are zero-initialised.
+            mj.mj_forward(self._world._model, self._world._data)
         try:
             with filter_mujoco_attach_noise():
                 self._world._backend_state["xml"] = spec.to_xml()
@@ -1897,24 +1934,31 @@ class MuJoCoSimEngine(
                 if kf_err is not None:
                     return kf_err
 
-            # Register the robot BEFORE attach so scene_ops can re-discover
-            # its joint/actuator IDs inside the merged model.
-            self._world.robots[name] = robot
-            # Track robot base path for asset path resolution.
-            if not self._world._backend_state.get("robot_base_xml"):
-                self._world._backend_state["robot_base_xml"] = resolved_path
+            # Registration, swap and rollback are one critical section (see
+            # "Scene mutation and self._lock" in the module docstring): the
+            # recorder thread is not covered by the policy gate above, so
+            # outside the lock it can observe the robot registered against a
+            # model that does not contain it. The asset is already resolved to
+            # ``resolved_path``, so no download happens under the lock.
+            with self._lock:
+                # Register the robot BEFORE attach so scene_ops can
+                # re-discover its joint/actuator IDs inside the merged model.
+                self._world.robots[name] = robot
+                # Track robot base path for asset path resolution.
+                if not self._world._backend_state.get("robot_base_xml"):
+                    self._world._backend_state["robot_base_xml"] = resolved_path
 
-            # Compose into the live spec via spec.attach(). The helper sets
-            # robot.joint_names from the source spec (pre-namespacing) and
-            # then scene_ops._recompile_preserving_state resolves the
-            # post-attach joint/actuator IDs on the compiled model.
-            ok = inject_robot_into_scene(self._world, robot, resolved_path)
-            if not ok:
-                del self._world.robots[name]
-                return {
-                    "status": "error",
-                    "content": [{"text": f"Failed to inject robot '{name}' into scene."}],
-                }
+                # Compose into the live spec via spec.attach(). The helper sets
+                # robot.joint_names from the source spec (pre-namespacing) and
+                # then scene_ops._recompile_preserving_state resolves the
+                # post-attach joint/actuator IDs on the compiled model.
+                ok = inject_robot_into_scene(self._world, robot, resolved_path)
+                if not ok:
+                    del self._world.robots[name]
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Failed to inject robot '{name}' into scene."}],
+                    }
 
             # Discover cameras that the robot's source MJCF declared. The
             # compiled model already has them namespaced under
@@ -3722,21 +3766,28 @@ class MuJoCoSimEngine(
             material=material,
             is_static=is_static,
         )
-        self._world.objects[name] = obj
-
         # Every scene mutation goes through spec.recompile() - no branching
         # on robots / scene_loaded, and no XML round-trip. MjSpec preserves
         # existing joint state automatically on recompile.
+        #
+        # Registration, swap and rollback are one critical section (see "Scene
+        # mutation and self._lock" in the module docstring): the recorder thread
+        # is not covered by the policy gate, so outside the lock it can observe
+        # the object registered against a model that does not contain it, or a
+        # rolled-back registry against the recompiled model.
         try:
-            if not inject_object_into_scene(self._world, obj):
-                # Injection returned False (compile error). Clean up.
-                self._world.objects.pop(name, None)
-                return {
-                    "status": "error",
-                    "content": [{"text": f"Failed to inject '{name}': spec recompile refused."}],
-                }
+            with self._lock:
+                self._world.objects[name] = obj
+                if not inject_object_into_scene(self._world, obj):
+                    # Injection returned False (compile error). Clean up.
+                    self._world.objects.pop(name, None)
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Failed to inject '{name}': spec recompile refused."}],
+                    }
         except (ValueError, RuntimeError) as e:
-            self._world.objects.pop(name, None)
+            with self._lock:
+                self._world.objects.pop(name, None)
             return {
                 "status": "error",
                 "content": [{"text": f"Failed to inject '{name}' into live scene: {e}"}],
@@ -3809,10 +3860,15 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
-        del self._world.objects[name]
-        # spec-based path: eject_body_from_scene looks up the body in the
-        # live MjSpec, deletes it, and recompiles preserving remaining state.
-        eject_body_from_scene(self._world, name)
+        # Deregistration and the recompile are one critical section (see the
+        # module docstring): outside the lock a recorder thread can observe the
+        # object already gone from the registry while the model it renders
+        # still contains the body.
+        with self._lock:
+            del self._world.objects[name]
+            # spec-based path: eject_body_from_scene looks up the body in the
+            # live MjSpec, deletes it, and recompiles preserving remaining state.
+            eject_body_from_scene(self._world, name)
         return {"status": "success", "content": [{"text": f"'{name}' removed."}]}
 
     def move_object(
@@ -4159,19 +4215,24 @@ class MuJoCoSimEngine(
             height=height,
             parent_body=parent_body or "",
         )
-        self._world.cameras[name] = cam
-
         # Spec-based path: inject_camera_into_scene adds the camera to the
-        # live spec and recompiles preserving state.
+        # live spec and recompiles preserving state. Registration, swap and
+        # rollback are one critical section (see the module docstring): a
+        # recorder thread resolves camera names against the registry and then
+        # renders them against the model, so outside the lock it can pick up a
+        # camera this recompile has not installed yet.
         try:
-            if not inject_camera_into_scene(self._world, cam):
-                self._world.cameras.pop(name, None)
-                return {
-                    "status": "error",
-                    "content": [{"text": f"Failed to inject camera '{name}': spec recompile refused."}],
-                }
+            with self._lock:
+                self._world.cameras[name] = cam
+                if not inject_camera_into_scene(self._world, cam):
+                    self._world.cameras.pop(name, None)
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Failed to inject camera '{name}': spec recompile refused."}],
+                    }
         except (ValueError, RuntimeError) as e:
-            self._world.cameras.pop(name, None)
+            with self._lock:
+                self._world.cameras.pop(name, None)
             return {
                 "status": "error",
                 "content": [{"text": f"Failed to inject camera '{name}' into live scene: {e}"}],
@@ -4224,24 +4285,30 @@ class MuJoCoSimEngine(
             return err
         cam = self._world.cameras[name]
 
-        if self._world._backend_state.get("spec") is not None:
-            # Use the namespaced MuJoCo name if we have it (camera came from
-            # a robot's URDF), else the short name.
-            if not eject_camera_from_scene(self._world, cam.name or name):
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"Camera '{name}' was not removed: the scene would not "
-                                "recompile without it. The camera is still registered and "
-                                "the scene is unchanged; the compiler's reason is logged."
-                            )
-                        }
-                    ],
-                }
+        # The recompile and the deregistration are one critical section (see
+        # "Scene mutation and self._lock" in the module docstring): outside the
+        # lock a recorder thread can resolve this camera from the registry and
+        # then render it against the model the eject has already recompiled
+        # without it.
+        with self._lock:
+            if self._world._backend_state.get("spec") is not None:
+                # Use the namespaced MuJoCo name if we have it (camera came
+                # from a robot's URDF), else the short name.
+                if not eject_camera_from_scene(self._world, cam.name or name):
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Camera '{name}' was not removed: the scene would not "
+                                    "recompile without it. The camera is still registered and "
+                                    "the scene is unchanged; the compiler's reason is logged."
+                                )
+                            }
+                        ],
+                    }
 
-        del self._world.cameras[name]
+            del self._world.cameras[name]
         return {"status": "success", "content": [{"text": f"Camera '{name}' removed."}]}
 
     # Simulation Control
