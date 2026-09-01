@@ -2926,8 +2926,9 @@ class MuJoCoSimEngine(
         base["methods"]["get_cameras_recording_status"] = (
             "() -> dict  # inspect an in-progress start_cameras_recording "
             "(elapsed time, per-camera frame counts, running vs thread_alive); "
-            "reports idle when none is active and stopping while a loop outlives "
-            "the stop that asked it to exit"
+            "phase is recording, stopping while a loop outlives the stop that "
+            "asked it to exit, unflushed once that loop has gone but its frames "
+            "are still unencoded, or idle only when no buffer is left to encode"
         )
 
         # Physics-introspection / grounding surface. The discovery surface

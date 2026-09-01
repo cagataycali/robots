@@ -16,6 +16,12 @@ still growing, a status verb answering ``[idle]`` about a live thread, and a
 second recorder started on the same cameras because the guard that should have
 refused it reads a flag the first loop already outlived.
 
+The refusal it settles on promises the buffered frames are recoverable through a
+second stop, which makes every read *between* the two calls part of the same
+defect: the state decays -- the slow ``render`` returns, the loop exits -- into
+one that no liveness read can see but that still holds those frames, so a guard
+keyed on liveness would let a `start` drop them under ``status="success"``.
+
 Each cell drives a real daemon thread and wedges it inside ``render``, mirroring
 ``test_daemon_camera_recording.py``'s fake-render harness so no GL context is
 needed. The join budget is monkeypatched down so a cell costs a fraction of a
@@ -110,6 +116,23 @@ class _WedgeableRecorder:
     def release(self) -> None:
         self._armed.clear()
         self._released.set()
+
+    def settle(self) -> int:
+        """Let the wedged ``render`` return so the loop exits, and count what it left.
+
+        The state a failed stop decays into on the ordinary recovery path: the
+        budget is sized for a slow render, i.e. one that does return, just late.
+        ``running`` is already clear, so the loop appends the frame that render
+        was holding and then leaves -- and the registration outlives it, because
+        only a flush deregisters.
+        """
+        thread = self.sim._cams_rec_state["thread"]
+        self.release()
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "premise: the released render lets the loop exit"
+        buffered = self.buffered()
+        assert buffered >= 3, "premise: the settled state still holds the captured frames"
+        return buffered
 
 
 @pytest.fixture
@@ -220,6 +243,87 @@ class TestAStopWhoseJoinExpires:
 
         assert again["status"] == "error", again
         assert "Already recording 'wedge'" in again["content"][0]["text"]
+
+
+class TestASettledRecordingIsNotDroppable:
+    """The failed stop decays: thread gone, buffers still registered and unencoded.
+
+    This is where the recovery contract is kept or broken. The refusal tells the
+    caller the frames are recoverable via a second stop, so nothing between the
+    two calls may discard them -- and a guard that reads liveness stops seeing
+    this state the moment the slow ``render`` returns, which is precisely when
+    the caller is most likely to retry. Reading the registration instead makes
+    the same caller sequence answer the same way whether or not the wedge
+    cleared in between.
+    """
+
+    def test_a_start_cannot_discard_the_frames_the_failed_stop_promised_were_recoverable(
+        self, recorder, tmp_path
+    ) -> None:
+        """The frames survive the refused start, so the second stop can still encode them."""
+        recorder.wedge()
+        assert recorder.sim.stop_cameras_recording()["status"] == "error"
+        buffered = recorder.settle()
+
+        again = recorder.sim.start_cameras_recording(cameras=["cam_a"], output_dir=str(tmp_path), fps=30, name="second")
+
+        assert again["status"] == "error", again
+        text = again["content"][0]["text"]
+        assert "stop_cameras_recording() first" in text, text
+        assert str(buffered) in text, text
+        assert _json_block(again)["phase"] == "unflushed"
+        # The refusal is only worth anything if the buffer it protected is intact.
+        assert recorder.sim._cams_rec_state["name"] == "wedge"
+        assert recorder.buffered() == buffered
+
+    def test_the_synchronous_start_reads_the_same_registration(self, recorder, tmp_path) -> None:
+        """Both start verbs replace one attribute, so one guard answers for both."""
+        recorder.wedge()
+        assert recorder.sim.stop_cameras_recording()["status"] == "error"
+        buffered = recorder.settle()
+
+        again = recorder.sim.start_cameras_recording_synchronous(
+            cameras=["cam_a"], output_dir=str(tmp_path), fps=30, name="second"
+        )
+
+        assert again["status"] == "error", again
+        assert "stop_cameras_recording() first" in again["content"][0]["text"]
+        assert recorder.sim._cams_rec_state["name"] == "wedge"
+        assert recorder.buffered() == buffered
+
+    def test_the_status_verb_does_not_call_an_unencoded_buffer_idle(self, recorder) -> None:
+        """``[idle]`` promises nothing is left to encode; here something is."""
+        recorder.wedge()
+        recorder.sim.stop_cameras_recording()
+        buffered = recorder.settle()
+
+        status = recorder.sim.get_cameras_recording_status()
+
+        text = status["content"][0]["text"]
+        assert text.startswith("[unflushed]"), text
+        assert "[idle]" not in text
+        payload = _json_block(status)
+        assert payload["phase"] == "unflushed"
+        # Neither boolean is set here, which is why the phase had to be carried:
+        # a caller reading only these two cannot tell this from a stale handle.
+        assert payload["running"] is False
+        assert payload["thread_alive"] is False
+        assert payload["frames"]["cam_a"] == buffered
+
+    def test_the_second_stop_still_encodes_the_settled_buffer(self, recorder) -> None:
+        """The advertised remedy: a stop on a settled recording joins at once and flushes."""
+        recorder.wedge()
+        assert recorder.sim.stop_cameras_recording()["status"] == "error"
+        buffered = recorder.settle()
+
+        second = recorder.sim.stop_cameras_recording()
+
+        assert second["status"] == "success", second
+        artifact = _json_block(second)["artifacts"][0]
+        assert artifact["frames"] == buffered
+        with imageio.v2.get_reader(str(artifact["path"])) as reader:
+            assert sum(1 for _ in reader) == buffered
+        assert recorder.sim._cams_rec_state is None
 
 
 class TestARecorderThatExitsIsUnaffected:

@@ -15,8 +15,15 @@ about that live thread.
 The join outcome is now read and reported. An expired join returns
 `status="error"` with `stopped=False` and the per-camera buffered frame counts,
 encodes nothing, and leaves the recording registered so a later
-`stop_cameras_recording()` re-joins the loop and flushes it. Both
-`start_cameras_recording` and `start_cameras_recording_synchronous` read the
-recorder thread's liveness rather than the `running` flag the loop outlives, and
-the status verb reports a `[stopping]` phase carrying `running` and
-`thread_alive` separately.
+`stop_cameras_recording()` re-joins the loop and flushes it.
+
+Both `start_cameras_recording` and `start_cameras_recording_synchronous` now key
+their refusal on the registration rather than on the `running` flag the loop
+outlives. Only a flush deregisters a recording, so a registered one always holds
+frames nothing has encoded -- including after an expired join's loop finally
+leaves `render` and exits, a state no liveness read can see. A `start` in that
+window used to replace the registration and discard those frames while reporting
+success, which is the recovery the expired-join error had just promised. The
+status verb names all four phases (`recording`, `stopping`, `unflushed`, `idle`)
+in its text and as `phase` in its JSON block, alongside `running` and
+`thread_alive`; `[idle]` now means only that no buffer is left to encode.
