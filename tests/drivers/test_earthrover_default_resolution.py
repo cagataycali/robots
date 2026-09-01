@@ -65,7 +65,12 @@ class TestTheBareCallStaysLerobotBacked:
 
     def test_the_registry_entry_declares_no_driver(self) -> None:
         """An absent ``hardware.driver`` is what defers to the default."""
-        hardware = get_robot(resolve_name("earthrover"))["hardware"]
+        entry = get_robot(resolve_name("earthrover"))
+        # Asserted rather than coalesced to ``{}``: the check below is an absence,
+        # so a missing entry would satisfy it vacuously and report a default this
+        # module never read.
+        assert entry is not None, "premise: 'earthrover' no longer resolves to a registry entry"
+        hardware = entry["hardware"]
         assert "driver" not in hardware, (
             "earthrover must not declare hardware.driver: the native driver does not carry "
             f"{list(_DOCUMENTED_TELEOP_READS)} (documented in README.md and "
