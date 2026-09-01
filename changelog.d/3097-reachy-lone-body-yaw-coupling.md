@@ -34,13 +34,15 @@ head target to wherever the head physically is when torque returns - the target
 is forgotten and the coupling is skipped, because a turn refused against a stale
 target is a turn the robot could have made.
 
-`reachy_look` and `reachy_body_turn` said otherwise in the descriptions a model
-reads back out of its own schema: `reachy_look` promised a refusal "beyond 65
-deg" that its default path could not produce and said `body_yaw=None` "leaves the
-body alone" when a large head yaw turns the whole robot, and `reachy_body_turn`
-offered the full +/-160 with no mention of what bounds it. Both now state the
-coupling and how to ask for a bigger turn. The Device Connect driver's
-`_reject_unusable` no longer hands the pairwise limit to "`send_action`, which
-takes both": one member is enough where the counterpart is known, and that
-surface keeps no such record, so its `body` RPC stays per-axis only - graded now
-rather than asserted in prose.
+The descriptions a model reads back out of its own schema follow the same split.
+`reachy_look` can omit `body_yaw`, so it states that the pairwise limit applies
+only when both are sent, and now says why a lone large `yaw` is not an unchecked
+twist: the body turns under the head to serve it. `reachy_body_turn` sends
+`body_yaw` alone, where the limit *is* applied, so it names the counterpart it is
+measured against instead of claiming an exemption. The suite grades those two
+obligations separately, derived per verb from what one call actually carries, so
+a stale exemption fails as loudly as an unqualified promise. The Device Connect
+`_reject_unusable` keeps its scope paragraph but no longer says the coverage is
+absent: the native driver has it, and this surface's `body` RPC stays per-axis
+because keeping no record of the pose its `look` RPC commanded is the invariant
+that puts the limit out of reach there.
