@@ -77,6 +77,17 @@ def envelope_error(values: dict[str, Any], context: str) -> str | None:
        legal - otherwise a caller would be told about a coupling when the real
        problem is one value.
 
+    Check (3) is a property of one *action* rather than of the robot: it needs
+    both members in the same ``values`` mapping, so an action carrying one of
+    them alone passes it however far that member is from the counterpart the
+    robot is holding. This module cannot close that on its own - it is handed a
+    mapping and has no robot to ask for the other half - and the gap is on paths
+    agents take rather than on an edge one, since ``reachy_body_turn`` sends
+    ``body_yaw`` alone and ``reachy_look`` omits ``body_yaw`` whenever the caller
+    leaves it at its default. Which surface should own the missing half is
+    #3094; until that is decided, a caller who needs the coupling enforced has
+    to supply both values in one action.
+
     A key this envelope does not know is ignored entirely - not bounded and not
     even checked for finiteness. The driver's action dict also carries antenna
     positions and other pass-through values, and refusing a name this module has

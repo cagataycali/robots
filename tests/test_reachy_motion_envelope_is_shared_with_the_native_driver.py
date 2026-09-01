@@ -291,6 +291,10 @@ class TestTheCouplingLimitIsNotReachableHere:
     Holds before and after the change. It records why the envelope's second
     limit is not part of it, so a reader does not take the omission for an
     oversight.
+
+    "Needs both values" is the whole scope, and it is not a fact about this
+    surface: the two rows added last grade what ``send_action`` does with one
+    member, which is the shape the agent verbs send (#3094).
     """
 
     def test_no_single_rpc_carries_both_members_of_the_yaw_pair(self, rmd: Any) -> None:
@@ -307,6 +311,31 @@ class TestTheCouplingLimitIsNotReachableHere:
         assert result["status"] == "error"
         assert sent == []
         assert "coupling" in _text(result)
+
+    def test_one_member_of_the_pair_alone_clears_the_check(self) -> None:
+        """The single-member case, graded rather than left to be assumed.
+
+        The row above pins that no Device Connect RPC carries both members. That
+        is a property of the *pair*, not of that surface, so an action reaching
+        ``send_action`` with one member does not reach the check either - which
+        is what ``reachy_body_turn`` (``body_yaw`` alone) and ``reachy_look``
+        (``body_yaw`` omitted at its default) send. Whichever surface #3094
+        gives the missing half to, this is the assertion that has to change, so
+        the answer arrives as an edited expectation rather than as silence.
+        """
+        far = HEAD_BODY_YAW_DELTA_LIMIT_DEG + 20.0
+        assert envelope_error({"head_yaw": far}, "reachy_look") is None
+        assert envelope_error({"body_yaw": far}, "reachy_body_turn") is None
+        # The same head value paired with a counterpart is refused, so what
+        # decides the verdict is the action's key set and not the angle.
+        assert envelope_error({"head_yaw": far, "body_yaw": 0.0}, "send_action") is not None
+
+    def test_a_lone_member_reaches_the_wire_through_the_native_driver(self) -> None:
+        """End to end: the envelope is consulted by a driver, not obeyed by one."""
+        driver, sent = _native()
+        result = driver.send_action({"body_yaw": HEAD_BODY_YAW_DELTA_LIMIT_DEG + 20.0})
+        assert result["status"] == "success", result
+        assert len(sent) == 1
 
 
 class TestThePremisesThisRestsOn:

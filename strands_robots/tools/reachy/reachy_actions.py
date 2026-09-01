@@ -170,9 +170,12 @@ def reachy_look(
 
     Calls ``ReachyDriver.send_action(...)`` once with a whole head pose: the
     daemon's head command is a pose, not a delta, so an absent axis means zero
-    (level), not "leave as it was". The driver refuses non-finite values, any
+    (level), not "leave as it was". The driver refuses non-finite values and any
     axis outside the motion envelope (pitch/roll +/-40 deg, yaw +/-180 deg,
-    body +/-160 deg) and a head-body yaw twist beyond 65 deg.
+    body +/-160 deg). It also refuses a head-body yaw twist beyond 65 deg, but
+    only when ``body_yaw`` is sent in the same call: left at its default,
+    ``body_yaw`` is omitted from the action and the twist against the body's
+    current heading is not checked. Pass ``body_yaw`` when that limit matters.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
@@ -237,7 +240,10 @@ def reachy_body_turn(driver: Any, yaw: float = 0.0) -> dict[str, Any]:
 
     Calls ``ReachyDriver.send_action(...)`` once with only ``body_yaw``; the
     driver refuses values outside +/-160 deg. Use it to turn toward a speaker
-    or scan the room while the head stays put.
+    or scan the room while the head stays put. Because the action carries no
+    head yaw, the 65 deg head-body twist limit is not checked on this call:
+    turning the body away from where the head is pointing can ask for a twist
+    past it. Send both values through ``reachy_look`` when the pair matters.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.

@@ -154,7 +154,14 @@ def _motion_domain_error(rpc_name: str, values: dict[str, Any]) -> dict[str, str
     from here: it bounds ``head_yaw - body_yaw`` and needs both values in one
     call, where this surface splits them across :meth:`ReachyMiniDriver.look`
     and :meth:`ReachyMiniDriver.body`. Per-axis travel is the half that
-    transfers; the pairwise limit stays with ``send_action``, which takes both.
+    transfers.
+
+    That is a scope and not a delegation. ``send_action`` applies the pairwise
+    limit only to an action carrying both members, and the agent verbs on that
+    seam split the pair as well - so there are paths on which it is checked by
+    nobody (#3094). This RPC is not where that is fixed, having one member per
+    call by construction, but the coverage this paragraph used to attribute to
+    ``send_action`` is not there to lean on.
 
     Args:
         rpc_name: The RPC that received the values, used as the message prefix.
