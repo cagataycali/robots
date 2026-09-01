@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
@@ -41,18 +40,6 @@ if TYPE_CHECKING:
     from websockets.sync.server import Server, ServerConnection
 
 logger = logging.getLogger(__name__)
-
-# How long a teardown waits for a closed client connection's handler thread to
-# leave before reporting that it has not. A handler inside an inference call
-# notices the close only when that call returns, so this bounds the wait rather
-# than the handler: more waiting does not change the verdict, and the operator
-# needs the verdict.
-CONNECTION_DRAIN_S = 5.0
-
-# Poll interval while waiting for the handler threads to leave. Short enough
-# that an ordinary teardown - every client gone in a millisecond or two - is not
-# padded out to a tick.
-_DRAIN_POLL_S = 0.005
 
 
 def _bind_port_error(value: Any, param: str, context: str) -> str | None:
@@ -148,25 +135,6 @@ class PolicyServer:
         # Serialize inference so per-episode policy state is never interleaved
         # across connections (v1 single-client contract).
         self._lock = threading.Lock()
-        # Every client connection currently being served, mapped to the peer it
-        # was accepted from. The sync websockets server keeps no such record -
-        # ``Server.shutdown()`` closes the listening socket and nothing else - so
-        # a teardown has no way to reach the connections it accepted unless they
-        # are tracked here. See _close_client_connections.
-        #
-        # The peer is recorded here rather than read back when a connection has
-        # to be reported, because by then it cannot be: ``remote_address`` is a
-        # property over ``socket.getpeername()``, which raises
-        # ``OSError: [Errno 9] Bad file descriptor`` once the connection is
-        # closed - and closing it is the first thing the teardown does. The
-        # address must be captured while the connection is live, exactly as the
-        # session stops capture a process identity before signalling it.
-        #
-        # Guarded by its own lock rather than by ``self._lock`` above: that one
-        # is held for the whole of an inference call, and a teardown must not
-        # queue behind an inference to find out what it has to close.
-        self._connections: dict[ServerConnection, str] = {}
-        self._connections_lock = threading.Lock()
 
     def _run_accept_loop(self, server: Server) -> None:
         """Run the sync server's accept loop, absorbing the teardown race only.
@@ -224,89 +192,31 @@ class PolicyServer:
         }
 
     def _handle(self, websocket: ServerConnection) -> None:
-        """Serve one client connection: handshake, then dispatch each message.
-
-        The connection is registered in :attr:`_connections` before the
-        handshake and removed once this returns, so it is reachable by a
-        teardown for the whole time the wrapped policy can be invoked for it -
-        including during the handshake, which a stop can land in the middle of.
-        See :meth:`_close_client_connections`.
-        """
+        """Serve one client connection: handshake, then dispatch each message."""
         peer = getattr(websocket, "remote_address", None)
         logger.info("PolicyServer: client connected %s", peer)
-        with self._connections_lock:
-            self._connections[websocket] = str(peer)
-        try:
-            websocket.send(
-                protocol.dumps(
-                    {
-                        "type": protocol.MSG_READY,
-                        "protocol_version": protocol.PROTOCOL_VERSION,
-                        "metadata": self._metadata(),
-                    }
-                )
+        websocket.send(
+            protocol.dumps(
+                {
+                    "type": protocol.MSG_READY,
+                    "protocol_version": protocol.PROTOCOL_VERSION,
+                    "metadata": self._metadata(),
+                }
             )
-            for raw in websocket:
-                try:
-                    message = protocol.loads(raw)
-                    reply = self._dispatch(message)
-                except Exception as exc:  # noqa: BLE001 - marshal ANY failure back to the client
-                    logger.exception("PolicyServer: error handling message")
-                    reply = {
-                        "type": protocol.MSG_ERROR,
-                        "error": f"{type(exc).__name__}: {exc}",
-                        "traceback": traceback.format_exc(),
-                    }
-                websocket.send(protocol.dumps(reply))
-        finally:
-            with self._connections_lock:
-                self._connections.pop(websocket, None)
-        logger.info("PolicyServer: client disconnected %s", peer)
-
-    def _close_client_connections(self) -> None:
-        """Close every open client connection and wait for its handler to leave.
-
-        ``Server.shutdown()`` closes the listening socket and nothing else. The
-        sync websockets server keeps no record of the connections it accepted,
-        and serves each on a thread of its own that outlives the server object,
-        so a teardown that shuts only the listener down returns while a client
-        that was already connected goes on streaming observations in and
-        receiving action chunks back: the wrapped policy is still being invoked,
-        and on a robot it is still driving the arm, after the caller was told the
-        server stopped. Closing the connections here is what ends that.
-
-        A handler inside an inference call notices the close only when that call
-        returns, so the wait is bounded by :data:`CONNECTION_DRAIN_S` and the
-        outcome is reported rather than waited out. This returns ``None``, like
-        both teardowns it serves, so the log is the only record there can be of a
-        connection still being served - which is exactly the fact an operator
-        needs, and the reason it is a warning and not a debug line.
-        """
-        with self._connections_lock:
-            closing = list(self._connections)
-        for connection in closing:
+        )
+        for raw in websocket:
             try:
-                connection.close()
-            except OSError:
-                # The peer is already gone, so there is nothing left to close;
-                # its handler is on its way out and removes itself below.
-                logger.debug("PolicyServer: connection already gone at teardown", exc_info=True)
-        still_served: list[str] = []
-        deadline = time.monotonic() + CONNECTION_DRAIN_S
-        while True:
-            with self._connections_lock:
-                still_served = list(self._connections.values())
-            if not still_served or time.monotonic() >= deadline:
-                break
-            time.sleep(_DRAIN_POLL_S)
-        if still_served:
-            logger.warning(
-                "PolicyServer: %d client connection(s) still being served %.1fs after the server "
-                "was told to stop (%s); the wrapped policy is still being invoked for them",
-                len(still_served),
-                CONNECTION_DRAIN_S,
-                ", ".join(still_served),
-            )
+                message = protocol.loads(raw)
+                reply = self._dispatch(message)
+            except Exception as exc:  # noqa: BLE001 - marshal ANY failure back to the client
+                logger.exception("PolicyServer: error handling message")
+                reply = {
+                    "type": protocol.MSG_ERROR,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(),
+                }
+            websocket.send(protocol.dumps(reply))
+        logger.info("PolicyServer: client disconnected %s", peer)
 
     def _dispatch(self, message: dict[str, Any]) -> dict[str, Any]:
         """Route one decoded message to the wrapped policy and build the reply.
@@ -408,11 +318,19 @@ class PolicyServer:
     def stop(self) -> None:
         """Stop serving and join the accept loop. Safe to call twice.
 
-        Closes the listening socket so no new client can connect, closes every
-        client connection still open so the wrapped policy stops being invoked
-        for them (:meth:`_close_client_connections`), and joins the accept
-        thread. A connection whose handler had not left in time is named in a
-        warning; this returns ``None`` either way.
+        Stops the server *serving*, not merely listening: ``Server.shutdown()``
+        closes the listening socket, closes every client connection still open
+        with code 1001, and returns only once every connection handler has
+        terminated - so the wrapped policy is no longer invoked for a client
+        that was already connected, and this call does not return while a
+        handler can still emit one more action chunk. A handler inside an
+        inference call notices the close when that call returns, so a stop
+        during inference returns when that inference does.
+
+        That is a guarantee of the declared ``websockets`` floor rather than of
+        this method, which is why the floor is >=17.0: 17.0 is the release that
+        closes accepted connections on shutdown, and through 16.x this returned
+        while a client that was already connected went on being served.
         """
         # Before the close, not after: the serving thread races this and reads
         # the flag to tell a teardown apart from a real socket failure.
@@ -420,12 +338,7 @@ class PolicyServer:
         if self._server is not None:
             self._server.shutdown()
             self._server = None
-        # After the listener is closed, so a connection accepted in the window
-        # between the two is already refused rather than raced for.
-        self._close_client_connections()
         if self._thread is not None:
-            # Bounded, and its exit is guaranteed by the close above: the accept
-            # loop breaks out of ``socket.accept()`` on the closed socket.
             self._thread.join(timeout=5.0)
             self._thread = None
 
@@ -449,10 +362,6 @@ class PolicyServer:
             try:
                 self._run_accept_loop(server)
             finally:
-                # The same obligation as stop(): returning from serve() while a
-                # client connection is still being served hands the caller a
-                # stopped server that is still driving the robot.
-                self._close_client_connections()
                 self._server = None
 
     def __enter__(self) -> PolicyServer:
