@@ -83,7 +83,7 @@ graph TB
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
 | `strands_robots/policies/` | ABC + 15 providers + factory + JSON registry. | `Policy`, `create_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 writer. | `DatasetRecorder` |
-| `strands_robots/tools/` | 20 `@tool`-decorated helpers. | `lerobot_calibrate`, `serial_tool`, etc. |
+| `strands_robots/tools/` | 26 `@tool`-decorated helpers. | `lerobot_calibrate`, `serial_tool`, etc. |
 
 ## ABCs
 
