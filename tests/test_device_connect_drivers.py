@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import unittest
+from typing import Any
 from dataclasses import dataclass
 from enum import Enum
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -213,6 +214,25 @@ def _make_mock_sim(tool_name="so100_sim"):
     world.step_count = 0
     sim._world = world
 
+    # ``stop_policy`` is a dimension of the wrapped simulation, not a call to
+    # absorb: ``SimulationDeviceDriver.stop`` routes each robot through it and
+    # reads the ``was_running`` verdict out of the answer. A bare ``MagicMock``
+    # answers ``hasattr`` truthfully-by-fabrication, swallows the stop, and
+    # returns an envelope carrying no verdict -- so a stand-in without this
+    # cannot observe either half of what the verb does. Grounded against the
+    # real method by ``tests.test_device_connect_sim_stop_reports_the_rollouts_
+    # it_halted``.
+    def _stop_policy(robot_name: str = "") -> dict[str, Any]:
+        if not robot_name or robot_name not in world.robots:
+            return {"status": "error", "content": [{"text": f"Unknown robot '{robot_name}'."}]}
+        was_running = world.robots[robot_name].request_policy_stop()
+        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        return {
+            "status": "success",
+            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+        }
+
+    sim.stop_policy.side_effect = _stop_policy
     sim.start_policy.return_value = {"status": "success", "content": [{"text": "Policy started"}]}
     sim.get_state.return_value = {"status": "success", "content": [{"text": "State info"}]}
     sim.get_features.return_value = {"status": "success", "content": [{"json": {"features": {}}}]}

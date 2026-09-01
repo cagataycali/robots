@@ -6211,6 +6211,12 @@ class MuJoCoSimEngine(
 
         empty robot_name returns a clear error instead of a silent
         match against the first robot.
+
+        Returns:
+            The agent-tool envelope. On success its ``json`` block reports
+            ``was_running`` - whether a rollout really was in flight when the
+            stop arrived - so a caller aggregating several of these answers
+            reads the verdict rather than matching on the sentence.
         """
         if not robot_name:
             return {
@@ -6232,7 +6238,22 @@ class MuJoCoSimEngine(
         # not yet reached its first frame cannot raise the flag back over it.
         was_running = robot.request_policy_stop() or was_running
         msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
-        return {"status": "success", "content": [{"text": msg}]}
+        # The verdict travels as data as well as prose. A programmatic caller -
+        # the Device Connect ``stop`` RPC aggregates one of these answers per
+        # robot - otherwise has to re-derive "was a rollout in flight" from its
+        # own reading of the flag, which is the second source #2833 is about, or
+        # match on the sentence above. ``stop_task`` and ``stop_teleoperate``
+        # both carry their verdict in a ``json`` block for the same reason.
+        #
+        # Named ``was_running`` and not ``stopped`` deliberately: the ``stopped``
+        # key that :func:`~strands_robots.teleop_mixin._stop_reported_stopped`
+        # reads means "the loop is no longer running", which is TRUE for the
+        # nothing-to-stop case. This one is False there. Two keys spelled alike
+        # and opposite on that case is the drift worth spending a word to avoid.
+        return {
+            "status": "success",
+            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+        }
 
     def list_policies_running(self) -> dict[str, Any]:
         """Return the names of robots currently running a policy.
