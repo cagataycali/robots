@@ -64,10 +64,32 @@ from strands_robots.simulation.models import SimRobot
 
 pytest.importorskip("device_connect_edge")
 
-from strands_robots.device_connect.sim_driver import (  # noqa: E402 - after the extra check
-    SimulationDeviceDriver,
-    _reported_a_rollout_in_flight,
+# The driver is imported per test, not here. A sibling file replaces the
+# device_connect_edge submodules with MagicMocks at import time; importing the
+# driver at module scope binds it to whichever of the two won collection, and
+# leaves that binding cached for the other file. The autouse fixture below
+# restores the real submodules and purges the cache, the same way
+# ``tests.test_estop_halts_every_simulation_motion_source`` does over this same
+# driver. An autouse fixture is bound to the module that declares it, so
+# importing the helper does not bring the sibling's fixture along.
+from tests.test_device_connect_hardening import (  # noqa: E402 - after the extra check
+    _force_real_device_connect_edge,
 )
+
+
+@pytest.fixture(autouse=True)
+def _real_device_connect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bind the driver to the real extra and leave the allowlists permissive."""
+    _force_real_device_connect_edge()
+    for var in ("DEVICE_CONNECT_RPC_ALLOW", "DEVICE_CONNECT_ESTOP_ALLOW", "DEVICE_CONNECT_ALLOW_INSECURE"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _sim_driver() -> Any:
+    """The driver module, imported after the fixture has bound the real extra."""
+    import strands_robots.device_connect.sim_driver as sim_driver
+
+    return sim_driver
 
 
 class _World:
@@ -131,7 +153,7 @@ class _SimPeer:
 
 def _rpc_stop(peer: _SimPeer) -> dict[str, Any]:
     """Answer the Device Connect ``stop`` RPC gives for *peer*."""
-    return asyncio.run(SimulationDeviceDriver(peer).stop())
+    return asyncio.run(_sim_driver().SimulationDeviceDriver(peer).stop())
 
 
 def _mesh_stop(peer: _SimPeer) -> dict[str, Any]:
@@ -273,7 +295,7 @@ class TestARefusedRolloutIsNamed:
         ``tests.mesh.test_fleet_stop_reports_a_refused_rollout`` uses over the
         owner's own module, so a third copy fails here rather than drifting.
         """
-        source = inspect.getsource(SimulationDeviceDriver.stop)
+        source = inspect.getsource(_sim_driver().SimulationDeviceDriver.stop)
         rule = re.compile(r'\.get\(\s*["\']status["\']\s*\)\s*==\s*["\']error["\']')
 
         assert "_reports_failure_to_stop(" in source, source
@@ -305,7 +327,7 @@ class TestAnAnswerWithNoVerdictIsReadAsNeither:
         ],
     )
     def test_the_verdict_reader_is_tri_state(self, envelope: dict[str, Any], expected: bool | None) -> None:
-        assert _reported_a_rollout_in_flight(envelope) is expected
+        assert _sim_driver()._reported_a_rollout_in_flight(envelope) is expected
 
 
 class TestBothRemoteSurfacesReportTheSameHaltedSet:
@@ -358,8 +380,9 @@ class TestTheStandInMatchesTheRealSimulation:
         finally:
             sim.cleanup()
 
-        assert _reported_a_rollout_in_flight(halted) is True, halted
-        assert _reported_a_rollout_in_flight(idle) is False, idle
+        in_flight = _sim_driver()._reported_a_rollout_in_flight
+        assert in_flight(halted) is True, halted
+        assert in_flight(idle) is False, idle
         assert _reports_failure_to_stop(refusal) is True, refusal
 
     def test_the_real_stop_policy_still_leads_with_its_sentence(self) -> None:
@@ -377,7 +400,7 @@ class TestTheStandInMatchesTheRealSimulation:
         sim = self._real_sim()
         try:
             assert sim.start_policy(robot_name="so100", policy_provider="mock", duration=30.0)["status"] == "success"
-            answer = asyncio.run(SimulationDeviceDriver(sim).stop())
+            answer = asyncio.run(_sim_driver().SimulationDeviceDriver(sim).stop())
         finally:
             sim.cleanup()
 

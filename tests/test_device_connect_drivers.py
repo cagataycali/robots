@@ -12,9 +12,9 @@ import json
 import os
 import sys
 import unittest
-from typing import Any
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from strands_robots.simulation.models import SimRobot
