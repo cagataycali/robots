@@ -91,6 +91,7 @@ def _bare_driver(connected: bool = True) -> ReachyDriver:
     driver = ReachyDriver.__new__(ReachyDriver)
     driver._connected = connected
     driver._cache_lock = threading.Lock()
+    driver._head_yaw_target = None
     driver._joints = None
     driver._pose = None
     driver._imu = None

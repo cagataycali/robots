@@ -170,9 +170,12 @@ def reachy_look(
 
     Calls ``ReachyDriver.send_action(...)`` once with a whole head pose: the
     daemon's head command is a pose, not a delta, so an absent axis means zero
-    (level), not "leave as it was". The driver refuses non-finite values, any
+    (level), not "leave as it was". The driver refuses non-finite values and any
     axis outside the motion envelope (pitch/roll +/-40 deg, yaw +/-180 deg,
-    body +/-160 deg) and a head-body yaw twist beyond 65 deg.
+    body +/-160 deg). A ``yaw`` beyond 65 deg is reached by the body turning
+    under the head, so it moves the whole robot even when ``body_yaw`` is left
+    alone; giving both refuses the pair if they differ by more than 65 deg,
+    because the daemon would override the body yaw asked for.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
@@ -182,7 +185,8 @@ def reachy_look(
         x: Head translation forward, millimetres (small, ~[-20, 20]).
         y: Head translation left, millimetres.
         z: Head translation up, millimetres.
-        body_yaw: Body rotation, degrees; ``None`` leaves the body alone.
+        body_yaw: Body rotation, degrees; ``None`` lets the daemon turn the body
+            as far as the head yaw needs, and no further.
         antenna_left: Left antenna angle, degrees; ``None`` leaves it alone.
         antenna_right: Right antenna angle, degrees; ``None`` leaves it alone.
 
@@ -236,12 +240,17 @@ def reachy_body_turn(driver: Any, yaw: float = 0.0) -> dict[str, Any]:
     """Rotate the Mini's body around the vertical axis, in degrees.
 
     Calls ``ReachyDriver.send_action(...)`` once with only ``body_yaw``; the
-    driver refuses values outside +/-160 deg. Use it to turn toward a speaker
-    or scan the room while the head stays put.
+    driver refuses values outside +/-160 deg. Use it to turn toward a speaker or
+    scan the room while the head stays put - which is what bounds it: the head
+    pose is the daemon's primary task, so the body turns no further than 65 deg
+    from the head's own yaw and a bigger turn is refused. To turn the whole robot
+    further, call ``reachy_look`` with ``yaw`` and ``body_yaw`` together so the
+    head comes round with the body.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
-        yaw: Body yaw, degrees, envelope +/-160.
+        yaw: Body yaw, degrees, envelope +/-160, and within 65 deg of the head's
+            current yaw target.
 
     Returns:
         The driver's envelope, success or refusal, unreshaped.
