@@ -139,10 +139,11 @@ class TestEveryVerbMakesExactlyOneDriverCall:
         assert len(handle.calls) == 1
         assert handle.calls[0][0] == VERB_ACCESSOR[verb]
 
-    def test_reachy_wake_sleep_flag_picks_goto_sleep(self) -> None:
+    @pytest.mark.parametrize("sleep,accessor", [(False, "wake_up"), (True, "goto_sleep")])
+    def test_reachy_wake_commands_the_motion_its_flag_names(self, sleep: bool, accessor: str) -> None:
         handle = _RecordingHandle()
-        reachy_actions.reachy_wake(driver=handle, sleep=True)
-        assert handle.calls == [("goto_sleep", (), {})]
+        reachy_actions.reachy_wake(driver=handle, sleep=sleep)
+        assert handle.calls == [(accessor, (), {})]
 
     def test_reachy_look_omits_axes_the_caller_left_alone(self) -> None:
         handle = _RecordingHandle()
@@ -186,7 +187,14 @@ PARAM_REFUSALS: list[tuple[str, dict[str, Any], str]] = [
     ("reachy_look_at", {"u": 4}, "`v` is required"),
     ("reachy_look_at", {"u": 4.5, "v": 4}, "got 'float'"),
     ("reachy_look_at", {"u": True, "v": 4}, "got 'bool'"),
+    ("reachy_wake", {"sleep": "false"}, "sleep must be a boolean"),
+    ("reachy_wake", {"sleep": 1}, "sleep must be a boolean"),
 ]
+
+#: Spellings a caller reaches for to opt *out* of sleep. Every one is truthy, so
+#: a ``sleep`` read by truthiness commands go-to-sleep for each of them - the
+#: opposite physical motion of the one asked for.
+TRUTHY_SPELLINGS_OF_OFF: list[Any] = ["false", "no", "off", "0", "False"]
 
 
 class TestTheVerbsOwnDataGates:
@@ -203,6 +211,50 @@ class TestTheVerbsOwnDataGates:
         assert text.startswith(f"{verb}: ")
         assert fragment in text
         assert handle.calls == []  # the refusal happened before any driver call
+
+
+class TestTheWakeFlagSelectsAPostureRatherThanScalingAQuantity:
+    """Fact family 3b: ``sleep`` picks one of two physical motions.
+
+    It is therefore checked against
+    :func:`~strands_robots.utils.boolean_flag_error` rather than read by
+    truthiness. :class:`TestTheVerbsOwnDataGates` already grades the refusal's
+    wording from :data:`PARAM_REFUSALS`; what these rows add is the *motion*,
+    which is the part a wrong answer moves.
+    """
+
+    @pytest.mark.parametrize("spelling", TRUTHY_SPELLINGS_OF_OFF)
+    def test_a_truthy_spelling_of_off_commands_nothing(self, spelling: Any) -> None:
+        handle = _RecordingHandle()
+        result = reachy_actions.reachy_wake(driver=handle, sleep=spelling)
+        assert result["status"] == "error"
+        # The point of the row: go-to-sleep was not commanded for a caller
+        # spelling "do not go to sleep".
+        assert handle.calls == []
+
+    def test_the_flag_is_judged_before_the_accessor_it_selects(self) -> None:
+        """A handle that can wake but not sleep still serves a request to wake.
+
+        ``accessor`` is derived from ``sleep``, so a flag read by truthiness
+        also decides which accessor the handle gate requires to be callable: a
+        misread ``'false'`` made this handle unusable for the very motion it
+        can perform.
+        """
+
+        class _WakeOnlyHandle:
+            def wake_up(self) -> dict[str, Any]:
+                return {"status": "success", "content": [{"text": "wake_up"}]}
+
+        assert reachy_actions.reachy_wake(driver=_WakeOnlyHandle(), sleep=False)["status"] == "success"
+        # Read from the table rather than written inline: the value is off-type
+        # on purpose - that is the property under test - and the table's ``Any``
+        # keeps the annotation mypy would enforce from hiding what a live caller
+        # can still supply.
+        refusal = reachy_actions.reachy_wake(driver=_WakeOnlyHandle(), sleep=TRUTHY_SPELLINGS_OF_OFF[0])
+        assert refusal["status"] == "error"
+        # The flag is named, not the handle - the handle was never the problem.
+        assert "sleep must be a boolean" in refusal["content"][0]["text"]
+        assert "does not expose" not in refusal["content"][0]["text"]
 
 
 class TestThePackageSurfaceHolds:

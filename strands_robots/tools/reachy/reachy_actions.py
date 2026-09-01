@@ -29,6 +29,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.tools.reachy._reachy_common import live_handle_refusal
+from strands_robots.utils import boolean_flag_error
 
 
 def _refusal(text: str) -> dict[str, Any]:
@@ -307,13 +308,30 @@ def reachy_wake(driver: Any, sleep: bool = False) -> dict[str, Any]:
     Calls ``ReachyDriver.wake_up()`` or ``ReachyDriver.goto_sleep()`` once -
     the daemon's two built-in recorded moves.
 
+    ``sleep`` selects which of two physical motions is commanded, so it is
+    checked against the shared
+    :func:`~strands_robots.utils.boolean_flag_error` domain rather than read by
+    truthiness - the domain
+    :func:`~strands_robots.tools.lerobot_teleoperate.build_lerobot_command`
+    already applies to its own flags. Every non-empty string is truthy, so
+    ``'false'``, ``'no'`` and ``'0'`` - the spellings a caller reaches for to
+    opt *out* - would otherwise command go-to-sleep and report success.
+
+    The check precedes the accessor because the accessor is derived from the
+    flag: a misread ``sleep`` also decides which accessor the handle gate
+    requires to be callable, so it would refuse a handle that can wake but not
+    sleep for a request to wake.
+
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
-        sleep: ``True`` plays go-to-sleep instead of wake-up.
+        sleep: ``True`` plays go-to-sleep instead of wake-up. Checked, not
+            parsed - a truthy spelling of off is refused, never honoured.
 
     Returns:
         The driver's envelope, success or refusal, unreshaped.
     """
+    if error := boolean_flag_error(sleep, "sleep", "reachy_wake"):
+        return _refusal(error)
     accessor = "goto_sleep" if sleep else "wake_up"
     refusal = _handle_refusal("reachy_wake", driver, accessor=accessor)
     if refusal is not None:

@@ -46,3 +46,14 @@ shipped verb. The read now goes through an accessor whose return type says what
 the endpoint can answer, so the shape must be narrowed before it is indexed and
 this class of mistake is a type error at check time rather than an exception on
 a real daemon.
+
+`reachy_wake` selects one of two physical motions, so its `sleep` flag is
+checked against the shared `boolean_flag_error` domain rather than read by
+truthiness. Every non-empty string is truthy, so `'false'`, `'no'`, `'off'` and
+`'0'` - the spellings a caller reaches for to opt *out* - each commanded
+go-to-sleep and reported success. The check precedes the accessor because the
+accessor is derived from the flag: the same misread also decided which accessor
+the handle judgement required to be callable, so a handle that could wake but
+not sleep was refused for a request to wake. It is the domain
+`build_lerobot_command` already applies to its own flags, so a posture flag is
+refused identically wherever it is supplied rather than merely equivalently.
