@@ -1092,6 +1092,17 @@ class SimEngine(ABC):
         unresolvable name reach ``create_policy``, whose raise escapes the
         ``status=error`` envelope this method exists to produce.
 
+        The observation is passed as a supplier, not a value, because only a
+        provider that overrides ``preflight`` reads it. Building it eagerly
+        rendered every camera in the scene before every rollout on behalf of
+        the providers that do not - and ``mock``, the classical planners and
+        the whole-body controllers all inherit the no-op - so the frames were
+        rendered and discarded. On a software rasterizer that render is
+        seconds per call, and it runs before the rollout loop and its
+        cooperative-stop check can start, which delayed a fleet-wide abort
+        past its deadline. ``preflight_policy`` decides whether the hook
+        consumes the keys, so it is what invokes the supplier.
+
         Returns:
             A ``status=error`` dict (for the caller to return) when the
             provider cannot be resolved or its preflight rejects the
@@ -1104,11 +1115,14 @@ class SimEngine(ABC):
         if reason is not None:
             return {"status": "error", "content": [{"text": reason}]}
 
-        obs = self.get_observation(robot_name)
-        if not isinstance(obs, dict) or not obs:
-            return None
+        def observation_keys() -> set[str] | None:
+            obs = self.get_observation(robot_name)
+            if not isinstance(obs, dict) or not obs:
+                return None
+            return set(obs.keys())
+
         try:
-            preflight_policy(policy_provider, set(obs.keys()), **(policy_config or {}))
+            preflight_policy(policy_provider, observation_keys, **(policy_config or {}))
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
         return None

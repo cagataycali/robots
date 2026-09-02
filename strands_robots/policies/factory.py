@@ -295,7 +295,11 @@ def create_policy(provider: str, **kwargs) -> Policy:
     return PolicyClass(**resolved_kwargs)
 
 
-def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> None:
+def preflight_policy(
+    provider: str,
+    observation_keys: set[str] | Callable[[], set[str] | None],
+    **kwargs,
+) -> None:
     """Run a provider's class-level :meth:`Policy.preflight` check, if any.
 
     Resolves ``provider`` to its policy class WITHOUT instantiating it (so no
@@ -315,7 +319,15 @@ def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> Non
         provider: Provider name, HF model ID, or server URL (as passed to
             ``create_policy``).
         observation_keys: Keys the runtime observation will contain (joint
-            names + camera names).
+            names + camera names), or a zero-argument callable returning them.
+            Collecting those keys can be expensive - a simulation builds them
+            from an observation that renders every scene camera - and only a
+            provider that OVERRIDES ``preflight`` reads them, which is decided
+            here and nowhere else. A callable is therefore invoked only once
+            the two early returns below are past, so a caller pays for the keys
+            exactly when the hook consumes them. A callable returning ``None``
+            reports that the runtime observation is not available yet; there is
+            then nothing to validate against and the hook is not run.
         **kwargs: Provider-specific parameters (the policy_config).
 
     Raises:
@@ -335,7 +347,12 @@ def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> Non
     if hook is None or getattr(hook, "__func__", hook) is base_hook:
         # Provider did not override the default no-op preflight.
         return
-    PolicyClass.preflight(set(observation_keys), **resolved_kwargs)
+    keys = observation_keys() if callable(observation_keys) else observation_keys
+    if keys is None:
+        # The caller cannot supply the runtime observation yet, so there is
+        # nothing for the hook to validate the configuration against.
+        return
+    PolicyClass.preflight(set(keys), **resolved_kwargs)
 
 
 def policy_provider_error(provider: str, **kwargs) -> str | None:

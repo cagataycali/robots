@@ -66,8 +66,23 @@ Aliases and shorthands are validated on load: each must be unique across provide
 | `provider_name` (property) | yes | - |
 | `requires_images` (property) | no | `True` |
 | `required_bodies` (property) | no | `()` |
+| `preflight(observation_keys, **config)` (classmethod) | no | no-op |
 | `reset(seed=None)` | no | no-op |
 | `get_actions_sync(...)` | no | sync wrapper |
+
+`preflight` is the fail-fast seam: the simulation calls it on your **class**,
+before `create_policy` constructs anything and therefore before any weight
+download, with the keys the runtime observation will carry (joint names plus
+camera names). Raise `ValueError` from it to reject a configuration your policy
+cannot consume - a declared image input that no sim camera can be routed to is
+the motivating case - instead of surfacing it deep inside the first inference.
+Implementations must be cheap: local metadata and the given keys, no network,
+no instantiation.
+
+Overriding it is not free for the *caller*: collecting those keys makes the
+simulation build a full observation, which renders every camera in the scene.
+A provider that does not override the hook is never asked for them, so leaving
+`preflight` at its default costs nothing.
 
 ## Declaring body poses your policy needs
 
