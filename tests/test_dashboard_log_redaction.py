@@ -7,6 +7,7 @@ dashboard published through a public tunnel that can drive real arms.
 
 from __future__ import annotations
 
+import io
 import logging
 
 import pytest
@@ -184,3 +185,110 @@ def test_an_http_status_code_survives_but_an_oauth_code_does_not() -> None:
     assert redact_secrets("response code=404 detail='no endpoint'") == "response code=404 detail='no endpoint'"
     assert redact_secrets("HTTP status code: 200") == "HTTP status code: 200"
     assert "4/0AY0e-g7xQoauthgrant" not in redact_secrets("code=4/0AY0e-g7xQoauthgrant")
+
+
+# --- what a formatter actually renders --------------------------------------------------------
+#
+# MEASURED through install_redaction() on a logger with one handler: the request line was
+# redacted and the traceback underneath it printed the same token verbatim. `Formatter.format`
+# renders three parts - the message, `exc_text` (from `exc_info`) and `stack_info` - and appends
+# the last two after every filter has run, so reading `getMessage()` graded one of the three.
+# The same measurement showed the OTHER half: install_redaction attaches the filter to the
+# logger AND to its handlers, so a record was redacted twice and the second pass fingerprinted
+# the first pass's fingerprint - `?token=<redacted:18:aco>>` for a 43-character token, the exact
+# corruption test_a_registered_literal_does_not_corrupt_the_fingerprint_of_a_keyed_value forbids.
+TOKEN = "kDD6toTMVDwOXYn51XfDI0vNnKGC4tSM5xP5c858aco"
+
+
+@pytest.fixture
+def rendered(request):
+    """A logger wired the way install_redaction() wires one, plus what a formatter wrote.
+
+    Yields ``(logger, read)``: ``read()`` returns the fully rendered log text, so the
+    assertions grade what reaches the file rather than the record's attributes.
+    """
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger = logging.getLogger(f"test.redaction.rendered.{request.node.name}")
+    logger.handlers[:] = [handler]
+    logger.filters[:] = []
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    install_redaction((logger.name,))
+    register_secret(TOKEN)
+    try:
+        yield logger, stream.getvalue
+    finally:
+        forget_secrets()
+        logger.handlers[:] = []
+        logger.filters[:] = []
+
+
+def test_a_credential_in_a_traceback_is_redacted(rendered) -> None:
+    """The exception message is where a request URL ends up, and it is rendered after the filters."""
+    logger, read = rendered
+    try:
+        raise ConnectionError(f"upstream rejected /ws/camera?token={TOKEN}")
+    except ConnectionError:
+        logger.exception("camera socket failed")
+    out = read()
+    assert TOKEN not in out
+    assert fingerprint(TOKEN) in out
+    # Still a traceback: redacting must not cost the diagnosis it was written for.
+    assert "ConnectionError" in out and "Traceback" in out
+
+
+def test_a_credential_in_stack_info_is_redacted() -> None:
+    """`stack_info` is the third part a formatter appends, verbatim, on the same footing as exc_text.
+
+    Set on the record rather than through ``stack_info=True``, because that flag captures the
+    stack of the logging call itself - source text, which holds a credential's NAME, not its value.
+    """
+    try:
+        register_secret(TOKEN)
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "handshake failed", None, None)
+        record.stack_info = f'  File "app.py", line 1, in ws\n    connect("?token={TOKEN}")'
+        assert RedactingFilter().filter(record) is True
+        out = logging.Formatter("%(message)s").format(record)
+        assert TOKEN not in out
+        assert fingerprint(TOKEN) in out
+    finally:
+        forget_secrets()
+
+
+def test_the_second_installed_filter_does_not_redact_the_first_ones_fingerprint(rendered) -> None:
+    """install_redaction attaches at the logger AND its handlers, so redaction runs twice.
+
+    A fingerprint's own text matches the value pattern, so the second pass reported the
+    fingerprint's length (18) instead of the credential's (43).
+    """
+    logger, read = rendered
+    logger.info("WebSocket /ws/camera?token=%s [accepted]", TOKEN)
+    assert read().strip() == f"WebSocket /ws/camera?token={fingerprint(TOKEN)} [accepted]"
+
+
+def test_a_record_whose_message_cannot_be_formatted_still_has_its_traceback_redacted() -> None:
+    """A broken message must not break logging - and must not exempt the rest of the record."""
+
+    class _Bad:
+        def __str__(self) -> str:
+            raise RuntimeError("nope")
+
+    try:
+        register_secret(TOKEN)
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "%s", (_Bad(),), None)
+        record.exc_text = f"ConnectionError: /ws?token={TOKEN}"
+        assert RedactingFilter().filter(record) is True
+        assert record.exc_text is not None
+        assert TOKEN not in record.exc_text
+    finally:
+        forget_secrets()
+
+
+def test_an_exc_info_that_is_not_the_documented_tuple_does_not_break_logging() -> None:
+    """Only the 3-tuple logging documents can be rendered; anything else is left alone."""
+    record = logging.LogRecord("x", logging.INFO, __file__, 1, "hello", None, None)
+    record.exc_info = True  # type: ignore[assignment]  # what a hand-built record may carry
+    assert RedactingFilter().filter(record) is True
+    assert record.exc_text is None
