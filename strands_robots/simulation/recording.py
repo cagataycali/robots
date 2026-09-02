@@ -222,7 +222,10 @@ def recorder_dataset_fps(recorder: Any) -> int | None:
     Returns:
         The dataset frame rate as an int, or ``None`` when the dataset does not
         report a usable whole rate (an unexpected LeRobot layout must not block
-        a valid resume).
+        a valid resume). A rate beyond the float64 range is reported that way
+        too: it is not a rate any recording can be written at, and raising the
+        conversion error out of this reader told the caller the dataset had
+        failed to open when it had opened fine.
     """
     dataset = getattr(recorder, "dataset", None)
     for value in (getattr(dataset, "fps", None), getattr(getattr(dataset, "meta", None), "fps", None)):
@@ -248,7 +251,24 @@ def recorder_dataset_fps(recorder: Any) -> int | None:
         # the three guards answering identically, which is the property the
         # cross-ordering test asserts. The conversion count is unchanged: the
         # previous spelling already called ``float`` to ask ``is_integer``.
-        declared = float(value)
+        try:
+            declared = float(value)
+        except (OverflowError, TypeError, ValueError):
+            # Reported as the unreadable layout it is, not raised. This rate
+            # arrives off disk, where no domain has been asked: ``meta/info.json``
+            # is JSON, whose integer literals are unbounded, and LeRobot's ``fps``
+            # is an unenforced dataclass annotation, so ``LeRobotDataset`` opens
+            # such a dataset without complaint and hands the value straight here.
+            # Letting the conversion raise escaped a reader documented to answer
+            # ``None`` for a rate it cannot read, and ``start_recording`` reported
+            # it as ``Dataset init failed: int too large to convert to float`` -
+            # a subject that had not failed, naming neither the field nor a
+            # remedy. Resolving the rate through ``float`` converts before the
+            # sign can be tested, so both signs reach the conversion and both are
+            # answered here. Same handled exceptions, and the same reason, as
+            # :func:`requested_rate_mismatch_reason`: it is the other guard in
+            # this module asked before any domain has classified its rate.
+            continue
         if declared > 0 and declared.is_integer():
             return int(declared)
     return None

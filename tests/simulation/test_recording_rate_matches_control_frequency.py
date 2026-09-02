@@ -257,6 +257,35 @@ class TestTheGuardHelperIsRobust:
         # asserted rather than left implied by the equality above.
         assert type(recorder_dataset_fps(_FakeRecorder(rate))) is int
 
+    @pytest.mark.parametrize("rate", [10**400, -(10**400)])
+    def test_a_rate_beyond_the_float_range_is_an_unreadable_layout_not_an_exception(self, rate):
+        """A rate no recording can be written at is reported, not raised.
+
+        This rate arrives off disk rather than from a caller, so no domain has
+        classified it: ``meta/info.json`` is JSON, whose integer literals are
+        unbounded, and LeRobot's ``fps`` field is an unenforced dataclass
+        annotation - so ``LeRobotDataset`` opens such a dataset without complaint
+        and hands the 401-digit ``int`` straight to this reader. Letting the
+        conversion raise escaped a function documented to answer ``None`` for a
+        layout it cannot read, and the caller reported it as the dataset having
+        failed to open, which it had not. Measured through ``start_recording``
+        against a recorded dataset whose on-disk ``fps`` was edited to that
+        value: ``error: Dataset init failed: int too large to convert to float``,
+        naming neither the field nor a remedy, while the fractional and infinite
+        rates beside it resumed as the unreadable layouts they are.
+
+        Both signs are asserted because resolving the rate through ``float`` -
+        which the typed spelling requires, ``numbers.Real`` carrying no ordering
+        against ``int`` - converts before it can test the sign, so a negative rate
+        reaches the conversion as well. Only the positive one changes what
+        ``start_recording`` reports: LeRobot refuses a negative rate as it opens
+        the dataset ("fps must be positive"), so that sign is a raise this reader
+        owes its own callers rather than a verdict the surface got wrong. It is
+        pinned here, where the contract is, for that reason.
+        """
+        assert recorder_dataset_fps(_FakeRecorder(rate)) is None
+        assert recorder_dataset_fps(_MetaOnlyRecorder(rate)) is None
+
 
 class TestTheRunnerLayerCarriesItsOwnGuarantee:
     """``PolicyRunner`` is driven directly, with the engine's guard off the path.

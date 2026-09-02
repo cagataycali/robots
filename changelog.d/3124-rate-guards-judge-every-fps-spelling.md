@@ -39,7 +39,8 @@ same module and catching `numpy.bool_`, which is not a `bool` subclass. The
 cross-ordering parametrization gains the numpy spellings, and each guard gains
 focused coverage asserting an in-domain rate is judged rather than passed through.
 
-No `try` is added around the `float(fps)` that follows either guard: both are
-asked only after the fps domain, which refuses a value beyond the float64 range
-with a reason of its own. That is the one respect in which they differ from
-`requested_rate_mismatch_reason`, which is asked before any domain and needs it.
+`rollout_rate_mismatch_reason` needs no `try` around the `float(fps)` that follows
+its guard: it is asked only after the fps domain, which refuses a value beyond the
+float64 range with a reason of its own. `recorder_dataset_fps` reads its rate off
+disk, where no domain has been asked, so it does need one -- see the entry for that
+guard below.
