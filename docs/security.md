@@ -256,6 +256,11 @@ that hides.  The variables:
   and the check step trusts the file: an attacker with write access to
   `STRANDS_MESH_AUDIT_DIR` could edit a record and leave no HMAC to fail
   against.  Set the PSK on every peer that writes to the same directory.
+  A record whose bytes are damaged - a torn write, failing media, or forged
+  content in a rotated copy - is read with the undecodable bytes replaced, so
+  it fails its HMAC and is reported as `bad_signature`; the walker never
+  raises on a damaged log, because one undecodable byte must not be able to
+  silence the whole report.
 - **`STRANDS_MESH_AUDIT_MAX_BYTES`** *(optional; default: 100 MiB per file;
   hard upper cap: 10 GiB)*.  Rotates the JSONL file when the active file
   crosses the cap.  Values above the hard cap are clamped and logged;
