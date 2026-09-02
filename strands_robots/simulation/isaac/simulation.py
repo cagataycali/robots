@@ -4264,7 +4264,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
 
-        total_steps = int(duration * control_frequency)
+        # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
+        # the wall-clock ``duration`` and the normalized ``n_steps``, and the
+        # duration it returns on the horizon path is itself derived as ``n_steps
+        # / control_frequency``. Recomputing ``int(duration * control_frequency)``
+        # from that float truncates on any frequency the count does not divide
+        # evenly: ``n_steps=29`` at 50 Hz ran 28 steps, and ``n_steps=1`` at
+        # 49 Hz ran ZERO and still reported a completed rollout - the
+        # degenerate-success shape ``_validate_positive_int`` exists to refuse.
+        # One merged frame is recorded per timestep, so a truncated horizon is
+        # also a dataset episode one frame shorter than the caller asked for.
+        # The single-robot loop (``PolicyRunner.run``) already forwards the count
+        # verbatim for exactly this reason; this is that rule for the
+        # multi-robot loop.
+        total_steps = n_steps if n_steps is not None else int(duration * control_frequency)
 
         # Mark all robots as running so a cooperative stop can interrupt the
         # loop, and so a concurrent driver is refused by the busy check above.
