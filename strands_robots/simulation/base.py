@@ -2731,8 +2731,10 @@ class SimEngine(ABC):
             DOF never driven; ``0.0`` == every actuator moved every step,
             ``~0.83`` == only 1 of 6 actuators ever moved).
 
-            Video: ``video_path`` (``None`` when no MP4 was written) and
-            ``video_frames``.
+            Video: ``video_path`` (``None`` when no MP4 was written),
+            ``video_frames`` and ``video_fps`` (the rate the MP4 plays at -
+            the requested ``fps`` capped to ``control_frequency``, since a
+            rollout renders at most one frame per control step).
 
             Episodes: ``n_episodes_requested``, ``n_episodes_completed``,
             ``episodes_saved`` and ``dataset_episode_indices`` (the dataset
