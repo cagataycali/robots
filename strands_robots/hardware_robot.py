@@ -1935,6 +1935,15 @@ class Robot(TeleopMixin, AgentTool):
         ``status="success"`` and "Task started" for it, because the failure
         surfaced on the executor thread with nobody left to tell.
 
+        Two different questions are asked about a port, from two different
+        registry fields, because neither field can answer both. ``requires``
+        lists the keywords a caller must supply, so it judges a *missing* port -
+        ``cosmos3`` dials a server yet defaults its port, so it is absent there
+        and a caller may legally omit one. ``config_keys`` lists the keywords the
+        provider understands, so it judges a *supplied* port: a provider outside
+        that set is handed a keyword it never declared, which
+        :func:`~strands_robots.registry.policies.provider_reads_a_port` reports.
+
         ``None`` is the "not supplied" spelling and is refused here for the same
         reason it is refused in :meth:`_get_policy`: without a pre-built
         ``policy_object`` there is nothing to build a policy from. Every other
@@ -1960,6 +1969,8 @@ class Robot(TeleopMixin, AgentTool):
             A tool-shaped error dict naming ``policy_port``, or ``None`` when a
             policy can be built from the value.
         """
+        from strands_robots.registry.policies import port_reading_providers, provider_reads_a_port
+
         if policy_port is None:
             # #13: port-less providers (mock, lerobot_local - registry
             # "requires" without "port") legally build with no port; only
@@ -1987,6 +1998,29 @@ class Robot(TeleopMixin, AgentTool):
             }
         if error := tcp_port_error(policy_port, "policy_port", method):
             return {"status": "error", "content": [{"text": error}]}
+        # A port the named provider never declared. ``requires`` above answers
+        # "must one be supplied"; ``config_keys`` answers "is one understood",
+        # and only the second can judge a port that WAS supplied. Without this,
+        # ``_get_policy`` forwarded ``port``/``host`` to every provider: the six
+        # whose constructor takes ``**kwargs`` swallowed them, so the rollout ran
+        # a policy that never dialed the caller's server and still reported
+        # success, and the four that take no ``**kwargs`` raised ``TypeError``
+        # from inside ``create_policy`` - on the executor thread, after
+        # ``_connect_robot`` had energized the arm and after ``start_task`` had
+        # already answered "Task started".
+        if provider_reads_a_port(policy_provider) is False:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{method}: policy_provider={policy_provider!r} declares no policy_port, "
+                            f"so policy_port={policy_port!r} would not be read. Drop the port, or name "
+                            f"a provider that reads one ({', '.join(port_reading_providers())})."
+                        )
+                    }
+                ],
+            }
         return None
 
     def _shutdown_error(self, method: str) -> dict[str, Any] | None:
@@ -2284,9 +2318,12 @@ class Robot(TeleopMixin, AgentTool):
 
         Args:
             instruction: Natural-language instruction passed to the policy.
-            policy_port: Port of the policy server to query. Required: this
-                entry point takes no pre-built policy, so the port is the only
-                thing a policy can be built from. Validated on the shared
+            policy_port: Port of the policy server to query. Required when
+                ``policy_provider`` dials one: this entry point takes no
+                pre-built policy, so the port is the only thing a policy can be
+                built from. A provider that builds in process declares no port,
+                and supplying one anyway is refused rather than forwarded and
+                dropped. Validated on the shared
                 :func:`~strands_robots.utils.tcp_port_error` domain before the
                 task is submitted, so a port no policy can be built from is
                 reported here instead of as a started task that connects the
