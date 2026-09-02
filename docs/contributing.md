@@ -25,6 +25,13 @@ mkdocs build --strict                # CI gate
 
 CI runs `hatch run test -x --strict-markers`.
 
+Coverage is collected through PEP 669 (`sys.monitoring`) rather than the default
+C trace function - `core = "sysmon"` in `[tool.coverage.run]`. It reports the
+same line coverage at roughly a tenth of the cost (measured +8.2% against
++76.6% over 17,102 tests), so `--no-cov` above is a smaller win than it used to
+be. The setting is for line coverage only; enabling `branch` means re-measuring
+that equivalence first.
+
 ## Rules
 
 **Lazy imports** - heavy modules (`mujoco`, `lerobot`, `torch`, `zenoh`) must not load at top-level. Use PEP 562 `__getattr__`. Enforced by `tests/test_init.py`.
