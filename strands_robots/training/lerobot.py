@@ -634,13 +634,18 @@ class LerobotTrainer(Trainer):
 
         Each field is honored on its own, and neither survives the pair.
         :meth:`_val_eval_split` turns ``val_episodes`` into lerobot's
-        ``dataset.eval_split``, and a non-zero ``eval_split`` sends lerobot down
-        ``make_train_eval_datasets``, which rebuilds BOTH splits as map-style
-        ``LeRobotDataset`` objects without consulting ``dataset.streaming`` - the
-        ``StreamingLeRobotDataset`` it built first is discarded. So the run
-        materializes the whole dataset, which is the outcome ``streaming``
-        exists to avoid, and it does so while reporting nothing: an annulled
-        stream is indistinguishable from ``streaming=False``.
+        ``dataset.eval_split``, and lerobot holds out a split only on a
+        MAP-STYLE dataset - ``make_train_eval_datasets`` rebuilds both halves as
+        ``LeRobotDataset`` objects, which is what makes the split addressable by
+        episode at all. A streamed dataset is not one, and lerobot answers the
+        contradiction differently across the range this backend supports:
+        ``DatasetConfig`` refuses the pair outright from lerobot 0.6.2
+        ("eval_split requires map-style datasets"), while before that it
+        constructed and the factory silently discarded the
+        ``StreamingLeRobotDataset`` it had built first. So the pair either fails
+        inside a launched run or materializes the whole dataset without
+        reporting it - an annulled stream is indistinguishable from
+        ``streaming=False``.
 
         Refusing here mirrors :meth:`_unreadable_episode_count_problem`, which
         refuses rather than let a requested validation split be silently
@@ -651,9 +656,10 @@ class LerobotTrainer(Trainer):
         """
         return (
             f"{self.provider_name}: streaming=True cannot be combined with "
-            f"val_episodes={spec.val_episodes}. A held-out split makes lerobot rebuild both "
-            "splits as map-style datasets, so the whole dataset is materialized and the stream "
-            "is dropped - the disk/RAM blowup streaming exists to avoid. Either set "
+            f"val_episodes={spec.val_episodes}. lerobot holds out a validation split only on a "
+            "map-style dataset, and a streamed dataset is not one: lerobot 0.6.2 refuses the "
+            "pair outright, and before it the stream is dropped for a map-style rebuild while "
+            "nothing reports that the whole dataset was materialized. Either set "
             "streaming=False to keep the validation split, or val_episodes=None to keep the "
             "stream."
         )
