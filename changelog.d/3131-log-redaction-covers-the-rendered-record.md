@@ -12,3 +12,9 @@ logger and its handlers, so a record was redacted twice, and a fingerprint's own
 the value pattern: the second pass reported the fingerprint's length rather than the
 credential's (`?token=<redacted:18:aco>>` for a 43-character token). An unformattable message
 no longer exempts the rest of the record either.
+
+Rendering and redacting those parts is guarded the way the message rail already was: a part this
+filter cannot render or redact is withheld with a marker saying so, rather than raised out of the
+caller's own logging call. A `Formatter` runs inside `Handler.emit`, where a broken record degrades
+to a note on stderr, but a filter has no such guard - and the default target set includes the root
+logger, so an escape there would reach any logging call in the process.

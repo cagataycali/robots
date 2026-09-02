@@ -98,6 +98,10 @@ _EXC_RENDERER = logging.Formatter()
 #: marks a record this filter has already redacted (see :class:`RedactingFilter`).
 _DONE = "_strands_robots_redacted"
 
+#: written in place of an appended part this filter could not redact. Withholding is the only
+#: fail-closed answer - the part may hold the credential - and a marker says why it is absent.
+_WITHHELD = "<withheld: this part of the record could not be redacted>"
+
 
 class RedactingFilter(logging.Filter):
     """Redacts every part of a record a formatter renders, and redacts it once.
@@ -116,6 +120,11 @@ class RedactingFilter(logging.Filter):
     the logger pass's OUTPUT: a fingerprint's own text matches the value pattern, so the
     line printed a wrong length - ``?token=<redacted:18:aco>>`` for a 43-character token,
     the same corruption the literals-last rail order exists to prevent.
+
+    An appended part this filter cannot render or redact is WITHHELD, not raised: a
+    ``Formatter`` runs inside ``Handler.emit``, where ``handleError`` degrades a broken
+    record to a note on stderr, and a filter has no such guard - so an escape here would
+    come out of the caller's own logging call, on any logger in :data:`_TARGETS`.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -130,16 +139,37 @@ class RedactingFilter(logging.Filter):
             if cleaned != original:
                 record.msg = cleaned
                 record.args = ()
-        # Only the 3-tuple logging documents can be rendered; anything else is left for
-        # the formatter to deal with rather than raised out of the logging path.
+        # Each appended rail carries the message rail's guard, and carries it SEPARATELY: a
+        # part that cannot be rendered must not exempt the part that can. Only the 3-tuple
+        # that logging documents is rendered here, but a shape check is not a guard: `Logger._log`
+        # accepts a 3-tuple whose middle value is not an exception, and rendering one raises.
         if isinstance(record.exc_info, tuple) and len(record.exc_info) == 3 and not record.exc_text:
-            record.exc_text = _EXC_RENDERER.formatException(record.exc_info)
+            try:
+                record.exc_text = _EXC_RENDERER.formatException(record.exc_info)
+            except Exception:  # noqa: BLE001 - a broken record must not break logging
+                # Left unset: the formatter's own attempt at it runs inside `Handler.emit`,
+                # where `handleError` degrades to a note on stderr and the caller's logging
+                # call returns - which is what stock logging does with the same record.
+                record.exc_text = None
         if record.exc_text:
-            record.exc_text = redact_secrets(record.exc_text)
+            record.exc_text = _redact_appended(record.exc_text)
         if record.stack_info:
-            record.stack_info = redact_secrets(record.stack_info)
+            record.stack_info = _redact_appended(record.stack_info)
         setattr(record, _DONE, True)
         return True
+
+
+def _redact_appended(part: object) -> str:
+    """Redact one appended part, withholding it rather than raising out of the logging call.
+
+    A `Formatter` runs inside `Handler.emit`, so a part it cannot render degrades through
+    `Handler.handleError`; a `Filter` has no such guard, and a hand-built non-str part
+    (bytes, say) made `redact_secrets` raise out of the caller's own logging call.
+    """
+    try:
+        return redact_secrets(part)  # type: ignore[arg-type]  # a hand-built part may be anything
+    except Exception:  # noqa: BLE001 - a broken record must not break logging
+        return _WITHHELD
 
 
 #: loggers that carry request lines; the root catches everything else

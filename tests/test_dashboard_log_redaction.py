@@ -13,6 +13,7 @@ import logging
 import pytest
 
 from strands_robots.dashboard.log_redaction import (
+    _WITHHELD,
     RedactingFilter,
     fingerprint,
     forget_secrets,
@@ -292,3 +293,67 @@ def test_an_exc_info_that_is_not_the_documented_tuple_does_not_break_logging() -
     record.exc_info = True  # type: ignore[assignment]  # what a hand-built record may carry
     assert RedactingFilter().filter(record) is True
     assert record.exc_text is None
+
+
+def test_a_malformed_exc_info_tuple_degrades_the_way_stock_logging_does() -> None:
+    """A Filter has no `handleError` guard, so a part it cannot render must not escape as an exception.
+
+    `Formatter.format` runs inside `Handler.emit`, which degrades a record it cannot render to a
+    note on stderr and lets the logging call return. A filter runs in `Logger.handle`, with no such
+    guard - so rendering `exc_info` here has to answer for the records `Logger._log` accepts but
+    `formatException` cannot render, of which a 3-tuple whose middle value is not an exception is
+    one. The default target set includes the root logger, so an escape here would come out of ANY
+    logging call in the process, including the safety-adjacent code whose logs this filter cleans.
+    """
+    broken = (ValueError, "not an exception", None)
+
+    def wired(name: str, *, redact: bool) -> logging.Logger:
+        logger = logging.getLogger(name)
+        # The handler list is set HERE rather than in a fixture on purpose: the test harness
+        # attaches its own capture handlers to a non-propagating logger during setup, and their
+        # `handleError` re-raises by design - which would grade the harness, not stock logging.
+        logger.handlers[:] = [logging.StreamHandler(io.StringIO())]
+        logger.filters[:] = []
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        if redact:
+            install_redaction((name,))
+        return logger
+
+    stock = wired("test.redaction.malformed.stock", redact=False)
+    filtered = wired("test.redaction.malformed.filtered", redact=True)
+    try:
+        stock.error("boom", exc_info=broken)  # type: ignore[arg-type]  # a caller bug stock logging survives
+        filtered.error("boom", exc_info=broken)  # type: ignore[arg-type]  # ... and so must this one
+        # the filter leaves the part it could not render for the formatter, under emit's guard
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "boom", None, broken)  # type: ignore[arg-type]
+        assert RedactingFilter().filter(record) is True
+        assert record.exc_text is None
+    finally:
+        for logger in (stock, filtered):
+            logger.handlers[:] = []
+            logger.filters[:] = []
+
+
+@pytest.mark.parametrize("part", ["exc_text", "stack_info"])
+def test_an_appended_part_that_cannot_be_redacted_is_withheld_not_raised(part: str) -> None:
+    """Withholding is the fail-closed answer: the part may hold the credential, so it is not written.
+
+    `redact_secrets` is a str operation and both appended attributes are whatever a caller set, so
+    a hand-built non-str part made it raise out of the caller's own logging call. Each rail is
+    guarded separately - the message keeps its redaction whatever the appended parts are.
+    """
+    try:
+        register_secret(TOKEN)
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, f"?token={TOKEN}", None, None)
+        setattr(record, part, b"handshake failed")  # bytes: what redact_secrets cannot read
+        assert RedactingFilter().filter(record) is True
+        assert getattr(record, part) == _WITHHELD
+        # the record still renders, the message is still redacted, and the marker says why the
+        # appended part is absent rather than leaving a reader to wonder
+        out = logging.Formatter("%(message)s").format(record)
+        assert TOKEN not in out
+        assert fingerprint(TOKEN) in out
+        assert _WITHHELD in out
+    finally:
+        forget_secrets()
