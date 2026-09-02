@@ -65,7 +65,6 @@ import json
 import logging
 import numbers
 import os
-import re
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
