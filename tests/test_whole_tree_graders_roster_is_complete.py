@@ -52,6 +52,13 @@ nothing reads exactly like a tree with nothing to select:
   render-gating sweep over all of ``tests/``. The asymmetry that makes such a
   module a grader is visible in its own calls: the planted call passes a
   ``tmp_path`` and resolves to nothing, the real one passes the package root.
+- a root bound *inside the function that walks it* resolves. This is the fifth
+  turn, and the plainest of the five: a grader that keeps its sweep beside the
+  assertion it feeds binds the root where it is used. Eight graders were
+  unrostered on it. Both directions are graded, because reading locals is the
+  first of these widenings that could over-select - a name assigned in one
+  function must not stand in for a receiver in another, and the tree carries a
+  live instance of exactly that pair.
 
 A roster only helps a caller who knows to run it. Issue #2940's failure mode
 was a *green* narrow run, so the remedy is only reachable if the pre-push
@@ -389,6 +396,118 @@ def test_a_parameter_the_module_does_not_bind_to_an_area_is_not_selected(label: 
         f"the derivation selected a module whose walk root is only ever {label}. "
         "Resolving a parameter is meant to read the same walks the tree already "
         "has, not to widen the class of walk that counts as whole-tree."
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "grader"),
+    [
+        (
+            "a local bound to a module constant",
+            "def test_it():\n    root = PKG\n    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local assembled from the installed package's file",
+            "def test_it():\n    root = pathlib.Path(strands_robots.__file__).parent\n"
+            "    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local returned by a zero-argument module helper",
+            "def _package_root():\n    return PKG\n\n\ndef test_it():\n    root = _package_root()\n"
+            "    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local defined in terms of an earlier local",
+            "def test_it():\n    own = pathlib.Path(strands_robots.__file__).resolve()\n    root = own.parent\n"
+            "    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local inside a test method on a class",
+            "class TestIt:\n    def test_it(self):\n        root = PKG\n"
+            "        for p in root.rglob('*.py'):\n            pass\n",
+        ),
+        (
+            "an enclosing function's local read by a nested one",
+            "def test_it():\n    root = PKG\n\n    def _sweep():\n        return [p for p in root.rglob('*.py')]\n\n"
+            "    assert _sweep() is not None\n",
+        ),
+        (
+            "a local assembled from a parameter the module binds",
+            "def _scan(base):\n    root = base / 'strands_robots'\n    return [p for p in root.rglob('*.py')]\n\n"
+            "FILES = _scan(PKG.parent)",
+        ),
+    ],
+)
+def test_a_root_bound_inside_the_function_resolves(label: str, grader: str) -> None:
+    """A grader whose walk root is assigned on a line of the function is selected.
+
+    This is the fifth turn of the same screw, and the plainest: a grader that
+    keeps its sweep beside the assertion it feeds has no reason to hoist the
+    root to module scope, so it binds it where it is used. Reading module-level
+    names and call-site arguments alone resolved the receiver to nothing, and
+    eight graders were unrostered on it - among them the sweep in
+    ``tests/test_mesh_state_loop_rate.py`` that grades every pacing loop in the
+    package, and three sweeps whose walk is the installed package root reached
+    through an imported module's ``__file__``.
+
+    The last case is the one neither resolver settles alone: the root is
+    *assembled* from a parameter, so the local and the argument have to compose.
+
+    ``label`` names the spelling so a failure says which one stopped resolving.
+    """
+    source = f"import pathlib\n\nimport strands_robots\n\nPKG = pathlib.Path(strands_robots.__file__).resolve().parent\n\n{grader}\n"
+    assert _selects(source, _TESTS_ROOT / "test_planted.py"), (
+        f"the derivation cannot resolve a root spelled as {label}, so a grader "
+        "written that way is invisible to the preflight rather than merely "
+        "unrostered."
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "grader"),
+    [
+        (
+            "a local in a different function than the walk",
+            "def test_reads_the_tree():\n    root = PKG\n    assert root.is_dir()\n\n\n"
+            "def test_walks_a_fixture(tmp_path):\n    root = tmp_path\n"
+            "    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local rebound to a subpackage closer to the walk",
+            "def test_it():\n    root = PKG\n\n    def _sweep():\n        root = PKG / 'policies'\n"
+            "        return [p for p in root.rglob('*.py')]\n\n    assert _sweep() is not None\n",
+        ),
+        (
+            "a local bound to a fixture directory beside the test",
+            "def test_it():\n    root = pathlib.Path(__file__).parent / 'fixtures'\n"
+            "    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+        (
+            "a local bound to a subpackage",
+            "def test_it():\n    root = PKG / 'policies'\n    for p in root.rglob('*.py'):\n        pass\n",
+        ),
+    ],
+)
+def test_a_local_the_walk_cannot_see_lends_nothing(label: str, grader: str) -> None:
+    """Reading locals must not lend a name across functions that do not share it.
+
+    The first case is the live shape this separation is measured against.
+    ``tests/policies/curobo/test_action_horizon_domain.py`` binds the repository
+    root in one test method - to *read* a file, not to walk one - and walks a
+    subpackage in another. Reading every assignment in the module would let the
+    first method's root stand in for the second method's receiver and select the
+    file; reading only the assignments the enclosing functions own leaves it
+    out, which is correct, because a path-scoped run over
+    ``tests/policies/`` does collect it.
+
+    The second case grades the same attribution one scope in: a nested function
+    that rebinds the name resolves to its own value, as Python does.
+    """
+    source = f"import pathlib\n\nimport strands_robots\n\nPKG = pathlib.Path(strands_robots.__file__).resolve().parent\n\n{grader}\n"
+    assert not _selects(source, _TESTS_ROOT / "subject" / "test_planted.py"), (
+        f"the derivation selected a module whose walk root is only ever {label}. "
+        "Resolving a local is meant to read the same walks the tree already has, "
+        "not to widen the class of walk that counts as whole-tree."
     )
 
 

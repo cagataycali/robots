@@ -46,7 +46,7 @@ good reason: a subject test globbing its own fixture directory is
 shape-identical to one walking the repository. It is not value-identical -
 ``Path(__file__).parent / "fixtures"`` and ``tmp_path`` are neither the
 repository root nor a top-level area - so resolving the path separates them.
-Measured over this repository, the derivation selects 74 of 1461 test modules.
+Measured over this repository, the derivation selects 83 of 1479 test modules.
 
 Resolving the *value* is also why the area a grader walks may be held in a loop
 variable. The idiom here is a tuple of area names walked one at a time::
@@ -85,6 +85,31 @@ asymmetry that makes the module a grader. Measured over this repository, five
 whole-tree graders were unrostered on this spelling - three docstring-
 completeness sweeps over the installed package, the package import-cycle graph,
 and the render-gating sweep over all of ``tests/``.
+
+The root may also be bound *inside the function that walks it*. A grader that
+keeps its sweep beside the assertion it feeds has no reason to hoist the root
+to module scope::
+
+    def test_no_publish_loop_still_paces_on_an_inflated_wait() -> None:
+        root = Path(__file__).resolve().parent.parent / "strands_robots"
+        for path in sorted(root.rglob("*.py")):
+
+The receiver is an ``ast.Name`` again, bound by a statement in a function body
+that neither the module-level pass nor the call-site pass reads.
+:func:`_enclosing_assignments` reads it from the assignments the functions
+enclosing the walk own, outermost first so a name rebound closer to the walk
+wins, as Python resolves it. Eight whole-tree graders were unrostered on this
+spelling - among them the sweep that grades every pacing loop in the package
+and three whose root is the installed package reached through an imported
+module's ``__file__``.
+
+Scoping is what keeps that from over-selecting, and there is a live measure of
+it: ``tests/policies/curobo/test_action_horizon_domain.py`` binds the
+repository root in one test method - to *read* a file, not to walk one - and
+walks a subpackage in another. Reading every assignment in the module would let
+the first lend its root to the second and select the file; reading only the
+assignments the enclosing functions own leaves it out, which is correct,
+because a path-scoped run over ``tests/policies/`` collects it already.
 
 A walk rooted *inside* a subpackage (``strands_robots/policies/``) is
 deliberately not selected: a path-scoped run over the mirroring test directory
@@ -543,6 +568,92 @@ def _parameter_scopes(
     return scopes
 
 
+def _enclosing_assignments(
+    call: ast.Call,
+    owners: dict[ast.AST, ast.AST | None],
+    scope: dict[str, Path],
+    module_path: Path,
+    root: Path,
+) -> dict[str, Path]:
+    """Return ``scope`` extended with the local names the functions around ``call`` bind to paths.
+
+    A grader that keeps its sweep beside the assertion it feeds binds the root
+    on a line of the test itself::
+
+        def test_no_loop_still_paces_on_an_inflated_wait() -> None:
+            root = Path(__file__).resolve().parent.parent / "strands_robots"
+            for path in sorted(root.rglob("*.py")):
+
+    The receiver is an ``ast.Name`` bound inside a function body, so reading
+    module-level names and call-site arguments alone resolved it to nothing.
+
+    Only the assignments the enclosing functions *own* are read, walking that
+    chain outermost first so a name rebound closer to the walk wins, exactly as
+    Python resolves it. A name assigned in some unrelated function is therefore
+    not in scope and lends nothing - that separation is the point, since a
+    module holding both a fixture-directory glob and a package sweep must not
+    have the one borrow the other's root.
+
+    :param call: The walk call whose receiver did not resolve.
+    :param owners: Node to its innermost enclosing function.
+    :param scope: The names already resolved, which the locals extend.
+    :param module_path: Where the module lives, so ``__file__`` resolves.
+    :param root: The repository root.
+    """
+    chain: list[ast.AST] = []
+    owner = owners.get(call)
+    while owner is not None:
+        chain.append(owner)
+        owner = owners.get(owner)
+    extended = dict(scope)
+    for function in reversed(chain):
+        # The loop repeats so a local defined in terms of an earlier one
+        # resolves regardless of how many steps the grader spells it in.
+        for _ in range(3):
+            for statement in ast.walk(function):
+                if owners.get(statement) is not function:
+                    continue
+                if (
+                    isinstance(statement, ast.Assign)
+                    and len(statement.targets) == 1
+                    and isinstance(statement.targets[0], ast.Name)
+                ):
+                    name, value = statement.targets[0].id, statement.value
+                elif (
+                    isinstance(statement, ast.AnnAssign)
+                    and isinstance(statement.target, ast.Name)
+                    and statement.value is not None
+                ):
+                    name, value = statement.target.id, statement.value
+                else:
+                    continue
+                resolved = _resolve(value, module_path, extended, root)
+                if isinstance(resolved, Path):
+                    extended[name] = resolved
+    return extended
+
+
+def _walk_scopes(
+    call: ast.Call,
+    owners: dict[ast.AST, ast.AST | None],
+    parameters: dict[tuple[str, str], set[Path]],
+    bindings: dict[str, Path],
+    module_path: Path,
+    root: Path,
+) -> list[dict[str, Path]]:
+    """Return every scope a walk receiver that did not resolve may be read under.
+
+    The module's own bindings first, then one per ``(parameter, candidate)``
+    pair, and each of those extended with the locals in scope at the call - so
+    a root assembled from a parameter (``root = base / "strands_robots"``)
+    resolves without either resolver needing to know about the other.
+    """
+    return [
+        _enclosing_assignments(call, owners, scope, module_path, root)
+        for scope in [bindings, *_parameter_scopes(call, owners, parameters, bindings)]
+    ]
+
+
 def _receiver_targets(
     receiver: ast.expr,
     module_path: Path,
@@ -581,7 +692,7 @@ def walked_paths(source: str, module_path: Path, root: Path) -> set[Path]:
             if found:
                 targets.update(found)
                 continue
-            for scope in _parameter_scopes(node, owners, parameters, bindings):
+            for scope in _walk_scopes(node, owners, parameters, bindings, module_path, root):
                 targets.update(_receiver_targets(receiver, module_path, scope, segments, root))
     return targets
 
