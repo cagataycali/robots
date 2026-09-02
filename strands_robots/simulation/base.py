@@ -1092,17 +1092,41 @@ class SimEngine(ABC):
         unresolvable name reach ``create_policy``, whose raise escapes the
         ``status=error`` envelope this method exists to produce.
 
+        The observation is looked up only when the resolved class actually
+        overrides ``preflight``
+        (:func:`~strands_robots.policies.policy_overrides_preflight`). It is not
+        a cheap lookup - ``get_observation`` without ``skip_images`` renders
+        every camera in the scene - and for a provider that leaves the default
+        no-op in place the frames are gathered purely to be discarded, delaying
+        the start of every rollout loop (and, for ``start_policy``, the first
+        cooperative-stop check) by a full render of the scene.
+
+        ``requires_images`` is deliberately NOT the question asked here. It is
+        an instance property, so it cannot be read off an uninstantiated class
+        (``MockPolicy.requires_images`` is the ``property`` object, which is
+        truthy despite the policy declaring ``False``), and an overriding
+        ``preflight`` needs the camera keys regardless of whether the policy
+        later consumes the frames: ``skip_images`` omits those keys entirely,
+        which is exactly the routing information such a hook validates.
+
         Returns:
             A ``status=error`` dict (for the caller to return) when the
             provider cannot be resolved or its preflight rejects the
             configuration; ``None`` when the check passes, is a no-op, or the
             observation is not yet available.
         """
-        from strands_robots.policies import policy_provider_error, preflight_policy
+        from strands_robots.policies import (
+            policy_overrides_preflight,
+            policy_provider_error,
+            preflight_policy,
+        )
 
         reason = policy_provider_error(policy_provider, **(policy_config or {}))
         if reason is not None:
             return {"status": "error", "content": [{"text": reason}]}
+
+        if not policy_overrides_preflight(policy_provider, **(policy_config or {})):
+            return None
 
         obs = self.get_observation(robot_name)
         if not isinstance(obs, dict) or not obs:
