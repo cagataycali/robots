@@ -5223,7 +5223,8 @@ class MuJoCoSimEngine(
 
         # Validate the step horizon synchronously, before submitting to the
         # executor. run_policy runs on a background thread, so a malformed
-        # horizon (duration <= 0, n_steps <= 0, control_frequency <= 0) would
+        # horizon (a duration resolving to no steps, n_steps <= 0,
+        # control_frequency <= 0) would
         # otherwise be reported only inside the future - the caller would
         # receive a false "started" success and the robot would be left marked
         # as running. Both horizon knobs are covered: the step count via
@@ -5240,7 +5241,7 @@ class MuJoCoSimEngine(
         if horizon_error is not None:
             return horizon_error
         if resolved_n_steps is None:
-            if err := self._validate_duration(resolved_duration, "start_policy"):
+            if err := self._validate_duration(resolved_duration, "start_policy", control_frequency):
                 return err
         if err := self._validate_action_horizon(action_horizon, "start_policy"):
             return err
@@ -5674,7 +5675,7 @@ class MuJoCoSimEngine(
         if horizon_error is not None:
             return horizon_error
         if n_steps is None:
-            if err := self._validate_duration(duration, "run_multi_policy"):
+            if err := self._validate_duration(duration, "run_multi_policy", control_frequency):
                 return err
 
         # Normalize action_horizon to a per-robot mapping through the shared

@@ -4211,7 +4211,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         if horizon_error is not None:
             return horizon_error
         if n_steps is None:
-            if err := self._validate_duration(duration, "run_multi_policy"):
+            if err := self._validate_duration(duration, "run_multi_policy", control_frequency):
                 return err
 
         # Normalize action_horizon to a per-robot mapping on the shared
