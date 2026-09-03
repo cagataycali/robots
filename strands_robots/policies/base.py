@@ -357,6 +357,11 @@ class Policy(ABC):
         start of the rollout with the available body names, rather than reading
         a missing key as a zero pose on every tick.
 
+        The runtime collects this over the whole policy tree
+        (:func:`iter_policy_tree`), so a policy that declares a body is honoured
+        when it is wrapped: a wrapper which does not override this property does
+        not hide its child's declaration.
+
         Returns:
             Ordered, de-duplicated body names. Empty (the default) means the
             observation is left exactly as the backend produced it.
