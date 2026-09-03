@@ -1,8 +1,9 @@
 """``STRANDS_MESH_STREAM_HZ`` must not be divided straight from the environment.
 
 Two call sites throttle ``publish_step`` against a monotonic clock -- the
-hardware control loop and the simulation ``run_policy`` hook -- and both computed their
-period as ``1.0 / float(os.environ.get("STRANDS_MESH_STREAM_HZ", "10") or 10)``.
+hardware control loop and the simulation ``run_policy`` hook -- and both
+computed their period as
+``1.0 / float(os.environ.get("STRANDS_MESH_STREAM_HZ", "10") or 10)``.
 That expression raises ``ZeroDivisionError`` on ``0`` and ``ValueError`` on any
 non-numeric value. One of the two runs inside ``HardwareRobot.__init__``, so the
 consequence is not "telemetry degraded" but "every ``Robot(..., mode="real")``
@@ -15,8 +16,15 @@ telemetry the same way bricked hardware bring-up.
 
 Both sites now route through :func:`stream_min_period_from_env`, which reuses
 the package's shared ``hz_from_env`` domain check and expresses "off" as
-``math.inf``: no elapsed time reaches an infinite period, so the throttle
-never fires and no caller needs a second flag.
+``math.inf``. No *finite* elapsed time reaches an infinite period -- but that
+is a property of the base as much as of the period, and both sites start
+theirs below every clock reading, so that a rollout's first step is due
+wherever the platform's monotonic epoch sits. On that step ``inf >= inf``
+holds, and the period alone would let exactly one publish past the opt-out.
+Each site therefore tests the period for finiteness once, where it resolves
+it, and gates the publish on that rather than on the subtraction alone;
+``test_a_sentinel_below_every_reading_defeats_the_subtraction`` is the cell
+that records why.
 
 :class:`TestEveryThrottleMeasuresItsPeriodOnTheMonotonicClock` is the other half
 of that sharing: the period is an elapsed interval, so the base both sites
