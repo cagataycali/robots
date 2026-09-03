@@ -6,6 +6,7 @@ end-to-end sim->train->load is exercised separately.
 
 import ast
 import dataclasses
+import importlib
 import inspect
 import json
 import sys
@@ -414,15 +415,88 @@ class TestCheckpointResolution:
         # latest_checkpoint returns the loadable DIRECTORY (parent of the file)
         assert LerobotTrainer().latest_checkpoint(str(out)) == str(last)
 
-    def test_falls_back_to_highest_numbered_step(self, tmp_path):
-        out = tmp_path / "out"
-        for step in ("000100", "000200"):
-            pm = out / "checkpoints" / step / "pretrained_model"
+    @staticmethod
+    def _tree(out, names):
+        """Write a checkpoints/ tree holding one config per given step name."""
+        for name in names:
+            pm = out / "checkpoints" / name / "pretrained_model"
             pm.mkdir(parents=True)
             (pm / "train_config.json").write_text("{}")
-        # No "last" dir -> newest by sorted name wins (000200).
-        cfg_file = LerobotTrainer()._resume_config_path(str(out))
-        assert cfg_file.endswith("000200/pretrained_model/train_config.json")
+
+    # lerobot names a checkpoint directory f"{step:0{max(6, len(str(steps)))}d}",
+    # so the padding width belongs to the RUN that wrote the name, not to the
+    # tree: resuming with a larger steps budget widens it, and from then on text
+    # order reads the narrower name as the later one. The newest checkpoint is
+    # the highest step, whatever budget each run was given.
+    @pytest.mark.parametrize(
+        ("case", "names", "newest"),
+        [
+            ("one run, 100k budget", ["020000", "100000"], "100000"),
+            ("one run, 1M budget", ["0200000", "0900000"], "0900000"),
+            ("100k run continued to 1M", ["100000", "0900000"], "0900000"),
+            ("100k run continued to 10M", ["100000", "09000000"], "09000000"),
+            # The same tree once the continued run reaches its budget: text order
+            # agrees again, so the wrong answer is intermittent rather than final.
+            ("...once it reaches 1M", ["100000", "1000000"], "1000000"),
+        ],
+    )
+    def test_falls_back_to_highest_numbered_step(self, tmp_path, case, names, newest):
+        out = tmp_path / "out"
+        self._tree(out, names)
+        assert LerobotTrainer()._resume_config_path(str(out)) == str(
+            out / "checkpoints" / newest / "pretrained_model" / "train_config.json"
+        ), case
+
+    def test_export_reads_the_highest_step_across_two_budgets(self, tmp_path):
+        """latest_checkpoint feeds export/create_policy, so it answers the same."""
+        out = tmp_path / "out"
+        self._tree(out, ["100000", "0900000"])
+        assert LerobotTrainer().latest_checkpoint(str(out)) == str(out / "checkpoints" / "0900000" / "pretrained_model")
+
+    def test_a_dangling_last_link_falls_back_to_the_highest_step(self, tmp_path):
+        """The route by which the fallback answers at all: `last` carries no config.
+
+        lerobot keeps a `last` symlink and it is preferred, so the step
+        directories are read when it is absent or its target has been pruned -
+        which is when the ordering has to be right.
+        """
+        out = tmp_path / "out"
+        self._tree(out, ["100000", "0900000"])
+        (out / "checkpoints" / "last").symlink_to("0950000")  # target pruned
+        assert not (out / "checkpoints" / "last").exists()
+        assert LerobotTrainer()._resume_config_path(str(out)) == str(
+            out / "checkpoints" / "0900000" / "pretrained_model" / "train_config.json"
+        )
+
+    def test_an_unnumbered_directory_does_not_outrank_a_checkpoint(self, tmp_path):
+        """A name lerobot did not number is ordered, not preferred or fatal."""
+        out = tmp_path / "out"
+        self._tree(out, ["000100", "handpicked"])
+        assert LerobotTrainer()._resume_config_path(str(out)) == str(
+            out / "checkpoints" / "000100" / "pretrained_model" / "train_config.json"
+        )
+        # ...and it is still the answer when it is the only one on disk.
+        only = tmp_path / "only"
+        self._tree(only, ["handpicked"])
+        assert LerobotTrainer()._resume_config_path(str(only)) == str(
+            only / "checkpoints" / "handpicked" / "pretrained_model" / "train_config.json"
+        )
+
+    def test_the_widths_are_lerobots_own(self):
+        """The fixture names above are what lerobot writes for those budgets."""
+        pytest.importorskip("lerobot")
+        get_step_identifier = None
+        for mod in ("lerobot.utils.train_utils", "lerobot.common.train_utils"):
+            try:  # the module moved between lerobot 0.5 and 0.6
+                get_step_identifier = importlib.import_module(mod).get_step_identifier
+                break
+            except ModuleNotFoundError:
+                continue
+        if get_step_identifier is None:
+            pytest.skip("lerobot exposes no get_step_identifier")
+        assert get_step_identifier(100_000, 100_000) == "100000"
+        assert get_step_identifier(900_000, 1_000_000) == "0900000"
+        assert get_step_identifier(9_000_000, 10_000_000) == "09000000"
 
     def test_checkpoints_dir_without_configs_returns_none(self, tmp_path):
         out = tmp_path / "out"
