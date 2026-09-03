@@ -517,6 +517,13 @@ class TestARefusalIsNotAVerdictOnThePermission:
         # field GitHub actually routes on is the only one that disagrees.
         recalled = _decode_node_id(_RECALLED_NODE_ID)[1]
         queried = _decode_node_id(_QUERIED_NODE_ID)[1]
+        assert queried == [0, _REPOSITORY_DATABASE_ID, _QUERIED_OWN_DATABASE_ID], (
+            f"{_QUERIED_NODE_ID!r} should decode to [0, this repository, pull request "
+            "3175's own databaseId]. Pinned to the recorded value rather than compared "
+            "field-by-field for the same reason as the two rows above: the inequality "
+            "below would still hold if this ID had drifted to name a third object, and "
+            "then the row it stands for would no longer be the one that merged. See #3180."
+        )
         assert recalled[:2] == queried[:2] == [0, _REPOSITORY_DATABASE_ID]
         assert recalled[2] != queried[2], (
             "the recalled and the queried ID must differ in their own-databaseId field. "
