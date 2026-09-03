@@ -1,0 +1,47 @@
+{
+  "tree": "/tmp/robots-src",
+  "episodes": [
+    {
+      "episode": 0,
+      "outer_phase_after_reset": 0,
+      "inner_phase_after_reset": 0,
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        101.0,
+        7.0,
+        7.0
+      ],
+      "inner_phase": [
+        0,
+        0,
+        0,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "episode": 1,
+      "outer_phase_after_reset": 0,
+      "inner_phase_after_reset": 0,
+      "rewards": [
+        1.0,
+        1.0,
+        1.0,
+        101.0,
+        7.0,
+        7.0
+      ],
+      "inner_phase": [
+        0,
+        0,
+        0,
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}
