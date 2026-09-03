@@ -40,7 +40,10 @@ from strands_robots.dashboard import settings
 
 # (section, key, value, substring the strict path must report, lenient result).
 # One row per unusable value; the lenient column is the key's own shape.
-_UNUSABLE = [
+# Annotated because the shapes differ per row: the value column spans str / float
+# / dict and the lenient column spans None / [] / False, so the bare ``[]`` leaves
+# mypy with a partial type it cannot close.
+_UNUSABLE: list[tuple[str, str, object, str, object]] = [
     ("agent", "temperature", "abc", "is not a number", None),
     ("agent", "temperature", 5.0, "outside 0..2", None),
     ("agent", "temperature", float("inf"), "is not a finite number", None),
