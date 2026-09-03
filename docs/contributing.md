@@ -25,6 +25,19 @@ mkdocs build --strict                # CI gate
 
 CI runs `hatch run test -x --strict-markers`.
 
+`-x` means a red run stops at the first failure with the rest of the suite
+unexecuted, and its counts line is shaped exactly like a complete run's. So
+`tests/conftest.py` registers the reporter in `tests/session_truncation.py`,
+which states the size of the gap:
+
+```
+============= session truncated: 1926 of 4878 collected tests ran ==============
+2952 collected tests never started, so the counts below are a floor, not a total.
+```
+
+A session that ran every test it collected prints nothing extra, so the section
+appears only where it changes what the counts below it mean.
+
 Coverage is collected through PEP 669 (`sys.monitoring`) rather than the default
 C trace function - `core = "sysmon"` in `[tool.coverage.run]`. It reports the
 same line coverage at roughly a tenth of the cost (measured +8.2% against
