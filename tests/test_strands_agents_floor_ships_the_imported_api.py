@@ -1,6 +1,6 @@
 """The declared strands-agents floor must ship the strands API the package imports.
 
-``strands_robots`` imports two strands symbols that did not exist in
+``strands_robots`` imports three strands symbols that did not exist in
 strands-agents 1.0:
 
 * ``strands.types.tools.ToolContext`` -- first shipped in **1.5.0**, imported at
@@ -9,6 +9,10 @@ strands-agents 1.0:
 * ``strands.types._events.ToolResultEvent`` -- first shipped in **1.7.0**,
   imported at module scope by ``strands_robots/hardware_robot.py`` and
   ``strands_robots/simulation/mujoco/simulation.py``.
+* ``strands.hooks.BeforeToolCallEvent`` -- first shipped in **1.10.0**, imported
+  at module scope by ``strands_robots/dashboard/agent_hitl.py``. ``strands.hooks``
+  exports no tool-call event at all below that release, so the name is absent
+  rather than moved.
 
 Both are module-level imports, so on an older release the whole module raises at
 import. The floor previously read ``>=1.0.0``, seven releases below the
@@ -25,6 +29,14 @@ capability, and the consequence was not a clean refusal:
 
 So a resolve anywhere in the declared range could produce an install that
 satisfies packaging, imports, lists robots -- and cannot build a simulation.
+
+``strands_robots.dashboard`` is not a lazy export, so the third symbol fails
+differently and more plainly: on strands-agents 1.9.1 -- a release the floor
+admitted -- ``import strands_robots.dashboard.agent_hitl`` raises ``ImportError:
+cannot import name 'BeforeToolCallEvent' from 'strands.hooks'``. That module is
+the human-in-the-loop gate a dashboard installs to pause an agent tool call
+before real hardware moves, so the release range decided whether the gate was
+there to be wired at all.
 
 :data:`_STRANDS_SYMBOL_FLOORS` is the single owner of the measurement. The
 tests below derive the required floor from it rather than restating a number, and
@@ -62,6 +74,9 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.types.tools", "ToolUse"): "1.0.0",
     ("strands.types.tools", "ToolContext"): "1.5.0",
     ("strands.types._events", "ToolResultEvent"): "1.7.0",
+    ("strands.hooks", "HookProvider"): "1.0.0",
+    ("strands.hooks", "HookRegistry"): "1.0.0",
+    ("strands.hooks", "BeforeToolCallEvent"): "1.10.0",
 }
 
 
@@ -89,6 +104,24 @@ def _imported_strands_symbols() -> dict[tuple[str, str], list[str]]:
             for alias in node.names:
                 found.setdefault((module, alias.name), []).append(rel)
     return found
+
+
+def _capability_comment() -> str:
+    """The comment block directly above the core ``strands-agents`` specifier.
+
+    That block is the only place a maintainer reading ``pyproject.toml`` learns
+    *why* the floor is the number it is, so it is read here as content rather
+    than left as decoration.
+    """
+    lines = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8").splitlines()
+    idx = next(i for i, line in enumerate(lines) if line.strip().startswith('"strands-agents>='))
+    block = []
+    for line in reversed(lines[:idx]):
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            break
+        block.append(stripped.lstrip("#").strip())
+    return " ".join(reversed(block))
 
 
 def _declared_strands_specifiers() -> dict[str, Requirement]:
@@ -168,4 +201,38 @@ class TestTheRecordedSymbolsExistInTheInstalledStrands:
         assert hasattr(imported, symbol), (
             f"{module}.{symbol} is recorded in _STRANDS_SYMBOL_FLOORS and imported by the "
             "package, but the installed strands-agents does not provide it"
+        )
+
+
+class TestTheManifestSaysWhichSymbolSetsTheFloor:
+    """A floor nobody can attribute is a floor the next reader may lower.
+
+    The two classes above keep the table and the specifier in step with the
+    sources, and both are satisfied by a bare number. Neither reads the comment
+    that carries the reason, so raising the floor while leaving the prose behind
+    is silent -- and that is what happened when ``strands.hooks`` arrived: the
+    block still credited a symbol two releases below the new bound.
+    """
+
+    def test_the_comment_names_the_symbol_and_release_that_set_the_floor(self) -> None:
+        required = _required_floor()
+        setters = sorted(
+            f"{module}.{symbol}"
+            for (module, symbol), first in _STRANDS_SYMBOL_FLOORS.items()
+            if Version(first) == required
+        )
+        assert setters, "no recorded symbol matches the required floor, so the table cannot explain it"
+
+        prose = _capability_comment()
+        assert prose, "the strands-agents specifier carries no comment block to read"
+        assert str(required) in prose, (
+            f"the comment above the strands-agents specifier does not mention {required}, "
+            f"the floor the table requires for {setters}. A reader cannot tell what the "
+            f"bound is protecting. Comment reads: {prose!r}"
+        )
+        unnamed = [name for name in setters if name not in prose]
+        assert not unnamed, (
+            f"these symbols set the {required} floor but the comment above the specifier does "
+            f"not name them: {unnamed}. Name each one there, so lowering the bound has to "
+            f"argue with the capability it would drop."
         )
