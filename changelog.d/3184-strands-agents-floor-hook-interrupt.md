@@ -27,3 +27,20 @@ re-declares it, and in `uv.lock`'s transcription of both. The resolved
 `tests/test_strands_agents_floor_ships_the_imported_api.py` owns the measurement
 and now also grades the members the gate calls, so a release that exports the
 name without them cannot pass for one that ships the capability.
+
+Two written install hints that restated the old floor move with it: the doctor's
+remedy for "strands-agents not importable" (`strands_robots/doctor.py`) and the
+agent/UI install line in `examples/so101_curobo/README.md`, which still named
+`>=1.0` and `>=0.1` respectively. A remedy below the real floor is the failure
+mode worth closing rather than a cosmetic mismatch -- it is already satisfied by
+a release this package refuses, so pip answers "Requirement already satisfied",
+upgrades nothing, and the reader is left running the command that printed it.
+Raising the floor without them would have widened that gap rather than left it
+where it was. Measured against the 60 published `strands-agents` 1.x releases,
+`>=1.0` admits 8 that the old `>=1.7.0` floor refused and 16 that `>=1.13.0`
+refuses -- so the floor raise doubles the remedy's error on its own. The
+README's `>=0.1` admits those 16 plus all 14 published `0.x` releases. Three of
+the 16 are the worst kind for this particular remedy -- 1.10.0, 1.11.0 and
+1.12.0 import `agent_hitl` cleanly and fail at gate time instead -- so the hint
+printed when `strands` is unimportable would have pointed at a range in which
+the gate this floor exists to protect is itself unusable.
