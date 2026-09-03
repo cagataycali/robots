@@ -2654,7 +2654,9 @@ class Robot(TeleopMixin, AgentTool):
                         },
                         "policy_provider": {
                             "type": "string",
-                            "description": "Policy provider (groot, openai, etc.)",
+                            "description": (
+                                "Policy provider name (e.g. groot, lerobot_local, mock). See list_providers()."
+                            ),
                             "default": "groot",
                         },
                         "duration": {
