@@ -4,6 +4,8 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from strands_robots.utils import boolean_flag_error
+
 __all__ = ["MOTION_ENV", "GATED_ACTIONS", "agent_motion_allowed", "peer_is_physical"]
 
 #: The grant. Set on the dashboard's process (or via the consent screen) to let the agent start
@@ -104,10 +106,33 @@ def task_post_allowed(
 ) -> dict[str, Any]:
     """Verdict for one task POST. Same shape as ``agent_motion_allowed``.
 
-    Off by default, and never in the way of a simulated peer or of an already-confirmed click.
+    Off by default, and never in the way of a simulated peer or of an
+    already-confirmed click. ``confirmed`` selects a posture, so on the paths
+    that read it, it must be a boolean
+    (:func:`~strands_robots.utils.boolean_flag_error`) rather than any truthy
+    value: a request whose confirmation is a string is refused, not honoured.
     """
     if not task_confirm_required(env):
         return {"allowed": True, "physical": False, "reason": "", "gated": False}
+    if text := boolean_flag_error(confirmed, "confirmed", "task_post_allowed"):
+        # Checked on the shared domain rather than read by truthiness, and here
+        # rather than at the top: this is the branch that reads it, so a
+        # dashboard which never asked for a confirmation is not refused for a
+        # field it does not consult. Every non-empty string is truthy, so
+        # `"confirmed": "false"` in a task POST body would otherwise select the
+        # confirmed posture -- real motion starting with the requirement the
+        # operator turned on satisfied by a value that reads as a refusal.
+        return {
+            "allowed": False,
+            "physical": True,
+            "gated": True,
+            "confirmed": False,
+            "reason": (
+                f"refused: {text} Nothing was sent. Send a JSON boolean "
+                f'(`"confirmed": true`), or press play on that robot\'s card, '
+                f"where the browser confirms."
+            ),
+        }
     if confirmed:
         return {"allowed": True, "physical": True, "reason": "", "gated": True, "confirmed": True}
 

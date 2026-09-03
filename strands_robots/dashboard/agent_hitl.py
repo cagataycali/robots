@@ -55,6 +55,41 @@ def _direct_serial_detail(action: str, tool_input: dict) -> str:
     return " ".join(parts) if len(parts) > 1 else ""
 
 
+def _resolve_target(
+    tool_name: str,
+    tool_input: Mapping[str, Any],
+    bound_targets: Mapping[str, str] | None,
+) -> str:
+    """The peer or port a yes would move, read from the most trusted source.
+
+    Precedence is by TRUST, never by presence. The model authors ``tool_input``
+    and the ``peers`` action that lists a sim's name is deliberately ungated, so
+    a sim peer's name is always within its reach; resolving the target from a
+    field it writes lets it choose which robot the gate believes it is asking
+    about. Each tool therefore has exactly one trusted source, and a field the
+    model wrote is read only where the tool itself reads the same field:
+
+    * a proxy tool IS its peer, so the per-build binding names the target and no
+      input can move it. This is the guarantee the binding exists to make.
+    * a direct-serial tool addresses a ``port``, one of its own declared
+      parameters. Neither ``pose_tool`` nor ``serial_tool`` declares ``target``,
+      and the SDK drops undeclared keys before the call, so a ``target`` on such
+      an input is unconsumed by construction: reading it would let the model
+      name a robot that is not the one the port moves.
+    * every other gated tool (``fleet``) declares ``target`` itself, so the gate
+      and the tool resolve the same peer from the same field.
+
+    An unresolvable target is returned empty, which is never a key on the peers
+    snapshot, so :func:`~strands_robots.dashboard.agent_motion.peer_is_physical`
+    treats it as metal and the call is gated.
+    """
+    if bound_targets is not None and tool_name in bound_targets:
+        return str(bound_targets.get(tool_name) or "").strip()
+    if tool_name in DIRECT_SERIAL_TOOLS:
+        return str(tool_input.get("port") or "").strip()
+    return str(tool_input.get("target") or "").strip()
+
+
 _TRUE = ("1", "true", "yes", "on")
 
 
@@ -91,16 +126,7 @@ def motion_intent(
     if _granted(env):
         return None  # the always-allow fast lane: no interrupt is raised
 
-    target = str(tool_input.get("target") or "").strip()
-    if not target and bound_targets is not None:
-        # a proxy tool IS its peer: the binding names the target, the model
-        # cannot write (or omit) its way around it.
-        target = str(bound_targets.get(tool_name) or "").strip()
-    if not target:
-        # direct-serial tools address a PORT, not a peer: show the operator the
-        # real thing the yes would move. A port is never on the peers snapshot,
-        # so peer_is_physical(None) below stays fail-closed (metal).
-        target = str(tool_input.get("port") or "").strip()
+    target = _resolve_target(tool_name, tool_input, bound_targets)
     peer = (peers or {}).get(target)
     physical, why = peer_is_physical(peer)
     if not physical:
