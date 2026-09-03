@@ -122,6 +122,17 @@ def motion_intent(
         try:
             reason["duration"] = float(tool_input["duration"])
         except (TypeError, ValueError):
+            # A duration the model wrote as prose ("30s") or as a structure is
+            # dropped rather than raised on. This field is one extra line the
+            # operator reads, not part of deciding WHETHER to ask: the gate has
+            # already resolved the action as motion and the target as metal by
+            # this point, so the interrupt fires with or without it and the tool
+            # still cannot run without a yes. Raising instead would take an
+            # unparseable optional field and abort the operator's turn with an
+            # exception out of a BeforeToolCallEvent hook, so the human is never
+            # asked the question this gate exists to ask them. The tuple is the
+            # exact pair float() raises: TypeError for a non-numeric type,
+            # ValueError for a string that does not parse.
             pass
     return reason
 
