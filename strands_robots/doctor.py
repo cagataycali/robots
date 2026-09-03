@@ -685,11 +685,14 @@ def check_strands_agents() -> str:
     try:
         import strands  # noqa: F401
     except ImportError:
-        # The bound is the floor pyproject declares, not a nominal one. A remedy
-        # naming a lower floor is already satisfied by a release this package
-        # refuses, so pip reports "Requirement already satisfied", upgrades
-        # nothing, and the next run prints this same line.
-        return _fail("strands-agents not importable", fix='uv pip install "strands-agents>=1.13.0,<2.0.0"')
+        return _fail(
+            "strands-agents not importable",
+            # The bound is the one pyproject declares. A remedy that names a
+            # lower floor is satisfied by a release this package refuses, so
+            # pip reports "Requirement already satisfied" against a stale
+            # environment and the diagnosis this line answers survives it.
+            fix='uv pip install "strands-agents>=1.13.0,<2.0.0"',
+        )
     return _pass(f"strands-agents {_resolve_version('strands', 'strands-agents')}")
 
 
