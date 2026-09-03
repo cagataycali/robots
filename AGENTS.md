@@ -796,6 +796,7 @@ hatch run format            # ruff check --fix, ruff format
      | `R_kgDOD1WOFw` | `[0, 257265175]` | the #1916 stray |
      | `PR_kwDOD1WOF87DdSjQ` | `[0, 257265175, 3279235280]` | **the same stray** |
      | `PR_kwDORUMiZs7Kw3fA` | `[0, 1162027622, 3401807808]` | **`uutils/coreutils#11342`** |
+     | `PR_kwDORUMiZs7DHqZ3` | `[0, 1162027622, 3273565815]` | **`gip-inclusion/autometa#8`** |
 
      The third row is why #1916's three guessed IDs all failed the same way: one
      stale value contaminated every mutation, and the two that failed did so only
@@ -814,6 +815,25 @@ hatch run format            # ruff check --fix, ruff format
      for the same repository is the same unsound test done less precisely. See
      #2007.
 
+     **The fifth row is why the refusal that stops such a merge is not a verdict
+     on your own permission.** Aimed at that ID while merging #3175,
+     `mergePullRequest` returned `cagataycali does not have the correct
+     permissions to execute MergePullRequest`. The same account, the same
+     mutation and the same token four minutes later - on the ID resolved from
+     `repository(owner:, name:) { pullRequest(number: 3175) { id } }` - squashed
+     that pull request as `c418f74`. So the permission reported on was a
+     stranger's, and every permission the merge needed was held. Nothing in the
+     response separates the two cases, because permission is evaluated before
+     state: even a target that is *already merged*, which
+     `gip-inclusion/autometa#8` is, is refused for permissions rather than for
+     mergeability. Read at face value that sentence says "merging is a maintainer
+     action" - self-consistent, terminal, and leaving an approved `CLEAN` pull
+     request open with every required context `SUCCESS`. That is a third recorded
+     cause of the presentation #1905 and #1917 name, and the first on the write
+     side, so a sweep that has learned to re-read the gate with `PAT_TOKEN` still
+     lands in it. Treat a permissions refusal as being about the ID until a query
+     has ruled the ID out.
+
      So the decode has exactly one sound use: a middle field naming another
      repository is proof of a wrong ID, and a middle field naming this one proves
      nothing at all. **The rule is the one with no decode in it** - resolve every
@@ -829,12 +849,14 @@ hatch run format            # ruff check --fix, ruff format
 
      **Weight it by reversibility rather than by correctness**, because the two
      directions are not symmetric. A refused `mergePullRequest` leaves nothing
-     behind; a `createIssue` against a wrong ID succeeds and cannot be undone by
-     the account that made it, since `deleteIssue` needs admin on the target and a
-     stray write by definition lands where you have none. It has now happened
-     twice: the second was `Ali111q/todo#1` at 16:23 UTC on 2026-08-07, twenty
-     minutes after #2007 was filed, from a `repositoryId` whose repository field
-     reads `1060491130` and not this repository's `1162027622` - the one
+     behind in the repository, though the fifth row is why that is not the same
+     as costing nothing; a `createIssue` against a wrong ID succeeds and cannot
+     be undone by the account that made it, since `deleteIssue` needs admin on
+     the target and a stray write by definition lands where you have none. It has
+     now happened twice: the second was `Ali111q/todo#1` at 16:23 UTC on
+     2026-08-07, twenty minutes after #2007 was filed, from a `repositoryId`
+     whose repository field reads `1060491130` and not this repository's
+     `1162027622` - the one
      direction a decode does catch. So `createIssue`,
      `addComment` and `updateIssue` earn the read-back more than the merge that
      prompted the rule, not less. If one has already landed, the remedy is not
