@@ -2158,6 +2158,17 @@ Corrections from code review that apply to all future contributions:
 - **Reject shell metacharacters in paths** - `;`, `|`, `$`, backticks, `>`, `<`,
   `\n`, `\r`, `\x00`. Also reject `..` path traversal components. Apply even when
   using argv-style subprocess.
+- **Anchor an allowlist with `\Z`, not `$`** - `$` matches at the end of the string
+  *or immediately before a single trailing newline*, so `re.match(r"^[a-z]+$", "abc\n")`
+  succeeds and the bullet above is not enforced by the pattern that claims to enforce
+  it. Spell the anchor `\Z`, or consult the pattern with `re.fullmatch`, which anchors
+  both ends itself. The difference is invisible in the pattern's rendered text and in
+  any test whose fixtures carry no line break, which is how the patterns in this
+  package came to disagree with the two that had been audited for it. Held for the
+  whole package by
+  `tests/test_allowlist_patterns_anchor_at_the_end_of_the_string.py`, whose population
+  is derived from the source rather than listed, so an allowlist added later is graded
+  on arrival.
 - **Bind to `127.0.0.1` by default**, not `0.0.0.0`. Users explicitly opt into
   network exposure.
 

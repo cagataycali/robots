@@ -21,6 +21,7 @@ import difflib
 import functools
 import importlib
 import logging
+import math
 import pkgutil
 import shutil
 import threading
@@ -574,6 +575,13 @@ class Robot(TeleopMixin, AgentTool):
         # loop can honor. Never a bare division: this runs in __init__, so a
         # ZeroDivisionError here fails the whole Robot(mode="real") bring-up.
         self._stream_min_period: float = stream_min_period_from_env()
+        # An infinite period is the operator's opt-out, and no finite elapsed
+        # time reaches it -- but ``_last_stream_pub`` starts below every
+        # reading, so the subtraction alone reads ``inf >= inf`` and lets
+        # exactly one publish (a whole observation, action and instruction)
+        # past the opt-out per rollout. The period is therefore tested
+        # directly, once here rather than on every tick of the control loop.
+        self._stream_enabled: bool = math.isfinite(self._stream_min_period)
         # Annotated with the base class rather than the concrete pool: the two
         # uses below are ``submit`` and ``shutdown``, so a caller substituting a
         # different Executor is honouring the contract, not evading it.
@@ -1769,7 +1777,7 @@ class Robot(TeleopMixin, AgentTool):
                     # (robot_mesh watch, dashboards) but no producers. Rate-
                     # limited; failures never touch the control loop.
                     _mesh = getattr(self, "mesh", None)
-                    if _mesh is not None:
+                    if _mesh is not None and self._stream_enabled:
                         _now_stream = time.monotonic()
                         if _now_stream - self._last_stream_pub >= self._stream_min_period:
                             self._last_stream_pub = _now_stream

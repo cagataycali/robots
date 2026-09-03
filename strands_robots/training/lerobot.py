@@ -472,7 +472,7 @@ def _reward_friendly_fields(rtype: str) -> set[str]:
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
 # to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
 # ``DatasetConfig.repo_id`` (which load_dataset/HfApi feed to a Hub URL).
-_HUB_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_HUB_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 class LerobotTrainer(Trainer):
