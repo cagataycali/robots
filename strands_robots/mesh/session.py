@@ -290,7 +290,7 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
 def stream_min_period_from_env() -> float:
     """Resolve the minimum period between per-step telemetry publishes.
 
-    Two call sites throttle ``publish_step`` against the wall clock -- the
+    Two call sites throttle ``publish_step`` against a monotonic clock -- the
     hardware control loop (``HardwareRobot.__init__``) and the simulation
     ``run_policy`` hook -- and both did it by dividing
     ``STRANDS_MESH_STREAM_HZ`` straight from the environment. That raises
