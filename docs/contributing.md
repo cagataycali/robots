@@ -38,6 +38,17 @@ which states the size of the gap:
 A session that ran every test it collected prints nothing extra, so the section
 appears only where it changes what the counts below it mean.
 
+The same statement is read back in CI. `scripts/report_truncated_test_run.py`
+runs after the suite and writes the extent to the job summary and a check
+annotation, so a reviewer sees it without downloading the log. The reporter above
+is the owner of the number: it holds the session's own item list, so when its
+section is in the log the script reads it rather than re-deriving a second answer
+from the counts line. The arithmetic remains as the fallback for a log that
+carries no such section, and it is measured on items rather than on outcome
+labels - a module that fails to import, or one that skips itself for an absent
+optional dependency, is an outcome on the summary line but was never a selected
+item.
+
 Coverage is collected through PEP 669 (`sys.monitoring`) rather than the default
 C trace function - `core = "sysmon"` in `[tool.coverage.run]`. It reports the
 same line coverage at roughly a tenth of the cost (measured +8.2% against

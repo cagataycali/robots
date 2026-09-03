@@ -28,6 +28,9 @@ bound.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -147,6 +150,232 @@ class TestACompleteRunIsNotReportedAsTruncated:
         assert report.outcome == "complete"
         assert report.selected == 500
         assert report.never_ran == 0
+
+
+# Collection lines produced by running pytest itself, one per way the tokens
+# after the item count can be arranged. pytest appends them conditionally and in
+# a fixed order (``TerminalReporter.report_collect``)::
+#
+#     collected N items[ / E errors][ / D deselected][ / S skipped][ / X selected]
+#
+# so ``deselected`` and ``selected`` are adjacent only when neither of the other
+# two fired. Each row carries the summary line the same run printed, and the
+# extent pytest's own item list had: ``selected`` is ``len(session.items)`` and
+# ``ran`` is how many of those were entered.
+_COLLECTION_SHAPES = [
+    pytest.param(
+        "collected 5 items / 3 deselected / 2 selected",
+        "===== 2 passed, 3 deselected in 0.01s =====",
+        2,
+        2,
+        id="deselected-and-selected-adjacent",
+    ),
+    pytest.param(
+        "collected 5 items / 3 deselected / 1 skipped / 2 selected",
+        "===== 2 passed, 1 skipped, 3 deselected in 0.01s =====",
+        2,
+        2,
+        id="a-module-skipped-itself-between-them",
+    ),
+    pytest.param(
+        "collected 5 items / 1 error / 3 deselected / 2 selected",
+        "===== 3 deselected, 1 error in 0.13s =====",
+        2,
+        0,
+        id="a-module-failed-to-import-before-them",
+    ),
+    pytest.param(
+        "collected 5 items / 1 error / 3 deselected / 1 skipped / 2 selected",
+        "===== 1 skipped, 3 deselected, 1 error in 0.13s =====",
+        2,
+        0,
+        id="both-tokens-between-them",
+    ),
+    pytest.param(
+        "collected 5 items / 1 error",
+        "===== 1 error in 0.13s =====",
+        5,
+        0,
+        id="a-failed-import-with-nothing-deselected",
+    ),
+]
+
+
+class TestTheExtentIsMeasuredOnOnePopulation:
+    """``never_ran`` subtracts executed items from selected items - one population.
+
+    Both halves used to be read off a different one. ``selected`` fell back to the
+    pre-deselection item count whenever an ``error`` or ``skipped`` token landed
+    between ``deselected`` and ``selected``, and ``executed`` summed outcome
+    labels that include the ones *collection* produced - a module that failed to
+    import, or one that skipped itself - neither of which was ever a selected
+    item. The two errors point opposite ways and partly cancel, which is why a
+    run whose tokens happened to be adjacent read correctly.
+    """
+
+    @pytest.mark.parametrize(("collect_line", "summary_line", "selected", "ran"), _COLLECTION_SHAPES)
+    def test_every_collection_line_shape_reports_the_extent_pytest_had(
+        self, collect_line: str, summary_line: str, selected: int, ran: int
+    ) -> None:
+        report = parse_run(f"{collect_line}\n{summary_line}\n")
+
+        assert report.selected == selected
+        assert report.executed == ran
+        assert report.never_ran == selected - ran
+        assert report.outcome == ("complete" if ran == selected else "truncated")
+
+    def test_a_scoped_run_that_finished_is_not_warned_about(self) -> None:
+        # The everyday case: a subset selected with -k, in a suite where some
+        # module skips itself for an absent optional dependency. Every selected
+        # item ran, so a pull request must carry no truncation warning.
+        log = (
+            "collected 5 items / 3 deselected / 1 skipped / 2 selected\n"
+            "===== 2 passed, 1 skipped, 3 deselected in 0.01s =====\n"
+        )
+        report = parse_run(log)
+
+        assert report.outcome == "complete"
+        assert render(report).count("::warning") == 0
+
+
+class TestTheSubtractionHasOneOwner:
+    """The session reporter computes this in process; this module reads it.
+
+    ``tests/session_truncation.py`` holds the session's own item list, so when
+    its section is in the log the extent is already settled and re-deriving it
+    from text would give a second answer with nothing to say which is right.
+    """
+
+    _STATED = "session truncated: 30 of 100 collected tests ran\n===== 1 failed, 28 passed, 1 skipped in 9.00s =====\n"
+
+    def test_the_reporters_statement_is_preferred_over_the_counts_line(self) -> None:
+        # The collection line would put ``selected`` at 900; the reporter, which
+        # held the items, says 100. Only one of those can be reported.
+        log = "collected 900 items / 800 deselected / 100 selected\n" + self._STATED
+        report = parse_run(log)
+
+        assert report.stated_by_session is True
+        assert report.selected == 100
+        assert report.executed == 30
+        assert report.never_ran == 70
+        assert report.outcome == "truncated"
+
+    def test_the_provenance_of_the_numbers_is_reported(self) -> None:
+        log = "collected 100 items\n" + self._STATED
+        assert "extent stated by | the session reporter" in render(parse_run(log))
+
+    def test_a_log_without_the_section_still_gets_the_arithmetic(self) -> None:
+        # The fallback: a log from before the reporter was wired, or one whose
+        # reporter never got to speak, is still described.
+        report = parse_run(TRUNCATED_LOG)
+
+        assert report.stated_by_session is False
+        assert report.outcome == "truncated"
+        assert report.never_ran == 12036
+
+    def test_the_reporters_heading_is_not_read_as_a_collection_or_summary_line(self) -> None:
+        # It says "collected tests", not "collected N items", and carries no
+        # trailing duration - so neither of the other two patterns claims it.
+        # Without that the section would be parsed as the run's own extent.
+        heading = "===== session truncated: 30 of 100 collected tests ran ====="
+        report = parse_run(f"{heading}\n")
+
+        assert report.outcome == "unreadable"
+
+
+# A conftest that records what pytest's own session held, so the assertion below
+# is grounded in pytest rather than in a count written out by hand: ``selected``
+# is ``len(session.items)`` after deselection, and ``started`` counts the items
+# that were entered. This is the same pair ``tests/session_truncation.py`` keeps.
+_TRUTH_CONFTEST = """
+import json, os
+_state = {"selected": None, "started": 0}
+
+
+def pytest_collection_finish(session):
+    _state["selected"] = len(session.items)
+
+
+def pytest_runtest_logfinish(nodeid):
+    _state["started"] += 1
+
+
+def pytest_sessionfinish(session, exitstatus):
+    with open(os.environ["TRUTH_OUT"], "w") as handle:
+        json.dump(_state, handle)
+"""
+
+_KEEP_AND_DROP = """
+def test_keep_one(): pass
+def test_keep_two(): pass
+def test_drop_one(): pass
+def test_drop_two(): pass
+def test_drop_three(): pass
+"""
+
+# A module that skips itself for an absent optional dependency - the idiom used
+# by several hundred files in this suite - and one that fails to import. Either
+# puts a token between ``deselected`` and ``selected`` on the collection line.
+_SKIPS_ITSELF = 'import pytest\npytest.importorskip("a_dependency_this_suite_does_not_have")\ndef test_never(): pass\n'
+_FAILS_TO_IMPORT = 'raise RuntimeError("this module cannot be imported")\n'
+
+
+class TestTheReportAgreesWithPytestsOwnCounts:
+    """The end-to-end pin: real sessions, and the extent pytest itself recorded.
+
+    The rows in :data:`_COLLECTION_SHAPES` are transcriptions. This runs the
+    sessions that produce them, so the expected numbers come from pytest's own
+    item list rather than from this file.
+    """
+
+    @pytest.mark.parametrize(
+        ("modules", "select"),
+        [
+            pytest.param({"test_a.py": _KEEP_AND_DROP}, "keep", id="deselecting-only"),
+            pytest.param(
+                {"test_a.py": _KEEP_AND_DROP, "test_skips.py": _SKIPS_ITSELF},
+                "keep",
+                id="deselecting-with-a-self-skipping-module",
+            ),
+            pytest.param(
+                {"test_a.py": _KEEP_AND_DROP, "test_broken.py": _FAILS_TO_IMPORT},
+                "keep",
+                id="deselecting-with-an-unimportable-module",
+            ),
+            pytest.param(
+                {
+                    "test_a.py": _KEEP_AND_DROP,
+                    "test_broken.py": _FAILS_TO_IMPORT,
+                    "test_skips.py": _SKIPS_ITSELF,
+                },
+                "keep",
+                id="deselecting-with-both",
+            ),
+            pytest.param({"test_a.py": _KEEP_AND_DROP}, None, id="selecting-everything"),
+        ],
+    )
+    def test_the_reported_extent_is_the_extent_the_session_had(
+        self, tmp_path: Path, modules: dict[str, str], select: str | None
+    ) -> None:
+        (tmp_path / "conftest.py").write_text(_TRUTH_CONFTEST)
+        for name, body in modules.items():
+            (tmp_path / name).write_text(body)
+        truth_file = tmp_path / "truth.json"
+
+        environment = {**os.environ, "TRUTH_OUT": str(truth_file), "PYTEST_ADDOPTS": ""}
+        command = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *modules]
+        if select is not None:
+            command += ["-k", select]
+        completed = subprocess.run(command, cwd=tmp_path, env=environment, capture_output=True, text=True)
+
+        truth = json.loads(truth_file.read_text())
+        assert truth["selected"] is not None, "the session never finished collecting, so it poses no case"
+        report = parse_run(completed.stdout)
+
+        assert report.selected == truth["selected"]
+        assert report.executed == truth["started"]
+        assert report.never_ran == truth["selected"] - truth["started"]
+        assert report.outcome == ("complete" if report.never_ran == 0 else "truncated")
 
 
 class TestARunThatNeverReportedIsNamedApart:
