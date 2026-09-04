@@ -1910,6 +1910,19 @@ which side the enum is on.
   the tree sat in `dashboard/auth.py`, where a WebAuthn challenge's TTL was measured on the
   wall clock. Same predicate, wider root, found it at once: a walk root narrower than the
   shape being graded reports a clean tree, not an ungraded one.
+- **A predicate that grades a decision does not grade a report.** That scan reports a
+  wall-clock read inside the test of a wait, which is the shape that truncates one, and
+  `lerobot_camera` was clean by it while four of its five handlers measured every span
+  they *report* on the wall clock - `capture`'s connect and read times, `capture_batch`'s
+  per-camera time and its total, `record`'s achieved duration, and `test`'s connect plus
+  two ten-frame windows. Nothing there decides on a clock (the recording is bounded by a
+  frame count, the windows by `range(10)`), and `preview`, whose deadline does decide, had
+  already moved. A reported span is a duration all the same, and the `test` action turns
+  each one into a verdict about the *camera*: a -30 s correction inside a ten-frame window
+  reports `Est. FPS: -0.3` and calls the camera `Good`, because a negative average is
+  below the 100 ms threshold. Pinned on behaviour by
+  `tests/tools/test_camera_durations_survive_a_clock_step.py`, which asserts what the tool
+  reports across a step rather than which clock the source names.
 - Pinned by `tests/test_expiry_gates_survive_a_clock_step.py` (a scan over the whole
   package, no exemption list), by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py`
   for the real `spin_for` behaviour, by

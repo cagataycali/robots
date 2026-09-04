@@ -2,6 +2,18 @@
 """
 LeRobot-based camera tool for Strands agents.
 Leverages LeRobot's OpenCV and RealSense camera classes for professional camera management.
+
+Every span this tool measures - a connect time, a per-frame capture time, a
+recording's achieved duration - is a duration, so it is measured on
+``time.monotonic()`` and its base carries that clock in its name
+(``..._started_mono``). ``time.time()`` is not a clock but the current opinion
+about the date, and an NTP correction, a ``date -s`` or a resume from suspend
+landing inside one of these windows subtracts the step from the span. The
+performance test then reads that span as a verdict about the camera (``Est.
+FPS``, ``Fast``/``Slow``, ``Good``/``Slow``), so a corrected clock is reported
+as a device measurement. The absolute stamps this tool writes - a filename's
+date, a report's ``Timestamp`` line - are the other half of that boundary and
+stay on ``datetime.now()``.
 """
 
 import json
@@ -647,16 +659,16 @@ def _capture_single_image(
         camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
 
         # Connect and capture
-        start_time = time.time()
+        connect_started_mono = time.monotonic()
         camera.connect(warmup=warmup)
-        connect_time = time.time() - start_time
+        connect_time = time.monotonic() - connect_started_mono
 
-        start_time = time.time()
+        capture_started_mono = time.monotonic()
         if async_mode:
             frame = camera.async_read(timeout_ms=timeout_ms)
         else:
             frame = camera.read()
-        capture_time = time.time() - start_time
+        capture_time = time.monotonic() - capture_started_mono
 
         # Save image
         success = cv2.imwrite(file_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -723,7 +735,7 @@ def _capture_batch_images(
 
         results = []
         successful_captures = 0
-        total_time = time.time()
+        batch_started_mono = time.monotonic()
 
         def capture_single_camera(cam_id):
             try:
@@ -739,7 +751,7 @@ def _capture_batch_images(
                 # Create and use camera
                 camera = _create_camera(camera_type, cam_id, width, height, fps, color_mode, rotation)
 
-                start_time = time.time()
+                capture_started_mono = time.monotonic()
                 camera.connect(warmup=warmup)
 
                 if async_mode:
@@ -747,7 +759,7 @@ def _capture_batch_images(
                 else:
                     frame = camera.read()
 
-                capture_time = time.time() - start_time
+                capture_time = time.monotonic() - capture_started_mono
 
                 # Save image
                 success = cv2.imwrite(file_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -784,7 +796,7 @@ def _capture_batch_images(
                 if result["status"] == "success":
                     successful_captures += 1
 
-        total_time = time.time() - total_time
+        total_time = time.monotonic() - batch_started_mono
 
         # Format results and prepare content list
         result_info = [" **Batch Camera Capture Results:**", ""]
@@ -866,7 +878,7 @@ def _record_video_sequence(
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
 
         frames_captured = 0
-        start_time = time.time()
+        started_mono = time.monotonic()
         target_frames = int(fps * capture_duration)
 
         try:
@@ -883,7 +895,7 @@ def _record_video_sequence(
 
                 # Progress update every second
                 if frames_captured % fps == 0:
-                    elapsed = time.time() - start_time
+                    elapsed = time.monotonic() - started_mono
                     remaining = capture_duration - elapsed
                     print(f"Recording... {elapsed:.1f}s / {capture_duration:.1f}s ({remaining:.1f}s remaining)")
 
@@ -891,7 +903,7 @@ def _record_video_sequence(
             video_writer.release()
             camera.disconnect()
 
-        actual_duration = time.time() - start_time
+        actual_duration = time.monotonic() - started_mono
         file_size = os.path.getsize(video_path)
 
         result_info = [
@@ -1036,19 +1048,19 @@ def _test_camera_performance(
         test_results.append(" **Camera Performance Test**\n")
 
         # Connection test
-        start_time = time.time()
+        connect_started_mono = time.monotonic()
         camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
-        connect_time = time.time() - start_time
+        connect_time = time.monotonic() - connect_started_mono
 
         test_results.append(f"**Connection Test**: {connect_time:.3f}s")
 
         # Frame capture test (sync)
         capture_times = []
         for i in range(10):
-            start_time = time.time()
+            read_started_mono = time.monotonic()
             frame = camera.read()
-            capture_time = time.time() - start_time
+            capture_time = time.monotonic() - read_started_mono
             capture_times.append(capture_time)
 
         avg_sync_time = np.mean(capture_times)
@@ -1065,9 +1077,9 @@ def _test_camera_performance(
         if async_mode:
             async_times = []
             for i in range(10):
-                start_time = time.time()
+                read_started_mono = time.monotonic()
                 frame = camera.async_read(timeout_ms=timeout_ms)
-                async_time = time.time() - start_time
+                async_time = time.monotonic() - read_started_mono
                 async_times.append(async_time)
 
             avg_async_time = np.mean(async_times)
