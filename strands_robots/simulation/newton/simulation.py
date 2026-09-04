@@ -417,15 +417,32 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return {"status": "success", "content": [{"text": "Newton world destroyed."}]}
 
     def reset(self) -> dict[str, Any]:
-        """Reset the world to its initial joint configuration."""
+        """Reset the world to its initial joint configuration.
+
+        While a dataset recording is open this is also an episode boundary: the
+        frames buffered since the last one are flushed as their own episode
+        before the world is rebuilt, which is the rule :meth:`save_episode`
+        documents. A reset with nothing buffered is unaffected.
+
+        Returns:
+            A ``{status, content}`` tool result. ``status`` is ``"error"`` when
+            no world exists, or when the episode flush this reset owes failed -
+            in that case the world is left untouched rather than rebuilt over a
+            recorder whose buffer is in an undefined state.
+        """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        flush_note = ""
+        if (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
         with self._lock:
             self._targets = {}
             self._world.sim_time = 0.0
             self._world.step_count = 0
             self._rebuild()
-        return {"status": "success", "content": [{"text": "Newton world reset."}]}
+        return {"status": "success", "content": [{"text": f"{flush_note}Newton world reset."}]}
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         """Advance the simulation by ``n_steps`` control steps.

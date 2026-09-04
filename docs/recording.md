@@ -349,6 +349,14 @@ single `episode_index=0` (1200 steps in one episode). To DISCARD a partial
 rollout instead of flushing it on the next `reset()`, call
 `clear_episode_buffer()` first.
 
+Every backend cuts the boundary: `reset()` asks one shared rule, so the loop
+above yields 20 episodes on MuJoCo, Newton and Isaac alike. The one exception is
+a *partial* Isaac reset - `reset(env_ids=[...])` re-initializes only the named
+environments, and whether the recorded robot's rollout ended is not knowable
+from `env_ids`, so no boundary is cut and the buffer stays open. Call
+`save_episode()` yourself if a partial reset does end the episode you are
+recording.
+
 ## Verifying episode count
 
 An LLM agent narrating "20 episodes recorded" is not proof: a single

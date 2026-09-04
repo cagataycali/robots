@@ -1333,6 +1333,50 @@ class DatasetRecordingMixin:
             ],
         }
 
+    def _flush_open_episode_before_reset(self) -> dict[str, Any] | None:
+        """Close the open dataset episode before a reset re-initializes the world.
+
+        A reset is the start of a new rollout, so the frames buffered since the
+        last episode boundary belong to the rollout that just ended. Flushing
+        them here is what makes :meth:`save_episode`'s "``reset()`` is itself an
+        episode boundary while recording" true, and ``docs/recording.md`` states
+        the same rule without naming a backend. Without it a
+        ``run_policy`` + ``reset`` collection loop appends every rollout to the
+        same buffer, and ``stop_recording`` flushes the lot as a single
+        ``episode_index=0`` whose frames span every teleport in between -
+        ``total_episodes`` stuck at 1 for a dataset downstream training and eval
+        slice by episode. Nothing reports it: the episode count the recorder and
+        the parquet agree on is 1, so ``stop_recording``'s own
+        author-versus-parquet gate passes, and ``verify_dataset_episodes``
+        counts episodes rather than comparing them to the rollouts that were
+        run.
+
+        Owned here rather than per backend because all three concrete engines
+        reset the same recording session through the same
+        :meth:`_recording_state` accessor: a copy per backend is what left two
+        of them without the boundary while the shared docstring promised it.
+
+        Returns:
+            ``None`` when there is nothing to flush - no recording is open, or
+            no frame has been captured since the last boundary - so a reset that
+            is not preceded by recorded frames is unaffected. Otherwise the
+            :meth:`save_episode` result: a success envelope whose text names the
+            episode just written, for the caller to quote, or an error envelope
+            the caller must return instead of resetting, because a failed flush
+            leaves the recorder closed and its buffer in an undefined state.
+        """
+        state = self._recording_state()
+        if state is None or not state.get("recording", False):
+            return None
+        recorder = state.get("dataset_recorder", None)
+        # ``save_episode`` reports an empty buffer as a success ("no frames to
+        # flush"), which would add a note to every reset in a session. Ask the
+        # recorder first so a reset with nothing buffered reads exactly as it
+        # did before there was a boundary to cut.
+        if getattr(recorder, "episode_frame_count", 0) <= 0:
+            return None
+        return self.save_episode()
+
     def stream_dataset(self, repo_id: str, **kwargs: Any) -> "StreamingDatasetReader":
         """Open a streaming reader for a LeRobotDataset - read frames straight
         from the Hub (or a local root) with no full materialization.

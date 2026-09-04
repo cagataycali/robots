@@ -4401,30 +4401,19 @@ class MuJoCoSimEngine(
             return err
 
         # A reset re-initializes the world, which is the start of a new
-        # rollout. If a recording is active with buffered (unsaved) frames,
-        # flush them as their own episode BEFORE the teleport mixes the next
-        # rollout into the same buffer. Without this, a run_policy + reset
-        # collection loop silently merges every rollout into a single
-        # episode_index=0 (total_episodes stuck at 1) - a data-integrity bug
-        # for downstream training/eval that slices by episode. This mirrors
-        # stop_recording, which already auto-flushes the trailing episode.
-        # save_episode() is a no-op on an empty buffer, so resets that are not
-        # preceded by recorded frames (e.g. eval_policy's internal per-episode
-        # resets, which do not feed the recorder) are unaffected. To DISCARD a
+        # rollout, so the frames buffered so far are that rollout's episode.
+        # ``_flush_open_episode_before_reset`` owns the rule for every backend -
+        # see it for what a merged episode costs downstream. To DISCARD a
         # partial rollout instead of flushing it, call clear_episode_buffer()
         # before reset().
         flush_note = ""
-        if self._world._backend_state.get("recording", False):
-            recorder = self._world._backend_state.get("dataset_recorder")
-            pending = getattr(recorder, "episode_frame_count", 0) if recorder is not None else 0
-            if pending > 0:
-                save_result = self.save_episode()
-                if save_result.get("status") != "success":
-                    # save_episode failed -> the recorder poisoned itself and
-                    # the facade already cleared the recording flag. Surface
-                    # the failure rather than resetting into an undefined state.
-                    return save_result
-                flush_note = save_result["content"][0]["text"] + " "
+        if (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                # save_episode failed -> the recorder poisoned itself and
+                # the facade already cleared the recording flag. Surface the
+                # failure rather than resetting into an undefined state.
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
 
         mj = self._mj
         with self._lock:

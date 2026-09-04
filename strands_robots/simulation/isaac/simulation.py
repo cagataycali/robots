@@ -1368,6 +1368,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
 
+        # A full reset re-initializes the scene, so an open recording's buffered
+        # frames are the rollout that just ended - flush them as their own
+        # episode before the teleport. Ahead of the main-thread marshal because
+        # the flush is a dataset write and does not touch the kit runtime. A
+        # PARTIAL reset is deliberately not a boundary: it re-initializes some
+        # envs and this stream records one robot, so whether its rollout ended
+        # is not knowable from ``env_ids`` alone, and cutting an episode there
+        # would split a trajectory that never stopped.
+        flush_note = ""
+        if env_ids is None and (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
+
         def _reset_impl() -> dict[str, Any]:
             with self._lock:
                 # Re-checked under the lock: a pump-marshalled call may race a
@@ -1391,7 +1405,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 self._step_count = 0
 
                 if env_ids is None:
-                    msg = "Full reset complete."
+                    msg = f"{flush_note}Full reset complete."
                 else:
                     msg = f"Partial reset complete for {len(env_ids)} envs."
 
