@@ -9,14 +9,12 @@ a robot name to its MJCF model XML, directory, and availability status:
     - get_robot_info: enriched metadata with resolved path
     - list_available_robots: presence-filtered listing
     - path-traversal protection on registry-sourced path components
-    - _has_meshes: mesh detection, with an optional per-scan memo
 
 These exercise observable behavior (returned paths, booleans, None) against a
 temp asset tree wired through STRANDS_ASSETS_DIR + the user registry, with no
 network and no auto-download dependency.
 """
 
-import os
 from pathlib import Path
 
 import pytest
@@ -47,6 +45,22 @@ def _isolate_assets(tmp_path, monkeypatch):
     _invalidate_cache()
 
 
+def _mjcf(*, meshdir: str | None = None, declares: tuple[str, ...] = ()) -> str:
+    """A minimal MJCF, optionally declaring meshes under a ``<compiler meshdir>``.
+
+    Mesh presence is a property of what a model DECLARES, not of what happens to
+    sit in its directory: ``<compiler meshdir>`` is where MuJoCo resolves a
+    ``file=`` reference, and it can name a directory outside the model's own.
+    A fixture that writes mesh files without declaring them cannot pose either
+    case, so a model with a missing mesh is spelled here and not by an unlinked
+    file alone.
+    """
+    compiler = f'<compiler meshdir="{meshdir}"/>' if meshdir else ""
+    refs = "".join(f'<mesh name="m{i}" file="{m}"/>' for i, m in enumerate(declares))
+    asset = f"<asset>{refs}</asset>" if refs else ""
+    return f'<mujoco>{compiler}{asset}<worldbody><body><geom size="0.1"/></body></worldbody></mujoco>'
+
+
 def _register_bot(
     assets_dir: Path,
     name: str = "unitbot",
@@ -54,14 +68,24 @@ def _register_bot(
     *,
     scene_xml: str | None = None,
     meshes: tuple[str, ...] = (),
+    declares: tuple[str, ...] = (),
+    meshdir: str | None = None,
 ) -> Path:
-    """Create a minimal MJCF asset dir and register it; return the dir path."""
+    """Create a minimal MJCF asset dir and register it; return the dir path.
+
+    ``declares`` names the mesh references the model asks MuJoCo for, resolved
+    against ``meshdir``; ``meshes`` names the files actually written. Passing a
+    reference in ``declares`` that is absent from ``meshes`` is how a model with
+    a missing mesh is posed.
+    """
     robot_dir = assets_dir / name
     robot_dir.mkdir(parents=True, exist_ok=True)
-    (robot_dir / xml_name).write_text(_MINIMAL_MJCF)
+    model = _mjcf(meshdir=meshdir, declares=declares)
+    (robot_dir / xml_name).write_text(model)
     if scene_xml:
-        (robot_dir / scene_xml).write_text(_MINIMAL_MJCF)
+        (robot_dir / scene_xml).write_text(model)
     for mesh in meshes:
+        (robot_dir / mesh).parent.mkdir(parents=True, exist_ok=True)
         (robot_dir / mesh).write_bytes(b"meshbytes")
     register_robot(
         name=name,
@@ -195,77 +219,6 @@ class TestPathTraversalProtection:
         assert manager.is_robot_asset_present("evil") is False
 
 
-class TestHasMeshes:
-    def test_false_for_missing_directory(self, tmp_path):
-        assert manager._has_meshes(tmp_path / "does_not_exist") is False
-
-    def test_false_when_no_mesh_files(self, tmp_path):
-        d = tmp_path / "bare"
-        d.mkdir()
-        (d / "model.xml").write_text(_MINIMAL_MJCF)
-        assert manager._has_meshes(d) is False
-
-    def test_true_for_nested_mesh(self, tmp_path):
-        d = tmp_path / "withmesh"
-        (d / "meshes").mkdir(parents=True)
-        (d / "meshes" / "link.obj").write_bytes(b"o")
-        assert manager._has_meshes(d) is True
-
-    def test_a_memo_answers_a_repeat_of_the_same_directory(self, tmp_path):
-        """Within one scan the tree is walked once per directory.
-
-        This is the saving the memo exists for: ``resolve_model_path`` ranks
-        several candidate XMLs that can share a directory, and a mesh-less tree
-        is the case the walk cannot early-exit out of.
-        """
-        d = tmp_path / "cachedir"
-        d.mkdir()
-        memo: dict[str, bool] = {}
-        assert manager._has_meshes(d, memo) is False
-        assert memo == {str(d): False}
-        # A mesh arriving mid-scan is not re-walked: the memo is the answer.
-        (d / "late.stl").write_bytes(b"m")
-        assert manager._has_meshes(d, memo) is False
-
-    def test_a_scan_that_brings_no_memo_reads_the_tree(self, tmp_path):
-        """A mesh that appeared is observed even when no timestamp moved.
-
-        A directory's own ``st_mtime`` is held stable here, which is what a
-        write into one of its subdirectories does anyway. Mesh detection answers
-        from the tree, so nothing outside a caller-owned memo can go stale.
-        """
-        d = tmp_path / "cachedir"
-        d.mkdir()
-        assert manager._has_meshes(d) is False
-        before = d.stat()
-        (d / "late.stl").write_bytes(b"m")
-        os.utime(d, ns=(before.st_atime_ns, before.st_mtime_ns))
-        assert d.stat().st_mtime_ns == before.st_mtime_ns
-        assert manager._has_meshes(d) is True
-
-    def test_an_unstattable_directory_is_still_searched(self, tmp_path, monkeypatch):
-        """A ``stat()`` failure after ``exists()`` must not crash mesh discovery.
-
-        A directory can become un-stattable between the ``exists()`` guard and
-        any later read of it (a TOCTOU removal, or its permissions stripped).
-        Mesh detection asks the tree and never the clock, so there is no
-        timestamp read left on this path for such a failure to escape from.
-        """
-        d = tmp_path / "withmesh"
-        (d / "meshes").mkdir(parents=True)
-        (d / "meshes" / "link.obj").write_bytes(b"o")
-
-        def _raise_stat(self, *args, **kwargs):
-            raise OSError("stat unavailable")
-
-        # exists() stays truthy (the dir is really there); only the cache-key
-        # stat() read fails, exactly as a mid-call permission strip would look.
-        monkeypatch.setattr(Path, "exists", lambda self, *a, **k: True)
-        monkeypatch.setattr(Path, "stat", _raise_stat)
-
-        assert manager._has_meshes(d) is True
-
-
 class TestAutoDownloadFallback:
     """When no XML is found on disk, resolution attempts an auto-download."""
 
@@ -329,7 +282,7 @@ class TestDownloadCanBeDeclined:
 
     def test_missing_meshes_return_the_xml_without_attempting(self, tmp_path, monkeypatch):
         """Second trigger: XML present, meshes absent. Declining keeps the XML."""
-        robot_dir = _register_bot(tmp_path / "assets")  # registered with no meshes
+        robot_dir = _register_bot(tmp_path / "assets", declares=("link.stl",))
         assert manager.is_robot_asset_present("unitbot") is True, "presence alone would not gate this"
         attempts: list[str] = []
         monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
@@ -339,7 +292,9 @@ class TestDownloadCanBeDeclined:
 
     def test_the_downloading_default_is_unchanged(self, tmp_path, monkeypatch):
         """Over-reach control: adding the knob must not stop the default fetching."""
-        _register_bot(tmp_path / "assets")  # no meshes -> the default reaches for them
+        # A DECLARED mesh that is absent is what makes a fetch the helpful thing.
+        # A model declaring none has nothing to fetch, so it cannot show this.
+        _register_bot(tmp_path / "assets", declares=("link.stl",))
         attempts: list[str] = []
         monkeypatch.setattr(manager, "_auto_download_robot", self._recording_downloader(attempts))
 
@@ -353,7 +308,7 @@ class TestDownloadCanBeDeclined:
         This is what makes the knob safe to add to a resolver 46 call sites
         already use: it introduces no third outcome.
         """
-        robot_dir = _register_bot(tmp_path / "assets")
+        robot_dir = _register_bot(tmp_path / "assets", declares=("link.stl",))
         if delete_xml:
             (robot_dir / "unitbot.xml").unlink()
             _invalidate_cache()
@@ -591,17 +546,6 @@ class TestAutoDownloadUnavailable:
         assert calls == [("unitbot", {"k": 1})]
 
 
-class TestHasMeshesScandirError:
-    """A non-walkable path (not a directory / unreadable) degrades to False."""
-
-    def test_false_when_scandir_raises(self, tmp_path):
-        # A regular file passes ``Path.exists()`` and ``stat()`` but scandir
-        # raises NotADirectoryError (an OSError subclass) during the walk.
-        not_a_dir = tmp_path / "model.xml"
-        not_a_dir.write_text(_MINIMAL_MJCF)
-        assert manager._has_meshes(not_a_dir) is False
-
-
 class TestIsRobotAssetPresentEdges:
     """Standard-search-path resolution and user-path traversal fall-through."""
 
@@ -685,11 +629,14 @@ class TestDownloadIntoTheDeclaredMeshdir:
         # Two candidate locations for one robot. The mesh-less one is ranked
         # first, so a stale mesh answer is visible in the resolved path rather
         # than in a log line alone.
-        _register_bot(tmp_path / "assets")  # candidate 0, never gets meshes
+        # Both candidates DECLARE the mesh under meshdir="assets"; only the
+        # second ever receives the file. Declaring it is what makes the ranking
+        # depend on the meshdir the model names rather than on a stray file.
+        _register_bot(tmp_path / "assets", declares=("pelvis.stl",), meshdir="assets")
         proj = tmp_path / "proj"  # CWD/assets is the second search path
         downloaded = proj / "assets" / "unitbot"
         downloaded.mkdir(parents=True)
-        (downloaded / "unitbot.xml").write_text(_MINIMAL_MJCF)
+        (downloaded / "unitbot.xml").write_text(_mjcf(meshdir="assets", declares=("pelvis.stl",)))
         (downloaded / "assets").mkdir()  # declared meshdir: pre-exists, empty
         monkeypatch.chdir(proj)
         before = downloaded.stat().st_mtime_ns

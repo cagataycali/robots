@@ -8,7 +8,6 @@ Resolves robot model files (MJCF XML) from:
 """
 
 import logging
-import os
 from pathlib import Path
 
 from strands_robots.registry import (
@@ -84,50 +83,43 @@ def _auto_download_robot(name: str, info: dict) -> bool:
     return _auto_download_robot_impl(name, info)
 
 
-_MESH_EXTS = frozenset({".stl", ".obj", ".msh", ".ply"})
+def _model_meshes_resolve(model_path: Path) -> bool:
+    """Whether every mesh *model_path* declares is on disk where MuJoCo looks.
 
+    Asked through the single owner of that question,
+    :func:`strands_robots.assets.download._mjcf_missing_meshes`, rather than by
+    walking the model directory for files with a mesh extension. The two are not
+    the same reading and they disagree in both directions:
 
-def _has_meshes(directory: Path, memo: dict[str, bool] | None = None) -> bool:
-    """Check whether a directory tree contains mesh files (early-exit).
+    * ``<compiler meshdir="../meshes"/>`` places a model's meshes OUTSIDE its own
+      directory - a real shipped layout - so a downward walk reports a complete
+      asset as mesh-less. The resolver then reaches for a download that cannot
+      change the answer, on every call, for a model that already loads.
+    * a model missing one of the meshes it declares still has the rest of them on
+      disk, so a walk reports it as fine and the fetch that would repair it is
+      never attempted. The caller gets a path MuJoCo refuses to load.
 
-    Uses ``os.scandir`` with an early break on the first mesh found rather
-    than ``rglob("*")``, which stats every file.
+    One owner is what keeps this resolver, :func:`~strands_robots.assets.download._needs_download`
+    and :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine._ensure_meshes`
+    from judging the same model present and absent.
 
     Args:
-        directory: Root of the tree to search.
-        memo: Optional per-scan cache of ``str(directory) -> result``, shared by
-              the caller across one pass over candidate locations. It is the
-              caller's job to scope it: a memo must not outlive the scan it was
-              created for, because a mesh landing anywhere in the subtree makes
-              every answer in it stale. Omitting it always walks the tree.
+        model_path: Path to the model's MAIN file.
 
     Returns:
-        True when a mesh file exists anywhere under *directory*.
+        True when the model declares no meshes or every reference resolves - the
+        two cases a caller may treat alike, since neither has anything to fetch.
+        False when a declared reference is absent, and when the model cannot be
+        read: this resolver's own next step is a download, which is the reading
+        :func:`~strands_robots.assets.download._needs_download` takes of the same
+        failure, because a fetch is what replaces a file it cannot read.
     """
-    if not directory.exists():
-        return False
-    key = str(directory)
-    if memo is not None and key in memo:
-        return memo[key]
+    from strands_robots.assets.download import _mjcf_missing_meshes
 
-    def _walk(path: str) -> bool:
-        try:
-            with os.scandir(path) as it:
-                for entry in it:
-                    if entry.is_file(follow_symlinks=False):
-                        ext = os.path.splitext(entry.name)[1].lower()
-                        if ext in _MESH_EXTS:
-                            return True
-                    elif entry.is_dir(follow_symlinks=False) and _walk(entry.path):
-                        return True
-        except OSError:
-            return False
+    try:
+        return not _mjcf_missing_meshes(model_path)
+    except (OSError, UnicodeDecodeError):
         return False
-
-    result = _walk(key)
-    if memo is not None:
-        memo[key] = result
-    return result
 
 
 def _resolve_candidates(asset_dir_name: str, xml_file: str, name: str) -> list[Path]:
@@ -200,16 +192,20 @@ def resolve_model_path(
     """Resolve a robot name to its MJCF model XML path.
 
     Looks up the robot in ``registry/robots.json``, then searches
-    the asset directories for the actual file.  If no XML is found, or XML is
-    found but mesh files are missing, downloads the asset via
-    ``robot_descriptions`` before returning - unless ``allow_download`` declines.
+    the asset directories for the actual file.  If no XML is found, or a mesh the
+    model DECLARES is absent, downloads the asset via ``robot_descriptions``
+    before returning - unless ``allow_download`` declines.
+
+    Mesh presence is read from the model's declarations, resolved against its
+    ``<compiler meshdir>`` the way MuJoCo resolves them, so a model whose meshes
+    live outside its own directory is not mistaken for one that has none.
 
     ``allow_download=False`` makes this a pure filesystem lookup: no network, no
     ``robot_descriptions`` import. Within the curated registry it is exactly
     equivalent to a download that declines, so it cannot change the answer for an
-    asset already on disk - an absent XML still returns ``None`` and a mesh-less
-    XML still returns its first candidate, the same two outcomes a failed download
-    produces today.
+    asset already on disk - an absent XML still returns ``None`` and an XML whose
+    declared mesh is absent still returns its first candidate, the same two
+    outcomes a failed download produces today.
 
     It declines the discovery fallback too, so a name only
     :mod:`strands_robots.registry.discovery` could synthesize an entry for reports
@@ -288,33 +284,31 @@ def resolve_model_path(
         logger.warning("Robot model not found: %s -> %s/%s", name, asset_dir_name, xml_file)
         return None
 
-    # Prefer the candidate whose directory contains mesh files,
-    # because an XML without meshes will fail to load in MuJoCo. The memo spans
-    # this pass alone, so two candidates that share a directory are walked once
-    # and the download below cannot be answered from a pre-download reading.
-    scan: dict[str, bool] = {}
+    # Prefer the candidate whose declared meshes all resolve, because an XML with
+    # a mesh reference MuJoCo cannot open will fail to load. Each candidate is
+    # read on its own, so the download below cannot be answered from a
+    # pre-download reading.
     for path in candidates:
-        if _has_meshes(path.parent, scan):
-            logger.debug("Resolved %s -> %s (has meshes)", name, path)
+        if _model_meshes_resolve(path):
+            logger.debug("Resolved %s -> %s (declared meshes resolve)", name, path)
             return Path(path)
 
     # XML found but no meshes - auto-download and re-check. Declining the
     # download leaves the first candidate to the fallback below, which is what a
     # download that fails already does.
     if allow_download:
-        logger.info("XML found for %s but no meshes, attempting auto-download...", name)
+        logger.info("XML found for %s but a declared mesh is absent, attempting auto-download...", name)
         if _auto_download_robot(name, info):
-            # Re-scan after download (new symlinks may have appeared). A new
-            # memo, because the download is exactly the change the pass above
-            # could not have observed.
+            # Re-read after download: the fetch is exactly the change the pass
+            # above could not have observed.
             refreshed = _resolve_candidates(asset_dir_name, xml_file, name)
-            rescan: dict[str, bool] = {}
             for path in refreshed:
-                if _has_meshes(path.parent, rescan):
+                if _model_meshes_resolve(path):
                     logger.debug("Resolved %s -> %s (auto-downloaded)", name, path)
                     return Path(path)
 
-    # Final fallback: return first candidate (some robots have no meshes)
+    # Final fallback: return the first candidate, which is what a download that
+    # cannot supply the absent reference leaves the caller with either way.
     logger.debug("Resolved %s -> %s (no meshes available)", name, candidates[0])
     return Path(candidates[0])
 
