@@ -162,7 +162,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 ``cameras=["camera1", "camera2", "camera3"]`` for a 3-camera
                 SmolVLA dataset) and keep the stray ``default`` view out of the
                 schema. Names may be raw (``arm0/wrist_cam``) or schema-safe
-                (``arm0__wrist_cam``); an unknown name fails loudly. Two scene cameras whose
+                (``arm0__wrist_cam``); an unknown name fails loudly, and is refused
+                before any dataset is created, resumed or wiped, so a typo costs
+                nothing even under ``overwrite=True``. Two scene cameras whose
                 names collapse onto one dataset column (``arm0/wrist`` and
                 ``arm0__wrist``) are refused before any dataset is created,
                 because the column would be named after whichever of them lost
@@ -278,17 +280,7 @@ class RecordingMixin(DatasetRecordingMixin):
         # after stop_recording has finalized the dataset and dropped the recorder.
         self._world._backend_state["last_dataset_root"] = str(dataset_dir)
 
-        # Multi-episode append: when NOT overwriting and a dataset already
-        # exists on disk, resume it (append new episodes) instead of calling
-        # create() - which hard-fails with FileExistsError. resume() is the
-        # only correct append path in LeRobot 0.5.2+ (the plain constructor is
-        # read-only). A pre-existing EMPTY root (e.g. tempfile.mkdtemp()) is
-        # cleared so create() does not dead-end on its own existence guard;
-        # overwrite=True wipes and recreates from scratch. See
-        # DatasetRecordingMixin._prepare_dataset_target.
         try:
-            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
-
             # Collect joint names from every robot. When the scene contains
             # more than one robot (e.g. multi-agent dual-task recording), prefix
             # each joint with the robot's instance name (``alice__shoulder_pan``)
@@ -455,6 +447,23 @@ class RecordingMixin(DatasetRecordingMixin):
                     sensor_cams,
                     sensor_cams,
                 )
+
+            # Create-vs-resume, and the wipe it can perform, are deferred to here
+            # rather than opened with. ``overwrite=True`` deletes the dataset being
+            # replaced, so every refusal this method can still make is made above it:
+            # the camera scoping just above used to sit behind this line, and a single
+            # unknown name in ``cameras=`` refused the call after the existing dataset
+            # had already been removed - the refusal's own remedy ("Add them with
+            # add_camera(...) ... or omit cameras=") asks for a retry against the data
+            # that same call destroyed. Nothing between the target resolution above and
+            # this line reads or writes the dataset directory (the schema is read from
+            # the scene), so the success path is unchanged. Resume an existing dataset,
+            # clear a pre-existing EMPTY root (e.g. tempfile.mkdtemp()) so create() does
+            # not dead-end on FileExistsError, and wipe on overwrite - the four outcomes
+            # of DatasetRecordingMixin._prepare_dataset_target. This is the ordering
+            # camera_schema_key_collision_error already establishes for the scene-level
+            # collision, applied to the last refusal that still followed the wipe.
+            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             assert _DatasetRecorder is not None  # checked above
             if resume_existing:

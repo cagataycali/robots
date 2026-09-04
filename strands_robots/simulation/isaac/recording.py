@@ -214,7 +214,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 behaves identically across engines. Names may be given in
                 either the raw camera name or the schema-safe form (``/``
                 collapsed to ``__``); an unknown name fails loudly, listing
-                the available cameras. Two scene cameras whose
+                the available cameras, and is refused before any dataset is
+                created, resumed or wiped, so a typo costs nothing even under
+                ``overwrite=True``. Two scene cameras whose
                 names collapse onto one dataset column (``arm0/wrist`` and
                 ``arm0__wrist``) are refused before any dataset is created,
                 because the column would be named after whichever of them lost
@@ -338,11 +340,6 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             state["last_dataset_root"] = str(dataset_dir)
 
             try:
-                # Create-vs-resume semantics shared with MuJoCo/Newton: resume
-                # an existing dataset, clear a pre-existing EMPTY root, wipe on
-                # overwrite. See DatasetRecordingMixin._prepare_dataset_target.
-                resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
-
                 (
                     joint_names,
                     action_names,
@@ -393,6 +390,23 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                     recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
 
                 state["recording_cameras"] = recording_cameras
+
+                # Create-vs-resume, and the wipe it can perform, are deferred to here
+                # rather than opened with. ``overwrite=True`` deletes the dataset being
+                # replaced, so every refusal this method can still make is made above it:
+                # the camera scoping just above used to sit behind this line, and a single
+                # unknown name in ``cameras=`` refused the call after the existing dataset
+                # had already been removed - the refusal's own remedy ("Add them with
+                # add_camera(...) ... or omit cameras=") asks for a retry against the data
+                # that same call destroyed. Nothing between the target resolution above and
+                # this line reads or writes the dataset directory (the schema is read from
+                # the scene), so the success path is unchanged. Resume an existing dataset,
+                # clear a pre-existing EMPTY root (e.g. tempfile.mkdtemp()) so create() does
+                # not dead-end on FileExistsError, and wipe on overwrite - the four outcomes
+                # of DatasetRecordingMixin._prepare_dataset_target. This is the ordering
+                # camera_schema_key_collision_error already establishes for the scene-level
+                # collision, applied to the last refusal that still followed the wipe.
+                resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
                 if resume_existing:
                     logger.info("Resuming existing dataset for append: %s", dataset_dir)

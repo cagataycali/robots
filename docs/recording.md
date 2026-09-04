@@ -121,7 +121,9 @@ sim.start_recording(
 The dataset schema then declares only those three image features. Names may be
 given in raw MuJoCo form (`arm0/wrist_cam`) or schema-safe form
 (`arm0__wrist_cam`); an unknown name fails loudly and lists the available
-cameras rather than silently recording the wrong set. Omit `cameras=` to keep
+cameras rather than silently recording the wrong set. The names are checked
+before any dataset is created, resumed or wiped, so a typo costs nothing even
+under `overwrite=True`. Omit `cameras=` to keep
 the legacy behavior of recording every camera - in that case a one-time
 warning is logged when the implicit `default` overview camera is swept in
 alongside your real sensor cameras, so the stray view is never recorded
@@ -193,6 +195,12 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 `overwrite=True`, which wipes and recreates it. A `root` that exists, is not a
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
+
+Because `overwrite=True` is the one posture that deletes a dataset without
+asking, it is applied as the last step before the recorder is built: every
+refusal `start_recording` can make - the fps and camera domains, the boolean
+postures, an unknown camera name, a scene whose camera names collide - happens
+first, so a refused call leaves the dataset that was already there untouched.
 
 `overwrite` and `push_to_hub` select a **posture**, so both must be booleans and
 are checked before anything is created, resumed, wiped or published. Neither is
