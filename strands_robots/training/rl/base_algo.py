@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
+from strands_robots.utils import positive_count_error
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable
@@ -249,7 +250,13 @@ class BaseRLAlgo(Trainer):
                 evaluating. ``None`` keeps the in-memory weights (or the
                 latest checkpoint under ``spec.output_dir`` for a fresh
                 instance).
-            num_episodes: Number of full episodes to roll out. Must be > 0.
+            num_episodes: Number of full episodes to roll out. Must be a
+                positive integer: it is consumed directly as a ``range()`` bound
+                and is the denominator of the reported ``success_rate``, so it is
+                held to the shared
+                :func:`~strands_robots.utils.positive_count_error` domain - the
+                same one this package's other ``range()``-bound counts
+                (``total_timesteps`` / ``rollout_steps`` / ``num_envs``) use.
 
         Returns:
             Metrics dict::
@@ -271,13 +278,24 @@ class BaseRLAlgo(Trainer):
             and ``success_rate`` is ``0.0``.
 
         Raises:
-            ValueError: ``num_episodes <= 0``, or the trainer is not set up and
-                no ``spec`` was provided to build it.
+            ValueError: ``num_episodes`` is not a positive integer, or the
+                trainer is not set up and no ``spec`` was provided to build it.
         """
         import torch
 
-        if num_episodes <= 0:
-            raise ValueError(f"num_episodes must be > 0, got {num_episodes}")
+        # ``num_episodes`` is read three times: as the ``range()`` bound of the
+        # episode loop, as the denominator of the reported ``success_rate``, and
+        # verbatim as the ``num_episodes`` field of the returned metrics. A bare
+        # ``<= 0`` test screens none of those: it read ``2.5`` / ``nan`` / ``inf``
+        # as usable and they raised ``TypeError`` out of ``range()`` - after the
+        # env, the networks and the optimizers had been built and a checkpoint
+        # loaded - and ``True`` landed as a silent count of one, reported back as
+        # ``{"num_episodes": True}`` from a field documented ``int``, with the
+        # success rate divided by a flag. Only a positive integer can be honored,
+        # so the count is held to the same shared domain as the other
+        # ``range()``-bound counts of an RL run.
+        if (error := positive_count_error(num_episodes, "num_episodes", "evaluate")) is not None:
+            raise ValueError(error)
 
         # Bring the trainer to a live state if it was not already set up.
         if getattr(self, "actor_critic", None) is None or getattr(self, "env", None) is None:
@@ -316,35 +334,45 @@ class BaseRLAlgo(Trainer):
         # first sub-env, which is a plain SimEnv with the (1,)-shaped contract.
         from strands_robots.training.rl.vec_env import VecSimEnv
 
-        eval_env = self.env.envs[0] if isinstance(self.env, VecSimEnv) else self.env
-
         returns: list[float] = []
         lengths: list[int] = []
         successes = 0
-        for _ in range(num_episodes):
-            obs = eval_env.reset()
-            ep_return = 0.0
-            ep_len = 0
-            terminated = False
-            while True:
-                actor_obs = _norm(obs["actor_obs"])
-                with torch.no_grad():
-                    action = self._deterministic_action(actor_obs)
-                obs, reward, done, info = eval_env.step(action)
-                ep_return += float(reward.item())
-                ep_len += 1
-                if bool(done.item()):
-                    terminated = bool(info.get("terminated", False))
-                    break
-            returns.append(ep_return)
-            lengths.append(ep_len)
-            if terminated:
-                successes += 1
-
-        # Restore the pre-eval mode (side-effect-free evaluate()).
-        self.actor_critic.train(_ac_was_training)
-        if actor_norm is not None:
-            actor_norm.train(_norm_was_training)
+        # The eval-mode window is closed in ``finally``, not after the loop: the
+        # modes flipped above are trainer state that outlives a raise, and this
+        # method documents itself as side-effect-free. ``actor_norm`` is the half
+        # that does not recover on its own - ``EmpiricalNormalization`` freezes
+        # its running statistics in eval mode and ``evaluate`` is the only place
+        # in the package that puts it back, whereas ``collect_rollout`` re-enters
+        # ``actor_critic.train()`` itself. An exception escaping the rollout (a
+        # caller-supplied reward term or ``success_fn`` raising on a live engine)
+        # would therefore stop observation normalization from learning for the
+        # rest of the run, with nothing reporting that it had stopped.
+        try:
+            eval_env = self.env.envs[0] if isinstance(self.env, VecSimEnv) else self.env
+            for _ in range(num_episodes):
+                obs = eval_env.reset()
+                ep_return = 0.0
+                ep_len = 0
+                terminated = False
+                while True:
+                    actor_obs = _norm(obs["actor_obs"])
+                    with torch.no_grad():
+                        action = self._deterministic_action(actor_obs)
+                    obs, reward, done, info = eval_env.step(action)
+                    ep_return += float(reward.item())
+                    ep_len += 1
+                    if bool(done.item()):
+                        terminated = bool(info.get("terminated", False))
+                        break
+                returns.append(ep_return)
+                lengths.append(ep_len)
+                if terminated:
+                    successes += 1
+        finally:
+            # Restore the pre-eval mode (side-effect-free evaluate()).
+            self.actor_critic.train(_ac_was_training)
+            if actor_norm is not None:
+                actor_norm.train(_norm_was_training)
 
         returns_t = torch.tensor(returns, dtype=torch.float32)
         return {

@@ -3,6 +3,8 @@
 CPU-only: a tiny fake ``SimEngine`` drives a deterministic 1-DOF env so the test
 needs neither mujoco nor model downloads. Pins the eval contract: deterministic
 rollout, frozen normalizer, schema, success_rate, and the not-setup guard.
+The ``num_episodes`` domain is pinned as a table in
+``test_rl_evaluate_episode_count_domain.py``.
 """
 
 from __future__ import annotations
@@ -134,20 +136,6 @@ def test_evaluate_requires_spec_when_not_setup() -> None:
     trainer = PpoTrainer()
     with pytest.raises(ValueError, match="setup"):
         trainer.evaluate(num_episodes=2)
-
-
-def test_evaluate_rejects_bad_episode_count(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    trainer = PpoTrainer()
-    spec = RLTrainSpec(
-        env_factory=_make_env,
-        output_dir=str(tmp_path),
-        rollout_steps=4,
-        num_mini_batches=2,
-        hidden_dims=(8,),
-    )
-    trainer.setup(spec)
-    with pytest.raises(ValueError, match="num_episodes"):
-        trainer.evaluate(num_episodes=0)
 
 
 def test_evaluate_loads_checkpoint_fresh_instance(tmp_path) -> None:  # type: ignore[no-untyped-def]

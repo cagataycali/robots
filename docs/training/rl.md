@@ -183,6 +183,24 @@ the RL lifecycle hooks `setup`, `collect_rollout`, `update`, and
 those hooks; an off-policy algorithm overrides `train()` with a replay-buffer
 loop while keeping the same hooks and checkpoint format.
 
+`evaluate(spec=None, checkpoint_dir=None, num_episodes=10)` is the eval peer of
+`train()`: it rolls out the deterministic (mean) action with gradients disabled
+and observation normalization frozen, so its numbers are what a deployed
+`policy.pt` would produce. It returns `num_episodes`, `mean_return`,
+`std_return`, `min_return`, `max_return`, `mean_length`, `success_rate` (the
+fraction of episodes that ended on a genuine terminal via the env's
+`success_fn`, not a time-out) and the per-episode `returns`.
+
+`num_episodes` must be a positive integer, checked against the same shared count
+domain as `total_timesteps` / `rollout_steps` / `num_envs`: it is the `range()`
+bound of the episode loop, the denominator of the reported `success_rate`, and is
+echoed back as the `num_episodes` field, so a value that is not a count cannot be
+honored by any of the three. `evaluate()` is side-effect-free with respect to
+train/eval mode on **every** exit, including a raising one - the actor-critic and
+the observation normalizer are returned to the mode they were in before the call,
+so a `train -> evaluate -> train` continuation resumes with the running
+statistics still learning.
+
 ## RLTrainSpec
 
 `RLTrainSpec` extends `TrainSpec`. RL ignores the dataset fields
