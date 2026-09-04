@@ -47,7 +47,7 @@ import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
-from strands_robots.policies.base import iter_policy_tree, resolve_chunk_length
+from strands_robots.policies.base import collect_required_bodies, resolve_chunk_length
 from strands_robots.utils import (
     non_negative_whole_number_error,
     positive_count_error,
@@ -971,27 +971,12 @@ class PolicyRunner:
                 everywhere else: ``PolicyRunner`` is drivable directly and a
                 direct caller has no envelope to read a refusal from.
         """
-        # name -> the policy that declared it first, so a refusal names the class
-        # that has to change rather than whichever wrapper is on the outside.
-        owner: dict[str, str] = {}
-        bodies: list[str] = []
-        for member in () if policy is None else iter_policy_tree(policy):
-            declared = getattr(member, "required_bodies", ()) or ()
-            if not declared:
-                continue
-            who = type(member).__name__
-            if isinstance(declared, str):
-                raise TypeError(
-                    f"{who}.required_bodies must be a sequence of body names, "
-                    f"not a bare str ({declared!r}) - a str iterates into one entry per character. "
-                    f"Use a tuple: ('{declared}',)."
-                )
-            for name in declared:
-                if not isinstance(name, str) or not name.strip():
-                    raise TypeError(f"{who}.required_bodies entries must be non-empty body-name strings, got {name!r}.")
-                if name not in owner:
-                    owner[name] = who
-                    bodies.append(name)
+        # The walk and its type refusals live in one place shared with the
+        # remote-inference handshake, so what a tree declares cannot depend on
+        # which surface asked. The mapping's value is the declaring class, so a
+        # refusal below names the class to fix rather than an outer wrapper.
+        owner = collect_required_bodies(policy)
+        bodies = list(owner)
         if not bodies:
             return ()
 
