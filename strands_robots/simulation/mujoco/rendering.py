@@ -265,9 +265,27 @@ class RenderingMixin:
         def _apply_kinematic_attachments(self) -> None:
             """Provided by ``ManipulationMixin``; declared here for type-checkers."""
 
-    def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
+    def _validate_render_dims(self, width: int, height: int, context: str) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
         overflow to a plain-English message that tells the LLM the actual cap.
+
+        Args:
+            width: Requested image width in pixels.
+            height: Requested image height in pixels.
+            context: The public method being called, quoted as the subject of
+                every refusal below. Required rather than defaulted to
+                ``"render"``, the way the ~20 domain helpers in
+                :mod:`strands_robots.utils` all take their caller's name: this
+                guard serves five public entry points, and a default is the
+                shape that let four of them report ``render`` to a caller who
+                had not called it. ``add_camera`` used to repair that after the
+                fact with ``text.replace("render:", "add_camera:", 1)`` - a
+                coupling to the literal prefix of every message here, which a
+                rewording would silently break.
+
+        Returns:
+            An agent-tool error envelope naming ``context``, or ``None`` when
+            the dimensions are usable.
         """
         # bool is an int subclass, so `isinstance(True, int)` passes: True would
         # be taken as a 1-pixel dimension and reach MuJoCo, which rejects it
@@ -277,13 +295,15 @@ class RenderingMixin:
             return {
                 "status": "error",
                 "content": [
-                    {"text": f"render: width/height must be int, got {type(width).__name__}/{type(height).__name__}."}
+                    {
+                        "text": f"{context}: width/height must be int, got {type(width).__name__}/{type(height).__name__}."
+                    }
                 ],
             }
         if width <= 0 or height <= 0:
             return {
                 "status": "error",
-                "content": [{"text": f"render: width and height must be > 0, got {width}x{height}."}],
+                "content": [{"text": f"{context}: width and height must be > 0, got {width}x{height}."}],
             }
         # Hard absolute ceiling regardless of model config (OOM protection).
         _ABS_MAX = 4096
@@ -292,7 +312,7 @@ class RenderingMixin:
                 "status": "error",
                 "content": [
                     {
-                        "text": f"render: {width}x{height} exceeds absolute maximum offscreen framebuffer cap ({_ABS_MAX}x{_ABS_MAX}). Lower width/height or set offwidth/offheight in the model."
+                        "text": f"{context}: {width}x{height} exceeds absolute maximum offscreen framebuffer cap ({_ABS_MAX}x{_ABS_MAX}). Lower width/height or set offwidth/offheight in the model."
                     }
                 ],
             }
@@ -305,7 +325,7 @@ class RenderingMixin:
                     "content": [
                         {
                             "text": (
-                                f"render: requested {width}x{height} exceeds the offscreen "
+                                f"{context}: requested {width}x{height} exceeds the offscreen "
                                 f"framebuffer cap ({max_w}x{max_h}). Lower width/height or "
                                 f"rebuild the model with a larger <global offwidth='...' offheight='...'/>."
                             )
@@ -1121,7 +1141,7 @@ class RenderingMixin:
         cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
-        if err := self._validate_render_dims(w, h):
+        if err := self._validate_render_dims(w, h, "render"):
             return err
 
         try:
@@ -1250,7 +1270,7 @@ class RenderingMixin:
         cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
-        if err := self._validate_render_dims(w, h):
+        if err := self._validate_render_dims(w, h, "render_depth"):
             return err
 
         try:
@@ -1456,7 +1476,7 @@ class RenderingMixin:
         cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
-        if err := self._validate_render_dims(w, h):
+        if err := self._validate_render_dims(w, h, "get_frame"):
             raise ValueError(err["content"][0]["text"])
 
         import numpy as _np
@@ -1573,7 +1593,7 @@ class RenderingMixin:
         # the offscreen framebuffer cap describes a frame render()/get_frame()
         # refuse to draw. Same guard, same message as those two call sites -
         # raised here because this API reports failure by exception.
-        if err := self._validate_render_dims(w, h):
+        if err := self._validate_render_dims(w, h, "get_camera_params"):
             raise ValueError(err["content"][0]["text"])
 
         with self._lock:

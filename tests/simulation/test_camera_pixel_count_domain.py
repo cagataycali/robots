@@ -143,8 +143,20 @@ def _newton_add_camera(stub: types.SimpleNamespace, **kwargs: Any) -> dict[str, 
 
 
 def _newton_resolve(stub: types.SimpleNamespace, camera_name: str | None, **kwargs: Any) -> tuple:
-    """``_resolve_camera_view``, the funnel Newton's three render surfaces share."""
-    return NewtonSimEngine._resolve_camera_view(stub, camera_name, kwargs.get("width"), kwargs.get("height"))  # type: ignore[arg-type]
+    """``_resolve_camera_view``, the funnel Newton's three render surfaces share.
+
+    ``context`` defaults to ``"render"`` here because these cells grade the
+    shared domain rather than which caller a refusal names; the attribution
+    itself is graded in
+    ``tests/simulation/test_render_dimension_refusal_names_the_caller.py``.
+    """
+    return NewtonSimEngine._resolve_camera_view(
+        stub,  # type: ignore[arg-type]
+        camera_name,
+        kwargs.get("width"),
+        kwargs.get("height"),
+        kwargs.get("context", "render"),
+    )
 
 
 def _verdict(call: Callable[[], Any]) -> str:
@@ -248,16 +260,18 @@ class TestNewtonAddCamera:
 
 class TestNewtonRenderFamily:
     """``_resolve_camera_view`` is the funnel ``render`` / ``get_frame`` /
-    ``get_camera_params`` share, so one guard covers all three."""
+    ``get_camera_params`` share, so one guard covers all three - and each one
+    reports it under its own name, which is what ``context`` carries."""
 
     @pytest.mark.parametrize("bad", _BAD_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     @pytest.mark.parametrize("camera", ["default", "cam"])
-    def test_unusable_override_is_refused(self, camera, param, bad):
+    @pytest.mark.parametrize("context", ["render", "get_frame", "get_camera_params"])
+    def test_unusable_override_is_refused(self, context, camera, param, bad):
         stub = _newton_stub()
         assert _newton_add_camera(stub, name="cam", width=320, height=240)["status"] == "success"
-        with pytest.raises(ValueError, match=f"render: {param} must be a positive integer"):
-            _newton_resolve(stub, camera, **{param: bad})
+        with pytest.raises(ValueError, match=f"{context}: {param} must be a positive integer"):
+            _newton_resolve(stub, camera, context=context, **{param: bad})
 
     def test_zero_is_refused_rather_than_read_as_omitted(self):
         """Membership, not truthiness.

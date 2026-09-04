@@ -4137,9 +4137,8 @@ class MuJoCoSimEngine(
         # ``render`` validates its dims, so a bad size fails at config time with
         # a clear message instead of deferring a cryptic GL/Renderer error (or a
         # silent non-positive dimension) to the first rollout that renders it.
-        if dim_err := self._validate_render_dims(width, height):
-            text = dim_err["content"][0]["text"].replace("render:", "add_camera:", 1)
-            return {"status": "error", "content": [{"text": text}]}
+        if dim_err := self._validate_render_dims(width, height, "add_camera"):
+            return dim_err
 
         # reject duplicate camera names.  Previously a second
         # add_camera(name=existing) silently overwrote the registry entry but

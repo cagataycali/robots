@@ -1568,7 +1568,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         is_default = camera_name in FREE_CAMERA_TOKENS
         label = "default" if is_default else camera_name
         try:
-            eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+            eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height, "render")
         except KeyError:
             return {
                 "status": "error",
@@ -1719,7 +1719,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             raise RuntimeError("No world. Call create_world first.")
-        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height, "get_frame")
         rgb = self._render_rgb(w, h, eye=eye, target=target, fov_deg=fov_deg)
         return np.asarray(rgb, dtype=np.uint8), None
 
@@ -1754,7 +1754,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         if self._world is None or self._model is None:
             raise RuntimeError("No world. Call create_world first.")
-        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height, "get_camera_params")
 
         fy = 0.5 * h / math.tan(math.radians(fov_deg) / 2.0)
         K = np.array([[fy, 0.0, 0.5 * w], [0.0, fy, 0.5 * h], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -1777,7 +1777,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return _CameraParams(K=K, T_world_cam=T, width=w, height=h, znear=0.01, zfar=1_000_000.0)
 
     def _resolve_camera_view(
-        self, camera_name: str | None, width: int | None, height: int | None
+        self, camera_name: str | None, width: int | None, height: int | None, context: str
     ) -> tuple[tuple[float, ...], tuple[float, ...], float, int, int]:
         """Resolve ``(eye, target, fov_deg, width, height)`` for a camera name.
 
@@ -1788,10 +1788,20 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         A supplied ``width`` / ``height`` is validated on the same shared floor
         (:func:`~strands_robots.utils.positive_count_error`) that
         ``add_camera`` applies, so the config-time and call-time domains agree
-        and every render entry point reports the same refusal. ``None`` means
+        and every render entry point refuses the same values for the same
+        reason. ``context`` is the caller's own name, so each of the three
+        reports that refusal as its own: the funnel is shared, the subject of
+        the message is not. ``None`` means
         "take the camera's configured size"; membership decides that, not
         truthiness - reading ``0`` as omitted would render at the default
         resolution and report it as the requested one.
+
+        Args:
+            camera_name: Camera to resolve, or a free-camera token.
+            width: Requested width override, or ``None`` for the camera's own.
+            height: Requested height override, or ``None`` for the camera's own.
+            context: The public method being called, quoted as the subject of a
+                dimension refusal so a caller is pointed at the call it made.
 
         Raises:
             KeyError: unknown camera name.
@@ -1799,7 +1809,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 the camera's mount body is no longer in the model.
         """
         for param, value in (("width", width), ("height", height)):
-            if value is not None and (text := positive_count_error(value, param, "render")) is not None:
+            if value is not None and (text := positive_count_error(value, param, context)) is not None:
                 raise ValueError(text)
         if camera_name in FREE_CAMERA_TOKENS:
             return (
