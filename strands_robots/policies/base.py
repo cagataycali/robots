@@ -357,10 +357,12 @@ class Policy(ABC):
         start of the rollout with the available body names, rather than reading
         a missing key as a zero pose on every tick.
 
-        The runtime collects this over the whole policy tree
-        (:func:`iter_policy_tree`), so a policy that declares a body is honoured
-        when it is wrapped: a wrapper which does not override this property does
-        not hide its child's declaration.
+        Every surface that reads this collects it over the whole policy tree
+        through :func:`collect_required_bodies`, so a policy that declares a
+        body is honoured when it is wrapped: a wrapper which does not override
+        this property does not hide its child's declaration. That one owner is
+        shared with the remote-inference handshake, so a policy served over the
+        wire declares the same bodies it does in-process.
 
         Returns:
             Ordered, de-duplicated body names. Empty (the default) means the

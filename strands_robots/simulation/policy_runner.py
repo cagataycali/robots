@@ -931,9 +931,12 @@ class PolicyRunner:
         here - with the available body names - rather than 300 steps of a
         silently absent key that the policy reads as a zero pose.
 
-        The declaration is collected over the whole policy tree
-        (:func:`~strands_robots.policies.base.iter_policy_tree`), not off the
-        object this runner was handed. A wrapper is a different object than the
+        The declaration is collected over the whole policy tree by
+        :func:`~strands_robots.policies.base.collect_required_bodies`, not off
+        the object this runner was handed. That function owns the walk and the
+        ``TypeError`` refusals documented below, and the remote-inference
+        handshake reads the same owner, so what a tree declares cannot depend on
+        which surface asked. A wrapper is a different object than the
         policy inside it, so reading the attribute off the wrapper reports a
         child's declaration as absent - which is the case
         :attr:`~strands_robots.policies.base.Policy.children` exists to answer,
