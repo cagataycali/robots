@@ -772,7 +772,9 @@ hatch run format            # ruff check --fix, ruff format
      **contributor's** branch - that is the `require_last_push_approval` identity
      problem below, which is independent of dismissal and does not care that the
      merge was clean. Ask the contributor to absorb `main` so they stay the last
-     pusher; #1827 was left alone for that reason.
+     pusher; #1827 was left alone for that reason. The **"Update branch" button**
+     is covered too -- it is the same push, and #2907 spent its sole approval on
+     it twice.
    - *And that the mutation named the object you meant.* A mutation
      names its subject by node ID and by nothing else - `createIssue` takes a
      `repositoryId`, not an owner and a name - so a well-formed ID that is wrong
@@ -1604,8 +1606,8 @@ hatch run format            # ruff check --fix, ruff format
    | #1035 at `8d6a4c42` | the maintainer | the maintainer | the maintainer | `REVIEW_REQUIRED` |
    | #1722 | `strands-robots` | the maintainer | the maintainer | `REVIEW_REQUIRED` |
 
-   So **pushing a fix to a contributor's branch consumes the approval of
-   whoever owns the token you push with**, turning a PR one maintainer could
+   So **putting a commit on a contributor's head consumes the approval of
+   whoever that head is attributed to**, turning a PR one maintainer could
    merge into one that needs a second. It compounds with
    `dismiss_stale_reviews_on_push`, which drops the existing approval in the
    same motion that disqualifies that account from re-supplying it. Prefer
@@ -1613,6 +1615,17 @@ hatch run format            # ruff check --fix, ruff format
    pusher; when the agent must push, that PR now requires a second approver,
    and saying so is the difference between a one-line request and a branch that
    never merges.
+
+   **Every spelling counts, including the one that is not a `git` command.** The
+   **"Update branch" button** on the pull request page is this same push. It sits
+   beside the merge button, presents itself as branch maintenance, prompts
+   nothing, needs no local checkout and handles no token the operator holds --
+   and it makes whoever clicked it the last pusher exactly as `git push` does. It
+   is not an exception because it is one click. Measured on #2907, a branch whose
+   author is `logesh4v`: the button produced its head twice, four days apart, and
+   each press spent the pull request's sole approval -- the second time after the
+   mechanism had already been written up in a comment on that same pull request.
+   A base refresh on a contributor's branch is theirs to make.
 
    **#1035 later crossed into the second row, which makes it the whole rule
    observed twice on one pull request.** CI triage on it correctly diagnosed a
@@ -1643,11 +1656,24 @@ hatch run format            # ruff check --fix, ruff format
    state now, and needs an approver who is not the account that pushed
    `8d6a4c42`.
 
-   Do not try to settle this from the commit metadata, which misleads in both
-   directions. #1722's author and committer are `strands-robots`, an identity
-   distinct from the approver, which reads as the rule being satisfied when it is
-   not; #1035's head names the maintainer outright. Same `REVIEW_REQUIRED`,
-   opposite metadata. Only `triggering_actor` is load-bearing.
+   Do not try to settle this from the commit metadata, which misleads in three
+   different directions. All three heads below read `REVIEW_REQUIRED`; only
+   `triggering_actor` is load-bearing.
+
+   | head | git author / committer | metadata reads as |
+   |---|---|---|
+   | #1722 `d938686` | both `strands-robots`, an identity distinct from the approver | rule satisfied |
+   | #1035 `8d6a4c42` | both the maintainer outright | rule unsatisfied |
+   | #2907 `1c66c8f3` | author the maintainer, committer **`web-flow`** | nobody pushed this at all |
+
+   The third row is the most reassuring of the three and so the least likely to
+   prompt a check: a commit whose committer is a GitHub service account reads as
+   GitHub having performed the merge rather than a person. It is what the
+   **"Update branch" button** leaves behind, and the clicker survives only in the
+   git *author* field and in `triggering_actor` -- both `cagataycali` on that
+   head, across all 12 of its workflow runs, on a branch authored by `logesh4v`.
+   A table that stopped two of the three shapes is why this one was read twice as
+   harmless.
 
    All of the above was documented here and enforced by nothing, which is the
    same shape as the changelog rule in step 3 before #1784. It is now surfaced by
