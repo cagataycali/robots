@@ -60,7 +60,12 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
-from strands_robots.utils import lerobot_version, validation_split_error, validation_split_fraction
+from strands_robots.utils import (
+    lerobot_version,
+    stale_output_dir_is_clearable,
+    validation_split_error,
+    validation_split_fraction,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from lerobot.configs.train import TrainPipelineConfig
@@ -1709,10 +1714,13 @@ class LerobotTrainer(Trainer):
         parent = os.path.dirname(os.path.abspath(spec.output_dir)) or "."
         os.makedirs(parent, exist_ok=True)
 
-        # Fresh-start hygiene: clear a stale output_dir with no resumable ckpt.
-        if not spec.resume and os.path.isdir(spec.output_dir):
-            if self.latest_checkpoint(spec.output_dir) is None:
-                shutil.rmtree(spec.output_dir, ignore_errors=True)
+        # Fresh-start hygiene: clear a stale EMPTY output_dir so lerobot's
+        # "already exists" guard does not refuse the run. Asked through the one
+        # owner of that bound, which the lerobot_train tool asks too: a directory
+        # holding anything is left for lerobot to refuse by name, because the
+        # removal is recursive and reports neither what it took nor a failure.
+        if not spec.resume and stale_output_dir_is_clearable(spec.output_dir):
+            shutil.rmtree(spec.output_dir, ignore_errors=True)
 
         job_id = f"lerobot-{int(time.time())}"
         log_path = os.path.join(parent, f"{os.path.basename(spec.output_dir)}.{job_id}.log")

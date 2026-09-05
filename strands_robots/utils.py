@@ -2630,6 +2630,42 @@ def published_string_error(value: Any, param: str, context: str) -> str | None:
     )
 
 
+def stale_output_dir_is_clearable(output_dir: str) -> bool:
+    """True when ``output_dir`` exists and holds nothing, so clearing it is free.
+
+    Both LeRobot training entry points clear a stale ``output_dir`` on a fresh
+    (non-resuming) start, because lerobot's own ``TrainPipelineConfig.validate``
+    refuses a pre-existing one unless ``resume=True``. This is the single owner
+    of the bound on that hygiene, so the two cannot disagree about what a fresh
+    start is allowed to remove.
+
+    Emptiness is the bound because the removal is a recursive
+    ``shutil.rmtree(..., ignore_errors=True)``: it reports neither what it took
+    nor a partial failure, and nothing it takes is recoverable. A directory with
+    nothing in it is the only one where that is free.
+
+    Emptiness also SUBSUMES the "no resumable checkpoint" test, so this needs no
+    checkpoint probe: a directory holding a checkpoint is not empty, whatever
+    layout the checkpoint is in. That matters because a checkpoint is not always
+    visible to a resume probe - lerobot's ``save_checkpoint`` writes
+    ``model.safetensors`` before ``train_config.json``, so a run interrupted
+    between the two leaves the trained weights on disk under a checkpoint no
+    resume probe reports, and a checkpoint-keyed bound clears exactly that.
+
+    Args:
+        output_dir: Path a run is about to write checkpoints into.
+
+    Returns:
+        ``True`` only when the path is an existing directory with no entries.
+        ``False`` for a path that does not exist (there is nothing to clear), is
+        not a directory, or holds anything at all.
+    """
+    path = Path(output_dir)
+    if not path.is_dir():
+        return False
+    return not any(path.iterdir())
+
+
 def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
     """``dataset.eval_split`` that holds out exactly ``val_episodes`` episodes.
 
