@@ -1171,12 +1171,12 @@ class Mesh(SensorLoopsMixin):
         # inject phantoms with stale envelopes. Reject heartbeats whose
         # timestamp is older than the freshness window or implausibly
         # future-skewed. Heartbeats without a numeric timestamp are also
-        # rejected (the publisher always sets one; a missing/garbage value is
-        # either a malformed or hand-crafted replay envelope). Reuses the
-        # safety-replay freshness/skew env knobs so operators tune one set of
-        # clock-drift bounds for the whole mesh.
-        _ts = data.get("timestamp")
-        if not isinstance(_ts, (int, float)) or isinstance(_ts, bool):
+        # rejected, and so are non-finite ones (the publisher always sets a
+        # real clock reading; anything else is a malformed or hand-crafted
+        # replay envelope). Reuses the safety-replay freshness/skew env knobs
+        # so operators tune one set of clock-drift bounds for the whole mesh.
+        _ts = _security.as_wire_timestamp(data.get("timestamp"))
+        if _ts is None:
             logger.debug("[mesh] %s: presence from %s missing/invalid timestamp -- dropped", self.peer_id, peer_id)
             return
         _now = time.time()
@@ -2694,9 +2694,9 @@ class Mesh(SensorLoopsMixin):
         # not from a canonical issuer -- reject (also closes the trivial
         # replay surface where an attacker strips ``t`` to bypass the
         # freshness check).
-        envelope_t = data.get("t")
+        envelope_t = _security.as_wire_timestamp(data.get("t"))
         now = time.time()
-        if not isinstance(envelope_t, (int, float)):
+        if envelope_t is None:
             logger.warning(
                 "[safety] %s: refusing remote estop -- envelope missing/invalid ``t``",
                 self.peer_id,
@@ -3091,9 +3091,9 @@ class Mesh(SensorLoopsMixin):
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
         #  tuple we have already accepted within the freshness
         #  window. Bounded at _resume_replay_cache_max() entries.
-        envelope_t = data.get("t")
+        envelope_t = _security.as_wire_timestamp(data.get("t"))
         now = time.time()
-        if not isinstance(envelope_t, (int, float)):
+        if envelope_t is None:
             logger.warning(
                 "[safety] %s: refusing remote resume -- envelope missing/invalid ``t``",
                 self.peer_id,

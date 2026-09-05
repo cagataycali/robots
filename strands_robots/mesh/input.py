@@ -34,6 +34,7 @@ from strands_robots.bus_access import motor_norm_modes, write_action
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.mesh.security import (
     ValidationError,
+    as_wire_timestamp,
     input_frame_slew_violation,
     input_value_abs_by_key,
     merge_slew_baseline,
@@ -705,9 +706,10 @@ class InputReceiver:
         # InputPublisher._publish_loop), so we just have to CHECK it. We reuse
         # the same freshness/forward-skew env knobs as the resume/e-stop replay
         # defence so operators tune one set of clock-drift bounds for the
-        # whole mesh. Frames with a missing/non-numeric ``t`` are rejected too
-        # (the publisher always sets it; absence means malformed or a
-        # hand-crafted replay envelope) -- identical posture to M-3. Dropped
+        # whole mesh. A ``t`` that is missing, non-numeric or non-finite is
+        # rejected too (the publisher always sets a real clock reading, so
+        # anything else is malformed or a hand-crafted replay envelope) --
+        # identical posture to M-3. Dropped
         # frames are counted + rate-limited-logged, never raised, because this
         # is a 50Hz+ hot loop.
         from strands_robots.mesh.core import (
@@ -715,8 +717,8 @@ class InputReceiver:
             _resume_freshness_window_s,
         )
 
-        _frame_t = data.get("t")
-        if not isinstance(_frame_t, (int, float)) or isinstance(_frame_t, bool):
+        _frame_t = as_wire_timestamp(data.get("t"))
+        if _frame_t is None:
             self._refuse(
                 "freshness",
                 "[mesh] input frame rejected (missing/invalid timestamp) from %s",
