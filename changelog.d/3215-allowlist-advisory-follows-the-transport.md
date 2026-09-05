@@ -1,3 +1,5 @@
+### Fixed: the Device Connect allowlist advisory follows the transport, not one of its two sources
+
 The Device Connect caller allowlist advisory now follows the transport that
 carries the call rather than one of the two sources that decide it. A
 `DeviceRuntime` resolves its posture from its own `allow_insecure` argument first
