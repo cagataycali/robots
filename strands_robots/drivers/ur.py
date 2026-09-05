@@ -209,6 +209,34 @@ def _refuse(reason: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": reason}]}
 
 
+def _axis_count_refusal(values: list[float], quantity: str) -> str | None:
+    """Refuse a controller vector that does not hold one value per joint.
+
+    Every quantity this driver reads off the RTDE registers is positional: it
+    is named by zipping it against :data:`JOINT_NAMES`. So a vector of a
+    different width is not a partial answer to be reported as far as it goes -
+    it is an answer this driver cannot name. A shorter one drops the joints it
+    has no values for, and a longer one has its extra element truncated away,
+    which is the case that cannot be told apart from a genuine six-axis read
+    afterwards.
+
+    Args:
+        values: The vector the controller answered with.
+        quantity: What it holds, named as the refusal should read it -
+            ``"joint positions"``, ``"joint velocities"``.
+
+    Returns:
+        ``None`` when the width is right, otherwise the reason, which the
+        caller prefixes with its own verb name.
+    """
+    if len(values) == len(JOINT_NAMES):
+        return None
+    return (
+        f"the controller reported {len(values)} {quantity}, expected {len(JOINT_NAMES)}. "
+        "This driver serves six-axis e-Series arms only."
+    )
+
+
 def _resolve_rtde() -> tuple[Any, Any] | str:
     """Import ``ur_rtde``'s two interfaces, or report why they are unavailable.
 
@@ -851,14 +879,19 @@ class URDriver:
             ``joint_velocities``, ``tcp_pose`` (x, y, z in metres then an
             axis-angle rotation vector), ``tcp_speed``, ``wrench`` (three forces
             in newtons then three torques in newton-metres) and the two
-            controller modes; or a refusal when the arm is not connected.
+            controller modes; or a refusal when the arm is not connected, or
+            when the controller answers a vector that is not one value per
+            joint - the same axis-count rule :meth:`send_action` is held to,
+            since ``joints`` and ``joint_velocities`` are named by position.
         """
         with self._lock:
             receive = self._receive
         if receive is None:
             return _refuse("state: not connected - call connect_eagerly() first")
+        joints, reason = self._read_joints(receive)
+        if reason is not None:
+            return _refuse(f"state: {reason}")
         try:
-            joints = [float(value) for value in receive.getActualQ()]
             velocities = [float(value) for value in receive.getActualQd()]
             tcp_pose = [float(value) for value in receive.getActualTCPPose()]
             tcp_speed = [float(value) for value in receive.getActualTCPSpeed()]
@@ -867,8 +900,10 @@ class URDriver:
             safety_mode = int(receive.getSafetyMode())
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return _refuse(f"state: the controller's RTDE read failed: {exc}")
+        if (reason := _axis_count_refusal(velocities, "joint velocities")) is not None:
+            return _refuse(f"state: {reason}")
 
-        named = dict(zip(JOINT_NAMES, joints, strict=False))
+        named = dict(zip(JOINT_NAMES, joints, strict=True))
         with self._lock:
             self._joints = dict(named)
             self._pose = {"tcp_pose": tcp_pose, "frame": "base"}
@@ -880,7 +915,7 @@ class URDriver:
                         "robot": self._tool_name,
                         "model": self._model,
                         "joints": named,
-                        "joint_velocities": dict(zip(JOINT_NAMES, velocities, strict=False)),
+                        "joint_velocities": dict(zip(JOINT_NAMES, velocities, strict=True)),
                         "tcp_pose": tcp_pose,
                         "tcp_speed": tcp_speed,
                         "wrench": wrench,
@@ -968,11 +1003,8 @@ class URDriver:
             joints = [float(value) for value in receive.getActualQ()]
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [], f"the controller's joint read failed: {exc}"
-        if len(joints) != len(JOINT_NAMES):
-            return [], (
-                f"the controller reported {len(joints)} joint positions, expected {len(JOINT_NAMES)}. "
-                "This driver serves six-axis e-Series arms only."
-            )
+        if (reason := _axis_count_refusal(joints, "joint positions")) is not None:
+            return [], reason
         return joints, None
 
     def _absorb_state(self) -> None:

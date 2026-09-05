@@ -34,6 +34,11 @@ class FakeReceive:
         self.host = host
         self.frequency = frequency
         self.q = list(MEASURED_Q)
+        # The velocity register, read separately on a real controller. ``None``
+        # derives it from ``q``'s width, which is what a healthy arm reports;
+        # setting it poses a velocity vector that disagrees with the position
+        # one, which a double deriving the two from one list cannot express.
+        self.qd: list[float] | None = None
         self.robot_mode = 7  # RUNNING
         self.safety_mode = 1  # NORMAL
         self.disconnected = False
@@ -42,7 +47,7 @@ class FakeReceive:
         return list(self.q)
 
     def getActualQd(self) -> list[float]:  # noqa: N802
-        return [0.0] * len(self.q)
+        return [0.0] * len(self.q) if self.qd is None else list(self.qd)
 
     def getActualTCPPose(self) -> list[float]:  # noqa: N802
         return list(MEASURED_TCP_POSE)
