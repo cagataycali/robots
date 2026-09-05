@@ -287,7 +287,7 @@ def _reads_a_wire_timestamp(node: ast.AST) -> bool:
     )
 
 
-def _calls_the_rule(func: ast.FunctionDef) -> bool:
+def _calls_the_rule(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     for node in ast.walk(func):
         if not isinstance(node, ast.Call):
             continue
