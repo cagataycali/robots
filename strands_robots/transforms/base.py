@@ -87,11 +87,19 @@ class TransformSpec:
             would destroy the recorded data the transform exists to multiply,
             so it is refused whatever the flag says.
         source_repo_id: Identifier written into the source dataset handle when
-            it is opened by ``source_root``. Purely a label here (the root is
-            the load-bearing field); recorded into each provenance record so a
-            generated episode names where its trajectory came from.
-        output_repo_id: Identifier for the augmented dataset. A label, like
-            :attr:`source_repo_id`; the dataset lives at :attr:`output_root`.
+            it is opened by ``source_root``. The root is the load-bearing
+            field, but this is not merely decorative: it is recorded verbatim
+            into each provenance record, so it is what a generated episode
+            names when asked where its trajectory came from. Held to a
+            non-empty string, because the sidecar carrying it is written only
+            after every generated episode is on disk - a value ``json.dumps``
+            cannot render would raise there and leave a fully synthetic
+            dataset with no provenance file, which reads as "recorded". An
+            ``owner/name`` slash is not required (that is a hub concern).
+        output_repo_id: Identifier for the augmented dataset; the dataset
+            itself lives at :attr:`output_root`. Held to the same non-empty
+            string domain as :attr:`source_repo_id` - one value, one verdict,
+            whichever end of the transform it names.
         episodes: Subset of source episode indices to transform. ``None``
             (default) means every episode. This is a subset selector, so it is
             read by membership rather than truthiness: an EMPTY list asks for
@@ -329,8 +337,9 @@ class DatasetTransform(ABC):
 
         Checks the provider-agnostic half of the contract: the source is a
         LeRobotDataset v3 root, the output is named and distinct from the
-        source, and the selector / count / flag fields are inside their value
-        domains. Read-only (stat + ``isfile``); never writes.
+        source, both dataset identities can be recorded into the output's
+        provenance, and the selector / count / flag fields are inside their
+        value domains. Read-only (stat + ``isfile``); never writes.
         """
         problems: list[str] = []
         ctx = f"{self.provider_name}.validate"
@@ -352,6 +361,36 @@ class DatasetTransform(ABC):
             problems.append(
                 f"output_root already holds a dataset ({spec.output_root}); pass overwrite=True to replace it"
             )
+
+        # The two repo ids are the dataset IDENTITIES, and the source one is
+        # written verbatim into every provenance record - the field whose whole
+        # job is naming where a generated episode's trajectory came from. Two
+        # things make an unusable value here worse than a wrong label. The
+        # sidecar is written LAST, after every generated episode is already on
+        # disk, and its descriptive keys are carried through with their type
+        # untouched by design (``write_provenance`` grades only the keys a
+        # reader turns into a verdict) - so a value ``json.dumps`` cannot
+        # render raised out of the sidecar write with a complete synthetic
+        # dataset already written, and a dataset carrying NO provenance file
+        # declares no synthetic episodes at all, which is exactly the silent
+        # mixing of generated and recorded data that file exists to prevent.
+        # A blank string is refused for the same reason the roots are: the
+        # record would answer "which dataset did this trajectory come from?"
+        # with nothing. No further shape is required - an ``owner/name`` slash
+        # is a hub concern, and ``output_root`` is the load-bearing path here,
+        # so the slashless local label the recorder itself accepts is honored.
+        for param, value in (("source_repo_id", spec.source_repo_id), ("output_repo_id", spec.output_repo_id)):
+            if not isinstance(value, str):
+                problems.append(
+                    f"{param} must be a non-empty string naming the dataset (got {type(value).__name__}); "
+                    "it is recorded into the output's provenance, which is written only after every "
+                    "generated episode is already on disk"
+                )
+            elif not value.strip():
+                problems.append(
+                    f"{param} must be a non-empty string naming the dataset (got {value!r}); "
+                    "a blank identity cannot say which dataset a generated episode came from"
+                )
 
         # ``episodes`` is a SUBSET SELECTOR over the source episodes, so it is
         # read ``is None`` (all) / by membership (some), never by truthiness:

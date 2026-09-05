@@ -16,7 +16,10 @@ pinned:
   without an edit here;
 * ``overwrite`` is a posture flag, checked as a strict boolean
   (:func:`~strands_robots.utils.boolean_flag_error`) - ``"false"`` must not
-  select dataset deletion by truthiness.
+  select dataset deletion by truthiness;
+* the two repo ids are dataset IDENTITIES, held to a non-empty string, because
+  ``source_repo_id`` is recorded verbatim into the output's provenance and that
+  sidecar is written only after every generated episode is on disk.
 
 One refusal is deliberately unconditional: ``output_root == source_root`` is
 refused whatever ``overwrite`` says, because that spelling plus
@@ -181,3 +184,53 @@ class TestPostureAndHooks:
         """Preflight is pure: a passing validate leaves the output root absent."""
         assert _validate(spec) == []
         assert not (tmp_path / "aug").exists()
+
+
+class TestDatasetIdentities:
+    """The two repo ids must be able to name a dataset in the provenance record.
+
+    ``source_repo_id`` is written verbatim into every provenance record - it is
+    what a generated episode names when asked where its trajectory came from -
+    and that sidecar is written only after every generated episode is on disk.
+    So an identity is preflighted like the roots rather than trusted like a
+    label: the alternative is discovering it at the sidecar write, having
+    already produced a synthetic dataset that no longer declares itself one.
+    """
+
+    @pytest.mark.parametrize("param", ["source_repo_id", "output_repo_id"])
+    @pytest.mark.parametrize(
+        "value",
+        [None, 0, 1, True, [], {}, ("local", "source"), object(), {"local/source"}],
+        ids=["none", "zero", "one", "bool", "list", "dict", "tuple", "object", "set"],
+    )
+    def test_a_non_string_identity_is_refused(self, spec, param, value: Any):
+        setattr(spec, param, value)
+        problems = _validate(spec)
+        assert any(f"{param} must be a non-empty string" in p for p in problems), problems
+
+    @pytest.mark.parametrize("param", ["source_repo_id", "output_repo_id"])
+    @pytest.mark.parametrize("value", ["", " ", "\t\n"], ids=["empty", "space", "whitespace"])
+    def test_a_blank_identity_is_refused(self, spec, param, value: str):
+        """A string that names nothing answers the provenance question with a blank."""
+        setattr(spec, param, value)
+        problems = _validate(spec)
+        assert any(f"{param} must be a non-empty string" in p for p in problems), problems
+
+    @pytest.mark.parametrize("param", ["source_repo_id", "output_repo_id"])
+    @pytest.mark.parametrize(
+        "value",
+        ["local/source", "no-slash", "owner/name/deep", "  padded/id  "],
+        ids=["default-shape", "slashless-local-label", "extra-segment", "padded"],
+    )
+    def test_a_usable_identity_is_honored(self, spec, param, value: str):
+        """No hub shape is imposed: ``output_root`` is the load-bearing path here."""
+        setattr(spec, param, value)
+        assert _validate(spec) == []
+
+    def test_both_identities_are_reported_together(self, spec):
+        """Each end is named on its own, so one fix does not hide the other."""
+        spec.source_repo_id = None
+        spec.output_repo_id = ""
+        problems = _validate(spec)
+        assert any("source_repo_id must be" in p for p in problems)
+        assert any("output_repo_id must be" in p for p in problems)
