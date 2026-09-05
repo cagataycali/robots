@@ -90,8 +90,11 @@ The by-name section below is now a table derived from ``_TOTAL_BY_MEMBERSHIP``,
 the guard the owning half already had, so a provider cannot be classified as
 already-total without being driven.
 
-``None`` and an empty list keep their existing "auto-detect" meaning: like every
-other consumer of the shared domain, the check is gated on a truthy value.
+``None`` and an empty list keep their existing "auto-detect" meaning: like the
+other consumers of the shared domain whose absent value DERIVES the list, this
+check is gated on a truthy value. (The VERA ``image_keys`` is the one consumer
+where it is not, because it selects a subset of the observation it was handed, so
+an empty selection there is refused rather than derived.)
 
 The AST classifier below proves that each of the nine owning surfaces CALLS
 the shared domain. It cannot prove that any of them RAISES: a body keeping the

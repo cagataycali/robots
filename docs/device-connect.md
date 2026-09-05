@@ -50,7 +50,7 @@ Each robot is wrapped as a Device Connect device by a `DeviceDriver` adapter:
 | Driver | Wraps | Exposes |
 |--------|-------|---------|
 | `SimulationDeviceDriver` | a MuJoCo `Simulation` | `execute`, `getFeatures`, `getStatus`, `reset`, `step`, `stop` |
-| `RobotDeviceDriver` | a hardware `Robot` | the same RPC surface, driving real servos |
+| `RobotDeviceDriver` | a hardware `Robot` **or a native driver** | the same RPC surface, driving real servos |
 | `ReachyMiniDriver` | a Pollen Reachy Mini | device-native RPCs (`look`, `nod`, …) over Zenoh / WebSocket |
 
 `stop` reports what it halted rather than asserting that it did. On a simulation
@@ -62,6 +62,17 @@ rollout are different answers and either can be checked against
 `status="success"` with an empty `stopped` list — never an error, because a peer
 reported as "did not stop" when it had nothing to stop is the false alarm that
 teaches an operator to ignore the warning.
+
+`getState` reports joint positions for either kind of robot. A lerobot robot is a
+*wrapper* holding the device that owns the motor bus, while a native driver
+([`driver="strands"`](getting-started/robot-factory.md)) owns its bus directly and
+so *is* that device — `Robot(mode="real")` attaches Device Connect to both, and the
+RPC resolves which one to read through the same resolution the mesh state topic
+uses. The read goes through the shared motor-bus lock, so it waits its turn behind
+an in-flight rollout, teleop write or mesh probe rather than colliding with it, and
+it reads the motors directly: a robot whose camera is failing still reports where
+its joints are. A robot that can answer no joint read at all is reported without a
+`joints` key rather than as an error.
 
 ### Published state events
 

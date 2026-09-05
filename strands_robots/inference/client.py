@@ -32,10 +32,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
-from strands_robots.policies.base import Policy
+from strands_robots.policies.base import Policy, chunk_count_error
 from strands_robots.utils import name_list_error, positive_finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
@@ -47,6 +48,63 @@ logger = logging.getLogger(__name__)
 #: this is generous; override via the ``request_timeout`` kwarg.
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_CONNECT_TIMEOUT = 10.0
+
+
+#: Metadata fields the ``ready`` handshake advertises as a per-inference chunk
+#: count. Both are consumed as slice bounds over the action chunk, so they share
+#: :func:`~strands_robots.policies.base.chunk_count_error`'s domain with the
+#: constructor parameters a locally-loaded checkpoint is held to.
+_MIRRORED_CHUNK_COUNTS = ("execution_horizon", "actions_per_step")
+
+#: Metadata fields advertised as a capability flag. JSON spells a boolean
+#: ``true``/``false``, so anything else is a peer that does not speak this
+#: protocol - and a non-empty string is TRUTHY, which is how a peer answering
+#: ``"no"`` used to turn a capability ON.
+_MIRRORED_FLAGS = ("requires_images", "supports_rtc")
+
+
+def _metadata_refusal(metadata: Mapping[str, Any]) -> str | None:
+    """Report why advertised policy metadata cannot be mirrored.
+
+    The handshake is the one place a peer's own numbers become this policy's
+    introspection answers, so it is where they have to be checked. Reading them
+    unchecked is not merely lenient, it is silent: the chunk counts land behind
+    :attr:`Policy.execution_horizon`'s ``max(1, int(...))``, which is documented
+    on :func:`~strands_robots.policies.base.chunk_count_error` as "silently
+    destructive" for exactly this reason - a count no consumer can execute
+    becomes ``1``, so an advertised ``0`` turns a chunk-emitting remote policy
+    into a single-step one and :meth:`Policy.is_chunk_emitting` reports
+    ``False``, which takes the rollout off the async-RTC path with nothing said.
+
+    Holding the wire to ``chunk_count_error``'s domain is what that function
+    asks for: it exists so "the same chunk count cannot be refused by a local
+    checkpoint and accepted by the server serving it", and this handshake is the
+    place the server does the accepting.
+
+    A field the handshake omits is not refused - the client keeps its own
+    default for it, which is what makes a peer advertising a subset of the
+    metadata (an older server, a third-party implementation) still usable.
+
+    Args:
+        metadata: The ``metadata`` payload of a ``ready`` or ``reset`` reply.
+
+    Returns:
+        Refusal text naming the field and the value, or ``None`` when every
+        advertised field is one this client can mirror.
+    """
+    for param in _MIRRORED_CHUNK_COUNTS:
+        if param in metadata and (error := chunk_count_error(metadata[param], param, "the served policy")):
+            return error
+    for param in _MIRRORED_FLAGS:
+        value = metadata.get(param, False)
+        if param in metadata and not isinstance(value, bool):
+            return (
+                f"the served policy advertised {param}={value!r} ({type(value).__name__}), which is not a JSON boolean."
+            )
+    if "provider_name" in metadata and not isinstance(metadata["provider_name"], str):
+        name = metadata["provider_name"]
+        return f"the served policy advertised provider_name={name!r} ({type(name).__name__}), which is not a string."
+    return None
 
 
 class RemotePolicy(Policy):
@@ -254,14 +312,37 @@ class RemotePolicy(Policy):
                 self._connect()
 
     def _apply_metadata(self, metadata: dict[str, Any]) -> None:
-        """Mirror the server policy's introspection metadata locally."""
+        """Mirror the server policy's introspection metadata locally.
+
+        Every advertised field is checked before ANY is applied, so a refusal
+        leaves the mirror exactly as it was rather than half-updated with the
+        fields that happened to be read before the offending one.
+
+        The coercions this used to apply are gone with the check that replaces
+        them: ``int()`` truncated an advertised ``8.9`` to ``8`` and parsed a
+        ``"16"`` that no local checkpoint would be allowed to pass, and
+        ``bool()`` turned the truthy string ``"no"`` into ``True``.
+
+        Args:
+            metadata: The ``metadata`` payload of a ``ready`` handshake or of a
+                ``reset`` reply, which re-advertises it once the server policy
+                has firmed up.
+
+        Raises:
+            ConnectionError: If a field the peer advertised is not one this
+                client can mirror, per :func:`_metadata_refusal`.
+        """
         if not metadata:
             return
+        if refusal := _metadata_refusal(metadata):
+            raise ConnectionError(
+                f"PolicyServer at {self.uri} advertised metadata this client cannot mirror: {refusal}"
+            )
         self._remote_provider_name = metadata.get("provider_name", self._remote_provider_name)
-        self._requires_images = bool(metadata.get("requires_images", self._requires_images))
-        self.actions_per_step = int(metadata.get("actions_per_step", self.actions_per_step))
-        self.supports_rtc = bool(metadata.get("supports_rtc", self.supports_rtc))
-        self._execution_horizon = int(metadata.get("execution_horizon", self._execution_horizon))
+        self._requires_images = metadata.get("requires_images", self._requires_images)
+        self.actions_per_step = metadata.get("actions_per_step", self.actions_per_step)
+        self.supports_rtc = metadata.get("supports_rtc", self.supports_rtc)
+        self._execution_horizon = metadata.get("execution_horizon", self._execution_horizon)
         # A JSON array of names. Coerced to the shape the robot host's runtime
         # validates rather than trusted verbatim, so a peer sending something
         # else cannot make the local resolver report the proxy as the declaring
@@ -447,7 +528,14 @@ class RemotePolicy(Policy):
                 self._reset_seed = seed
                 return
             reply = self._request({"type": protocol.MSG_RESET, "seed": seed})
-            self._apply_metadata(reply.get("metadata", {}))
+            try:
+                self._apply_metadata(reply.get("metadata", {}))
+            except ConnectionError:
+                # Same rule the handshake follows: a connection whose metadata
+                # this client rejected must not be handed to the next request,
+                # or the refusal is raised once and then served on silently.
+                self._discard_connection()
+                raise
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

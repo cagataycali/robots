@@ -3318,6 +3318,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         prim deletion is delegated to :meth:`destroy` / world teardown in
         Phase 1; only the in-Python registry is updated here.
 
+        "Rooted at" is judged at the USD path boundary, so a robot whose name
+        merely *extends* this one keeps its prim. Prim paths are interpolated
+        from the name (``{stage_path}/Robots/{name}``), so with ``arm`` and
+        ``arm_left`` both live the two paths share a prefix without one
+        containing the other.
+
         Parameters
         ----------
         name : str
@@ -3336,7 +3342,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     "content": [{"text": f"Robot '{name}' not found."}],
                 }
             prim_path = self._robots[name].prim_path
-            self._prim_registry = [p for p in self._prim_registry if not p.startswith(prim_path)]
+            # ``/`` is USD's path separator, so it is what separates a
+            # descendant prim from a sibling that merely shares a prefix. A bare
+            # ``startswith`` test made every robot whose NAME extends this one a
+            # descendant: with ``arm`` and ``arm_left`` both live,
+            # ``remove_robot("arm")`` dropped ``/World/Robots/arm_left`` from the
+            # teardown registry too, leaving a robot that is still registered in
+            # ``_robots`` with zero tracked prims for :meth:`destroy` to release
+            # -- the same corruption an empty name used to cause, reachable from
+            # two ordinary names. The other two removal verbs
+            # (:meth:`remove_object`, :meth:`remove_camera`) ask for their exact
+            # path, which cannot over-match; this one keeps the subtree prune its
+            # docstring promises and bounds it at the separator.
+            self._prim_registry = [
+                p for p in self._prim_registry if p != prim_path and not p.startswith(f"{prim_path}/")
+            ]
             del self._robots[name]
             # A controller closed over this robot's articulation is stale
             # the moment the robot is gone; drop it with the robot.

@@ -226,7 +226,14 @@ installs the torque shim (the `WBCTorqueController` PD->torque loop) for the
 duration of the call, then hands the world back afterwards: the controller is
 deregistered from the action-controller seam **and** the actuators are restored,
 so a second `run_policy` on the same sim installs a fresh shim and behaves
-exactly like the first. With the real
+exactly like the first. Constructing the shim directly takes
+`physics_substeps_per_control` - the `mj_step` calls one action is held for,
+which at the SONIC 0.005 s timestep makes the upstream `control_decimation=4`
+one inference per 20 ms (50 Hz). It is the same quantity as `control_substeps`
+and `send_action(n_substeps=)`, held to the same domain: a non-positive or
+non-integral count is refused rather than clamped, because the gait clock
+integrates at the declared control period, so a count other than the one asked
+for would run the gait at a rhythm nobody commanded. With the real
 `GR00T-WholeBodyControl-{Balance,Walk}.onnx` weights and `target_velocity =
 [0.5, 0, 0]` the base advances ~1.9 m over 5 s while holding pelvis height
 ~0.75 m and staying upright. Pass `wbc_install_torque_control=False` to opt out
