@@ -268,7 +268,12 @@ class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
 
         assert not hasattr(_NeverInitialized(), "_device")
         with pytest.raises(AttributeError):
-            _NeverInitialized()._device  # noqa: B018 - the read the default replaces
+            # Suppressed for both checkers, not just ruff: the read is
+            # deliberately invalid statically, and mypy runs in the same
+            # required job ruff does. (A comment *opening* with the mypy
+            # pragma would itself be read as a type comment - hence the
+            # wording here.)
+            _NeverInitialized()._device  # type: ignore[attr-defined]  # noqa: B018
         assert az.attached_runtime(_NeverInitialized()) is None
 
         runtime = _Runtime(True)
