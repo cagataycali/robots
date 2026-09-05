@@ -33,8 +33,22 @@ def _build_alias_map() -> dict[str, str]:
     reg = _load("robots")
     alias_map: dict[str, str] = {}
     for name, info in reg.get("robots", {}).items():
+        canonical_key = normalize_robot_name(name)
         for alias in info.get("aliases", []):
-            alias_map[normalize_robot_name(alias)] = name
+            key = normalize_robot_name(alias)
+            # An alias that folds onto its OWNER's canonical name is a second
+            # spelling of that name, not a separate lookup: ``resolve_name``
+            # answers it from ``canonical_names`` whether or not it is here.
+            # Emitting it anyway would make this an identity entry, and
+            # ``list_aliases`` is the public read of this map - a caller asking
+            # "what does this alias mean" would be told it means itself. The
+            # shipped registry has exactly one (``reachy_mini`` aliases
+            # ``reachy-mini``), which only became an identity entry once alias
+            # keys were folded. Skipping it costs no resolution; it is the same
+            # carve-out ``_validate_robots`` makes when it allows the alias.
+            if key == canonical_key:
+                continue
+            alias_map[key] = name
     return alias_map
 
 

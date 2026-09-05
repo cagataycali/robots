@@ -182,6 +182,40 @@ class TestTheShippedRegistryKeepsLoading:
             assert resolve_name(alias) == name
             assert get_robot(alias) is not None
 
+    def test_a_self_folding_alias_resolves_without_an_identity_map_entry(self) -> None:
+        """The carve-out is a canonical-name hit, not an alias entry meaning itself.
+
+        ``resolve_name`` answers a second spelling of a canonical name from
+        ``canonical_names``, so keying it into the alias map as well adds an
+        entry whose key equals its value. That is not free: ``list_aliases`` is
+        the public read of this map, and
+        ``tests/policies/test_provider_alias_discovery.py::test_the_policy_alias_mapping_has_the_shape_the_robot_one_does``
+        states the shape both registries answer in - no alias means itself. The
+        entry only became an identity once alias keys were folded, so the fold
+        is what makes skipping it necessary rather than merely tidy.
+        """
+        registry = json.loads((Path(loader_mod.__file__).parent / "robots.json").read_text())["robots"]
+        self_folding = {
+            name: alias
+            for name, info in registry.items()
+            for alias in info.get("aliases", [])
+            if normalize_robot_name(alias) == normalize_robot_name(name)
+        }
+        assert self_folding, "premise: no shipped alias folds onto its own canonical name"
+
+        alias_map = list_aliases()
+        identity = {key: value for key, value in alias_map.items() if key == value}
+        assert not identity, f"alias map reports entries that mean themselves: {identity}"
+
+        for name, alias in self_folding.items():
+            assert normalize_robot_name(alias) not in alias_map, (
+                f"'{alias}' is keyed in the alias map as well as being canonical '{name}'"
+            )
+            # Resolution is unchanged in every spelling, off the canonical map.
+            for spelling in (alias, alias.upper(), f"  {alias}  ", name):
+                assert resolve_name(spelling) == name
+                assert get_robot(spelling) is not None
+
     def test_every_shipped_alias_still_resolves_to_the_robot_that_declares_it(self) -> None:
         """Re-keying the map moved no alias off its owner."""
         registry = json.loads((Path(loader_mod.__file__).parent / "robots.json").read_text())["robots"]
