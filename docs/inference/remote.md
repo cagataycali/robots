@@ -158,12 +158,18 @@ policy's introspection answers, so the handshake is where a locally-loaded
 checkpoint's constructor sits in the remote arrangement. `execution_horizon` and
 `actions_per_step` are slice bounds over the action chunk, so they share
 `chunk_count_error`'s domain with the constructor parameters they mirror - a
-positive `int`, nothing else - and `requires_images` / `supports_rtc` must be JSON
-booleans. Coercing instead is silent rather than lenient: an advertised `0` lands
-behind `execution_horizon`'s `max(1, ...)` floor, so a peer declaring a 16-action
-chunk is mirrored as single-step, `is_chunk_emitting()` answers `False`, and the
-rollout leaves the async-RTC path with nothing said; `bool("no")` is `True`, so a
-peer answering `"no"` turns a capability on. A field the handshake omits is not
+positive `int`, nothing else - `requires_images` / `supports_rtc` must be JSON
+booleans, and `required_bodies` is held to `required_bodies_error`, the same owner
+`collect_required_bodies` asks when the policy is local. Coercing instead is silent
+rather than lenient: an advertised `0` lands behind `execution_horizon`'s
+`max(1, ...)` floor, so a peer declaring a 16-action chunk is mirrored as
+single-step, `is_chunk_emitting()` answers `False`, and the rollout leaves the
+async-RTC path with nothing said; `bool("no")` is `True`, so a peer answering
+`"no"` turns a capability on; and filtering a body list keeps the entries it can
+use, so `["torso_link", 42]` becomes a proxy declaring `("torso_link",)` - a
+declaration nobody made, whose missing pose the served tracker replaces with
+`base_quat`, the pelvis. A repeated name is accepted, because the local owner
+de-duplicates it rather than refusing it. A field the handshake omits is not
 refused - the client keeps its own default, so a server advertising a subset stays
 usable - and a value it cannot mirror raises a `ConnectionError` naming the field,
 the value and the peer, without the connection being cached.
