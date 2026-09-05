@@ -242,7 +242,11 @@ class HardwareRtpsBridge(RosTelemetryBase):
             self._participant = DomainParticipant(self._domain_id)
 
         self._robot_name = self._safe(self._resolve_robot_name(robot) if robot is not None else "robot")
-        self._joint_writer: Any = None
+        # One writer per robot, as in ``_image_writers`` below and in the rclpy
+        # transport's ``_joint_pubs``: ``robot`` is a per-call argument that
+        # selects the topic, so caching a single writer would publish every
+        # later robot's state on the first one's topic.
+        self._joint_writers: dict[str, Any] = {}
         self._image_writers: dict[str, Any] = {}
 
         # Cache the resolved IDL classes once (KeyError here = the bundle is
@@ -304,10 +308,14 @@ class HardwareRtpsBridge(RosTelemetryBase):
         """Publish one ``JointState`` for ``robot`` on ``/<robot>/joint_states``.
 
         Signature matches ``RosTelemetryBridge.publish_joint_states`` so the
-        hardware ``Robot`` telemetry path is transport-agnostic.
+        hardware ``Robot`` telemetry path is transport-agnostic - including the
+        writer being resolved per ``robot``. The writers are lazy, so a bridge
+        only ever advertises the robots it was actually asked to publish.
         """
-        if self._joint_writer is None:
-            self._joint_writer = self._make_writer(self.joint_states_topic(robot), self._JointState)
+        writer = self._joint_writers.get(robot)
+        if writer is None:
+            writer = self._make_writer(self.joint_states_topic(robot), self._JointState)
+            self._joint_writers[robot] = writer
         msg = self._JointState(
             header=self._header(self._safe(robot)),
             name=list(names),
@@ -315,7 +323,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
             velocity=[],
             effort=[],
         )
-        self._joint_writer.write(msg)
+        writer.write(msg)
 
     def publish_image(self, robot: str, camera: str, image: np.ndarray) -> None:
         """Publish one RGB ``Image`` on ``/<robot>/<camera>/image_raw``."""
@@ -414,7 +422,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
         # Dropping references lets cyclonedds reclaim the readers/writers and
         # the participant; there is no explicit close() in the python binding.
         self._command_reader = None
-        self._joint_writer = None
+        self._joint_writers = {}
         self._image_writers = {}
         self._participant = None
 
