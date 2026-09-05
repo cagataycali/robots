@@ -19,7 +19,7 @@ from device_connect_edge.drivers import (
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
 from strands_robots.bus_access import read_joints
-from strands_robots.device_connect._authz import authz_error, is_authorized_caller
+from strands_robots.device_connect._authz import attached_runtime, authz_error, is_authorized_caller
 from strands_robots.mesh.security import is_safe_policy_provider
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ class RobotDeviceDriver(DeviceDriver):
         # Security hardening: authorize the calling device before mutating
         # physical robot state.
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc", device=self._device):
+        if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "execute")
 
         # Security hardening: restrict policy_provider to the vetted allowlist
@@ -171,7 +171,7 @@ class RobotDeviceDriver(DeviceDriver):
     async def stop(self) -> dict[str, Any]:
         """Stop the currently running task."""
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc", device=self._device):
+        if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "stop")
         return self._robot.stop_task()
 
@@ -290,7 +290,7 @@ class RobotDeviceDriver(DeviceDriver):
         stop that arrives over Device Connect rather than over the mesh is the
         same operator request and gets the same accounting.
         """
-        if not is_authorized_caller(device_id, scope="estop", device=self._device):
+        if not is_authorized_caller(device_id, scope="estop", device=attached_runtime(self)):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
         logger.warning("Emergency stop received from %s - stopping task", device_id)

@@ -87,6 +87,34 @@ def insecure_env_opts_in(env_value: str | None) -> bool:
     return env_value is not None and env_value.lower() in INSECURE_TRUE
 
 
+def attached_runtime(driver: Any) -> Any:
+    """The ``DeviceRuntime`` *driver* is attached to, or ``None`` when it is not.
+
+    ``DeviceDriver._device`` belongs to ``device_connect_edge``, and that base
+    class creates the attribute in ``set_device`` rather than in ``__init__`` -
+    so the attribute's *absence* is how an unattached driver presents, not a
+    ``None`` value. Reading ``self._device`` directly therefore raises
+    ``AttributeError`` on any driver whose runtime never attached, which is the
+    one case :func:`is_authorized_caller` documents a fallback for. That is a
+    refusal the safety path cannot afford: the ``emergencyStop`` handlers read
+    the posture before deciding a stop, and an ``AttributeError`` there is a
+    stop that neither authorizes nor refuses.
+
+    Asked through one accessor so the contract is stated once rather than
+    assumed at each of the 21 call sites, and so a future base class that does
+    initialize the attribute needs no change here.
+
+    Args:
+        driver: The ``DeviceDriver`` handling the call, normally ``self``.
+
+    Returns:
+        The attached runtime, or ``None`` when no runtime has been set - which
+        is what :func:`_insecure_transport_active` falls back to the environment
+        variable for.
+    """
+    return getattr(driver, "_device", None)
+
+
 def _insecure_transport_active(device: Any = None) -> bool:
     """Whether the transport carrying an RPC is unauthenticated.
 
@@ -167,8 +195,9 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any 
         device: The ``DeviceRuntime`` this driver is attached to, so the
             self-asserted-identity advisory follows the transport that actually
             carries the call rather than the environment variable alone. Callers
-            pass ``self._device``, which ``DeviceDriver.set_device`` fills in on
-            every bring-up path. ``None`` falls back to the variable.
+            pass ``attached_runtime(self)``, which reports the runtime
+            ``DeviceDriver.set_device`` set or ``None`` when none was set.
+            ``None`` falls back to the variable.
 
     Returns:
         Whether the call may proceed. Authorization itself does not consult

@@ -219,3 +219,118 @@ def _owner_line(module: Any) -> int:
         if line.startswith("INSECURE_TRUE"):
             return i
     raise AssertionError("INSECURE_TRUE is not spelled in its owner")
+
+
+class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
+    """``_device`` is created by ``set_device``, so an unattached driver has no attribute.
+
+    ``DeviceDriver`` belongs to ``device_connect_edge`` and creates ``_device``
+    in ``set_device`` rather than in ``__init__``, so an unattached driver
+    presents as the attribute being *absent* - not as a ``None`` value. Passing
+    ``self._device`` therefore raised ``AttributeError`` on every driver whose
+    runtime never attached, which is precisely the case
+    :func:`is_authorized_caller` documents the environment fallback for. The
+    fallback was unreachable through a driver, so the two cells that graded it
+    (``test_an_unattached_driver_still_falls_back_to_the_variable`` and the
+    resolver's own row) both passed ``device=None`` to the helper directly and
+    could not see it.
+
+    That is a refusal the safety path cannot afford: the ``emergencyStop``
+    handlers read the posture before deciding whether to honour a stop, and an
+    ``AttributeError`` there is a stop that neither authorizes nor refuses.
+    """
+
+    def test_the_accessor_reports_absent_and_attached_alike(self) -> None:
+        """Absent attribute reads as ``None``; after ``set_device`` it is the runtime."""
+        az = _authz()
+
+        class _Unattached:
+            """A driver that has not been handed a runtime - no ``_device`` at all."""
+
+        assert not hasattr(_Unattached(), "_device")
+        assert az.attached_runtime(_Unattached()) is None
+
+        runtime = _Runtime(True)
+
+        class _Attached:
+            _device = runtime
+
+        assert az.attached_runtime(_Attached()) is runtime
+
+    def test_an_rpc_on_a_never_attached_driver_decides_rather_than_raises(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The shape that regressed: a driver constructed and driven with no runtime.
+
+        No ``set_device`` call, which is how every unit that exercises a driver
+        directly builds one. The RPC has to reach the wrapped simulation, and
+        the advisory has to follow the environment variable because that is the
+        only source of a posture available.
+        """
+        from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
+
+        az = _authz()
+
+        class _Sim:
+            def __init__(self) -> None:
+                self.steps = 0
+
+            def step(self, n_steps: int) -> dict[str, Any]:
+                self.steps += n_steps
+                return {"status": "success", "content": [{"text": f"stepped {n_steps}"}]}
+
+        for env, expect_advisory in (("yes", True), ("no", False)):
+            monkeypatch.setenv("DEVICE_CONNECT_ALLOW_INSECURE", env)
+            az._warned_insecure_acl.clear()
+            az._warned_permissive.clear()
+
+            sim = _Sim()
+            driver = SimulationDeviceDriver(sim)
+            assert not hasattr(driver, "_device"), "set_device must not have run"
+
+            with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect._authz"):
+                caplog.clear()
+                result = asyncio.run(driver.step(n_steps=3, source_device="ctrl"))
+
+            assert result["status"] == "success", env
+            assert sim.steps == 3, env
+            advisories = [r for r in caplog.records if "SELF-ASSERTED" in r.getMessage()]
+            assert bool(advisories) is expect_advisory, env
+
+    def test_no_authorization_call_reads_the_private_attribute_directly(self) -> None:
+        """Derived over the drivers, so a call site added later is graded on arrival.
+
+        Every ``is_authorized_caller`` call in the Device Connect drivers must
+        reach the runtime through the accessor. ``self._device`` is refused here
+        rather than left to the one driver-level cell that happened to construct
+        an unattached driver, because the failure is per-call-site: a single new
+        RPC spelling it the old way raises on exactly the bring-up shape this
+        test file exists to cover.
+        """
+        import ast
+        import pathlib
+
+        import strands_robots.device_connect as dc
+
+        package = pathlib.Path(dc.__file__).parent
+        drivers = sorted(p for p in package.glob("*driver*.py"))
+        assert len(drivers) >= 3, f"expected the three drivers, found {[p.name for p in drivers]}"
+
+        checked: list[str] = []
+        for path in drivers:
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if getattr(node.func, "id", None) != "is_authorized_caller":
+                    continue
+                passed = {kw.arg: kw.value for kw in node.keywords}
+                where = f"{path.name}:{node.lineno}"
+                assert "device" in passed, f"{where} decides the posture from the environment alone"
+                assert ast.unparse(passed["device"]) == "attached_runtime(self)", (
+                    f"{where} passes {ast.unparse(passed['device'])!r}; read the runtime through "
+                    "attached_runtime(self), which tolerates a driver whose set_device never ran"
+                )
+                checked.append(where)
+
+        assert len(checked) == 21, f"expected the 21 known call sites, graded {len(checked)}: {checked}"
