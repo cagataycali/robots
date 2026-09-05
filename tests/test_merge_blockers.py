@@ -548,6 +548,131 @@ def test_an_unknown_mergeability_does_not_read_as_the_stale_state_case() -> None
     assert "Attempt the merge" not in rendered
 
 
+# --------------------------------------------------------------------------
+# The third reading of a null mergeability: the pull request already merged.
+#
+# #3219 and #3230 were squashed at 12:26:39Z and 12:37:58Z on 2026-09-05, and
+# `GET /repos/strands-labs/robots/pulls/{n}` then reported, for both:
+#
+#     state=closed  merged=true  mergeable=None  mergeable_state=unknown
+#
+# which is what the cluster above reads as "GitHub is still computing". Open
+# #3205, read in the same minute, was `merged=false` with an identically null
+# `mergeable` -- so the honest transient #2586 was written for is live at the
+# same time, and every field the check read before this was the same on all
+# three. `merged` is the one that separates them, and it was already in the
+# payload `resolve_state` fetches. See issue #3231.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("merged", "expected"),
+    [
+        pytest.param(True, "already-merged", id="merged-3219-and-3230"),
+        pytest.param(False, "merge-state-unknown", id="open-3205"),
+    ],
+)
+def test_the_same_null_mergeability_gets_two_verdicts_by_whether_it_merged(merged: bool, expected: str) -> None:
+    """The measured pair, differing in the one field that was not being read.
+
+    Pre-fix both rows report ``merge-state-unknown``, so the two are one verdict
+    and the merged row is told to re-read a value that is already final.
+    """
+    st = state(merged=merged, mergeable=None, merge_state="unknown")
+    assert outcomes(mod.evaluate(st, MAIN)) == [expected]
+
+
+def test_a_merged_pull_request_names_no_rule_underneath_it() -> None:
+    """Every rule is moot, not merely unanswerable, so none is listed.
+
+    Deliberately hostile inputs: no approval, two unresolved threads and no
+    check conclusion at all. On an open pull request each is a blocker the
+    report must name. On a merged one, naming them invents obligations against a
+    closed pull request -- the change is already on the base, so there is no
+    approval that could admit it and no thread whose resolution could.
+    """
+    st = state(
+        merged=True,
+        mergeable=None,
+        merge_state="unknown",
+        approvers=(),
+        unresolved_threads=2,
+        check_conclusions={},
+    )
+    assert outcomes(mod.evaluate(st, MAIN)) == [mod.ALREADY_MERGED]
+
+
+def test_a_merged_pull_request_is_owed_by_nobody_and_is_not_a_finding() -> None:
+    """Owed by nobody for the opposite reason to ``required-check-pending``.
+
+    That one is waiting; this one is finished. Not a finding either way, because
+    the exit status is for what a scheduled author-side pass can act on alone,
+    and there is nothing left to act on.
+    """
+    blocker = mod.primary(mod.evaluate(state(merged=True, mergeable=None), MAIN))
+    assert blocker.outcome == mod.ALREADY_MERGED
+    assert blocker.owed_by == mod.NOBODY
+    assert blocker.is_finding is False
+    assert blocker.is_gating is True
+
+
+def test_a_merged_pull_request_is_not_prescribed_a_read_that_cannot_settle() -> None:
+    """The measured cost: the remedy that describes a wait with no end.
+
+    A merged pull request is closed, so ``mergeable`` never becomes non-null and
+    "settles on a later read" is false however many times it is re-read. The
+    ungated wording is refused for the same reason -- "the answer is not in yet"
+    is the sentence that read as reassuring while the answer had been in for
+    eleven minutes -- and so is #2574's merge attempt, which would be a second
+    merge of a merged branch.
+    """
+    st = state(merged=True, mergeable=None, merge_state="unknown")
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "Re-read" not in rendered
+    assert "the answer is not in yet" not in rendered
+    assert "Attempt the merge" not in rendered
+    assert f"Next action is owed by {mod.NOBODY}, on `{mod.ALREADY_MERGED}`" in rendered
+    assert "already merged" in rendered
+
+
+def test_a_merged_pull_request_is_reported_alone_rather_than_as_a_gate() -> None:
+    """Gating says "not yet"; this says "never again", so nothing trails it.
+
+    ``_next_action`` appends "an approval is necessary but not sufficient while
+    it stands" whenever a gating blocker has siblings. On a merged pull request
+    no approval is necessary at all, so that sentence would be false -- it is
+    absent because the blocker is returned alone, which this pins rather than
+    assuming.
+    """
+    st = state(merged=True, mergeable=None, approvers=(), unresolved_threads=1)
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "necessary but not sufficient" not in rendered
+
+
+def test_the_merged_verdict_does_not_reach_an_open_pull_request() -> None:
+    """A guard against fixing this by reporting every null as merged.
+
+    #2586 exists because reading the null as clean handed a ``DIRTY`` branch to
+    a reviewer (#1035). Reading it as merged would be the same error wearing the
+    opposite sign, so the whole open cluster above must be untouched.
+    """
+    for mergeable in (True, False, None):
+        st = state(merged=False, mergeable=mergeable)
+        assert mod.ALREADY_MERGED not in outcomes(mod.evaluate(st, MAIN))
+
+
+def test_the_merged_key_is_read_from_the_payload_that_already_carried_it() -> None:
+    """``resolve_state`` must populate the field, or the report never sees it.
+
+    The seam #3231 measured was not the classifier but the read: ``evaluate``
+    cannot separate the two nulls if every state reaching it says ``merged=
+    False``. Graded on the constructed state rather than the transport, so the
+    fixture is the REST payload's own key names.
+    """
+    source = _SCRIPT.read_text(encoding="utf-8")
+    assert 'merged=bool(payload.get("merged"))' in source
+
+
 def test_the_next_action_line_names_one_owner_when_a_gating_blocker_is_present() -> None:
     blockers = mod.evaluate(state(mergeable=False, approvers=()), MAIN)
     rendered = mod.render(state(mergeable=False, approvers=()), MAIN, blockers, "o/r")

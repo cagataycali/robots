@@ -86,7 +86,22 @@ is*, so the outcomes group that way rather than by severity:
     run just after a merge is precisely when it is null. Reported as *gating*,
     because reading the null as clean is how a conflicted branch is reported as
     owed by a reviewer -- measured on #1035, which read
-    ``pusher-only-approval`` while it was ``DIRTY``. Re-read to resolve it.
+    ``pusher-only-approval`` while it was ``DIRTY``. Re-read to resolve it,
+    which works only because the pull request is open: the entry below reads the
+    same null for a reason no read settles.
+
+``already-merged``
+    Nobody, and unlike every entry above there is no state left to reach. A
+    merged pull request is closed, so ``mergeable`` stays null for good -- the
+    same null the entry above reads as "still computing", on the one pull
+    request whose own merge invalidated it. Reported ahead of every ruleset rule
+    and short-circuiting them: once the change is on the base, "0 of 1
+    approvals" is not a rule the merge left unsatisfied, it is a question about
+    a closed pull request. Measured on #3219 and #3230, which read ``closed`` /
+    ``merged: true`` / ``mergeable: null`` while open #3205 read ``mergeable:
+    null`` for the honest reason at the same moment -- byte-identical in every
+    field this check had been reading, so the ``merged`` key it already fetches
+    is what separates them (#3231).
 
 ``required-check-cancelled``
     A **maintainer**, by re-running the run. A cancelled run is not a verdict
@@ -222,6 +237,7 @@ resolve_reviews = _approval.resolve_reviews
 # Outcome names. Ordered here the way they bind in practice, which is also the
 # order they are reported in: a conflict makes the approval question moot, and
 # an unresolved thread makes it moot for a different reason.
+ALREADY_MERGED = "already-merged"
 MERGE_CONFLICT = "merge-conflict"
 MERGE_STATE_UNKNOWN = "merge-state-unknown"
 DRAFT = "draft"
@@ -244,6 +260,7 @@ NOBODY = "nobody"
 ANYONE = "anyone, by attempting the merge"
 
 _OWED_BY: dict[str, str] = {
+    ALREADY_MERGED: NOBODY,
     MERGE_CONFLICT: AUTHOR,
     MERGE_STATE_UNKNOWN: NOBODY,
     DRAFT: AUTHOR,
@@ -270,7 +287,12 @@ _OWED_BY: dict[str, str] = {
 # because the cost is asymmetric -- reporting the approval rule as the next
 # action on a branch that turns out to be conflicted burns an approval, and
 # reporting it as necessary-but-not-sufficient costs one re-read (#2585).
-_GATING: frozenset[str] = frozenset({MERGE_CONFLICT, MERGE_STATE_UNKNOWN, DRAFT})
+# ``already-merged`` gates for the strongest reason of the three: there is no
+# rule left to assess rather than one that cannot be assessed yet. It is in this
+# set so the report names it as the next action's subject and prints "owed by
+# nobody, on `already-merged`" rather than the ungated wording "the answer is not
+# in yet", which is the sentence #3231 measured as the misleading one.
+_GATING: frozenset[str] = frozenset({ALREADY_MERGED, MERGE_CONFLICT, MERGE_STATE_UNKNOWN, DRAFT})
 
 
 # The outcomes a scheduled author-side pass can act on without anyone else.
@@ -353,6 +375,12 @@ class PullRequestState:
     mergeable: bool | None
     merge_state: str
     unresolved_threads: int
+    # Whether the pull request has already merged. Lives among the defaulted
+    # fields for the mechanical reason that the seven above it carry no default,
+    # not because it is peripheral: it is read before any of them. ``False`` is
+    # the safe default because it is the only value that leaves every rule below
+    # evaluated.
+    merged: bool = False
     check_conclusions: dict[str, str | None] = field(default_factory=dict)
     # Each check suite's conclusion on the head, or ``None`` for a census that
     # was not read. ``()`` is a positive observation -- zero suites exist -- and
@@ -471,6 +499,29 @@ def evaluate(state: PullRequestState, rules: Ruleset) -> tuple[Blocker, ...]:
     answer with a remedy, not an absence of one.
     """
     found: list[Blocker] = []
+
+    # Ahead of every rule below, the draft check included: a merged pull request
+    # has no unsatisfied rule to name. Separated from the uncomputed
+    # mergeability further down because the two are indistinguishable in every
+    # other field this check reads -- a merged pull request is closed, so
+    # ``mergeable`` stays null for good, and #2586's "re-read, it settles on a
+    # later read" then prescribes a wait with no terminating condition (#3231).
+    #
+    # Returned alone rather than added to ``found`` and gated: gating says the
+    # rules below cannot be assessed *yet*, and here there is nothing left to
+    # assess in any future read.
+    if state.merged:
+        return (
+            Blocker(
+                ALREADY_MERGED,
+                "(not a ruleset rule)",
+                f"The pull request is already merged into {state.base_ref}, so no "
+                f"rule is outstanding and no later read will change that. Cached "
+                f"merge state is {state.merge_state or 'unknown'}, and mergeability "
+                f"is null here because the pull request is closed rather than "
+                f"because GitHub is still computing it.",
+            ),
+        )
 
     if state.draft:
         found.append(
@@ -810,6 +861,9 @@ def resolve_state(repo: str, pr: int, token: str) -> PullRequestState:
         head_sha=head_sha,
         base_ref=base_ref,
         draft=bool(payload.get("draft")),
+        # Already in this payload and previously unread, which is what let a
+        # merged pull request report as an uncomputed mergeability (#3231).
+        merged=bool(payload.get("merged")),
         mergeable=payload.get("mergeable"),
         merge_state=str(payload.get("mergeable_state") or ""),
         unresolved_threads=resolve_unresolved_threads(repo, pr, token),
