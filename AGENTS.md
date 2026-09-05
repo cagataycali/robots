@@ -1287,7 +1287,8 @@ hatch run format            # ruff check --fix, ruff format
    absent because the head carries no check suite at all (also a maintainer,
    but by closing and reopening: there is no held run to approve and no
    suite to re-run), a check still running (nobody), a
-   mergeability GitHub has not finished computing (nobody, until a re-read), or
+   mergeability GitHub has not finished computing (nobody, until a re-read), a
+   pull request that has already merged (nobody, terminally), or
    no unsatisfied rule at all, which is the #2574 case and the one worth saying
    out loud. A conflict, a draft, or an uncomputed mergeability is reported as
    *gating*: the rules behind it cannot be assessed, so an approval there is
@@ -1301,6 +1302,18 @@ hatch run format            # ruff check --fix, ruff format
    while it was in fact `CONFLICTING`/`DIRTY`, and an otherwise-satisfied pull
    request in the same state read `no-unsatisfied-rule`, whose printed remedy is
    to attempt the merge. Both are now `merge-state-unknown`. See #2585.
+
+   Read the null against `merged`, though, because "every open pull request" is
+   the whole of that claim. The pull request whose *own* merge invalidated the
+   value is not open, and for it the null never resolves: #2586 still read
+   `mergeable: null` / `mergeable_state: unknown` fourteen days after it
+   squashed. So a merged pull request reports `already-merged`, terminal and
+   ahead of every rule, rather than the re-read -- which on a closed pull request
+   describes a wait with no terminating condition, and reads in the reassuring
+   direction while a merge-and-verify cycle polls for an answer it already has.
+   A pull request closed *without* merging is a different reading again and does
+   not share the null: measured on #3194, it retains its last computed
+   `mergeable` (`true`/`blocked`). See #3231.
 
    It composes `check_last_push_approval.py` rather than restating it, so what
    counts as a current approval has one owner. Neither script gates a merge.
