@@ -6,9 +6,11 @@ teleoperation subprocess's PID is recorded. So the prune's classification is
 load-bearing: a record dropped by mistake is gone for good, and the process it
 named keeps driving the arm with no supported way to stop it.
 
-Two probes decide the classification. ``psutil.pid_exists`` answers existence;
-``Process(pid).is_running()`` refines it. When the second one raises they
-disagree, and the two ways it can raise mean opposite things:
+Two probes decide the classification. ``psutil.pid_exists`` answers whether the
+number exists; reading the process's start time answers whether it is still the
+one the record was written for, which is what a reused PID changes. When the
+second one raises they disagree, and the two ways it can raise mean opposite
+things:
 
 * ``NoSuchProcess`` - reaped between the two calls, so the record names nothing.
 * ``AccessDenied`` - the process exists and this user may not inspect it (a
@@ -57,6 +59,21 @@ def _live_pid() -> int:
     return pid
 
 
+#: Start offset a seeded record claims for its process. Any value does: what the
+#: prune reads is whether the process holding the PID reports this one.
+_RECORDED_START_S = 1.0
+
+
+def _identified(pid: int) -> dict[str, Any]:
+    """A session record that names its process, not only the number holding it."""
+    return {
+        "pid": pid,
+        "action": "teleoperate",
+        "start_time": 0.0,
+        tele_mod.PID_STARTED_SINCE_BOOT: _RECORDED_START_S,
+    }
+
+
 def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exception]) -> None:
     """Make every probe of the process raise ``exc`` while ``pid_exists`` stays truthful.
 
@@ -69,6 +86,9 @@ def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exce
     class _Probe:
         def __init__(self, pid: int) -> None:
             self._pid = pid
+
+        def create_time(self) -> float:
+            raise exc(self._pid)
 
         def is_running(self) -> bool:
             raise exc(self._pid)
@@ -178,10 +198,14 @@ def test_stop_can_still_reach_a_session_it_could_not_inspect(monkeypatch: pytest
 
 
 def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    """A denied probe is the operator's only clue, so it must not be silent."""
+    """A denied probe is the operator's only clue, so it must not be silent.
+
+    The record names its process, so the denied read is what left the prune with
+    nothing but existence to go on - which is the situation being reported.
+    """
     mgr = SessionManager()
     pid = _live_pid()
-    mgr.add_session("arm_teleop", {"pid": pid, "action": "teleoperate", "start_time": 0.0})
+    mgr.add_session("arm_teleop", _identified(pid))
     _raise_on_probe(monkeypatch, tele_mod, tele_mod.psutil.AccessDenied)
 
     with caplog.at_level("WARNING"):
@@ -198,7 +222,7 @@ def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplo
 def test_a_process_reaped_mid_probe_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
     """``NoSuchProcess`` names nothing, so the record goes - including on disk."""
     mgr = SessionManager()
-    mgr.add_session("racy", {"pid": _live_pid(), "action": "teleoperate", "start_time": 0.0})
+    mgr.add_session("racy", _identified(_live_pid()))
     _raise_on_probe(monkeypatch, tele_mod, tele_mod.psutil.NoSuchProcess)
 
     assert mgr.list_sessions() == {}
@@ -215,22 +239,28 @@ def test_a_pid_that_no_longer_exists_is_still_pruned(monkeypatch: pytest.MonkeyP
     assert _stored(mgr) == {}, "a session whose PID is gone must still be pruned"
 
 
-def test_a_pid_that_is_not_running_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``is_running() -> False`` (a zombie, or a reused PID) is not our session."""
-    mgr = SessionManager()
-    mgr.add_session("zombie", {"pid": _live_pid(), "action": "teleoperate", "start_time": 0.0})
+def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reused PID is not our session, and the recorded identity is what says so.
 
-    class _NotRunning:
+    This case used to be posed as ``is_running() -> False``, which a freshly
+    constructed :class:`psutil.Process` cannot return: it captures the identity at
+    construction, so it agrees with whatever the PID means now. A process that is
+    not ours has to be posed as one whose start time is not the recorded one.
+    """
+    mgr = SessionManager()
+    mgr.add_session("taken_over", _identified(_live_pid()))
+
+    class _AnotherProcess:
         def __init__(self, pid: int) -> None:
             self._pid = pid
 
-        def is_running(self) -> bool:
-            return False
+        def create_time(self) -> float:
+            return tele_mod.psutil.boot_time() + _RECORDED_START_S + 3600.0
 
-    monkeypatch.setattr(tele_mod.psutil, "Process", _NotRunning)
+    monkeypatch.setattr(tele_mod.psutil, "Process", _AnotherProcess)
 
     assert mgr.list_sessions() == {}
-    assert _stored(mgr) == {}, "a PID that is not running must still be pruned"
+    assert _stored(mgr) == {}, "a PID held by another process must still be pruned"
 
 
 # The sibling store is held to the same rule in

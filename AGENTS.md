@@ -1923,6 +1923,17 @@ which side the enum is on.
   below the 100 ms threshold. Pinned on behaviour by
   `tests/tools/test_camera_durations_survive_a_clock_step.py`, which asserts what the tool
   reports across a step rather than which clock the source names.
+- **A process identity compared across processes is a duration too.** A pid does not name
+  a process - the kernel reuses the number - so a session record that outlives its run has
+  to carry the identity of the process it was written for, and `psutil.Process(pid)`
+  constructed to *ask* that question captures the identity it is being asked to check, so
+  `Process(pid).is_running()` cannot contradict a reused pid (measured: over 647 live pids
+  it never disagreed with `pid_exists`). What is recorded is the process's start offset
+  since boot, not its creation date: `create_time()` is `/proc/stat`'s btime plus the
+  process's start ticks and btime is recomputed from the current wall clock on every read,
+  so a correction between the write and the read would make a live session read as a
+  stranger - and refusing to stop a training run that holds a GPU is worse than the defect.
+  Pinned by `tests/tools/test_session_running_verdict_names_its_own_process.py`.
 - Pinned by `tests/test_expiry_gates_survive_a_clock_step.py` (a scan over the whole
   package, no exemption list), by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py`
   for the real `spin_for` behaviour, by

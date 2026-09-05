@@ -11,10 +11,21 @@ caller the arm is released and the GPU is free when neither may be true.
 :func:`confirm_exit` is that answer and :func:`unstopped_result` is the report
 for when it is not affirmative, shared by every session ``stop`` verb so the
 rule is stated once rather than per verb.
+
+The other half of the same question is which process is being asked about. A pid
+is not a name: the kernel hands the number back out once the process holding it
+exits, so a session record that outlives its run points at whatever holds the
+number next. Answering "is it running" from the pid alone therefore reports a
+stranger as the session, and the ``stop`` verb that verdict invites signals it.
+:func:`session_is_running` is that answer, and it needs the identity
+:func:`confirm_exit` already insists on - captured before the question is asked,
+because a freshly constructed :class:`psutil.Process` captures the identity it is
+being asked to check and so cannot contradict it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import psutil
@@ -28,6 +39,104 @@ SIGTERM_GRACE_S = 2.0
 # A process still present after this is in an uninterruptible wait; more waiting
 # does not change the verdict, and the caller needs the verdict.
 SIGKILL_CONFIRM_S = 2.0
+
+#: Session-record key holding the identity of the process the record was written
+#: for: how long after boot that process started.
+PID_STARTED_SINCE_BOOT = "pid_started_since_boot"
+
+# Tolerance for comparing two reads of that identity. Both are the same integer
+# tick count the kernel recorded, divided by the tick rate, so they differ only by
+# the float error of the subtraction below - about 1e-7 s on a month of uptime.
+# One tick is far above that noise, and far below the lifetime of any session,
+# which is the gap a reused pid's own start offset differs by.
+_IDENTITY_TOLERANCE_S = 0.05
+
+
+def process_started_since_boot(pid: int) -> float | None:
+    """How long after boot the process holding ``pid`` started.
+
+    A start offset rather than a creation date, because the two ends of the
+    comparison it serves sit in different processes minutes or hours apart: the
+    session store is written by the run that started the process and read back by
+    a later one. ``create_time()`` is a date - ``/proc/stat``'s ``btime`` plus the
+    process's own start ticks, and ``btime`` is recomputed from the current wall
+    clock on every read - so an NTP correction or a ``date -s`` between the write
+    and the read moves it by the size of the step, and a live session would read
+    as a stranger. Subtracting the boot time recovers the tick count itself,
+    which is a duration and moves for nothing.
+
+    Args:
+        pid: The pid to identify.
+
+    Returns:
+        Seconds between boot and the process's creation, or ``None`` when the
+        process is gone or this user may not inspect it. ``None`` is not evidence
+        either way, and callers must not read it as a mismatch.
+    """
+    try:
+        return psutil.Process(pid).create_time() - psutil.boot_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def session_is_running(info: Mapping[str, Any]) -> bool:
+    """Whether the process a session record names is still that process.
+
+    Args:
+        info: A session record, read for its ``pid`` and for the identity
+            :data:`PID_STARTED_SINCE_BOOT` names.
+
+    Returns:
+        ``True`` while the recorded pid exists *and* still holds the process the
+        record was written for.
+
+        A record carrying no identity - one written before it was recorded - can
+        only be answered by existence. Of the two ways the identity read can fail,
+        only one is an answer: :class:`psutil.NoSuchProcess` means the process went
+        away between the two probes, which is the same finished run as a pid that
+        was already gone, while :class:`psutil.AccessDenied` means this user may
+        not look - and being unable to look is no evidence that the session ended.
+    """
+    pid = info.get("pid")
+    if not pid or not psutil.pid_exists(int(pid)):
+        return False
+    recorded = info.get(PID_STARTED_SINCE_BOOT)
+    if isinstance(recorded, bool) or not isinstance(recorded, int | float):
+        return True
+    try:
+        started = psutil.Process(int(pid)).create_time() - psutil.boot_time()
+    except psutil.NoSuchProcess:
+        return False
+    except psutil.AccessDenied:
+        return True
+    return abs(started - float(recorded)) <= _IDENTITY_TOLERANCE_S
+
+
+def reused_pid_result(session_name: str, pid: int) -> dict[str, Any]:
+    """Report a ``stop`` for a session whose pid now belongs to another process.
+
+    The session is over - its process exited, which is what let the pid be handed
+    out again - so this is the same success as stopping one that had already
+    finished. What it must not do is signal the pid, and it says so, because the
+    caller cannot otherwise tell this outcome from a kill it asked for.
+
+    Args:
+        session_name: Name the session was tracked under.
+        pid: The recorded pid, now held by an unrelated process.
+
+    Returns:
+        A tool success result whose ``json`` block carries ``pid_reused``.
+    """
+    return {
+        "status": "success",
+        "content": [
+            {
+                "text": f"Session '{session_name}' was already stopped: PID {pid} now belongs to a "
+                f"different process, which was not signalled. Its record has been dropped."
+            },
+            {"json": {"session_name": session_name, "pid": pid, "stopped": True, "pid_reused": True}},
+        ],
+    }
 
 
 def confirm_exit(proc: psutil.Process, timeout: float) -> bool | None:

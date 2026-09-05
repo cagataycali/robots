@@ -24,9 +24,13 @@ import psutil
 from strands import tool
 
 from strands_robots.tools._process_stop import (
+    PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,
     SIGTERM_GRACE_S,
     confirm_exit,
+    process_started_since_boot,
+    reused_pid_result,
+    session_is_running,
     unstopped_result,
 )
 from strands_robots.utils import (
@@ -275,24 +279,25 @@ class SessionManager:
     def _load_sessions(self) -> dict[str, Any]:
         """Load the session store, pruning records whose process is gone.
 
-        ``psutil.pid_exists`` answers whether the PID exists;
-        ``Process(pid).is_running()`` refines that (it also rules out PID reuse).
-        The two probes can disagree, and the two ways they disagree mean opposite
-        things, so they are handled separately:
+        Gone is answered by :func:`~strands_robots.tools._process_stop.session_is_running`,
+        which is the PID existing *and* still holding the process the record was
+        written for. A ``Process(pid).is_running()`` here could not answer the
+        second half: psutil records the creation time when the object is
+        constructed, so an object constructed to ask the question carries whatever
+        the PID means now and agrees with it. A record that outlived its run then
+        survives a prune whose whole purpose is to drop it, and reads as a live
+        session.
 
-        * :class:`psutil.NoSuchProcess` - the process was reaped between the two
-          calls. The record names nothing, so it is pruned.
-        * :class:`psutil.AccessDenied` - the process exists (``pid_exists`` just
-          said so) but this user may not inspect it; a session started under
-          ``sudo`` for serial-port access and then listed as the invoking user
-          reads this way. That is not death, so the record is kept.
+        A PID that exists but cannot be inspected is a third answer and not a
+        prune: a session started under ``sudo`` for serial-port access and then
+        listed as the invoking user reads this way. That is not death, so the
+        record is kept and the denial is logged - it is also the operator's only
+        clue that the identity could not be checked.
 
-        Keeping it matters because the prune below is *written back to disk* and
-        this store is the only place a detached session's PID is recorded: a
-        pruned record leaves the teleoperation process running with no supported
-        way to stop it. Presence here is not the running claim - ``list`` and
-        ``status`` each derive that from ``pid_exists`` - so a retained record is
-        reported running only while its PID really exists.
+        Keeping such a record matters because the prune below is *written back to
+        disk* and this store is the only place a detached session's PID is
+        recorded: a pruned record leaves the teleoperation process running with no
+        supported way to stop it.
 
         Returns:
             The surviving session records, keyed by session name.
@@ -312,26 +317,22 @@ class SessionManager:
             # Check if processes are still running and clean up dead sessions
             active_sessions = {}
             for name, info in sessions.items():
+                if not session_is_running(info):
+                    continue
+                active_sessions[name] = info
                 pid = info.get("pid")
-                if pid and psutil.pid_exists(pid):
-                    try:
-                        proc = psutil.Process(pid)
-                        if proc.is_running():
-                            active_sessions[name] = info
-                    except psutil.NoSuchProcess:
-                        # Reaped between pid_exists and this probe: the record
-                        # names nothing, so pruning it loses no live session.
-                        pass
-                    except psutil.AccessDenied:
-                        # Exists but not inspectable: keep the record (see above)
-                        # and say so, because the store is written back below and
-                        # silence here loses the PID for good.
-                        active_sessions[name] = info
-                        logger.warning(
-                            "Teleop session PID %s exists but cannot be inspected; "
-                            "keeping its record so the session stays stoppable",
-                            pid,
-                        )
+                if PID_STARTED_SINCE_BOOT in info and process_started_since_boot(int(pid)) is None:
+                    # A record that carries an identity was nonetheless kept on
+                    # existence alone, so the read was refused - a process that had
+                    # gone away would not have been kept. Said out loud, because
+                    # the store is written back below and silence here loses the
+                    # PID for good. A record carrying no identity is not reported:
+                    # existence is the only answer available for it either way.
+                    logger.warning(
+                        "Teleop session PID %s exists but cannot be inspected; "
+                        "keeping its record so the session stays stoppable",
+                        pid,
+                    )
 
             # Update sessions file with only active sessions
             if len(active_sessions) != len(sessions):
@@ -1103,6 +1104,9 @@ def lerobot_teleoperate(
                     "command": " ".join(cmd),
                     "log_file": str(log_file),
                     "start_time": time.time(),
+                    # The identity half of the pid, captured now: the pid alone
+                    # stops naming this process the moment it exits.
+                    PID_STARTED_SINCE_BOOT: process_started_since_boot(proc.pid),
                     "background": True,
                     "robot_type": robot_type,
                     "teleop_type": teleop_type,
@@ -1178,6 +1182,12 @@ def lerobot_teleoperate(
                 return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
 
             pid_int = int(pid)
+            if psutil.pid_exists(pid_int) and not session_is_running(session_info):
+                # The pid exists but no longer holds the process this record was
+                # written for, so the session is over and the signals below would
+                # go to a stranger.
+                session_manager.remove_session(session_name)
+                return reused_pid_result(session_name, pid_int)
             try:
                 # Capture the process identity before signalling anything: psutil
                 # records the creation time here, so the escalation and the
@@ -1240,7 +1250,7 @@ def lerobot_teleoperate(
                     uptime = time.time() - info.get("start_time", 0)
                     uptime_min = uptime / 60
                     pid = info.get("pid")
-                    is_running = pid and psutil.pid_exists(pid)
+                    is_running = session_is_running(info)
 
                     content_lines.extend(
                         [
@@ -1277,7 +1287,7 @@ def lerobot_teleoperate(
             start_time: float = float(session_info.get("start_time") or 0)
             uptime = time.time() - start_time
             uptime_min = uptime / 60
-            is_running = pid and psutil.pid_exists(int(pid))
+            is_running = session_is_running(session_info)
 
             content_lines = [
                 f"**Session Status: `{session_name}`**",

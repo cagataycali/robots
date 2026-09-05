@@ -30,9 +30,13 @@ from strands.types.tools import ToolContext
 
 from strands_robots.tools._hitl_audit import log_operator_response
 from strands_robots.tools._process_stop import (
+    PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,
     SIGTERM_GRACE_S,
     confirm_exit,
+    process_started_since_boot,
+    reused_pid_result,
+    session_is_running,
     unstopped_result,
 )
 from strands_robots.utils import (
@@ -256,8 +260,9 @@ class SessionManager:
 
         Leaving a record out is not needed to avoid over-reporting it either:
         presence here is not the running claim. ``list`` and ``status`` each
-        derive that from ``psutil.pid_exists`` at the moment they are asked, so a
-        retained record reads as running only while its pid really exists.
+        derive that from :func:`~strands_robots.tools._process_stop.session_is_running`
+        at the moment they are asked, so a retained record reads as running only
+        while its pid still holds the process the record was written for.
 
         Returns:
             Every stored session record, keyed by session name. A store that
@@ -287,12 +292,13 @@ class SessionManager:
     def _report_uninspectable(self, sessions: dict[str, Any]) -> None:
         """Warn for each session whose process exists but cannot be inspected.
 
-        ``psutil.pid_exists`` answers existence and ``Process(pid).is_running()``
-        refines it. When the second raises :class:`psutil.AccessDenied` the
-        process is there and this user may not look at it - a session started
-        under ``sudo`` and later listed as the invoking user reads this way. That
-        denial is the operator's only clue that ``status`` is reporting on a
-        process it cannot see into, so it is said out loud.
+        ``psutil.pid_exists`` answers existence with a signal; reading the process
+        reads ``/proc``, which can be refused. When it raises
+        :class:`psutil.AccessDenied` the process is there and this user may not
+        look at it - a session started under ``sudo`` and later listed as the
+        invoking user reads this way. That denial is the operator's only clue that
+        ``status`` is reporting on a process it cannot see into, and that its
+        identity could not be checked either, so it is said out loud.
 
         :class:`psutil.NoSuchProcess` needs no report: it means the run was
         reaped between the two probes, which is the same finished run as a pid
@@ -308,7 +314,9 @@ class SessionManager:
             try:
                 # Called for what it raises, not for what it returns: the
                 # running/finished line is re-derived by ``list`` and ``status``,
-                # so this probe exists only to surface a denial.
+                # so this probe exists only to surface a denial - the same denial
+                # their identity check would meet, since both have to read the
+                # process rather than only signal its number.
                 psutil.Process(pid).is_running()
             except psutil.NoSuchProcess:
                 # Reaped between the two probes: the same finished run as a pid
@@ -997,6 +1005,10 @@ def lerobot_train(
                 "command": " ".join(cmd),
                 "log_file": str(log_file),
                 "start_time": time.time(),
+                # The identity half of the pid, captured now: the pid alone stops
+                # naming this process the moment it exits, and this record can
+                # outlive it by hours.
+                PID_STARTED_SINCE_BOOT: process_started_since_boot(proc.pid),
                 "policy_type": policy_type,
                 "dataset_root": dataset_root,
                 "output_dir": resolved_output_dir,
@@ -1039,6 +1051,12 @@ def lerobot_train(
                 return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
 
             pid_int = int(pid)
+            if psutil.pid_exists(pid_int) and not session_is_running(session_info):
+                # The pid exists but no longer holds the process this record was
+                # written for, so the run is over and the signals below would go
+                # to a stranger.
+                session_manager.remove_session(session_name)
+                return reused_pid_result(session_name, pid_int)
             try:
                 # Capture the process identity before signalling anything: psutil
                 # records the creation time here, so the escalation and the
@@ -1091,7 +1109,7 @@ def lerobot_train(
                 for name, info in sessions.items():
                     uptime_min = (time.time() - info.get("start_time", 0)) / 60
                     pid = info.get("pid")
-                    is_running = bool(pid and psutil.pid_exists(pid))
+                    is_running = session_is_running(info)
                     lines.extend(
                         [
                             f"**{name}**",
@@ -1123,7 +1141,7 @@ def lerobot_train(
 
             pid = session_info.get("pid")
             uptime = time.time() - float(session_info.get("start_time") or 0)
-            is_running = bool(pid and psutil.pid_exists(int(pid)))
+            is_running = session_is_running(session_info)
             lines = [
                 f"**Session Status: `{session_name}`**",
                 f"PID: {pid}",

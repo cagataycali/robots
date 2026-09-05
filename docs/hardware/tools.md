@@ -64,19 +64,28 @@ stores load, modify and write back, so a record a load leaves out is erased from
 disk by the next session started or stopped. What a load counts as "finished"
 therefore decides whether a session stays stoppable.
 
+A pid alone cannot answer that, because the kernel hands the number back out once
+the process holding it exits. Each record therefore also carries the identity of
+the process it was written for - how long after boot that process started - and
+"is it running" means *that* process, not whatever now holds its number. A start
+offset rather than a creation date, because the record is written by one run and
+read back by a later one: `/proc/stat`'s boot time is recomputed from the wall
+clock on every read, so a date would move under an NTP correction while the
+kernel's own start ticks do not.
+
 `lerobot_teleoperate` prunes a finished session:
 
 | What the probe reports | Verdict |
 |------------------------|---------|
 | the pid no longer exists | finished - pruned |
 | `psutil.NoSuchProcess` (reaped between the existence check and the probe) | finished - pruned |
-| `is_running()` returns `False` (a zombie, or the pid was reused) | not this session - pruned |
-| `psutil.AccessDenied` (the pid exists, this user may not inspect it) | kept, and reported at `WARNING` |
+| the process holding the pid started at some other time | the pid was reused - pruned |
+| `psutil.AccessDenied` (the pid exists, this user may not inspect it) | kept on existence alone, and reported at `WARNING` |
 
 The last row is why a session started under `sudo` - a common way to reach a
 serial port - is still listed and still stoppable when the tool is later invoked
 as the unprivileged user. Being kept is not a claim that it is running: `list`
-and `status` each derive that from the pid's existence at the moment you ask.
+and `status` each re-derive that at the moment you ask.
 
 `lerobot_train` keeps a store of the same shape, held to the same rule, with one
 deliberate difference: a finished run is *retained* so `status` can still show
@@ -85,7 +94,7 @@ through `remove_session` - is what ends a record:
 
 | What the probe reports | Verdict |
 |------------------------|---------|
-| the pid no longer exists, or `is_running()` returns `False` | finished - kept for its log tail |
+| the pid no longer exists, or another process now holds it | finished - kept for its log tail |
 | `psutil.NoSuchProcess` (reaped between the existence check and the probe) | the same finished run - kept |
 | `psutil.AccessDenied` (the pid exists, this user may not inspect it) | kept, and reported at `WARNING` |
 
@@ -95,7 +104,8 @@ The last row is the one where dropping the record would lose a pid that still
 names a *live* process - a training run holding a GPU, with nothing left
 recording where it is.
 
-`stop` is held to the same standard from the other side. It captures the process
+`stop` is held to the same standard from the other side. It checks that the pid is
+still its session's process before it signals anything, and captures the process
 identity *before* it signals - so the SIGKILL escalation is aimed at the process
 it found, not at whatever holds the pid once the grace period is over - and then
 reports only what it can establish:
@@ -104,6 +114,7 @@ reports only what it can establish:
 |-----------------------------|-----------|--------|
 | the process left the process table | `true` | success, record dropped |
 | it was already gone when `stop` looked | `true` | success ("already stopped"), record dropped |
+| the pid is held by another process now | `true` | success, nothing signalled, record dropped |
 | it is still there | `false` | error, record kept |
 | whether it exited could not be determined (`AccessDenied`) | `null` | error, record kept |
 

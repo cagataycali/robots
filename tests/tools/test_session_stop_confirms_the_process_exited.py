@@ -45,6 +45,11 @@ from strands_robots.tools import _process_stop
 # can reach a real process.
 FAKE_PID = 424242
 
+#: Start offset the seeded record claims for its process, in the domain
+#: ``session_is_running`` compares. The stand-in below reports the same one, so a
+#: seeded session's PID is still its own process and the stop verb proceeds.
+RECORDED_START_S = 1.0
+
 # Both stop verbs are the same shape over their own session store, so each
 # behaviour is pinned on both. ``kwargs`` carries the argument the tool needs
 # beyond the action.
@@ -87,8 +92,8 @@ def _install(
             ``AccessDenied`` for a process this user may not inspect).
         missing_after: Number of successful ``Process()`` constructions before
             the next one raises ``NoSuchProcess``. ``1`` models the real race:
-            alive when the session store probes it, gone by the time the stop
-            verb captures it.
+            alive when the stop verb checks that the PID is still its session's
+            process, gone by the time it captures that process to signal it.
 
     Returns:
         The event log: ``"wait"`` per confirmation and ``"kill:<SIGNAME>"`` per
@@ -105,6 +110,10 @@ def _install(
                 raise real_psutil.NoSuchProcess(pid)
             self.pid = pid
             self._waits = 0
+
+        def create_time(self) -> float:
+            """The identity the seeded record names, so this stands in for it."""
+            return real_psutil.boot_time() + RECORDED_START_S
 
         def is_running(self) -> bool:
             # The session store's own liveness probe; keeps the record visible.
@@ -142,7 +151,15 @@ def _json(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _add(module: Any, name: str) -> None:
-    module.SessionManager().add_session(name, {"pid": FAKE_PID, "start_time": 0.0, "action": "train"})
+    module.SessionManager().add_session(
+        name,
+        {
+            "pid": FAKE_PID,
+            "start_time": 0.0,
+            "action": "train",
+            module.PID_STARTED_SINCE_BOOT: RECORDED_START_S,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
