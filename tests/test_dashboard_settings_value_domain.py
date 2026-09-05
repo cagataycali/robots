@@ -9,9 +9,9 @@ degrades - and the module states the rule that makes degrading safe: it must
 degrade to *the key's own shape*, because "a list key that fell back to a scalar
 poisons every comma-split consumer, which is worse than the empty default".
 
-That rule was applied to the list keys and to the four numeric keys and omitted
-for the one boolean key, ``runtime.trust_remote_code`` - whose consumer is the
-remote-code execution gate. The lenient path returned the value that had failed
+That rule was applied to the list keys and omitted for the one boolean key,
+``runtime.trust_remote_code`` - whose consumer is the remote-code execution
+gate. The lenient path returned the value that had failed
 to be a boolean, so a non-boolean sat in a boolean slot, and
 :func:`~strands_robots.dashboard.settings.apply_mesh_env` publishes that key by
 TRUTHINESS. A spelling like ``"maybe"`` was therefore published as the literal
@@ -28,10 +28,32 @@ The rest pin the two paths' answers across the whole value domain as one table,
 so a key added to the schema without a domain is visible, and the spellings that
 legitimately mean true or false are pinned as controls - they pass either way,
 which is what keeps the fix from reading as "refuse more things".
+
+And it reached two of the four numeric keys, not four.
+``TestANonFiniteNumberIsReportedNotRaised`` covers the half it missed: the two
+whose shape is a float go through ``_finite_float``, which refuses a non-finite
+by name, while the two whose shape is an integer converted with a bare ``int()``
+whose ``except (TypeError, ValueError)`` does not catch the ``OverflowError``
+that ``int(float("inf"))`` raises. So neither path answered - the strict one
+raised instead of reporting the key, and the lenient one raised out of ``load``
+itself, taking the whole tree with it rather than degrading one value.
+
+Those rows are a class of their own rather than four more ``_UNUSABLE`` entries
+because the lenient column there is resolved through the settings FILE, and a
+file cannot carry a non-finite at all: ``json.dumps`` writes it as the bare
+``Infinity`` token, which ``_read_file`` already refuses as corrupt (see
+``test_a_value_the_file_cannot_hold_heals_to_the_default``), so those rows would
+pass through the healing path without reaching the coercion under test. The
+lenient vector that does reach it is ``override`` - a process-scoped value,
+which is also what made the failure permanent for the life of the process.
+The four keys are one roster in the module now, rather than a literal tuple per
+path, and one cell here holds this table to it - so a numeric key added to the
+schema is held to this domain rather than quietly escaping it.
 """
 
 from __future__ import annotations
 
+import decimal
 import json
 
 import pytest
@@ -60,6 +82,28 @@ _UNUSABLE: list[tuple[str, str, object, str, object]] = [
 
 # Spellings that DO mean something. Controls: green on both trees.
 _USABLE_BOOL = [("1", True), ("true", True), (1, True), ("false", False), ("off", False), ("", False), (0, False)]
+
+# Every spelling of "not a finite number" that ``json.loads`` produces: it accepts
+# the bare ``Infinity``/``-Infinity``/``NaN`` tokens, so a request body is one of
+# the ways one of these arrives in a numeric slot.
+_NON_FINITE = [float("inf"), float("-inf"), float("nan")]
+
+# The numeric keys, by the shape their value takes. Spelled here rather than read
+# from the module so the table collects against a tree that has not got the
+# roster yet, and held to the module's own by
+# ``test_the_modules_numeric_roster_is_the_one_this_table_covers`` - so a numeric
+# key added to the schema fails that cell rather than quietly escaping the domain.
+_INT = ("max_tokens", "port")
+_NUMERIC = ("temperature", "camera_hz") + _INT
+
+# Numbers each integer key must still take, so the refusal above cannot read as
+# "refuse more things". Controls: green on both trees.
+_USABLE_INT = [("max_tokens", 1, 1), ("max_tokens", "8", 8), ("port", 65535, 65535), ("port", 1.0, 1)]
+
+
+def _section_of(key: str) -> str:
+    """The schema section holding *key* - both coercion paths match numeric keys by name."""
+    return next(section for section, keys in settings._SCHEMA.items() if key in keys)
 
 
 @pytest.fixture()
@@ -190,3 +234,58 @@ class TestTheStoreStillAnswersTheRestOfItsSurface:
 
         assert tree["voice"]["provider"] == "kept"
         assert tree["mesh"]["connect"] == []
+
+
+class TestANonFiniteNumberIsReportedNotRaised:
+    """A non-finite number in any numeric slot is one of the two paths' answers, not an escape."""
+
+    def test_the_modules_numeric_roster_is_the_one_this_table_covers(self):
+        """One owner for which keys are numbers: both coercion paths read this roster."""
+        assert tuple(settings._NUMERIC_KEYS) == _NUMERIC
+        assert tuple(settings._INT_KEYS) == _INT
+
+    @pytest.mark.parametrize("key", _NUMERIC)
+    @pytest.mark.parametrize("value", _NON_FINITE)
+    def test_the_strict_path_reports_the_key_and_stores_nothing(self, store, key, value):
+        section = _section_of(key)
+
+        changed, errors = settings.update_strict({section: {key: value}})
+
+        assert changed == []
+        assert errors == [f"{section}.{key}: {value!r} is not a finite number"]
+        assert json.loads(store.read_text()) == {}, "a value that was reported was also stored"
+
+    @pytest.mark.parametrize("key", _NUMERIC)
+    @pytest.mark.parametrize("value", _NON_FINITE)
+    def test_the_lenient_path_degrades_that_one_key_and_leaves_the_tree_readable(self, store, key, value):
+        """``override`` is the lenient vector: the file cannot carry a non-finite at all."""
+        section = _section_of(key)
+        settings.override(section, key, value)
+
+        assert settings.load(refresh=True)[section][key] is None
+        # The consequence of raising from `load` rather than degrading: one bad
+        # value took every OTHER setting with it, for as long as it was set.
+        assert settings.get("voice", "provider") == "openai"
+        assert isinstance(settings.apply_mesh_env(), dict)
+
+    @pytest.mark.parametrize("key", _INT)
+    def test_an_infinity_that_is_not_a_float_instance_is_reported_too(self, store, key):
+        """``Decimal("Infinity")`` is not a ``float``, and converts with the same OverflowError."""
+        section = _section_of(key)
+        value = decimal.Decimal("Infinity")
+
+        _changed, errors = settings.update_strict({section: {key: value}})
+
+        assert len(errors) == 1, errors
+        assert "is not a finite number" in errors[0]
+
+    @pytest.mark.parametrize(("key", "value", "expected"), _USABLE_INT)
+    def test_a_number_the_key_can_hold_is_still_held(self, store, key, value, expected):
+        """Control: the guard refuses non-finite values and nothing else."""
+        section = _section_of(key)
+
+        changed, errors = settings.update_strict({section: {key: value}})
+
+        assert errors == []
+        assert changed == [f"{section}.{key}"]
+        assert settings.load(refresh=True)[section][key] == expected
