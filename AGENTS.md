@@ -2415,6 +2415,55 @@ Corrections from code review that apply to all future contributions:
   that a record cannot split rather than the record's field layout, and keep the
   escape to `\r` and `\n`: these messages are read by a human diagnosing a
   binding, and a broader filter corrupts the diagnosis they exist for.
+- **`py/unused-import` does not read a string forward reference, so a
+  `TYPE_CHECKING` import consumed only by a `cast("X", ...)` is reported as
+  dead.** `cast`'s first argument is an ordinary runtime expression, so
+  `from __future__ import annotations` is not what makes it a string - the idiom
+  writes it as one, and a type checker resolves it against the module namespace,
+  which is where the `TYPE_CHECKING` block puts the name. The extractor reads
+  bare `Name` loads and a string carries none.
+
+  Do not answer the alert by reading it. Run the counterfactual - delete the
+  import and lint the file - because that is what separates the two cases, and
+  they need opposite actions:
+
+  | `ruff check` after deleting the import | meaning | action |
+  |---|---|---|
+  | `F821 Undefined name 'X'` at the cast | the import is the name's only binding, and load-bearing | dismiss as `false positive`, keep the import |
+  | clean | the name is bound at runtime too, so the import carries nothing | the alert is right: delete the import |
+
+  Measured on `strands_robots/training/rl/fast_td3.py` (alert 1160), where
+  `SimEnv` reaches nothing but `cast("SimEnv", self.env)`: `ruff` reports
+  `F821` at that line and `mypy` reports `Name "SimEnv" is not defined`
+  `[name-defined]`, both inside `call-test-lint / Test and Lint`. So the two
+  gates the repository actually runs refuse the edit the alert asks for, and the
+  remaining ways to take it anyway are a suppression or a runtime import - which
+  on that file also invites the `isinstance` narrow the comment above the cast
+  exists to refuse. Do not reach for the query filter either: the rule carries
+  live signal here, seven of its twelve alerts on `main` being open and
+  unadjudicated, and `tests/test_codeql_query_filters.py` pins that file at two
+  ids.
+
+  This is written down because the decision was already made once and did not
+  survive. Alert 599 was dismissed with this reasoning **32 minutes** after it
+  opened on 2026-07-02, and the reasoning went into the dismissal comment - 280
+  characters, in the Security tab, invisible from the tree. Two recurrences then
+  had nothing to point at:
+
+  | alert | site | cost before it was adjudicated |
+  |---|---|---|
+  | 599 | `tests/training/test_rl_truncation_bootstrap.py:27` | 32 minutes |
+  | 1138 | `tests/drivers/robotiq/test_robotiq_gripper_moves_over_modbus_tcp.py:24` | open on `main` for five days |
+  | 1160 | `strands_robots/training/rl/fast_td3.py:54` | a review thread held #3206 for twelve hours under `required_review_thread_resolution` |
+
+  A dismissal comment is a less durable home than the PR comment this file
+  already warns about, which is why the entry is here and not a fourth
+  dismissal. `tests/test_cast_string_imports_are_the_names_only_binding.py`
+  grades the boundary in the table above - it derives the sites from the tree
+  and refuses a `TYPE_CHECKING` import of a name the module also binds at
+  runtime, the one shape where this exemption would suppress a true finding and
+  the one direction `ruff` and `mypy` cannot report, since the cast string
+  resolves either way.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."
