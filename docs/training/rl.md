@@ -238,6 +238,31 @@ separately rather than against that shared domain, because the accepted sets
 differ: PPO parallelizes and accepts any count `>= 1`, while the MuJoCo-backed
 FastSAC is single-env and requires exactly `1`.
 
+`hidden_dims` must be a sequence of positive integer layer widths, checked by
+`validate()` on all three RL backends - each builds every network it trains by
+expanding the same field (the on-policy actor and critic; off-policy the actor,
+its Polyak target and all four Q heads). Nothing judged the widths, and
+`nn.Linear` does not either: a width of **zero** is a legal layer. `torch` only
+warns ("Initializing zero-element tensors is a no-op"), the layer emits an empty
+activation, and the layer after it therefore emits its bias alone - so the
+network's output stops being a function of the observation. Measured over a full
+`train()` on each backend, `hidden_dims=(16, 0)` returned a **bit-identical
+action** for an all-zero observation and an all-`50` one, while `train()`
+reported `status="success"` with a real `actor_loss` and exported
+`policy.pt` + `policy_meta.json`: a deployable checkpoint whose actor commands
+one fixed action in every state the robot can reach. A negative or non-integer
+width instead raised out of `torch` after the environment, the networks and the
+optimizers were built, and `np.int64` trained to completion and then lost the run
+at the save, because `save_checkpoint` JSON-encodes the field.
+
+The **empty** sequence stays accepted: it is the honest spelling of a linear
+policy (input straight to the output layer), and its action still varies with the
+observation. So the domain is per element rather than on the length, and a
+problem names the offending index (`hidden_dims[1] must be a positive integer`).
+A value that is not a sequence of widths at all - a bare `int`, `None`, a `str`,
+or a one-shot generator, which would be consumed by the first network built and
+leave every later critic a different shape - is refused as a whole.
+
 `gamma` must be a finite number in the closed interval `[0, 1]`, checked by
 `validate()` on both backends. It is the one coefficient both of them read (PPO
 discounts the GAE recursion with it, FastSAC its target-Q bootstrap) and a

@@ -138,6 +138,14 @@ noise is symmetric, so a negative scale is silently the identical
 distribution, zero silently removes the mechanism the field configures, and a
 non-finite value poisons the actions or the TD target. It is scoped like
 :func:`policy_delay_problems`: only the TD3 backend reads the three fields.
+
+:func:`network_width_problems` is the seventeenth, on the *architecture* axis:
+``hidden_dims``, the hidden layer widths every from-scratch RL backend builds
+its actor and its critics from. It is scoped like
+:func:`learning_rate_problems` rather than like :func:`gae_lambda_problems` -
+all three RL backends read the field, for every network they construct - and it
+is the only one of these gates whose field is a *sequence*, so the domain is
+asked of each element in turn and the message names the offending index.
 """
 
 from __future__ import annotations
@@ -145,6 +153,7 @@ from __future__ import annotations
 import math
 import numbers
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.tools._path_validation import validate_save_path
@@ -1545,3 +1554,95 @@ def td3_noise_problems(spec: TrainSpec, *, context: str) -> list[str]:
         if error is not None:
             problems.append(error)
     return problems
+
+
+def network_width_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return hidden-layer-width problems for a from-scratch RL :class:`TrainSpec`.
+
+    ``hidden_dims`` is the only spec field that decides the *shape* of the
+    networks a run trains. Every RL backend expands it the same way, once per
+    network it builds - the on-policy actor and critic, and off-policy the actor,
+    its Polyak target and all four Q heads::
+
+        for h in spec.hidden_dims:
+            layers += [nn.Linear(last, h), nn.ReLU()]
+            last = h
+        layers.append(nn.Linear(last, out_dim))
+
+    Nothing judged the widths, and ``nn.Linear`` does not either: a width of
+    zero is a legal layer. It builds a ``(n, 0)`` weight - ``torch`` only warns
+    "Initializing zero-element tensors is a no-op" - and every forward pass
+    through it produces a ``(batch, 0)`` activation, so the next layer sees no
+    input and emits its bias alone. **The output stops being a function of the
+    observation.** Measured on the fake one-joint env, over a full ``train()``
+    on each backend, comparing the trained actor's action for an all-zero
+    observation against an all-``50`` one:
+
+    ======================  ==============  ==================================
+    ``hidden_dims``         Verdict         Outcome
+    ======================  ==============  ==================================
+    ``(16,)`` (a control)   accepted        actions differ: ``0.109`` / ``-0.869``
+    ``()``                  accepted        a linear policy; actions differ
+    ``(0,)``               **accepted**    every action bit-identical
+    ``(16, 0)``            **accepted**    every action bit-identical
+    ``(-1,)``               accepted        raises inside ``setup``
+    ``(16.0,)`` / ``(True,)`` accepted      raises inside ``setup``
+    ``np.int64(16)``        accepted        trains, then the checkpoint raises
+    ``16`` / ``None``       accepted        raises inside ``setup``
+    a generator             accepted        a different shape per network
+    ======================  ==============  ==================================
+
+    The two bold rows are why this is a gate rather than a lint. A zero width
+    anywhere in the sequence severs the policy from the robot: the run collects
+    its rollouts, the critics train against a constant, ``train()`` returns
+    ``status="success"`` with a real ``actor_loss`` and a real ``actor_updates``
+    count, and it exports ``policy.pt`` + ``policy_meta.json`` - a *deployable*
+    checkpoint whose actor emits one fixed action for every state the robot can
+    ever be in. On hardware that is an arm driving to a single pose and staying
+    there, reported as a trained policy. This is the same shape as
+    :func:`gradient_clip_problems` (a run that reports success having learned
+    nothing), reached through the one field that can make learning *impossible*
+    rather than merely ineffective.
+
+    The empty sequence is **not** in that class and stays accepted: it is the
+    honest spelling of a linear policy (input straight to output, no hidden
+    layer), and its action still varies with the observation. So the domain is
+    per element, not on the length.
+
+    Each width is asked of the shared :func:`~strands_robots.utils.positive_count_error`
+    domain, the same one the loop-bound counts use, because a width is consumed
+    directly as a tensor dimension: an integral float raises ``TypeError``
+    inside ``torch`` rather than being coerced, and ``bool`` would otherwise
+    pass a bare ``< 1`` test as a silent width of one. That domain also refuses
+    ``np.int64``, which is not an over-refusal here even though ``nn.Linear``
+    accepts it - ``save_checkpoint`` writes ``list(spec.hidden_dims)`` to
+    ``policy_meta.json`` and ``json.dump`` raises ``TypeError: Object of type
+    int64 is not JSON serializable``, so a run configured that way trains to
+    completion and then loses the whole run at the save.
+
+    The container is checked before its elements, since a field that is not a
+    sequence of widths has no elements to name: a bare ``int`` or ``None`` is
+    not iterable, a ``str`` iterates into characters, and a one-shot iterator is
+    worse than either - a generator is consumed by the first network built, so
+    the actor gets the requested architecture and every later critic silently
+    gets none (measured: 452 parameters for the first, 28 for the second).
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable width (named by index), or a single problem
+        when ``hidden_dims`` is not a sequence of widths at all; empty when
+        every width can be honored.
+    """
+    widths = getattr(spec, "hidden_dims", ())
+    if isinstance(widths, str) or not isinstance(widths, Sequence):
+        return [f"{context}: hidden_dims must be a sequence of positive int layer widths, got {widths!r}"]
+    return [
+        error
+        for index, width in enumerate(widths)
+        if (error := positive_count_error(width, f"hidden_dims[{index}]", context)) is not None
+    ]

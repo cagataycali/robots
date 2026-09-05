@@ -947,6 +947,44 @@ class Trainer(ABC):
 
         return td3_noise_problems(spec, context=self.provider_name)
 
+    def _network_width_problems(self, spec: TrainSpec) -> list[str]:
+        """Hidden-layer-width preflight for a from-scratch RL backend.
+
+        Returns a problem per unusable width in
+        :attr:`RLTrainSpec.hidden_dims`, named by index. A :meth:`validate`
+        implementation that builds its networks from the field MUST call this,
+        because the loop that expands it judges nothing and neither does
+        ``nn.Linear``: a width of zero is a legal layer whose activation is
+        empty, so the layer after it emits its bias alone and the network's
+        output stops depending on the observation at all. The run still
+        collects, still trains its critics against that constant, still returns
+        ``status="success"``, and still exports a deployable checkpoint - one
+        whose actor commands a single fixed action in every state. The empty
+        sequence is a genuine linear policy and stays accepted, so the domain
+        is per element rather than on the length.
+
+        Scoped like :meth:`_learning_rate_problems` rather than like
+        :meth:`_gae_lambda_problems`: every from-scratch RL backend builds its
+        actor and critics from this field, so there is no RL backend for which
+        reporting on it would be a false rejection. A supervised backend, which
+        fine-tunes a pretrained policy whose architecture comes from the
+        checkpoint rather than from the spec, does not read it and must not
+        report on it.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            One problem per width that cannot be honored, or a single problem
+            when the field is not a sequence of widths; empty when it is usable.
+        """
+        from strands_robots.training._validate import network_width_problems
+
+        return network_width_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
