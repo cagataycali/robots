@@ -163,6 +163,44 @@ def _refusal_text(envelope: dict[str, Any]) -> str:
     return "; ".join(texts) if texts else "no reason given"
 
 
+def _achieved_hz(frames: int, window_start_frames: int, start_mono: float) -> float:
+    """Frames per second over the CURRENT session, for both input stream sides.
+
+    The one owner of this arithmetic, because both sides report it under the same
+    ``hz_actual`` key and a caller compares it against one ``hz_target``.
+
+    ``frames`` is cumulative for the life of the object - the totals the two
+    ``stats`` surfaces report say so, and the receiver's sampled safety audit
+    keys its cadence on that count. ``start_mono`` is NOT: every ``start()``
+    re-stamps it, which is what makes a restarted session's rate measurable at
+    all (``start()`` clears the publisher's stop event and re-declares the
+    receiver's subscription precisely so a stopped stream can be started again).
+    Dividing the cumulative count by one session's elapsed time therefore mixes
+    two windows and reports a rate the stream never ran at: a 30 Hz stream
+    restarted after 180 frames reads ~118 Hz two seconds in, four times the
+    ``hz_target`` it was asked for and above the cap the loop paces itself
+    against - which no reading of "achieved rate" can produce.
+
+    ``window_start_frames`` is the count when the current window opened, so the
+    numerator covers the same window as the denominator while every reported
+    total stays cumulative.
+
+    Args:
+        frames: Cumulative frames the side has published / received.
+        window_start_frames: ``frames`` when the current session started.
+        start_mono: Monotonic stamp taken by that ``start()``, ``0.0`` before
+            the first one.
+
+    Returns:
+        The achieved rate in Hz, or ``0.0`` before a session has started or
+        within the same instant one did.
+    """
+    elapsed = time.monotonic() - start_mono if start_mono else 0.0
+    if elapsed <= 0:
+        return 0.0
+    return (frames - window_start_frames) / elapsed
+
+
 class InputPublisher:
     """Publishes teleoperator actions to the mesh at a fixed rate.
 
@@ -222,6 +260,10 @@ class InputPublisher:
         self._event_read_error_count = 0
         self._frame_count = 0
         self._start_mono = 0.0
+        # ``frames``/``frames_received`` stay cumulative; this is the count when
+        # the current session's clock started, so ``_achieved_hz`` measures its
+        # numerator over the same window as ``_start_mono``.
+        self._window_start_frames = 0
 
     def __repr__(self) -> str:
         try:
@@ -255,7 +297,6 @@ class InputPublisher:
         Without the second reading a caller polling after a stop would be told
         ``running=False`` about a loop that is still publishing.
         """
-        elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
             "device": self.device_name,
             "method": self.method,
@@ -264,7 +305,7 @@ class InputPublisher:
             "frames": self._frame_count,
             "errors": self._error_count,
             "event_read_errors": self._event_read_error_count,
-            "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
+            "hz_actual": _achieved_hz(self._frame_count, self._window_start_frames, self._start_mono),
             "hz_target": self.hz,
         }
 
@@ -274,7 +315,9 @@ class InputPublisher:
             return
         self._running = True
         self._stop_event.clear()
+        # Stamped together - see ``_achieved_hz``.
         self._start_mono = time.monotonic()
+        self._window_start_frames = self._frame_count
         self._thread = threading.Thread(
             target=self._publish_loop,
             name=f"mesh-input-{self.device_name}",
@@ -503,6 +546,10 @@ class InputReceiver:
         self._value_abs_by_key: dict[str, float] = {}
         self._envelope_resolved = False
         self._start_mono = 0.0
+        # ``frames``/``frames_received`` stay cumulative; this is the count when
+        # the current session's clock started, so ``_achieved_hz`` measures its
+        # numerator over the same window as ``_start_mono``.
+        self._window_start_frames = 0
 
     def __repr__(self) -> str:
         try:
@@ -550,7 +597,6 @@ class InputReceiver:
         non-finite or past the magnitude bound). ``rejected`` always equals
         their sum.
         """
-        elapsed = time.monotonic() - self._start_mono if self._start_mono else 0
         return {
             "source": self.source_peer_id,
             "device": self.device_name,
@@ -564,7 +610,7 @@ class InputReceiver:
             **{f"rejected_{cause}": n for cause, n in self._rejected_by_cause.items()},
             "rate_dropped": self._rate_dropped,
             "slew_rejected": self._slew_rejected,
-            "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
+            "hz_actual": _achieved_hz(self._frame_count, self._window_start_frames, self._start_mono),
         }
 
     def start(self) -> None:
@@ -572,7 +618,9 @@ class InputReceiver:
         if self._running:
             return
         self._running = True
+        # Stamped together - see ``_achieved_hz``.
         self._start_mono = time.monotonic()
+        self._window_start_frames = self._frame_count
         self._sub_name = self.mesh.subscribe(
             self.topic,
             callback=self._on_input,

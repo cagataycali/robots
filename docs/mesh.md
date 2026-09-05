@@ -284,6 +284,13 @@ follower.stop_teleop("leader")
 
 `get_teleop_status()` on either side inspects current teleop state.
 
+The counts it reports -- `frames` / `frames_received`, `errors`, `rejected` and the
+rest -- are cumulative for the life of the publisher or receiver, while
+`hz_actual` is the rate achieved by the session running now: `start()` opens a
+new measurement window, so a stream stopped and started again reports the rate it
+is running at rather than one averaged over both sessions. Compare `hz_actual`
+against `hz_target` to judge a link; read the totals to judge the device.
+
 Each published frame carries the operator's control signals from the
 teleoperator's `get_teleop_events()` - `terminate_episode`, `success`,
 `rerecord_episode`, `is_intervention` - alongside the joint action. Reading them
