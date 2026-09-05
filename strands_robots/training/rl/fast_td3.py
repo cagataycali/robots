@@ -180,6 +180,13 @@ class FastTd3Trainer(BaseRLAlgo):
         # the update loop after the env, networks, optimizers and buffer are
         # built, and raises TypeError itself on a string or None.
         problems.extend(self._rl_replay_problems(spec))
+        # hidden_dims is the shape of every network this backend builds - the
+        # actor and the critics alike. The expansion loop judges nothing and
+        # nn.Linear accepts a width of zero, which makes the activation after it
+        # empty and the next layer's output its bias alone: the policy stops
+        # being a function of the observation, and the run reports success while
+        # exporting a deployable checkpoint whose actor is one fixed action.
+        problems.extend(self._network_width_problems(spec))
         if not 0.0 < spec.tau <= 1.0:
             problems.append(f"tau must be in (0, 1], got {spec.tau}")
         # learning_starts >= batch_size is a relation between two counts, so BOTH

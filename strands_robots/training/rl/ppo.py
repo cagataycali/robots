@@ -180,6 +180,13 @@ class PpoTrainer(BaseRLAlgo):
         # it reads True, a fraction below one iteration, nan and inf as a single
         # iteration under a successful run.
         problems.extend(self._rl_run_size_problems(spec))
+        # hidden_dims is the shape of every network this backend builds - the
+        # actor and the critics alike. The expansion loop judges nothing and
+        # nn.Linear accepts a width of zero, which makes the activation after it
+        # empty and the next layer's output its bias alone: the policy stops
+        # being a function of the observation, and the run reports success while
+        # exporting a deployable checkpoint whose actor is one fixed action.
+        problems.extend(self._network_width_problems(spec))
         # num_envs is the third factor of that same product. Which *counts* are
         # usable is per-backend - this one parallelizes, so any positive count is,
         # while the single-env FastSAC requires exactly 1 - but that a count is
