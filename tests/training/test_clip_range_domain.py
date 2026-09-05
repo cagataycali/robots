@@ -77,7 +77,7 @@ from tests.training._spec_field_reads import reads_spec_field
 ON_POLICY = "ppo"
 
 # Backends that never clip a ratio - they must stay quiet about the field.
-NO_CLIP_BACKENDS = ("fast_sac", "mock")
+NO_CLIP_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Half-widths the clip can honor.
 USABLE: list[Any] = [0.2, 0.1, 0.5, 1.0, 3, np.float64(0.2), np.int64(2)]

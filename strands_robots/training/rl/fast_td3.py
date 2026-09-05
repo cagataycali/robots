@@ -1,33 +1,48 @@
-"""FastSAC - off-policy from-scratch RL trainer for the ``SimEngine`` env.
+"""FastTD3 - off-policy from-scratch RL trainer for the ``SimEngine`` env.
 
-Soft Actor-Critic: an off-policy, sample-efficient peer of the on-policy
-:class:`~strands_robots.training.rl.ppo.PpoTrainer`. It trains a tanh-squashed
-Gaussian-MLP actor and twin Q critics (clipped double-Q, Polyak-averaged target
-critics) with automatic entropy-temperature tuning, replaying transitions from a
-:class:`~strands_robots.training.rl.replay_buffer.SimpleReplayBuffer`. Like PPO
+Twin Delayed DDPG: the deterministic-actor peer of
+:class:`~strands_robots.training.rl.fast_sac.FastSacTrainer`. It trains a
+tanh-bounded deterministic MLP actor against twin Q critics with clipped
+double-Q targets, target policy smoothing (clipped Gaussian noise on the target
+action), delayed actor / target-network updates (``policy_delay``), and Polyak
+averaging, replaying transitions from a
+:class:`~strands_robots.training.rl.replay_buffer.SimpleReplayBuffer`. Like SAC
 it learns from a reward function alone (the reward-term DSL) on a
 :class:`~strands_robots.training.rl.env.SimEnv`, so a reach / locomotion / WBC
 policy can be trained in MuJoCo with no demonstration dataset.
 
-Off-policy means the on-policy ``BaseRLAlgo.train()`` loop does not fit, so this
-overrides :meth:`train` with the standard SAC schedule (random warmup -> per-step
-gradient updates from the replay buffer) while keeping the same
-``setup -> collect_rollout -> update -> save_checkpoint`` hooks and the
-``policy.pt`` + ``policy_meta.json`` checkpoint contract as PPO. Selected via
-``create_trainer("fast_sac")``.
+Where SAC explores through its stochastic actor, a deterministic actor explores
+only through the Gaussian ``exploration_noise_std`` added at collection - after
+a uniform-random warmup of ``learning_starts`` steps - so that scale (and the
+two smoothing scales) is preflighted rather than trusted: zero silently removes
+the mechanism and the run still reports success.
 
-The SAC math (clipped double-Q target, tanh-squashed log-prob correction,
-automatic temperature) is the standard Haarnoja et al. formulation, adapted from
-the Amazon FAR Holosoma FastSAC (BSD-3-Clause,
-https://github.com/amazon-far/holosoma), re-homed onto the single-environment
-MuJoCo backend.
+Unlike the single-env FastSAC, collection is vectorized: ``num_envs > 1``
+steps N independent envs through a
+:class:`~strands_robots.training.rl.vec_env.VecSimEnv` and pushes N transitions
+per tick, bootstrapping a done env's stored next-observation from the captured
+pre-reset ``infos[i]["terminal_obs"]`` exactly as the vectorized PPO path
+bootstraps its next-value - off-policy replay has no rollout tensor to reshape,
+so the buffer absorbs the extra envs without changing the update.
+
+Off-policy means the on-policy ``BaseRLAlgo.train()`` loop does not fit, so this
+overrides :meth:`train` with the same schedule as FastSAC (random warmup ->
+per-step gradient updates from the replay buffer) while keeping the same
+``setup -> collect_rollout -> update -> save_checkpoint`` hooks and the
+``policy.pt`` + ``policy_meta.json`` checkpoint contract as PPO / FastSAC.
+Selected via ``create_trainer("fast_td3")``.
+
+The TD3 math (clipped double-Q, target policy smoothing, delayed policy
+updates) is the standard Fujimoto et al. formulation, benchmarked against the
+FastTD3 project (https://github.com/younggyoseo/FastTD3, arXiv:2505.22642) and
+re-homed onto the strands-robots ``SimEnv`` / ``VecSimEnv`` backend.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.training.base import TrainResult, TrainSpec
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
@@ -37,12 +52,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
 
     from strands_robots.training.rl.env import SimEnv
-
-# tanh-squashed Gaussian: clamp log_std into a stable range and bound the
-# log(1 - tanh(u)^2) correction away from -inf at the squash saturation.
-_LOG_STD_MIN = -5.0
-_LOG_STD_MAX = 2.0
-_LOG_PROB_EPS = 1e-6
 
 
 def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
@@ -59,52 +68,44 @@ def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
 
 
 def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: int, spec: RLTrainSpec) -> Any:
-    """Construct the SAC ``ActorCritic`` module: tanh-Gaussian actor + twin Q critics."""
+    """Construct the TD3 ``ActorCritic`` module: deterministic actor + twin Q critics.
+
+    Every network that has a Polyak target carries it here - the actor as well
+    as both critics, because target policy smoothing samples around the *target*
+    policy's action, not the live one.
+    """
     import torch
     import torch.nn as nn
 
-    class SacActorCritic(nn.Module):
-        """tanh-squashed Gaussian actor + twin Q critics with target copies."""
+    class Td3ActorCritic(nn.Module):
+        """tanh-bounded deterministic actor + twin Q critics, each with a target copy."""
 
         def __init__(self) -> None:
             super().__init__()
-            # Actor outputs (mean, log_std) for the pre-squash Gaussian.
-            self.actor = _mlp(num_actor_obs, spec.hidden_dims, 2 * num_actions)
+            # Actor outputs a pre-tanh action; tanh bounds it to [-1, 1], the
+            # same action interval the SAC actor squashes into, so the two
+            # off-policy backends drive SimEnv with one action contract.
+            self.actor = _mlp(num_actor_obs, spec.hidden_dims, num_actions)
+            self.actor_target = _mlp(num_actor_obs, spec.hidden_dims, num_actions)
             # Twin critics Q(critic_obs, action) -> scalar (clipped double-Q).
             self.q1 = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
             self.q2 = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
             self.q1_target = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
             self.q2_target = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
+            self.actor_target.load_state_dict(self.actor.state_dict())
             self.q1_target.load_state_dict(self.q1.state_dict())
             self.q2_target.load_state_dict(self.q2.state_dict())
-            for p in self.q1_target.parameters():
-                p.requires_grad_(False)
-            for p in self.q2_target.parameters():
-                p.requires_grad_(False)
-
-        def _mean_log_std(self, actor_obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            mean, log_std = self.actor(actor_obs).chunk(2, dim=-1)
-            log_std = torch.clamp(log_std, _LOG_STD_MIN, _LOG_STD_MAX)
-            return mean, log_std
-
-        def sample(self, actor_obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-            """Reparameterized tanh-Gaussian sample; returns ``(action, log_prob)``.
-
-            ``log_prob`` includes the tanh change-of-variables correction and is
-            summed over action dimensions, shape ``(B, 1)``.
-            """
-            mean, log_std = self._mean_log_std(actor_obs)
-            std = log_std.exp()
-            normal = torch.distributions.Normal(mean, std)
-            u = normal.rsample()
-            action = torch.tanh(u)
-            log_prob = normal.log_prob(u) - torch.log(1.0 - action.pow(2) + _LOG_PROB_EPS)
-            return action, log_prob.sum(-1, keepdim=True)
+            for target in (self.actor_target, self.q1_target, self.q2_target):
+                for p in target.parameters():
+                    p.requires_grad_(False)
 
         def act_inference(self, actor_obs: torch.Tensor) -> torch.Tensor:
-            """Deterministic (mean) action - the deployable policy."""
-            mean, _ = self._mean_log_std(actor_obs)
-            return torch.tanh(mean)
+            """Deterministic bounded action - the deployable policy."""
+            return torch.tanh(self.actor(actor_obs))
+
+        def act_target(self, actor_obs: torch.Tensor) -> torch.Tensor:
+            """Target policy's bounded action, for the smoothed TD backup."""
+            return torch.tanh(self.actor_target(actor_obs))
 
         def q_values(self, critic_obs: torch.Tensor, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             """Twin-critic Q-values ``(Q1, Q2)`` for a state-action pair (clipped double-Q)."""
@@ -116,24 +117,24 @@ def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: in
             x = torch.cat([critic_obs, action], dim=-1)
             return torch.min(self.q1_target(x), self.q2_target(x))
 
-    return SacActorCritic()
+    return Td3ActorCritic()
 
 
-class FastSacTrainer(BaseRLAlgo):
-    """Soft Actor-Critic trainer (``provider_name == "fast_sac"``)."""
+class FastTd3Trainer(BaseRLAlgo):
+    """Twin Delayed DDPG trainer (``provider_name == "fast_td3"``)."""
 
     @property
     def provider_name(self) -> str:
-        """Registry key for this trainer (``"fast_sac"``)."""
-        return "fast_sac"
+        """Registry key for this trainer (``"fast_td3"``)."""
+        return "fast_td3"
 
     def validate(self, spec: TrainSpec) -> list[str]:
-        """Preflight an :class:`RLTrainSpec` for a FastSAC run (pure / read-only)."""
+        """Preflight an :class:`RLTrainSpec` for a FastTD3 run (pure / read-only)."""
         problems = self._security_problems(spec)
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._seed_problems(spec))
         if not isinstance(spec, RLTrainSpec):
-            problems.append(f"fast_sac requires an RLTrainSpec, got {type(spec).__name__}")
+            problems.append(f"fast_td3 requires an RLTrainSpec, got {type(spec).__name__}")
             return problems
         if spec.env_factory is None:
             problems.append("env_factory is required (a zero-arg callable returning a SimEnv)")
@@ -142,38 +143,36 @@ class FastSacTrainer(BaseRLAlgo):
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
         problems.extend(self._discount_factor_problems(spec))
-        # alpha_lr is a second learning rate on a second optimizer: the actor
-        # and critics take spec.learning_rate, the entropy temperature takes
-        # this one, and only the first is covered above.
-        problems.extend(self._temperature_learning_rate_problems(spec))
-        # init_alpha is the temperature that rate moves, and it reaches
-        # torch.log on both branches, so only a positive finite value has a
-        # usable logarithm - the same domain, on the value rather than the rate.
-        problems.extend(self._initial_temperature_problems(spec))
+        # policy_delay is the modulus that decides whether the actor and the
+        # target networks move at all; a modulus the test never satisfies trains
+        # the critics for the whole run while the deployable actor never takes a
+        # gradient step, under a successful result.
+        problems.extend(self._policy_delay_problems(spec))
+        # The three noise scales are a deterministic policy's only exploration
+        # and the critic target's only smoothing; zero silently removes the
+        # mechanism, a negative scale is silently the identical distribution,
+        # and a non-finite one poisons the actions or the TD target.
+        problems.extend(self._td3_noise_problems(spec))
         # total_timesteps and rollout_steps are the two caller-supplied factors of
         # this loop's own bound, max(1, total_timesteps // (rollout_steps *
         # num_envs)). The max() clamp means a local <= 0 test cannot bound them:
         # it reads True, a fraction below one iteration, nan and inf as a single
         # iteration under a successful run.
         problems.extend(self._rl_run_size_problems(spec))
-        # num_envs is the third factor of that same product. Which *count* is
-        # usable is per-backend - this one is single-env, so only 1 is, while PPO
-        # parallelizes and accepts any positive count - but that a count is what
-        # the field must hold is not, and it is the same ``positive_count_error``
-        # domain the two factors above use. A bare ``!= 1`` test cannot carry that
-        # half: ``True`` and ``1.0`` both satisfy it, so a value that reads as a
-        # flag landed as the required single env, and ``rollout_steps * 1.0`` made
-        # ``num_iters`` a float that raised out of ``range()`` after setup had
-        # built the env, the networks, the optimizers and the replay buffer. The
-        # count rule is asked only of a count, so a non-count is reported as one
-        # rather than as the wrong number of envs.
+        # num_envs is the third factor of that same product. Which *counts* are
+        # usable is per-backend - this one collects through VecSimEnv, so any
+        # positive count is, like PPO and unlike the single-env FastSAC - but
+        # that a count is what the field must hold is not, and it is the same
+        # ``positive_count_error`` domain the two factors above use, for the
+        # same reason: it is a factor of a ``range()`` bound, and it also sizes
+        # the warmup batch of uniform actions drawn per tick. Over the values
+        # the domain accepts, every positive ``int`` parallelizes, so there is
+        # no further count to test here.
         if (error := positive_count_error(spec.num_envs, "num_envs", self.provider_name)) is not None:
             problems.append(error)
-        elif spec.num_envs != 1:
-            problems.append(f"the MuJoCo backend is single-env (num_envs must be 1), got {spec.num_envs}")
         # buffer_size, batch_size and gradient_steps are the replay loop's three
         # caller-supplied counts: the buffer capacity, the transitions sampled
-        # per gradient step, and the SAC updates per iteration. Each is consumed
+        # per gradient step, and the TD3 updates per iteration. Each is consumed
         # directly as a count (a tensor capacity, a sample size, a range() bound),
         # so a local <= 0 test is weaker than the shared count domain - it admits
         # True as a degenerate size (a one-slot buffer that never fills, a batch
@@ -185,20 +184,17 @@ class FastSacTrainer(BaseRLAlgo):
             problems.append(f"tau must be in (0, 1], got {spec.tau}")
         # learning_starts >= batch_size is a relation between two counts, so BOTH
         # operands are asked of the shared count domain and the relation only of
-        # two values that are counts. Asking it of batch_size alone was not
-        # enough: a non-finite learning_starts makes ``<`` answer False (every
-        # comparison against nan is False, and inf is below no int), so the
-        # relation passed and both consumers then read a value that is not a
-        # count. ``collect_rollout`` tests ``buffer.size < learning_starts`` to
-        # decide the random warmup and ``train`` tests ``buffer.size >=
-        # learning_starts`` to decide whether ``update()`` runs at all, so nan
-        # skips the warmup and takes zero gradient steps while inf warms up
-        # forever and takes zero gradient steps - a run that reports success
-        # having learned nothing, which is the outcome _rl_replay_problems exists
-        # to refuse for buffer_size. The domain is the strict count one its
-        # sibling operand already uses, so the relation compares two values drawn
-        # from one domain rather than one count against whatever the other side
-        # happened to be.
+        # two values that are counts - a non-finite learning_starts makes ``<``
+        # answer False (every comparison against nan is False, and inf is below
+        # no int), so without the domain the relation passes and both consumers
+        # then read a value that is not a count: ``collect_rollout`` tests
+        # ``buffer.size < learning_starts`` to decide the random warmup and
+        # ``train`` tests ``buffer.size >= learning_starts`` to decide whether
+        # ``update()`` runs at all, so nan skips the warmup and takes zero
+        # gradient steps while inf warms up forever and takes zero gradient
+        # steps - a run that reports success having learned nothing. See
+        # FastSAC's identical guard for the full measured reasoning; the two
+        # off-policy backends share the warmup contract verbatim.
         learning_starts_error = positive_count_error(spec.learning_starts, "learning_starts", self.provider_name)
         if learning_starts_error is not None:
             problems.append(learning_starts_error)
@@ -213,8 +209,8 @@ class FastSacTrainer(BaseRLAlgo):
         return problems
 
     def setup(self, spec: RLTrainSpec) -> None:
-        """Build env, actor + twin critics, optimizers, temperature, and replay buffer."""
-        require_optional("torch", purpose="FastSAC RL training (strands_robots.training.rl.fast_sac)")
+        """Build env(s), actor + twin critics (with targets), optimizers, and replay buffer."""
+        require_optional("torch", purpose="FastTD3 RL training (strands_robots.training.rl.fast_td3)")
         import torch
 
         from strands_robots.training.rl.normalization import EmpiricalNormalization
@@ -227,7 +223,16 @@ class FastSacTrainer(BaseRLAlgo):
 
         if spec.env_factory is None:  # pragma: no cover - guarded by validate()
             raise ValueError("env_factory is required")
-        self.env: SimEnv = spec.env_factory()
+        # num_envs == 1 keeps the single SimEnv path (the FastSAC shape);
+        # num_envs > 1 wraps N independent SimEnv in a VecSimEnv that emits
+        # (N, D) batches. ``self._vectorized`` selects the collect_rollout path.
+        self._vectorized = spec.num_envs > 1
+        if self._vectorized:
+            from strands_robots.training.rl.vec_env import VecSimEnv
+
+            self.env = VecSimEnv(spec.env_factory, spec.num_envs, device=self.device)
+        else:
+            self.env = spec.env_factory()
         # The learner device is authoritative over the env device (see PpoTrainer
         # for the cross-device mismatch this guards against on a GPU host).
         if self.env.device != self.device:
@@ -243,20 +248,6 @@ class FastSacTrainer(BaseRLAlgo):
         self.actor_optimizer = torch.optim.Adam(actor_params, lr=spec.learning_rate)
         self.critic_optimizer = torch.optim.Adam(critic_params, lr=spec.learning_rate)
 
-        # Automatic entropy temperature (alpha): optimize log_alpha against the
-        # target entropy (default -num_actions, the SAC heuristic).
-        self.target_entropy = (
-            float(spec.target_entropy) if spec.target_entropy is not None else -float(self.env.num_actions)
-        )
-        self.autotune_alpha = spec.autotune_alpha
-        if self.autotune_alpha:
-            self.log_alpha = torch.tensor(
-                float(torch.log(torch.tensor(spec.init_alpha))), device=self.device, requires_grad=True
-            )
-            self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=spec.alpha_lr)
-        else:
-            self.log_alpha = torch.tensor(float(torch.log(torch.tensor(spec.init_alpha))), device=self.device)
-
         self.actor_norm = EmpiricalNormalization(self.env.num_actor_obs, self.device) if spec.normalize_obs else None
         self.critic_norm = EmpiricalNormalization(self.env.num_critic_obs, self.device) if spec.normalize_obs else None
         self.buffer = SimpleReplayBuffer(
@@ -264,13 +255,13 @@ class FastSacTrainer(BaseRLAlgo):
         )
         self._obs = self.env.reset()
         self._collected_steps = 0
+        # The delayed-update counter: persistent across update() calls so the
+        # ``update_count % policy_delay`` cadence spans iterations rather than
+        # restarting inside each one.
+        self._update_count = 0
         self._ep_return = 0.0
+        self._ep_returns_vec = torch.zeros(spec.num_envs, device=self.device)
         self._recent_returns: list[float] = []
-
-    @property
-    def alpha(self) -> torch.Tensor:
-        """Current entropy temperature (``exp(log_alpha)``)."""
-        return self.log_alpha.exp()
 
     def _norm_actor(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
         return self.actor_norm(x, update=update) if self.actor_norm is not None else x
@@ -278,28 +269,58 @@ class FastSacTrainer(BaseRLAlgo):
     def _norm_critic(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
         return self.critic_norm(x, update=update) if self.critic_norm is not None else x
 
-    def collect_rollout(self) -> dict[str, float]:
-        """Step the env ``rollout_steps`` times, pushing transitions to the buffer.
+    def _explore_action(self, actor_obs: torch.Tensor, batch: int) -> torch.Tensor:
+        """Collection-time action for a ``(batch, num_actor_obs)`` observation.
 
-        Before ``learning_starts`` transitions are stored the actions are drawn
-        uniformly at random (exploration warmup); afterwards they are sampled
-        from the stochastic SAC actor. Stores the *terminal* done flag (a time-out
-        truncation is recorded as not-done so its value is bootstrapped).
+        Uniform random over the action interval before ``learning_starts``
+        transitions are stored (the exploration warmup); afterwards the
+        deterministic actor's action plus clipped Gaussian exploration noise -
+        the only exploration a deterministic policy has.
         """
         import torch
 
+        spec = self.spec
+        if self.buffer.size < spec.learning_starts:
+            return torch.rand(batch, self.env.num_actions, device=self.device) * 2.0 - 1.0
+        with torch.no_grad():
+            action = self.actor_critic.act_inference(actor_obs)
+            noise = torch.randn_like(action) * spec.exploration_noise_std
+            return (action + noise).clamp(-1.0, 1.0)
+
+    def collect_rollout(self) -> dict[str, float]:
+        """Step the env(s) ``rollout_steps`` times, pushing transitions to the buffer.
+
+        Dispatches to the vectorized path when ``setup`` built a ``VecSimEnv``
+        (num_envs > 1), else the single-env path (the FastSAC shape). Both
+        store the *terminal* done flag (a time-out truncation is recorded as
+        not-done so its value is bootstrapped).
+        """
+        if getattr(self, "_vectorized", False):
+            return self._collect_rollout_vectorized()
+        return self._collect_rollout_single()
+
+    def _collect_rollout_single(self) -> dict[str, float]:
+        """Single-env collection (num_envs == 1), one transition per tick.
+
+        ``SimEnv`` does not auto-reset, so on ``done`` the stored
+        next-observation is already the TRUE terminal observation and the reset
+        happens here, after the push - the same ordering FastSAC uses.
+        """
+        import torch
+
+        # Not an isinstance narrow: the single-env contract is duck-typed (the
+        # truncation-contract tests drive it with a scripted fake, exactly as
+        # they drive FastSAC's), so the cast records which of the two step
+        # shapes this path consumes without refusing a conforming fake.
+        env = cast("SimEnv", self.env)
         spec = self.spec
         self.actor_critic.train()
         ep_returns: list[float] = []
         step_rewards: list[float] = []
         for _ in range(spec.rollout_steps):
             actor_obs = self._norm_actor(self._obs["actor_obs"])
-            if self.buffer.size < spec.learning_starts:
-                action = torch.rand(1, self.env.num_actions, device=self.device) * 2.0 - 1.0
-            else:
-                with torch.no_grad():
-                    action, _ = self.actor_critic.sample(actor_obs)
-            next_obs, reward, done, info = self.env.step(action)
+            action = self._explore_action(actor_obs, batch=1)
+            next_obs, reward, done, info = env.step(action)
 
             # Bootstrap through time-outs: only a genuine terminal stops the value
             # backup. ``info["terminated"]`` is the real terminal (not a time-out).
@@ -320,7 +341,7 @@ class FastSacTrainer(BaseRLAlgo):
             if bool(done.item()):
                 ep_returns.append(self._ep_return)
                 self._ep_return = 0.0
-                self._obs = self.env.reset()
+                self._obs = env.reset()
             else:
                 self._obs = next_obs
 
@@ -333,22 +354,91 @@ class FastSacTrainer(BaseRLAlgo):
             "buffer_size": float(self.buffer.size),
         }
 
-    def update(self) -> dict[str, float]:
-        """Run ``gradient_steps`` SAC updates from the replay buffer.
+    def _collect_rollout_vectorized(self) -> dict[str, float]:
+        """Vectorized collection over a ``VecSimEnv``: N transitions per tick.
 
-        Each update does a clipped double-Q critic step, a delayed-style actor
-        step against the min-Q minus entropy, an automatic temperature step, and
-        a Polyak target-critic update. Returns averaged loss metrics; a no-op
-        (empty-ish metrics) until the buffer holds at least ``batch_size``.
+        ``VecSimEnv`` auto-resets a done sub-env and returns the FRESH
+        post-reset observation in ``next_obs[i]``, stashing the pre-reset
+        terminal observation in ``infos[i]["terminal_obs"]`` - so the stored
+        next-observation for a done env is pulled back out of the info, the
+        same capture the vectorized PPO path bootstraps its next-value from.
+        Storing the post-reset observation instead would back the TD target of
+        the episode's last action with the value of a fresh episode's first
+        state - a bootstrap across the reset boundary that nothing reports.
+        """
+        import torch
+
+        from strands_robots.training.rl.vec_env import VecSimEnv
+
+        assert isinstance(self.env, VecSimEnv)  # vectorized path
+        spec = self.spec
+        N = self.env.num_envs
+        self.actor_critic.train()
+        ep_returns: list[float] = []
+        reward_sum = 0.0
+        reward_count = 0
+        for _ in range(spec.rollout_steps):
+            actor_obs = self._norm_actor(self._obs["actor_obs"])  # (N, Da)
+            action = self._explore_action(actor_obs, batch=N)  # (N, A)
+            next_obs, reward, done, infos = self.env.step(action)  # reward, done (N,)
+
+            for i, info in enumerate(infos):
+                term_obs = info.get("terminal_obs")
+                if term_obs is not None:
+                    next_actor_i = term_obs["actor_obs"]
+                    next_critic_i = term_obs["critic_obs"]
+                else:
+                    next_actor_i = next_obs["actor_obs"][i : i + 1]
+                    next_critic_i = next_obs["critic_obs"][i : i + 1]
+                terminal = torch.tensor([[float(info["terminated"])]], dtype=torch.float32, device=self.device)
+                self.buffer.add(
+                    self._obs["actor_obs"][i : i + 1],
+                    self._obs["critic_obs"][i : i + 1],
+                    action[i : i + 1],
+                    reward[i : i + 1],
+                    next_actor_i,
+                    next_critic_i,
+                    terminal,
+                )
+            self._collected_steps += N
+            reward_sum += float(reward.sum().item())
+            reward_count += N
+            self._ep_returns_vec = self._ep_returns_vec + reward
+            done_mask = done.bool()
+            if bool(done_mask.any()):
+                for i in range(N):
+                    if bool(done_mask[i].item()):
+                        ep_returns.append(float(self._ep_returns_vec[i].item()))
+                        self._ep_returns_vec[i] = 0.0
+            self._obs = next_obs
+
+        if ep_returns:
+            self._recent_returns = ep_returns
+        mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else reward_sum / max(1, N)
+        return {
+            "mean_reward": reward_sum / max(1, reward_count),
+            "mean_episode_return": mean_return,
+            "buffer_size": float(self.buffer.size),
+        }
+
+    def update(self) -> dict[str, float]:
+        """Run ``gradient_steps`` TD3 updates from the replay buffer.
+
+        Each update does a clipped double-Q critic step against a smoothed
+        target (clipped Gaussian noise on the target policy's action), and -
+        every ``policy_delay``-th step - a delayed deterministic-policy-gradient
+        actor step against Q1 followed by a Polyak update of the actor and both
+        critic targets. Returns averaged loss metrics; a no-op (zero-loss
+        metrics) until the buffer holds at least ``batch_size``.
         """
         import torch
         import torch.nn.functional as F
 
         spec = self.spec
         if self.buffer.size < spec.batch_size:
-            return {"critic_loss": 0.0, "actor_loss": 0.0, "alpha": float(self.alpha.item()), "latest_loss": 0.0}
+            return {"critic_loss": 0.0, "actor_loss": 0.0, "latest_loss": 0.0}
 
-        tot_critic, tot_actor, tot_alpha_loss, tot_entropy = 0.0, 0.0, 0.0, 0.0
+        tot_critic, tot_actor, n_actor = 0.0, 0.0, 0
         for _ in range(spec.gradient_steps):
             batch = self.buffer.sample(spec.batch_size)
             actor_obs = self._norm_actor(batch["actor_obs"], update=False)
@@ -358,57 +448,53 @@ class FastSacTrainer(BaseRLAlgo):
             rewards = batch["rewards"]
             dones = batch["dones"]
 
-            # --- critic update: clipped double-Q target with entropy bonus ---
+            # --- critic update: clipped double-Q against a smoothed target ---
             with torch.no_grad():
-                next_action, next_logp = self.actor_critic.sample(next_actor_obs)
-                q_next = self.actor_critic.q_target(next_critic_obs, next_action) - self.alpha * next_logp
+                noise = (torch.randn_like(batch["actions"]) * spec.target_noise_std).clamp(
+                    -spec.target_noise_clip, spec.target_noise_clip
+                )
+                next_action = (self.actor_critic.act_target(next_actor_obs) + noise).clamp(-1.0, 1.0)
+                q_next = self.actor_critic.q_target(next_critic_obs, next_action)
                 target_q = rewards + spec.gamma * (1.0 - dones) * q_next
             q1, q2 = self.actor_critic.q_values(critic_obs, batch["actions"])
             critic_loss = F.mse_loss(q1, target_q) + F.mse_loss(q2, target_q)
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
-
-            # --- actor update: maximize min-Q minus entropy temperature term ---
-            new_action, logp = self.actor_critic.sample(actor_obs)
-            q1_pi, q2_pi = self.actor_critic.q_values(critic_obs, new_action)
-            min_q_pi = torch.min(q1_pi, q2_pi)
-            actor_loss = (self.alpha.detach() * logp - min_q_pi).mean()
-            self.actor_optimizer.zero_grad()
-            actor_loss.backward()
-            self.actor_optimizer.step()
-
-            # --- temperature update (automatic entropy tuning) ---
-            if self.autotune_alpha:
-                alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
-                self.alpha_optimizer.zero_grad()
-                alpha_loss.backward()
-                self.alpha_optimizer.step()
-                tot_alpha_loss += float(alpha_loss.item())
-
-            # --- Polyak target-critic update ---
-            with torch.no_grad():
-                for p, tp in zip(self.actor_critic.q1.parameters(), self.actor_critic.q1_target.parameters()):
-                    tp.mul_(1.0 - spec.tau).add_(spec.tau * p)
-                for p, tp in zip(self.actor_critic.q2.parameters(), self.actor_critic.q2_target.parameters()):
-                    tp.mul_(1.0 - spec.tau).add_(spec.tau * p)
-
             tot_critic += float(critic_loss.item())
-            tot_actor += float(actor_loss.item())
-            tot_entropy += float(-logp.mean().item())
+
+            # --- delayed actor + target update (the "Delayed" of TD3) ---
+            self._update_count += 1
+            if self._update_count % spec.policy_delay == 0:
+                q1_pi, _ = self.actor_critic.q_values(critic_obs, self.actor_critic.act_inference(actor_obs))
+                actor_loss = -q1_pi.mean()
+                self.actor_optimizer.zero_grad()
+                actor_loss.backward()
+                self.actor_optimizer.step()
+                tot_actor += float(actor_loss.item())
+                n_actor += 1
+
+                # Polyak: every network with a target copy moves together, so
+                # the smoothed backup keeps sampling around a slow policy.
+                with torch.no_grad():
+                    for live, target in (
+                        (self.actor_critic.actor, self.actor_critic.actor_target),
+                        (self.actor_critic.q1, self.actor_critic.q1_target),
+                        (self.actor_critic.q2, self.actor_critic.q2_target),
+                    ):
+                        for p, tp in zip(live.parameters(), target.parameters()):
+                            tp.mul_(1.0 - spec.tau).add_(spec.tau * p)
 
         g = spec.gradient_steps
         return {
             "critic_loss": tot_critic / g,
-            "actor_loss": tot_actor / g,
-            "alpha_loss": tot_alpha_loss / g,
-            "alpha": float(self.alpha.item()),
-            "entropy": tot_entropy / g,
+            "actor_loss": tot_actor / max(1, n_actor),
+            "actor_updates": float(n_actor),
             "latest_loss": tot_critic / g,
         }
 
     def train(self, spec: TrainSpec) -> TrainResult:
-        """Off-policy SAC loop: setup -> [collect_rollout -> update]* -> save.
+        """Off-policy TD3 loop: setup -> [collect_rollout -> update]* -> save.
 
         Overrides the on-policy ``BaseRLAlgo.train``. ``spec`` MUST be an
         :class:`RLTrainSpec`; :meth:`validate` is called first and fails closed.
@@ -460,10 +546,13 @@ class FastSacTrainer(BaseRLAlgo):
         return os.path.join(output_dir, "checkpoints", "last")
 
     def save_checkpoint(self, output_dir: str, iteration: int | None = None) -> str:
-        """Save the actor-critic, normalizers, temperature, and policy metadata.
+        """Save the actor-critic (targets included), normalizers, and policy metadata.
 
         Writes the same ``policy.pt`` + ``policy_meta.json`` contract as
-        ``PpoTrainer`` so a single checkpoint loader serves both RL backends.
+        ``PpoTrainer`` / ``FastSacTrainer`` so a single checkpoint loader
+        serves every RL backend. The target networks travel inside the
+        actor-critic state dict, so the shared
+        :meth:`BaseRLAlgo.load_checkpoint` restores them with no override.
         """
         import torch
 
@@ -471,7 +560,6 @@ class FastSacTrainer(BaseRLAlgo):
         os.makedirs(ckpt_dir, exist_ok=True)
         state: dict[str, Any] = {
             "actor_critic": self.actor_critic.state_dict(),
-            "log_alpha": self.log_alpha.detach(),
             "iteration": iteration,
             "provider": self.provider_name,
         }
@@ -511,5 +599,5 @@ class FastSacTrainer(BaseRLAlgo):
 
     @property
     def hardware_floor(self) -> dict[str, Any]:
-        """FastSAC on MuJoCo trains fine on CPU; no GPU floor."""
+        """FastTD3 on MuJoCo trains fine on CPU; no GPU floor."""
         return {"min_gpus": 0, "min_vram_gb": 0, "multinode": False}

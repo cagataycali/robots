@@ -53,7 +53,7 @@ from strands_robots.utils import positive_count_error
 from tests.training._spec_field_reads import reads_spec_field
 
 # The backends that size a training loop from these two fields.
-RL_BACKENDS = ("ppo", "fast_sac")
+RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
 
 # A backend that sizes its run from ``steps`` instead - it must stay quiet about
 # fields it never reads, or an RL-only value would be a false rejection.
@@ -416,7 +416,7 @@ class TestOneOwnerForTheRlRunSizeDomain:
             for p in _training_modules()
             if _defines_validate(p.read_text()) and _reads_the_run_size(p.read_text())
         }
-        assert gated == {"fast_sac.py", "ppo.py"}, gated
+        assert gated == {"fast_sac.py", "fast_td3.py", "ppo.py"}, gated
 
     def test_the_shared_loop_reads_the_fields_and_has_no_preflight_to_gate(self) -> None:
         """Why the scan is scoped to preflights, pinned rather than asserted in prose.

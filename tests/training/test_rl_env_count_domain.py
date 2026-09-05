@@ -69,7 +69,7 @@ from strands_robots.training.rl.ppo import PpoTrainer
 from strands_robots.utils import positive_count_error
 
 # The backends that derive a loop bound from this factor.
-RL_BACKENDS = ("ppo", "fast_sac")
+RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
 
 # Values that survive a bare per-backend comparison and cannot bound the loop.
 # ``True`` / ``1.0`` survive *both* comparisons; the rest survive PPO's ``< 1``.

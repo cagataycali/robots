@@ -82,18 +82,37 @@ class RLTrainSpec(TrainSpec):
         normalize_advantage: Standardize advantages per batch.
         device: Torch device (``"cpu"`` / ``"cuda"``); ``None`` auto-selects.
         log_interval: Iterations between progress logs.
-        buffer_size: Off-policy replay-buffer capacity (SAC).
-        batch_size: Transitions sampled per gradient step (SAC).
+        buffer_size: Off-policy replay-buffer capacity (SAC / TD3).
+        batch_size: Transitions sampled per gradient step (SAC / TD3).
         learning_starts: Env steps of random warmup collected into the
-            buffer before the first gradient update (SAC).
-        gradient_steps: SAC gradient updates run per training iteration.
-        tau: Polyak averaging coefficient for the target critics (SAC).
+            buffer before the first gradient update (SAC / TD3).
+        gradient_steps: Off-policy gradient updates run per training
+            iteration (SAC / TD3).
+        tau: Polyak averaging coefficient for the target networks (SAC / TD3).
         autotune_alpha: Automatically tune the entropy temperature against
             ``target_entropy`` (SAC).
         init_alpha: Initial entropy temperature (SAC).
         alpha_lr: Learning rate for the temperature optimizer (SAC).
         target_entropy: Target policy entropy; ``None`` uses ``-num_actions``
             (the SAC heuristic).
+        policy_delay: Critic updates per delayed actor / target update (TD3).
+            The actor and the target networks move only every
+            ``policy_delay``-th gradient step, so the critics settle before the
+            policy chases them. ``1`` disables the delay. Must be a positive
+            integer: it is the modulus of an ``update_count % policy_delay``
+            test, so a non-integer never satisfies it and the actor silently
+            never trains (see :meth:`Trainer._policy_delay_problems`).
+        exploration_noise_std: Std of the Gaussian noise added to the
+            deterministic actor's action during collection (TD3). The
+            deterministic policy explores only through this term. Must be a
+            positive finite number (see :meth:`Trainer._td3_noise_problems`).
+        target_noise_std: Std of the target-policy-smoothing noise added to
+            the target action inside the critic's TD target (TD3). Must be a
+            positive finite number (see :meth:`Trainer._td3_noise_problems`).
+        target_noise_clip: Bound the smoothing noise is clipped to, keeping
+            the smoothed target action near the target policy's own (TD3).
+            Must be a positive finite number (see
+            :meth:`Trainer._td3_noise_problems`).
     """
 
     # RL builds fresh optimizers with no policy preset to defer to, so it
@@ -120,7 +139,7 @@ class RLTrainSpec(TrainSpec):
     normalize_advantage: bool = True
     device: str | None = None
     log_interval: int = 10
-    # --- off-policy (SAC) fields; ignored by on-policy backends (PPO) ---
+    # --- off-policy (SAC / TD3) fields; ignored by on-policy backends (PPO) ---
     buffer_size: int = 100_000
     batch_size: int = 256
     learning_starts: int = 1_000
@@ -130,6 +149,11 @@ class RLTrainSpec(TrainSpec):
     init_alpha: float = 1.0
     alpha_lr: float = 3e-4
     target_entropy: float | None = None
+    # --- off-policy (TD3) fields; ignored by the other backends (PPO / SAC) ---
+    policy_delay: int = 2
+    exploration_noise_std: float = 0.1
+    target_noise_std: float = 0.2
+    target_noise_clip: float = 0.5
 
 
 class BaseRLAlgo(Trainer):
@@ -173,6 +197,9 @@ class BaseRLAlgo(Trainer):
 
         Off-policy algorithms override this. ``spec`` MUST be an
         :class:`RLTrainSpec`; :meth:`validate` is called first and fails closed.
+        The env built by :meth:`setup` is closed in ``finally`` when the run
+        leaves this method - see :meth:`_close_env` for why the trainer is the
+        owner and why a later ``evaluate`` on the same instance still works.
         """
         if not isinstance(spec, RLTrainSpec):
             return TrainResult(
@@ -184,31 +211,63 @@ class BaseRLAlgo(Trainer):
         if problems:
             return TrainResult(status="error", job_id="", message="validation failed: " + "; ".join(problems))
 
-        self.setup(spec)
-        steps_per_iter = max(1, self.steps_per_iter)
-        num_iters = max(1, spec.total_timesteps // steps_per_iter)
+        try:
+            self.setup(spec)
+            steps_per_iter = max(1, self.steps_per_iter)
+            num_iters = max(1, spec.total_timesteps // steps_per_iter)
 
-        job_id = f"{self.provider_name}-{id(self):x}"
-        last_metrics: dict[str, Any] = {}
-        ckpt_dir: str | None = None
-        for it in range(num_iters):
-            rollout_metrics = self.collect_rollout()
-            loss_metrics = self.update()
-            last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
-            if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
-                ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
-        if ckpt_dir is None:
-            ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
+            job_id = f"{self.provider_name}-{id(self):x}"
+            last_metrics: dict[str, Any] = {}
+            ckpt_dir: str | None = None
+            for it in range(num_iters):
+                rollout_metrics = self.collect_rollout()
+                loss_metrics = self.update()
+                last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
+                if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
+                    ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
+            if ckpt_dir is None:
+                ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
 
-        last_metrics.setdefault("latest_step", num_iters * steps_per_iter)
-        return TrainResult(
-            status="success",
-            job_id=job_id,
-            checkpoint_dir=ckpt_dir,
-            exported_model=self.export(spec, ckpt_dir),
-            metrics=last_metrics,
-            message=f"{self.provider_name}: {num_iters} iterations x {steps_per_iter} steps complete",
-        )
+            last_metrics.setdefault("latest_step", num_iters * steps_per_iter)
+            return TrainResult(
+                status="success",
+                job_id=job_id,
+                checkpoint_dir=ckpt_dir,
+                exported_model=self.export(spec, ckpt_dir),
+                metrics=last_metrics,
+                message=f"{self.provider_name}: {num_iters} iterations x {steps_per_iter} steps complete",
+            )
+        finally:
+            self._close_env()
+
+    def _close_env(self) -> None:
+        """Close the env this trainer built, releasing its pooled resources.
+
+        The trainer owns the env lifecycle - ``spec.env_factory`` hands it a
+        factory precisely so nothing else holds the instance - so ``train()``
+        closes what its ``setup()`` built, in ``finally``, whether the run
+        finished or raised. Without this, nothing ever called ``close()``: a
+        ``VecSimEnv``'s reused ``ThreadPoolExecutor`` outlived every training
+        run (its worker threads are only reaped at interpreter exit), so each
+        vectorized ``train()`` leaked ``min(num_envs, 8)`` idle threads while
+        the run itself reported success.
+
+        Safe on every path, by construction of the envs' own ``close()``:
+
+        * A failed ``setup`` may not have built an env yet, so a missing
+          ``env`` attribute closes nothing.
+        * ``SimEnv.close`` is a documented no-op (the engine lifecycle belongs
+          to the caller) and ``VecSimEnv.close`` is idempotent, so a second
+          close - a caller closing the env it can still reach - cannot raise.
+        * A closed ``VecSimEnv`` still steps and resets (its ``_map`` falls
+          back to serial when the pool is gone), so the documented
+          train-then-``evaluate()`` continuation on the same instance keeps
+          working; ``evaluate`` itself never closes, because it leaves the
+          trainer live for exactly that reuse.
+        """
+        env = getattr(self, "env", None)
+        if env is not None:
+            env.close()
 
     def _deterministic_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
         """Return the deployable (mean / deterministic) action for ``actor_obs``.

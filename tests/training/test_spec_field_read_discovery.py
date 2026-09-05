@@ -72,6 +72,8 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_gradient_clip_problems": ("max_grad_norm",),
     "_loss_weight_problems": ("value_loss_coef", "entropy_coef"),
     "_clip_range_problems": ("clip_param",),
+    "_policy_delay_problems": ("policy_delay",),
+    "_td3_noise_problems": ("exploration_noise_std", "target_noise_std", "target_noise_clip"),
 }
 
 
@@ -185,9 +187,11 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_lora_hyperparameter_domain.py",
             "test_loss_weight_domain.py",
             "test_optimization_epochs_domain.py",
+            "test_policy_delay_domain.py",
             "test_rl_run_size_domain.py",
             "test_rl_replay_domain.py",
             "test_seed_domain.py",
+            "test_td3_noise_domain.py",
             "test_temperature_learning_rate_domain.py",
             "test_validation_episodes_domain.py",
         }

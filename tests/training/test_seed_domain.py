@@ -273,7 +273,7 @@ class TestOneOwnerForTheSeedDomain:
     def test_the_scan_finds_the_seeding_backends(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
         readers = {p.name for p in _trainer_modules() if _reads_the_seed(p.read_text())}
-        assert readers == {"cosmos3.py", "lerobot.py", "fast_sac.py", "ppo.py", "sagemaker.py"}
+        assert readers == {"cosmos3.py", "lerobot.py", "fast_sac.py", "fast_td3.py", "ppo.py", "sagemaker.py"}
 
     def test_every_backend_that_seeds_routes_through_the_shared_gate(self) -> None:
         adrift = sorted(

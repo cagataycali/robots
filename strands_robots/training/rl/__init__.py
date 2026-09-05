@@ -11,6 +11,7 @@ Public surface:
     - :class:`RLTrainSpec` - reward-driven training spec.
     - :class:`PpoTrainer` - Proximal Policy Optimization (on-policy).
     - :class:`FastSacTrainer` - Soft Actor-Critic (off-policy, replay buffer).
+    - :class:`FastTd3Trainer` - Twin Delayed DDPG (off-policy, replay buffer).
     - :class:`SimpleReplayBuffer` - off-policy transition store.
     - :class:`SimEnv` - ``SimEngine`` -> RL env adapter.
     - :class:`VecSimEnv` - N independent ``SimEnv`` presented as one ``(N, D)`` env.
@@ -24,6 +25,7 @@ registered there through a lazy loader instead.
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.training.rl.env import SimEnv
 from strands_robots.training.rl.fast_sac import FastSacTrainer
+from strands_robots.training.rl.fast_td3 import FastTd3Trainer
 from strands_robots.training.rl.gym_env import GymSimEnv
 from strands_robots.training.rl.normalization import EmpiricalNormalization
 from strands_robots.training.rl.ppo import PpoTrainer
@@ -35,6 +37,7 @@ __all__ = [
     "RLTrainSpec",
     "PpoTrainer",
     "FastSacTrainer",
+    "FastTd3Trainer",
     "SimpleReplayBuffer",
     "SimEnv",
     "GymSimEnv",

@@ -75,7 +75,7 @@ NOT_A_NUMBER = ("1e-4", [1e-4], {"lr": 1e-4})
 UNUSABLE = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
 
 SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
-RL_TRAINER_NAMES = ("FastSacTrainer", "PpoTrainer")
+RL_TRAINER_NAMES = ("FastSacTrainer", "FastTd3Trainer", "PpoTrainer")
 ALL_TRAINER_NAMES = tuple(t.__name__ for t in SUPERVISED_TRAINERS) + RL_TRAINER_NAMES
 
 

@@ -38,7 +38,7 @@ from strands_robots.training.rl import RLTrainSpec
 from tests.training._spec_field_reads import reads_spec_field
 
 # Every backend that discounts a return with the field.
-RL_BACKENDS = ("ppo", "fast_sac")
+RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
 
 # Values outside the closed interval: the discounted return either diverges in
 # the horizon (> 1) or stops accumulating future reward at all (< 0).
@@ -268,7 +268,7 @@ class TestOneOwnerForTheDiscountDomain:
     def test_the_reader_set_is_the_expected_one(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
         readers = {p.name for p in _training_modules() if _reads_the_discount_factor(p.read_text())}
-        assert readers == {"ppo.py", "fast_sac.py"}, readers
+        assert readers == {"ppo.py", "fast_sac.py", "fast_td3.py"}, readers
 
     def test_the_scanner_detects_a_planted_reader(self) -> None:
         """A module reading the field without the gate is really reported."""

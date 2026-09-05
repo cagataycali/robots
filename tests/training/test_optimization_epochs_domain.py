@@ -46,7 +46,7 @@ from tests.training._spec_field_reads import reads_spec_field
 ON_POLICY = "ppo"
 
 # Backends with no epoch loop - they must stay quiet about the field.
-NO_EPOCH_LOOP_BACKENDS = ("fast_sac", "mock")
+NO_EPOCH_LOOP_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Non-positive counts. These are the silent half: the run succeeds having taken
 # no gradient step, and reports losses of 0.0 through ``max(1, n_updates)``.

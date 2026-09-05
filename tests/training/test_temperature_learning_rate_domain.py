@@ -48,7 +48,7 @@ from tests.training._spec_field_reads import reads_spec_field
 OFF_POLICY = "fast_sac"
 
 # Backends that read ``learning_rate`` but never ``alpha_lr``.
-NO_TEMPERATURE_BACKENDS = ("ppo", "mock")
+NO_TEMPERATURE_BACKENDS = ("ppo", "fast_td3", "mock")
 
 # Values the temperature optimizer cannot be driven by. ``0`` and ``False`` build
 # it and never move it; ``inf`` poisons it and the actor with it; ``True`` is a

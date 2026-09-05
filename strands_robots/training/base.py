@@ -380,14 +380,14 @@ class Trainer(ABC):
         return rl_run_size_problems(spec, context=self.provider_name)
 
     def _rl_replay_problems(self, spec: TrainSpec) -> list[str]:
-        """Replay-loop count preflight for the off-policy (FastSAC) backend.
+        """Replay-loop count preflight for the off-policy (SAC / TD3) backends.
 
         Returns problems for :attr:`RLTrainSpec.buffer_size` /
         :attr:`RLTrainSpec.batch_size` / :attr:`RLTrainSpec.gradient_steps` - the
-        three caller-supplied counts of a SAC replay loop (the buffer capacity,
-        the transitions sampled per gradient step, and the updates per iteration)
-        - against the same shared positive-count domain the run-size and
-        launch-topology gates use.
+        three caller-supplied counts of an off-policy replay loop (the buffer
+        capacity, the transitions sampled per gradient step, and the updates per
+        iteration) - against the same shared positive-count domain the run-size
+        and launch-topology gates use.
 
         A :meth:`validate` that reads any of the three MUST call this instead of
         comparing the value itself. Each is consumed directly as a count (a
@@ -399,8 +399,9 @@ class Trainer(ABC):
         :func:`~strands_robots.training._validate.rl_replay_problems` for the
         measured table.
 
-        Only FastSAC reads these fields; PPO sizes its minibatches from
-        ``num_mini_batches`` and never reads them, so it must not report on them.
+        Only the off-policy backends (FastSAC and FastTD3) read these fields;
+        PPO sizes its minibatches from ``num_mini_batches`` and never reads
+        them, so it must not report on them.
 
         Imported lazily for the same reason as :meth:`_security_problems` - to
         keep the ``base -> _validate`` import one-way at runtime.
@@ -686,7 +687,7 @@ class Trainer(ABC):
         writes a checkpoint holding non-finite parameters, both under a
         successful result.
 
-        Only the off-policy backend tunes a temperature, so unlike
+        Only the SAC backend tunes a temperature, so unlike
         :meth:`_learning_rate_problems` a backend that does not read the field
         MUST NOT call this: per :class:`TrainSpec` a backend ignores the fields it
         does not support, so reporting on one it never reads would be a false
@@ -865,6 +866,86 @@ class Trainer(ABC):
         from strands_robots.training._validate import clip_range_problems
 
         return clip_range_problems(spec, context=self.provider_name)
+
+    def _policy_delay_problems(self, spec: TrainSpec) -> list[str]:
+        """Policy-delay preflight for a backend that delays its actor updates.
+
+        Returns a problem when :attr:`RLTrainSpec.policy_delay` is not a
+        positive integer. A :meth:`validate` implementation whose update gates
+        the actor / target step on ``update_count % policy_delay == 0`` MUST
+        call this, because the modulus judges nothing and its silent reading is
+        the worst one: a value the test can never satisfy (``nan``, since
+        ``n % nan`` is ``nan`` and compares unequal to everything) trains the
+        critics for the whole run while the deployable actor never takes a
+        gradient step - the run reports success and checkpoints an untrained
+        policy. ``True`` is a silent delay of one, a fraction a silently
+        different cadence, ``0`` a ``ZeroDivisionError`` and a string a
+        ``TypeError`` - each from inside the update loop, after the env, the
+        networks, the optimizers and the replay buffer are built.
+
+        ``1`` is inside the domain: a delay of one is TD3 with the delay
+        disabled, a configuration rather than a defect.
+
+        Only a backend that delays its policy may call this: like
+        :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``policy_delay`` cannot be honored;
+            empty otherwise.
+        """
+        from strands_robots.training._validate import policy_delay_problems
+
+        return policy_delay_problems(spec, context=self.provider_name)
+
+    def _td3_noise_problems(self, spec: TrainSpec) -> list[str]:
+        """Noise-scale preflight for a backend built on a deterministic actor.
+
+        Returns a problem per unusable :attr:`RLTrainSpec.exploration_noise_std`
+        / :attr:`RLTrainSpec.target_noise_std` /
+        :attr:`RLTrainSpec.target_noise_clip` - the three scalars of TD3's two
+        noise mechanisms: the exploration noise that is a deterministic
+        policy's only exploration once the random warmup ends, and the target
+        policy smoothing that keeps the critic from exploiting its own sharp
+        errors. A :meth:`validate` implementation that reads any of the three
+        MUST call this, because the multiplications that consume them judge
+        nothing: zero silently removes the mechanism (a collection that never
+        explores; plain clipped double-Q reported as the smoothed algorithm), a
+        negative scale is silently the identical distribution (Gaussian noise
+        is symmetric) while a negative clip inverts the clamp into a constant
+        bias, and a non-finite value poisons the actions or the TD target under
+        a run that keeps stepping. Positive infinity has no "disable" reading
+        here, unlike the clip bounds of :meth:`_gradient_clip_problems` - an
+        infinite std is a coin-flip between the action bounds, not a large
+        noise - so the domain is the plain positive-finite one.
+
+        Only a backend that explores and smooths this way may call this: like
+        :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the
+        fields MUST NOT report on them, because per :class:`TrainSpec` a
+        backend ignores the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            One problem per noise scalar that cannot be honored; empty when all
+            three can.
+        """
+        from strands_robots.training._validate import td3_noise_problems
+
+        return td3_noise_problems(spec, context=self.provider_name)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.

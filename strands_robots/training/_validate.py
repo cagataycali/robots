@@ -120,6 +120,24 @@ because the two bounds have one domain for one reason - a clip bound is a
 positive width, and positive infinity is each field's only spelling of "do not
 clip". It is scoped like :func:`gae_lambda_problems`: ``spec.clip_param`` is read
 in ``rl/ppo.py`` and nowhere else.
+
+:func:`policy_delay_problems` is the fifteenth, on the *optimization* axis:
+``policy_delay``, the number of critic updates FastTD3 runs per delayed actor /
+target update. It is consumed as the modulus of an ``update_count %
+policy_delay`` test, so a value that never satisfies the test silently trains
+the critics for the whole run while the deployable actor never takes a
+gradient step - under a successful result. It is scoped like
+:func:`gae_lambda_problems`: only the TD3 backend delays its policy, so a
+backend that does not read the field must not report on it.
+
+:func:`td3_noise_problems` is the sixteenth, on the *exploration/target* axis:
+``exploration_noise_std``, ``target_noise_std`` and ``target_noise_clip``, the
+three scalars that shape FastTD3's two noise mechanisms - exploration noise on
+collection and target policy smoothing in the critic's TD target. Gaussian
+noise is symmetric, so a negative scale is silently the identical
+distribution, zero silently removes the mechanism the field configures, and a
+non-finite value poisons the actions or the TD target. It is scoped like
+:func:`policy_delay_problems`: only the TD3 backend reads the three fields.
 """
 
 from __future__ import annotations
@@ -320,15 +338,17 @@ def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
 
 
 def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
-    """Return replay-loop problems for a FastSAC :class:`RLTrainSpec`.
+    """Return replay-loop problems for an off-policy :class:`RLTrainSpec`.
 
-    The three caller-supplied counts of an off-policy SAC run's replay loop:
+    The three caller-supplied counts of an off-policy (SAC / TD3) run's replay
+    loop:
 
     * ``buffer_size`` - the replay buffer's capacity, a tensor dimension built
       in :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`.
     * ``batch_size`` - the transitions sampled per gradient step, passed to
       ``ReplayBuffer.sample``.
-    * ``gradient_steps`` - the SAC updates run per iteration, a ``range()`` bound.
+    * ``gradient_steps`` - the off-policy updates run per iteration, a
+      ``range()`` bound.
 
     Each is consumed directly as a count - a capacity, a sample size, a
     ``range()`` bound - so the same strict-``int``
@@ -367,10 +387,10 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     a :meth:`~strands_robots.training.base.Trainer.validate` documented to
     *return* its problems.
 
-    Only FastSAC reads these three fields; PPO sizes its minibatches from
-    ``num_mini_batches`` and never reads them, so a backend that ignores them
-    must not report on them - which is why this is a gate scoped to the field
-    rather than part of :func:`validate_train_inputs`.
+    Only the off-policy backends (FastSAC and FastTD3) read these three fields;
+    PPO sizes its minibatches from ``num_mini_batches`` and never reads them, so
+    a backend that ignores them must not report on them - which is why this is a
+    gate scoped to the field rather than part of :func:`validate_train_inputs`.
 
     ``learning_starts`` and ``tau`` stay in the backend's own ``validate``: the
     first is one side of a relation (``>= batch_size``) rather than a bare count,
@@ -1010,7 +1030,7 @@ def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list
     would be a false rejection. A plain :class:`TrainSpec` has no
     ``autotune_alpha`` at all and is likewise silent.
 
-    Only the off-policy backend tunes a temperature, so this is scoped like
+    Only the SAC backend tunes a temperature, so this is scoped like
     :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`: a
     backend that does not read the field MUST NOT call this.
 
@@ -1080,7 +1100,7 @@ def initial_temperature_problems(spec: TrainSpec, *, context: str) -> list[str]:
     with a concrete ``1.0`` default, so ``None`` is a value ``torch.log`` cannot
     take rather than a request for a default.
 
-    Only the off-policy backend holds an entropy temperature, so this is scoped
+    Only the SAC backend holds an entropy temperature, so this is scoped
     like :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`:
     a backend that does not read the field MUST NOT call this. A plain
     :class:`TrainSpec` has no ``init_alpha`` at all and is likewise silent.
@@ -1388,3 +1408,140 @@ def clip_range_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """
     error = _clip_bound_error(getattr(spec, "clip_param", 0.2), "clip_param", context)
     return [error] if error is not None else []
+
+
+def policy_delay_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return policy-delay problems for an off-policy TD3 :class:`RLTrainSpec`.
+
+    ``policy_delay`` is the number of critic updates FastTD3 runs per delayed
+    actor / target update - the "delayed" of Twin Delayed DDPG. It is consumed
+    as the modulus of the one test that decides whether the actor and the
+    target networks move at all::
+
+        if self._update_count % spec.policy_delay == 0:  # actor + Polyak step
+
+    Nothing downstream judges it, and the modulus mis-handles every unusable
+    spelling differently - measured on a CPU FastTD3 run of 6 gradient updates
+    (an otherwise-valid spec, one field mutated):
+
+    ======================  ==========  ===============  ======================
+    ``policy_delay``        verdict     actor updates    what happened
+    ======================  ==========  ===============  ======================
+    ``2`` (the default)     honored     3                the asked-for delay
+    ``float("nan")``        success     **0**            ``n % nan`` is ``nan``,
+                                                         never ``== 0``
+    ``2.5``                 success     **1** (not 3)    only multiples of 2.5
+    ``True``                success     6                a silent delay of one
+    ``0``                   raises      --               ``ZeroDivisionError``
+                                                         mid-update
+    ``"2"`` / ``None``      raises      --               ``TypeError`` from ``%``
+    ======================  ==========  ===============  ======================
+
+    The ``nan`` row is the reason this is a gate rather than a lint: the
+    critics train for the whole run, the losses are real numbers, the run
+    reports success and writes a checkpoint - but the actor inside it never
+    took a gradient step, so the deployable half of the policy is its untrained
+    initialisation with nothing anywhere reporting that. ``True`` and a
+    fraction are silently a *different* delay from the one the caller named,
+    and a non-positive or non-numeric value raises from inside the update loop
+    after the env, the networks, the optimizers and the replay buffer are
+    built - the cost a read-only preflight exists to precede.
+
+    The domain is a positive integer, checked by
+    :func:`~strands_robots.utils.positive_count_error` - the same rule this
+    package applies to every count consumed as a modulus or ``range()`` bound -
+    with ``1`` first-class: a delay of one is TD3 with the delay disabled,
+    which is a configuration, not a defect.
+
+    Only the TD3 backend delays its policy - PPO has no target networks and
+    SAC updates its actor every gradient step - so this is scoped like
+    :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`: a
+    backend that does not read the field MUST NOT call this, because per
+    :class:`TrainSpec` a backend ignores the fields it does not support and
+    reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``policy_delay`` cannot be honored; empty
+        otherwise.
+    """
+    error = positive_count_error(getattr(spec, "policy_delay", 1), "policy_delay", context)
+    return [error] if error is not None else []
+
+
+def td3_noise_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return noise-scale problems for an off-policy TD3 :class:`RLTrainSpec`.
+
+    ``exploration_noise_std``, ``target_noise_std`` and ``target_noise_clip``
+    are the three scalars that shape FastTD3's two noise mechanisms, read in
+    exactly two expressions::
+
+        action = (action + torch.randn_like(action) * spec.exploration_noise_std).clamp(-1.0, 1.0)
+        noise = (torch.randn_like(a) * spec.target_noise_std).clamp(-spec.target_noise_clip, spec.target_noise_clip)
+
+    The first is the only exploration a deterministic policy has once the
+    random warmup ends; the second is target policy smoothing, the mechanism
+    that keeps the critic from exploiting its own sharp errors. Neither
+    expression judges its scalars, and each unusable value produces a finite,
+    successful run that is not the configured one:
+
+    * **Zero silently removes the mechanism.** ``randn * 0`` is exactly ``0``,
+      so ``exploration_noise_std=0`` collects with the deterministic action
+      alone - the policy revisits the identical trajectory instead of
+      exploring around it - and ``target_noise_std=0`` (or a clip of ``0``,
+      which clamps every sample to ``[0, 0]``) trains plain clipped double-Q
+      while reporting the smoothing knobs it was asked for. Neither run can be
+      told apart from an honored one by its result object.
+    * **A negative scale is silently the identical run.** Gaussian noise is
+      symmetric, so ``randn * (-s)`` draws from the same distribution as
+      ``randn * s`` - a value that reads as different and changes nothing. A
+      negative *clip* is worse than identical: ``clamp`` with inverted bounds
+      returns the constant upper bound, so every smoothing sample becomes the
+      same negative offset and the target is biased rather than smoothed.
+    * **A non-finite value poisons what the expression feeds.** A ``nan`` std
+      makes every collected action (or every TD target, and from there every
+      critic parameter) ``nan`` under a run that keeps stepping; an ``inf``
+      exploration std saturates the clamp so every action is a coin-flip
+      between the bounds ``-1`` and ``1`` - bang-bang control, not a large
+      noise. ``True`` is a silent scale of ``1.0``, ten times the shipped
+      exploration default, from a value that reads as a flag.
+
+    Only a positive finite number can be honored, so all three are checked
+    against the shared
+    :func:`~strands_robots.utils.positive_finite_number_error` domain - the
+    family that already owns the dimensionless-multiplier scalars - which also
+    refuses the ``bool`` a bare comparison would accept. There is no "disable"
+    spelling to carve out, unlike :func:`_clip_bound_error`'s infinity: a run
+    that wants no smoothing is a different algorithm, not a boundary value of
+    this one.
+
+    Only the TD3 backend reads the three fields - SAC explores through its
+    stochastic actor and smooths nothing - so this is scoped like
+    :func:`policy_delay_problems`: a backend that does not read them MUST NOT
+    call this, because per :class:`TrainSpec` a backend ignores the fields it
+    does not support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable noise scalar; empty when all three are usable.
+    """
+    problems: list[str] = []
+    for param, default in (
+        ("exploration_noise_std", 0.1),
+        ("target_noise_std", 0.2),
+        ("target_noise_clip", 0.5),
+    ):
+        error = positive_finite_number_error(getattr(spec, param, default), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems

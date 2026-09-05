@@ -66,7 +66,7 @@ from tests.training._spec_field_reads import reads_spec_field
 ON_POLICY = "ppo"
 
 # Backends that never clip - they must stay quiet about the field.
-NO_CLIP_BACKENDS = ("fast_sac", "mock")
+NO_CLIP_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Zero scales every gradient to zero, so the run takes no informed step at all.
 NO_GRADIENT_STEP: list[Any] = [0, 0.0]
