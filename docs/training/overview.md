@@ -208,6 +208,32 @@ Check what a policy freezes by default before assuming `method="full"` trains
 all of it: `dataclasses.fields()` on its lerobot config class lists every knob
 and its default.
 
+#### `output_dir` on a fresh start
+
+lerobot refuses a pre-existing `output_dir` unless it is resuming:
+
+```
+FileExistsError: Output directory /tmp/ft_out already exists and resume is
+False. Please change your output directory so that /tmp/ft_out is not
+overwritten.
+```
+
+So a fresh (`resume=False`) start clears a leftover `output_dir` first - but
+**only when it is empty**. A directory holding anything at all is left for
+lerobot to refuse by name, because the removal is a recursive
+`shutil.rmtree(..., ignore_errors=True)` that reports neither what it took nor a
+partial failure. Both entry points - `train_policy` / `LerobotTrainer.train()`
+and the `lerobot_train` tool - ask
+`strands_robots.utils.stale_output_dir_is_clearable()`, so they cannot disagree
+about it.
+
+Emptiness rather than "holds no resumable checkpoint" is the bound because a
+checkpoint is not always visible to a resume probe: lerobot's `save_checkpoint`
+writes `model.safetensors` before `train_config.json`, so a run interrupted
+between the two leaves the trained weights under a checkpoint that answers "not
+resumable". Point a fresh run at a new `output_dir`, or pass `resume=True` to
+continue in place.
+
 #### RA-BC sample weighting (reward-aligned behavior cloning)
 
 Reward-Aligned Behavior Cloning reweights the per-sample loss so high-progress

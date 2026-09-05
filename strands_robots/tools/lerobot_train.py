@@ -41,6 +41,7 @@ from strands_robots.tools._process_stop import (
 )
 from strands_robots.utils import (
     positive_count_error,
+    stale_output_dir_is_clearable,
     step_cadence_error,
     validation_split_error,
     validation_split_fraction,
@@ -1016,13 +1017,12 @@ def lerobot_train(
             # Default output_dir lives next to the dataset so artifacts are colocated.
             resolved_output_dir = output_dir or str(Path(dataset_root).resolve().parent / "train_out" / job_name)
 
-            # Clear a stale EMPTY output_dir on a fresh (non-resumable) start so
-            # lerobot's "already exists" guard does not crash. Never delete a dir
-            # that holds checkpoints.
-            out_path = Path(resolved_output_dir)
-            if out_path.is_dir() and not _has_resumable_checkpoint(resolved_output_dir):
-                if not any(out_path.iterdir()):
-                    shutil.rmtree(out_path, ignore_errors=True)
+            # Clear a stale EMPTY output_dir on a fresh start so lerobot's
+            # "already exists" guard does not crash. Never delete a dir that
+            # holds checkpoints - the emptiness bound the shared owner applies
+            # subsumes the checkpoint probe that used to be asked here.
+            if stale_output_dir_is_clearable(resolved_output_dir):
+                shutil.rmtree(resolved_output_dir, ignore_errors=True)
 
             if extra_flags:
                 gate_err = _gate_extra_flags(extra_flags, tool_context)

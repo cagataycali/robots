@@ -822,11 +822,27 @@ class TestTrainOrchestration:
         assert "lerobot train raised RuntimeError" in result.message
         assert "CUDA OOM" in result.message
 
-    def test_fresh_start_clears_stale_output_dir(self, spec, monkeypatch, tmp_path):
+    @pytest.mark.parametrize(
+        ("leftover", "cleared"),
+        [(None, True), ("leftover.txt", False)],
+        ids=("empty", "holds-a-file"),
+    )
+    def test_fresh_start_clears_only_an_empty_output_dir(self, spec, monkeypatch, tmp_path, leftover, cleared):
+        """A stale EMPTY output_dir is cleared; one holding anything is kept.
+
+        lerobot refuses a pre-existing output_dir unless resume=True, so a fresh
+        start clears a leftover directory rather than launch into that refusal.
+        The bound is emptiness, because the removal is a recursive
+        ``rmtree(ignore_errors=True)``: a directory holding a stale run's plots,
+        its wandb dir, or a checkpoint no resume probe can see is left for
+        lerobot to refuse by name instead. Owned by
+        ``strands_robots.utils.stale_output_dir_is_clearable`` and shared with
+        the ``lerobot_train`` tool.
+        """
         out = tmp_path / "stale_out"
         out.mkdir()
-        sentinel = out / "leftover.txt"
-        sentinel.write_text("old")
+        if leftover is not None:
+            (out / leftover).write_text("old")
         spec.output_dir = str(out)
         spec.resume = False
 
@@ -838,8 +854,9 @@ class TestTrainOrchestration:
 
         monkeypatch.setattr(lt, "train", lambda cfg, **kw: None)
         trainer.train(spec)
-        # Stale dir (no resumable checkpoint) is wiped before training.
-        assert not sentinel.exists()
+        assert out.exists() is not cleared
+        if leftover is not None:
+            assert (out / leftover).exists()
 
     def test_multi_gpu_uses_elastic_launch(self, spec, monkeypatch):
         spec.num_gpus = 2
