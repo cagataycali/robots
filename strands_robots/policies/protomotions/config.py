@@ -25,7 +25,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import non_negative_whole_number_error, require_optional
+from strands_robots.utils import (
+    non_negative_whole_number_error,
+    positive_finite_number_error,
+    require_optional,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -219,8 +223,15 @@ class ProtoMotionsConfig:
             physics_dt``).
         future_step_indices: Future-reference lookahead offsets in control
             steps.
-        action_ema_alpha: Optional exponential-moving-average smoothing on the
-            joint target output (``1.0`` = passthrough, upstream default).
+        action_ema_alpha: Exponential-moving-average smoothing applied to the
+            joint targets the PD loop receives, in ``(0, 1]``. ``1.0`` (the
+            upstream default) is passthrough; a smaller value weights the
+            previous target more heavily, trading tracking lag for less
+            per-tick jitter. Applied by
+            :meth:`~strands_robots.policies.protomotions.policy.\
+ProtoMotionsPolicy.get_actions`; the raw network output continues to feed the
+            historical-actions buffer, which is what the ONNX graph's
+            ``historical_processed_actions`` input is defined over.
         onnx_in_names: Input tensor names in the order the exported session
             declares them, so the session's ``get_inputs()`` order can be
             validated against this tuple at load.
@@ -265,7 +276,7 @@ class ProtoMotionsConfig:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Refuse a body index that cannot address :attr:`body_names`.
+        """Refuse a body index, or a smoothing factor, no reader can honor.
 
         The two indices are the only fields this config resolves a body NAME
         from, and an index that misses is not a value the control path can
@@ -281,9 +292,22 @@ class ProtoMotionsConfig:
         yaml ``anchor_body_index: true`` into row 1 (``head``) and a ``2.7``
         into row 2 (``left_hip_pitch_link``).
 
+        :attr:`action_ema_alpha` is gated for the same reason and against the
+        same failure: the value is the weight the CURRENT network output carries
+        in the target the PD loop receives, so ``0`` weights it not at all and
+        freezes the commanded pose at the first tick's target for the whole
+        clip - a tracker that reports every frame and moves through none of
+        them. A negative weight drives the joint the opposite way from the
+        motion it is tracking, one above ``1`` over-extrapolates past it, and
+        ``nan`` propagates into the filter state and never leaves it, so every
+        joint of every later tick is ``nan`` however good the network output
+        is. None of the four is a smoothing factor, and all four used to be
+        stored and carried into the control path.
+
         Raises:
             ValueError: If either body index is not a non-negative whole number,
-                or is not a row of :attr:`body_names`.
+                or is not a row of :attr:`body_names`; or if
+                :attr:`action_ema_alpha` is not a finite number in ``(0, 1]``.
         """
         num_bodies = len(self.body_names)
         for name in ("anchor_body_index", "root_body_index"):
@@ -302,6 +326,24 @@ class ProtoMotionsConfig:
             # integral float the domain admits is stored as the row number the
             # observation lookup and the future-reference slice both index with.
             object.__setattr__(self, name, index)
+
+        # The shared positive-finite domain covers the sign, the finiteness, the
+        # non-real spellings and the ``bool`` that would act as a silent 1.0;
+        # only the upper bound is this field's own, so only it is spelled here.
+        if error := positive_finite_number_error(self.action_ema_alpha, "action_ema_alpha", "ProtoMotionsConfig"):
+            raise ValueError(error)
+        if float(self.action_ema_alpha) > 1.0:
+            raise ValueError(
+                "ProtoMotionsConfig: action_ema_alpha must be <= 1 (1.0 is the "
+                f"unsmoothed passthrough), got {self.action_ema_alpha!r}. The value is the "
+                "weight the current network output carries in the blend, so one above 1 "
+                "gives the previous target a negative weight and extrapolates past the "
+                "motion instead of smoothing toward it."
+            )
+        # Normalise to a plain float for the same reason the indices normalise
+        # to int: the filter multiplies with it every tick, and a NumPy scalar
+        # read from a config array would set the output dtype from the weight.
+        object.__setattr__(self, "action_ema_alpha", float(self.action_ema_alpha))
 
     # ------------------------------------------------------------------
     # Derived properties - computed on read, never stored, so a frozen
@@ -392,10 +434,10 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
         ValueError: If the file is not valid YAML, or holds a YAML value that
             is not a mapping, or contains an inconsistent dimension: a
             ``stiffness`` or ``damping`` length that is not the joint count, or
-            an ``anchor_body_index`` / ``root_body_index`` that is not a row of
-            ``body_names`` (refused by
-            :meth:`ProtoMotionsConfig.__post_init__`, so a config built by hand
-            reports the same value the same way).
+            an ``anchor_body_index`` / ``root_body_index`` that is not a row
+            of ``body_names``, or an ``action_ema_alpha`` outside ``(0, 1]``
+            (each refused by :meth:`ProtoMotionsConfig.__post_init__`, so a
+            config built by hand reports the same value the same way).
     """
     yaml = require_optional(
         "yaml",
@@ -435,7 +477,11 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
     control = data.get("control", {})
     stiffness = tuple(control.get("stiffness", data.get("default_joint_stiffness", _G1_STIFFNESS)))
     damping = tuple(control.get("damping", data.get("default_joint_damping", _G1_DAMPING)))
-    ema = float(control.get("action_ema_alpha", 1.0))
+    # Handed through raw for the reason the body indices are: the config's
+    # __post_init__ is the single owner of what a smoothing factor may be, and
+    # ``float()`` here first is what turned a yaml ``action_ema_alpha: true``
+    # into an unsmoothed 1.0 before the domain could see it.
+    ema = control.get("action_ema_alpha", 1.0)
 
     timing = data.get("timing", {})
     control_dt = float(timing.get("control_dt", GTP_G1_CONTROL_DT))

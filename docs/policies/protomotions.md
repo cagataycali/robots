@@ -258,6 +258,7 @@ sidecar; omit it to use the defaults, which match the shipped export.
 | `root_body_index` | `0` (`pelvis`) | Floating base |
 | `control_dt` | `0.02` | Seconds per control tick (50 Hz) |
 | `future_step_indices` | `(1, 2, 4, 8)` | Lookahead offsets, in control steps |
+| `action_ema_alpha` | `1.0` | Smoothing weight on the emitted joint targets; `1.0` is passthrough |
 
 ### A body index has to address a body
 
@@ -286,6 +287,54 @@ The index also goes through the shared whole-number domain, so a yaml
 and a hand-built `ProtoMotionsConfig(...)` reports the same value the same way a
 sidecar does. An integral float such as `16.0` addresses a row and is kept,
 normalised to the row number both consumers index with.
+
+### Target smoothing
+
+`action_ema_alpha` is the weight the CURRENT network output carries in the target
+the PD loop receives:
+
+```text
+y[t] = alpha * x[t] + (1 - alpha) * y[t-1]
+```
+
+`1.0` - the shipped checkpoint's own value - is passthrough, and returns the
+network output unchanged and bit-exact rather than multiplying it by one. A
+smaller value weights the previous target more heavily, trading tracking lag for
+less per-tick jitter in the commanded pose. Measured on a tracker output carrying
+an alternating +/-0.11 rad per-tick component, the mean per-tick change in the
+emitted `left_hip_pitch_joint` target:
+
+| `action_ema_alpha` | mean per-tick change |
+| --- | --- |
+| `1.0` (passthrough) | 0.220 rad |
+| `0.5` | 0.074 rad |
+| `0.2` | 0.029 rad |
+| `0.05` | 0.010 rad |
+
+Two things the filter deliberately does not do. The first tick of an episode
+seeds from the network's own output rather than from zeros - a zero-seeded filter
+would command a pose between the origin and the first target, which on a 29-DOF
+humanoid holding a stance is a lurch toward the zero pose, and the smaller the
+alpha the further that first command would sit from the motion. And the
+historical-actions buffer keeps carrying the RAW output: it feeds the graph's own
+`historical_processed_actions` input, which is defined over it, so smoothing what
+the network reads back would change its input distribution.
+
+The factor must be a finite number in `(0, 1]`, refused when the config is built
+rather than when the filter reads it, and by the sidecar and a hand-built
+`ProtoMotionsConfig(...)` alike:
+
+```text
+ValueError: ProtoMotionsConfig: action_ema_alpha must be > 0, got 0.0.
+```
+
+`0` weights the current output at zero, freezing the commanded pose at the first
+tick's target for the whole clip - a tracker that reports every frame and moves
+through none of them. A negative weight drives each joint the opposite way from
+the motion, a value above `1` gives the previous target a negative weight and
+extrapolates past the motion instead of smoothing toward it, and `nan` enters the
+filter state and never leaves it, so every joint of every later tick is `nan`
+however good the network output is.
 
 ## Testing without weights
 
