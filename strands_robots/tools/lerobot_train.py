@@ -192,13 +192,24 @@ def _blocked_flags_named(key: str) -> tuple[str, ...]:
     full names that flag and nothing else, however many longer flags it is a
     prefix of.
 
+    A key is truncated at its first ``=`` before anything else is asked of it,
+    because that is what argparse does with the argv element. Keys are emitted
+    as one element, ``f"--{key}={value}"``, so a key that carries its own ``=``
+    puts the rest of itself in the *value*: ``{"output_dir=/evil/dir": "x"}``
+    emits ``--output_dir=/evil/dir=x`` and sets ``output_dir`` to the perfectly
+    valid path ``/evil/dir=x``. Matching the whole key against the blocklist
+    asked about a name argparse never reads - ``"output_dir".startswith(
+    "output_dir=/evil/dir")`` is ``False`` - so every gated spelling had an
+    ungated ``=``-carrying twin, abbreviations included (``ou=``). No legitimate
+    key carries ``=``; the emitter appends its own.
+
     Args:
         key: An ``extra_flags`` key as the caller wrote it, Hydra prefix and all.
 
     Returns:
         The blocked flags, or an empty tuple when the key reaches none.
     """
-    normalized = _normalize_hydra_key(key)
+    normalized = _normalize_hydra_key(key).split("=", 1)[0]
     if normalized in _BLOCKED_EXTRA_FLAGS:
         return (normalized,)
     return tuple(sorted(flag for flag in _BLOCKED_EXTRA_FLAGS if _abbreviates_flag(normalized, flag)))

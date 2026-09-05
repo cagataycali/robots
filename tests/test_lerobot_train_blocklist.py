@@ -272,6 +272,11 @@ class TestAbbreviatedFlagsReachTheSameGate:
 
         Returns the option name it resolved to, ``"ambiguous"`` when the prefix
         matches several, or ``"unrecognized"`` when it matches none.
+
+        The resolved option is read as the one that got *any* value rather than
+        the one that got ``"X"``: a candidate carrying its own ``=`` leaves the
+        rest of itself in the value (``--output_dir=/evil=X`` sets
+        ``/evil=X``), which is the whole point of the ``=`` cells below.
         """
         parser = argparse.ArgumentParser(add_help=False)
         for name in options:
@@ -283,7 +288,7 @@ class TestAbbreviatedFlagsReachTheSameGate:
                 return "ambiguous"
         if extras:
             return "unrecognized"
-        return next(name for name, value in vars(namespace).items() if value == "X")
+        return next(name for name, value in vars(namespace).items() if value is not None)
 
     @pytest.mark.parametrize(
         "key,flag",
@@ -303,6 +308,16 @@ class TestAbbreviatedFlagsReachTheSameGate:
             ("--ou", "output_dir"),
             ("+ou", "output_dir"),
             ("~ou", "output_dir"),
+            # A key carrying its own ``=``. The emitter appends ``={value}``, so
+            # the rest of the key lands in the value and argparse resolves the
+            # option from the text before the first ``=`` - the same flag.
+            ("output_dir=/evil/dir", "output_dir"),
+            ("ou=/evil", "output_dir"),
+            ("config_path=/evil.json", "config_path"),
+            ("co=/evil.json", "config_path"),
+            ("policy.pretrained_path=/evil", "policy.pretrained_path"),
+            ("wandb.p=someproject", "wandb.project"),
+            ("--ou=/evil", "output_dir"),
         ],
     )
     def test_an_abbreviation_names_the_flag_it_reaches(self, key, flag):
@@ -354,10 +369,19 @@ class TestAbbreviatedFlagsReachTheSameGate:
         rule = self._rule()
         candidates = {flag[:cut] for flag in _BLOCKED_EXTRA_FLAGS for cut in range(1, len(flag) + 1)}
         candidates |= {"batch_size", "steps", "op", "observation", "dataset.repo_id", "lr"}
+        # Every one of those spellings again carrying its own ``=``. argparse
+        # resolves the option from the text before the first ``=``, so the rule
+        # has to agree with it on these too - they were the ungated twins.
+        candidates |= {f"{candidate}=/evil/dir" for candidate in tuple(candidates)}
         for candidate in sorted(candidates):
             verdict = self._argparse_verdict(self._OPTIONS, candidate)
+            # argparse resolves the option from the text before the first ``=``,
+            # so the ambiguity is a property of that portion, not of the whole
+            # candidate: ``wandb.e=/evil/dir`` is ambiguous because ``wandb.e``
+            # is. The oracle has to model the split it is grading the rule on.
+            option = candidate.split("=", 1)[0]
             reaches_gated = verdict in _BLOCKED_EXTRA_FLAGS or (
-                verdict == "ambiguous" and any(flag.startswith(candidate) for flag in _BLOCKED_EXTRA_FLAGS)
+                verdict == "ambiguous" and any(flag.startswith(option) for flag in _BLOCKED_EXTRA_FLAGS)
             )
             assert bool(rule(candidate)) == reaches_gated, f"{candidate!r}: argparse says {verdict!r}"
 
