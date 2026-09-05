@@ -229,6 +229,37 @@ always agree: both describe the full rotation for every orientation, including
 the half of SO(3) past 120 degrees that a robot turning back the way it came
 lands in.
 
+### Out of contact vs gone
+
+A peer that stops heartbeating is *unreachable* after `PEER_TIMEOUT` (10 s)
+and, by default, deleted from the registry at that same moment. For fleets
+whose silence is planned - a satellite between ground-station passes, a rover
+in an RF shadow, a drone beyond range - deletion answers "was it ever here?"
+with "no": a dispatcher reading absence as loss fails work over to another
+vehicle, and a fleet view renders a scheduled contact gap as a vanished peer.
+
+Set `STRANDS_MESH_PEER_RETENTION_S` to keep such peers on the books instead.
+The peer stays in `mesh.peers` with `reachable: false` (a locally-derived
+verdict the peer cannot claim about itself - it shares the collision rule
+`age` has) until its silence exceeds `max(PEER_TIMEOUT, retention)`, at which
+point it is gone for real. Retention off (the default) is byte-identical to
+the historic behavior. The `STRANDS_MESH_MAX_PEERS` eviction cap still
+outranks retention: at the cap, the longest-silent peer is evicted first.
+
+Readers that *act* on a peer record can state the freshness their decision
+needs instead of parsing `age` themselves:
+
+```python
+row = robot.mesh.get_peer(peer_id, max_age_s=30.0)
+if row is None:
+    ...  # unknown OR older than 30 s - for this decision, the same thing
+```
+
+`max_age_s=None` (default) accepts any age - right for displays that render
+staleness themselves. The bound must be positive and finite: `nan` would make
+the comparison answer False for every age, a bound failing open on exactly
+the stale record it was written to refuse, so it is refused instead.
+
 ### Rejoining the mesh
 
 `stop()` then `start()` is how a peer leaves and rejoins - after a config
