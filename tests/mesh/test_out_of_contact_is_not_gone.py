@@ -62,6 +62,20 @@ def _age_peer(peer_id: str, age_s: float) -> None:
     mesh_session._PEERS[peer_id].last_seen_mono = time.monotonic() - age_s
 
 
+def _row(peer_id: str) -> dict[str, Any]:
+    """The peer's registry row, with its presence stated rather than assumed.
+
+    ``get_peer`` answers ``dict | None``, and the assertions below are about
+    a *field* of the row: reading one off ``None`` would fail as a
+    ``TypeError`` naming neither the peer nor the field. Asserting presence
+    here also keeps a cell that expects a row from passing vacuously if the
+    peer were pruned out from under it.
+    """
+    row = get_peer(peer_id)
+    assert row is not None, f"premise: {peer_id} is still in the registry"
+    return row
+
+
 class TestRetentionOffIsTheHistoricBehavior:
     def test_a_silent_peer_is_pruned_at_the_timeout(self, registry: Any) -> None:
         update_peer("rover-1", "robot", "h", {})
@@ -140,8 +154,7 @@ class TestOutOfContactIsRetainedNotErased:
         _age_peer("rover-1", PEER_TIMEOUT + 50.0)
 
         assert prune_peers() == [], "a peer inside retention must not be deleted"
-        row = get_peer("rover-1")
-        assert row is not None
+        row = _row("rover-1")
         assert row["reachable"] is False, "presence stops meaning alive under retention; the row must say so"
         assert row["age"] > PEER_TIMEOUT
 
@@ -156,15 +169,15 @@ class TestOutOfContactIsRetainedNotErased:
         monkeypatch.setenv("STRANDS_MESH_PEER_RETENTION_S", "3600")
         update_peer("rover-1", "robot", "h", {})
         _age_peer("rover-1", PEER_TIMEOUT + 50.0)
-        assert get_peer("rover-1")["reachable"] is False
+        assert _row("rover-1")["reachable"] is False
 
         update_peer("rover-1", "robot", "h", {})  # back in coverage: heartbeats resume
 
-        assert get_peer("rover-1")["reachable"] is True
+        assert _row("rover-1")["reachable"] is True
 
     def test_a_fresh_peer_is_reachable(self, registry: Any) -> None:
         update_peer("arm-1", "robot", "h", {})
-        assert get_peer("arm-1")["reachable"] is True
+        assert _row("arm-1")["reachable"] is True
 
     def test_the_eviction_cap_outranks_retention(self, registry: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         """At the cap the longest-silent peer goes first - which under
