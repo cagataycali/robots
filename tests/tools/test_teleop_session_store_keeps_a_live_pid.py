@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _process_stop
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -97,6 +98,14 @@ def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exce
             raise exc(self._pid)
 
     monkeypatch.setattr(module.psutil, "Process", _Probe)
+    # On Linux the verdict reads /proc/<pid>/stat directly and never consults
+    # the psutil stub above, so the double must sit at that seam too - the same
+    # fix Round 2 applied in test_session_stop_confirms_the_process_exited.py.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: module.psutil.Process(pid).create_time() - module.psutil.boot_time(),
+    )
 
 
 def _stored(mgr: Any) -> dict[str, Any]:
@@ -258,6 +267,14 @@ def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.Monke
             return tele_mod.psutil.boot_time() + _RECORDED_START_S + 3600.0
 
     monkeypatch.setattr(tele_mod.psutil, "Process", _AnotherProcess)
+    # Route the identity read through the double so the mismatched start time
+    # reaches the verdict on Linux, where the procfs read would otherwise bypass
+    # the psutil stub and happen to mismatch for a different reason.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: _RECORDED_START_S + 3600.0,
+    )
 
     assert mgr.list_sessions() == {}
     assert _stored(mgr) == {}, "a PID held by another process must still be pruned"
