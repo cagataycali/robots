@@ -98,7 +98,7 @@ import threading
 from collections.abc import AsyncGenerator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail
+from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.utils import (
     finite_number_error,
@@ -663,12 +663,14 @@ class CrazyflieDriver:
             )
         elif action == "status":
             envelope = await self.get_status()
-        else:  # "land"
+        elif action == "land":
             # The sibling's envelope verbatim. Building one here could only
             # restate the intent ("asked it to land"), while the descent itself
             # can be refused - a disconnected link, an unusable duration - and
             # the agent needs that verdict rather than an acknowledgement.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

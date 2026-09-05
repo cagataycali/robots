@@ -47,6 +47,8 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.drivers.base import undeclared_verb_error
+
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
 
@@ -192,12 +194,14 @@ class DynamixelDriver:
                 "status": "success",
                 "content": [{"json": {"joint_state": None, "reason": _NOT_WIRED}}],
             }
-        else:  # "stop"
+        elif action == "stop":
             await self.stop()
             envelope = {
                 "status": "success",
                 "content": [{"text": f"stop: {_NOT_WIRED}"}],
             }
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
