@@ -548,6 +548,129 @@ def test_an_unknown_mergeability_does_not_read_as_the_stale_state_case() -> None
     assert "Attempt the merge" not in rendered
 
 
+# --------------------------------------------------------------------------
+# A merged pull request. ``mergeable`` is null here for the same reason it is
+# null while GitHub computes, and the two need opposite reports. Measured on
+# 2026-09-05 immediately after #3219 and #3230 squashed: both read
+# ``state: closed``, ``merged: true``, ``mergeable: null``,
+# ``mergeable_state: unknown``, byte-identical to open #3205 in every field this
+# script read, and all three reported ``merge-state-unknown`` owed by nobody
+# with the remedy "re-read ... settles on a later read". It does not settle:
+# #2586 still read null fourteen days after it merged.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("merged", "expected"),
+    [(False, mod.MERGE_STATE_UNKNOWN), (True, mod.ALREADY_MERGED)],
+    ids=["open-and-recomputing", "already-merged"],
+)
+def test_a_merged_pull_request_and_an_open_recomputing_one_do_not_read_the_same(merged: bool, expected: str) -> None:
+    """One field apart, and it is the field that decides whether waiting helps.
+
+    Both rows are ``mergeable=None``, ``merge_state="unknown"`` -- the whole
+    observable difference is ``merged``, which the pull request payload already
+    carries beside the two keys the script was reading. The open row is the
+    genuine transient #2585 was written for and must keep its re-read; the
+    merged row must not get it, because no read will ever change it.
+    """
+    st = state(merged=merged, mergeable=None, merge_state="unknown")
+    assert outcomes(mod.evaluate(st, MAIN)) == [expected]
+
+
+def test_a_merged_pull_request_is_not_offered_a_remedy_that_cannot_terminate() -> None:
+    """The cost was a polling cycle: the reassuring reading is also the wrong one.
+
+    "No party owes an action; the answer is not in yet" is literally true of a
+    merged pull request and describes the opposite situation -- the answer is
+    in, and it is that the change already landed. Every deferral this report can
+    print is asserted absent, because each one sends the caller back to a wait
+    with no terminating condition.
+    """
+    st = state(merged=True, mergeable=None, merge_state="unknown")
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+
+    assert mod.primary(blockers).is_terminal is True
+    assert "already merged into main" in rendered
+    assert "terminal rather than not-in-yet" in rendered
+    for deferral in (
+        "settles on a later read",
+        "Re-read the pull request",
+        "Attempt the merge",
+        "the answer is not in yet",
+        "necessary but not sufficient",
+        mod.MERGE_STATE_UNKNOWN,
+    ):
+        assert deferral not in rendered, f"a merged pull request was told to {deferral!r}"
+
+
+def test_a_merged_pull_request_leaves_no_rule_unsatisfied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every rule below is short-circuited, and the exit status stays clean.
+
+    Posed with three rules unsatisfied at once, because that is what makes the
+    short-circuit the point rather than an artefact of a quiet fixture: on a
+    change already sitting on the base, "0 of 1 approvals" is not an
+    outstanding obligation and a red check on a superseded head is not a
+    finding. A finding here would exit 1 and open an author-side warning on a
+    pull request whose author has nothing left to do.
+    """
+    st = state(
+        merged=True,
+        mergeable=None,
+        merge_state="unknown",
+        approvers=(),
+        unresolved_threads=2,
+        check_conclusions={REQUIRED: "failure"},
+    )
+    blockers = mod.evaluate(st, MAIN)
+
+    assert outcomes(blockers) == [mod.ALREADY_MERGED]
+    assert mod.primary(blockers).owed_by == mod.NOBODY
+    assert mod.primary(blockers).is_finding is False
+
+    monkeypatch.setattr(mod, "resolve_ruleset", lambda repo, ref, token: MAIN)
+    monkeypatch.setattr(mod, "resolve_state", lambda repo, pr, token: st)
+    assert mod.main(["--repo", "o/r", "--pr", "1", "--token", "t"]) == 0
+
+
+def test_the_resolved_state_carries_the_merged_key_it_already_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read is the fix; the fixtures above cannot see a key nobody reads.
+
+    ``resolve_state`` fetched the whole pull request object and took five keys
+    from it. ``merged`` was in the same response the whole time, so this pins
+    the wiring rather than the classification: without it the field keeps its
+    ``False`` default and every merged pull request reports the transient again.
+    """
+    monkeypatch.setattr(
+        mod,
+        "_get",
+        lambda url, token: {
+            "head": {"sha": "b6c49eca"},
+            "base": {"ref": "main"},
+            "draft": False,
+            "merged": True,
+            "mergeable": None,
+            "mergeable_state": "unknown",
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_reviews", lambda *a: [])
+    monkeypatch.setattr(mod, "resolve_unresolved_threads", lambda *a: 0)
+    monkeypatch.setattr(mod, "resolve_check_conclusions", lambda *a: {})
+    monkeypatch.setattr(mod, "resolve_check_suites", lambda *a: ())
+    monkeypatch.setattr(mod, "resolve_pusher", lambda *a: "the-author")
+
+    resolved = mod.resolve_state("o/r", 3219, "t")
+
+    assert resolved.merged is True
+    # And it lands where the classification reads it.
+    assert outcomes(mod.evaluate(resolved, MAIN)) == [mod.ALREADY_MERGED]
+
+
 def test_the_next_action_line_names_one_owner_when_a_gating_blocker_is_present() -> None:
     blockers = mod.evaluate(state(mergeable=False, approvers=()), MAIN)
     rendered = mod.render(state(mergeable=False, approvers=()), MAIN, blockers, "o/r")

@@ -82,11 +82,25 @@ is*, so the outcomes group that way rather than by severity:
     Nobody, for now, and the same shape as the entry above one field over.
     ``mergeable`` is ``bool | None``: GitHub computes it on demand and returns
     null while it works, which is neither "conflicts" nor "merges cleanly". A
-    merge into the base invalidates it for every open pull request, so a sweep
+    merge into the base invalidates it for every *open* pull request, so a sweep
     run just after a merge is precisely when it is null. Reported as *gating*,
     because reading the null as clean is how a conflicted branch is reported as
     owed by a reviewer -- measured on #1035, which read
     ``pusher-only-approval`` while it was ``DIRTY``. Re-read to resolve it.
+
+    Scoped to an open pull request deliberately: the pull request whose own
+    merge invalidated the value is not open, and for it the null never resolves
+    at all. That case is ``already-merged`` below, not this one.
+
+``already-merged``
+    Nobody, terminally. A merged pull request is closed, so ``mergeable`` stays
+    null permanently -- measured on #2586, still ``null``/``unknown`` fourteen
+    days after it squashed -- and the re-read above describes a wait with no
+    terminating condition. Read from ``merged``, which the same response
+    already carries. Reported ahead of every rule and short-circuiting them:
+    once the change is on the base, "0 of 1 approvals" is not an unsatisfied
+    rule, it is a question about a closed pull request. Not a finding, because
+    there is nothing for an author-side pass to act on.
 
 ``required-check-cancelled``
     A **maintainer**, by re-running the run. A cancelled run is not a verdict
@@ -222,6 +236,7 @@ resolve_reviews = _approval.resolve_reviews
 # Outcome names. Ordered here the way they bind in practice, which is also the
 # order they are reported in: a conflict makes the approval question moot, and
 # an unresolved thread makes it moot for a different reason.
+ALREADY_MERGED = "already-merged"
 MERGE_CONFLICT = "merge-conflict"
 MERGE_STATE_UNKNOWN = "merge-state-unknown"
 DRAFT = "draft"
@@ -244,6 +259,7 @@ NOBODY = "nobody"
 ANYONE = "anyone, by attempting the merge"
 
 _OWED_BY: dict[str, str] = {
+    ALREADY_MERGED: NOBODY,
     MERGE_CONFLICT: AUTHOR,
     MERGE_STATE_UNKNOWN: NOBODY,
     DRAFT: AUTHOR,
@@ -271,6 +287,15 @@ _OWED_BY: dict[str, str] = {
 # action on a branch that turns out to be conflicted burns an approval, and
 # reporting it as necessary-but-not-sufficient costs one re-read (#2585).
 _GATING: frozenset[str] = frozenset({MERGE_CONFLICT, MERGE_STATE_UNKNOWN, DRAFT})
+
+# An outcome that answers the question rather than deferring it. Distinct from
+# gating: a gating blocker is one the rules below it wait on, and it clears. A
+# terminal one has nothing below it and never clears, so the remedy language
+# every other outcome carries -- re-read, re-run, attempt the merge -- is wrong
+# for it. Held as a set rather than checked at the two render sites because
+# ``primary`` and ``_next_action`` are handed blockers alone, and the module's
+# own rule is that precedence cannot be applied to one report and not the other.
+_TERMINAL: frozenset[str] = frozenset({ALREADY_MERGED})
 
 
 # The outcomes a scheduled author-side pass can act on without anyone else.
@@ -328,6 +353,15 @@ class Blocker:
         """Whether the rules after this one cannot be assessed until it clears."""
         return self.outcome in _GATING
 
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this answers the question rather than deferring it.
+
+        A terminal outcome is not waiting on a person, a clock or a later read,
+        so it takes precedence over every other and must not carry a remedy.
+        """
+        return self.outcome in _TERMINAL
+
 
 @dataclass(frozen=True)
 class Ruleset:
@@ -353,6 +387,12 @@ class PullRequestState:
     mergeable: bool | None
     merge_state: str
     unresolved_threads: int
+    # Whether the change is already on the base. Read because ``mergeable`` is
+    # null for a merged pull request exactly as it is for one GitHub is still
+    # computing, and the two need opposite reports: one is terminal, the other
+    # settles on a re-read. Defaults to ``False`` so the ordinary open case is
+    # unchanged, and every caller names its fields.
+    merged: bool = False
     check_conclusions: dict[str, str | None] = field(default_factory=dict)
     # Each check suite's conclusion on the head, or ``None`` for a census that
     # was not read. ``()`` is a positive observation -- zero suites exist -- and
@@ -469,7 +509,25 @@ def evaluate(state: PullRequestState, rules: Ruleset) -> tuple[Blocker, ...]:
     is a single ``no-unsatisfied-rule`` blocker rather than an empty tuple: the
     caller asked why a pull request is blocked, and "no reason found" is an
     answer with a remedy, not an absence of one.
+
+    A merged pull request short-circuits every rule below. Its ``mergeable`` is
+    null for good, so falling through would report the transient
+    ``merge-state-unknown`` and prescribe a re-read that cannot settle; and an
+    approval count on a change already on the base is not an unsatisfied rule.
     """
+    if state.merged:
+        return (
+            Blocker(
+                ALREADY_MERGED,
+                "(not a ruleset rule)",
+                f"The pull request is already merged into {state.base_ref or 'its base'}, "
+                f"so no rule is outstanding. Its cached merge state reads "
+                f"{state.merge_state or 'unknown'} and stays that way: mergeability is "
+                f"computed for open pull requests only, so re-reading this one cannot "
+                f"settle it and no party owes an action.",
+            ),
+        )
+
     found: list[Blocker] = []
 
     if state.draft:
@@ -812,6 +870,7 @@ def resolve_state(repo: str, pr: int, token: str) -> PullRequestState:
         draft=bool(payload.get("draft")),
         mergeable=payload.get("mergeable"),
         merge_state=str(payload.get("mergeable_state") or ""),
+        merged=bool(payload.get("merged")),
         unresolved_threads=resolve_unresolved_threads(repo, pr, token),
         check_conclusions=resolve_check_conclusions(repo, head_sha, token) if head_sha else {},
         check_suite_conclusions=resolve_check_suites(repo, head_sha, token) if head_sha else None,
@@ -836,14 +895,20 @@ def primary(blockers: Sequence[Blocker]) -> Blocker:
     reviewer now, and reporting it as owed by nobody would park it. Only if no
     blocker is owed by anyone does the earliest-binding one stand.
 
+    A terminal blocker precedes even a gating one: gating asks the reader to wait
+    for something, and there is nothing left to wait for.
+
     Both renderers and both warning paths route through this, so precedence
     cannot be applied to one report and not the other.
     """
     return next(
-        (b for b in blockers if b.is_gating),
+        (b for b in blockers if b.is_terminal),
         next(
-            (b for b in blockers if b.is_finding),
-            next((b for b in blockers if b.owed_by != NOBODY), blockers[0]),
+            (b for b in blockers if b.is_gating),
+            next(
+                (b for b in blockers if b.is_finding),
+                next((b for b in blockers if b.owed_by != NOBODY), blockers[0]),
+            ),
         ),
     )
 
@@ -857,7 +922,18 @@ def _next_action(blockers: Sequence[Blocker]) -> list[str]:
     merge anything. Non-gating blockers genuinely are parallel -- a pending
     check and a missing approval wait on different people at once -- so those
     are listed together.
+
+    A terminal blocker is reported first and alone, and says so in as many
+    words. The fall-through line below it -- "the answer is not in yet" -- is
+    the reassuring reading a merged pull request must not get: it is true only
+    of an outcome that a later read can change.
     """
+    terminal = next((b for b in blockers if b.is_terminal), None)
+    if terminal is not None:
+        return [
+            f"No party owes an action, and none will: `{terminal.outcome}`.",
+            "This is terminal rather than not-in-yet -- no later read changes it.",
+        ]
     gating = primary(blockers) if any(b.is_gating for b in blockers) else None
     if gating is not None:
         trailing = [b for b in blockers if b is not gating]
