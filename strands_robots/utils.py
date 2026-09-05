@@ -1556,11 +1556,17 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     through :func:`_read_name_list`, and a read that cannot finish is answered
     with a message rather than raising out of the guard.
 
-    Callers gate this check on a truthy value, because in both consumers a falsy
-    ``image_keys`` (``None``, or an empty list) already means "not supplied" and
-    the list is derived instead. So an empty sequence is not rejected here, and
-    ``None`` is the caller's to skip rather than this function's to accept - a
-    surface where an absent value IS an error keeps that verdict its own.
+    An empty sequence is not rejected here, and ``None`` is the caller's to skip
+    rather than this function's to accept - a surface where an absent value IS an
+    error keeps that verdict its own. Which verdict that is depends on what the
+    parameter names, and the two ``image_keys`` differ on exactly this. The
+    LeRobot one DECLARES the model's visual features, and absence derives them
+    from the embodiment instead, so a falsy value there genuinely means "not
+    supplied" and that caller gates this check on truthiness. The VERA one
+    SELECTS a subset of the observation it was handed, so an empty selection asks
+    for no view and is the opposite of the documented "every view" default;
+    ``VeraPolicy`` reads it ``is not None`` and supplies the refusal beside this
+    check.
 
     Args:
         value: The caller-supplied value.
