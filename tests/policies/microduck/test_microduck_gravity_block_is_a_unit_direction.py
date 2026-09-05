@@ -54,6 +54,7 @@ import math
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from strands_robots.policies.microduck import (
     MICRODUCK_DEFAULT_POSE,
@@ -79,10 +80,11 @@ Q_PITCH_20 = np.array(
 #: is the norm a linear interpolation of two 90-deg-apart samples leaves behind.
 SCALES = (0.5, 0.923879, 1.01, 2.0, 10.0)
 
-#: The spellings of an orientation that carries no direction.
+#: The spellings of an orientation that carries no direction, in the float32 the
+#: module's own ``_require_base_block`` hands the helper.
 NO_DIRECTION = (
-    ("all zero", [0.0, 0.0, 0.0, 0.0]),
-    ("below the shared floor", [MIN_QUATERNION_NORM / 10.0, 0.0, 0.0, 0.0]),
+    ("all zero", np.zeros(_BASE_QUAT_LEN, dtype=np.float32)),
+    ("below the shared floor", np.array([MIN_QUATERNION_NORM / 10.0, 0.0, 0.0, 0.0], dtype=np.float32)),
 )
 
 
@@ -124,7 +126,7 @@ def _slot_two(base_quat: object) -> np.ndarray:
     observation = build_observation(
         _obs_dict(base_quat),
         joint_names=list(MICRODUCK_JOINT_NAMES),
-        default_pose=MICRODUCK_DEFAULT_POSE,
+        default_pose=np.array(MICRODUCK_DEFAULT_POSE, dtype=np.float32),
         last_action=np.zeros(len(MICRODUCK_JOINT_NAMES), dtype=np.float32),
         command=np.zeros(3, dtype=np.float32),
     )
@@ -164,12 +166,12 @@ class TestAnOrientationThatWasNeverWrittenIsRefused:
     """A quaternion with no direction is refused, not read as upright."""
 
     @pytest.mark.parametrize(("label", "quat"), NO_DIRECTION, ids=[label for label, _ in NO_DIRECTION])
-    def test_the_helper_refuses_it(self, label: str, quat: list[float]) -> None:
+    def test_the_helper_refuses_it(self, label: str, quat: NDArray[np.float32]) -> None:
         with pytest.raises(ValueError, match="describes no rotation"):
             quat_rotate_inverse(quat, WORLD_GRAVITY)
 
     @pytest.mark.parametrize(("label", "quat"), NO_DIRECTION, ids=[label for label, _ in NO_DIRECTION])
-    def test_build_observation_refuses_it(self, label: str, quat: list[float]) -> None:
+    def test_build_observation_refuses_it(self, label: str, quat: NDArray[np.float32]) -> None:
         with pytest.raises(ValueError, match="describes no rotation"):
             _slot_two(quat)
 
