@@ -52,6 +52,7 @@ _EXPECTED_FUNCTIONS = {
     "mangling.py::dds_topic_name",
     "mangling.py::ros_topic_name",
     "mangling.py::dds_type_name",
+    "mangling.py::ros_topic_error",
     "idl::have_cyclonedds",
     "idl::get_type",
 }

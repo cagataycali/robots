@@ -328,7 +328,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
             self._image_writers[key] = writer
         height, width = int(image.shape[0]), int(image.shape[1])
         msg = self._Image(
-            header=self._header(f"{self._safe(robot)}/{self._safe(camera)}"),
+            header=self._header(f"{self._safe(robot)}/{self._safe(camera, fallback='camera')}"),
             height=height,
             width=width,
             encoding="rgb8",

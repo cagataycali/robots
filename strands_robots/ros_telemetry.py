@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.utils import (
@@ -42,6 +43,14 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# A ROS 2 name token is ASCII ``[A-Za-z0-9_]`` with no repeated underscore, so
+# the sanitiser needs the ASCII class explicitly - ``str.isalnum`` is true of
+# every Unicode letter and digit and would pass a character no ROS 2 name may
+# hold. The rule these two enforce on a token is the one
+# :data:`~strands_robots.rtps.mangling.ROS_TOPIC_RE` enforces on the whole name.
+_NON_TOKEN_CHAR_RE = re.compile(r"[^A-Za-z0-9_]")
+_UNDERSCORE_RUN_RE = re.compile(r"_+")
 
 
 #: Remedy for a missing ``rclpy``, shared by every surface that refuses for want
@@ -168,9 +177,45 @@ class RosTelemetryBase:
     """
 
     @staticmethod
-    def _safe(name: str) -> str:
-        """Map a robot/camera name to a valid ROS 2 topic segment."""
-        return "".join(c if (c.isalnum() or c == "_") else "_" for c in name).strip("_") or "robot"
+    def _safe(name: str, *, fallback: str = "robot") -> str:
+        """Map a robot/camera name to a valid ROS 2 topic segment.
+
+        The segment is a name token, so it is held to the token rules the ROS 2
+        mapping states and :data:`~strands_robots.rtps.mangling.ROS_TOPIC_RE`
+        enforces: ASCII ``[A-Za-z0-9_]`` only, no repeated underscore, and no
+        leading digit. ``str.isalnum`` is true of every Unicode letter and
+        digit, so it is not that character set - a camera named ``cam2`` (with
+        a superscript) survived it and produced a topic the mangling then
+        refused, and one named ``0`` or ``3rd_person`` produced a token ROS 2
+        refuses while the mangling let it through. Both are silent on the DDS
+        side, where matching is by topic name and no subscriber ever appears.
+
+        Args:
+            name: Robot or camera name, from the caller's observation keys.
+            fallback: Token used when *name* holds nothing usable, and prefixed
+                to a name that starts with a digit (which ROS 2 forbids at the
+                start of a token, so the digits have to be carried rather than
+                dropped - two cameras named ``0`` and ``1`` must not collapse
+                onto one topic).
+
+        Returns:
+            A token :data:`~strands_robots.rtps.mangling.ROS_TOPIC_RE` accepts
+            between two ``/`` separators.
+
+        Note:
+            Not injective, and cannot be: two names differing only in a run of
+            separators (``front  cam`` and ``front - cam``) both render
+            ``front_cam``, because no valid token may carry the difference. That
+            is a collision on one reachable topic rather than, as before, two
+            distinct topics under names ROS 2 refuses, which no subscriber could
+            read either of.
+        """
+        token = _UNDERSCORE_RUN_RE.sub("_", _NON_TOKEN_CHAR_RE.sub("_", name)).strip("_")
+        if not token:
+            return fallback
+        if token[0] in "0123456789":
+            return f"{fallback}_{token}"
+        return token
 
     @staticmethod
     def _resolve_robot_name(robot: Any) -> str:
@@ -192,7 +237,7 @@ class RosTelemetryBase:
     @classmethod
     def image_topic(cls, robot: str, camera: str) -> str:
         """ROS 2 topic a robot camera's ``Image`` frames are published on."""
-        return f"/{cls._safe(robot)}/{cls._safe(camera)}/image_raw"
+        return f"/{cls._safe(robot)}/{cls._safe(camera, fallback='camera')}/image_raw"
 
     @classmethod
     def joint_command_topic(cls, robot: str) -> str:
@@ -573,7 +618,7 @@ class RosTelemetryBridge(RosTelemetryBase):
         height, width = int(image.shape[0]), int(image.shape[1])
         msg = self._Image()
         msg.header.stamp = self._now()
-        msg.header.frame_id = f"{self._safe(robot)}/{self._safe(camera)}"
+        msg.header.frame_id = f"{self._safe(robot)}/{self._safe(camera, fallback='camera')}"
         msg.height = height
         msg.width = width
         msg.encoding = "rgb8"
