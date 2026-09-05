@@ -101,10 +101,11 @@ will not make the next heartbeat tick drop every peer it can still hear.
 process's reading of when it last heard from a peer, and the `peer_id` a peer is
 filed under is the one its topic and certificate bind - not a field inside the
 payload. A presence payload is merged into what you read about a peer so you get
-its capabilities (`tool_name`, `connected`, `cameras`, ...), and those four
-locally decided keys - `peer_id`, `type`, `hostname`, `age` - win a name
-collision with it. A peer heartbeating `"age": 0` does not report itself fresh,
-and one naming another peer's id does not answer a lookup for that peer.
+its capabilities (`tool_name`, `connected`, `cameras`, ...), and those five
+locally decided keys - `peer_id`, `type`, `hostname`, `age`, `reachable` - win a
+name collision with it. A peer heartbeating `"age": 0` does not report itself
+fresh, one claiming `"reachable": true` does not report itself in contact, and
+one naming another peer's id does not answer a lookup for that peer.
 
 Repeated wrong codes arm a brute-force cooldown
 (`STRANDS_MESH_RESUME_MAX_FAILS`, `STRANDS_MESH_RESUME_BACKOFF_S`): during the
@@ -233,10 +234,11 @@ lands in.
 
 A peer that stops heartbeating is *unreachable* after `PEER_TIMEOUT` (10 s)
 and, by default, deleted from the registry at that same moment. For fleets
-whose silence is planned - a satellite between ground-station passes, a rover
-in an RF shadow, a drone beyond range - deletion answers "was it ever here?"
-with "no": a dispatcher reading absence as loss fails work over to another
-vehicle, and a fleet view renders a scheduled contact gap as a vanished peer.
+whose silence is planned - a rover in an RF shadow, a warehouse robot crossing
+a Wi-Fi dead zone, a satellite between ground-station passes - deletion answers
+"was it ever here?" with "no": a dispatcher reading absence as loss fails work
+over to another robot, and a fleet view renders a planned silence as a
+vanished peer.
 
 Set `STRANDS_MESH_PEER_RETENTION_S` to keep such peers on the books instead.
 The peer stays in `mesh.peers` with `reachable: false` (a locally-derived

@@ -109,14 +109,14 @@ MAX_PEERS_DEFAULT: int = 1024
 
 #: Default extra retention (seconds) for a peer past :data:`PEER_TIMEOUT`.
 #: ``0.0`` keeps the historic behavior: a silent peer is deleted at the
-#: timeout. Operators whose fleets have *planned* silence - a satellite
-#: between ground-station passes, a rover in an RF shadow, a drone beyond
-#: range - raise it via ``STRANDS_MESH_PEER_RETENTION_S`` so those peers are
-#: retained (and reported unreachable) instead of erased. Deletion answers
-#: "was it ever here?" with "no", which is the wrong answer for a peer that
-#: is merely out of contact: a dispatcher that reads absence as loss fails
-#: over work the peer still holds, and a fleet view renders a scheduled
-#: contact gap as a vanished vehicle.
+#: timeout. Operators whose fleets have *planned* silence - a rover in an RF
+#: shadow, a warehouse robot crossing a Wi-Fi dead zone, a satellite between
+#: ground-station passes - raise it via ``STRANDS_MESH_PEER_RETENTION_S`` so
+#: those peers are retained (and reported unreachable) instead of erased.
+#: Deletion answers "was it ever here?" with "no", which is the wrong answer
+#: for a peer that is merely out of contact: a dispatcher that reads absence
+#: as loss fails over work the peer still holds, and a fleet view renders a
+#: planned silence as a vanished robot.
 PEER_RETENTION_DEFAULT: float = 0.0
 
 
@@ -236,13 +236,23 @@ def _peer_retention_s() -> float:
 
     The value is a span of seconds compared against peer ages in
     :func:`prune_peers`, so the finiteness rule the mesh applies to every
-    numeric environment variable applies here with a specific failure mode:
-    ``nan`` compares ``False`` against every age, and ``inf`` is above all of
-    them - either way no peer is ever pruned and the registry's only bound
-    left standing is the eviction cap, reached silently. A value like that is
-    a misconfiguration, not a very long retention, so it falls back to the
-    default (off) and says so once per offending spelling rather than once
+    numeric environment variable applies here with two distinct failure
+    modes. ``inf`` read permissively means no peer is ever pruned - the
+    registry's only bound left standing is the eviction cap, reached
+    silently. ``nan`` (and a negative) read permissively would collapse to
+    "retention off", but only by the accident of ``max()``'s argument order:
+    ``nan`` makes every comparison answer ``False``, so ``max`` keeps
+    whichever operand comes first, and :func:`prune_peers` happens to pass
+    the timeout first. A guard whose outcome depends on which side of a
+    ``max()`` a refactor puts it is no guard, which is why an unusable value
+    is refused here, before it can reach the comparison at all. The fallback
+    is the default (off), said once per offending spelling rather than once
     per 2 Hz heartbeat tick.
+
+    This deliberately reuses neither :func:`hz_from_env` (that domain is
+    loop *rates*, reasoned through ``1.0 / hz``; retention is a span) nor
+    core's ``_parse_positive_float_env`` (core imports session; the
+    dependency cannot point back).
     """
     raw = os.getenv("STRANDS_MESH_PEER_RETENTION_S")
     if raw is None or raw.strip() == "":
@@ -513,13 +523,14 @@ class PeerInfo:
         answer that about itself; and a ``peer_id`` the sender chooses is the
         key ``Mesh.peers_by_id`` and ``Mesh.get_peer`` look the peer up by.
         """
+        age = self.age  # one clock read: the row's age and verdict must agree
         return {
             **self.caps,
             "peer_id": self.peer_id,
             "type": self.peer_type,
             "hostname": self.hostname,
-            "age": round(self.age, 1),
-            "reachable": self.reachable,
+            "age": round(age, 1),
+            "reachable": age <= PEER_TIMEOUT,
         }
 
     def __repr__(self) -> str:
@@ -656,6 +667,11 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
         List of pruned peer IDs (may be empty).
     """
     global _PEERS_VERSION  # noqa: PLW0603
+    # Argument order is load-bearing: max() keeps its FIRST operand when a
+    # comparison answers False, so with the timeout first a nan that somehow
+    # reached this line degrades to the timeout instead of to never-pruned.
+    # The resolver refuses non-finite values before this, and a test pins
+    # this order so a refactor that swaps the operands fails loudly.
     cutoff = max(timeout, _peer_retention_s())
     now = time.monotonic()
     pruned: list[str] = []
@@ -666,7 +682,9 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
             _PEERS_VERSION += 1
             pruned.append(pid)
     for pid in pruned:
-        logger.info("Mesh: peer %s timed out", pid)
+        # Under retention this fires at retention expiry, potentially long
+        # after the peer stopped being reachable - say what happened.
+        logger.info("Mesh: peer %s pruned after silence exceeded %.0fs", pid, cutoff)
     return pruned
 
 
@@ -711,7 +729,8 @@ def get_peer(peer_id: str, max_age_s: float | None = None) -> dict[str, Any] | N
 
 
 def peer_count() -> int:
-    """Number of currently known (non-stale) peers."""
+    """Number of peers currently in the registry (under retention this
+    includes retained out-of-contact peers)."""
     with _PEERS_LOCK:
         return len(_PEERS)
 
