@@ -29,7 +29,7 @@ import strands_robots
 ```python
 from strands_robots.registry import (
     list_robots, resolve_name, get_robot, has_sim, has_hardware, get_hardware_type,
-    list_robots_by_category, list_aliases, format_robot_table,
+    list_robots_by_category, list_aliases, normalize_robot_name, format_robot_table,
     register_robot, unregister_robot, list_user_robots,
     user_registry_source, parse_user_robots,
     list_policy_providers, resolve_policy, import_policy_class, build_policy_kwargs,
@@ -39,12 +39,13 @@ from strands_robots.registry import (
 | Symbol | What |
 |--------|------|
 | `list_robots(category)` | All robots in a category, or `"all"`. |
-| `resolve_name(name)` | Alias → canonical name. |
+| `resolve_name(name)` | Alias → canonical name. The query is folded by `normalize_robot_name` first, so any spelling of a name or alias reaches the same robot. |
 | `get_robot(name)` | Full registry entry dict. |
 | `has_sim(name)` / `has_hardware(name)` | Sim / real support flags. |
 | `get_hardware_type(name)` | LeRobot type string for `mode="real"`. |
 | `list_robots_by_category()` | `{category: [names]}`. |
-| `list_aliases()` | All 119 aliases, including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
+| `list_aliases()` | All 121 aliases, keyed by `normalize_robot_name` (so every key is a spelling a folded query can produce), including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
+| `normalize_robot_name(name)` | The fold every registry lookup applies: lowercase, trimmed, dashes as underscores. Canonical names, aliases and the uniqueness constraints over both are all keyed by it, so this is the rule that predicts which robot a name reaches. |
 | `format_robot_table()` | Pretty-printed robot table. |
 | `register_robot(name, entry)` | Add user-defined robot at runtime. |
 | `unregister_robot(name)` | Remove a runtime-registered robot. |
