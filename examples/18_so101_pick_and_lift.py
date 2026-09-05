@@ -30,6 +30,14 @@ during a welded carry contains an idealized transport segment; label or gate
 such episodes accordingly (the same caveat the ``attach_bodies`` docstring
 carries).
 
+Every primitive here returns a tool envelope, and this example checks each one:
+a refused step is reported with the refusal's own text rather than carried past.
+Without that check the ``[sim-mujoco]`` IK solver being absent - which refuses
+all three ``move_to`` calls, each naming the install that fixes it - was
+indistinguishable from the friction limitation described above, because the run
+still summarised ``status="success"`` and printed "PICK FAILED - cube lifted
+only 0.0 mm".
+
 Dependencies: pip install "strands-robots[sim-mujoco]"
 Expected output: "PICK OK - cube lifted NNN mm" (NNN is ~150).
 Runtime: ~3 seconds on CPU (a few more if --video is passed).
@@ -52,6 +60,40 @@ CUBE_HALF = 0.025  # 25 mm cube edge (full extent passed to add_object)
 LIFT_HEIGHT = 0.18  # how far above the table to raise the cube (metres)
 
 
+class _Refused(RuntimeError):
+    """A simulation primitive answered with an error envelope.
+
+    Raised by :func:`_ok` and caught once in :func:`run_pick`, which renders it
+    as the error summary the caller receives. The step name is carried because
+    that summary is the only thing a caller sees.
+    """
+
+    def __init__(self, step: str, result: dict) -> None:
+        self.step = step
+        self.detail = "; ".join(
+            item["text"] for item in result.get("content", []) if isinstance(item, dict) and item.get("text")
+        )
+        super().__init__(f"{step}: {self.detail}")
+
+
+def _ok(step: str, result: dict) -> dict:
+    """Return *result*, or raise :class:`_Refused` when it is an error envelope.
+
+    Args:
+        step: What was attempted, named as it should read in the summary.
+        result: The envelope the primitive returned.
+
+    Returns:
+        *result* unchanged, so a call site reads as the primitive it wraps.
+
+    Raises:
+        _Refused: When ``result["status"]`` is ``"error"``.
+    """
+    if result.get("status") == "error":
+        raise _Refused(step, result)
+    return result
+
+
 def _cube_z(sim) -> float:
     """Current world z of the cube's body origin (metres)."""
     return sim.get_body_state("cube")["content"][-1]["json"]["position"][2]
@@ -65,79 +107,119 @@ def run_pick(video_path: str | None = None) -> dict:
             MP4 there (needs a GL backend; run headless with ``MUJOCO_GL=egl``).
 
     Returns:
-        A summary dict: ``{"status", "lifted_mm", "success", "frames"}``.
-        ``success`` is True when the cube rises at least 80 mm.
+        A summary dict. On a completed run: ``{"status": "success", "lifted_mm",
+        "success", "frames"}``, where ``success`` is True when the cube rises at
+        least 80 mm. If any primitive refuses, ``status`` is ``"error"`` and the
+        summary also carries ``step`` (which one) and ``detail`` (the refusal's
+        own text, which names the remedy) - so a refusal is never reported as a
+        completed pick that merely failed to lift.
     """
     # Robot("so101") defaults to mode="sim": the factory has already called
     # create_world() and added the "so101" arm, so the scene is ready.
     sim = Robot("so101", mesh=False)
     rest_on_table = CUBE_HALF / 2  # a 25 mm cube rests with its centre 12.5 mm up
-    sim.add_object(
-        name="cube",
-        shape="box",
-        position=[CUBE_XY[0], CUBE_XY[1], rest_on_table],
-        size=[CUBE_HALF, CUBE_HALF, CUBE_HALF],
-        color=[0.9, 0.2, 0.2, 1],
-        mass=0.02,
-    )
 
     frames: list = []
     record = video_path is not None
-    if record:
-        import imageio.v3 as iio
-        import numpy as np
 
-        sim.add_camera(
-            name="side",
-            position=[0.32, -0.55, 0.30],
-            target=[CUBE_XY[0], CUBE_XY[1], 0.08],
-            fov=52,
-            width=480,
-            height=368,
+    try:
+        _ok(
+            "add_object(cube)",
+            sim.add_object(
+                name="cube",
+                shape="box",
+                position=[CUBE_XY[0], CUBE_XY[1], rest_on_table],
+                size=[CUBE_HALF, CUBE_HALF, CUBE_HALF],
+                color=[0.9, 0.2, 0.2, 1],
+                mass=0.02,
+            ),
         )
 
-        def snap():
-            png = sim.render(camera_name="side")["content"][1]["image"]["source"]["bytes"]
-            frames.append(np.asarray(iio.imread(png, extension=".png")))
-    else:
+        if record:
+            import imageio.v3 as iio
+            import numpy as np
 
-        def snap():
-            return None
+            _ok(
+                "add_camera(side)",
+                sim.add_camera(
+                    name="side",
+                    position=[0.32, -0.55, 0.30],
+                    target=[CUBE_XY[0], CUBE_XY[1], 0.08],
+                    fov=52,
+                    width=480,
+                    height=368,
+                ),
+            )
 
-    # Let the cube settle onto the table before we read its rest height.
-    sim.step(200)
-    snap()
-    z_rest = _cube_z(sim)
+            def snap() -> None:
+                rendered = _ok("render(side)", sim.render(camera_name="side"))
+                png = rendered["content"][1]["image"]["source"]["bytes"]
+                frames.append(np.asarray(iio.imread(png, extension=".png")))
 
-    # --- pick sequence, public API only -------------------------------------
-    sim.set_gripper(robot_name="so101", state="open")
-    snap()
-    # 1. approach: hover 10 cm above the cube
-    sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + 0.10], tol=0.02)
-    snap()
-    # 2. descend to the cube (tol 2 cm: a 5-DOF arm cannot also pin orientation)
-    sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + 0.005], tol=0.02)
-    snap()
-    # 3. close the fingers on the cube
-    sim.set_gripper(robot_name="so101", state="close")
-    snap()
-    # 4. grasp-assist: hold the cube's current pose relative to the gripper.
-    #    NOT a physical grasp - see the module docstring.
-    sim.attach_bodies(parent="so101/gripper", child="cube", mode="weld")
-    snap()
-    # 5. lift
-    sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + LIFT_HEIGHT], tol=0.02)
-    snap()
-    z_top = _cube_z(sim)
-    lifted_mm = 1000.0 * (z_top - z_rest)
+        else:
 
-    # 6. place back down and release, so the scene ends clean
-    sim.move_to(robot_name="so101", position=[CUBE_XY[0] + 0.06, CUBE_XY[1], z_rest + 0.02], tol=0.02)
-    snap()
-    sim.detach_bodies(parent="so101/gripper", child="cube")
-    sim.set_gripper(robot_name="so101", state="open")
-    sim.step(100)
-    snap()
+            def snap() -> None:
+                return None
+
+        # Let the cube settle onto the table before we read its rest height.
+        _ok("step(settle)", sim.step(200))
+        snap()
+        z_rest = _cube_z(sim)
+
+        # --- pick sequence, public API only ---------------------------------
+        _ok("set_gripper(open)", sim.set_gripper(robot_name="so101", state="open"))
+        snap()
+        # 1. approach: hover 10 cm above the cube
+        _ok(
+            "move_to(hover)",
+            sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + 0.10], tol=0.02),
+        )
+        snap()
+        # 2. descend to the cube (tol 2 cm: a 5-DOF arm cannot also pin orientation)
+        _ok(
+            "move_to(descend)",
+            sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + 0.005], tol=0.02),
+        )
+        snap()
+        # 3. close the fingers on the cube
+        _ok("set_gripper(close)", sim.set_gripper(robot_name="so101", state="close"))
+        snap()
+        # 4. grasp-assist: hold the cube's current pose relative to the gripper.
+        #    NOT a physical grasp - see the module docstring.
+        _ok("attach_bodies(weld)", sim.attach_bodies(parent="so101/gripper", child="cube", mode="weld"))
+        snap()
+        # 5. lift
+        _ok(
+            "move_to(lift)",
+            sim.move_to(robot_name="so101", position=[CUBE_XY[0], CUBE_XY[1], z_rest + LIFT_HEIGHT], tol=0.02),
+        )
+        snap()
+        z_top = _cube_z(sim)
+        lifted_mm = 1000.0 * (z_top - z_rest)
+
+        # 6. place back down and release, so the scene ends clean
+        _ok(
+            "move_to(place)",
+            sim.move_to(robot_name="so101", position=[CUBE_XY[0] + 0.06, CUBE_XY[1], z_rest + 0.02], tol=0.02),
+        )
+        snap()
+        _ok("detach_bodies", sim.detach_bodies(parent="so101/gripper", child="cube"))
+        _ok("set_gripper(release)", sim.set_gripper(robot_name="so101", state="open"))
+        _ok("step(settle)", sim.step(100))
+        snap()
+    except _Refused as refused:
+        # The refusal carries its own remedy; a summary that dropped it would
+        # leave "lifted 0.0 mm" as the only evidence, which is the friction
+        # limitation this example exists to work around - a different cause
+        # with a different fix.
+        return {
+            "status": "error",
+            "step": refused.step,
+            "detail": refused.detail,
+            "lifted_mm": 0.0,
+            "success": False,
+            "frames": len(frames),
+        }
 
     if record and frames:
         import imageio.v3 as iio
@@ -159,6 +241,9 @@ def main() -> None:
     args = ap.parse_args()
 
     result = run_pick(video_path=args.video)
+    if result["status"] == "error":
+        print(f"PICK REFUSED at {result['step']}: {result['detail']}")
+        raise SystemExit(1)
     if result["success"]:
         print(f"PICK OK - cube lifted {result['lifted_mm']} mm")
     else:
