@@ -63,6 +63,7 @@ import pytest
 
 from strands_robots.policies.microduck import build_observation, decode_action, projected_gravity
 from strands_robots.policies.microduck import observation as obs_mod
+from strands_robots.utils import MIN_QUATERNION_NORM
 
 #: The command width the shipped alpha policies declare (twist 3 + head 4 + body 6).
 _ALPHA_COMMAND_WIDTH = 13
@@ -373,15 +374,19 @@ class TestThePremisesTheDefectRestedOn:
         cos = float(np.clip(np.dot(right, wrong) / (np.linalg.norm(right) * np.linalg.norm(wrong)), -1.0, 1.0))
         assert np.degrees(np.arccos(cos)) > min_tilt_deg
 
-    def test_the_only_norm_this_module_reads_is_the_accelerometer_estimator(self) -> None:
+    def test_no_norm_this_module_reads_can_judge_a_width(self) -> None:
         """So the norm drift is still not a signal anything acts on.
 
-        :func:`raw_accel_gravity` reads a norm to turn the accelerometer into the
+        Two functions read a norm, and neither reads one to judge a WIDTH.
+        :func:`raw_accel_gravity` reads one to turn the accelerometer into the
         unit gravity direction Pollen's ``get_raw_accelerometer`` returns - the
         estimator's own arithmetic, on a block whose width the reader already
-        held. Nothing reads a norm to JUDGE a block, so a wrong-width
-        ``base_quat`` still produces no signal any code acts on, which is the
-        premise the measurement above rests on.
+        held. :func:`quat_rotate_inverse` reads one to rotate by the orientation
+        a quaternion encodes rather than by its components, and the only norm it
+        refuses is a ~zero one, which carries no direction at all. A short
+        ``base_quat`` stays within a percent of unity - the measurement above -
+        so it is a usable direction to both of them and the width guard cannot
+        be delegated to either, which is the premise this class rests on.
         """
         source = inspect.getsource(obs_mod)
         norm_readers = sorted(
@@ -389,7 +394,14 @@ class TestThePremisesTheDefectRestedOn:
             for node in ast.parse(source).body
             if isinstance(node, ast.FunctionDef) and "linalg.norm" in ast.unparse(node)
         )
-        assert norm_readers == ["raw_accel_gravity"], norm_readers
+        assert norm_readers == ["quat_rotate_inverse", "raw_accel_gravity"], norm_readers
+        # The norm that IS a judgement clears a short read: three components of a
+        # unit quaternion still describe a direction, just the wrong one.
+        short = np.asarray([0.9098, -0.0665, 0.1604], dtype=np.float32)
+        assert float(np.linalg.norm(short)) > MIN_QUATERNION_NORM, "premise: a short read is not degenerate"
+        assert bool(np.all(np.isfinite(projected_gravity(short)))), (
+            "a wrong-width base_quat is still answered, so only the width guard can refuse it"
+        )
         # Whitespace-normalised: the claim spans a line wrap in the docstring, so a
         # raw substring match would grade the wrapping rather than the sentence.
         assert "This module never rescales the assembled vector." in " ".join(source.split())

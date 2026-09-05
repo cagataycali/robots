@@ -28,9 +28,12 @@ serves every policy in a bundle.
 
 CRITICAL: ``EmpiricalNormalization`` is baked INTO the exported ONNX graph, so
 the vector built here is fed RAW to the session. This module never rescales the
-assembled vector. The one normalisation it performs is inside
-:func:`raw_accel_gravity`, and that is the ``raw_accel`` export's own estimator -
-Pollen returns a unit gravity direction there - rather than a scaling choice.
+assembled vector. The two normalisations it performs are both inside slot two,
+and neither is a scaling choice: :func:`raw_accel_gravity` returns the unit
+direction the ``raw_accel`` export's own estimator returns, and
+:func:`quat_rotate_inverse` normalises the orientation it reads because its
+formula is a rotation only for a unit quaternion - a scaled quaternion encodes
+the same rotation and has to answer the same.
 """
 
 from __future__ import annotations
@@ -39,6 +42,8 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+
+from strands_robots.utils import MIN_QUATERNION_NORM
 
 #: World gravity direction, rotated into the base frame to form the
 #: ``projected_gravity`` observation block.
@@ -82,10 +87,67 @@ def quat_rotate_inverse(quat: NDArray[np.float32], vec: NDArray[np.float32]) -> 
 
     Byte-for-byte the same formula Pollen's ``infer_policy.py`` uses to derive
     ``projected_gravity`` from the trunk orientation, so a rollout driven here
-    feeds the network the same gravity block it saw in training.
+    feeds the network the same gravity block it saw in training - read from the
+    rotation the quaternion encodes rather than from the quaternion itself.
+
+    The formula mixes a term quadratic in the components with a linear one, so
+    scaling does not cancel: it is a rotation only for a UNIT quaternion. A
+    quaternion scaled by any positive factor encodes the same rotation, which is
+    why the library's orientation domain
+    (:func:`~strands_robots.utils.coerce_orientation_quaternion`) accepts any
+    magnitude - on the stated ground that "every consumer either normalizes or
+    is scale-invariant". This is one of those consumers, so it normalizes: read
+    unnormalized, a base orientation 2x off unit turns world ``-Z`` 41 deg away
+    from the direction it encodes and hands the graph a slot-two block of
+    magnitude 1.56, where the layout declares a unit direction. Pollen's own
+    code needs no such step because it reads a fused-IMU orientation that is
+    already unit; the values reaching a provider are not all of that kind - an
+    IMU reading drifts off unit, and an orientation obtained by interpolating
+    two samples is short by up to ~8%.
+
+    A norm below :data:`~strands_robots.utils.MIN_QUATERNION_NORM` carries no
+    direction at all and cannot be repaired by scaling, so it is refused rather
+    than read. That case is the ``[0, 0, 0, 0]`` an unwritten or dropped
+    orientation field spells, and the formula answers it with ``vec``
+    unchanged - for world ``-Z``, exactly the gravity block of a PERFECTLY
+    UPRIGHT base, the one attitude a locomotion policy most needs to tell apart
+    from a fall. It passes the width guard in :func:`_require_base_block` and
+    the finiteness pass in :func:`_non_finite_observation_error`, so this is the
+    only place that sees it. The same-layer siblings refuse it the same way
+    (:func:`strands_robots.policies.wbc.control.quat_rotate_inverse`,
+    :func:`strands_robots.policies.protomotions.state_utils.quat_rotate_inverse`).
+
+    Args:
+        quat: Base orientation ``[w, x, y, z]``. Any magnitude is accepted and
+            normalized here, so a scaled quaternion answers the same as the
+            unit one it encodes.
+        vec: The world-frame 3-vector to express in the base frame.
+
+    Returns:
+        ``vec`` expressed in the base frame, ``float32`` - unit-length whenever
+        ``vec`` is. A ``nan``/``inf`` component propagates instead of being
+        refused here, so the assembled-vector pass names it through the block it
+        becomes.
+
+    Raises:
+        ValueError: If ``quat`` has no direction to recover (norm below
+            :data:`~strands_robots.utils.MIN_QUATERNION_NORM`).
     """
     q = np.asarray(quat, dtype=np.float32)
     v = np.asarray(vec, dtype=np.float32)
+    # float64 for the norm alone: the components stay in the caller's float32,
+    # matching the dtype the ONNX graph is fed.
+    norm = float(np.linalg.norm(np.asarray(q, dtype=np.float64)))
+    if norm < MIN_QUATERNION_NORM:
+        raise ValueError(
+            f"quat_rotate_inverse: the base orientation {np.asarray(q, dtype=np.float64).tolist()} "
+            f"has norm {norm!r} and describes no rotation, so the gravity block it reduces "
+            f"to carries no direction either. An all-zero quaternion is what an orientation "
+            f"that was never written spells, and rotating world -Z by it returns world -Z - "
+            f"the gravity block of a perfectly upright base. Supply the base's real wxyz "
+            f"orientation (MuJoCo reports it as base_quat in get_observation)."
+        )
+    q = (q / np.float32(norm)).astype(np.float32)
     w = q[0]
     xyz = q[1:4]
     t = np.cross(xyz, v) * 2.0
@@ -93,7 +155,21 @@ def quat_rotate_inverse(quat: NDArray[np.float32], vec: NDArray[np.float32]) -> 
 
 
 def projected_gravity(base_quat: NDArray[np.float32]) -> NDArray[np.float32]:
-    """World ``-Z`` expressed in the base frame, from the base quaternion (wxyz)."""
+    """World ``-Z`` expressed in the base frame, from the base quaternion (wxyz).
+
+    A UNIT direction for any ``base_quat`` magnitude: the rotation is read from
+    the orientation the quaternion encodes, not from its components (see
+    :func:`quat_rotate_inverse`).
+
+    Args:
+        base_quat: Base orientation ``[w, x, y, z]``, any magnitude.
+
+    Returns:
+        The unit gravity direction in the base frame (``float32``, 3).
+
+    Raises:
+        ValueError: If ``base_quat`` describes no rotation (~zero norm).
+    """
     return quat_rotate_inverse(base_quat, _WORLD_GRAVITY)
 
 
@@ -127,6 +203,10 @@ def raw_accel_gravity(base_acc: NDArray[np.float32], base_quat: NDArray[np.float
 
     Returns:
         A unit ``float32`` gravity direction in the base frame.
+
+    Raises:
+        ValueError: If the reading is degenerate AND ``base_quat`` describes no
+            rotation, so neither estimator carries a direction.
     """
     negated = -np.asarray(base_acc, dtype=np.float32)
     magnitude = float(np.linalg.norm(negated))
@@ -149,8 +229,9 @@ def _require_base_block(observation_dict: dict[str, Any], key: str, expected_len
     directions. One component short, ``q[1:4]`` is a 2-vector that ``np.cross``
     reads as planar, so ``base_quat`` silently loses its ``z``: the gravity block
     is still three finite components at the documented width, 7.5 degrees from the
-    truth for a small-yaw pose at a norm of 0.991 - inside a percent of unity, and
-    this module normalises nothing - rising to 20.7 degrees at 0.935. Over-long, a
+    truth for a small-yaw pose at a norm of 0.991 - inside a percent of unity, so the
+    normalisation :func:`quat_rotate_inverse` performs does not flag it either - rising
+    to 20.7 degrees at 0.935. Over-long, a
     7-element ``[base_pos, base_quat]`` slice is read as a quaternion made of
     positions, 70.9 degrees off. A short ``base_ang_vel`` instead narrowed the
     returned vector below the documented ``48 + len(command)``, handing the graph
@@ -311,7 +392,11 @@ def build_observation(
             vector is not finite - the offending blocks are named, and a joint
             block names the joint. A ``nan``/``inf`` reaches the graph
             otherwise, which propagates it and makes ``get_actions`` refuse it
-            as ``'the ONNX action'``.
+            as ``'the ONNX action'``. Or if ``base_quat`` describes no rotation
+            (~zero norm, the spelling of an orientation that was never written):
+            the width and finiteness passes both accept it while the gravity
+            block it reduces to reads as a perfectly upright base, so
+            :func:`quat_rotate_inverse` refuses it instead.
     """
     if gravity_source not in _GRAVITY_SOURCES:
         raise ValueError(
