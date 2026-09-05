@@ -708,12 +708,16 @@ def _declared_dependency_floors() -> dict[str, str]:
 
 
 def _version_key(raw: str) -> tuple[int, ...]:
-    """Order a release string by its numeric components.
+    """Read a release string as its numeric components, in order.
 
-    ``numpy>=2`` and ``numpy>=1.21.0`` are both written in the tree, so the
-    comparison pads rather than requiring equal arity: ``2`` sorts above
-    ``1.21.0``. A non-numeric component ends the read (``2.*``, ``1.0rc1``),
-    which keeps a pre-release from sorting above the release it precedes.
+    A non-numeric component ends the read (``2.*``, ``1.0rc1``), which keeps a
+    pre-release from sorting above the release it precedes.
+
+    The tuple is only as long as the string has components, so two keys are
+    comparable only once padded to a common width, which
+    :func:`_names_a_lower_release` does. Comparing them raw orders a key below
+    every longer key it is a prefix of, and ``numpy>=2`` and ``numpy>=1.21.0``
+    are both written in the tree.
     """
     parts: list[int] = []
     for component in raw.split("."):
@@ -722,6 +726,26 @@ def _version_key(raw: str) -> tuple[int, ...]:
             break
         parts.append(int(digits.group()))
     return tuple(parts)
+
+
+def _names_a_lower_release(written: str, floor: str) -> bool:
+    """Whether ``written`` names a release below ``floor``.
+
+    PEP 440 reads an absent release component as zero, so ``1.21`` and
+    ``1.21.0`` are one release, and a bound written either way admits exactly
+    the same environments -- ``pip install "numpy>=1.21"`` refuses 1.20.99 just
+    as ``>=1.21.0`` does. Padding to a common width is what makes an
+    abbreviation compare equal to the floor it abbreviates; comparing the parsed
+    keys raw ordered ``(1, 21)`` below ``(1, 21, 0)``, which reported every
+    declared floor as undercut by its own shorter spelling.
+    """
+    written_key, floor_key = _version_key(written), _version_key(floor)
+    width = max(len(written_key), len(floor_key))
+
+    def padded(key: tuple[int, ...]) -> tuple[int, ...]:
+        return key + (0,) * (width - len(key))
+
+    return padded(written_key) < padded(floor_key)
 
 
 def _below_floor_bounds(text: str, floors: dict[str, str]) -> list[tuple[str, str, str]]:
@@ -743,7 +767,7 @@ def _below_floor_bounds(text: str, floors: dict[str, str]) -> list[tuple[str, st
         floor = floors.get(_normalize_extra(name))
         if floor is None:
             continue
-        if _version_key(written) < _version_key(floor):
+        if _names_a_lower_release(written, floor):
             stale.append((name, written, floor))
     return stale
 
@@ -797,10 +821,21 @@ def test_written_version_bounds_are_not_below_the_declared_floor() -> None:
         # Below the floor: reported, with the floor it undercuts.
         ('pip install "strands-agents>=1.0"', [("strands-agents", "1.0", "1.7.0")]),
         ('pip install "strands-agents>=0.1"', [("strands-agents", "0.1", "1.7.0")]),
+        # Below the floor in a component the floor spells and the bound does
+        # not: the padding must not read the absent component as "no verdict".
+        ("pip install 'numpy>=1.20'", [("numpy", "1.20", "1.21.0")]),
         # At the floor, and above it: a stricter local requirement is correct.
         ('pip install "strands-agents>=1.7.0,<2.0.0"', []),
         ("pip install 'numpy>=1.24'", []),
         ("composes with numpy>=2", []),
+        # At the floor, written without its trailing zeros. PEP 440 reads the
+        # absent component as zero, so these name the floor itself rather than
+        # something below it.
+        ('pip install "strands-agents>=1.7"', []),
+        ("pip install 'numpy>=1.21'", []),
+        # And the same release spelled longer than the floor is not above it
+        # either, so it stays unreported for the same reason.
+        ("pip install 'numpy>=1.21.0.0'", []),
         # A distribution the manifest does not declare sets no floor to be below.
         ('pip install "gradio>=4,<7"', []),
         # A longer name is not read as a bound on its tail.
@@ -815,6 +850,41 @@ def test_the_written_bound_rule_can_both_accept_and_reject(line: str, expected: 
     """
     floors = {"strands-agents": "1.7.0", "numpy": "1.21.0"}
     assert _below_floor_bounds(line, floors) == expected
+
+
+def test_a_declared_floor_written_without_its_trailing_zeros_is_not_read_as_undercutting_itself() -> None:
+    """Every declared floor, abbreviated, must be read as that floor.
+
+    A release bound may be written without its trailing zeros -- ``numpy>=1.21``
+    and ``numpy>=1.21.0`` are one release under PEP 440, and pip resolves them
+    identically -- so prose and install lines across the tree spell floors both
+    ways. Reading the abbreviation as an undercut is a false report on the one
+    axis this sweep exists to police, and it fires on *every* declared
+    dependency rather than some unusual corner:
+
+        numpy: floor 1.21.0, written >=1.21 -> reported as below 1.21.0
+
+    The live manifest is the fixture so the cell cannot go stale against a floor
+    that gains or loses a component.
+    """
+    floors = _declared_dependency_floors()
+    assert floors, "no lower bound read from [project.dependencies]; the manifest reader has drifted"
+
+    graded = 0
+    for name, floor in floors.items():
+        components = floor.split(".")
+        # Drop trailing zero components one at a time: 1.21.0 -> 1.21, and
+        # 8.0.0 -> 8.0 -> 8. Each is the same release as the floor.
+        for width in range(len(components) - 1, 0, -1):
+            if any(part != "0" for part in components[width:]):
+                break
+            abbreviated = ".".join(components[:width])
+            graded += 1
+            assert _below_floor_bounds(f'pip install "{name}>={abbreviated}"', floors) == [], (
+                f"{name}>={abbreviated} names the declared floor {floor} itself, not a release below it"
+            )
+
+    assert graded >= len(floors), f"only {graded} abbreviations graded for {len(floors)} declared floors"
 
 
 # Headers that mean "the extra you install". A column merely containing the word
