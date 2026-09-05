@@ -106,6 +106,10 @@ def _policy_config_field_names(policy_type: str) -> frozenset[str] | None:
 # that an LLM agent (or prompt injection) could abuse. Gated by a HIL
 # interrupt; operators can pre-approve individual flags via
 # STRANDS_TRAIN_EXTRA_FLAGS_ALLOW or bypass entirely with BYPASS_TOOL_CONSENT.
+#
+# Membership is decided by ``_blocked_flags_named``, not by a whole-key equality
+# test: the argv these keys land in is parsed by argparse, which honors any
+# unambiguous prefix, so an entry here also gates every abbreviation of itself.
 _BLOCKED_EXTRA_FLAGS = frozenset(
     {
         "output_dir",
@@ -145,14 +149,75 @@ def _normalize_hydra_key(key: str) -> str:
     return key.lstrip("-+~")
 
 
+def _abbreviates_flag(candidate: str, flag: str) -> bool:
+    """Whether argparse could resolve the argv spelling ``candidate`` to ``flag``.
+
+    ``extra_flags`` keys are emitted verbatim into the argv of
+    ``lerobot.scripts.lerobot_train``, which parses it with draccus, which
+    builds a stdlib :class:`argparse.ArgumentParser`. That parser leaves
+    ``allow_abbrev`` at its default of ``True``, so any *unambiguous prefix* of
+    a registered option selects that option: ``--ou=/x`` sets ``output_dir``
+    and ``--co=y`` sets ``config_path``. A key is therefore not the flag it
+    reaches, and a gate that compares whole keys does not see the difference.
+
+    A prefix that stops exactly at a dotted-segment boundary is not an
+    abbreviation. draccus registers an option for each nested config as well as
+    for its fields (``--wandb`` beside ``--wandb.project``), and argparse
+    prefers an exact match over any abbreviation, so ``wandb`` names that
+    option rather than the blocked child under it.
+
+    The rule is deliberately conservative in one direction: a prefix that is
+    ambiguous - ``wandb.e``, which could be ``wandb.enable`` or
+    ``wandb.entity`` - is treated as naming both, even though argparse refuses
+    it outright. Gating a spelling the trainer would reject anyway costs a
+    prompt; missing one costs the write.
+
+    Args:
+        candidate: A normalized ``extra_flags`` key, Hydra prefix already off.
+        flag: The blocked flag to judge ``candidate`` against.
+
+    Returns:
+        ``True`` when ``candidate`` is a proper prefix of ``flag`` that does not
+        end at one of ``flag``'s own dotted-segment boundaries.
+    """
+    if not candidate or candidate == flag or not flag.startswith(candidate):
+        return False
+    return flag[len(candidate)] != "."
+
+
+def _blocked_flags_named(key: str) -> tuple[str, ...]:
+    """The blocked flags the argv spelling ``key`` can reach, sorted.
+
+    Exact match first, mirroring argparse: a key that spells a blocked flag in
+    full names that flag and nothing else, however many longer flags it is a
+    prefix of.
+
+    Args:
+        key: An ``extra_flags`` key as the caller wrote it, Hydra prefix and all.
+
+    Returns:
+        The blocked flags, or an empty tuple when the key reaches none.
+    """
+    normalized = _normalize_hydra_key(key)
+    if normalized in _BLOCKED_EXTRA_FLAGS:
+        return (normalized,)
+    return tuple(sorted(flag for flag in _BLOCKED_EXTRA_FLAGS if _abbreviates_flag(normalized, flag)))
+
+
 def _validate_extra_flags(extra_flags: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return list of (raw_key, normalized_key) pairs that are blocked."""
-    blocked_pairs = []
-    for key in extra_flags:
-        normalized = _normalize_hydra_key(key)
-        if normalized in _BLOCKED_EXTRA_FLAGS:
-            blocked_pairs.append((key, normalized))
-    return blocked_pairs
+    """Return the (raw key, blocked flag) pairs ``extra_flags`` reaches.
+
+    One pair per blocked flag a key can reach, so a prefix short enough to
+    abbreviate two of them has to clear both allowlist entries rather than one.
+
+    Args:
+        extra_flags: The passthrough dict, keys as the caller wrote them.
+
+    Returns:
+        Pairs of the caller's own spelling and the blocked flag it names, in the
+        order the keys were supplied.
+    """
+    return [(key, flag) for key in extra_flags for flag in _blocked_flags_named(key)]
 
 
 def _gate_extra_flags(
@@ -179,12 +244,14 @@ def _gate_extra_flags(
         logger.debug("all blocked flags allowed via %s", _EXTRA_FLAGS_ALLOW_ENV)
         return None
 
+    # Reported as the caller's own spellings, deduplicated: one key can name two
+    # blocked flags, and the allowlist check above is what needs it per flag.
+    flag_names = ", ".join(dict.fromkeys(raw for raw, _ in needs_approval))
+
     if os.environ.get(_BYPASS_CONSENT_ENV, "").lower() == "true":
-        flag_names = ", ".join(raw for raw, _ in needs_approval)
         logger.warning("BYPASS_TOOL_CONSENT: allowing blocked extra_flags: %s", flag_names)
         return None
 
-    flag_names = ", ".join(raw for raw, _ in needs_approval)
     block_msg = (
         f"extra_flags {flag_names} blocked for security reasons (controls output paths, telemetry, or code loading)."
     )
@@ -883,6 +950,10 @@ def lerobot_train(
             status/stop).
         extra_flags: Passthrough dict of additional lerobot-train flags, e.g.
             ``{"policy.optimizer_lr": 1e-4}`` -> ``--policy.optimizer_lr=0.0001``.
+            A key that abbreviates a gated flag is gated as that flag, because
+            the trainer's parser honors unambiguous prefixes: ``{"ou": "/x"}``
+            reaches ``output_dir``, so it needs the same approval, and the same
+            ``STRANDS_TRAIN_EXTRA_FLAGS_ALLOW=output_dir`` entry clears it.
 
     Returns:
         Dict with ``status`` ("success" or "error") and a ``content`` list of
