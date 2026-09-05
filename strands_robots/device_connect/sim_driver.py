@@ -100,7 +100,7 @@ class SimulationDeviceDriver(DeviceDriver):
         # Security hardening: authorize the calling device before mutating
         # simulation state.
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc"):
+        if not is_authorized_caller(caller, scope="rpc", device=self._device):
             return authz_error(caller, "execute")
 
         # Determine robot name
@@ -160,7 +160,7 @@ class SimulationDeviceDriver(DeviceDriver):
             whatever did halt still under ``stopped``.
         """
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc"):
+        if not is_authorized_caller(caller, scope="rpc", device=self._device):
             return authz_error(caller, "stop")
         print("[policy] Stop command received - stopping every rollout", flush=True)
         halted: list[str] = []
@@ -284,7 +284,7 @@ class SimulationDeviceDriver(DeviceDriver):
             n_steps: Number of physics steps to take
         """
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc"):
+        if not is_authorized_caller(caller, scope="rpc", device=self._device):
             return authz_error(caller, "step")
         return self._sim.step(n_steps)
 
@@ -292,7 +292,7 @@ class SimulationDeviceDriver(DeviceDriver):
     async def reset(self) -> dict[str, Any]:
         """Reset simulation to initial state."""
         caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc"):
+        if not is_authorized_caller(caller, scope="rpc", device=self._device):
             return authz_error(caller, "reset")
         return self._sim.reset()
 
@@ -351,7 +351,7 @@ class SimulationDeviceDriver(DeviceDriver):
         in the emergency-stop allowlist, so a spoofed event from an arbitrary
         device cannot interrupt operations.
         """
-        if not is_authorized_caller(device_id, scope="estop"):
+        if not is_authorized_caller(device_id, scope="estop", device=self._device):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
         logger.warning("Emergency stop received from %s - halting every motion source", device_id)

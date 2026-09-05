@@ -165,7 +165,7 @@ You rarely touch more than one or two of these. Grouped by what they control:
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `MESSAGING_CREDENTIALS_FILE` | unset | **The one var to enable mTLS.** A single `*.creds.json` bundling CA + cert + key. Works D2D or brokered. |
-| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true`/`1`/`yes` = skip auth/encryption; every other spelling is secure. **Trusted, isolated LAN only**; logs a warning. The string vocabulary is this variable's - the `allow_insecure=` argument must be a boolean and refuses a string, since `"false"` is truthy. |
+| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true`/`1`/`yes` = skip auth/encryption; every other spelling is secure. **Trusted, isolated LAN only**; logs a warning. The string vocabulary is this variable's - the `allow_insecure=` argument must be a boolean and refuses a string, since `"false"` is truthy. The argument **outranks** this variable, and the posture it resolves to is what the allowlist advisory below follows - so a device brought up with `allow_insecure=True` and this variable unset is still reported as insecure. |
 
 `ReachyMiniDriver` reaches its robot over a second link the variables above do not
 cover: the Reachy Mini daemon's own REST / WebSocket interface. That link is

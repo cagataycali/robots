@@ -825,7 +825,16 @@ def _dc_ensure_connected() -> None:
     # set DEVICE_CONNECT_ALLOW_INSECURE=true process-wide, silently downgrading
     # every connection in the process. Insecure mode is now strictly opt-in by
     # the operator. If they have opted in, surface a warning so it is visible.
-    if os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE", "").lower() in ("true", "1", "yes"):
+    #
+    # The environment variable is the whole question on this path, unlike the
+    # device side: this connector takes no ``allow_insecure`` argument, so there
+    # is no higher-precedence source to consult. What it borrows is the
+    # vocabulary - which spellings opt in is decided once, in the module that
+    # owns the variable, so this warning cannot come to disagree with the
+    # posture the device side resolves.
+    from strands_robots.device_connect._authz import insecure_env_opts_in  # noqa: PLC0415 - lazy on purpose
+
+    if insecure_env_opts_in(os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE")):
         logger.warning(
             "DEVICE_CONNECT_ALLOW_INSECURE is enabled - agent-side Device "
             "Connect traffic is unencrypted and unauthenticated. Use only on "

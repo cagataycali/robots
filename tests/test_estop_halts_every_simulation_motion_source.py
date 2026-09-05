@@ -53,10 +53,15 @@ def _real_device_connect(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     import strands_robots.device_connect.sim_driver as sim_driver
 
+    # ``device`` is the ``DeviceRuntime`` the driver is attached to, which decides
+    # whether the self-asserted-identity advisory fires. This file grades who is
+    # admitted, not the advisory, so the double accepts and ignores it - dropping
+    # the parameter would make the double narrower than the call and turn every
+    # cell here into a TypeError.
     monkeypatch.setattr(
         sim_driver,
         "is_authorized_caller",
-        lambda device_id, scope="rpc": device_id == _ESTOP_SOURCE,
+        lambda device_id, scope="rpc", device=None: device_id == _ESTOP_SOURCE,
     )
 
 

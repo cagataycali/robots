@@ -71,6 +71,19 @@ def _device_connect() -> Any:
     return module
 
 
+def _vocabulary() -> tuple[str, ...]:
+    """The opt-in spellings, read from the module that owns them.
+
+    They moved out of ``_impl`` so the stdlib-only authorization module can share
+    them rather than keep a second copy - see
+    ``tests/test_insecure_transport_posture_has_one_owner``. Imported inside the
+    call for the same reason as :func:`_device_connect`.
+    """
+    from strands_robots.device_connect._authz import INSECURE_TRUE
+
+    return INSECURE_TRUE
+
+
 def _resolve(explicit: Any = None, env_value: Any = None) -> Any:
     """Call the resolver with values outside its declared parameter types.
 
@@ -184,11 +197,14 @@ class TestParsingTheArgumentWasRejectedForAMeasuredReason:
 
     @pytest.mark.parametrize("spelling", ["on", "enabled", "y"])
     def test_an_opt_in_spelling_outside_the_vocabulary_would_read_as_secure(self, spelling: str) -> None:
-        assert spelling not in _device_connect()._INSECURE_TRUE
+        assert spelling not in _vocabulary()
         assert _resolve(None, spelling) is False
 
     def test_the_vocabulary_is_the_one_the_refusal_quotes(self) -> None:
-        assert _device_connect()._INSECURE_TRUE == OPT_IN_SPELLINGS
+        # Spelled once, in the stdlib-only ``_authz``, and imported here - the
+        # authorizer's own fallback needs the same answer and cannot import this
+        # module. See ``tests/test_insecure_transport_posture_has_one_owner``.
+        assert _vocabulary() == OPT_IN_SPELLINGS
 
 
 class TestTheRefusalPrecedesTheRuntime:

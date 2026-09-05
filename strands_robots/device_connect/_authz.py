@@ -31,9 +31,18 @@ Caller-identity semantics (READ THIS before relying on the allowlist):
   every anonymous caller - configure an id on the caller side to allow it.
 * The id is only as trustworthy as the transport. Under authenticated
   transport (mTLS) it is bound to the sender's certificate. Under insecure
-  transport (``DEVICE_CONNECT_ALLOW_INSECURE``) it is **self-asserted** - any
-  peer can claim any id - so the allowlist is advisory there, not a
-  cryptographic boundary. A one-time warning is logged in that case.
+  transport it is **self-asserted** - any peer can claim any id - so the
+  allowlist is advisory there, not a cryptographic boundary. A one-time warning
+  is logged in that case.
+* Which of those two holds is a property of the ``DeviceRuntime`` the driver is
+  attached to, not of the environment alone. A runtime resolves its posture from
+  its own ``allow_insecure`` argument first and ``DEVICE_CONNECT_ALLOW_INSECURE``
+  second, so this module reads the runtime's resolved answer and falls back to
+  the variable only when no runtime is attached. Reading the variable
+  unconditionally answered the lower-precedence half of the question: a runtime
+  brought up with ``allow_insecure=True`` and the variable unset is insecure and
+  went unwarned, and one brought up with ``allow_insecure=False`` while the
+  variable opted in is authenticated and was warned about anyway.
 """
 
 from __future__ import annotations
@@ -41,6 +50,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +62,47 @@ _warned_insecure_acl: set[str] = set()
 
 _INSECURE_ENV = "DEVICE_CONNECT_ALLOW_INSECURE"
 
+#: The string spellings of ``DEVICE_CONNECT_ALLOW_INSECURE`` that opt in. Spelled
+#: once for the whole package: this module is stdlib-only, so the two other
+#: readers of the variable can import it here, while a module that needs the
+#: ``[device-connect]`` extra cannot be imported from either of them.
+INSECURE_TRUE = ("true", "1", "yes")
 
-def _insecure_transport_active() -> bool:
-    return os.environ.get(_INSECURE_ENV, "").lower() in ("true", "1", "yes")
+
+def insecure_env_opts_in(env_value: str | None) -> bool:
+    """Whether a raw ``DEVICE_CONNECT_ALLOW_INSECURE`` value opts in.
+
+    The one reader of that variable's string vocabulary. Every surface that
+    answers the question - the ``allow_insecure`` resolver, this module's
+    fallback and the agent-side connector's warning - asks here, so the three
+    cannot come to disagree about what ``"yes"`` means.
+
+    Args:
+        env_value: The raw variable value, or ``None`` when it is unset.
+
+    Returns:
+        Whether the value is one of :data:`INSECURE_TRUE`, case-insensitively.
+        ``None`` and every other spelling are secure.
+    """
+    return env_value is not None and env_value.lower() in INSECURE_TRUE
+
+
+def _insecure_transport_active(device: Any = None) -> bool:
+    """Whether the transport carrying an RPC is unauthenticated.
+
+    Args:
+        device: The ``DeviceRuntime`` the driver is attached to (its
+            ``allow_insecure`` is the resolved posture), or ``None`` when the
+            driver is not attached to one.
+
+    Returns:
+        The runtime's resolved posture when there is a runtime, otherwise what
+        ``DEVICE_CONNECT_ALLOW_INSECURE`` says on its own.
+    """
+    resolved = getattr(device, "allow_insecure", None)
+    if isinstance(resolved, bool):
+        return resolved
+    return insecure_env_opts_in(os.environ.get(_INSECURE_ENV))
 
 
 def _warn_insecure_acl_once(scope: str) -> None:
@@ -65,9 +113,10 @@ def _warn_insecure_acl_once(scope: str) -> None:
     _warned_insecure_acl.add(scope)
     logger.warning(
         "Device Connect %s allowlist is enforced against a SELF-ASSERTED caller "
-        "identity: %s is set, so any peer can claim an allowed id. Treat the "
-        "allowlist as advisory here; use authenticated transport (mTLS) for a "
-        "cryptographic authorization boundary.",
+        "identity: this device's transport is insecure (allow_insecure, or %s "
+        "when no runtime setting was given), so any peer can claim an allowed "
+        "id. Treat the allowlist as advisory here; use authenticated transport "
+        "(mTLS) for a cryptographic authorization boundary.",
         scope,
         _INSECURE_ENV,
     )
@@ -107,11 +156,25 @@ def _warn_permissive_once(scope: str) -> None:
         )
 
 
-def is_authorized_caller(caller: str | None, *, scope: str = "rpc") -> bool:
+def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any = None) -> bool:
     """Return True iff *caller* is authorized for the given *scope*.
 
-    scope="rpc"   -> state-mutating RPCs (execute/stop/step/reset)
-    scope="estop" -> emergency-stop event handling
+    Args:
+        caller: The id the messaging layer reported as the RPC's source device,
+            or ``None`` for an anonymous caller.
+        scope: ``"rpc"`` for state-mutating RPCs (execute/stop/step/reset), or
+            ``"estop"`` for emergency-stop event handling.
+        device: The ``DeviceRuntime`` this driver is attached to, so the
+            self-asserted-identity advisory follows the transport that actually
+            carries the call rather than the environment variable alone. Callers
+            pass ``self._device``, which ``DeviceDriver.set_device`` fills in on
+            every bring-up path. ``None`` falls back to the variable.
+
+    Returns:
+        Whether the call may proceed. Authorization itself does not consult
+        *device*: an allowlist is enforced under either posture, and *device*
+        only decides whether the advisory that the enforcement is advisory
+        fires.
     """
     if scope == "estop":
         # Fall back through the parser, not through the raw string's truthiness:
@@ -136,7 +199,7 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc") -> bool:
 
     # An allowlist is configured. If the transport is insecure the caller id is
     # self-asserted, so the allowlist is advisory - say so once, loudly.
-    if _insecure_transport_active():
+    if _insecure_transport_active(device):
         _warn_insecure_acl_once(env_scope)
 
     # Allowlist configured: a missing caller identity cannot be authorized.
