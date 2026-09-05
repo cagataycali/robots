@@ -42,7 +42,14 @@ resolve_name("franka")    # 'panda'
 resolve_name("g1")        # 'unitree_g1'
 ```
 
-Case-insensitive, hyphens/underscores interchangeable. Full alias map in `registry/robots.json`.
+Case-insensitive, hyphens/underscores interchangeable. That fold is
+`registry.normalize_robot_name`, and it is the rule the registry is keyed by, not
+just the rule queries pass through: a canonical name is stored folded and an
+alias is keyed folded, so an alias declared `"My-Arm"` answers `my_arm`,
+`MY-ARM` and `My-Arm` alike. Two aliases that fold to one key are therefore one
+alias, and `register_robot` refuses an alias that folds onto another robot's name
+or alias rather than letting it resolve to that robot. Full alias map in
+`registry/robots.json`.
 
 ## Real hardware
 

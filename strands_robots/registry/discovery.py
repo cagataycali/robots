@@ -35,6 +35,8 @@ import re
 from functools import lru_cache
 from typing import Any
 
+from .loader import normalize_robot_name
+
 logger = logging.getLogger(__name__)
 
 # Robot names are interpolated into ``importlib`` module paths, so restrict them
@@ -59,11 +61,6 @@ _SCENE_CANDIDATES = ("scene.xml", "scene_mjx.xml")
 
 # Cache of synthesized entries (and negative results) keyed by normalized name.
 _DISCOVER_CACHE: dict[str, dict[str, Any] | None] = {}
-
-
-def _normalize(name: str) -> str:
-    """Lowercase, strip, and underscore-normalize a robot name."""
-    return name.lower().strip().replace("-", "_")
 
 
 @lru_cache(maxsize=1)
@@ -105,7 +102,7 @@ def descriptions_module(name: str) -> str | None:
         descriptions_module("go2")   # -> "go2_mj_description"
         descriptions_module("so100") # -> None (curated, not a description)
     """
-    norm = _normalize(name)
+    norm = normalize_robot_name(name)
     if not _NAME_RE.match(norm):
         return None
     return _mjcf_modules().get(norm)
@@ -143,7 +140,7 @@ def discover_robot(name: str) -> dict[str, Any] | None:
         or ``None`` if the robot is not an MJCF-capable ``robot_descriptions``
         robot.
     """
-    norm = _normalize(name)
+    norm = normalize_robot_name(name)
     if norm in _DISCOVER_CACHE:
         return _DISCOVER_CACHE[norm]
 
@@ -246,7 +243,7 @@ def urdf_descriptions_module(name: str) -> str | None:
         urdf_descriptions_module("atlas_v4") # -> "atlas_v4_description"
         urdf_descriptions_module("so100")    # -> None (curated, not a description)
     """
-    norm = _normalize(name)
+    norm = normalize_robot_name(name)
     if not _NAME_RE.match(norm):
         return None
     return _urdf_modules().get(norm)
@@ -283,7 +280,7 @@ def discover_urdf_path(name: str) -> str | None:
         URDF-capable ``robot_descriptions`` robot, the module cannot be
         imported, or it exposes no readable ``URDF_PATH``.
     """
-    norm = _normalize(name)
+    norm = normalize_robot_name(name)
     module_name = urdf_descriptions_module(norm)
     if module_name is None:
         return None

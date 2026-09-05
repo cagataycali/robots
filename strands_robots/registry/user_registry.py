@@ -47,7 +47,7 @@ from typing import Any
 
 from strands_robots.utils import get_base_dir, resolve_asset_path
 
-from .loader import invalidate_cache
+from .loader import invalidate_cache, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,12 @@ def register_robot(
               (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``).
             - None: defaults to ``<assets_dir>/<name>/``.
         scene_xml: Scene XML (with ground/lights). Defaults to ``model_xml``.
-        aliases: Alternative names for this robot.
+        aliases: Alternative names for this robot. Folded to a lookup key the
+            same way ``name`` is (see
+            :func:`~strands_robots.registry.loader.normalize_robot_name`), so
+            ``"My-Arm"`` and ``"my_arm"`` are one alias, and an alias that folds
+            onto another robot's canonical name or alias is refused rather than
+            resolving to that robot.
         robot_descriptions_module: Optional ``robot_descriptions`` module name.
         hardware: Optional hardware config dict (``lerobot_type``, etc.).
         overwrite: If False (default), raises ValueError if robot already exists.
@@ -193,7 +198,7 @@ def register_robot(
         )
     """
     # Normalize name
-    name = name.lower().strip().replace("-", "_")
+    name = normalize_robot_name(name)
 
     # Load existing
     data = _load_user_registry()
@@ -291,7 +296,7 @@ def unregister_robot(name: str) -> bool:
     Returns:
         True if the robot was removed, False if it wasn't in the user registry.
     """
-    name = name.lower().strip().replace("-", "_")
+    name = normalize_robot_name(name)
     data = _load_user_registry()
 
     if name not in data.get("robots", {}):

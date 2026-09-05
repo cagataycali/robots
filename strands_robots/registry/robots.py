@@ -8,7 +8,7 @@ or modify robots.
 import logging
 from typing import Any
 
-from .loader import _load
+from .loader import _load, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,17 @@ def _build_alias_map() -> dict[str, str]:
 
     Each robot entry may have an "aliases" list.  This function
     inverts those into a flat lookup dict.
+
+    Keyed by :func:`~strands_robots.registry.loader.normalize_robot_name`, the
+    same fold :func:`resolve_name` applies to the query it looks up here: an
+    alias keyed as declared is unreachable in EVERY spelling once its declared
+    one is not already folded, because the query is folded before it arrives.
     """
     reg = _load("robots")
     alias_map: dict[str, str] = {}
     for name, info in reg.get("robots", {}).items():
         for alias in info.get("aliases", []):
-            alias_map[alias] = name
+            alias_map[normalize_robot_name(alias)] = name
     return alias_map
 
 
@@ -48,7 +53,7 @@ def resolve_name(name: str) -> str:
         resolve_name("SO100_follower") # → "so100"
         resolve_name("g1")            # → "unitree_g1"
     """
-    normalized = name.lower().strip().replace("-", "_")
+    normalized = normalize_robot_name(name)
     alias_map = _build_alias_map()
     # Canonical names come straight from the registry keys. Using
     # ``alias_map.values()`` here was wrong: it only contains robots that
