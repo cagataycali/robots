@@ -15,6 +15,7 @@ from strands_robots.tools.lerobot_train import (
     _gate_extra_flags,
     _normalize_hydra_key,
     _validate_extra_flags,
+    build_train_command,
 )
 
 
@@ -318,11 +319,36 @@ class TestAbbreviatedFlagsReachTheSameGate:
             ("policy.pretrained_path=/evil", "policy.pretrained_path"),
             ("wandb.p=someproject", "wandb.project"),
             ("--ou=/evil", "output_dir"),
+            # Two of them, so it is the *first* ``=`` that is graded. With one,
+            # taking the first and taking the last agree, and every candidate
+            # above has one - argparse takes the first.
+            ("output_dir=a=b", "output_dir"),
+            ("ou=/evil=more", "output_dir"),
         ],
     )
     def test_an_abbreviation_names_the_flag_it_reaches(self, key, flag):
         assert self._rule()(key) == (flag,)
         assert _validate_extra_flags({key: "/tmp/evil"}) == [(key, flag)]
+
+    def test_the_emitted_argv_is_what_the_rule_models(self):
+        """The premise the ``=`` truncation rests on: the emitter joins with ``=``.
+
+        Truncating a key at its first ``=`` is only the parser's own rule while
+        ``build_train_command`` writes one argv element per key with an ``=``
+        between key and value. Nothing else here drives the emitter, so a change
+        to that shape would leave the rule modelling a parser it is no longer
+        handed. This grades the emitter against argparse and never asks the rule,
+        so it says the spellings are reachable rather than that they are refused.
+        """
+        for key, flag in (
+            ("output_dir=/evil/dir", "output_dir"),
+            ("ou=/evil", "output_dir"),
+            ("policy.pretrained_path=/evil", "policy.pretrained_path"),
+        ):
+            command = build_train_command(dataset_root="/tmp/ds", extra_flags={key: "x"})
+            element = f"--{key}=x"
+            assert element in command, f"the emitter no longer writes {element!r}"
+            assert self._argparse_verdict(self._OPTIONS, key) == flag
 
     def test_a_nested_config_name_is_not_an_abbreviation_of_its_gated_child(self):
         """``--wandb`` is its own option, so argparse never reads it as a child.
