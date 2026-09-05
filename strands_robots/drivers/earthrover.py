@@ -38,7 +38,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail
+from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 
 if TYPE_CHECKING:
@@ -256,8 +256,10 @@ class EarthRoverDriver:
             envelope = {"status": "success", "content": [{"json": self.read_state()}]}
         elif action == "status":
             envelope = await self.get_status()
-        else:  # "stop"
+        elif action == "stop":
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

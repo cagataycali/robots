@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 import time
 from typing import Any
 
@@ -542,3 +543,84 @@ def _wait_for_exit(driver: URDriver, timeout: float = 5.0) -> None:
             return
         time.sleep(0.01)
     raise AssertionError("the rollout did not finish within its budget")
+
+
+def _refused_for_the_axis_count(envelope: dict[str, Any]) -> bool:
+    """Whether this envelope is the axis-count refusal, rather than any error."""
+    return envelope["status"] == "error" and "six-axis" in text_of(envelope)
+
+
+def _reason_without_the_verb(envelope: dict[str, Any]) -> str:
+    """The refusal text with the leading ``<verb>: `` prefix dropped."""
+    return text_of(envelope).split(": ", 1)[1]
+
+
+class TestTheAxisCountRuleHoldsOnEverySurface:
+    """A controller whose vectors are not six wide is refused by every verb.
+
+    ``joints`` and ``joint_velocities`` are named by zipping the controller's
+    answer against :data:`JOINT_NAMES`, so a width that is not six cannot be
+    named: a shorter vector loses its last joints and a longer one has the
+    extra element truncated away. That second case is the one that cannot be
+    recognised afterwards - six named joints from a seven-axis read are
+    byte-identical in shape to a genuine six-axis read - which is why the read
+    surfaces have to answer it the same way the command path does.
+    """
+
+    @pytest.mark.parametrize("axes", [5, 6, 7])
+    def test_the_read_and_the_command_path_refuse_the_same_controllers(self, fake_rtde: FakeRTDE, axes: int) -> None:
+        """One controller, one verdict - whichever verb asks it."""
+        driver = _connected(fake_rtde)
+        fake_rtde.receive.q = [0.1 * (index + 1) for index in range(axes)]
+
+        by_state = _refused_for_the_axis_count(driver.state())
+        by_command = _refused_for_the_axis_count(driver.send_action({"elbow_joint": 0.1}))
+
+        assert by_state == by_command == (axes != 6)
+
+    def test_both_verbs_state_the_rule_in_the_same_words(self, fake_rtde: FakeRTDE) -> None:
+        """One rule, so one sentence - not two that can drift apart."""
+        driver = _connected(fake_rtde)
+        fake_rtde.receive.q = [0.0] * 7
+
+        assert _reason_without_the_verb(driver.state()) == _reason_without_the_verb(
+            driver.send_action({"elbow_joint": 0.1})
+        )
+
+    def test_a_truncated_read_is_not_published_as_the_arms_pose(self, fake_rtde: FakeRTDE) -> None:
+        """The mesh keeps the last pose it could name, not six of seven joints."""
+        driver = _connected(fake_rtde)
+        assert driver.get_observation() == dict(zip(JOINT_NAMES, MEASURED_Q, strict=True))
+        fake_rtde.receive.q = [9.0] * 7
+
+        assert driver.state()["status"] == "error"
+        assert driver.get_observation() == dict(zip(JOINT_NAMES, MEASURED_Q, strict=True))
+
+    def test_a_wrong_width_from_the_first_read_publishes_no_joints(
+        self, fake_rtde: FakeRTDE, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Priming on connect must not seed the mesh with an unnameable read."""
+        module = sys.modules["rtde_receive"]
+        build = module.RTDEReceiveInterface
+
+        def seven_axis(host: str, frequency: float | None = None) -> Any:
+            interface = build(host, frequency)
+            interface.q = [9.0] * 7
+            return interface
+
+        monkeypatch.setattr(module, "RTDEReceiveInterface", seven_axis)
+        driver = URDriver(tool_name="ur5e", port=HOST)
+        assert driver.connect_eagerly() is None
+
+        assert driver.get_observation() == {}
+
+    def test_the_velocity_register_is_held_to_the_same_rule(self, fake_rtde: FakeRTDE) -> None:
+        """A velocity vector disagreeing with the position one is not reported."""
+        driver = _connected(fake_rtde)
+        fake_rtde.receive.qd = [0.0] * 5
+
+        envelope = driver.state()
+
+        assert envelope["status"] == "error"
+        assert "5 joint velocities" in text_of(envelope)
+        assert "six-axis" in text_of(envelope)

@@ -441,6 +441,9 @@ class TestTheGuardsSurviveARealRollout:
         policy._mj_model = _Bridge.model
         policy._ee_frame_name = "hand"
         policy._ik_bridge = _Bridge()
+        # The cache serves a bridge only for the model and frame it was built
+        # from, so the injected one states which those are.
+        policy._ik_bridge_binding = (_Bridge.model, "hand", "body")
         observation = {"image": np.zeros((8, 8, 3), np.uint8), **dict.fromkeys(joints, 0.0)}
         actions = asyncio.run(policy.get_actions(observation, "pick"))
         assert actions, "a usable pair must still produce actions"

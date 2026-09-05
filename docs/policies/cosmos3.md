@@ -69,6 +69,15 @@ keys must be columns of the active space. Mapping the gripper is therefore
 `{"grasp": ...}` under `midtrain` and `{"gripper": ...}` under `joint_pos`; a key
 that names no column is refused, listing the ones that are valid.
 
+It has to be a rename, so two columns may not arrive at one actuator name. A
+step dict holds one entry per column, so a merge would collapse two columns into
+one entry and drop a command - the actuator that lost would hold position while
+the model asked it to move. Both spellings are refused at construction, naming
+the columns and the target they collide on: two entries sharing a target, and a
+single entry aimed at another column's own name (`{"joint_0": "joint_1"}` on
+`joint_pos` names only real columns and still costs a joint). Renaming *every*
+column is a bijection and is accepted.
+
 `joint_pos` needs seven joint values plus a gripper, and it reads them in the
 order you declare with `set_robot_state_keys()`. Declaring that order is what
 every example here does, and it is what binds the request to the joints you mean.

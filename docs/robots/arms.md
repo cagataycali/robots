@@ -130,6 +130,13 @@ command the way a servo bus does - it accepts the register and performs nothing:
   proximal joints are held to 120 deg/s - so the same policy cadence can be admitted on
   one arm and refused on the other.
 
+Reads are held to one further rule, and it applies to every surface rather than only to a
+write: each RTDE vector is named by its position against the arm's six joints, so a
+controller answering a different width is refused by name - `state()` and the mesh joint
+read included - instead of being reported as far as it goes. A seven-axis answer is the
+case that makes it load-bearing: naming its first six elements produces a pose that reads
+exactly like a genuine six-axis one. This driver serves six-axis e-Series arms only.
+
 Stopping a rollout is reported rather than asserted. `stop_task()` signals the loop,
 waits up to two seconds for its thread and decelerates the arm with `servoStop`; a
 policy blocking on a remote inference call outlasts that budget, and the envelope then

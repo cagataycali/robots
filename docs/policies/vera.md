@@ -84,6 +84,11 @@ robot is drivable iff (its `action_space` matches a served embodiment) **and**
 **IK bridge** that maps the 6-DoF end-effector deltas to joint targets and
 auto-discovers the end-effector frame from the compiled MuJoCo model — so any
 kinematically-compatible 6/7-DoF arm can be driven once a matching IDM exists.
+The bridge solves against one compiled model, and the simulation rebinds the
+policy on every rollout, so it is rebuilt whenever the model or the frame
+changes: one policy object reused across rollouts of a scene that was rebuilt
+(a robot re-placed, an object added) solves in the world it is currently bound
+to, not the one it first saw.
 
 ## Checkpoints
 

@@ -49,6 +49,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
@@ -519,7 +520,7 @@ class G1Driver:
                 "status": "success",
                 "content": [{"json": await self.get_status()}],
             }
-        else:  # "stop"
+        elif action == "stop":
             # Report the halt outcome rather than assert one.  ``stop()`` is
             # the protocol's shutdown hook and returns ``None``, so an
             # envelope built beside it can only restate the intent: a policy
@@ -530,6 +531,8 @@ class G1Driver:
             # timeout reason), so the verb returns that envelope rather than
             # re-deriving it from the loop handle.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

@@ -282,6 +282,10 @@ class VeraPolicy(Policy):
         self._ik_prev_q: dict[str, float] = {}
         self._translation_scale: float = 1.0
         self._ik_bridge: Any = None  # lazily built MinkIKBridge
+        # What that bridge was built from: (mj_model, ee_frame_name, ee_frame_type).
+        # The bridge is only reusable while all three still hold - see
+        # :meth:`_ensure_ik_bridge`.
+        self._ik_bridge_binding: tuple[Any, str, str] | None = None
         self._sim_namespace: str | None = None  # robot namespace for ee-frame scoping
         self._warned_unbound: bool = False
 
@@ -388,6 +392,7 @@ class VeraPolicy(Policy):
         if translation_scale is not None:
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
+        self._ik_bridge_binding = None
 
     def autoconfigure_ik(self, mj_model: Any, namespace: str | None = None, *, force: bool = False) -> bool:
         """Zero-config IK setup: discover the ee-frame from the MjModel.
@@ -772,11 +777,54 @@ class VeraPolicy(Policy):
         return addr
 
     def _ensure_ik_bridge(self, mj_model: Any, ee_frame: str):
-        """Lazily build (and cache) the MinkIKBridge."""
-        if self._ik_bridge is None:
-            from .sim_ik import MinkIKBridge
+        """Return the IK bridge for this model and frame, building it on a miss.
 
-            self._ik_bridge = MinkIKBridge(mj_model, ee_frame, self._ee_frame_type)
+        Keyed on every input the bridge is built from - the compiled model, the
+        end-effector frame name, and the frame type - for the same reason
+        :meth:`_joint_qpos_addr` is keyed on the model. A bridge holds a
+        ``mink.Configuration`` and the tasks built from ONE ``MjModel``, so a
+        bridge built from a superseded model solves against the previous world's
+        kinematics.
+
+        That is reachable through the ordinary rollout path, not just an explicit
+        retarget. The simulation rebinds a policy on every rollout
+        (``bind_policy_sim_context`` -> :meth:`set_sim_context`) and hands it the
+        model compiled *now*, which is a new object after any scene change;
+        :meth:`autoconfigure_ik` returns early once an ee-frame is configured, so
+        the rebind does not re-enter :meth:`set_ik_target` and nothing else
+        invalidated the bridge. Both outcomes were silent at the boundary:
+
+        * the DOF count changed - the stale bridge refuses the seed built from
+          the bound model, naming ``q_init`` and the *superseded* model's ``nq``,
+          which reads as a caller bug;
+        * the DOF count did not change (a robot re-placed, a scene rebuilt) - the
+          solve returns joint targets for geometry that is no longer there, under
+          an action dict shaped exactly like a good one.
+
+        The model is held by identity rather than by ``id()``: an int key keeps
+        nothing alive, so a freed model's address can be reused by the model that
+        replaces it and collide. Holding it pins nothing new - ``self._mj_model``
+        already holds the same object for as long as it is the active model - and
+        this single-slot cache drops a superseded bridge on the next miss.
+
+        Args:
+            mj_model: The compiled ``mujoco.MjModel`` the solve runs against.
+            ee_frame: Name of the end-effector frame the IK tracks.
+
+        Returns:
+            The cached bridge when it was built from this model and frame, else a
+            freshly built one.
+        """
+        binding = (mj_model, ee_frame, self._ee_frame_type)
+        cached = self._ik_bridge
+        held = self._ik_bridge_binding
+        if cached is not None and held is not None and held[0] is mj_model and held[1:] == binding[1:]:
+            return cached
+
+        from .sim_ik import MinkIKBridge
+
+        self._ik_bridge = MinkIKBridge(mj_model, ee_frame, self._ee_frame_type)
+        self._ik_bridge_binding = binding
         return self._ik_bridge
 
     def _ik_chunk_to_action_dicts(

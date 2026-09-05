@@ -43,6 +43,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.drivers.robotiq.protocol import (
     DEFAULT_TCP_PORT,
     DEFAULT_UNIT_ID,
@@ -381,11 +382,13 @@ class RobotiqDriver:
             envelope = self.read_status()
         elif action == "status":
             envelope = await self.get_status()
-        else:  # "stop"
+        elif action == "stop":
             # Delegate rather than re-derive: stop_task decides whether the halt
             # reached the gripper, and an agent that read a restated success here
             # would be told the fingers stopped when the write failed.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

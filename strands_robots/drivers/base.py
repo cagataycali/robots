@@ -270,3 +270,59 @@ def halt_failure_detail(envelope: dict[str, Any]) -> str | None:
             for payload in payloads
         )
     return "no detail reported"
+
+
+def declared_verbs(tool_spec: ToolSpec | dict[str, Any]) -> list[str]:
+    """The ``action`` verbs a driver's own tool spec declares, in schema order.
+
+    Read back out of the spec rather than restated, so the verb list a refusal
+    hands an agent is the one the schema really carries. A hand-copied list
+    drifts the moment a verb is added or narrowed, and the agent then corrects
+    itself towards a verb that is not there.
+
+    Args:
+        tool_spec: The driver's :attr:`HardwareDriver.tool_spec`.
+
+    Returns:
+        The declared verbs, in the order the schema lists them.
+    """
+    return [str(verb) for verb in tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]]
+
+
+def undeclared_verb_error(driver: Any, action: Any) -> dict[str, Any]:
+    """Refuse an ``action`` the driver's own tool spec does not declare.
+
+    The ``enum`` a ``tool_spec`` carries *describes* the verbs an agent may
+    send; nothing between the model and :meth:`HardwareDriver.stream` enforces
+    it. A dispatcher whose last branch is a bare ``else`` therefore runs its
+    final verb for every value the enum does not cover, and on these drivers
+    the final verb is the write one - so a typo, a stale verb from an earlier
+    schema, or a verb borrowed from a sibling driver halted the robot and
+    answered ``status="success"``, leaving the caller unable to tell that its
+    own verb had not been dispatched.
+
+    One owner rather than one per driver, because the list the refusal quotes
+    has to come off the same schema the agent planned against
+    (:func:`declared_verbs`).
+
+    Args:
+        driver: The driver that was invoked; named in the refusal, and read for
+            its :attr:`HardwareDriver.tool_spec`.
+        action: Whatever arrived in the tool input, quoted back verbatim - it is
+            not necessarily a string, and a caller cannot correct a value the
+            refusal does not show.
+
+    Returns:
+        A ``status="error"`` envelope naming the action and every declared verb.
+    """
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{type(driver).__name__}: unknown action {action!r}; "
+                    f"declared verbs are {declared_verbs(driver.tool_spec)}"
+                )
+            }
+        ],
+    }
