@@ -124,13 +124,18 @@ class VeraConfig:
         embodiment: VERA embodiment - selects the WAN/DFoT planner + Jacobian
             IDM pair and the client-side action adapter.
         host: Policy-server hostname.
-        server_port: Policy-server websocket port. ``None`` applies the
-            per-embodiment default; any other value must be an ``int`` in
-            ``[1, 65535]``, because the client dials it and the server binds it.
-        vis_port: MJPEG live-viewer port. ``None`` applies the per-embodiment
-            default; ``0`` disables the viewer (the runner omits
-            ``--vis-port``); any other value must be an ``int`` in
-            ``[1, 65535]``.
+        server_port: Policy-server websocket port. ``None`` applies
+            ``VERA_SERVER_PORT`` else the per-embodiment default; any other
+            value must be an ``int`` in ``[1, 65535]``, because the client dials
+            it and the server binds it. That includes a value the environment
+            supplied: ``VERA_SERVER_PORT=0`` is refused rather than read as
+            "unset", so it cannot resolve to the default under a success.
+        vis_port: MJPEG live-viewer port. ``None`` applies ``VERA_VIS_PORT``
+            else the per-embodiment default; ``0`` disables the viewer (the
+            runner omits ``--vis-port``); any other value must be an ``int`` in
+            ``[1, 65535]``. ``0`` means the same through the environment as it
+            does through the keyword, which is why the override is read for its
+            presence and not for its truth.
         render_width: Per-view width, in pixels, each camera frame is resized
             to before it is sent to the planner. ``None`` applies
             ``VERA_RENDER_WIDTH`` else the per-embodiment default; any other
@@ -191,8 +196,21 @@ class VeraConfig:
     def __post_init__(self) -> None:
         # Apply per-embodiment port defaults when not explicitly set.
         default_policy, default_vis = _DEFAULT_PORTS.get(self.embodiment, (8800, 8801))
+        # Both env overrides are read with ``is not None``, never with ``or``.
+        # The two spellings are not interchangeable for a port: ``0`` is falsy,
+        # so the ``or`` this line used to carry discarded the override and
+        # applied the per-embodiment default in its place - the same discard
+        # that ``render_width`` below was converted away from. That made one
+        # value mean two things depending on how it was spelled:
+        # ``VeraConfig(server_port=0)`` was refused by the shared domain (the
+        # client has no way to learn which ephemeral port the kernel handed the
+        # server, so it cannot dial one), while ``VERA_SERVER_PORT=0`` reported
+        # success on the default. Reading the override for its presence rather
+        # than its truth sends both spellings to the one check below, so the
+        # caller who asked for 0 gets the refusal rather than port 8820.
         if self.server_port is None:
-            self.server_port = _env_int("VERA_SERVER_PORT") or default_policy
+            env_port = _env_int("VERA_SERVER_PORT")
+            self.server_port = env_port if env_port is not None else default_policy
         if self.vis_port is None:
             env_vis = _env_int("VERA_VIS_PORT")
             self.vis_port = env_vis if env_vis is not None else default_vis

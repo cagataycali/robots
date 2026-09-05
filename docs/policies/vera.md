@@ -165,7 +165,11 @@ it, the runner launches the server on it, and `VeraConfig.server_uri` reports it
 — so a value outside the range is not merely refused late but resolved
 differently by each of them. `vis_port = 0` is the one exception and disables the
 live viewer (`--vis-port` is omitted). The `VERA_*_PORT` overrides go through the
-same check.
+same check, including when the value they carry is `0`: an override is applied
+because it is present, not because it is truthy, so a port means the same thing
+whichever spelling named it. `VERA_SERVER_PORT=0` is refused exactly as
+`server_port=0` is, and `VERA_VIS_PORT=0` disables the viewer exactly as
+`vis_port=0` does.
 
 `motion_plan_scale` takes the same domain as the two IK scales below: a positive
 finite number, or `None` to leave the server's own scale alone. `0` is not the
