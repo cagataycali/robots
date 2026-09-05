@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
-from strands_robots.policies.base import Policy, chunk_count_error
+from strands_robots.policies.base import Policy, chunk_count_error, required_bodies_error
 from strands_robots.utils import name_list_error, positive_finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
@@ -81,6 +81,21 @@ def _metadata_refusal(metadata: Mapping[str, Any]) -> str | None:
     checkpoint and accepted by the server serving it", and this handshake is the
     place the server does the accepting.
 
+    ``required_bodies`` is held to
+    :func:`~strands_robots.policies.base.required_bodies_error` for the same
+    reason, and it is the field where reading unchecked was least visible: the
+    mirror used to KEEP the entries it could use and drop the rest, so a peer
+    advertising ``["torso_link", 42]`` became a proxy declaring
+    ``("torso_link",)`` - a declaration nobody made. The robot host then resolved
+    that shorter set against its scene, merged poses for it, and reported a
+    successful rollout, while the served tracker's second anchor link never
+    arrived. Dropping a body name is not a smaller request; it is a pose the
+    observation never carries, and the served policy reads ``base_quat`` - the
+    pelvis - in its place. A declaration the local owner refuses by name has to
+    be refused here too, which is the whole of what
+    :func:`~strands_robots.policies.base.collect_required_bodies` means by "two
+    surfaces ask it and must not disagree".
+
     A field the handshake omits is not refused - the client keeps its own
     default for it, which is what makes a peer advertising a subset of the
     metadata (an older server, a third-party implementation) still usable.
@@ -104,6 +119,10 @@ def _metadata_refusal(metadata: Mapping[str, Any]) -> str | None:
     if "provider_name" in metadata and not isinstance(metadata["provider_name"], str):
         name = metadata["provider_name"]
         return f"the served policy advertised provider_name={name!r} ({type(name).__name__}), which is not a string."
+    if "required_bodies" in metadata and (
+        error := required_bodies_error(metadata["required_bodies"], "required_bodies", "the served policy")
+    ):
+        return error
     return None
 
 
@@ -320,8 +339,10 @@ class RemotePolicy(Policy):
 
         The coercions this used to apply are gone with the check that replaces
         them: ``int()`` truncated an advertised ``8.9`` to ``8`` and parsed a
-        ``"16"`` that no local checkpoint would be allowed to pass, and
-        ``bool()`` turned the truthy string ``"no"`` into ``True``.
+        ``"16"`` that no local checkpoint would be allowed to pass, ``bool()``
+        turned the truthy string ``"no"`` into ``True``, and the
+        ``required_bodies`` filter kept the entries it could use while dropping
+        the rest, mirroring a declaration the peer never advertised.
 
         Args:
             metadata: The ``metadata`` payload of a ``ready`` handshake or of a
@@ -343,14 +364,13 @@ class RemotePolicy(Policy):
         self.actions_per_step = metadata.get("actions_per_step", self.actions_per_step)
         self.supports_rtc = metadata.get("supports_rtc", self.supports_rtc)
         self._execution_horizon = metadata.get("execution_horizon", self._execution_horizon)
-        # A JSON array of names. Coerced to the shape the robot host's runtime
-        # validates rather than trusted verbatim, so a peer sending something
-        # else cannot make the local resolver report the proxy as the declaring
-        # class; a server built on this release refuses a malformed declaration
-        # before it advertises one.
-        advertised = metadata.get("required_bodies")
-        if isinstance(advertised, list | tuple):
-            self._required_bodies = tuple(name for name in advertised if isinstance(name, str) and name.strip())
+        # A JSON array of names, applied verbatim: the refusal above already held
+        # it to the domain the robot host's runtime validates, so there is
+        # nothing left to coerce and no entry to drop. Mirroring it exactly is
+        # what makes this proxy the declaring class for the set the peer really
+        # advertised - see ``collect_required_bodies``.
+        if "required_bodies" in metadata:
+            self._required_bodies = tuple(metadata["required_bodies"])
 
     def close(self) -> None:
         """Close the WebSocket connection. Safe to call more than once."""

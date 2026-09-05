@@ -41,6 +41,7 @@ from strands_robots.policies.base import (
     Policy,
     align_action_values,
     chunk_count_error,
+    required_bodies_error,
     resolve_chunk_length,
 )
 
@@ -74,6 +75,7 @@ __all__ = [
     "resolve_chunk_length",
     "align_action_values",
     "chunk_count_error",
+    "required_bodies_error",
     "MockPolicy",
     "Cosmos3Policy",
     "CompositePolicy",

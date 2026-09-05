@@ -23,6 +23,18 @@ capability flags through a bare ``bool()``, which is silent rather than lenient:
   string...`` out of the middle of a connect, naming neither the field nor the
   peer.
 
+``required_bodies`` arrived through a filter, which is quieter still: the mirror
+KEPT the entries it could use and dropped the rest, so a peer advertising
+``["torso_link", 42]`` produced a proxy declaring ``("torso_link",)`` -- a
+declaration nobody made. Nothing downstream can tell that from a peer that
+really asked for one body: the robot host resolves the shorter set against its
+scene, merges poses for it, and reports a successful rollout, while the served
+tracker's other anchor link never arrives and it reads ``base_quat`` -- the
+pelvis -- in its place. The local owner
+:func:`~strands_robots.policies.base.collect_required_bodies` refuses that same
+list by name, and its docstring is explicit that the two surfaces "must not
+disagree".
+
 The sibling module ``test_remote_policy_handshake_contract.py`` pins the loud
 seams of a misbehaving peer; these pin the quiet ones.
 """
@@ -32,7 +44,8 @@ from typing import Any
 import pytest
 
 from strands_robots.inference import RemotePolicy, protocol
-from strands_robots.policies.base import chunk_count_error
+from strands_robots.policies.base import chunk_count_error, collect_required_bodies
+from strands_robots.policies.mock import MockPolicy
 
 #: Every mirrored field, with the value a compliant peer sends.
 _COMPLIANT: dict[str, Any] = {
@@ -41,7 +54,35 @@ _COMPLIANT: dict[str, Any] = {
     "actions_per_step": 16,
     "supports_rtc": False,
     "execution_horizon": 16,
+    "required_bodies": ["torso_link", "pelvis"],
 }
+
+#: ``(advertised required_bodies, the fragment a refusal must quote, what the
+#: filter mirrored instead)``. The last column is measured on the pre-fix client.
+#: The first two rows are the ones the filter got WRONG rather than merely quiet:
+#: it answered with a shorter declaration instead of none at all.
+_UNMIRRORABLE_BODIES: list[tuple[Any, str, str]] = [
+    (["torso_link", 42], "42", "mirrored ('torso_link',): a declaration the peer never sent"),
+    (["torso_link", "  "], "'  '", "mirrored ('torso_link',): the blank name dropped"),
+    (["torso_link", None], "None", "mirrored ('torso_link',): the null name dropped"),
+    ("torso_link", "'torso_link'", "mirrored (): a bare str is not a list, so nothing applied"),
+    (42, "42", "mirrored (): not a list, so nothing applied"),
+    ({"torso_link": 1}, "{'torso_link': 1}", "mirrored (): a JSON object, so nothing applied"),
+    ([42, None], "42", "mirrored (): every entry unusable"),
+]
+
+
+class _Declaring(MockPolicy):
+    """A local policy stating ``required_bodies`` exactly as handed in."""
+
+    def __init__(self, declared: Any) -> None:
+        super().__init__()
+        self._declared = declared
+
+    @property
+    def required_bodies(self) -> Any:
+        return self._declared
+
 
 #: ``(field, advertised value, what reading it unchecked produced)``. The last
 #: column is measured on the pre-fix client and is what the refusal replaces.
@@ -122,6 +163,7 @@ def test_compliant_metadata_is_still_mirrored(monkeypatch: pytest.MonkeyPatch) -
     assert client.requires_images is True
     assert client.supports_rtc is False
     assert client.remote_provider_name == "lerobot_local"
+    assert client.required_bodies == ("torso_link", "pelvis")
     assert client.is_chunk_emitting() is True
 
 
@@ -132,6 +174,7 @@ def test_metadata_omitting_a_field_keeps_this_client_s_default(monkeypatch: pyte
     assert client.requires_images is False
     assert client.execution_horizon == 1
     assert client.actions_per_step == 1
+    assert client.required_bodies == ()
 
 
 def test_a_refused_handshake_leaves_the_mirror_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,3 +240,73 @@ def test_the_wire_and_the_constructor_agree_about_a_chunk_count(monkeypatch: pyt
         wire_refuses = True
 
     assert wire_refuses is constructor_refuses
+
+
+@pytest.mark.parametrize(("advertised", "quoted", "filtered"), _UNMIRRORABLE_BODIES, ids=lambda v: str(v)[:24])
+def test_a_declaration_this_client_cannot_mirror_is_refused_by_name(
+    monkeypatch: pytest.MonkeyPatch, advertised: Any, quoted: str, filtered: str
+) -> None:
+    """A body name the runtime could not resolve is a named refusal, not a shorter list."""
+    client, _ = _advertising(monkeypatch, "required_bodies", advertised)
+
+    with pytest.raises(ConnectionError, match="required_bodies") as raised:
+        _ = client.required_bodies
+
+    assert quoted in str(raised.value), f"the refusal does not quote the offending value ({filtered})"
+
+
+def test_a_refused_declaration_does_not_leave_the_connection_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rejected connection is closed and dropped, exactly as for a refused count."""
+    client, fake = _advertising(monkeypatch, "required_bodies", ["torso_link", 42])
+
+    with pytest.raises(ConnectionError):
+        _ = client.required_bodies
+
+    assert fake.closed is True
+    assert client._ws is None
+    assert client._required_bodies == (), "a refused handshake half-applied the declaration"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        ["torso_link", "pelvis"],
+        ["torso_link"],
+        [],
+        ["torso_link", "torso_link"],
+        ["torso_link", 42],
+        ["torso_link", "  "],
+        ["torso_link", None],
+        "torso_link",
+        42,
+        {"torso_link": 1},
+        [42, None],
+    ],
+    ids=repr,
+)
+def test_the_wire_and_the_local_declaration_agree_about_a_body_list(
+    monkeypatch: pytest.MonkeyPatch, declared: Any
+) -> None:
+    """One declaration, one verdict: what a local policy may not declare, the wire refuses.
+
+    Graded against ``collect_required_bodies`` -- the owner the simulation
+    runtime and ``PolicyServer`` both ask -- rather than against a list of values
+    this test picked, so the two halves cannot drift apart. The accepting rows
+    matter as much as the refusing ones: an empty list and a repeated name are
+    both things a policy may declare in-process, so refusing them on the wire
+    would be the same disagreement in the other direction.
+    """
+    try:
+        collect_required_bodies(_Declaring(declared))
+        local_refuses = False
+    except TypeError:
+        local_refuses = True
+
+    client, _ = _advertising(monkeypatch, "required_bodies", declared)
+    try:
+        _ = client.required_bodies
+        wire_refuses = False
+    except ConnectionError:
+        wire_refuses = True
+
+    assert wire_refuses is local_refuses
