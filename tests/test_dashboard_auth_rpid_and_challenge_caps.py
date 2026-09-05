@@ -165,3 +165,100 @@ def test_the_client_ip_prefers_a_forwarded_header_for_fairness_only():
 
 def test_client_ip_never_raises_on_a_strange_object():
     assert auth._client_ip(object()) is None
+
+
+# --------------------------------------------------------------------------
+# Q11b - the caps are operator-set, and only some pairs give the property
+# --------------------------------------------------------------------------
+# Both caps are read from the environment at import. Every other number this
+# module reads has a domain; these two had none, so a pair that cannot deliver
+# per-client fairness was accepted and the guarantee above was silently lost.
+
+
+def _load_auth(monkeypatch, **env):
+    """Import a private copy of the auth module under ``env``.
+
+    A fresh module object rather than a reload, so a rejected pair cannot leave
+    ``strands_robots.dashboard.auth`` unusable for the rest of the session.
+    """
+    import importlib.util
+
+    for key, value in env.items():
+        monkeypatch.setenv(auth._ENV + key, value)
+    spec = importlib.util.spec_from_file_location("_auth_probe", auth.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_per_ip_cap_at_the_global_cap_costs_the_operator_their_login(monkeypatch):
+    """The premise: the pair is what carries the property, not either cap alone.
+
+    Holds on any version of the caps - it is ``_stash_challenge``'s eviction
+    order, which is ip-blind once the global cap binds. It is the reason the pair
+    needs a domain.
+    """
+    monkeypatch.setattr(auth, "_CHAL_MAX", 32)
+    monkeypatch.setattr(auth, "_CHAL_MAX_PER_IP", 32)
+    mine = auth._stash_challenge("auth", b"operator", {}, ip="192.0.2.5")
+    for _ in range(200):
+        auth._stash_challenge("reg", b"flood", {}, ip="198.51.100.7")
+    assert mine not in auth._challenges
+
+
+@pytest.mark.parametrize("spelling", ["lots", "16.0", "0x10", "sixteen", "1e3", "16 32"])
+def test_a_cap_that_is_not_an_integer_is_refused_by_name(spelling, monkeypatch):
+    monkeypatch.setenv(auth._ENV + "CHAL_MAX", spelling)
+    with pytest.raises(ValueError, match="CHAL_MAX"):
+        auth._challenge_cap("CHAL_MAX", 512, 2)
+
+
+@pytest.mark.parametrize(
+    ("name", "minimum", "value"),
+    [
+        ("CHAL_MAX", 2, 1),
+        ("CHAL_MAX", 2, 0),
+        ("CHAL_MAX", 2, -5),
+        ("CHAL_MAX_PER_IP", 1, 0),
+        ("CHAL_MAX_PER_IP", 1, -5),
+    ],
+)
+def test_a_cap_too_small_to_bound_the_table_is_refused(name, minimum, value, monkeypatch):
+    """Zero and negatives read as "no cap" but measure as a table of one entry."""
+    monkeypatch.setenv(auth._ENV + name, str(value))
+    with pytest.raises(ValueError, match=name):
+        auth._challenge_cap(name, 512, minimum)
+
+
+@pytest.mark.parametrize("raw", ["", "   "])
+def test_an_empty_setting_means_unset(raw, monkeypatch):
+    """Matching how the TTL readers next door treat an empty variable."""
+    monkeypatch.setenv(auth._ENV + "CHAL_MAX", raw)
+    assert auth._challenge_cap("CHAL_MAX", 512, 2) == 512
+
+
+def test_a_usable_cap_is_honored_with_surrounding_whitespace(monkeypatch):
+    monkeypatch.setenv(auth._ENV + "CHAL_MAX", " 64 ")
+    assert auth._challenge_cap("CHAL_MAX", 512, 2) == 64
+
+
+@pytest.mark.parametrize(("cap_max", "cap_per_ip"), [("512", "512"), ("512", "513"), ("512", "100000"), ("8", "16")])
+def test_a_per_ip_cap_that_cannot_bind_is_refused_at_import(cap_max, cap_per_ip, monkeypatch):
+    """Including the last pair, where only the GLOBAL cap was narrowed."""
+    with pytest.raises(ValueError, match="CHAL_MAX_PER_IP"):
+        _load_auth(monkeypatch, CHAL_MAX=cap_max, CHAL_MAX_PER_IP=cap_per_ip)
+
+
+@pytest.mark.parametrize(("cap_max", "cap_per_ip"), [("2", "1"), ("32", "31"), ("512", "16"), ("100000", "64")])
+def test_a_pair_that_gives_the_property_still_loads(cap_max, cap_per_ip, monkeypatch):
+    """The narrowest usable pair is ``MAX=2, PER_IP=1`` - measured, not assumed."""
+    module = _load_auth(monkeypatch, CHAL_MAX=cap_max, CHAL_MAX_PER_IP=cap_per_ip)
+    assert (module._CHAL_MAX, module._CHAL_MAX_PER_IP) == (int(cap_max), int(cap_per_ip))
+
+
+def test_the_shipped_defaults_are_a_pair_that_gives_the_property(monkeypatch):
+    monkeypatch.delenv(auth._ENV + "CHAL_MAX", raising=False)
+    monkeypatch.delenv(auth._ENV + "CHAL_MAX_PER_IP", raising=False)
+    module = _load_auth(monkeypatch)
+    assert (module._CHAL_MAX, module._CHAL_MAX_PER_IP) == (512, 16)
+    assert module._CHAL_MAX_PER_IP < module._CHAL_MAX

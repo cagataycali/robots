@@ -148,6 +148,11 @@ Order of operations, and the reason for it:
   disables mesh TLS for single-machine work; do not leave it on for a fleet
   that spans machines. See [Multi-robot Mesh](../mesh.md).
 - A session lasts `STRANDS_DASH_AUTH_TOKEN_TTL` seconds (default 86400).
+- In-flight sign-in challenges are bounded by `STRANDS_DASH_AUTH_CHAL_MAX`
+  (default 512) and `STRANDS_DASH_AUTH_CHAL_MAX_PER_IP` (default 16). The
+  per-ip bound is what stops one client from filling the table and pushing out
+  your pending login, so it must stay strictly below the global one; a pair
+  that cannot hold both is refused at startup rather than silently accepted.
   `GET /api/auth/credentials` lists enrolled passkeys and
   `DELETE /api/auth/credentials/{id}` revokes a lost phone.
 

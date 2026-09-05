@@ -19,6 +19,13 @@ Configuration:
         so it must carry the scheme and any non-default port.
     ``STRANDS_DASH_AUTH_RP_ID``: pins the relying-party id when the hostname
         legitimately changed. See :func:`rp_id_verdict`.
+    ``STRANDS_DASH_AUTH_CHAL_MAX`` (default 512) and
+        ``STRANDS_DASH_AUTH_CHAL_MAX_PER_IP`` (default 16): bounds on the table of
+        in-flight WebAuthn challenges. The per-ip cap must stay strictly below the
+        global one -- it is what keeps one client off the global cap, whose eviction
+        is ip-blind. Both are read through :func:`_challenge_cap`, which refuses a
+        pair that cannot hold a flooding client's entries and the operator's pending
+        login at the same time.
 """
 
 from __future__ import annotations
@@ -562,10 +569,64 @@ _CHAL_TTL = 300.0
 
 # : Caps on the challenge table. Both are per-process and generous: a challenge : measures
 # ~0.5KB, so 512 of them is ~256KB.
-_CHAL_MAX = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX", "512"))
+# :
 # : The property that actually matters: no single client may fill the table and : push out the
-# operator's pending login.
-_CHAL_MAX_PER_IP = int(os.getenv("STRANDS_DASH_AUTH_CHAL_MAX_PER_IP", "16"))
+# : operator's pending login. That property is a RELATION between the two caps, not a range on
+# : either alone. The per-ip cap is what keeps a flooder off the global one, so it only binds
+# : while it is the smaller of the two: at ``PER_IP >= MAX`` the global cap is reached first,
+# : and its eviction drops the oldest record in the table regardless of ip -- the operator's
+# : pending login, if theirs was stashed first. So the pair is read through one domain that
+# : refuses the values which defeat the guarantee, rather than accepting them and losing it.
+
+
+def _challenge_cap(name: str, default: int, minimum: int) -> int:
+    """Read one bound on the challenge table, refusing a value that cannot bound it.
+
+    Args:
+        name: Suffix of the environment variable, e.g. ``"CHAL_MAX"``.
+        default: Value used when the variable is unset or empty, matching how the
+            TTL readers in this module treat an empty setting.
+        minimum: Smallest value at which this cap can still do its job.
+
+    Returns:
+        The cap, as an ``int``.
+
+    Raises:
+        ValueError: The variable holds something that is not an integer, or an
+            integer below ``minimum``. Refused rather than defaulted because
+            these caps front routes that command real hardware: an operator who
+            narrowed a cap and mistyped it must hear about it, not silently be
+            handed the wide default back.
+    """
+    var = _ENV + name
+    raw = os.getenv(var, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"{var}={raw!r} is not an integer. It bounds the table of pending WebAuthn "
+            f"challenges, so it must be a whole number >= {minimum} (default {default})."
+        ) from None
+    if value < minimum:
+        raise ValueError(
+            f"{var}={value} cannot bound the table of pending WebAuthn challenges: it must "
+            f"be >= {minimum} (default {default}). Below that the table cannot hold both a "
+            "flooding client's entry and the operator's pending login."
+        )
+    return value
+
+
+_CHAL_MAX = _challenge_cap("CHAL_MAX", 512, 2)
+_CHAL_MAX_PER_IP = _challenge_cap("CHAL_MAX_PER_IP", 16, 1)
+if _CHAL_MAX_PER_IP >= _CHAL_MAX:
+    raise ValueError(
+        f"{_ENV}CHAL_MAX_PER_IP={_CHAL_MAX_PER_IP} must be below {_ENV}CHAL_MAX={_CHAL_MAX}. "
+        "The per-ip cap is what keeps one client off the global cap; at or above it the global "
+        "cap is reached first, and it evicts the oldest record in the table regardless of ip -- "
+        "the operator's pending login, if theirs was stashed first."
+    )
 
 
 def _evict_oldest(where: dict[str, dict[str, Any]], keep: int, ip: str | None = None) -> int:
