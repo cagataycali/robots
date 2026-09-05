@@ -130,6 +130,21 @@ def _install(
 
     monkeypatch.setattr(real_psutil, "Process", _Proc)
     monkeypatch.setattr(real_psutil, "pid_exists", lambda pid: True)
+    # The identity the verdict compares is read by ``_started_since_boot``, and on
+    # Linux that reads ``/proc/<pid>/stat`` field 22 rather than probing psutil -
+    # so stubbing ``Process`` alone leaves the verdict reading procfs for a PID
+    # that does not exist, which is a mismatch, which reads as a reused pid and
+    # drops the record. The stand-in therefore sits at that seam, spelled as the
+    # subtraction the double above was built to answer. Routing it through
+    # ``_Proc`` rather than returning the constant keeps every cell's semantics
+    # intact: ``missing_after`` still raises ``NoSuchProcess`` here, and the
+    # construction count stays what it was when the verdict itself built the
+    # ``Process``.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: real_psutil.Process(pid).create_time() - real_psutil.boot_time(),
+    )
     monkeypatch.setattr(module.os, "kill", lambda pid, sig: events.append(f"kill:{_SIGNAMES[sig]}"))
     # The pre-fix implementation paced itself with a bare sleep; keep the suite
     # fast if it is ever reintroduced.
