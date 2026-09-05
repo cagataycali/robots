@@ -146,7 +146,11 @@ class TestAnUnusableValueIsReportedAndDisablesPublishing:
 
         # 0 is a request, not a mistake; warning about it trains operators to
         # ignore the warning that does mean something.
-        assert caplog.text == ""
+        # Scoped to the session module's own logger: ``caplog`` captures every record in
+        # the process, at every level, for the whole test, so a background thread's
+        # record -- a finalizer's teardown report, say -- would otherwise read as
+        # that module reporting.
+        assert [r.getMessage() for r in caplog.records if r.name == "strands_robots.mesh.session"] == []
 
 
 class TestNeitherCallSiteDividesTheRawEnvValue:
