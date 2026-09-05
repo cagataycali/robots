@@ -106,6 +106,10 @@ def test_action_mapping_renames_columns():
     assert "shoulder_pan" in out[0]
     assert "grip" in out[0]
     assert "joint_0" not in out[0]
+    # A rename must be a rename: the step dict still carries one entry per
+    # action column. Membership alone would also hold for a mapping that
+    # merged two columns into one key and dropped a command.
+    assert len(out[0]) == 8
 
 
 def test_default_prompt_used_when_instruction_empty():
