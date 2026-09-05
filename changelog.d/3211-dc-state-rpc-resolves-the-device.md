@@ -1,3 +1,5 @@
+### Fixed: the Device Connect state RPC reads the device that owns the bus, wrapper or driver
+
 `RobotDeviceDriver.getState` reported no `joints` key at all for a robot whose
 motors it could already read. A robot reaches its motors one of two ways -- a
 lerobot robot is a wrapper holding the device that owns the bus under `robot`, a
