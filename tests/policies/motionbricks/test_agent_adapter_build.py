@@ -17,6 +17,12 @@ contracts worth pinning on any machine (no GPU, no checkpoints, no
   the process.
 * It loads BOTH the ``pose`` and ``root`` state dicts and derives the adapter's
   clip keys, per-clip token masks, and min/max token counts from the generator.
+* It derives the skeleton XML path when the config omits one, and otherwise
+  builds the generator with the skeleton the caller named. That selection read
+  ``config.skeleton_xml or <derived>``, so a falsy value the config had not
+  refused was discarded and the derived default silently took its place; the
+  config now holds every path field to path-ness, and this reads ``is None`` -
+  "the caller omitted it" - rather than "the caller's value is falsy".
 
 Both process-global restorations happen in a ``finally``, so they must survive a
 mid-build failure too. These tests inject stub ``motionbricks.*`` modules into
@@ -34,6 +40,7 @@ from typing import Any
 import pytest
 import torch
 
+from strands_robots.policies.motionbricks import MotionBricksConfig
 from strands_robots.policies.motionbricks.policy import (
     MotionBricksPolicy,
     _MotionBricksAgentAdapter,
@@ -212,3 +219,55 @@ def test_build_restores_process_state_when_load_fails(monkeypatch: pytest.Monkey
     # Even on a mid-build failure the CWD and cuda.set_device are restored.
     assert os.getcwd() == cwd_before
     assert torch.cuda.set_device is set_device_before
+
+
+@pytest.mark.parametrize(
+    ("skeleton_xml", "expected"),
+    [
+        # Omitted: derived from the checkpoint tree, the documented behaviour.
+        (None, "DERIVED"),
+        ("custom/skeletons/g1.xml", "custom/skeletons/g1.xml"),
+        # A caller holding a Path: normalised by the config, so the generator is
+        # built with the str it declares rather than with a PosixPath.
+        (Path("custom/skeletons/g1.xml"), "custom/skeletons/g1.xml"),
+    ],
+)
+def test_the_skeleton_the_caller_named_is_the_skeleton_the_generator_is_built_with(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, skeleton_xml: Any, expected: str
+) -> None:
+    result_dir = tmp_path / "out"
+    result_dir.mkdir()
+    pose_ckpt, root_ckpt = result_dir / "pose.ckpt", result_dir / "root.ckpt"
+    _write_ckpt(pose_ckpt)
+    _write_ckpt(root_ckpt)
+    fake_agent = _install_fake_motionbricks(
+        monkeypatch,
+        pose_model=_FakeModel(),
+        root_model=_FakeModel(),
+        pose_ckpt=pose_ckpt,
+        root_ckpt=root_ckpt,
+    )
+
+    config = MotionBricksConfig(result_dir=str(result_dir), skeleton_xml=skeleton_xml, device="cpu")
+    MotionBricksPolicy(config=config, device="cpu")
+
+    derived = str(result_dir.parent / "assets" / "skeletons" / "g1" / "g1.xml")
+    reached = fake_agent.init_kwargs["skeleton_xml"]
+    assert reached == (derived if expected == "DERIVED" else expected)
+    # Not merely equal to a str: a PosixPath compares unequal to one, and the
+    # upstream kwarg is declared a path string.
+    assert type(reached) is str
+
+
+@pytest.mark.parametrize("falsy", ["", 0, False])
+def test_a_falsy_skeleton_can_no_longer_be_read_as_a_request_for_the_derived_one(falsy: Any) -> None:
+    """A caller who named a skeleton is not a caller who omitted one.
+
+    Pre-fix these three built a config, then ``config.skeleton_xml or <derived>``
+    discarded the field and the generator was built against the derived skeleton
+    with the run reporting success - indistinguishable, at every later surface,
+    from ``skeleton_xml=None``. The refusal now happens at the config, which is
+    the only place that can still name the field.
+    """
+    with pytest.raises(ValueError, match=r"skeleton_xml must be a (non-empty path|str or os\.PathLike)"):
+        MotionBricksConfig(result_dir="out", skeleton_xml=falsy)

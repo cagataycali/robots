@@ -128,7 +128,7 @@ policy = create_policy(
 | `MotionBricksConfig` field | Meaning | Default |
 | --- | --- | --- |
 | `result_dir` | Path to the upstream `out/` checkpoint tree - a `str` or any `os.PathLike`, stored as a `str` | required |
-| `skeleton_xml` / `scene_xml` | G1 skeleton / scene MuJoCo XML | derived from `result_dir` |
+| `skeleton_xml` / `scene_xml` | G1 skeleton / scene MuJoCo XML - same path domain as `result_dir`; `None` (and only `None`) derives it from the checkpoint tree | derived from `result_dir` |
 | `clips` | Clip set name | `"G1"` |
 | `style` | Default mode (index or name) | `"walk"` |
 | `generate_dt` | Synthesis horizon multiplier | `2.0` |
