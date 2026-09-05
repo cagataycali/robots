@@ -222,33 +222,54 @@ def _owner_line(module: Any) -> int:
 
 
 class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
-    """``_device`` is created by ``set_device``, so an unattached driver has no attribute.
+    """An unattached driver presents ``_device`` as ``None``, and the read says so.
 
-    ``DeviceDriver`` belongs to ``device_connect_edge`` and creates ``_device``
-    in ``set_device`` rather than in ``__init__``, so an unattached driver
-    presents as the attribute being *absent* - not as a ``None`` value. Passing
-    ``self._device`` therefore raised ``AttributeError`` on every driver whose
-    runtime never attached, which is precisely the case
-    :func:`is_authorized_caller` documents the environment fallback for. The
-    fallback was unreachable through a driver, so the two cells that graded it
+    ``DeviceDriver`` belongs to ``device_connect_edge``, and its ``__init__``
+    initializes ``_device`` to ``None`` (``drivers/base.py:146``); ``set_device``
+    only rebinds it (``:184``). That holds on the published 0.2.5 this tree locks
+    *and* on ``arm/device-connect@main``, the ref CI redirects to when the
+    integration changes, so an unattached driver presents a ``None`` value on
+    either - it is the value, not the attribute's absence, that says no runtime
+    attached. This class grades the fallback *through a driver*, because the two
+    cells that graded it before
     (``test_an_unattached_driver_still_falls_back_to_the_variable`` and the
-    resolver's own row) both passed ``device=None`` to the helper directly and
-    could not see it.
+    resolver's own row) pass ``device=None`` to the helper directly and so cannot
+    see how a driver arrives at it.
 
-    That is a refusal the safety path cannot afford: the ``emergencyStop``
-    handlers read the posture before deciding whether to honour a stop, and an
-    ``AttributeError`` there is a stop that neither authorizes nor refuses.
+    The accessor still reads with a ``getattr`` default rather than as
+    ``driver._device``, and the second cell pins why: a driver that has not
+    reached ``super().__init__()`` carries no attribute at all, and the direct
+    read raises ``AttributeError`` on that shape. That is a refusal the safety
+    path cannot afford, since the ``emergencyStop`` handlers read the posture
+    before deciding whether to honour a stop and an ``AttributeError`` there is a
+    stop that neither authorizes nor refuses.
     """
 
-    def test_the_accessor_reports_absent_and_attached_alike(self) -> None:
-        """Absent attribute reads as ``None``; after ``set_device`` it is the runtime."""
+    def test_the_accessor_reports_every_shape_a_driver_can_present(self) -> None:
+        """``None``, absent, and attached all read as what they are.
+
+        The first shape is the one a real driver presents: ``__init__`` ran, so
+        the attribute exists and is ``None``. The second is the shape the
+        ``getattr`` default exists for and the direct read would raise on. Both
+        must answer ``None``, or the environment fallback is not reached.
+        """
         az = _authz()
 
         class _Unattached:
-            """A driver that has not been handed a runtime - no ``_device`` at all."""
+            """A driver whose ``__init__`` ran but whose ``set_device`` did not."""
 
-        assert not hasattr(_Unattached(), "_device")
+            def __init__(self) -> None:
+                self._device = None
+
         assert az.attached_runtime(_Unattached()) is None
+
+        class _NeverInitialized:
+            """A driver that has not reached ``super().__init__()`` - no attribute."""
+
+        assert not hasattr(_NeverInitialized(), "_device")
+        with pytest.raises(AttributeError):
+            _NeverInitialized()._device  # noqa: B018 - the read the default replaces
+        assert az.attached_runtime(_NeverInitialized()) is None
 
         runtime = _Runtime(True)
 
@@ -286,7 +307,12 @@ class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
 
             sim = _Sim()
             driver = SimulationDeviceDriver(sim)
-            assert not hasattr(driver, "_device"), "set_device must not have run"
+            # The premise, spelled as the base class actually presents it and
+            # without going through the accessor under test: ``__init__`` ran,
+            # so the attribute exists, and ``set_device`` did not, so it is
+            # still ``None``. Asserting the attribute were *absent* here would
+            # be asserting against ``DeviceDriver.__init__``, which sets it.
+            assert getattr(driver, "_device", None) is None, "set_device must not have run"
 
             with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect._authz"):
                 caplog.clear()

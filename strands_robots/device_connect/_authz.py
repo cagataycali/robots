@@ -90,19 +90,26 @@ def insecure_env_opts_in(env_value: str | None) -> bool:
 def attached_runtime(driver: Any) -> Any:
     """The ``DeviceRuntime`` *driver* is attached to, or ``None`` when it is not.
 
-    ``DeviceDriver._device`` belongs to ``device_connect_edge``, and that base
-    class creates the attribute in ``set_device`` rather than in ``__init__`` -
-    so the attribute's *absence* is how an unattached driver presents, not a
-    ``None`` value. Reading ``self._device`` directly therefore raises
-    ``AttributeError`` on any driver whose runtime never attached, which is the
-    one case :func:`is_authorized_caller` documents a fallback for. That is a
-    refusal the safety path cannot afford: the ``emergencyStop`` handlers read
-    the posture before deciding a stop, and an ``AttributeError`` there is a
-    stop that neither authorizes nor refuses.
+    ``DeviceDriver._device`` belongs to ``device_connect_edge``, whose
+    ``__init__`` initializes it to ``None`` and whose ``set_device`` later
+    rebinds it to the runtime - ``drivers/base.py`` lines 146 and 184 on both
+    the published 0.2.5 this tree locks and ``arm/device-connect@main``, the ref
+    CI redirects to when the integration changes. So an unattached driver
+    presents as a ``None`` *value*, which is the case
+    :func:`is_authorized_caller` documents the environment fallback for, and
+    every driver here reaches that initializer: all three call
+    ``super().__init__()``.
 
-    Asked through one accessor so the contract is stated once rather than
-    assumed at each of the 21 call sites, and so a future base class that does
-    initialize the attribute needs no change here.
+    Read through ``getattr`` with a default rather than as ``driver._device``
+    so the contract is stated once instead of assumed at each of the 21 call
+    sites, and so the two shapes answer alike. A driver that has not reached
+    ``super().__init__()`` carries no attribute at all rather than a ``None``
+    -- ``ReachyMiniDriver`` refuses an unusable ``api_port`` or ``prefix``
+    before that call -- and the direct read raises ``AttributeError`` on that
+    shape where this returns ``None``. The distinction is worth the default
+    because the ``emergencyStop`` handlers read the posture before deciding a
+    stop, and an ``AttributeError`` there is a stop that neither authorizes nor
+    refuses.
 
     Args:
         driver: The ``DeviceDriver`` handling the call, normally ``self``.
