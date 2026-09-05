@@ -146,6 +146,9 @@ def test_provider_ik_path_emits_joint_keys():
     p._mj_model = FakeBridge.model
     p._ee_frame_name = "hand"
     p._ik_bridge = FakeBridge()
+    # The cached bridge is served only while it is a bridge for THIS model and
+    # frame, so the injected one has to say which it stands for.
+    p._ik_bridge_binding = (FakeBridge.model, "hand", "body")
     obs = {"image": np.zeros((8, 8, 3), np.uint8), **{j: 0.0 for j in joints}}
     out = asyncio.run(p.get_actions(obs, "pick"))
     d = out[0]
@@ -223,6 +226,8 @@ def test_ik_smoothing_ema_damps_targets():
         p._mj_model = FakeBridge.model
         p._ee_frame_name = "hand"
         p._ik_bridge = FakeBridge()
+        # As above: the injected bridge states the model and frame it is for.
+        p._ik_bridge_binding = (FakeBridge.model, "hand", "body")
         obs = {"image": np.zeros((8, 8, 3), np.uint8), **{j: 0.0 for j in joints}}
         # one get_actions returns the first action; drain the queue for the chunk
         seq = []
