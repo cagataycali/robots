@@ -48,6 +48,9 @@ Everything here is offline - no server, no socket, no ``vera`` package, no GPU.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
 from typing import Any
 
 import numpy as np
@@ -191,3 +194,81 @@ class TestTheRuleDoesNotReachActionMapping:
     def test_an_empty_action_mapping_is_accepted_and_means_no_rename(self) -> None:
         assert _policy(action_mapping={}).action_mapping is None
         assert _policy(action_mapping=None).action_mapping is None
+
+
+def _reads_image_keys_bare(test: ast.expr) -> bool:
+    """``image_keys`` used as a condition on its own, i.e. read by truthiness."""
+    return (isinstance(test, ast.Name) and test.id == "image_keys") or (
+        isinstance(test, ast.Attribute) and test.attr == "image_keys"
+    )
+
+
+def _image_keys_reads(func: Any) -> tuple[list[ast.expr], list[ast.Compare]]:
+    """Every conditional read of ``image_keys`` in ``func``, split by how it reads."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    bare = [
+        node.test
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.If, ast.IfExp)) and _reads_image_keys_bare(node.test)
+    ]
+    membership = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(op, (ast.Is, ast.IsNot)) for op in node.ops)
+        and _reads_image_keys_bare(node.left)
+    ]
+    return bare, membership
+
+
+class TestEveryReadOfTheSelectionUsesMembership:
+    """The third read, which no value can reach any more, graded structurally.
+
+    The three reads this module names are pinned by behaviour above except one.
+    The shape guard is pinned by the refusal; the resolver is pinned by an
+    attribute assigned after construction. The store runs only at construction,
+    *below* a guard that now refuses every empty value, so no value can reach it
+    to tell the two spellings apart - yet it is the line that erased ``[]`` to
+    ``None`` and it is the reason the resolver never saw a selection to widen.
+
+    Its spelling is a ternary rather than an ``if``, so both conditional forms
+    are scanned: a check written for statement conditionals alone leaves the
+    store free to return to truthiness, and a later change that relaxed or moved
+    the refusal would then restore the widening with nothing failing.
+    """
+
+    @pytest.mark.parametrize(
+        "func",
+        [VeraPolicy.__init__, VeraPolicy._resolve_view_keys],
+        ids=["__init__", "_resolve_view_keys"],
+    )
+    def test_no_conditional_reads_the_selection_by_truthiness(self, func: Any) -> None:
+        bare, _ = _image_keys_reads(func)
+        assert not bare, (
+            f"{func.__qualname__} reads image_keys by truthiness at line(s) "
+            f"{[node.lineno for node in bare]}, which reads an empty selection as absent "
+            "and widens it to every view"
+        )
+
+    @pytest.mark.parametrize(
+        "func",
+        [VeraPolicy.__init__, VeraPolicy._resolve_view_keys],
+        ids=["__init__", "_resolve_view_keys"],
+    )
+    def test_the_scan_is_looking_at_a_membership_read(self, func: Any) -> None:
+        """Non-vacuity: deleting the reads would satisfy the rule above."""
+        _, membership = _image_keys_reads(func)
+        assert membership, f"{func.__qualname__} does not read image_keys against None at all"
+
+    def test_the_constructor_holds_both_conditional_forms(self) -> None:
+        """The gate is an ``if`` and the store is a ternary, so both are in scope.
+
+        Recorded because the two forms are what a partial scan splits: the counts
+        below are the reason :meth:`test_no_conditional_reads_the_selection_by_truthiness`
+        cannot be written against ``ast.If`` alone.
+        """
+        tree = ast.parse(textwrap.dedent(inspect.getsource(VeraPolicy.__init__)))
+        statements = [n for n in ast.walk(tree) if isinstance(n, ast.If)]
+        ternaries = [n for n in ast.walk(tree) if isinstance(n, ast.IfExp)]
+        assert statements, "the constructor no longer guards with an if statement"
+        assert ternaries, "the constructor no longer stores the selection through a ternary"
