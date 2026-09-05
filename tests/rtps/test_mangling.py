@@ -294,6 +294,14 @@ def test_the_topic_rule_is_spelled_once_in_the_package() -> None:
     )
     assert spellings == ["rtps/mangling.py"], spellings
 
-    # And the two seams that had a copy now read this one.
-    assert use_rtps_module._TOPIC_RE is ROS_TOPIC_RE
+    # And the two seams that had a copy now read this one. ``use_rtps`` reads it
+    # through ``ros_topic_error`` - the rendering of this pattern's verdict, which
+    # early-returns on it - rather than by binding the pattern under a name of its
+    # own. That is the stronger form of the property this cell is here to hold:
+    # the tool cannot answer "is this a ROS 2 topic" differently from the mangling
+    # because it does not answer the question at all, and it keeps no topic-rule
+    # name that a later edit could quietly repoint. Asserting an alias no caller
+    # read would grade a vestige instead of the seam.
+    assert use_rtps_module.ros_topic_error is ros_topic_error
+    assert not any(name.endswith("_TOPIC_RE") for name in vars(use_rtps_module))
     assert rtps_robot_module.RtpsRobot._TOPIC_RE is ROS_TOPIC_RE
