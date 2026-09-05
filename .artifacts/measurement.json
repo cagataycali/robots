@@ -1,0 +1,80 @@
+{
+ "registered_options": 713,
+ "gated_registered": [
+  "config_path",
+  "dataset.root",
+  "output_dir",
+  "policy.pretrained_path",
+  "policy.push_to_hub",
+  "wandb.enable",
+  "wandb.entity",
+  "wandb.project"
+ ],
+ "total_reaching": 98,
+ "by_kind": {
+  "prefix": 49,
+  "value-bearing": 49
+ },
+ "per_flag": {
+  "config_path": {
+   "reaching": 16,
+   "ungated_main": 15,
+   "ungated_branch": 8,
+   "ungated_fixed": 0
+  },
+  "dataset.root": {
+   "reaching": 6,
+   "ungated_main": 5,
+   "ungated_branch": 3,
+   "ungated_fixed": 0
+  },
+  "output_dir": {
+   "reaching": 18,
+   "ungated_main": 17,
+   "ungated_branch": 9,
+   "ungated_fixed": 0
+  },
+  "policy.pretrained_path": {
+   "reaching": 8,
+   "ungated_main": 7,
+   "ungated_branch": 4,
+   "ungated_fixed": 0
+  },
+  "policy.push_to_hub": {
+   "reaching": 20,
+   "ungated_main": 19,
+   "ungated_branch": 10,
+   "ungated_fixed": 0
+  },
+  "wandb.enable": {
+   "reaching": 8,
+   "ungated_main": 7,
+   "ungated_branch": 4,
+   "ungated_fixed": 0
+  },
+  "wandb.entity": {
+   "reaching": 8,
+   "ungated_main": 7,
+   "ungated_branch": 4,
+   "ungated_fixed": 0
+  },
+  "wandb.project": {
+   "reaching": 14,
+   "ungated_main": 13,
+   "ungated_branch": 7,
+   "ungated_fixed": 0
+  }
+ },
+ "total_ungated_main": 90,
+ "total_ungated_branch": 49,
+ "total_ungated_fixed": 0,
+ "example": {
+  "key": "output_dir=/evil/dir",
+  "argv": "--output_dir=/evil/dir=x",
+  "argparse_selects": "output_dir",
+  "gate_branch": [],
+  "gate_fixed": [
+   "output_dir"
+  ]
+ }
+}
