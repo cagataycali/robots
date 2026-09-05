@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 from strands_robots.bus_access import bus_lock
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
 from strands_robots.utils import boolean_flag_error
 
@@ -212,19 +213,6 @@ class FeetechDriver:
             },
         }
 
-    @property
-    def declared_verbs(self) -> list[str]:
-        """The action verbs this driver's schema declares, in schema order.
-
-        Read back out of :attr:`tool_spec` rather than restated, so the verb
-        list an agent is handed when it fires an unknown action is the one the
-        schema really carries. A hand-copied list drifts the moment a verb is
-        added or narrowed, and the agent then corrects itself towards a verb
-        that does not exist.
-        """
-        action_schema = self.tool_spec["inputSchema"]["json"]["properties"]["action"]
-        return [str(verb) for verb in action_schema["enum"]]
-
     async def stream(
         self,
         tool_use: ToolUse,
@@ -275,9 +263,7 @@ class FeetechDriver:
         elif action == "stop":
             envelope = self._set_torque_envelope(False)
         else:
-            envelope = _refuse(
-                f"FeetechDriver: unknown action {action!r}; declared verbs are {self.declared_verbs}",
-            )
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

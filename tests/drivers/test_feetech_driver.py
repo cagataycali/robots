@@ -36,6 +36,7 @@ from strands_robots.drivers import (
     list_native_drivers,
     missing_driver_members,
 )
+from strands_robots.drivers.base import declared_verbs
 from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS
 from strands_robots.drivers.feetech.driver import _NO_POLICY_LOOP, SUPPORTED_ROBOTS
@@ -663,7 +664,7 @@ class TestStream:
         assert result["status"] == "error", f"undeclared verb {verb!r} must be refused, not run"
         assert _port(driver).writes == [], f"undeclared verb {verb!r} reached the wire"
         text = result["content"][0]["text"]
-        for declared in driver.declared_verbs:
+        for declared in declared_verbs(driver.tool_spec):
             assert declared in text, f"the refusal must name declared verb {declared!r}: {text}"
 
     def test_the_refusal_reads_its_verb_list_off_the_schema(self) -> None:
@@ -685,7 +686,7 @@ class TestStream:
                 return spec
 
         driver = _ExtraVerbDriver(tool_name="so101", port="/dev/fake")
-        assert "wiggle" in driver.declared_verbs
+        assert "wiggle" in declared_verbs(driver.tool_spec)
         result = _run_stream(driver, {"toolUseId": "tid-8", "name": "so101", "input": {"action": "home"}})
         assert result["status"] == "error"
         assert "wiggle" in result["content"][0]["text"], (

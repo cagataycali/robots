@@ -152,6 +152,22 @@ policy inside it - and the client declares the same set. A mimic tracker such as
 [ProtoMotions](../policies/protomotions.md) therefore reads its anchor link over
 the wire exactly as it does in-process.
 
+Advertised metadata is held to the same domain the local property is, in the same
+direction the forwarded parameters below are: a peer's numbers become this
+policy's introspection answers, so the handshake is where a locally-loaded
+checkpoint's constructor sits in the remote arrangement. `execution_horizon` and
+`actions_per_step` are slice bounds over the action chunk, so they share
+`chunk_count_error`'s domain with the constructor parameters they mirror - a
+positive `int`, nothing else - and `requires_images` / `supports_rtc` must be JSON
+booleans. Coercing instead is silent rather than lenient: an advertised `0` lands
+behind `execution_horizon`'s `max(1, ...)` floor, so a peer declaring a 16-action
+chunk is mirrored as single-step, `is_chunk_emitting()` answers `False`, and the
+rollout leaves the async-RTC path with nothing said; `bool("no")` is `True`, so a
+peer answering `"no"` turns a capability on. A field the handshake omits is not
+refused - the client keeps its own default, so a server advertising a subset stays
+usable - and a value it cannot mirror raises a `ConnectionError` naming the field,
+the value and the peer, without the connection being cached.
+
 ## Real-Time Chunking across the wire
 
 The RTC contract is preserved end to end. The runner counts how many control

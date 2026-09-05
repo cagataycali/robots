@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -436,3 +436,112 @@ def test_start_poll_is_idempotent(fake_cyclonedds: dict[str, Any]) -> None:
 
     b.shutdown()
     assert b._poll_thread is None
+
+
+# --- per-robot topics (both transports) --------------------------------------
+
+
+def test_each_robot_published_through_one_bridge_reaches_its_own_joint_states_topic(
+    fake_cyclonedds: dict[str, Any],
+) -> None:
+    """``robot`` is a per-call argument, so it has to select the writer too.
+
+    A bridge in telemetry-only mode is a pure publisher, and ``robot`` is the
+    topic namespace the caller supplies per call - the shape
+    ``SimEngine._publish_ros_telemetry`` drives when it loops over
+    ``list_robots()``. Caching one writer for the whole bridge publishes every
+    later robot's state on whichever robot happened to publish first, and the
+    sample is not even wrong about itself: its ``frame_id`` names the robot it
+    came from while the topic names another, so a subscriber to the second
+    robot's ``joint_states`` sees no writer at all and the first robot's topic
+    carries two arms interleaved. Nothing reports it - a write to a matched
+    writer succeeds either way.
+    """
+    b = _bridge(enable_commands=False)
+    for robot, positions in (("arm_a", [0.1]), ("arm_b", [7.7]), ("arm_a", [0.2])):
+        b.publish_joint_states(robot, ["j0"], positions)
+
+    by_topic: dict[str, list[Any]] = {}
+    for writer in fake_cyclonedds["writers"]:
+        by_topic.setdefault(writer.topic, []).extend(writer.samples)
+
+    assert sorted(by_topic) == ["rt/arm_a/joint_states", "rt/arm_b/joint_states"]
+    assert [s.position for s in by_topic["rt/arm_a/joint_states"]] == [[0.1], [0.2]]
+    assert [s.position for s in by_topic["rt/arm_b/joint_states"]] == [[7.7]]
+    # Two robots, three publishes: the writers are cached per robot, not per call.
+    assert len(fake_cyclonedds["writers"]) == 2
+    # Every sample's own frame_id agrees with the topic it was written to.
+    for topic, samples in by_topic.items():
+        for sample in samples:
+            assert f"rt/{sample.header.frame_id}/joint_states" == topic
+
+
+def test_the_rtps_and_rclpy_transports_advertise_the_same_per_robot_topics(
+    fake_cyclonedds: dict[str, Any],
+) -> None:
+    """The two transports are byte-identical on the graph only if both key on ``robot``.
+
+    ``RosTelemetryBase`` exists so the topic names live in one place, but each
+    subclass owns its own publisher cache - so the cache is where the two can
+    still disagree about how many topics one call sequence advertises. This
+    drives the same sequence through both and compares what each would put on
+    the graph. The rclpy side is read from its real ``_joint_publisher`` /
+    ``_image_publisher``, bound to a stub, so no sourced ROS 2 distro is needed.
+    """
+    from types import SimpleNamespace
+
+    from strands_robots.ros_telemetry import RosTelemetryBridge
+    from strands_robots.rtps.mangling import dds_topic_name
+
+    calls = (("arm_a", "wrist"), ("arm_b", "wrist"))
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+
+    bridge = _bridge(enable_commands=False)
+    for robot, camera in calls:
+        bridge.publish_joint_states(robot, ["j0"], [0.0])
+        bridge.publish_image(robot, camera, frame)
+    rtps_topics = sorted(w.topic for w in fake_cyclonedds["writers"])
+
+    created: list[str] = []
+
+    class _Node:
+        def create_publisher(self, _msg_type: Any, topic: str, _depth: int) -> object:
+            created.append(topic)
+            return object()
+
+    stub = SimpleNamespace(
+        _joint_pubs={},
+        _image_pubs={},
+        _node=_Node(),
+        _JointState=object(),
+        _Image=object(),
+        _qos_depth=10,
+        joint_states_topic=RosTelemetryBridge.joint_states_topic,
+        image_topic=RosTelemetryBridge.image_topic,
+    )
+    # The two cache methods read only the attributes above, so binding them to
+    # the stub grades the real rclpy codepath without a rclpy install.
+    as_bridge = cast(RosTelemetryBridge, stub)
+    for robot, camera in calls:
+        RosTelemetryBridge._joint_publisher(as_bridge, robot)
+        RosTelemetryBridge._image_publisher(as_bridge, robot, camera)
+
+    assert created, "premise: the rclpy transport advertised nothing"
+    assert rtps_topics == sorted(dds_topic_name(topic) for topic in created)
+
+
+def test_shutdown_drops_every_robots_joint_writer(fake_cyclonedds: dict[str, Any]) -> None:
+    """Shutdown releases the DDS entities for all robots, not just one.
+
+    The python binding has no explicit ``close()``, so dropping the references
+    is what lets cyclonedds reclaim the writers; a writer left behind keeps this
+    participant advertising a robot the bridge no longer publishes.
+    """
+    b = _bridge(enable_commands=False)
+    b.publish_joint_states("arm_a", ["j0"], [0.1])
+    b.publish_joint_states("arm_b", ["j0"], [0.2])
+    assert len(fake_cyclonedds["writers"]) == 2
+
+    b.shutdown()
+    assert b._joint_writers == {}
+    assert b._image_writers == {}

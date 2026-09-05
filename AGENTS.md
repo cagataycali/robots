@@ -2052,6 +2052,18 @@ which side the enum is on.
   the remedy names the `robots=` that caller passed rather than the `names=` it never
   did. Pinned by `tests/test_asset_download_selection_domain.py`, whose controls pin the
   three tolerated spellings so the narrowing stays deliberate rather than incidental.
+- **A provider keyword is the same surface, and the erasure can happen before the read.**
+  `VeraPolicy(image_keys=...)` selects which of the observation's own image keys are
+  width-concatenated into the one frame the video planner acts on, and `[]` was stored as
+  `None` - so the selection was gone before the resolver ran, and a caller who excluded
+  every camera drove the arm from all of them, in a *wider* frame, under a success result.
+  Four sites spell one parameter there (shape guard, store, resolver, and the docstring
+  that documented `None` alone), and the guard being gated on a truthy value is what let
+  `""` widen too - it never reached the bare-string refusal it was already owed. Fix the
+  store and the resolver together: one alone leaves the other free to widen. Pinned by
+  `tests/policies/vera/test_vera_image_keys_selection_domain.py`, whose controls pin the
+  documented spellings under both handshake cases and the `action_mapping` carve-out one
+  line below, which is a rename map rather than a subset and is correct as it stands.
 - Pinned by `tests/test_teleop_device_selection_domain.py`, whose controls assert that the
   documented spellings (`names=None`, a real subset, `detach_teleop(None)`) are unchanged,
   and by the render path's `cameras` resolution, which has read the same kind of selector

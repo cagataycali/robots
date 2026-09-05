@@ -70,6 +70,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry import resolve_name
 from strands_robots.utils import (
@@ -539,12 +540,14 @@ class URDriver:
             envelope = self.state()
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             # ``stop`` is the protocol's shutdown hook and returns ``None``, so
             # an envelope built beside it could only restate the intent.
             # ``stop_task`` performs the same halt and already decides the
             # verdict, so the verb reports that.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

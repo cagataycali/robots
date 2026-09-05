@@ -179,15 +179,26 @@ def _stop_task_can_refuse(node: ast.AST) -> bool:
     return False
 
 
+#: How the shipped dispatchers spell the halt verb. ``land`` is the Crazyflie's
+#: spelling of the same decision - a drone stops by descending.
+_HALT_VERBS = ("stop", "land")
+
+
 def _stream_stop_branch(node: ast.AST) -> str:
-    """The source of the final ``else`` of a ``stream`` action dispatch."""
-    branch: list[ast.stmt] | None = None
+    """The source of the ``stream`` dispatch branch that performs the halt.
+
+    Found by the verb its test names rather than as "the final ``else``": the
+    terminal branch now refuses a verb the schema does not declare
+    (:func:`~strands_robots.drivers.base.undeclared_verb_error`), so the halt has
+    a branch of its own and reading the ``else`` would report on the refusal.
+    """
     for inner in ast.walk(node):
-        if isinstance(inner, ast.If) and inner.orelse and not any(isinstance(x, ast.If) for x in inner.orelse):
-            branch = inner.orelse
-    if branch is None:
-        return ""
-    return ast.unparse(ast.Module(body=branch, type_ignores=[]))
+        if not isinstance(inner, ast.If):
+            continue
+        test = ast.unparse(inner.test)
+        if any(f"action == {verb!r}" in test for verb in _HALT_VERBS):
+            return ast.unparse(ast.Module(body=inner.body, type_ignores=[]))
+    return ""
 
 
 def _reports_the_verdict(branch: str) -> bool:
@@ -417,8 +428,10 @@ class TestTheRuleIsNotVacuous:
                 envelope = {"status": "ok"}
             elif action == "status":
                 envelope = {"status": "ok"}
-            else:
+            elif action == "stop":
                 envelope = self.stop_task()
+            else:
+                envelope = undeclared_verb_error(self, action)
             yield envelope
     """
 
@@ -428,9 +441,11 @@ class TestTheRuleIsNotVacuous:
                 envelope = {"status": "ok"}
             elif action == "status":
                 envelope = {"status": "ok"}
-            else:
+            elif action == "stop":
                 await self.stop()
                 envelope = {"status": "success", "content": [{"text": "asked it to stop"}]}
+            else:
+                envelope = undeclared_verb_error(self, action)
             yield envelope
     """
 
