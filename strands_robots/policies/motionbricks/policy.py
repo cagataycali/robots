@@ -454,7 +454,15 @@ class _MotionBricksAgentAdapter:
         )
 
         device = config.device
-        skeleton_xml = config.skeleton_xml or str(result_dir.parent / "assets" / "skeletons" / "g1" / "g1.xml")
+        # ``is None`` rather than ``or``: the derived default is what an OMITTED
+        # skeleton asks for, and the config now guarantees anything else is a
+        # non-empty path - so a caller's value can no longer be discarded here
+        # for being falsy and reported as a success against the default.
+        skeleton_xml = (
+            str(result_dir.parent / "assets" / "skeletons" / "g1" / "g1.xml")
+            if config.skeleton_xml is None
+            else config.skeleton_xml
+        )
         clips_ckpt = result_dir / "G1-clip.ckpt"
         prev_cwd = os.getcwd()
         prev_set_device = t.cuda.set_device

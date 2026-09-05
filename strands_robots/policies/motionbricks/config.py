@@ -23,14 +23,20 @@ comparison, because a comparison is not a domain: ``fps < 1`` and
 through reached :attr:`MotionBricksConfig.controller_dt` and from there the
 generator's ``generate_new_frames``.
 
-``result_dir`` takes a domain of its own rather than a share of that one,
-because what it must refuse is not out of range - it is not a path. It is held
-to "a value a path can be read from" (a ``str`` or an :class:`os.PathLike`) and
-normalised to the ``str`` the field declares, the same shape as the
-``speed_scale`` normalisation below. That rule stays local rather than becoming
-a shared ``non_empty_string_error`` beside the numeric guards: each of those has
-between 5 and 123 callers in this tree and this would have exactly one, since
-the only other ``if not self.<path field>`` here
+The three path fields (``result_dir``, ``skeleton_xml``, ``scene_xml``) take a
+domain of their own rather than a share of that one, because what they must
+refuse is not out of range - it is not a path. Each is held to "a value a path
+can be read from" (a ``str`` or an :class:`os.PathLike`) and normalised to the
+``str`` the field declares, the same shape as the ``speed_scale`` normalisation
+below. The two optional ones additionally keep ``None`` first-class, because
+``None`` is how a caller asks the builder to derive the path from the package
+install - and it is the *only* way, which is why an empty string is refused
+here rather than read as a second spelling of it.
+
+That rule is one module-local function, :func:`_normalised_path_field`, rather
+than a shared ``non_empty_string_error`` beside the numeric guards: those have
+between 5 and 123 callers in this tree and this has three, all in this file,
+since the only other ``if not self.<path field>`` in the library
 (:mod:`strands_robots.training._inproc`) is a branch that skips logging rather
 than a validation. Lift it when a second config needs it.
 
@@ -73,6 +79,76 @@ _DEFAULT_STYLE = "walk"
 # generator (upstream ``base_controller._CONTROLLER_DT = 8 / FPS``).
 NUM_REGEN_FRAMES = 8
 
+# The fields that name a location, with what each names and where an unusable
+# value would otherwise have surfaced. ``result_dir`` is required; the other two
+# take ``None`` to mean "derive it from the package install".
+_PATH_FIELDS: tuple[tuple[str, str, str], ...] = (
+    (
+        "result_dir",
+        "path to the 'out/' checkpoint tree",
+        "it is read as Path(result_dir) when the generator is built, which raises TypeError there rather than here.",
+    ),
+    (
+        "skeleton_xml",
+        "path to the G1 skeleton MuJoCo XML",
+        "it is handed to the upstream generator as skeleton_xml, which reads it as a file there rather than here.",
+    ),
+    (
+        "scene_xml",
+        "path to the G1 scene MuJoCo XML",
+        "it is read as MjModel.from_xml_path(scene_xml) when the scene is loaded, which raises there rather than here.",
+    ),
+)
+
+
+def _normalised_path_field(value: Any, field: str, *, names: str, consequence: str, optional: bool) -> str | None:
+    """Return ``value`` as the ``str`` a path field declares, or raise.
+
+    The domain of a field that names a location is path-ness, not truthiness:
+    ``if not value`` sorts candidates by a property the field does not have, so
+    it accepts ``123`` and ``["out"]`` for being truthy and rejects ``0`` - with
+    a message about an empty path, about a number - for being falsy. A
+    :class:`~pathlib.Path`, meanwhile, is what a caller is most likely to be
+    holding, so the rule normalises rather than merely admitting it: two configs
+    naming the same file must compare and hash equal whichever spelling built
+    them, and this dataclass is frozen, therefore hashable, so a ``list`` here
+    would break ``hash()`` outright.
+
+    Args:
+        value: The caller-supplied field value, of any type.
+        field: Field name, for the refusal message.
+        names: What the path names, e.g. ``"path to the G1 skeleton MuJoCo
+            XML"``; read into both refusal messages.
+        consequence: Where an unusable value would have failed instead, so the
+            refusal says what it saved the caller from.
+        optional: When ``True``, ``None`` is returned unchanged - the documented
+            way to ask the builder to derive this path.
+
+    Returns:
+        ``os.fspath(value)`` for an :class:`os.PathLike`, ``value`` for a
+        non-empty ``str``, or ``None`` for an omitted optional field.
+
+    Raises:
+        ValueError: If no path can be read from ``value``, or it is empty.
+    """
+    if optional and value is None:
+        return None
+    if isinstance(value, os.PathLike):
+        # ``os.fspath`` raises when ``__fspath__`` returns a non-path, so leave
+        # the value unconverted on that: it then falls to the refusal below,
+        # which is the channel a bad value is reported on here.
+        with suppress(TypeError):
+            value = os.fspath(value)
+    if not isinstance(value, str):
+        raise ValueError(
+            f"MotionBricksConfig.{field} must be a str or os.PathLike {names}, "
+            f"got {value!r} ({type(value).__name__}); {consequence}"
+        )
+    if not value:
+        derive = " or None to derive it" if optional else ""
+        raise ValueError(f"MotionBricksConfig.{field} must be a non-empty {names}{derive}")
+    return value
+
 
 @dataclass(frozen=True)
 class MotionBricksConfig:
@@ -91,11 +167,17 @@ class MotionBricksConfig:
             seam builds a policy without checkpoints) - it is checked when the
             agent is constructed.
         skeleton_xml: Path to the G1 skeleton MuJoCo XML (upstream
-            ``assets/skeletons/g1/g1.xml``). ``None`` lets the builder derive it
-            from the package install.
+            ``assets/skeletons/g1/g1.xml``). ``None`` - and only ``None`` - lets
+            the builder derive it from the package install; an empty string is
+            refused rather than read as a second spelling of that, because the
+            builder cannot tell one from a caller whose path came out empty.
+            Otherwise held to the same path domain as ``result_dir``: a ``str``
+            or any :class:`os.PathLike`, stored as ``os.fspath`` of it so two
+            configs naming the same skeleton compare and hash equal.
         scene_xml: Path to the G1 scene MuJoCo XML (upstream
             ``assets/skeletons/g1/scene_29dof.xml``), used for rendering /
-            kinematic playback. ``None`` lets the builder derive it.
+            kinematic playback. ``None`` lets the builder derive it; same path
+            domain as ``skeleton_xml``.
         clips: Clip set name (upstream ``--clips``; the only shipped set is
             ``"G1"``).
         style: Default motion style - either a clip mode index (``int``) or a
@@ -141,28 +223,26 @@ class MotionBricksConfig:
     def __post_init__(self) -> None:
         # Fail-fast on bad synthesis knobs (AGENTS.md #5: raise on fatal config,
         # never carry a value that will misbehave deep inside the generator).
-        # ``result_dir`` names a location, so its domain is path-ness. ``if not
-        # self.result_dir`` asserted truthiness instead, which sorts these values
-        # by a property the field does not have: ``123`` and ``["out"]`` were
-        # accepted for being truthy, ``0`` was refused for being falsy - by a
-        # message about an empty *path*, about a number - and a ``Path`` was
-        # accepted but stored unnormalised, so a config built from one compared
-        # unequal to the identical config built from a ``str`` and
-        # ``result_dir=["out"]`` left this frozen dataclass unhashable.
-        if isinstance(self.result_dir, os.PathLike):
-            # ``os.fspath`` raises when ``__fspath__`` returns a non-path, so
-            # leave the value unconverted on that: it then falls to the refusal
-            # below, which is the channel a bad value is reported on here.
-            with suppress(TypeError):
-                object.__setattr__(self, "result_dir", os.fspath(self.result_dir))
-        if not isinstance(self.result_dir, str):
-            raise ValueError(
-                f"MotionBricksConfig.result_dir must be a str or os.PathLike path to the 'out/' checkpoint "
-                f"tree, got {self.result_dir!r} ({type(self.result_dir).__name__}); it is read as "
-                "Path(result_dir) when the generator is built, which raises TypeError there rather than here."
+        # Every field that names a location goes through the same rule, because
+        # its domain is path-ness: ``skeleton_xml`` and ``scene_xml`` had no
+        # check at all, so a ``Path`` was stored unnormalised (a config built
+        # from one compared unequal to the identical config built from a
+        # ``str``), a ``list`` left this frozen dataclass unhashable, and ``123``
+        # travelled to the generator to fail there. Worse than the truthiness
+        # test ``result_dir`` used to carry: a falsy value was not refused at
+        # all, and the builder's derived default silently took its place.
+        for field, names, consequence in _PATH_FIELDS:
+            object.__setattr__(
+                self,
+                field,
+                _normalised_path_field(
+                    getattr(self, field),
+                    field,
+                    names=names,
+                    consequence=consequence,
+                    optional=field != "result_dir",
+                ),
             )
-        if not self.result_dir:
-            raise ValueError("MotionBricksConfig.result_dir must be a non-empty path to the 'out/' checkpoint tree")
         # The synthesis knobs go through the shared numeric domains rather than a
         # local comparison, because a comparison is not a domain: ``fps < 1`` is
         # ``False`` for ``nan`` and for ``inf``, and ``True`` is an ``int``
