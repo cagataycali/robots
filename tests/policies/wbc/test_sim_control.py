@@ -36,6 +36,7 @@ from strands_robots.policies.wbc.policy import (
     _G1_SONIC_KDS,
     _G1_SONIC_KPS,
 )
+from strands_robots.policies.wbc.sim_control import _CONTROL_DECIMATION
 from strands_robots.simulation.base import SimEngine
 
 
@@ -187,7 +188,11 @@ class TestWBCTorqueController:
         ctrl.apply(action, model, data, "unitree_g1")
 
         # owns_stepping: apply advanced physics by decimation substeps of dt.
-        expected_dt = ctrl.physics_substeps_per_control * float(model.opt.timestep)
+        # Derived from the nominal SONIC decimation, not from the attribute the
+        # controller stored: reading back what was stored made this pass for any
+        # count the constructor substituted (see
+        # ``test_substep_count_domain.py``).
+        expected_dt = _CONTROL_DECIMATION * float(model.opt.timestep)
         assert abs((float(data.time) - t0) - expected_dt) < 1e-6
 
         # At least one driven actuator received a finite torque command.
