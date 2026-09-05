@@ -10,7 +10,8 @@ What works and what does not:
 
 * ``send_action`` - writes the commanded joints in one SYNC_WRITE frame.
   Targets are **degrees** (``gripper`` is percent open); a key may be spelled
-  ``shoulder_pan`` or ``shoulder_pan.pos``, matching lerobot's suffix.
+  ``shoulder_pan`` or ``shoulder_pan.pos``, matching lerobot's suffix - but only
+  one of the two per motor, because both name the same servo.
 * ``bus`` / ``is_connected`` - the pair
   :func:`strands_robots.bus_access.joint_read_source` resolves, so an SO-arm
   publishes ``joints`` on the mesh state topic without a wrapper. This is the
@@ -276,7 +277,10 @@ class FeetechDriver:
         Args:
             action: Joint name -> target. Degrees for every joint, percent open
                 for ``gripper``. A ``.pos`` suffix is accepted and stripped, so
-                a lerobot-shaped action dict works unchanged.
+                a lerobot-shaped action dict works unchanged. Each motor must be
+                spelled once: ``{"gripper": 0.0, "gripper.pos": 100.0}`` names one
+                motor twice with two different targets and is refused rather
+                than letting insertion order pick the winner.
             robot_name: Unused; this driver fronts exactly one arm.
 
         Returns:
@@ -287,7 +291,9 @@ class FeetechDriver:
         del robot_name
         if not isinstance(action, dict) or not action:
             return _refuse("send_action: pass a non-empty mapping of joint targets")
-        targets = {str(key).removesuffix(".pos"): value for key, value in action.items()}
+        targets, doubled = _motor_targets(action)
+        if doubled is not None:
+            return _refuse(doubled)
         try:
             with bus_lock(self):
                 self._connect_if_needed()
@@ -481,3 +487,38 @@ class FeetechDriver:
 def _refuse(message: str) -> dict[str, Any]:
     """Return an error envelope with ``message``, matching the "not wired" contract."""
     return {"status": "error", "content": [{"text": message}]}
+
+
+def _motor_targets(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Reduce every action key to the motor it names, once.
+
+    ``"<motor>"`` and ``"<motor>.pos"`` are two spellings of one motor, and
+    :func:`strands_robots.bus_access.read_joints` returns the suffixed one for
+    this driver while the tool schema and the success envelope both speak the
+    bare one - so a dict built from a read and then overridden by name carries
+    both. Reducing them silently would make one of the two targets win by
+    insertion order, write a single-motor frame, and report success naming only
+    the survivor: the caller's other command would be gone with nothing saying
+    so. One motor takes one target, so a doubled motor is refused instead.
+
+    Args:
+        action: The caller's mapping of joint name -> target, either spelling.
+
+    Returns:
+        ``(targets, None)`` keyed by motor name, or ``({}, message)`` naming
+        every motor that was spelled more than once and the keys that spell it.
+    """
+    targets: dict[str, Any] = {}
+    spellings: dict[str, list[str]] = {}
+    for key, value in action.items():
+        motor = str(key).removesuffix(".pos")
+        spellings.setdefault(motor, []).append(str(key))
+        targets[motor] = value
+    doubled = {motor: keys for motor, keys in spellings.items() if len(keys) > 1}
+    if doubled:
+        named = "; ".join(f"{sorted(keys)} all name {motor!r}" for motor, keys in sorted(doubled.items()))
+        return {}, (
+            f"send_action: one motor takes one target, but {named}. "
+            "A '.pos' suffix names the same motor as the bare joint, so spell each motor once."
+        )
+    return targets, None
