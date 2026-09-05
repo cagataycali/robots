@@ -228,16 +228,24 @@ def _require_base_block(observation_dict: dict[str, Any], key: str, expected_len
     A wrong width used to be taken by a truncating slice, which is silent in both
     directions. One component short, ``q[1:4]`` is a 2-vector that ``np.cross``
     reads as planar, so ``base_quat`` silently loses its ``z``: the gravity block
-    is still three finite components at the documented width, 7.5 degrees from the
-    truth for a small-yaw pose at a norm of 0.991 - inside a percent of unity, so the
-    normalisation :func:`quat_rotate_inverse` performs does not flag it either - rising
-    to 20.7 degrees at 0.935. Over-long, a
+    is still three finite components at the documented width, 8.1 degrees from the
+    truth for a small-yaw pose and 28.0 for a roll-then-yaw one - at EXACTLY unit
+    length both times, because :func:`quat_rotate_inverse` normalises the orientation
+    it is handed, so the truncation leaves no trace in the magnitude for anything
+    downstream to screen. Over-long, a
     7-element ``[base_pos, base_quat]`` slice is read as a quaternion made of
     positions, 70.9 degrees off. A short ``base_ang_vel`` instead narrowed the
     returned vector below the documented ``48 + len(command)``, handing the graph
-    fewer values than its own ``observation_names`` metadata declares. NumPy 2.0
-    deprecated the 2-vector cross the short read relies on, so that path is on its
-    way to raising from inside numpy rather than answering.
+    fewer values than its own ``observation_names`` metadata declares.
+
+    The short-``base_quat`` reading is numpy-version dependent, and both bands are
+    inside the declared ``numpy>=1.21,<3.0``: the 2-vector cross it relies on was
+    deprecated through the 2.0-2.4 line and removed in 2.5.0, so from there the
+    same unguarded read raises out of ``np.cross`` - ``Both input arrays must be
+    (arrays of) 3-dimensional vectors`` - naming neither this key, nor its width,
+    nor the caller who supplied it. Silently wrong below that boundary and
+    unattributable above it, so this guard is what names the block on either, and
+    it is not a guard a newer numpy makes redundant.
 
     The sibling locomotion observation builders hold their own sub-vectors the
     same way (``strands_robots.policies.wbc.observation._require_len``).

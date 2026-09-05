@@ -11,7 +11,8 @@ Those are read only inside the builder, so no seam ever sees them, and they were
 taken by a truncating ``[:3]`` / ``[:4]`` slice rather than checked.
 
 Measured on the pre-fix tree with the shipped alpha command width (C=13, so the
-documented return width is ``48 + 13 == 61``):
+documented return width is ``48 + 13 == 61``), at the numpy the lock resolves
+(2.2.6):
 
 =======================  ==========  =======  ==================================
 input                    outcome     width    what the vector then carried
@@ -24,14 +25,28 @@ ang=3 quat=4 (contract)  success     61       correct
 ``base_quat`` 2          ValueError  -        raised from inside ``np.cross``
 =======================  ==========  =======  ==================================
 
+The ``base_quat`` 3 row is the one that depends on which numpy is installed, and
+both sides of that are inside the declared ``numpy>=1.21,<3.0``: the planar
+2-vector cross it relies on was deprecated through the 2.0-2.4 line and REMOVED in
+2.5.0, so from there the same unguarded read raises from inside ``np.cross`` -
+naming neither this key nor the width it was held to - instead of answering
+8.1-28.0 deg off. Silent below that boundary, unattributable above it, and refused
+by name on both once the guard runs, which is why the guard is not a
+version-dependent one. ``TestThePremisesTheDefectRestedOn`` grades whichever band
+it runs on rather than skipping one.
+
 The ``base_quat`` rows are the ones nothing downstream can screen. One component
 short, ``np.cross`` reads the 2-element ``q[1:4]`` as a planar vector, which is
 exactly the quaternion with its ``z`` dropped: the gravity block keeps the
 documented width and stays finite while the direction the biped is told is "down"
-moves 7.5 degrees for a small-yaw pose and 20.7 for a roll-then-yaw one. Its norm
-drifts with it (0.991 and 0.935), but nothing here reads a norm - the module
-docstring says it normalises nothing - so at a percent off unity that is not a
-signal anything acts on either. Over-long, a
+moves 8.1 degrees for a small-yaw pose and 28.0 for a roll-then-yaw one on the
+tree as it stands. The block stays EXACTLY unit-length while it does:
+``quat_rotate_inverse`` normalises the orientation it is handed, so the truncation
+leaves no trace in the magnitude at all. It did leave one when the table above was
+taken - 0.991 and 0.935, and a smaller tilt with it - because that measurement
+predates the normalisation. Nothing reads the assembled vector's norm either - the
+module never rescales it - so no magnitude anywhere is a signal that a width was
+wrong. Over-long, a
 7-element ``[base_pos, base_quat]`` slice - a caller handing over a floating-base
 ``qpos`` slice - is read as a quaternion made of positions. A short
 ``base_ang_vel`` instead falsifies the builder's own documented ``48 +
@@ -56,6 +71,7 @@ import ast
 import inspect
 import re
 import textwrap
+import warnings
 from typing import Any
 
 import numpy as np
@@ -328,49 +344,139 @@ class TestBothBlocksRouteThroughTheOneReader:
         assert obs_mod._BASE_ACC_LEN == 3
 
 
+#: The two things an UNGUARDED short ``base_quat`` read does, one per numpy band.
+_ANSWERED = "answered"
+_REFUSED_BY_NUMPY = "refused-by-numpy"
+
+
+def _numpy_reads_a_two_vector_as_planar() -> bool:
+    """Whether ``np.cross`` on this numpy reads a 2-element vector as planar.
+
+    Probed rather than compared against a version string, because what the class
+    below documents is what numpy DOES with the short read: the planar form was
+    deprecated through the 2.0-2.4 line and removed in 2.5.0, and both bands are
+    inside the declared ``numpy>=1.21,<3.0``. A probe also cannot go stale on the
+    release that changes it back.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            np.cross(np.array([1.0, 2.0]), np.array([0.0, 0.0, -1.0]))
+        except ValueError:
+            return False
+    return True
+
+
+def _unguarded_short_quat_read(quat: Any) -> tuple[str, Any]:
+    """What :func:`projected_gravity` does with a 3-element ``base_quat``.
+
+    This is the read ``_require_base_block`` exists to reach first. Reduced to a
+    comparable outcome so a cell can state the one invariant that holds on every
+    numpy in the declared range: however this branch resolves, the short block is
+    never refused *by name* here.
+
+    Returns:
+        ``(_ANSWERED, gravity_block)`` where the planar cross survives, and
+        ``(_REFUSED_BY_NUMPY, message)`` where numpy refuses the 2-vector.
+    """
+    try:
+        return _ANSWERED, projected_gravity(np.asarray(quat, dtype=np.float32))
+    except ValueError as exc:
+        return _REFUSED_BY_NUMPY, str(exc)
+
+
 class TestThePremisesTheDefectRestedOn:
-    """Facts that hold on both trees and make the measurement above legible."""
+    """Facts that hold on both trees and make the measurement above legible.
 
-    def test_numpy_cross_accepts_a_two_element_vector_but_deprecates_it(self) -> None:
-        """Why a 3-element quaternion was silent - and why it will stop being.
+    The unguarded read's failure mode changes at numpy 2.5.0 - silently wrong
+    below, refused by numpy without naming the block above - and both bands are
+    declared supported. Each cell here grades the band it is running on rather
+    than skipping one, so the class documents the guard's justification on the
+    whole declared range instead of on the locked version alone.
+    """
 
-        NumPy 2.0 deprecated the planar form, so the truncating read was already
-        heading for a raise from inside numpy naming neither block.
+    def test_numpy_reads_a_two_element_vector_as_planar_until_2_5_then_refuses_it(self) -> None:
+        """Why a 3-element quaternion was silent, and what replaced that silence.
+
+        NumPy 2.0 deprecated the planar form and 2.5.0 removed it, so the
+        truncating read went from answering wrongly to raising from inside numpy
+        naming neither block. Whichever this numpy implements is graded; the
+        deprecated band is not the only supported one.
         """
-        with pytest.warns(DeprecationWarning, match="2-dimensional vectors are deprecated"):
-            planar = np.cross(np.array([0.2, 0.3]), np.array([0.0, 0.0, -1.0]))
-        assert planar.shape == (3,)
+        planar_operand = np.array([0.2, 0.3])
+        world_gravity = np.array([0.0, 0.0, -1.0])
+        if _numpy_reads_a_two_vector_as_planar():
+            with pytest.warns(DeprecationWarning, match="2-dimensional vectors are deprecated"):
+                planar = np.cross(planar_operand, world_gravity)
+            assert planar.shape == (3,)
+        else:
+            with pytest.raises(ValueError, match="3-dimensional vectors"):
+                _ = np.cross(planar_operand, world_gravity)
+        # Band-independent: an over-long operand was never read as planar.
         with pytest.raises(ValueError, match="dimension"):
-            _ = np.cross(np.array([0.2, 0.3, 0.4, 0.5]), np.array([0.0, 0.0, -1.0]))
+            _ = np.cross(np.array([0.2, 0.3, 0.4, 0.5]), world_gravity)
 
     @pytest.mark.filterwarnings("ignore:Arrays of 2-dimensional vectors:DeprecationWarning")
-    def test_a_three_element_quaternion_reads_as_the_quaternion_with_z_dropped(self) -> None:
+    def test_an_unguarded_three_element_quaternion_is_never_refused_by_name(self) -> None:
+        """The premise, on either numpy band: only the guard names the block.
+
+        Below numpy 2.5 the short read is answered, and answered as exactly the
+        quaternion with its ``z`` dropped. From 2.5 it raises from inside
+        ``np.cross``, whose message names neither the key nor the width it was
+        held to. Neither reading tells the caller which block was wrong, so the
+        guard is what attributes it on both.
+        """
         short = np.array([0.683, 0.183, 0.183], dtype=np.float32)
-        with_zero_z = np.array([0.683, 0.183, 0.183, 0.0], dtype=np.float32)
-        assert np.array_equal(projected_gravity(short), projected_gravity(with_zero_z))
+        outcome, payload = _unguarded_short_quat_read(short)
+        if outcome == _ANSWERED:
+            with_zero_z = np.array([0.683, 0.183, 0.183, 0.0], dtype=np.float32)
+            assert np.array_equal(payload, projected_gravity(with_zero_z))
+        else:
+            assert "base_quat" not in payload, payload
+            assert "wide" not in payload, payload
+        # The guarded path attributes it either way, which is the regression above.
+        with pytest.raises(ValueError, match=re.escape("observation_dict['base_quat']")):
+            _build(base_quat=short)
 
     @pytest.mark.filterwarnings("ignore:Arrays of 2-dimensional vectors:DeprecationWarning")
     @pytest.mark.parametrize(
-        ("quat", "min_tilt_deg", "norm_tolerance"),
+        ("quat", "min_tilt_deg"),
         [
-            # A small-yaw pose: the norm stays inside a percent of unity, so even a
-            # norm check with a sane tolerance would pass it.
-            ((0.9098, -0.0665, 0.1604, 0.3769), 5.0, 0.01),
-            # A roll-then-yaw pose: the worst tilt measured, still finite.
-            ((0.683, 0.183, 0.183, 0.683), 15.0, 0.07),
+            # A small-yaw pose: 8.1 deg off at unit length, so no norm check with
+            # any tolerance would catch it.
+            ((0.9098, -0.0665, 0.1604, 0.3769), 5.0),
+            # A roll-then-yaw pose: the worst tilt measured, 28.0 deg, still finite.
+            ((0.683, 0.183, 0.183, 0.683), 15.0),
         ],
     )
-    def test_the_wrong_reading_stays_finite_and_near_unit_norm(
-        self, quat: tuple[float, ...], min_tilt_deg: float, norm_tolerance: float
+    def test_the_wrong_reading_is_unscreenable_where_numpy_still_produces_one(
+        self, quat: tuple[float, ...], min_tilt_deg: float
     ) -> None:
-        """Width and finiteness are intact and the norm barely moves."""
+        """Width, finiteness and magnitude are all intact; only the direction moves.
+
+        The magnitude is intact EXACTLY, not approximately:
+        :func:`quat_rotate_inverse` normalises the orientation, so the wrong
+        reading is a unit direction like the right one and the truncation leaves
+        no trace for a magnitude check to find.
+
+        Where numpy no longer produces the planar reading there is nothing to
+        screen: the same short read raises instead, and the raise names neither
+        the block nor its width. Both are unusable without the guard; only the
+        first is silent, and it is the band the lock resolves.
+        """
         full = np.asarray(quat, dtype=np.float32)
         full = full / np.linalg.norm(full)
-        wrong = projected_gravity(full[:3])
         right = projected_gravity(full)
-        assert bool(np.all(np.isfinite(wrong)))
         assert float(np.linalg.norm(right)) == pytest.approx(1.0, abs=1e-3)
-        assert float(np.linalg.norm(wrong)) == pytest.approx(1.0, abs=norm_tolerance)
+
+        outcome, payload = _unguarded_short_quat_read(full[:3])
+        if outcome == _REFUSED_BY_NUMPY:
+            assert "3-dimensional vectors" in payload, payload
+            assert "base_quat" not in payload, payload
+            return
+        wrong = payload
+        assert bool(np.all(np.isfinite(wrong)))
+        assert float(np.linalg.norm(wrong)) == pytest.approx(1.0, abs=1e-3)
         cos = float(np.clip(np.dot(right, wrong) / (np.linalg.norm(right) * np.linalg.norm(wrong)), -1.0, 1.0))
         assert np.degrees(np.arccos(cos)) > min_tilt_deg
 
@@ -399,9 +505,16 @@ class TestThePremisesTheDefectRestedOn:
         # unit quaternion still describe a direction, just the wrong one.
         short = np.asarray([0.9098, -0.0665, 0.1604], dtype=np.float32)
         assert float(np.linalg.norm(short)) > MIN_QUATERNION_NORM, "premise: a short read is not degenerate"
-        assert bool(np.all(np.isfinite(projected_gravity(short)))), (
-            "a wrong-width base_quat is still answered, so only the width guard can refuse it"
-        )
+        outcome, payload = _unguarded_short_quat_read(short)
+        if outcome == _ANSWERED:
+            assert bool(np.all(np.isfinite(payload))), (
+                "a wrong-width base_quat is still answered, so only the width guard can refuse it"
+            )
+        else:
+            # From numpy 2.5 the short read does raise - but out of the cross, on
+            # a shape, not out of either norm reader: the floor above cleared. So
+            # no norm this module reads judges the width on either band.
+            assert "norm" not in payload, payload
         # Whitespace-normalised: the claim spans a line wrap in the docstring, so a
         # raw substring match would grade the wrapping rather than the sentence.
         assert "This module never rescales the assembled vector." in " ".join(source.split())
