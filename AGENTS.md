@@ -1929,11 +1929,22 @@ which side the enum is on.
   constructed to *ask* that question captures the identity it is being asked to check, so
   `Process(pid).is_running()` cannot contradict a reused pid (measured: over 647 live pids
   it never disagreed with `pid_exists`). What is recorded is the process's start offset
-  since boot, not its creation date: `create_time()` is `/proc/stat`'s btime plus the
-  process's start ticks and btime is recomputed from the current wall clock on every read,
-  so a correction between the write and the read would make a live session read as a
-  stranger - and refusing to stop a training run that holds a GPU is worse than the defect.
-  Pinned by `tests/tools/test_session_running_verdict_names_its_own_process.py`.
+  since boot, not its creation date: `create_time()` is the process's start ticks plus
+  `/proc/stat`'s btime, so a correction between the write and the read would make a live
+  session read as a stranger - and refusing to stop a training run that holds a GPU is
+  worse than the defect. Read the ticks from the kernel (`/proc/<pid>/stat` field 22 over
+  `SC_CLK_TCK`), **not** as `create_time() - boot_time()`: that subtraction puts the wall
+  clock on both sides and the two terms are not guaranteed to be one read of it. On psutil
+  at or before 7.0 the process side adds a btime cached at import while top-level
+  `boot_time()` deliberately re-reads `/proc/stat` ("we are not caching this because it is
+  subject to system clock updates"), so a step after the cache was populated moves the
+  result by the step size; on 7.2 the cache is gone and both re-read, narrowing the window
+  to a step landing between the two reads without closing it. Measured on this tree with
+  the two terms skewed by 10 s, the subtraction moved by exactly 10 s and a live session
+  mismatched its own record; the field-22 read moved by 0. Keep the subtraction only as the
+  non-procfs fallback, and say so where it is written. Pinned by
+  `tests/tools/test_session_running_verdict_names_its_own_process.py`, whose clock-step
+  cell asserts equality with the kernel value rather than a tolerance any spelling meets.
 - Pinned by `tests/test_expiry_gates_survive_a_clock_step.py` (a scan over the whole
   package, no exemption list), by `tests/tools/test_tool_wait_budgets_survive_a_clock_step.py`
   for the real `spin_for` behaviour, by

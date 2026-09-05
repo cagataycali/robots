@@ -18,11 +18,19 @@ asked - and these records captured none, so there was nothing to compare against
 
 What is recorded now is the process's start offset since boot, which is a
 duration and therefore the same number in the run that wrote it and the run that
-reads it back hours later. A creation *date* would not be: it is ``/proc/stat``'s
-btime plus the process's start ticks, and btime is recomputed from the current
-wall clock on every read, so a correction between the write and the read would
-make a live session read as a stranger - the one outcome worse than this defect,
-because it would refuse to stop a training run that is holding the GPU.
+reads it back hours later. A creation *date* would not be: it is the process's
+start ticks plus ``/proc/stat``'s btime, so a correction between the write and the
+read would make a live session read as a stranger - the one outcome worse than
+this defect, because it would refuse to stop a training run that is holding the
+GPU.
+
+The offset is read from the kernel directly - ``/proc/<pid>/stat`` field 22 over
+``SC_CLK_TCK`` - and *not* as ``create_time() - boot_time()``. That subtraction
+looks like it recovers the ticks but puts the wall clock on both sides, and the
+two terms are not guaranteed to be one read of it, so it moves under exactly the
+step this identity exists to survive. The last two cells grade that: one pins
+equality with the kernel's own value rather than a tolerance any spelling meets,
+and one injects the skew and asserts a live session still reads as running.
 
 A record carrying no identity, or one whose identity cannot be read, still falls
 back to existence. Those are pinned below too: they are the reason this change
@@ -45,6 +53,7 @@ import pytest
 import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
 from strands_robots.tools._process_stop import (
+    _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
     session_is_running,
@@ -359,3 +368,68 @@ def test_start_records_the_identity_of_the_process_it_started(
     stored = train_mod.SessionManager().get_session("training")
     assert stored is not None
     assert stored[PID_STARTED_SINCE_BOOT] == process_started_since_boot(stranger.pid)
+
+
+def _kernel_ticks_since_boot(pid: int) -> float:
+    """Field 22 of ``/proc/<pid>/stat`` in seconds - the kernel's own record.
+
+    Everything up to and including ``comm`` is dropped by partitioning on the
+    last ``)``, because a process name may itself contain spaces and parentheses.
+    """
+    with open(f"/proc/{pid}/stat", "rb") as handle:
+        after_comm = handle.read().rpartition(b")")[2].split()
+    return float(after_comm[19]) / os.sysconf("SC_CLK_TCK")
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="procfs identity is Linux-only")
+def test_the_identity_is_exactly_the_kernel_value_not_merely_close(stranger: Any) -> None:
+    """Equality, not a tolerance: the read must not go through the wall clock.
+
+    ``test_the_identity_is_the_tick_count_the_kernel_recorded`` above allows
+    0.01 s, which any ``create_time() - boot_time()`` spelling also satisfies on
+    an undisturbed clock - so that cell cannot tell the two implementations
+    apart. Reading field 22 directly returns the kernel's own value bit for bit,
+    and pinning equality is what refuses a reintroduced subtraction.
+    """
+    assert process_started_since_boot(stranger.pid) == _kernel_ticks_since_boot(stranger.pid)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="procfs identity is Linux-only")
+def test_the_identity_survives_a_step_of_the_wall_clock(stranger: Any, monkeypatch: Any) -> None:
+    """The graded property: an NTP correction must not move this number.
+
+    The identity exists to be comparable between the run that writes it and a run
+    that reads it back hours later, so surviving a clock step is the whole point
+    (AGENTS.md > Review Learnings (#86) > "Clocks: a duration is measured, a
+    stamp is recorded"). ``create_time() - boot_time()`` does not have that
+    property, because the two terms are not guaranteed to be the same read of
+    btime: on psutil at or before 7.0 the process side adds a btime cached at
+    import while top-level ``boot_time()`` deliberately re-reads ``/proc/stat``,
+    and on 7.2 both re-read it, leaving a step that lands between the two reads.
+
+    The skew is injected rather than waited for: ``psutil.boot_time`` is moved so
+    the two terms of that subtraction disagree by 10 s, which is what a
+    correction between the cache and the read produces. Measured against the
+    pre-fix spelling on this tree, the value moved by exactly the step size and a
+    live session mismatched its own record - `stop` would then take the
+    ``pid_reused`` branch and drop the record, and the teleop prune would write
+    it out of the store, leaving the process running with no supported way to
+    stop it. Reading field 22 has no wall-clock term to disagree about.
+    """
+    truth = _kernel_ticks_since_boot(stranger.pid)
+    record = {"pid": stranger.pid, PID_STARTED_SINCE_BOOT: truth}
+    assert session_is_running(record) is True, "control: the stranger is alive before the step"
+
+    real_boot_time = psutil.boot_time
+    step_s = 10.0
+    monkeypatch.setattr(psutil, "boot_time", lambda: real_boot_time() - step_s)
+
+    # The spelling this test refuses, evaluated here so the cell carries its own
+    # evidence that the step is large enough to matter rather than asserting it.
+    skewed = psutil.Process(stranger.pid).create_time() - psutil.boot_time()
+    assert abs(skewed - truth) > _IDENTITY_TOLERANCE_S, (
+        f"the injected step must exceed the tolerance to grade anything, moved {skewed - truth}"
+    )
+
+    assert process_started_since_boot(stranger.pid) == truth, "a clock step moved the identity"
+    assert session_is_running(record) is True, "a clock step made a live session read as a stranger"

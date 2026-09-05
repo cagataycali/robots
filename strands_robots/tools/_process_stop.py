@@ -25,6 +25,8 @@ being asked to check and so cannot contradict it.
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -44,12 +46,75 @@ SIGKILL_CONFIRM_S = 2.0
 #: for: how long after boot that process started.
 PID_STARTED_SINCE_BOOT = "pid_started_since_boot"
 
-# Tolerance for comparing two reads of that identity. Both are the same integer
-# tick count the kernel recorded, divided by the tick rate, so they differ only by
-# the float error of the subtraction below - about 1e-7 s on a month of uptime.
-# One tick is far above that noise, and far below the lifetime of any session,
-# which is the gap a reused pid's own start offset differs by.
+# Tolerance for comparing two reads of that identity. On Linux both reads are the
+# same integer tick count the kernel recorded, divided by the tick rate, so they
+# are bit-identical and the tolerance is slack. It is not zero because the
+# non-Linux fallback below recovers the count by subtracting a boot date, and two
+# such subtractions agree only to the float error of the pair. One tick is far
+# above that noise, and far below the lifetime of any session, which is the gap a
+# reused pid's own start offset differs by.
 _IDENTITY_TOLERANCE_S = 0.05
+
+#: Index of ``starttime`` among the ``/proc/<pid>/stat`` fields that follow the
+#: comm field - field 22 of the whole line, counting from 1. Everything up to and
+#: including comm is skipped by partitioning on the last ``)``, because a process
+#: name may itself contain spaces and parentheses.
+_STARTTIME_AFTER_COMM = 19
+
+
+def _started_since_boot(pid: int) -> float:
+    """The kernel's own record of how long after boot ``pid`` started.
+
+    Raises the same two exceptions a :class:`psutil.Process` probe does, so a
+    caller can still tell "the process is gone" from "this user may not look" -
+    a distinction :func:`session_is_running` turns into opposite verdicts.
+
+    Read from ``/proc/<pid>/stat`` field 22 directly on Linux, rather than as
+    ``create_time() - boot_time()``, because that subtraction is not invariant
+    under a wall-clock step and the whole point of this identity is that it is.
+    ``Process.create_time()`` returns the tick count *plus* a boot date, so the
+    boot date has to be subtracted back off, and the two terms are not
+    guaranteed to be the same read of it: on psutil at or before 7.0 the process
+    side adds a module-level btime cached at import while top-level
+    ``boot_time()`` deliberately re-reads ``/proc/stat`` (its own comment: "we
+    are not caching this because it is subject to system clock updates"), so a
+    step after the cache was populated moves the result by the step size until
+    the cache is refreshed. On 7.2 the cache is gone and both terms re-read
+    ``/proc/stat``, which narrows the exposure to a step landing between the two
+    reads but does not remove it. Field 22 never mentions the wall clock, so
+    there is nothing to disagree about on any version.
+
+    Args:
+        pid: The pid to identify.
+
+    Returns:
+        Seconds between boot and the process's creation.
+
+    Raises:
+        psutil.NoSuchProcess: The process is gone.
+        psutil.AccessDenied: This user may not inspect it.
+    """
+    if not sys.platform.startswith("linux"):
+        # No procfs. The subtraction is the only route, so the fallback carries
+        # the clock-step exposure described above; recorded here rather than in
+        # the caller because it is a property of this platform branch alone.
+        return psutil.Process(pid).create_time() - psutil.boot_time()
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            after_comm = handle.read().rpartition(b")")[2].split()
+    except (FileNotFoundError, ProcessLookupError) as exc:
+        raise psutil.NoSuchProcess(pid) from exc
+    except PermissionError as exc:
+        raise psutil.AccessDenied(pid) from exc
+    try:
+        ticks = float(after_comm[_STARTTIME_AFTER_COMM])
+    except (IndexError, ValueError) as exc:
+        # A stat line this code cannot parse is not evidence of anything, and
+        # guessing would answer the identity question wrongly in one direction
+        # or the other. Report it as un-inspectable, which callers already treat
+        # as "no evidence".
+        raise psutil.AccessDenied(pid) from exc
+    return ticks / os.sysconf("SC_CLK_TCK")
 
 
 def process_started_since_boot(pid: int) -> float | None:
@@ -58,12 +123,14 @@ def process_started_since_boot(pid: int) -> float | None:
     A start offset rather than a creation date, because the two ends of the
     comparison it serves sit in different processes minutes or hours apart: the
     session store is written by the run that started the process and read back by
-    a later one. ``create_time()`` is a date - ``/proc/stat``'s ``btime`` plus the
-    process's own start ticks, and ``btime`` is recomputed from the current wall
-    clock on every read - so an NTP correction or a ``date -s`` between the write
-    and the read moves it by the size of the step, and a live session would read
-    as a stranger. Subtracting the boot time recovers the tick count itself,
-    which is a duration and moves for nothing.
+    a later one. ``create_time()`` is a date - the process's own start ticks plus
+    ``/proc/stat``'s ``btime`` - so an NTP correction or a ``date -s`` between the
+    write and the read moves it by the size of the step, and a live session would
+    read as a stranger. The tick count on its own is a duration and moves for
+    nothing, so that is what :func:`_started_since_boot` reads: the kernel's field
+    22 directly, rather than a date with the boot time subtracted back off, which
+    would reintroduce the wall clock on both sides of a subtraction that is not
+    guaranteed to read it once.
 
     Args:
         pid: The pid to identify.
@@ -74,7 +141,7 @@ def process_started_since_boot(pid: int) -> float | None:
         either way, and callers must not read it as a mismatch.
     """
     try:
-        return psutil.Process(pid).create_time() - psutil.boot_time()
+        return _started_since_boot(pid)
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return None
 
@@ -104,7 +171,7 @@ def session_is_running(info: Mapping[str, Any]) -> bool:
     if isinstance(recorded, bool) or not isinstance(recorded, int | float):
         return True
     try:
-        started = psutil.Process(int(pid)).create_time() - psutil.boot_time()
+        started = _started_since_boot(int(pid))
     except psutil.NoSuchProcess:
         return False
     except psutil.AccessDenied:
