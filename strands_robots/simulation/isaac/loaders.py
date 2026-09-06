@@ -465,6 +465,12 @@ def _parse_sphere_size(el: ET.Element) -> tuple[float, ...]:
 # MJCF's default joint axis: a <joint> that omits ``axis`` acts about +Z.
 _MJCF_DEFAULT_JOINT_AXIS = (0.0, 0.0, 1.0)
 
+# MJCF's default geom type: a <geom> that omits ``type`` is a sphere, and
+# ``size`` then holds its radius. Both readers of the attribute resolve the
+# default through this name, because the two answering one element differently
+# is how a link declared as a ball came to be reported as a box.
+_MJCF_DEFAULT_GEOM_TYPE = "sphere"
+
 _MJCF_JOINT_TYPE_MAP = {
     "hinge": "revolute",
     "slide": "prismatic",
@@ -702,13 +708,25 @@ def _extract_mjcf_shape(
     All three attributes are read through :func:`_class_attrs`, because a geom
     need not spell any of them itself - ``<default>`` inheritance may supply
     them, and a link whose class declares ``type="capsule"`` reads as the
-    fallback box if the element is asked directly.
+    typeless default if the element is asked directly.
+
+    A ``<geom>`` that states no ``type`` at all takes MJCF's documented default
+    (:data:`_MJCF_DEFAULT_GEOM_TYPE`, a sphere), which is also what
+    :func:`_geom_aabb` reads it as - the two answering one element differently
+    is a link reported as a shape its own file does not describe. Read as a box,
+    such a geom loses its stated ``size`` as well as its shape, because the box
+    branch needs three components and a ball declares one.
+
+    A body with no ``<geom>`` at all is the separate case: there is no geometry
+    to name, so it keeps the module's no-geometry box proxy, the same one
+    :func:`_extract_urdf_shape` returns for a link with no ``<visual>`` or
+    ``<collision>``.
     """
     geom = body_el.find("geom")
     if geom is None:
         return "box", (0.05, 0.05, 0.05)
     attrs = _class_attrs(geom, defaults, childclass)
-    gtype = attrs.get("type", "box")
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
     size_str = attrs.get("size", "")
     sizes: list[float] = []
     if size_str:
@@ -1456,7 +1474,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
     # elements rather than restarting at each one, because MuJoCo merges them.
     # Starting from ``{}`` per element lets the last one REPLACE the others, so a
     # ``type`` only the first declares is dropped and every geom resolving
-    # against the root reports the fallback box under a successful load.
+    # against the root reports the 0.05 m fallback proxy under a successful load.
     root_attrs: dict[str, str] = {}
     for el in _mjcf_model_toplevel(root, base_dir):
         if el.tag == "default":
@@ -1470,7 +1488,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
             # whole model when the two disagree, and they disagree in shipped
             # assets: Menagerie's ``pal_tiago_dual`` writes ``class="main"`` and
             # gives none of its 46 geoms a class, so 34 of them report the
-            # fallback box for the ``type="mesh"`` that class declares.
+            # 0.05 m fallback proxy for the ``type="mesh"`` that class declares.
             #
             # Registering both spellings cannot shadow a different class,
             # because neither name is available to one: MuJoCo refuses a nested
@@ -1984,7 +2002,8 @@ def _refuse_non_finite_geom(attrs: Mapping[str, str], attribute: str, values: Se
         ValueError: If any component of ``values`` is not finite.
     """
     name = attrs.get("name")
-    where = f"geom {name!r}" if name else f'unnamed <geom type="{attrs.get("type", "sphere")}">'
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
+    where = f"geom {name!r}" if name else f'unnamed <geom type="{gtype}">'
     _refuse_non_finite_placement(where, attribute, values)
 
 
@@ -2046,7 +2065,7 @@ def _geom_aabb(
             (:func:`_refuse_non_finite_geom`).
     """
     attrs = _class_attrs(geom, defaults, childclass)
-    gtype = attrs.get("type", "sphere")
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
     pos = _parse_xyz(attrs.get("pos"))
     _refuse_non_finite_geom(attrs, "pos", pos)
     size_str = attrs.get("size", "")
