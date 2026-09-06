@@ -10,7 +10,10 @@ The acceptance criteria of the transform surface, asserted on real files
   rendered differently, so those columns survive byte-identical;
 * **pixels actually changed** - the transformed half really happened;
 * **provenance present** - every generated episode carries ``synthetic=true``,
-  its source episode, and the transform's name and version.
+  its source episode, and the transform's name and version;
+* **no output without provenance** - the sidecar is the only thing that marks
+  the pixels as generated, so a spec that could not produce one is refused
+  before any episode is written rather than at the write itself.
 """
 
 import numpy as np
@@ -145,3 +148,32 @@ class TestSelectors:
         assert result.status == "error"
         assert "validation failed" in result.message
         assert not (tmp_path / "aug_none").exists()
+
+    @pytest.mark.parametrize("identity", [object(), {"local/source"}, None], ids=["object", "set", "none"])
+    def test_an_unrecordable_identity_is_refused_before_any_episode_is_written(
+        self, record_source_dataset, tmp_path, identity
+    ):
+        """A dataset must never reach disk without the sidecar that marks it synthetic.
+
+        ``source_repo_id`` is written verbatim into every provenance record, and
+        that sidecar is written LAST - after every generated episode. An
+        identity ``json.dumps`` cannot render therefore used to raise out of the
+        sidecar write with the whole augmented dataset already on disk, and a
+        dataset with no provenance file declares no synthetic episodes at all:
+        ``synthetic_episode_indices`` returned an empty set for a fully
+        generated dataset, so a training filter read every generated episode as
+        recorded. The preflight owns this now, so the failure happens before the
+        first episode instead of after the last.
+        """
+        from strands_robots.transforms import synthetic_episode_indices
+
+        source_root = record_source_dataset([40])
+        output_root = tmp_path / "aug_unrecordable"
+        spec = TransformSpec(source_root=source_root, output_root=str(output_root), source_repo_id=identity)
+
+        result = create_transform("mock").transform(spec)
+
+        assert result.status == "error"
+        assert "source_repo_id must be a non-empty string" in result.message
+        assert not output_root.exists(), "a refused spec wrote a dataset"
+        assert synthetic_episode_indices(output_root) == set()

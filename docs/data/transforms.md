@@ -59,7 +59,16 @@ record (strands-robots)  ->  transform (this page)  ->  train (create_trainer)
    non-empty string and every non-zero number is truthy - guessing which of them
    meant "generated" is how a generated episode ends up counted as recorded. The
    descriptive keys (`transform_version`, `prompt`, `seed`) are carried through
-   untouched; nothing reads them as a verdict.
+   untouched; nothing reads them as a verdict. Because they are carried
+   untouched, the spec fields that feed them are held to their domain up front:
+   `source_repo_id` (the key answering *which dataset this trajectory came
+   from*) and `output_repo_id` must each be a non-empty string. The sidecar is
+   written **last**, after every generated episode is already on disk, so an
+   identity that cannot be serialized would fail there - leaving a fully
+   synthetic dataset with no provenance file, which declares no synthetic
+   episodes at all. `validate()` refuses it before the first episode instead.
+   No `owner/name` shape is imposed: `output_root` is the load-bearing path, so
+   a slashless local label is honored.
 3. **Re-validation is the acceptance gate.** Supply a deterministic verdict
    function and every generated episode is re-scored against its source
    episode's verdict; a generated episode that flips the verdict is discarded
