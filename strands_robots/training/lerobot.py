@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 from strands_robots.utils import (
+    declared_count,
     lerobot_version,
     stale_output_dir_is_clearable,
     validation_split_error,
@@ -551,11 +552,19 @@ class LerobotTrainer(Trainer):
         return f"policy:{self._resolve_policy_type(spec)}"
 
     def _dataset_total_episodes(self, dataset_root: str) -> int | None:
+        """Episode count declared by a local dataset's ``meta/info.json``, or None.
+
+        The count is graded by :func:`~strands_robots.utils.declared_count`, the
+        one owner every reader of this header shares, so the validation split
+        cannot be computed from a denominator another surface refuses. ``None``
+        is the unknown case - an absent, unreadable or unusable header - and
+        every caller here already treats it as "no split can be derived".
+        """
         info = os.path.join(dataset_root, "meta", "info.json")
         try:
             with open(info, encoding="utf-8") as f:
-                return int(json.load(f).get("total_episodes"))
-        except (OSError, ValueError, TypeError):
+                return declared_count(json.load(f).get("total_episodes"))
+        except (OSError, ValueError, AttributeError):
             return None
 
     def _resume_config_path(self, output_dir: str) -> str | None:

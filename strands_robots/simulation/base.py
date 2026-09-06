@@ -3675,7 +3675,8 @@ class SimEngine(ABC):
             Standard status dict. ``status`` is ``"success"`` when the parquet
             holds exactly ``expected`` episodes, else ``"error"``. The
             ``{"json": {...}}`` block carries ``expected``, ``actual``,
-            ``info_total_episodes``, ``sources_agree``, ``episode_indices``,
+            ``info_total_episodes``, ``info_problems``, ``sources_agree``,
+            ``episode_indices``,
             ``total_frames``, ``total_frames_per_ep``, ``unreadable_files`` and
             ``root`` so a caller (or CI) can fail loudly programmatically.
             ``status`` is ``"error"`` when the parquet count differs from
@@ -3726,6 +3727,7 @@ class SimEngine(ABC):
                             "expected": expected,
                             "actual": 0,
                             "info_total_episodes": None,
+                            "info_problems": [],
                             "sources_agree": False,
                             "episode_indices": [],
                             "total_frames": 0,
@@ -3741,6 +3743,7 @@ class SimEngine(ABC):
 
         actual = info["total_episodes"]
         info_total = info.get("info_total_episodes")
+        info_problems = info.get("info_problems") or []
         unreadable = info.get("unreadable_files") or []
 
         # Two independent truths must agree: the parquet episode count AND the
@@ -3749,7 +3752,11 @@ class SimEngine(ABC):
         # finalize), so a parquet-only check is not sufficient. sources_agree is
         # True when info.json is absent (parquet is then the sole truth) or when
         # the header matches the parquet.
-        sources_agree = info_total is None or info_total == actual
+        # A header that declares something which is not an episode count agrees
+        # with nothing: it is neither a matching count nor an absent header, and
+        # reading it as the latter (the parquet is then the sole truth) would
+        # certify the inconsistent dataset this cross-check exists to catch.
+        sources_agree = not info_problems and (info_total is None or info_total == actual)
         # A dataset with unreadable episode parquet files can never be certified:
         # the readable files are a LOWER BOUND on the episode count, so a count
         # that happens to equal ``expected`` proves nothing about the whole
@@ -3763,6 +3770,12 @@ class SimEngine(ABC):
                 f"parquet file(s) could not be read, so the {actual} episode(s) found "
                 f"are a lower bound (expected {expected}): {'; '.join(unreadable)}. "
                 f"Root: {root}"
+            )
+        elif info_problems:
+            text = (
+                f"verify_dataset_episodes: MISMATCH - {'; '.join(info_problems)}; the parquet "
+                f"holds {actual} episode(s) (expected {expected}), so the two metadata sources "
+                f"cannot be shown to agree. Root: {root}"
             )
         elif not sources_agree:
             verdict = "MISMATCH"
@@ -3788,6 +3801,7 @@ class SimEngine(ABC):
                         "expected": expected,
                         "actual": actual,
                         "info_total_episodes": info_total,
+                        "info_problems": list(info_problems),
                         "sources_agree": sources_agree,
                         "episode_indices": info["episode_indices"],
                         "total_frames": info["total_frames"],
