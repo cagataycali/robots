@@ -81,7 +81,22 @@ class RLTrainSpec(TrainSpec):
         normalize_obs: Wrap observations in ``EmpiricalNormalization``.
         normalize_advantage: Standardize advantages per batch.
         device: Torch device (``"cpu"`` / ``"cuda"``); ``None`` auto-selects.
-        log_interval: Iterations between progress logs.
+        log_interval: Iterations between checkpoints. This is the RL loop's
+            checkpoint cadence, not a logging one - no RL module emits a
+            progress log, and the field is read in exactly one expression,
+            ``it % log_interval == 0``, which decides whether
+            :meth:`BaseRLAlgo.save_checkpoint` runs for that iteration. So it
+            answers for an RL run what :attr:`TrainSpec.save_freq` answers for a
+            supervised one (RL reads this field and ignores that one), and it
+            takes the same whole-number domain for the same reason: a backend
+            MUST check it through
+            :meth:`Trainer._rl_checkpoint_interval_problems` rather than forward
+            it, because the modulus judges nothing. ``nan`` never satisfies the
+            test and silently keeps only the final checkpoint of a successful
+            run, ``True`` writes one every iteration, ``2.5`` is the schedule of
+            ``5``, and a string raises ``TypeError`` from inside the loop.
+            ``0`` is the supported "no intermediate checkpoints" mode - the
+            end-of-run fallback still writes exactly one final checkpoint.
         buffer_size: Off-policy replay-buffer capacity (SAC / TD3).
         batch_size: Transitions sampled per gradient step (SAC / TD3).
         learning_starts: Env steps of random warmup collected into the

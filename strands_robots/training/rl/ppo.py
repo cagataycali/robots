@@ -221,6 +221,15 @@ class PpoTrainer(BaseRLAlgo):
             problems.append(
                 f"rollout_steps ({spec.rollout_steps}) must be divisible by num_mini_batches ({spec.num_mini_batches})"
             )
+        # log_interval is this loop's checkpoint cadence - the modulus of the one
+        # test that decides whether an intermediate checkpoint is written - so it
+        # answers the same question save_freq does for a supervised run and takes
+        # the same shared domain. The modulus judges it not at all: nan never
+        # satisfies it and silently keeps only the final checkpoint of a
+        # successful run, True writes one every iteration, a fraction is a
+        # silently different cadence, and a str raises out of the loop after
+        # setup has built the env, the networks and the optimizers.
+        problems.extend(self._rl_checkpoint_interval_problems(spec))
         return problems
 
     def setup(self, spec: RLTrainSpec) -> None:

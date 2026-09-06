@@ -356,6 +356,42 @@ successful, deployable run whose objective was not the configured one:
 spelling of *do not clip* - and the two bounds share one domain helper rather
 than a copy each.
 
+`log_interval` must be a whole number of iterations, checked by `validate()` on
+all three backends. **It is the RL run's checkpoint cadence, not a logging one**:
+no RL module emits a progress log, and the field is read in exactly one
+expression - `it % log_interval == 0` - which decides whether `save_checkpoint`
+runs for that iteration. So it answers for an RL run what
+[`TrainSpec.save_freq`](overview.md) answers for a supervised one
+(RL reads this field and ignores that one), and it takes the same shared
+step-cadence domain, because the modulus judges the value no more than lerobot's
+does. Measured on the loop over 20 iterations, against the `[1, 6, 11, 16, 20]`
+an `int` cadence of `5` writes:
+
+| `log_interval` | Checkpoints written | Reading |
+|---|---|---|
+| `5` | 5, at 1/6/11/16/20 | the requested schedule |
+| `True` | **20** | a modulus of one - one every iteration |
+| `2.5` | 5, at 1/6/11/16/20 | the schedule of `5`, not of `2.5` |
+| `0.3` | **2**, at 1 and 20 | the periodic checkpoints are gone |
+| `nan` | **1**, at 20 | silently the *disabled* mode |
+| `inf` | **2**, at 1 and 20 | ditto |
+| `"5"` | **0** | `TypeError` out of `train()`, after `setup` |
+| `0` | 1, at 20 | the supported "no intermediate checkpoints" mode |
+| `-5` | 5, at 1/6/11/16/20 | the cadence of its magnitude |
+
+`nan` is the worst of them: it satisfies the truthiness guard, never satisfies
+the modulus, and so a long run that asked to checkpoint every few iterations
+keeps only its final one - under `status="success"`. For RL those intermediate
+checkpoints are not a convenience: return is non-monotonic in training, so the
+deployable policy is often an earlier iteration, and a run that silently kept
+only its last cannot be recovered without training again.
+
+Only the *type* is graded, so this domain has no floor: `0` disables the periodic
+checkpoints and leaves the end-of-run fallback to write exactly one final
+checkpoint. A negative is accepted for the same reason and is *not* the disabled
+mode here - unlike lerobot's `save_freq > 0` test, this loop guards on bare
+truthiness - so which spelling disables is the loop's business, not the domain's.
+
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and `examples/training/train_fastsac_reach.py`
