@@ -153,7 +153,8 @@ wins over code defaults):
 | `dynamics_run_id` | `VERA_DYNAMICS_RUN_ID` | `--dynamics-run-id` |
 | `text_prompt` | `VERA_TEXT_PROMPT` | `--text` |
 | `ckpt_root` | `VERA_CKPT_ROOT` | container `/ckpts` mount |
-| `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` |
+| `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` (positive whole count of denoise steps) |
+| `teacache` / `teacache_thresh` | — | `--no-teacache` / `--teacache-thresh` |
 | `tracker_backend` | `VERA_TRACKER_BACKEND` | IDM tracker |
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
 | `server_ready_timeout` | `VERA_SERVER_READY_TIMEOUT` | readiness wait budget, in seconds |
@@ -209,6 +210,38 @@ with a best-effort `configure` call whose failure is logged at INFO and does not
 stop the rollout, so a value `float()` cannot convert is neither applied nor
 reported. `VERA_MOTION_PLAN_SCALE` goes through the same check; an unparsable
 spelling still falls back to `None`, as it does for the ports.
+
+The two video-planner sampler knobs take the same treatment, for a reason
+specific to how they travel. `sample_steps` and `teacache_thresh` are read
+nowhere but the launch command, which carries them as *text* —
+`str(cfg.sample_steps)` and `str(cfg.teacache_thresh)` in the subprocess argv,
+`VERA_SAMPLE_STEPS=` in the container's `-e` overlay — so a value nothing here
+inspects is handed to the server, and the server can only report it in one of two
+ways, neither naming the field. A token its flag's own type cannot parse
+(`'2.7'`, `'nan'`, `'True'` for an `int` flag) makes the server exit before it
+opens its port, and the readiness wait answers `VERA server exited early (code N)
+... common causes are missing checkpoints (set VERA_CKPT_ROOT / ckpt_root) or
+CUDA OOM` — two causes that are not the cause. A token it *can* parse starts a
+server on a setting nobody asked for: `0` or `-5` denoise steps, a threshold of
+`nan` (below nothing) or `inf` (below everything). Which of the two happens is
+not a property of the value being usable, only of how `str()` spells it, and
+`start()` already refuses a locally-decidable cause in the same place —
+`_require_vera_installed` exists so a missing install does not surface as that
+same opaque early exit.
+
+So `sample_steps` takes the shared count domain `render_width` takes and is
+converted to `int`, and `teacache_thresh` takes the shared continuous domain
+`motion_plan_scale` takes and is converted to `float`. The conversion is
+load-bearing on the count: `sample_steps=20 / 2` is a positive whole number the
+domain accepts, `str(10.0)` is `'10.0'`, and `--sample-steps` cannot parse that —
+converting after the check is what puts `10` on the command line. `0` is not the
+threshold's opt-out; `teacache=False` is, and it emits `--no-teacache` in place of
+the flag. The documented quality cliff above `0.15` is guidance about output
+quality rather than a bound, so `0.25` stays a legitimate request. The threshold
+is checked whatever `teacache` is set to, because `VeraConfig` is a plain
+dataclass and the flag can be turned on after construction. `VERA_SAMPLE_STEPS`
+goes through the same check on the effective value; an unparsable spelling still
+falls back to `None`, as it does for the ports.
 
 ### IK conversion knobs
 
