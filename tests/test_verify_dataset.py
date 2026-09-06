@@ -38,7 +38,7 @@ from strands_robots.verify_dataset import main as verify_main
 def _write_dataset(
     root: Path,
     episode_indices: list[int],
-    frames_per_episode: list[int] | None = None,
+    frames_per_episode: list[int | None] | None = None,
     info: dict | None = None,
 ) -> Path:
     """Write a minimal LeRobot v3 dataset (episodes parquet + optional info.json).
@@ -46,7 +46,9 @@ def _write_dataset(
     Args:
         root: Dataset root (the dir that will contain ``meta/``).
         episode_indices: Distinct ``episode_index`` values to write.
-        frames_per_episode: Per-episode ``length`` column (omitted if None).
+        frames_per_episode: Per-episode ``length`` column (omitted if None). A
+            ``None`` entry writes a null, a length nobody recorded rather than
+            a recorded zero.
         info: Optional ``meta/info.json`` payload.
 
     Returns:
