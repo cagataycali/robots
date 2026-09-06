@@ -146,7 +146,7 @@ rejected eagerly. The commonly used fields:
 | `render_mode` | `str` | `"headless"` | `"headless"`, `"rtx_realtime"` (raster), or `"rtx_pathtracing"` (photoreal). |
 | `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). Three finite components, Z-aligned - the same domain `create_world(gravity=...)` takes. |
 | `ground_plane` | `bool` | `True` | Add a ground plane on `create_world()`. |
-| `stage_path` | `str` | `"/World"` | USD stage path prefix. |
+| `stage_path` | `str` | `"/World"` | USD prim-path prefix every created prim is addressed under. Must be absolute, with at least one component, every component a prim name (`[A-Za-z_][A-Za-z0-9_]*`). |
 | `nucleus_url` | `str \| None` | `None` | Override Omniverse Nucleus URL (env-resolvable). |
 | `camera_width` / `camera_height` | `int` | `640` / `480` | Default camera resolution. |
 | `enable_rtx_sensors` | `bool` | `True` | Enable RTX-accelerated camera / LiDAR sensors. |
@@ -283,6 +283,19 @@ prunes its cleanup registry by that prefix. Unlike the MuJoCo backend there is
 no "derive a label from the model" short form: `name` is also the procedural
 lookup key, so `None` / `""` are refused rather than replaced with a generated
 label.
+
+`stage_path` is the other half of that same path and carries the same floor, so
+a path this backend records is one it can address whichever component the caller
+got wrong. It must be an absolute USD prim path with at least one component,
+every component a prim name (`[A-Za-z_][A-Za-z0-9_]*`). A non-`str` was
+previously interpolated as its rendered text (`stage_path=None` recorded
+`None/Robots/arm`); a relative prefix (`"World"`) recorded a path that
+`get_body_state` cannot take, because it distinguishes an absolute prim path
+from a `<robot>/<link>` pair by the leading `/`; a trailing or doubled separator
+(`"/World/"`) left an empty component; and a component outside USD's identifier
+alphabet (`"/My World"`) is transcoded by USD, so the prim does not land at the
+path recorded for it. The identifier rule applies to the prefix only - `name` is
+shared with backends whose entity names are not USD identifiers.
 
 The one deliberate difference in that list is `mass=0`. The Newton backend
 documents it as an alternative spelling of `is_static=True` and honours it, so it
