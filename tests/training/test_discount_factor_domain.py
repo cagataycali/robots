@@ -12,9 +12,12 @@ silent ``gamma`` of one, and a non-finite value surfaces only once the update
 samples the action distribution - as a torch constraint error naming neither the
 field nor the run, after the env, the networks and a full rollout are built.
 
-The sibling FastSAC preflight already bounded its own interval coefficient this
-way (``tau`` must be in ``(0, 1]``); this pins the same shape for the field both
-backends share. Every test here reaches the real ``validate`` entry point, so it
+The off-policy preflights already bounded their own interval coefficient this way
+(``tau`` must be in ``(0, 1]``); this pins the same shape for the field both
+on-policy backends share. That precedent is a shared gate too now rather than a
+bare comparison inside each backend - see
+``tests/training/test_polyak_coefficient_domain.py``, whose interval is half-open
+where this one is closed. Every test here reaches the real ``validate`` entry point, so it
 covers the wiring as well as the domain.
 """
 

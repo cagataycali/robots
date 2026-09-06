@@ -74,6 +74,11 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_loss_weight_problems": ("value_loss_coef", "entropy_coef"),
     "_clip_range_problems": ("clip_param",),
     "_policy_delay_problems": ("policy_delay",),
+    # The Polyak-coefficient gate. Its field lives on ``RLTrainSpec`` and no
+    # provider forwards it, so it is graded on the reader scan only - and that
+    # scan finds two backends rather than one, since both off-policy backends
+    # maintain a target network.
+    "_polyak_coefficient_problems": ("tau",),
     "_td3_noise_problems": ("exploration_noise_std", "target_noise_std", "target_noise_clip"),
     # The RL checkpoint-interval gate. Its field lives on ``RLTrainSpec`` and no
     # provider forwards it, so it is graded on the reader scan only - and that
@@ -201,6 +206,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_network_width_domain.py",
             "test_optimization_epochs_domain.py",
             "test_policy_delay_domain.py",
+            "test_polyak_coefficient_domain.py",
             "test_rl_run_size_domain.py",
             "test_rl_checkpoint_interval_domain.py",
             "test_rl_replay_domain.py",

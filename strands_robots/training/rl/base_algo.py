@@ -104,6 +104,13 @@ class RLTrainSpec(TrainSpec):
         gradient_steps: Off-policy gradient updates run per training
             iteration (SAC / TD3).
         tau: Polyak averaging coefficient for the target networks (SAC / TD3).
+            The rate at which each target network tracks its online one, spent as
+            ``tp.mul_(1 - tau).add_(tau * p)``. A real number in ``(0, 1]``,
+            checked by the preflight through
+            :meth:`Trainer._polyak_coefficient_problems`: one is the deliberate
+            hard update ``tp = p``, while zero would freeze the target network at
+            its initialization, and ``True`` is refused rather than read as the
+            hard update it would otherwise alias.
         autotune_alpha: Automatically tune the entropy temperature against
             ``target_entropy`` (SAC).
         init_alpha: Initial entropy temperature (SAC).

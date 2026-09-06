@@ -29,7 +29,8 @@ must every supervised backend; :class:`TestABackendThatDoesNotReadThemStaysQuiet
 pins that. ``learning_starts`` and ``tau`` are outside this gate's field set, and
 :class:`TestTauAndLearningStartsAreNotInThisDomain` pins that scope line rather
 than leaving it to prose. ``tau`` is a coefficient in ``(0, 1]`` and so shares no
-part of this domain. ``learning_starts`` is one side of a relation
+part of this domain; it has its own gate on its own interval, graded in
+``tests/training/test_polyak_coefficient_domain.py``. ``learning_starts`` is one side of a relation
 (``>= batch_size``) and *does* share the domain: FastSAC asks it of the same
 strict-``int`` rule as the relation's other operand, in its own ``validate``
 rather than through this gate, because PPO reads neither field. That is graded in

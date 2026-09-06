@@ -410,10 +410,12 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     a backend that ignores them must not report on them - which is why this is a
     gate scoped to the field rather than part of :func:`validate_train_inputs`.
 
-    ``learning_starts`` and ``tau`` stay in the backend's own ``validate``: the
-    first is one side of a relation (``>= batch_size``) rather than a bare count,
-    the second a coefficient in ``(0, 1]`` rather than a count, so neither shares
-    this domain.
+    ``learning_starts`` stays in the backend's own ``validate``: it is one side
+    of a relation (``>= batch_size``) rather than a bare count, so it does not
+    share this domain. ``tau`` does not either - it is a coefficient in
+    ``(0, 1]`` rather than a count - but it no longer stays local for that
+    reason: it has its own gate on its own interval, in
+    :func:`polyak_coefficient_problems`.
 
     Args:
         spec: The spec to check.
@@ -836,10 +838,14 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     reward only. So the domain is the *closed* interval [0, 1], checked through
     :func:`_closed_unit_interval_error`.
 
-    The sibling FastSAC preflight already bounds its own interval coefficient
-    this way (``tau`` must be in ``(0, 1]``), which is the shape this gate
-    generalizes: an interval coefficient is checked against its interval rather
-    than left to the arithmetic that consumes it.
+    The off-policy backends bound their own interval coefficient this way
+    (``tau`` must be in ``(0, 1]``), which is the shape this gate generalizes: an
+    interval coefficient is checked against its interval rather than left to the
+    arithmetic that consumes it. That precedent is now a shared gate too rather
+    than a bare comparison inside each backend - see
+    :func:`polyak_coefficient_problems`, which is half-open where this one is
+    closed because zero freezes a target network instead of reading as a
+    myopic agent.
 
     ``lam``, the other factor of the trace-decay product, has its own gate for
     that same scoping reason - see :func:`gae_lambda_problems`,
@@ -1845,3 +1851,105 @@ def rl_checkpoint_interval_problems(spec: TrainSpec, *, context: str) -> list[st
     """
     error = step_cadence_error(getattr(spec, "log_interval", 0), "log_interval", context)
     return [] if error is None else [error]
+
+
+def _half_open_unit_interval_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when *value* is not a real number in the half-open range (0, 1].
+
+    Sibling of :func:`_closed_unit_interval_error`, and the two differ in exactly
+    one decision: whether zero is inside the interval. Numeric-ness, ``bool``
+    rejection, finiteness and the float64 range are delegated to the shared
+    :func:`~strands_robots.utils.finite_number_error` domain by both, so those
+    refusals read identically to every other numeric field's.
+
+    Zero is **outside** this interval because it is a degenerate spelling rather
+    than a reading: the one consumer is a Polyak update, ``tp.mul_(1 -
+    x).add_(x * p)``, which at zero leaves the target parameters at their
+    initialization for the whole run. The upper endpoint is inside, because at
+    one the same expression is the hard update ``tp = p`` that TD3-family
+    algorithms take deliberately.
+
+    Args:
+        value: The caller-supplied value.
+        param: Field name for the message.
+        context: Caller label the message is prefixed with.
+
+    Returns:
+        The error text, or None when *value* is a real number in (0, 1].
+    """
+    error = finite_number_error(value, param, context)
+    if error is not None:
+        return error
+    if not 0.0 < float(value) <= 1.0:
+        return f"{context}: {param} must be in (0, 1], got {value!r}."
+    return None
+
+
+def polyak_coefficient_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return Polyak-coefficient problems for an off-policy RL :class:`TrainSpec`.
+
+    ``tau`` is the rate at which a target network tracks its online network. The
+    two off-policy backends spend it in one expression each, per mirrored critic
+    pair::
+
+        tp.mul_(1.0 - spec.tau).add_(spec.tau * p)
+
+    so the field does not merely tune the update - it decides whether a separate
+    target network exists at all, and a target network is the mechanism that
+    makes an off-policy critic's bootstrap target stationary enough to regress
+    onto.
+
+    This interval was the *precedent* the two on-policy interval gates were
+    written against - :func:`discount_factor_problems` and
+    :func:`gae_lambda_problems` both cite "the sibling FastSAC preflight already
+    bounds its own interval coefficient this way (``tau`` must be in ``(0, 1]``)"
+    as the shape they generalize - while the check they cited was a bare local
+    comparison, ``if not 0.0 < spec.tau <= 1.0``, duplicated verbatim in both
+    backends. A bare comparison against the interval bounds cannot carry the
+    domain, and it left two holes the generalization had already closed:
+
+    * ``True`` is a silent ``tau`` of **one**, because ``bool`` is an ``int``
+      subclass. That is the maximum of the interval, so the Polyak average
+      degenerates to ``tp.mul_(0.0).add_(p)`` - the target network becomes a
+      copy of the online network on every update, which is the same thing as
+      having no target network. Measured on a 60-timestep FastSAC run,
+      ``validate()`` returning ``[]`` and the run reporting success: the largest
+      online-to-target parameter gap in the exported checkpoint was ``0.0``
+      exactly against the default ``tau``'s ``9.9e-04``, and the checkpoint was
+      byte-identical to a run that asked for ``tau=1.0``. So a flag landed as a
+      request to switch off target networks, and nothing in the run said so.
+    * A numeric **string**, ``None`` or a list raises ``TypeError: '<' not
+      supported between instances of 'float' and 'str'`` out of the comparison
+      itself - from a
+      :meth:`~strands_robots.training.base.Trainer.validate` documented to
+      *return* its problems, which is the contract every other field on this
+      spec is now checked against.
+
+    ``nan`` and the two infinities were already refused, by an accident of
+    Python's chained comparison rather than by a finiteness test: every
+    comparison against ``nan`` is False and ``inf`` is above the upper bound, so
+    the bare test happened to answer them. They stay refused here, on the
+    shared domain, with the reason naming finiteness rather than the interval.
+
+    Both endpoints keep the reading the bare test gave them, so no value that
+    worked becomes an error: ``1.0`` is accepted as the deliberate hard update,
+    and ``0.0`` is refused because it freezes the target network at its
+    initialization for the whole run - see
+    :func:`_half_open_unit_interval_error`, which owns that one decision and is
+    what makes this interval half-open where the on-policy pair's is closed.
+
+    Only a backend that maintains a target network may call this: like
+    :func:`gae_lambda_problems`, and unlike :func:`learning_rate_problems`, a
+    backend that does not read the field MUST NOT report on it - PPO has no
+    target network and never reads ``tau``.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        A single-element list when ``tau`` cannot be honored; empty otherwise.
+    """
+    error = _half_open_unit_interval_error(getattr(spec, "tau", 0.005), "tau", context)
+    return [error] if error is not None else []
