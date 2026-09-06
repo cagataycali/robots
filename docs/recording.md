@@ -382,9 +382,20 @@ parquet disagrees with `info.json` (an internally inconsistent dataset, e.g. an
 interrupted finalize - `sources_agree` is then `False`), so a dataset that
 happens to match `expected` on one source but not the other still fails. The
 `{"json": {...}}` block carries `expected`, `actual`, `info_total_episodes`,
-`sources_agree`, `episode_indices`, and `total_frames` for programmatic CI
-gating. The pure-pyarrow `read_dataset_episode_indices(root)` exposes the same
-facts without instantiating a `LeRobotDataset`.
+`info_problems`, `sources_agree`, `episode_indices`, and `total_frames` for
+programmatic CI gating. The pure-pyarrow `read_dataset_episode_indices(root)`
+exposes the same facts without instantiating a `LeRobotDataset`.
+
+A header that is present but is not a count at all - `2.5`, `"2"`, `true`, or a
+JSON number outside double range such as `1e400` (which `json.load` parses to
+`inf`) - is a THIRD outcome, distinct from both a matching count and an absent
+header: `info_total_episodes` is `None`, the reason lands in `info_problems`, and
+`sources_agree` is `False`. Such a header is never coerced to a nearby number,
+because `int(2.5)` is `2` - exactly the count a two-episode parquet holds, so
+coercing it would certify the inconsistent dataset. Every reader of that header
+(this facade, `verify-dataset`, `read_dataset_episode_indices`, and the
+training-side validation split) shares one domain,
+`strands_robots.utils.declared_count`, so one file cannot get two verdicts.
 
 The same check runs from the shell against any LeRobot dataset on disk, with an
 exit code suitable for CI:
@@ -398,8 +409,8 @@ strands-robots verify-dataset /path/to/dataset --no-check-videos  # skip the per
 `verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
 helper (no `lerobot` import) and flags five failure modes: the mega-episode
 (fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
-`total_frames` drifting from the parquet ground truth (caught even without
-`--expected`), any episode below `--min-frames` (default 1), - unless
+`total_frames` drifting from the parquet ground truth - or declaring something
+that is not a count at all - (caught even without `--expected`), any episode below `--min-frames` (default 1), - unless
 `--no-check-videos` is passed - any per-episode video file that is missing or
 empty on disk, and - unless `--no-check-stats` is passed - a dead control
 column. The video check is the video-modality sibling of the

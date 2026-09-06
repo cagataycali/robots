@@ -40,6 +40,7 @@ from strands_robots.tools._process_stop import (
     unstopped_result,
 )
 from strands_robots.utils import (
+    declared_count,
     positive_count_error,
     stale_output_dir_is_clearable,
     step_cadence_error,
@@ -504,9 +505,10 @@ def _read_total_episodes(dataset_root: str) -> int:
     with open(info_path) as f:
         info = json.load(f)
     total = info.get("total_episodes")
-    if not isinstance(total, int) or total <= 0:
+    declared = declared_count(total)
+    if declared is None or declared <= 0:
         raise ValueError(f"info.json has no usable 'total_episodes' (got {total!r})")
-    return total
+    return declared
 
 
 def _has_resumable_checkpoint(output_dir: str) -> Path | None:

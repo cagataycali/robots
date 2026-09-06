@@ -57,7 +57,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import non_negative_count_error
+from strands_robots.utils import declared_count, non_negative_count_error
 
 logger = logging.getLogger(__name__)
 
@@ -211,17 +211,27 @@ def verify_dataset(
             declared = json.loads(info_json_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
             problems.append(f"could not read meta/info.json: {e}")
-        decl_eps = declared.get("total_episodes")
-        decl_frames = declared.get("total_frames")
+        # Both headers are graded by their one owner rather than an inline type
+        # test, and a declaration that is not a count is REPORTED rather than
+        # passed over: a header no writer could have produced is exactly the
+        # metadata drift this check exists to find, and the inline test skipped
+        # it silently (``true`` even compared equal to a one-episode parquet).
+        raw_eps = declared.get("total_episodes")
+        raw_frames = declared.get("total_frames")
+        decl_eps = declared_count(raw_eps)
+        decl_frames = declared_count(raw_frames)
         report["info_total_episodes"] = decl_eps
         report["info_total_frames"] = decl_frames
-        if isinstance(decl_eps, int) and decl_eps != info["total_episodes"]:
+        for key, raw, decl in (("total_episodes", raw_eps, decl_eps), ("total_frames", raw_frames, decl_frames)):
+            if key in declared and decl is None:
+                problems.append(f"meta/info.json {key}={raw!r} is not a count - metadata is corrupt")
+        if decl_eps is not None and decl_eps != info["total_episodes"]:
             problems.append(
                 f"meta/info.json total_episodes={decl_eps} disagrees with parquet "
                 f"({info['total_episodes']} distinct episode(s)) - metadata/parquet drift"
             )
         # Frame totals only meaningful when parquet carries per-episode lengths.
-        if isinstance(decl_frames, int) and info["total_frames"] and decl_frames != info["total_frames"]:
+        if decl_frames is not None and info["total_frames"] and decl_frames != info["total_frames"]:
             problems.append(
                 f"meta/info.json total_frames={decl_frames} disagrees with parquet ({info['total_frames']} frame(s))"
             )

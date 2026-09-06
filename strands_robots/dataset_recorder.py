@@ -36,6 +36,7 @@ import numpy as np
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
+    declared_count,
     lerobot_version,
     name_list_error,
     non_negative_whole_number_error,
@@ -1990,10 +1991,15 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
           - ``frames_per_episode``: per-episode frame counts aligned to
             ``episode_indices`` (empty list if the ``length`` column is absent).
           - ``info_total_episodes``: the ``total_episodes`` recorded in
-            ``meta/info.json`` (``None`` if that file is absent or unreadable).
-            Returned alongside the parquet truth so callers can cross-check the
-            two metadata sources for agreement - a healthy dataset has
+            ``meta/info.json`` (``None`` if that file is absent or unreadable, or
+            if it declares no usable count - see ``info_problems``). Returned
+            alongside the parquet truth so callers can cross-check the two
+            metadata sources for agreement - a healthy dataset has
             ``info_total_episodes == total_episodes``.
+          - ``info_problems``: one message per ``meta/info.json`` declaration
+            that is present but is not a count (empty list for a healthy
+            dataset). A cross-check must fail on these rather than read the
+            ``None`` count as an absent header, which is agreement.
           - ``unreadable_files``: ``"<path relative to root>: <error>"`` for
             every ``meta/episodes`` parquet that could not be read (empty list
             for a healthy dataset). A partially-corrupt dataset - one truncated
@@ -2073,14 +2079,30 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
     # is internally inconsistent (e.g. an interrupted finalize), which
     # verify_dataset_episodes surfaces. Absent/corrupt info.json -> None (the
     # parquet remains the ground truth and is still reported).
+    # The declared count is graded by its one owner (``declared_count``) rather
+    # than coerced here. A header that declares something which is NOT a count is
+    # a third outcome, distinct from both a matching count and an absent header,
+    # so it is reported in ``info_problems`` instead of collapsing into the
+    # absent case - which a cross-check reads as agreement, the parquet being the
+    # sole truth then. Coercing instead was silently destructive both ways:
+    # ``int(2.5)`` is ``2``, the very count a two-episode parquet holds, and
+    # ``int(1e400)`` raises ``OverflowError`` out of this documented "unknown".
     info_total_episodes: int | None = None
+    info_problems: list[str] = []
     info_path = root_path / "meta" / "info.json"
     if info_path.is_file():
         try:
             with info_path.open() as f:
-                info_total_episodes = int(json.load(f)["total_episodes"])
+                raw_total = json.load(f)["total_episodes"]
         except (OSError, ValueError, KeyError, TypeError):
-            info_total_episodes = None
+            # Absent key, or a file no reader can parse: the documented unknown,
+            # indistinguishable from an absent header, and reported by
+            # verify_dataset's own meta/info.json check.
+            pass
+        else:
+            info_total_episodes = declared_count(raw_total)
+            if info_total_episodes is None:
+                info_problems.append(f"meta/info.json total_episodes={raw_total!r} is not an episode count")
 
     return {
         "episode_indices": episode_indices,
@@ -2088,5 +2110,6 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
         "total_frames": sum(frames_per_episode) if has_lengths else 0,
         "frames_per_episode": frames_per_episode if has_lengths else [],
         "info_total_episodes": info_total_episodes,
+        "info_problems": info_problems,
         "unreadable_files": unreadable_files,
     }

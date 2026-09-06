@@ -43,6 +43,10 @@ def sim():
     s.cleanup()
 
 
+#: Header spellings a two-episode dataset could carry that are not counts.
+UNUSABLE_HEADERS = ["2.5", "1e400", "true", '"2"']
+
+
 def _record(sim: Simulation, root: str, *, n_episodes: int, n_steps: int = 4) -> dict:
     """Drive a full start -> run_policy -> stop recording cycle; return run json."""
     shutil.rmtree(root, ignore_errors=True)
@@ -245,6 +249,36 @@ class TestInfoParquetCrossCheck:
         assert vj["actual"] == 2
         assert vj["info_total_episodes"] == 99
         assert vj["sources_agree"] is False
+
+    @pytest.mark.parametrize("declaration", ["2.5", "1e400", "true", '"2"'])
+    def test_verify_errors_when_the_header_is_not_an_episode_count(self, sim, tmp_path, declaration):
+        """A header that is not a count is a MISMATCH envelope, never agreement.
+
+        The parquet holds exactly ``expected`` episodes, so the only way this can
+        pass is by believing the header. Each spelling failed differently before
+        the count had one owner: ``2.5`` truncated to ``2`` and CERTIFIED the
+        dataset, ``"2"`` and ``true`` were coerced to a count, and ``1e400`` (a
+        well-formed JSON number that ``json.load`` parses to ``inf``) raised
+        ``OverflowError`` straight through this facade - which documents that a
+        corrupt dataset is "reported as this same error dict, never raised".
+        """
+        root = tmp_path / f"decl-{UNUSABLE_HEADERS.index(declaration)}"
+        _record(sim, str(root), n_episodes=2, n_steps=3)
+
+        info_path = root / "meta" / "info.json"
+        meta = json.loads(info_path.read_text())
+        meta["total_episodes"] = "@@declaration@@"
+        info_path.write_text(json.dumps(meta).replace('"@@declaration@@"', declaration))
+
+        result = sim.verify_dataset_episodes(expected=2)
+        assert result["status"] == "error", "a header no writer could produce must not certify"
+        assert "MISMATCH" in result["content"][0]["text"]
+        vj = _json_block(result)
+        assert vj["actual"] == 2
+        assert vj["info_total_episodes"] is None
+        assert vj["sources_agree"] is False
+        assert len(vj["info_problems"]) == 1
+        assert "total_episodes" in vj["info_problems"][0]
 
     def test_verify_treats_parquet_as_sole_truth_when_info_json_absent(self, sim, tmp_path):
         """Missing info.json -> parquet is the sole truth; verify still passes."""
