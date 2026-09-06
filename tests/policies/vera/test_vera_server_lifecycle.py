@@ -185,10 +185,18 @@ class TestVeraServerRunnerStart:
     def test_times_out_when_never_ready(self, monkeypatch):
         monkeypatch.setattr(sr, "_require_vera_installed", lambda *a, **k: None)
         monkeypatch.setattr(sr, "_port_open", lambda *a, **k: False)
+        monkeypatch.setattr(sr.time, "sleep", lambda _s: None)
+        mono = iter([0.0, 0.0, 5.0])  # deadline base, in-window check, expired check
+        monkeypatch.setattr(sr.time, "monotonic", lambda: next(mono))
         proc = _FakeProc(poll_values=[None], stdout=None)
         monkeypatch.setattr(sr.subprocess, "Popen", lambda *a, **k: proc)
-        # Zero readiness budget -> the wait loop never iterates and times out.
-        cfg = VeraConfig(embodiment="pusht", server_ready_timeout=0.0)
+        # The clock is driven, not the budget: a real one-second budget with a
+        # monotonic that jumps past it exercises the same expiry as the docker
+        # runner's readiness test below. This used to pass ``0.0`` instead, which
+        # expires the deadline before the loop's first test - so the port was
+        # never probed at all - and a budget of zero is not one a caller can ask
+        # for (``VeraConfig`` holds the field to a positive finite span).
+        cfg = VeraConfig(embodiment="pusht", server_ready_timeout=1.0)
         runner = sr.VeraServerRunner(cfg)
         with pytest.raises(TimeoutError, match="did not become ready"):
             runner.start()

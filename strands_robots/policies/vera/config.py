@@ -46,6 +46,11 @@ _DEFAULT_RENDER_WIDTH: dict[str, int] = {
     "allegro": 128,
 }
 
+# Seconds the readiness wait allows the server to open its websocket. A WAN
+# model load is slow, so the budget is generous; it is a default rather than a
+# bound, and ``VERA_SERVER_READY_TIMEOUT`` overrides it.
+_DEFAULT_SERVER_READY_TIMEOUT = 600.0
+
 _DEFAULT_PORTS: dict[str, tuple[int, int]] = {
     "pusht": (8820, 8821),
     "mimicgen": (8800, 8801),
@@ -162,8 +167,15 @@ class VeraConfig:
         teacache: Enable the near-lossless DiT teacache speedup (default True).
         teacache_thresh: teacache rel_l1 threshold (>0.15 hits a quality cliff).
         auto_launch_server: Launch + manage the server subprocess on first use.
-        server_ready_timeout: Seconds to wait for the server websocket to come
-            up before raising (WAN model load can be slow).
+        server_ready_timeout: Seconds the readiness wait allows the server
+            websocket to come up before raising (WAN model load can be slow).
+            ``None`` applies ``VERA_SERVER_READY_TIMEOUT`` else 600; any other
+            value must be a positive finite number of seconds, the shared
+            continuous-span domain
+            (:func:`~strands_robots.utils.positive_finite_number_error`) a
+            ``duration`` in seconds already takes. The environment spelling is
+            the one both readiness timeouts name as the remedy, so it is read
+            here rather than nowhere.
         python_executable: Interpreter used to launch the server subprocess
             (defaults to the current interpreter / ``VERA_PYTHON``).
     """
@@ -184,7 +196,7 @@ class VeraConfig:
     teacache: bool = True
     teacache_thresh: float = 0.10
     auto_launch_server: bool = True
-    server_ready_timeout: float = 600.0
+    server_ready_timeout: float | None = None
     python_executable: str | None = None
     # --- server launch mode -------------------------------------------------
     server_mode: str = "subprocess"  # "subprocess" | "docker"
@@ -319,6 +331,62 @@ class VeraConfig:
             # any real scalar, so an ``int`` 1 or a ``np.float64`` passes it, while
             # the field is declared ``float``.
             self.motion_plan_scale = float(self.motion_plan_scale)
+        # The readiness budget is resolved and checked here for the reason the
+        # ports, ``render_width`` and ``motion_plan_scale`` above are: this is the
+        # one funnel every caller passes through, and it is the only place the
+        # value can still be refused. Both ``VeraServerRunner._wait_until_ready``
+        # implementations - the subprocess one and the docker one - consume it as
+        # ``time.monotonic() + cfg.server_ready_timeout``, so the field is read
+        # only once the server has already been launched.
+        #
+        # ``VERA_SERVER_READY_TIMEOUT`` is read here because BOTH of those
+        # timeouts name it in the message they raise ("raise server_ready_timeout
+        # / VERA_SERVER_READY_TIMEOUT if needed"), and nothing read it: those two
+        # strings were the environment variable's only appearances in the tree.
+        # An operator who took the advice exported it, re-ran, and timed out
+        # after exactly the same 600 seconds with exactly the same message
+        # pointing at exactly the same variable - the one failure mode a
+        # readiness timeout exists to make actionable. It is applied for its
+        # presence and not its truth, matching the ports above, so a spelling the
+        # environment carries reaches the same check a keyword does.
+        #
+        # A span of seconds has no usable non-positive or non-finite value, and
+        # each way this field could hold one was reachable and silent:
+        #
+        # * ``inf`` made ``deadline`` infinite, so ``while time.monotonic() <
+        #   deadline`` never ended. The wait that documents "or raise on timeout"
+        #   instead polled forever, and because the raise is what calls
+        #   ``self.stop()``, the server subprocess (or container) it had just
+        #   launched was never torn down either.
+        # * ``nan`` is below nothing, so ``time.monotonic() < nan`` was False on
+        #   the first test: the loop body never ran, the port was never probed
+        #   once, and a server that was coming up fine was torn down and reported
+        #   as "did not become ready within nans".
+        # * ``0`` and a negative did the same thing in plainer words ("within 0s",
+        #   "within -30s"), and ``True`` - an ``int`` subclass - silently meant a
+        #   one-second budget.
+        # * a ``str`` (``"600"``, the shape an environment value has) raised
+        #   ``TypeError: unsupported operand type(s) for +: 'float' and 'str'``
+        #   out of the wait, past the ``TimeoutError``/``RuntimeError`` channel
+        #   the runner documents, with the server already spawned and again no
+        #   ``stop()``.
+        #
+        # ``0`` is not an opt-out here, for the reason it is not one for
+        # ``motion_plan_scale``: ``_ensure_started`` already probes the port
+        # BEFORE launching anything and reuses a server that is listening, so
+        # "do not wait" is expressible without a zero budget, and a zero budget
+        # only ever launches a server and instantly tears it down.
+        if self.server_ready_timeout is None:
+            env_timeout = _env_float("VERA_SERVER_READY_TIMEOUT")
+            self.server_ready_timeout = env_timeout if env_timeout is not None else _DEFAULT_SERVER_READY_TIMEOUT
+        if (
+            err := positive_finite_number_error(self.server_ready_timeout, "server_ready_timeout", type(self).__name__)
+        ) is not None:
+            raise ValueError(err)
+        # Normalized for the reason ``render_width`` and ``motion_plan_scale``
+        # are: the shared domain admits any real scalar, while the consumers add
+        # it to a ``float`` clock and format it with ``:.0f``.
+        self.server_ready_timeout = float(self.server_ready_timeout)
         if self.python_executable is None:
             self.python_executable = _env("VERA_PYTHON")
         _sm = _env("VERA_SERVER_MODE")

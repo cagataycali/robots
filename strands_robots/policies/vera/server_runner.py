@@ -173,7 +173,15 @@ class VeraServerRunner:
     def _wait_until_ready(self) -> None:
         """Poll the websocket port until ready, or raise on timeout / early exit."""
         cfg = self.config
-        deadline = time.monotonic() + cfg.server_ready_timeout
+        # ``VeraConfig.__post_init__`` resolves the budget (keyword, else
+        # ``VERA_SERVER_READY_TIMEOUT``, else the default), holds it to the shared
+        # positive-finite-seconds domain and normalizes it to a plain ``float``,
+        # so there is nothing left to coerce or to fall back to here. An ``inf``
+        # used to make this loop unable to end and a ``nan`` used to make it
+        # unable to begin.
+        timeout = cfg.server_ready_timeout
+        assert timeout is not None  # guaranteed by VeraConfig.__post_init__
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
                 code = self._proc.returncode
@@ -189,7 +197,7 @@ class VeraServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA server did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
+            f"within {timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT if needed)."
         )
 
@@ -356,7 +364,11 @@ class DockerServerRunner:
     def _wait_until_ready(self) -> None:
         """Poll the websocket port until ready, or raise on timeout / container exit."""
         cfg = self.config
-        deadline = time.monotonic() + cfg.server_ready_timeout
+        # Same guarantee as the subprocess runner's wait above: the budget is
+        # already resolved and checked on the config.
+        timeout = cfg.server_ready_timeout
+        assert timeout is not None  # guaranteed by VeraConfig.__post_init__
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._started_container and not self._container_running():
                 logs = self._tail_logs()
@@ -370,7 +382,7 @@ class DockerServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA container did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
+            f"within {timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT)."
         )
 
