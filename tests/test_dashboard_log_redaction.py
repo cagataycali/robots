@@ -357,3 +357,170 @@ def test_an_appended_part_that_cannot_be_redacted_is_withheld_not_raised(part: s
         assert _WITHHELD in out
     finally:
         forget_secrets()
+
+
+# --- the record has to stay renderable by the formatter it was written for ----------------------
+#
+# MEASURED against uvicorn 0.41's own AccessFormatter: three requests logged, TWO lines in the
+# access log. `AccessFormatter.formatMessage` unpacks five values out of `record.args` and builds
+# the request line from them - it never reads the message this filter cleaned - so baking the
+# redacted text into `msg` and clearing `args`, the stock way to freeze a redacted message, left
+# it nothing to unpack. It raised ValueError inside `Handler.emit` for exactly the records
+# carrying a credential, and this module's own docstring says every camera and mesh socket carries
+# one: the access log kept every ordinary request and dropped every authenticated handshake. That
+# is `test_the_line_is_still_a_useful_log_line` read one layer up - the line was not less useful,
+# it was absent - and a dropped handshake is the audit trail this module exists to keep.
+
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW1lcmEiLCJleHAiOjk5fQ.c2lnbmF0dXJlX2hlcmVfMTIzNA"
+
+#: uvicorn's access-log call, verbatim: the credential rides in ``args[2]``, never in the format
+#: string, and the last arg is an ``int`` under a ``%d``.
+_ACCESS_MSG = '%s - "%s %s HTTP/%s" %d'
+
+
+def _access_record(full_path: str) -> logging.LogRecord:
+    return logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        _ACCESS_MSG,
+        ("127.0.0.1:52111", "GET", full_path, "1.1", 200),
+        None,
+    )
+
+
+class _PositionalFormatter(logging.Formatter):
+    """Reads ``record.args`` positionally, which is what uvicorn's AccessFormatter does."""
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        client_addr, method, full_path, http_version, status_code = record.args  # type: ignore[misc]
+        return f'{client_addr} - "{method} {full_path} HTTP/{http_version}" {status_code}'
+
+
+class TestARedactedRecordIsStillRenderable:
+    """``args`` is a rendered part: redact it, do not discard it."""
+
+    def test_a_formatter_that_reads_args_positionally_still_has_them(self) -> None:
+        record = _access_record(f"/ws/camera?token={JWT}")
+        RedactingFilter().filter(record)
+        line = _PositionalFormatter().format(record)
+        assert JWT not in line
+        # and it is still the log line the access log exists for
+        assert "/ws/camera?token=" in line
+        assert '"GET' in line and "200" in line
+
+    def test_the_arity_the_formatter_unpacks_is_preserved(self) -> None:
+        record = _access_record(f"/ws/camera?token={JWT}")
+        RedactingFilter().filter(record)
+        assert isinstance(record.args, tuple)
+        assert len(record.args) == 5
+
+    def test_the_credential_is_gone_from_the_args_themselves(self) -> None:
+        # A formatter reading args raw never sees the cleaned message, so the redaction has
+        # to have happened in the values, not only in the rendered text.
+        record = _access_record(f"/ws/camera?token={JWT}")
+        RedactingFilter().filter(record)
+        assert not any(JWT in arg for arg in record.args if isinstance(arg, str))  # type: ignore[union-attr]
+
+    def test_an_arg_that_is_not_a_string_is_left_as_it_is(self) -> None:
+        # ``%d`` needs an int: a fingerprint there would leave a format string its own args
+        # cannot render, which is the failure this fix is removing, reintroduced.
+        record = _access_record(f"/ws/camera?token={JWT}")
+        RedactingFilter().filter(record)
+        assert record.args[-1] == 200  # type: ignore[index]
+        assert logging.Formatter("%(message)s").format(record).endswith(" 200")
+
+    def test_the_message_rail_is_redacted_as_before(self) -> None:
+        record = _access_record(f"/ws/camera?token={JWT}")
+        RedactingFilter().filter(record)
+        assert JWT not in record.getMessage()
+        assert f"token={fingerprint(JWT)}" in record.getMessage()
+
+    def test_dict_style_args_are_redacted_too(self) -> None:
+        # a mapping is passed INSIDE the args tuple, which is what ``Logger._log`` hands over;
+        # ``LogRecord`` then unwraps it onto ``record.args``.
+        record = logging.LogRecord(
+            "x", logging.INFO, __file__, 1, "socket %(path)s", ({"path": f"/ws?token={JWT}"},), None
+        )
+        RedactingFilter().filter(record)
+        assert JWT not in record.getMessage()
+        if isinstance(record.args, dict):  # arity preserved -> the key is still there
+            assert JWT not in record.args["path"]
+
+    def test_a_record_carrying_no_credential_is_untouched(self) -> None:
+        record = _access_record("/api/status")
+        RedactingFilter().filter(record)
+        assert record.args == ("127.0.0.1:52111", "GET", "/api/status", "1.1", 200)
+        assert record.msg == _ACCESS_MSG
+
+
+class TestACredentialVisibleOnlyOnceJoinedStillFailsClosed:
+    """No per-arg redaction can reach it, so the message is baked and the args dropped."""
+
+    def test_the_message_is_redacted_and_the_args_are_dropped(self) -> None:
+        # ``supersecretvalue123`` is credential-shaped only because ``?token=`` precedes it in
+        # the FORMAT STRING - the arg on its own is an ordinary word.
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "?token=%s", ("supersecretvalue123",), None)
+        RedactingFilter().filter(record)
+        assert "supersecretvalue123" not in record.getMessage()
+        assert record.args == ()
+
+    def test_a_registered_literal_is_redacted_without_fingerprinting_the_fingerprint(self) -> None:
+        # The arg IS the credential here, so the args are kept - and the verdict must not be
+        # taken by re-running the redaction, whose own fingerprint matches the value pattern
+        # and would report a 18-character token for a 43-character one.
+        try:
+            register_secret(TOKEN)
+            record = logging.LogRecord(
+                "x", logging.INFO, __file__, 1, "WebSocket /ws/camera?token=%s [accepted]", (TOKEN,), None
+            )
+            RedactingFilter().filter(record)
+            assert record.getMessage() == f"WebSocket /ws/camera?token={fingerprint(TOKEN)} [accepted]"
+        finally:
+            forget_secrets()
+
+    def test_a_record_whose_message_cannot_be_rendered_does_not_break_logging(self) -> None:
+        class _Bad:
+            def __str__(self) -> str:
+                raise RuntimeError("nope")
+
+        record = logging.LogRecord("x", logging.INFO, __file__, 1, "%s", (_Bad(),), None)
+        assert RedactingFilter().filter(record) is True
+
+
+class TestTheAccessLogKeepsEveryRequest:
+    """The whole defect, end to end, through uvicorn's own formatter."""
+
+    def _access_logger(self, name: str, formatter: logging.Formatter) -> tuple[logging.Logger, io.StringIO]:
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(formatter)
+        logger = logging.getLogger(name)
+        logger.handlers[:] = [handler]
+        logger.filters[:] = []
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        install_redaction((name,))
+        return logger, stream
+
+    @pytest.mark.parametrize("real_uvicorn", [False, True], ids=["positional", "uvicorn"])
+    def test_three_requests_produce_three_lines(self, real_uvicorn: bool) -> None:
+        if real_uvicorn:
+            uvicorn_logging = pytest.importorskip("uvicorn.logging")
+            formatter: logging.Formatter = uvicorn_logging.AccessFormatter(
+                '%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False
+            )
+        else:
+            formatter = _PositionalFormatter()
+        logger, stream = self._access_logger(f"test.redaction.access.{real_uvicorn}", formatter)
+        try:
+            for path in ("/api/status", f"/ws/camera?token={JWT}", "/api/robots"):
+                logger.info(_ACCESS_MSG, "127.0.0.1:52111", "GET", path, "1.1", 200)
+            written = stream.getvalue()
+        finally:
+            logger.handlers[:] = []
+            logger.filters[:] = []
+        assert len(written.strip().splitlines()) == 3, "the handshake carrying a credential was dropped"
+        assert JWT not in written
+        assert "/ws/camera?token=" in written, "which socket was opened is what the access log is for"
