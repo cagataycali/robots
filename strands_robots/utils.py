@@ -1162,6 +1162,95 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+# Characters that end the host inside ``<scheme>://<host>:<port>``. Each one
+# starts a later URI component, so a host carrying one does not name a bad host -
+# it names a different URI. ``:`` is in the set because the port follows it, and a
+# bracketed IPv6 literal (``[::1]``) is the one place it belongs to the host.
+_URI_COMPONENT_DELIMITERS = frozenset("/?#@:[]\\")
+
+
+def dial_host_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the host half of a websocket URI.
+
+    The other half of :func:`tcp_port_error`. Every caller-supplied port this
+    package dials is held to that shared domain, for the reason its consumers
+    record: an unusable port is not refused by the transport, it is *applied*,
+    and surfaces much later as an unreachable server that implicates the service
+    the caller was trying to reach. The host beside it is interpolated into the
+    same expression - ``ws://{host}:{port}`` - and was held to nothing, so the
+    URI parse resolved a value that is not a host instead of refusing it:
+
+    * A URI delimiter re-cuts the URI, and the validated port is the component
+      it takes. ``host="127.0.0.1/foo"`` parses as host ``127.0.0.1``, path
+      ``/foo:<port>`` and port **80**, so the client dials a port nobody
+      configured - the port domain cannot see this, because it is the host half
+      that discards the port. ``host="ws://127.0.0.1"``, the shape a caller who
+      pastes a URI supplies, parses as host ``ws`` on port 80.
+    * ``""`` builds no URI at all: the parse reports "hostname isn't provided"
+      and raises ``InvalidURI``, which is not an ``OSError`` and so escapes the
+      channel these clients convert into their actionable "could not reach the
+      server" hint.
+    * A non-string is carried by the f-string verbatim. ``None`` reaches the
+      resolver as the DNS name ``"none"`` and an ``int`` as its digits, so the
+      client dials a name the caller never wrote.
+    * A resolver silently repairs some values rather than reporting them: a tab
+      inside a host is dropped, and a trailing NUL truncates the lookup.
+
+    Only the shape a URI and a resolver can be *given* is decided here. Whether
+    the host resolves, and whether anything is listening on it, are facts about
+    the network a constructor cannot know and that the connect path already
+    reports.
+
+    ``"0.0.0.0"`` stays accepted: it is the documented way to reach a server
+    bound on every interface, it interpolates and dials cleanly, and readiness
+    probes special-case it. ``""`` means the same thing to a ``bind`` call and
+    nothing to a URI, so the refusal for it names ``"0.0.0.0"`` as the spelling
+    that works.
+
+    A ZMQ endpoint is deliberately not held to this domain. ``tcp://`` is not a
+    URI, and ``zmq``'s own address parse refuses every delimiter spelling above
+    at ``connect`` with the whole address in the message, so the transport there
+    reports what this function would.
+
+    Args:
+        value: The caller-supplied host.
+        param: The field or parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value can address a host.
+    """
+    if not isinstance(value, str):
+        return (
+            f"{context}: {param} must be a string hostname or IP literal, got {value!r} "
+            f"({type(value).__name__}). It is interpolated into the websocket URI the client "
+            "dials (ws://<host>:<port>), which carries it verbatim, so the client dials a name "
+            "nobody wrote rather than reporting the value."
+        )
+    bracketed = value.startswith("[") and value.endswith("]")
+    body = value[1:-1] if bracketed else value
+    if not body:
+        return (
+            f"{context}: {param} must name a host to dial, got {value!r}; "
+            f'ws://{value}:<port> is not a URI (the parse reports "hostname isn\'t provided"). '
+            "Use '0.0.0.0' to reach a server bound on every interface, or '127.0.0.1' for a local one."
+        )
+    own = frozenset(":") if bracketed else frozenset()
+    bad = sorted(
+        {c for c in body if (c in _URI_COMPONENT_DELIMITERS and c not in own) or not c.isprintable() or c.isspace()}
+    )
+    if bad:
+        hint = " Pass a bracketed literal for IPv6 (e.g. '[::1]')." if ":" in bad else ""
+        return (
+            f"{context}: {param} must be a bare hostname or IP literal, got {value!r}; "
+            f"{', '.join(map(repr, bad))} cannot appear in the host half of the websocket URI it is "
+            f"interpolated into (ws://<host>:<port>), so {f'ws://{value}:<port>'!r} names a "
+            "different URI rather than a host - a '/' puts the validated port in the path and the "
+            f"client dials :80 instead.{hint}"
+        )
+    return None
+
+
 def non_negative_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative integer count.
 
