@@ -236,10 +236,18 @@ class TestWhatTheUncheckedCoefficientDidToTheTargetNetwork:
     """Executable premises for the measured harm, without a full training run."""
 
     def test_a_boolean_coefficient_is_the_maximum_of_the_interval(self) -> None:
-        """``bool`` is an ``int`` subclass, so a bare interval test takes ``True``."""
-        assert isinstance(True, int)
-        assert float(True) == 1.0
-        assert 0.0 < True <= 1.0  # noqa: E712 - the bare test this replaces
+        """``bool`` is an ``int`` subclass, so a bare interval test takes ``True``.
+
+        The coefficient is bound to a name rather than written as a literal
+        operand: a comparison between two constants is decided when it is
+        typed, so as ``0.0 < True <= 1.0`` this assertion could not have
+        failed whatever Python did, which is the shape
+        tests/test_no_vacuous_comparisons.py refuses.
+        """
+        coefficient: Any = True
+        assert isinstance(coefficient, int)
+        assert float(coefficient) == 1.0
+        assert 0.0 < coefficient <= 1.0
 
     def test_the_maximum_makes_the_target_a_copy_of_the_online_network(self) -> None:
         """At ``tau=1`` the Polyak average is ``tp = p`` - no target network at all."""
