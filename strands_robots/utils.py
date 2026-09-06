@@ -1383,7 +1383,7 @@ def torch_device_error(value: Any, param: str, context: str) -> str | None:
         torch.device(value)
     except (RuntimeError, ValueError) as e:
         return (
-            f"{context}: {param}={value!r} is not a torch device string ({e}). "
+            f"{context}: {param}={_refusal_repr(value)} is not a torch device string ({e}). "
             "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
         )
     return None
