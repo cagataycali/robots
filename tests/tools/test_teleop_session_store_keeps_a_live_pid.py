@@ -31,8 +31,10 @@ one prunes it.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -58,6 +60,19 @@ def _live_pid() -> int:
     pid = os.getpid()
     assert tele_mod.psutil.pid_exists(pid), "premise: the test process must exist"
     return pid
+
+
+def _free_pid() -> int:
+    """A PID no process holds, so the host's own verdict for it is "finished".
+
+    Taken from the top of the kernel's range rather than a fixed low number: a
+    low one is exactly what a busy machine is likely to have handed out, which is
+    how a test's verdict comes to depend on the host it runs on.
+    """
+    for candidate in range(4194303, 4194303 - 256, -1):
+        if not tele_mod.psutil.pid_exists(candidate):
+            return candidate
+    raise AssertionError("premise: some PID near the top of the range must be free")
 
 
 #: Start offset a seeded record claims for its process. Any value does: what the
@@ -285,3 +300,110 @@ def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.Monke
 # checked from here, but only through ``list_sessions`` - a read - and that
 # store's prune reaches disk through ``add_session``/``remove_session``, so the
 # read alone could not see it drop the record. The write paths are graded there.
+
+
+# ---------------------------------------------------------------------------
+# The double has to sit where the verdict is read.
+# ---------------------------------------------------------------------------
+class TestTheVerdictIsControlledWhereItIsAnswered:
+    """A stand-in for the probes above only counts if the prune consults it.
+
+    ``session_is_running`` resolves ``psutil`` from :mod:`strands_robots.tools._process_stop`'s
+    own globals, so rebinding ``lerobot_teleoperate.psutil`` installs a stand-in
+    the prune never looks at. The verdict then falls through to the real host and
+    the record's fate is decided by whether this machine happens to hold the PID
+    the test named -- a pass where it is free, a failure where it is taken, and a
+    grade of nothing either way. ``NoSuchProcess`` had a case written that way,
+    which is why the one above it is worth keeping honest.
+
+    Rebinding a whole module in another module's globals is the right tool when
+    that module is the reader, and it usually is: of the 21 such rebindings in this
+    tree, 20 are sound, 15 of them installing a fake clock. So the census below
+    asks only about ``psutil``, whose answer a second module owns.
+    """
+
+    def test_no_test_reaches_the_prune_by_rebinding_psutil(self) -> None:
+        """No test controls a process probe by rebinding the name ``psutil``."""
+        root = Path(__file__).resolve().parents[2]
+        offenders = []
+        accepted = 0
+        for path in sorted((root / "tests").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "setattr"
+                    and len(node.args) >= 2
+                ):
+                    continue
+                target, name = node.args[0], node.args[1]
+                if isinstance(target, ast.Attribute) and target.attr == "psutil":
+                    accepted += 1
+                elif (
+                    isinstance(target, ast.Name)
+                    and isinstance(name, ast.Constant)
+                    and name.value == "psutil"
+                    # This module carries the one occurrence there is a reason for:
+                    # the case below installs such a stand-in in order to assert
+                    # that the prune does not consult it.
+                    and path.name != Path(__file__).name
+                ):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+        assert accepted, "premise: some test must reach psutil for this rule to be about anything"
+        assert not offenders, (
+            "a stand-in installed as <module>.psutil is not consulted by the prune, whose "
+            "verdict is answered in strands_robots.tools._process_stop; set the attribute on "
+            "the psutil module object instead, and the identity read at "
+            f"_process_stop._started_since_boot, as _raise_on_probe does: {offenders}"
+        )
+
+    def test_a_rebinding_in_the_tool_module_is_not_consulted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rebinding ``tele_mod.psutil`` leaves the prune reading the real host.
+
+        The stand-in would keep the record -- it reports the PID as existing, and a
+        record carrying no identity is answered on existence alone. The record is
+        pruned anyway, and the stand-in is never asked: both halves say the verdict
+        came from the host.
+        """
+        consulted: list[str] = []
+
+        class _WouldKeepIt:
+            NoSuchProcess = tele_mod.psutil.NoSuchProcess
+            AccessDenied = tele_mod.psutil.AccessDenied
+
+            @staticmethod
+            def pid_exists(pid: int) -> bool:
+                consulted.append("pid_exists")
+                return True
+
+            @staticmethod
+            def Process(pid: int):  # noqa: N802 - mirror psutil.Process
+                consulted.append("Process")
+                raise _WouldKeepIt.NoSuchProcess(pid)
+
+        mgr = SessionManager()
+        mgr.add_session("unidentified", {"pid": _free_pid(), "action": "teleoperate", "start_time": 0.0})
+        monkeypatch.setattr(tele_mod, "psutil", _WouldKeepIt)
+
+        assert mgr.list_sessions() == {}, "the stand-in would have kept this record"
+        assert consulted == [], f"the prune must not be reachable this way, but consulted {consulted}"
+
+    def test_the_module_object_is_the_seam_the_prune_reads(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Setting the attribute on the shared psutil object does reach the prune.
+
+        The control for the census above: the rule is about how a double is
+        installed, not about leaving the probes alone.
+        """
+        asked: list[int] = []
+
+        def pid_exists(pid: int) -> bool:
+            asked.append(int(pid))
+            return False
+
+        pid = _live_pid()
+        mgr = SessionManager()
+        mgr.add_session("live", _identified(pid))
+        monkeypatch.setattr(tele_mod.psutil, "pid_exists", pid_exists)
+
+        assert mgr.list_sessions() == {}
+        assert pid in asked, f"the prune must read the module object, but asked {asked}"
