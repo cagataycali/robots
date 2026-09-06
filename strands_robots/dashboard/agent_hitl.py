@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any
 
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 
@@ -40,19 +40,57 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
 #: tools whose gated input names the motion in FIELDS, not an instruction string.
 DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
 
-#: the motion-bearing fields, in the order an operator reads them.
-_DETAIL_FIELDS = ("pose_name", "motor_name", "positions", "position", "delta", "steps", "data")
+#: The motion-bearing fields, in the order an operator reads them: which servo
+#: first, then what it is being told to do.
+#:
+#: Every gated action's payload must appear here, because this roster is what
+#: makes one call distinguishable from another -- it is read both by
+#: :func:`_direct_serial_detail`, for the line the operator is shown, and by
+#: :func:`_grant_key`, for the identity their yes is recorded against. A payload
+#: field missing from it is therefore invisible twice over: the human approves a
+#: motion the gate declined to describe, and their grant is deposited under a key
+#: some other call also owns.
+#:
+#: ``motor_id`` and ``velocity`` are the whole payload of ``serial_tool``'s
+#: ``feetech_velocity``, and ``hex_data`` is the second spelling of ``send`` /
+#: ``send_read`` -- the raw bytes that go on the bus. Absent, those three actions
+#: rendered as an empty detail line. ``duration`` is here for the same reason on
+#: the ``fleet`` surface: it is shown to the operator, and how long a robot moves
+#: is part of what they said yes to, so a yes for a five-second task was
+#: otherwise spendable by a ten-minute one.
+_DETAIL_FIELDS = (
+    "pose_name",
+    "motor_name",
+    "motor_id",
+    "positions",
+    "position",
+    "velocity",
+    "delta",
+    "steps",
+    "data",
+    "hex_data",
+    "duration",
+)
 
 
-def _direct_serial_detail(action: str, tool_input: dict) -> str:
+def _motion_fields(tool_input: Mapping[str, Any]) -> tuple[str, ...]:
+    """``field=value`` for each motion-bearing field this call carries, in roster order.
+
+    The one reading of :data:`_DETAIL_FIELDS`, so the operator's line and the
+    grant key cannot come to describe a call differently. An omitted field and an
+    empty one are the same thing here: neither names any motion.
+    """
+    return tuple(
+        f"{key}={tool_input[key]}"
+        for key in _DETAIL_FIELDS
+        if tool_input.get(key) is not None and tool_input.get(key) != ""
+    )
+
+
+def _direct_serial_detail(action: str, tool_input: Mapping[str, Any]) -> str:
     """The gated call's own motion fields as one readable line -- never invented."""
-    parts = [action]
-    for key in _DETAIL_FIELDS:
-        value = tool_input.get(key)
-        if value is None or value == "":
-            continue
-        parts.append(f"{key}={value}")
-    return " ".join(parts) if len(parts) > 1 else ""
+    fields = _motion_fields(tool_input)
+    return " ".join((action, *fields)) if fields else ""
 
 
 def _resolve_target(
@@ -136,7 +174,7 @@ def motion_intent(
     if not instruction and tool_name in DIRECT_SERIAL_TOOLS:
         # pose/serial inputs carry the motion in named fields, not an
         # instruction string; show the operator WHAT a yes moves, verbatim.
-        instruction = _direct_serial_detail(action, cast("dict[str, Any]", tool_input))
+        instruction = _direct_serial_detail(action, tool_input)
     reason: dict[str, Any] = {
         "tool": tool_name,
         "action": action,
@@ -183,13 +221,41 @@ _grants: set[str] = set()
 
 
 def _grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
+    """The identity a human yes is recorded against: what they were shown, verbatim.
+
+    A grant is spendable by exactly one call, so the key has to name that call.
+    Reading ``tool_input["target"]`` did not: the two tools this layer is the
+    ONLY human gate for do not declare a ``target`` at all -- their peer is the
+    ``port``, which is why :func:`_resolve_target` reads that field instead -- and
+    they carry the motion itself in :data:`_DETAIL_FIELDS`, not in an
+    ``instruction`` string. Three of the four parts were therefore constant for
+    them, and every ``pose_tool`` / ``serial_tool`` call of one action hashed to
+    the same ``tool|action||``. A yes for ``motor_name=shoulder_pan
+    position=2048`` on ``/dev/ttyACM0`` was spendable by ``motor_name=elbow_flex
+    position=4095`` on ``/dev/ttyACM1``: a different joint, on a different arm, to
+    a different angle, with no human asked. The gate had already resolved the
+    port and shown the operator those very fields -- the key was the one place
+    that dropped them.
+
+    So the parts are the facts :func:`motion_intent` resolves, read the same way
+    it reads them: the tool, the action as the gate matched it (stripped), the
+    target :func:`_resolve_target` resolved, the instruction, and the call's own
+    motion fields. A per-build binding is not consulted, and does not need to be:
+    a bound proxy tool IS its peer, so ``tool_name`` already names the robot.
+
+    Returns:
+        ``repr`` of the parts tuple. A tuple rather than a ``"|"`` join because
+        these values are model-authored: a ``"|"`` inside one of them would
+        otherwise shift a boundary and let two different calls agree.
+    """
     tool_input = tool_input or {}
-    return "|".join(
+    return repr(
         (
             tool_name,
-            str(tool_input.get("action") or ""),
-            str(tool_input.get("target") or ""),
+            str(tool_input.get("action") or "").strip(),
+            _resolve_target(tool_name, tool_input, None),
             str(tool_input.get("instruction") or tool_input.get("message") or ""),
+            *_motion_fields(tool_input),
         )
     )
 
