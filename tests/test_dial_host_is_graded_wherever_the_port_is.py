@@ -39,15 +39,21 @@ for an action.
 from __future__ import annotations
 
 import inspect
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 import strands_robots.utils as utils_module
 from strands_robots.inference.client import RemotePolicy
-from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 from strands_robots.policies.cosmos3.policy import Cosmos3Policy
 from strands_robots.policies.vera import VeraConfig
+
+if TYPE_CHECKING:
+    # Reaches nothing but the `cast` below, which is a string, so the name needs
+    # to exist for a type checker and not at runtime. Under `TYPE_CHECKING` that
+    # is what it costs; imported at runtime it also loads the real client into a
+    # module whose whole point is that a stand-in is never asked to dial.
+    from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 
 # Hosts a URI cannot carry, grouped by what the value did instead of failing.
 # ``':'`` is a delimiter because the port follows it, so a bare IPv6 literal and
