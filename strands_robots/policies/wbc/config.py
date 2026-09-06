@@ -139,7 +139,11 @@ class WBCConfig:
             never changes what an unnamed sibling is scaled by.
         cmd_scale: Scale applied to the ``[vx, vy, omega]`` velocity command
             before it enters the observation's command block (upstream
-            ``cmd_scale = [2.0, 2.0, 0.5]``).
+            ``cmd_scale = [2.0, 2.0, 0.5]``). An empty sequence means "not
+            stated" and is completed with that upstream triple at construction,
+            so this attribute is always the vector the command block is built
+            with - passing an empty sequence never scales the velocity
+            differently from omitting the argument.
         height_cmd: Default target base height written to command slot [3]
             (upstream ``height_cmd = 0.74``). Overridable per call via the
             ``height`` kwarg.
@@ -304,6 +308,20 @@ class WBCConfig:
         # dataclass, so the normalised map is installed with object.__setattr__.
         if any(name not in self.obs_scales for name in _DEFAULT_OBS_SCALES):
             object.__setattr__(self, "obs_scales", {**_DEFAULT_OBS_SCALES, **self.obs_scales})
+        # The velocity scale gets the same completion, for the same reason. The
+        # length rule above admits an EMPTY cmd_scale as "not stated", but this
+        # field's default IS the full upstream triple - so omitting the argument
+        # and passing an empty sequence are two spellings of one request that
+        # resolved to different scales, because both _resolve_command
+        # implementations fall back to a bare unit scale for a vector too short
+        # to slice. That is the second fallback number the obs_scales table above
+        # exists to prevent, and here it lands on the command block the network
+        # reads: omega scaled by 1.0 where this table says 0.5, so a yaw rate the
+        # caller asked for arrives DOUBLED, and vx/vy arrive HALVED. Filling it
+        # here keeps cmd_scale the vector the command block is actually built
+        # with, exactly as obs_scales is the map the frame is built with.
+        if not cmd_scale_length:
+            object.__setattr__(self, "cmd_scale", list(_DEFAULT_CMD_SCALE))
 
     @property
     def num_obs(self) -> int:

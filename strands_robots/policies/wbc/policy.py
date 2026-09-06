@@ -65,7 +65,7 @@ import numpy as np
 from strands_robots.policies.base import Policy
 from strands_robots.utils import finite_number_error, require_optional, sequence_length
 
-from .config import WBCConfig
+from .config import _DEFAULT_CMD_SCALE, WBCConfig
 from .control import compute_targets, pd_control, projected_gravity
 from .observation import ObservationHistory, build_single_frame
 
@@ -523,10 +523,8 @@ class WBCPolicy(Policy):
         command = np.zeros(c, dtype=np.float64)
 
         # Slots [0:3]: velocity * cmd_scale (clamp the slice to whatever fits).
-        cmd_scale = np.asarray(self._config.cmd_scale, dtype=np.float64).ravel()
         n_vel = min(3, c)
-        scale = cmd_scale[:n_vel] if cmd_scale.shape[0] >= n_vel else np.ones(n_vel)
-        command[:n_vel] = raw_velocity[:n_vel] * scale
+        command[:n_vel] = raw_velocity[:n_vel] * self._velocity_scale(n_vel)
 
         # Slot [3]: target base height (per-call ``height`` overrides the config).
         if c > 3:
@@ -546,6 +544,45 @@ class WBCPolicy(Policy):
             command[4 : 4 + n_rpy] = rpy[:n_rpy]
 
         return command, raw_velocity
+
+    def _velocity_scale(self, n_vel: int) -> np.ndarray:
+        """Resolve the first ``n_vel`` components of the ``cmd_scale`` factor.
+
+        A component the config does not supply resolves from
+        :data:`~strands_robots.policies.wbc.config._DEFAULT_CMD_SCALE` - this
+        module's single owner of the upstream velocity scale - and not from a
+        bare ``1.0``, for the reason
+        :func:`~strands_robots.policies.wbc.observation.build_single_frame`
+        resolves an omitted ``obs_scales`` key from ``_DEFAULT_OBS_SCALES``: a
+        second fallback number scales the command block by something no table
+        states. Here that lands hardest on ``omega``, whose documented scale is
+        ``0.5``, so a unit fallback commands a yaw rate DOUBLE the one asked for
+        while ``vx``/``vy`` arrive halved - a wrong command rather than an error,
+        in the observation's first ``command_dim`` entries, which a dense network
+        carries to all ``num_actions`` joint targets.
+
+        :meth:`WBCConfig.__post_init__` completes an empty ``cmd_scale`` from the
+        same table, so a config built through it states every component and this
+        resolution is the identity. It is what answers for a config object
+        assembled AROUND that constructor - the input class the sibling fallback
+        in ``build_single_frame`` exists for.
+
+        Shared with :meth:`WBCGaitPolicy._resolve_command`, whose command block
+        scales the same velocity triple, so the two blocks cannot be built with
+        different scales.
+
+        Args:
+            n_vel: How many velocity components the command block has room for.
+                At most three, the width of the scale table.
+
+        Returns:
+            An ``(n_vel,)`` float64 array of scale factors.
+        """
+        cmd_scale = np.asarray(self._config.cmd_scale, dtype=np.float64).ravel()
+        return np.array(
+            [cmd_scale[i] if i < cmd_scale.shape[0] else _DEFAULT_CMD_SCALE[i] for i in range(n_vel)],
+            dtype=np.float64,
+        )
 
     def _extract_state(self, observation_dict: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Pull (qj, dqj, base_ang_vel, base_quat) out of the observation dict.
