@@ -156,6 +156,7 @@ wins over code defaults):
 | `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` |
 | `tracker_backend` | `VERA_TRACKER_BACKEND` | IDM tracker |
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
+| `server_ready_timeout` | `VERA_SERVER_READY_TIMEOUT` | readiness wait budget, in seconds |
 | `server_mode` | `VERA_SERVER_MODE` | `subprocess` \| `docker` |
 
 Both ports take the shared TCP-port domain every port-dialing provider applies:
@@ -170,6 +171,21 @@ because it is present, not because it is truthy, so a port means the same thing
 whichever spelling named it. `VERA_SERVER_PORT=0` is refused exactly as
 `server_port=0` is, and `VERA_VIS_PORT=0` disables the viewer exactly as
 `vis_port=0` does.
+
+`server_ready_timeout` is the span the readiness wait allows the server to open
+its websocket: a positive finite number of seconds, the shared continuous-span
+domain (`positive_finite_number_error`) a `duration` in seconds already takes, or
+`None` to apply `VERA_SERVER_READY_TIMEOUT` else 600. Both waits raise
+`did not become ready ... within Ns (WAN model load can be slow - raise
+server_ready_timeout / VERA_SERVER_READY_TIMEOUT if needed)`, so the environment
+spelling is read on the config: a remedy a failure names has to be one, and
+following that advice has to change the next attempt. `0` is not an opt-out, for
+the reason it is not one for `motion_plan_scale` — `_ensure_started` probes the
+port and reuses an already-listening server *before* it launches anything, so
+"do not wait" needs no zero budget, and a zero budget only ever launches a server
+and instantly tears it down. `inf` is refused for the opposite reason: it makes
+`while time.monotonic() < deadline` unable to end, and the raise that ends it is
+what tears the launched server down.
 
 `motion_plan_scale` takes the same domain as the two IK scales below: a positive
 finite number, or `None` to leave the server's own scale alone. `0` is not the
