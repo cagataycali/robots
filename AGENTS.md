@@ -986,6 +986,34 @@ hatch run format            # ruff check --fix, ruff format
      `require_last_push_approval` then disqualifies the pushing account from
      re-supplying it, turning a one-approval merge into one that needs a second
      reviewer.
+
+     **`CHANGES_REQUESTED` is a fourth reading, and it is the one no approval
+     answers.** A standing request for changes holds the merge until *its own
+     author* approves or dismisses it, so an approval from anybody else
+     satisfies `required_approving_review_count` and leaves the pull request
+     `BLOCKED`. That makes it the opposite of every other value here: the party
+     it needs is not "a reviewer" but one named account, and asking a different
+     reviewer for the approval spends a round that cannot merge anything.
+
+     It is also the reading a resolved thread hides. #3205 sat at
+     `CHANGES_REQUESTED` for 15h44m with its one review thread **resolved**,
+     `call-test-lint` `SUCCESS`, and `check_thread_is_answered.py` reading
+     `nothing-owed` -- 12h51m of that after the fix had landed. Thread
+     resolution and review decision are separate objects and resolving the
+     thread does not retract the review, so the sweep that answers "does this
+     owe me anything" correctly said no while the decision went on blocking.
+     Nor does the requester's own follow-up reply clear it: a reply is a
+     `COMMENTED` review, which expresses no position, so it supersedes nothing.
+
+     `check_merge_blockers.py` reports this as `changes-requested`, owed by
+     `the reviewer who requested changes` and named account by account, ahead of
+     the approval rules it is not answerable by. It did not always: it modelled
+     the approval side alone, so it reported #3205 as `missing-approval` owed by
+     "a reviewer other than the pusher" -- a party whose approval could not have
+     merged it, which is the #1905 presentation reached from the review-decision
+     side rather than the last-push side. If you are the requester and the work
+     has landed, the remedy is to supersede your own review; that is a review,
+     not a push, and it costs the branch nothing.
    - *And that the head it names is the branch's tip.* A pull request has three
      answers to "what is the head commit" and they can disagree for hours. Two
      of them are the API's, and are the pair this bullet compares: `headRefOid`
@@ -1280,7 +1308,9 @@ hatch run format            # ruff check --fix, ruff format
    It reads the branch ruleset - so a rule that is changed in settings cannot
    drift from this file - and names every rule the pull request leaves
    unsatisfied together with the party who can clear it: a conflict or an
-   unresolved thread or a failing check (the author), a missing approval (any
+   unresolved thread or a failing check (the author), a standing request for
+   changes (only the account that made it, by approving or dismissing its own
+   review -- no other reviewer's approval clears it), a missing approval (any
    reviewer), an approval only its own pusher supplied (a different reviewer,
    per #1905), a required check absent because a fork run is held at
    `action_required` (a maintainer, by approving each run), a required check

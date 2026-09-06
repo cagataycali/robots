@@ -52,6 +52,10 @@ def commented(author: str, at: str = "2026-08-01T00:00:00Z") -> Any:
     return Review(author=author, state="COMMENTED", submitted_at=at)
 
 
+def requested_changes(author: str, at: str = "2026-08-01T00:00:00Z") -> Any:
+    return Review(author=author, state="CHANGES_REQUESTED", submitted_at=at)
+
+
 # --------------------------------------------------------------------------
 # The four measured pull requests.
 #
@@ -741,3 +745,84 @@ def test_the_sweep_report_stays_ascii():
     ]
     mod.render_sweep(rows, [1900], "strands-labs/robots").encode("ascii")
     mod.render_sweep([], [], "strands-labs/robots").encode("ascii")
+
+
+# --------------------------------------------------------------------------
+# A standing request for changes is a separate question with a separate party.
+# --------------------------------------------------------------------------
+
+
+def test_a_standing_request_for_changes_is_reported_beside_the_approval_it_does_not_answer():
+    """The two positions name different parties, so they are read separately.
+
+    Measured on #3205: one account held a standing CHANGES_REQUESTED and no
+    account had approved. Reading the approval side alone answers "nobody has
+    approved", which points at any reviewer -- and an approval from any other
+    reviewer leaves the pull request blocked, because only the requesting
+    account can clear its own review.
+    """
+    reviews = [requested_changes("the-reviewer", "2026-09-06T01:24:59Z")]
+    assert mod.current_approvers(reviews) == ()
+    assert mod.current_change_requesters(reviews) == ("the-reviewer",)
+
+
+def test_a_commented_review_does_not_retract_a_request_for_changes():
+    """Symmetric with the approval side: COMMENTED expresses no position.
+
+    This is the #3205 shape exactly -- the requesting account replied on the
+    thread describing the fix it had pushed, which is a COMMENTED review. If
+    that counted as a retraction the request would read as cleared while it went
+    on holding the merge.
+    """
+    reviews = [
+        requested_changes("the-reviewer", "2026-09-06T01:24:59Z"),
+        commented("the-reviewer", "2026-09-06T04:17:25Z"),
+    ]
+    assert mod.current_change_requesters(reviews) == ("the-reviewer",)
+
+
+@pytest.mark.parametrize("clearing", ["APPROVED", "DISMISSED"])
+def test_the_requesting_account_clears_its_own_request_either_way(clearing):
+    """The two remedies that belong to the requester, and nothing else does."""
+    reviews = [
+        requested_changes("the-reviewer", "2026-09-06T01:24:59Z"),
+        Review(author="the-reviewer", state=clearing, submitted_at="2026-09-06T17:09:17Z"),
+    ]
+    assert mod.current_change_requesters(reviews) == ()
+
+
+def test_another_accounts_approval_does_not_clear_a_request_for_changes():
+    """The whole point of reading the two separately.
+
+    An approval satisfies ``required_approving_review_count`` and leaves the
+    request standing, so a report that collapses them sends the reader to a
+    party whose approval cannot merge anything.
+    """
+    reviews = [
+        requested_changes("the-reviewer", "2026-09-06T01:24:59Z"),
+        approved("another-reviewer", "2026-09-06T09:00:00Z"),
+    ]
+    assert mod.current_approvers(reviews) == ("another-reviewer",)
+    assert mod.current_change_requesters(reviews) == ("the-reviewer",)
+
+
+def test_both_questions_resolve_standing_the_same_way():
+    """One owner for "whose position counts", asked twice.
+
+    Derived rather than asserted per case: whatever the shared resolution
+    decides, an account appears in at most one of the two answers. A second copy
+    of the ordering rule is how the two come to disagree.
+    """
+    reviews = [
+        requested_changes("alice", "2026-01-01T00:00:00Z"),
+        approved("alice", "2026-01-02T00:00:00Z"),
+        approved("bob", "2026-01-01T00:00:00Z"),
+        requested_changes("bob", "2026-01-02T00:00:00Z"),
+        commented("carol", "2026-01-03T00:00:00Z"),
+    ]
+    approvers = set(mod.current_approvers(reviews))
+    requesters = set(mod.current_change_requesters(reviews))
+    assert approvers == {"alice"}
+    assert requesters == {"bob"}
+    assert not approvers & requesters
+    assert "carol" not in approvers | requesters

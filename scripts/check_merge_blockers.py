@@ -243,6 +243,7 @@ _approval = _load_sibling()
 current_approvers = _approval.current_approvers
 resolve_pusher = _approval.resolve_pusher
 resolve_reviews = _approval.resolve_reviews
+current_change_requesters = _approval.current_change_requesters
 
 
 # Outcome names. Ordered here the way they bind in practice, which is also the
@@ -258,6 +259,7 @@ REQUIRED_CHECK_CANCELLED = "required-check-cancelled"
 REQUIRED_CHECK_ABSENT = "required-check-absent"
 CHECK_SUITE_ABSENT = "check-suite-absent"
 UNRESOLVED_THREADS = "unresolved-threads"
+CHANGES_REQUESTED = "changes-requested"
 MISSING_APPROVAL = "missing-approval"
 PUSHER_ONLY_APPROVAL = "pusher-only-approval"
 NO_UNSATISFIED_RULE = "no-unsatisfied-rule"
@@ -266,6 +268,7 @@ NO_UNSATISFIED_RULE = "no-unsatisfied-rule"
 AUTHOR = "the author"
 REVIEWER = "any reviewer"
 OTHER_REVIEWER = "a reviewer other than the pusher"
+REQUESTING_REVIEWER = "the reviewer who requested changes"
 MAINTAINER = "a maintainer"
 NOBODY = "nobody"
 ANYONE = "anyone, by attempting the merge"
@@ -281,6 +284,7 @@ _OWED_BY: dict[str, str] = {
     REQUIRED_CHECK_ABSENT: MAINTAINER,
     CHECK_SUITE_ABSENT: MAINTAINER,
     UNRESOLVED_THREADS: AUTHOR,
+    CHANGES_REQUESTED: REQUESTING_REVIEWER,
     MISSING_APPROVAL: REVIEWER,
     PUSHER_ONLY_APPROVAL: OTHER_REVIEWER,
     NO_UNSATISFIED_RULE: ANYONE,
@@ -422,6 +426,12 @@ class PullRequestState:
     # silently pick one.
     check_suite_conclusions: tuple[str | None, ...] | None = None
     approvers: tuple[str, ...] = ()
+    # Accounts whose latest position requests changes. Read separately from
+    # ``approvers`` because the two name different parties: a standing request
+    # for changes is clearable only by its own author, and no approval from
+    # anyone else clears it. Defaults to ``()`` so every existing caller and
+    # fixture describes an unblocked review state unchanged.
+    change_requesters: tuple[str, ...] = ()
     pusher: str | None = None
 
 
@@ -643,6 +653,29 @@ def evaluate(state: PullRequestState, rules: Ruleset) -> tuple[Blocker, ...]:
         )
 
     if rules.required_approving_review_count:
+        if state.change_requesters:
+            # Reported ahead of the approval rules, and separately from them,
+            # because an approval does not answer it. With required reviews in
+            # force a standing CHANGES_REQUESTED holds the merge until its own
+            # author approves or dismisses it, so another account's approval
+            # satisfies the count and the pull request stays BLOCKED. Reading
+            # the approval side alone therefore names a reviewer who cannot
+            # clear it -- measured on #3205, which this check reported as
+            # `missing-approval` owed by "a reviewer other than the pusher"
+            # while the only account that could clear it was the one that had
+            # requested the changes. It stood 15h44m, of which 12h51m was after
+            # the fix had landed and the thread was resolved.
+            found.append(
+                Blocker(
+                    CHANGES_REQUESTED,
+                    "required_approving_review_count",
+                    f"{_join(sorted(state.change_requesters))} "
+                    f"{'has' if len(state.change_requesters) == 1 else 'have'} a standing "
+                    f"request for changes. Only that account can clear it, by approving or "
+                    f"by dismissing its own review; an approval from anyone else is necessary "
+                    f"but not sufficient while it stands.",
+                )
+            )
         # The pusher's own approval is discounted only when the branch actually
         # carries require_last_push_approval. Filtering unconditionally would
         # invent a blocker on a branch that permits a self-approved head.
@@ -913,6 +946,7 @@ def resolve_state(repo: str, pr: int, token: str) -> PullRequestState:
         check_conclusions=resolve_check_conclusions(repo, head_sha, token) if head_sha else {},
         check_suite_conclusions=resolve_check_suites(repo, head_sha, token) if head_sha else None,
         approvers=current_approvers(reviews),
+        change_requesters=current_change_requesters(reviews),
         pusher=resolve_pusher(repo, head_sha, token) if head_sha else None,
     )
 
