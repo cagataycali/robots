@@ -140,7 +140,7 @@ it, or a tuned PD law) is required, and is out of scope for this provider.
 | `tracker_fps` | int | 50 | SLERP upsample target |
 | `device` | str \| None | auto | `"cuda"` / `"cpu"` |
 | `dtype` | str | `"fp16"` | `"fp16"` / `"bf16"` / `"fp32"` |
-| `seed` | int \| None | None | Reproducible sampling |
+| `seed` | int \| None | None | Reproducible sampling. A whole number, either sign, or `None` for fresh entropy |
 
 Every field above is also an explicit keyword argument of `KimodoPolicy`, so it
 can be set three interchangeable ways:
@@ -205,6 +205,18 @@ whole run stays reproducible: re-running at the same master `seed=` replays the
 same per-episode motions. Repeating a seed replays the buffered motion rather
 than re-running the sampler for identical frames, and `reset()` without a seed
 only rewinds - neither pays for a diffusion run.
+
+That replay is keyed on the seed, so the seed has to be a whole number and both
+surfaces that set one enforce it: `KimodoConfig` (however the value arrives) and
+`reset(seed=...)`, which stores a per-episode reseed on the frozen config and so
+applies the domain itself. A fractional seed would reach the sampler as itself
+and key as `int(seed)`, making `2.5` and `2.9` name one motion - the second
+episode would read as a cache hit and replay the first. `nan` and `inf` cannot
+be keyed at all, and `inf` is what a config file spelling `1e400` parses to.
+Either sign and any width is accepted; a seed too wide for `torch.manual_seed`
+is refused by the applier, which names the overflow itself. A refused
+`reset(seed=...)` changes nothing - the held motion and the cursor are left as
+they were.
 
 ## Chaining prompts into a long-horizon sequence
 
