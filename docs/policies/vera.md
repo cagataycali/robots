@@ -224,20 +224,19 @@ The two video-planner sampler knobs take the same treatment, for a reason
 specific to how they travel. `sample_steps` and `teacache_thresh` are read
 nowhere but the launch command, which carries them as *text* —
 `str(cfg.sample_steps)` and `str(cfg.teacache_thresh)` in the subprocess argv,
-`VERA_SAMPLE_STEPS=` and `VERA_TEACACHE_THRESH=` in the
-container's `-e` overlay — so a value nothing here
-inspects is handed to the server, and the server can only report it in one of two
-ways, neither naming the field. A token its flag's own type cannot parse
-(`'2.7'`, `'nan'`, `'True'` for an `int` flag) makes the server exit before it
-opens its port, and the readiness wait answers `VERA server exited early (code N)
-... common causes are missing checkpoints (set VERA_CKPT_ROOT / ckpt_root) or
-CUDA OOM` — two causes that are not the cause. A token it *can* parse starts a
-server on a setting nobody asked for: `0` or `-5` denoise steps, a threshold of
-`nan` (below nothing) or `inf` (below everything). Which of the two happens is
-not a property of the value being usable, only of how `str()` spells it, and
-`start()` already refuses a locally-decidable cause in the same place —
-`_require_vera_installed` exists so a missing install does not surface as that
-same opaque early exit.
+`VERA_SAMPLE_STEPS=` and `VERA_TEACACHE_THRESH=` in the container's `-e` overlay
+— so a value nothing here inspects is handed to the server, and the server can
+only report it in one of two ways, neither naming the field. A token its flag's
+own type cannot parse (`'2.7'`, `'nan'`, `'True'` for an `int` flag) makes the
+server exit before it opens its port, and the readiness wait answers `VERA
+server exited early (code N) ... common causes are missing checkpoints (set
+VERA_CKPT_ROOT / ckpt_root) or CUDA OOM` — two causes that are not the cause. A
+token it *can* parse starts a server on a setting nobody asked for: `0` or `-5`
+denoise steps, a threshold of `nan` (below nothing) or `inf` (below everything).
+Which of the two happens is not a property of the value being usable, only of
+how `str()` spells it, and `start()` already refuses a locally-decidable cause
+in the same place — `_require_vera_installed` exists so a missing install does
+not surface as that same opaque early exit.
 
 So `sample_steps` takes the shared count domain `render_width` takes and is
 converted to `int`, and `teacache_thresh` takes the shared continuous domain
