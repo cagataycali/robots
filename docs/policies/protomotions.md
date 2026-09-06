@@ -256,7 +256,7 @@ sidecar; omit it to use the defaults, which match the shipped export.
 | `joint_names` | 29 G1 joints | ONNX action order |
 | `anchor_body_index` | `16` (`torso_link`) | Link whose world rotation the network reads |
 | `root_body_index` | `0` (`pelvis`) | Floating base |
-| `control_dt` | `0.02` | Seconds per control tick (50 Hz) |
+| `control_dt` | `0.02` | Seconds per control tick (50 Hz); the period the reference motion is resampled onto |
 | `future_step_indices` | `(1, 2, 4, 8)` | Lookahead offsets, in control steps |
 | `action_ema_alpha` | `1.0` | Smoothing weight on the emitted joint targets; `1.0` is passthrough |
 
@@ -287,6 +287,50 @@ The index also goes through the shared whole-number domain, so a yaml
 and a hand-built `ProtoMotionsConfig(...)` reports the same value the same way a
 sidecar does. An integral float such as `16.0` addresses a row and is kept,
 normalised to the row number both consumers index with.
+
+### A control period has to be a period
+
+`control_dt` is the field of the timing block the control path spends. It is the
+period the reference motion is *resampled* onto, so it fixes how many frames one
+clip becomes, and the playhead advances exactly one of those frames per control
+tick. It goes through the same positive-finite domain, at construction:
+
+```text
+ValueError: ProtoMotionsConfig: control_dt must be > 0, got True.
+```
+
+The values it turns away are not near-misses. Measured by resampling a 3-second,
+30 fps reference clip that sweeps every joint once, then commanding the tracker one
+frame per tick and asking the default lookahead offsets `(1, 2, 4, 8)` for frames
+ahead of the playhead:
+
+| sidecar `timing.control_dt` | resolved | frames in the clip | widest joint travel | lookahead offsets already past the end |
+| --- | --- | --- | --- | --- |
+| `0.02` (shipped) | `0.02` | 151 | 1.050 rad | 0 of 4 |
+| `0.04` | `0.04` | 76 | 1.050 rad | 0 of 4 |
+| `true` | `1.0` | 4 | 0.940 rad | 2 of 4 |
+| `-0.02` | `-0.02` | 1 | 0.0 rad | 4 of 4 |
+| `inf` | `inf` | 1 | 0.0 rad | 4 of 4 |
+
+A negative period and `inf` collapse the clip to a single frame, because the
+conversion is `max(1, round(motion_length / control_dt) + 1)` and both make that
+term non-positive; the index clamp in `get_state_at_frame` then serves that one
+frame for every tick of the episode. Traced over 200 ticks, the commanded target
+never leaves `0.0` rad for either, while the shipped period arches to `1.0` rad at
+tick 75 and back by tick 150; `true` is over in three ticks (`0.0` -> `0.866` ->
+`0.866` -> `0.0`) and holds there for the remaining 196 - a tracker that reports a
+motion and plays almost none of it. `0` left the reported rate undefined, and
+`nan` used to reach
+`int(round(...))` inside the resampler and raise `cannot convert float NaN to
+integer` there, naming neither the field nor the sidecar it came from.
+
+A cache dict's own `control_dt` outranks the `control_dt=` argument, so it is
+held to the same domain by `MotionPlayer` rather than only at the config.
+
+`physics_dt` and `decimation` are deliberately left alone: no reader in this
+package consumes either, so refusing a value would change which sidecars load
+with no behaviour to protect. Their documented relation to `control_dt` is
+unchecked for the same reason.
 
 ### Target smoothing
 

@@ -217,10 +217,17 @@ class ProtoMotionsConfig:
         root_body_index: Row index of the root body inside ``body_names``.
         stiffness: Per-joint kp used by the deployed PD loop.
         damping: Per-joint kd used by the deployed PD loop.
-        control_dt: Seconds per outer control tick.
-        physics_dt: Seconds per inner physics substep.
+        control_dt: Seconds per outer control tick, a positive finite number.
+            This is the period the reference motion is RESAMPLED onto by
+            :class:`~strands_robots.policies.protomotions.motion_utils.MotionPlayer`,
+            so it fixes how many frames one clip becomes, and the playhead
+            advances exactly one of those frames per tick.
+        physics_dt: Seconds per inner physics substep. Carried for provenance;
+            no reader in this package consumes it.
         decimation: Physics substeps per control tick (``control_dt /
-            physics_dt``).
+            physics_dt``). Carried for provenance; no reader in this package
+            consumes it, and the stated relation is not checked against the two
+            periods.
         future_step_indices: Future-reference lookahead offsets in control
             steps.
         action_ema_alpha: Exponential-moving-average smoothing applied to the
@@ -276,7 +283,7 @@ ProtoMotionsPolicy.get_actions`; the raw network output continues to feed the
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Refuse a body index, or a smoothing factor, no reader can honor.
+        """Refuse a body index, a smoothing factor or a control period no reader can honor.
 
         The two indices are the only fields this config resolves a body NAME
         from, and an index that misses is not a value the control path can
@@ -304,10 +311,30 @@ ProtoMotionsPolicy.get_actions`; the raw network output continues to feed the
         is. None of the four is a smoothing factor, and all four used to be
         stored and carried into the control path.
 
+        :attr:`control_dt` is gated for the same reason, and it is the one field
+        of the timing block the control path SPENDS: it is the period the
+        reference motion is resampled onto, so it decides how many frames one
+        clip becomes, and the playhead advances one frame per tick. A period of
+        ``1.0`` - what a sidecar's ``control_dt: true`` resolved to - resamples a
+        3-second clip to 4 frames, so two of the tracker's four lookahead
+        offsets read past the end from the first tick; a negative period and
+        ``inf`` each collapse the clip to a SINGLE frame, which the frame clamp
+        then serves for every tick of the episode - a tracker that reports a
+        motion and holds one pose. ``0`` left the period undefined, and ``nan``
+        reached the resampler to raise there instead, naming neither the field
+        nor the sidecar it came from. All five used to be stored.
+
+        :attr:`physics_dt` and :attr:`decimation` are deliberately NOT gated: no
+        reader in this package consumes either, so refusing a value would change
+        which sidecars load with no behaviour to protect - a decision this does
+        not make. Their documented relation to :attr:`control_dt` is unchecked
+        for the same reason.
+
         Raises:
             ValueError: If either body index is not a non-negative whole number,
-                or is not a row of :attr:`body_names`; or if
-                :attr:`action_ema_alpha` is not a finite number in ``(0, 1]``.
+                or is not a row of :attr:`body_names`; if
+                :attr:`action_ema_alpha` is not a finite number in ``(0, 1]``;
+                or if :attr:`control_dt` is not a positive finite number.
         """
         num_bodies = len(self.body_names)
         for name in ("anchor_body_index", "root_body_index"):
@@ -344,6 +371,16 @@ ProtoMotionsPolicy.get_actions`; the raw network output continues to feed the
         # to int: the filter multiplies with it every tick, and a NumPy scalar
         # read from a config array would set the output dtype from the weight.
         object.__setattr__(self, "action_ema_alpha", float(self.action_ema_alpha))
+
+        # A control period is a rate, which is precisely the shared domain's
+        # subject ("the loop period is 1 / hz"): it covers the sign, the zero,
+        # the finiteness, the non-real spellings and the ``bool`` that would act
+        # as a silent 1.0.
+        if error := positive_finite_number_error(self.control_dt, "control_dt", "ProtoMotionsConfig"):
+            raise ValueError(error)
+        # Normalise for the reason action_ema_alpha does: the resampler divides a
+        # motion length by this value and multiplies it by a frame number.
+        object.__setattr__(self, "control_dt", float(self.control_dt))
 
     # ------------------------------------------------------------------
     # Derived properties - computed on read, never stored, so a frozen
@@ -484,7 +521,14 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
     ema = control.get("action_ema_alpha", 1.0)
 
     timing = data.get("timing", {})
-    control_dt = float(timing.get("control_dt", GTP_G1_CONTROL_DT))
+    # Handed through raw for the reason the body indices and the smoothing factor
+    # are: the config's __post_init__ is the single owner of what a control
+    # period may be, and ``float()`` here first is what turned a sidecar's
+    # ``control_dt: true`` into a 1-second control period - resampling a
+    # 3-second reference motion down to 4 frames - before the domain saw it.
+    control_dt = timing.get("control_dt", GTP_G1_CONTROL_DT)
+    # These two keep their coercion: no reader consumes either, so there is no
+    # domain behind them for a value to be laundered past.
     physics_dt = float(timing.get("physics_dt", 0.001))
     decimation = int(timing.get("decimation", 20))
 
