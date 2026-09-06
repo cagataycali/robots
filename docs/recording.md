@@ -458,6 +458,17 @@ switch the check off and certify a dataset holding a zero-length episode. The
 same domain backs `verify_dataset_episodes(expected=...)`, so neither surface
 accepts an episode count the other refuses.
 
+The dataset can switch that check off the same way the threshold could: the
+length check runs only when the parquet carries per-episode lengths at all, and
+availability is whether a `length` was *read*, not whether one was positive. A
+run that wrote three episodes of zero frames is graded and named
+(`3 episode(s) below min_frames=1`), and its `meta/info.json total_frames` is
+still compared against the zero the parquet holds - previously the whole-run
+corruption read as "this writer omits the `length` column" and passed while the
+strictly better `[5, 0, 0]` failed. A column that is absent, or present but
+wholly null, remains unavailable: a length nobody recorded is unknown, not zero,
+so neither gains a zero-length verdict.
+
 `verify-dataset` always produces a report - it never crashes on the corruption
 it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
 `video_path` template, or a truncated / unreadable MP4 is reported as a problem

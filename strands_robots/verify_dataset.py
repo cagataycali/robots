@@ -230,8 +230,13 @@ def verify_dataset(
                 f"meta/info.json total_episodes={decl_eps} disagrees with parquet "
                 f"({info['total_episodes']} distinct episode(s)) - metadata/parquet drift"
             )
-        # Frame totals only meaningful when parquet carries per-episode lengths.
-        if decl_frames is not None and info["total_frames"] and decl_frames != info["total_frames"]:
+        # Frame totals only meaningful when parquet carries per-episode lengths,
+        # and that availability is ``frames_per_episode`` rather than the total
+        # being non-zero: a parquet whose every episode recorded 0 frames sums
+        # to 0, so gating on the total read the worst dataset in this class as
+        # one carrying no lengths and dropped the comparison on exactly the
+        # header that claims frames the dataset does not hold.
+        if decl_frames is not None and info["frames_per_episode"] and decl_frames != info["total_frames"]:
             problems.append(
                 f"meta/info.json total_frames={decl_frames} disagrees with parquet ({info['total_frames']} frame(s))"
             )
