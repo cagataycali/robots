@@ -11,7 +11,8 @@ measured.
 Neither field is read anywhere else. Their only consumer is the launch command,
 which carries them as *text*: `str(cfg.sample_steps)` and
 `str(cfg.teacache_thresh)` in `VeraServerRunner._build_command`, and
-`VERA_SAMPLE_STEPS=` in `DockerServerRunner`'s `-e` overlay. Nothing between the
+`VERA_SAMPLE_STEPS=` / `VERA_TEACACHE_THRESH=` in `DockerServerRunner`'s `-e`
+overlay. Nothing between the
 config and the server inspects the value, so the server was left to report it,
 and it has two ways to - neither of which names the field.
 

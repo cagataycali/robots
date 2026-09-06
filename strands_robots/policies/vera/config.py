@@ -221,7 +221,13 @@ class VeraConfig:
             number - the shared domain ``motion_plan_scale`` takes - checked
             whatever ``teacache`` is set to, since that flag can be turned on
             after construction. Use ``teacache=False`` to switch the cache off;
-            ``0`` is not that opt-out.
+            ``0`` is not that opt-out. Carried to the server by both launch
+            modes: as ``--teacache-thresh`` on the subprocess argv, and as
+            ``-e VERA_TEACACHE_THRESH`` for the container, which the entrypoint
+            turns back into the same flag. Only the ``teacache`` off-switch used
+            to be forwarded to the container, so a tuned threshold applied under
+            ``server_mode="subprocess"`` and was silently dropped under
+            ``server_mode="docker"``.
         auto_launch_server: Launch + manage the server subprocess on first use.
         server_ready_timeout: Seconds the readiness wait allows the server
             websocket to come up before raising (WAN model load can be slow).

@@ -67,15 +67,17 @@ def test_store_hot_reloads_on_file_change(tmp_path):
     assert auth.list_credentials()[0]["name"] == "phone"
 
 
-def test_token_roundtrip_and_expiry(monkeypatch):
+def test_token_roundtrip_and_expiry():
     token = auth.issue_token("cred1", name="phone")
     claims = auth.verify_token(token)
     assert claims["sub"] == "cred1"
     assert auth.session_is_valid(token)
     assert not auth.session_is_valid("garbage")
     assert not auth.session_is_valid("")
-    monkeypatch.setenv("STRANDS_DASH_AUTH_TOKEN_TTL", "-10")
-    expired = auth.issue_token("cred1")
+    # Expiry is driven by the explicit ``exp`` argument issue_token() takes for
+    # exactly this, not by a negative TOKEN_TTL: a lifetime at or below zero is
+    # now refused, because every token minted under it is dead on arrival.
+    expired = auth.issue_token("cred1", exp=int(time.time()) - 10)
     with pytest.raises(HTTPException) as exc:
         auth.verify_token(expired)
     assert exc.value.status_code == 401
