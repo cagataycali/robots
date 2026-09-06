@@ -111,8 +111,7 @@ class TestATypelessGeomTakesTheFormatsDefault:
         assert shape == "sphere"
         # A ball is its own rotation: the half-extent is the radius on each axis.
         assert half == pytest.approx((shape_size[0],) * 3), (
-            f"the link reader reported {(shape, shape_size)} and the AABB reader {half} "
-            "for one <geom size='0.03'/>"
+            f"the link reader reported {(shape, shape_size)} and the AABB reader {half} for one <geom size='0.03'/>"
         )
 
     def test_the_default_is_the_one_the_compiler_applies(self, tmp_path):
