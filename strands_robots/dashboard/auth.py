@@ -19,6 +19,14 @@ Configuration:
         so it must carry the scheme and any non-default port.
     ``STRANDS_DASH_AUTH_RP_ID``: pins the relying-party id when the hostname
         legitimately changed. See :func:`rp_id_verdict`.
+    ``STRANDS_DASH_AUTH_TOKEN_TTL`` (default 86400), ``..._SESSION_MAX_AGE``
+        (default 2592000) and ``..._HANDOFF_TTL`` (default 300): how long a
+        session token lives, the absolute age past which no renewal extends it,
+        and the lifetime of a handoff token. All three are a whole number of
+        SECONDS, read through :func:`_duration`, which refuses a value it cannot
+        use rather than substituting the default: these are how the window in
+        which a session commands hardware gets narrowed, and every direction a
+        substituted default lands in is the wider one.
     ``STRANDS_DASH_AUTH_CHAL_MAX`` (default 512) and
         ``STRANDS_DASH_AUTH_CHAL_MAX_PER_IP`` (default 16): bounds on the table of
         in-flight WebAuthn challenges. The per-ip cap must stay strictly below the
@@ -104,11 +112,80 @@ def _rp_name() -> str:
     return os.getenv(_ENV + "RP_NAME", "strands robots dashboard")
 
 
-def _token_ttl() -> int:
+# Every duration this module reads, in seconds, with the value each falls back
+# to when its variable is unset. One table rather than a literal at each reader:
+# a second copy of a fallback is what lets a reader hand back a number no
+# documentation states.
+_DURATION_DEFAULTS = {"TOKEN_TTL": 86400, "SESSION_MAX_AGE": 2592000, "HANDOFF_TTL": 300}
+
+
+def _duration(name: str) -> int:
+    """Read one duration knob, in seconds, refusing a value it cannot use.
+
+    Args:
+        name: Suffix of the environment variable, e.g. ``"TOKEN_TTL"``. Must be
+            a key of :data:`_DURATION_DEFAULTS`, which supplies its fallback.
+
+    Returns:
+        The duration in seconds, as an ``int``.
+
+    Raises:
+        ValueError: The variable holds something that is not a whole number of
+            seconds, or a number below one second. Refused rather than
+            defaulted, for the same reason :func:`_challenge_cap` refuses a cap
+            it cannot use: these knobs are how an operator TIGHTENS the window
+            in which a session commands real hardware, and every direction the
+            old reader defaulted in was the wider one. ``TOKEN_TTL=1h`` is not
+            an hour, it is unparseable, and silently handing back the one-day
+            default means the operator who shortened the window keeps the long
+            one and is never told.
+    """
+    default = _DURATION_DEFAULTS[name]
+    var = _ENV + name
+    raw = os.getenv(var, "").strip()
+    if not raw:
+        return default
     try:
-        return int(os.getenv(_ENV + "TOKEN_TTL", "86400"))
+        value = int(raw)
     except ValueError:
-        return 86400
+        raise ValueError(
+            f"{var}={raw!r} is not a whole number of seconds (default {default}). "
+            "Durations here are plain integers: '1h', '30s' and '15m' are not "
+            "recognized units, and a window narrowed with one of them would be "
+            "dropped in favour of the wider default."
+        ) from None
+    if value < 1:
+        raise ValueError(
+            f"{var}={value} is not a usable lifetime: it must be >= 1 second "
+            f"(default {default}). At or below zero, every token minted under it "
+            "is already expired when it is handed out, so nobody can sign in."
+        )
+    return value
+
+
+def _validate_durations() -> None:
+    """Resolve every duration knob once, refusing the whole configuration if one
+    cannot be read.
+
+    Called at import so a misspelled duration stops the server, rather than
+    first surfacing as a failed login on a dashboard that is already serving.
+    The readers below re-read their own variable, so the environment stays the
+    source of truth.
+
+    Raises:
+        ValueError: Propagated from :func:`_duration` for the first knob that
+            holds a value it cannot use.
+    """
+    for knob in _DURATION_DEFAULTS:
+        _duration(knob)
+
+
+_validate_durations()
+
+
+def _token_ttl() -> int:
+    """Lifetime of a freshly minted session token (default 1 day)."""
+    return _duration("TOKEN_TTL")
 
 
 def _bootstrap_token() -> str:
@@ -735,10 +812,7 @@ def issue_token(
 
 def _session_max_age() -> int:
     """Absolute lifetime of a session, however often it is renewed (default 30 days)."""
-    try:
-        return int(os.getenv(_ENV + "SESSION_MAX_AGE", "2592000"))
-    except ValueError:
-        return 2592000
+    return _duration("SESSION_MAX_AGE")
 
 
 def renewal_verdict(
@@ -827,10 +901,7 @@ def session_is_valid(token: str) -> bool:
 def handoff_ttl() -> int:
     """Lifetime of a handoff token (default 5 minutes). It rides in a URL, so it must be
     short: URLs land in history, logs and screenshots."""
-    try:
-        return int(os.getenv(_ENV + "HANDOFF_TTL", "300"))
-    except ValueError:
-        return 300
+    return _duration("HANDOFF_TTL")
 
 
 def handoff_verdict(

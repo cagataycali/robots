@@ -147,7 +147,15 @@ Order of operations, and the reason for it:
 - The mesh is a separate trust domain from the web session. `--local-dev`
   disables mesh TLS for single-machine work; do not leave it on for a fleet
   that spans machines. See [Multi-robot Mesh](../mesh.md).
-- A session lasts `STRANDS_DASH_AUTH_TOKEN_TTL` seconds (default 86400).
+- A session lasts `STRANDS_DASH_AUTH_TOKEN_TTL` seconds (default 86400), cannot
+  be renewed past `STRANDS_DASH_AUTH_SESSION_MAX_AGE` seconds from the original
+  sign-in (default 2592000) and can be copied into a LAN URL for
+  `STRANDS_DASH_AUTH_HANDOFF_TTL` seconds (default 300). All three are a whole
+  number of **seconds**: `1h`, `30s` and `15m` are not units this reads. A value
+  it cannot use is refused at startup rather than replaced by the default,
+  because the default is the wider window in all three cases - shortening one of
+  these and being handed the long one back is the mistake worth failing loudly
+  over.
 - In-flight sign-in challenges are bounded by `STRANDS_DASH_AUTH_CHAL_MAX`
   (default 512) and `STRANDS_DASH_AUTH_CHAL_MAX_PER_IP` (default 16). The
   per-ip bound is what stops one client from filling the table and pushing out
