@@ -147,7 +147,7 @@ wins over code defaults):
 
 | kwarg | env var | maps to |
 |-------|---------|---------|
-| `embodiment` | — | `--embodiment` |
+| `embodiment` | — | `--embodiment` (`pusht` \| `mimicgen` \| `allegro` \| `droid`) |
 | `server_port` / `vis_port` | `VERA_SERVER_PORT` / `VERA_VIS_PORT` | `--port` / `--vis-port` |
 | `algo_config` | `VERA_ALGO_CONFIG` | `--algo-config` (swap to the omni planner) |
 | `dynamics_run_id` | `VERA_DYNAMICS_RUN_ID` | `--dynamics-run-id` |
@@ -158,6 +158,19 @@ wins over code defaults):
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
 | `server_ready_timeout` | `VERA_SERVER_READY_TIMEOUT` | readiness wait budget, in seconds |
 | `server_mode` | `VERA_SERVER_MODE` | `subprocess` \| `docker` |
+
+`embodiment` is checked against that vocabulary before anything is resolved from
+it, because it is the key the rest of the table is looked up by: both default
+ports, the render width, the checkpoint-root variable that is probed, the
+container name and the server's own `--embodiment` flag. Each of those six
+readers does something different with a name no table has an entry for, and the
+two lookups that carried their own fallback fell back on mimicgen's values, so an
+unrecognised spelling resolved to a configuration indistinguishable from
+`embodiment="mimicgen"` — and because the runner reuses a server that is already
+listening, a mistyped `pusht` would dial 8800 and roll out against a running
+mimicgen server under a success. `docker/entrypoint.sh` already refuses the same
+four-name vocabulary with `exit 2`, but only for `server_mode="docker"` and only
+after the image has started, so the config holds it too.
 
 Both ports take the shared TCP-port domain every port-dialing provider applies:
 an `int` in `[1, 65535]`, or `None` for the per-embodiment default. The value is

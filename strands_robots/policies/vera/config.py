@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from strands_robots.utils import (
     positive_finite_number_error,
@@ -31,6 +31,12 @@ Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # VERA's configurations/dataset/pusht.yaml), so it validates the
 # provider -> server -> action plumbing rather than producing a solving
 # rollout. "allegro"/"droid" are code-present but checkpoint-absent (Wave 2).
+
+# The embodiments this provider knows, derived from the type alias rather than
+# re-listed, so an embodiment added to :data:`Embodiment` participates in the
+# refusal below on arrival instead of being silently absorbed by a fallback.
+_EMBODIMENTS: tuple[str, ...] = get_args(Embodiment)
+
 
 # Per-embodiment default ports (policy, viz) - match the VERA examples
 # (PushT uses 8820/8821; everything else uses 8800/8801).
@@ -76,6 +82,42 @@ def _env_int(name: str) -> int | None:
         return int(v)
     except ValueError:
         return None
+
+
+def _embodiment_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not an embodiment this provider knows.
+
+    The embodiment is not one knob among the others: it is the field the other
+    per-embodiment defaults are *looked up by*. It selects both ports, the
+    per-view render width, the checkpoint-root variable that is probed, the
+    container name and the ``--embodiment`` flag the server itself is launched
+    with, so a spelling no table has an entry for is not a single wrong value -
+    it is a whole configuration assembled from whatever each of those six
+    readers does with an unknown key.
+
+    Refusing it here rather than downstream is what the package already does on
+    the other side of the container boundary: ``docker/entrypoint.sh`` ends its
+    per-embodiment ``case`` with ``ERROR: unknown embodiment`` and ``exit 2``,
+    listing the same four names. That refusal cannot stand in for this one,
+    because it is only reached in ``server_mode="docker"`` after an image has
+    been started, and it never runs at all for the subprocess runner or for a
+    server that is merely dialed (``auto_launch_server=False``).
+
+    Args:
+        value: The caller-supplied embodiment.
+        param: The field name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is a known embodiment.
+    """
+    if value in _EMBODIMENTS:
+        return None
+    return (
+        f"{context}: {param} must be one of {', '.join(map(repr, _EMBODIMENTS))}, got {value!r}. "
+        "The embodiment selects the planner/IDM pair, both default ports and the render width, "
+        "so an unknown one cannot be resolved to a configuration."
+    )
 
 
 def _viewer_port_error(value: Any, param: str, context: str) -> str | None:
@@ -127,7 +169,12 @@ class VeraConfig:
 
     Args:
         embodiment: VERA embodiment - selects the WAN/DFoT planner + Jacobian
-            IDM pair and the client-side action adapter.
+            IDM pair and the client-side action adapter. Must be one of
+            ``pusht``, ``mimicgen``, ``allegro``, ``droid`` (the members of
+            :data:`Embodiment`); any other spelling is refused, because this
+            field is the key every other per-embodiment default is looked up by
+            and an unknown one would otherwise resolve to another embodiment's
+            ports and render width.
         host: Policy-server hostname.
         server_port: Policy-server websocket port. ``None`` applies
             ``VERA_SERVER_PORT`` else the per-embodiment default; any other
@@ -206,8 +253,27 @@ class VeraConfig:
     docker_extra_args: list[str] | None = None  # extra `docker run` args (list, no shell)
 
     def __post_init__(self) -> None:
+        # Checked first, because every per-embodiment default below is looked up
+        # BY this field. Both lookups used to carry their own fallback -
+        # ``_DEFAULT_PORTS.get(self.embodiment, (8800, 8801))`` and
+        # ``_DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)`` - and those two
+        # literals are byte-for-byte mimicgen's entries, so every unrecognised
+        # spelling resolved to mimicgen's ports and mimicgen's width. That is
+        # not a degraded configuration, it is an indistinguishable one:
+        # ``VeraServerRunner.start`` reuses a server that is already listening
+        # ("ours or someone else's"), so ``embodiment="PushT"`` dialed 8800,
+        # found a running mimicgen server and ran the whole rollout against the
+        # wrong embodiment's planner/IDM pair under a success. A typo could not
+        # be told from a deliberate ``embodiment="mimicgen"``.
+        #
+        # With the vocabulary held here the tables are the single statement of
+        # what each embodiment defaults to, so they are indexed directly: a
+        # second copy of a default is what made "not a known embodiment" and
+        # "mimicgen" the same request.
+        if (err := _embodiment_error(self.embodiment, "embodiment", type(self).__name__)) is not None:
+            raise ValueError(err)
         # Apply per-embodiment port defaults when not explicitly set.
-        default_policy, default_vis = _DEFAULT_PORTS.get(self.embodiment, (8800, 8801))
+        default_policy, default_vis = _DEFAULT_PORTS[self.embodiment]
         # Both env overrides are read with ``is not None``, never with ``or``.
         # The two spellings are not interchangeable for a port: ``0`` is falsy,
         # so the ``or`` this line used to carry discarded the override and
@@ -264,7 +330,7 @@ class VeraConfig:
         # for it is owed the refusal below, not 128 under a success.
         if self.render_width is None:
             env_width = _env_int("VERA_RENDER_WIDTH")
-            self.render_width = env_width if env_width is not None else _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
+            self.render_width = env_width if env_width is not None else _DEFAULT_RENDER_WIDTH[self.embodiment]
         if (err := positive_whole_number_error(self.render_width, "render_width", type(self).__name__)) is not None:
             raise ValueError(err)
         # Normalized to a plain ``int`` here because the domain accepts any real
