@@ -148,6 +148,7 @@ wins over code defaults):
 | kwarg | env var | maps to |
 |-------|---------|---------|
 | `embodiment` | — | `--embodiment` (`pusht` \| `mimicgen` \| `allegro` \| `droid`) |
+| `host` | — | `--host` (a bare hostname or IP literal; `[::1]` for IPv6) |
 | `server_port` / `vis_port` | `VERA_SERVER_PORT` / `VERA_VIS_PORT` | `--port` / `--vis-port` |
 | `algo_config` | `VERA_ALGO_CONFIG` | `--algo-config` (swap to the omni planner) |
 | `dynamics_run_id` | `VERA_DYNAMICS_RUN_ID` | `--dynamics-run-id` |
@@ -194,6 +195,25 @@ because it is present, not because it is truthy, so a port means the same thing
 whichever spelling named it. `VERA_SERVER_PORT=0` is refused exactly as
 `server_port=0` is, and `VERA_VIS_PORT=0` disables the viewer exactly as
 `vis_port=0` does.
+
+`host` is the other half of that URI, and it is checked in the same funnel for
+the same reason: `ws://{host}:{port}` is one expression, so a host a URI cannot
+carry does not name a bad address — it names a *different* address, and the port
+is the component it takes. It must be a bare hostname or IP literal, with no `/`,
+`?`, `#`, `@`, `:` (outside a bracketed IPv6 literal such as `[::1]`), whitespace
+or control character. `host="127.0.0.1/foo"` parses as host `127.0.0.1`, path
+`/foo:8820` and port **80**, and `host="ws://127.0.0.1"` — the shape a caller who
+pastes a URI supplies — parses as host `ws` on port 80: both discard the port the
+TCP-port domain just accepted, which the port half cannot see. `""` is refused
+naming `"0.0.0.0"` as the spelling that reaches a server bound on every
+interface, because `""` is the one unusable host the readiness probe *accepted* —
+it maps a bind-only host to loopback, so the runner reported `VERA server ready`
+and the client then raised `InvalidURI` past the `OSError` channel that carries
+its "could not reach the VERA policy server" hint. A non-string never reaches a
+URI at all: it is handed to `socket.getaddrinfo`, which answers with a `TypeError`
+naming neither the field nor a fix. Whether the host *resolves*, and whether
+anything is listening on it, are facts about the network that the constructor
+cannot know and that the readiness probe already reports.
 
 `server_ready_timeout` is the span the readiness wait allows the server to open
 its websocket: a positive finite number of seconds, the shared continuous-span

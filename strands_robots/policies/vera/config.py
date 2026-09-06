@@ -120,6 +120,93 @@ def _embodiment_error(value: Any, param: str, context: str) -> str | None:
     )
 
 
+# Characters that end the host inside ``ws://<host>:<port>``. Each one starts a
+# later URI component, so a host carrying one does not name a bad host - it names
+# a different URI. ``:`` is in the set because the port follows it, and a
+# bracketed IPv6 literal (``[::1]``) is the one place it belongs to the host.
+_URI_COMPONENT_DELIMITERS = frozenset("/?#@:[]\\")
+
+
+def _dial_host_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the host half of the server URI.
+
+    ``host`` and ``server_port`` are the two halves of one expression,
+    :attr:`VeraConfig.server_uri`'s ``ws://{host}:{port}``. The port half is held
+    to :func:`~strands_robots.utils.tcp_port_error` because three consumers read
+    it under three coercions and an unusable value is *applied* as three
+    different ports. The host half reaches the same three consumers - it is
+    interpolated into that URI, handed to ``socket.create_connection`` by the
+    runner's readiness probe, and carried as ``--host`` on the server argv - and
+    was held to nothing, so a value that is not a host was not refused but
+    resolved, differently by each of them:
+
+    * A delimiter re-cuts the URI, and the port is what it takes.
+      ``host="127.0.0.1/foo"`` parses as host ``127.0.0.1``, path
+      ``/foo:8820`` and port **80**: the validated port is discarded, so the
+      client dials a port nobody configured. ``host="ws://127.0.0.1"`` - the
+      shape a caller who pastes a URI supplies - parses as host ``ws`` on
+      port 80.
+    * ``""`` is refused by the URI parse itself ("hostname isn't provided"),
+      which raises ``InvalidURI`` rather than the ``OSError`` the client
+      converts into its actionable "could not reach the VERA policy server"
+      hint. It is also the one spelling the readiness probe *accepts*, because
+      that probe maps a bind-only host to loopback: the runner reports "VERA
+      server ready" and the client then cannot build the URI at all.
+    * A non-string reaches ``socket.getaddrinfo`` before anything else and
+      raises ``TypeError: getaddrinfo() argument 1 must be string or None`` out
+      of ``start()``, past the ``TimeoutError``/``RuntimeError`` channel the
+      runner documents.
+
+    Only the shape a URI and a resolver can be *given* is decided here.
+    Whether the host resolves, and whether anything is listening on it, are
+    facts about the network that this constructor cannot know and that the
+    readiness probe already reports.
+
+    ``"0.0.0.0"`` stays accepted. It is the documented way to reach a server
+    bound on every interface, the readiness probe special-cases it, and it
+    interpolates and dials cleanly; ``""`` means the same thing to a ``bind``
+    call and nothing to a URI, so the refusal names ``"0.0.0.0"`` as the
+    spelling that works.
+
+    Args:
+        value: The caller-supplied host.
+        param: The field name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value can address a host.
+    """
+    if not isinstance(value, str):
+        return (
+            f"{context}: {param} must be a string hostname or IP literal, got {value!r} "
+            f"({type(value).__name__}). It is interpolated into the websocket URI the client "
+            "dials (ws://<host>:<port>) and handed to socket.create_connection, which refuses "
+            "a non-string with a getaddrinfo TypeError that names neither the field nor a fix."
+        )
+    bracketed = value.startswith("[") and value.endswith("]")
+    body = value[1:-1] if bracketed else value
+    if not body:
+        return (
+            f"{context}: {param} must name a host to dial, got {value!r}; "
+            f'ws://{value}:<port> is not a URI (the parse reports "hostname isn\'t provided"). '
+            "Use '0.0.0.0' to reach a server bound on every interface, or '127.0.0.1' for a local one."
+        )
+    own = frozenset(":") if bracketed else frozenset()
+    bad = sorted(
+        {c for c in body if (c in _URI_COMPONENT_DELIMITERS and c not in own) or not c.isprintable() or c.isspace()}
+    )
+    if bad:
+        hint = " Pass a bracketed literal for IPv6 (e.g. '[::1]')." if ":" in bad else ""
+        return (
+            f"{context}: {param} must be a bare hostname or IP literal, got {value!r}; "
+            f"{', '.join(map(repr, bad))} cannot appear in the host half of the websocket URI it is "
+            f"interpolated into (ws://<host>:<port>), so {f'ws://{value}:<port>'!r} names a "
+            "different URI rather than a host - a '/' puts the validated port in the path and the "
+            f"client dials :80 instead.{hint}"
+        )
+    return None
+
+
 def _viewer_port_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot address the MJPEG live-viewer port.
 
@@ -175,7 +262,16 @@ class VeraConfig:
             field is the key every other per-embodiment default is looked up by
             and an unknown one would otherwise resolve to another embodiment's
             ports and render width.
-        host: Policy-server hostname.
+        host: Policy-server hostname or IP literal, and the host half of
+            :attr:`server_uri`. Must be a bare host a URI can carry - no ``/``,
+            ``?``, ``#``, ``@``, ``:`` (outside a bracketed IPv6 literal such as
+            ``[::1]``), whitespace or control character - because those end the
+            host inside ``ws://<host>:<port>`` and the port is what they take:
+            ``"127.0.0.1/foo"`` dials port 80, discarding the port the shared
+            TCP-port domain just accepted. ``""`` is refused with ``"0.0.0.0"``
+            named as the spelling that reaches a server bound on every
+            interface. Whether the host resolves is left to the readiness probe,
+            which is the surface that can observe it.
         server_port: Policy-server websocket port. ``None`` applies
             ``VERA_SERVER_PORT`` else the per-embodiment default; any other
             value must be an ``int`` in ``[1, 65535]``, because the client dials
@@ -286,6 +382,16 @@ class VeraConfig:
         # second copy of a default is what made "not a known embodiment" and
         # "mimicgen" the same request.
         if (err := _embodiment_error(self.embodiment, "embodiment", type(self).__name__)) is not None:
+            raise ValueError(err)
+        # The other half of ``server_uri``. Checked here, in the same funnel the
+        # port half passes through, because the two are one expression: a URI
+        # cut apart by an unchecked host is not a bad address, it is a
+        # *different* address, and the port is the component it takes. Nothing
+        # downstream refuses it - the runner's probe reports a bind-only host as
+        # ready, the client raises ``InvalidURI`` past the ``OSError`` channel
+        # that carries its actionable hint, and a non-string surfaces as a
+        # ``getaddrinfo`` ``TypeError`` out of ``start()``.
+        if (err := _dial_host_error(self.host, "host", type(self).__name__)) is not None:
             raise ValueError(err)
         # Apply per-embodiment port defaults when not explicitly set.
         default_policy, default_vis = _DEFAULT_PORTS[self.embodiment]

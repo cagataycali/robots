@@ -63,8 +63,11 @@ logger = logging.getLogger(__name__)
 
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     """True if a TCP connection to ``host:port`` succeeds (server is listening)."""
-    # 0.0.0.0 is a bind address, not connectable - probe loopback instead.
-    probe_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    # 0.0.0.0 is a bind address, not connectable - probe loopback instead. The
+    # empty string used to be mapped here too, and that arm is what let a host a
+    # URI cannot carry be reported as ready; ``VeraConfig`` now refuses it at
+    # construction, naming 0.0.0.0 as the spelling that binds every interface.
+    probe_host = "127.0.0.1" if host == "0.0.0.0" else host
     try:
         with socket.create_connection((probe_host, port), timeout=timeout):
             return True
