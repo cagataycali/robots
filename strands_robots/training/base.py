@@ -787,6 +787,59 @@ class Trainer(ABC):
 
         return initial_temperature_problems(spec, context=self.provider_name)
 
+    def _target_entropy_problems(self, spec: TrainSpec) -> list[str]:
+        """Target-entropy preflight, for backends that tune a temperature.
+
+        Returns a problem when :attr:`RLTrainSpec.target_entropy` is neither the
+        ``None`` sentinel nor a finite real of either sign. It is the third field
+        of FastSAC's temperature block, and a backend that builds that block MUST
+        call this **alongside** :meth:`_initial_temperature_problems` and
+        :meth:`_temperature_learning_rate_problems`: those two guard the
+        temperature's starting value and the rate that moves it, and this one the
+        constant it is moved *toward*, so guarding two of the three leaves the
+        third to the arithmetic that spends it.
+
+        The domain is signed, which is why it is
+        :func:`~strands_robots.utils.finite_number_error` rather than the
+        positive-finite domain its two neighbours read: the field defaults to
+        ``-num_actions``, so every reading of it is a negative entropy in nats and
+        no endpoint is decidable. ``target_entropy=True`` is therefore not merely
+        a flag read as a number but a silent sign flip - a target of ``+1.0`` -
+        and a run that took it reported success while checkpointing a different
+        temperature. ``nan`` poisons ``alpha``, which scales the entropy term of
+        both the critic target and the actor loss, and the next rollout raises
+        from inside ``torch.distributions.Normal`` about ``nan`` policy means; a
+        list or a dict raises ``TypeError`` out of the ``float()`` coercion in
+        ``setup``.
+
+        ``None`` is exempt rather than refused: unlike ``init_alpha`` and
+        ``alpha_lr`` this field is annotated ``float | None``, and ``None`` is the
+        documented request for the ``-num_actions`` heuristic.
+
+        Like :meth:`_initial_temperature_problems` this is not scoped to
+        ``autotune_alpha``: the coercion in ``setup`` is unconditional, so a
+        non-real value raises on either branch.
+
+        Only a backend that optimizes a temperature against a target entropy may
+        call this: like :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``target_entropy`` cannot be honored;
+            empty when it can.
+        """
+        from strands_robots.training._validate import target_entropy_problems
+
+        return target_entropy_problems(spec, context=self.provider_name)
+
     def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
         """Gradient-clip preflight for a backend that clips before it steps.
 

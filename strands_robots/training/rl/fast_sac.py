@@ -150,6 +150,12 @@ class FastSacTrainer(BaseRLAlgo):
         # torch.log on both branches, so only a positive finite value has a
         # usable logarithm - the same domain, on the value rather than the rate.
         problems.extend(self._initial_temperature_problems(spec))
+        # target_entropy is the constant the temperature is moved toward -
+        # the third and last caller-supplied field of the same block. Signed
+        # by construction (it defaults to -num_actions), so it takes the
+        # finite-real domain rather than the positive-finite one above, and
+        # the None sentinel is a request for that default rather than a value.
+        problems.extend(self._target_entropy_problems(spec))
         # total_timesteps and rollout_steps are the two caller-supplied factors of
         # this loop's own bound, max(1, total_timesteps // (rollout_steps *
         # num_envs)). The max() clamp means a local <= 0 test cannot bound them:

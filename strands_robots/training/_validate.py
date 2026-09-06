@@ -1137,6 +1137,120 @@ def initial_temperature_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return [error] if error is not None else []
 
 
+def target_entropy_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return target-entropy problems for a :class:`TrainSpec`.
+
+    ``target_entropy`` is the third caller-supplied field of FastSAC's
+    temperature block, and the only one nothing judged. It is the constant the
+    temperature is optimized *against* - the one term of the temperature loss a
+    caller supplies::
+
+        alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
+
+    and it reaches that expression through an unconditional coercion in
+    :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`::
+
+        self.target_entropy = (
+            float(spec.target_entropy) if spec.target_entropy is not None else -float(self.env.num_actions)
+        )
+
+    Its two neighbours in the same block - the temperature's starting value in
+    :func:`initial_temperature_problems` and the rate that moves it in
+    :func:`temperature_learning_rate_problems` - are both held to a *positive*
+    finite domain, and this field was explicitly left out of both: it is signed
+    by construction, defaulting to ``-num_actions``, so it needs a domain neither
+    of them can express. That domain is
+    :func:`~strands_robots.utils.finite_number_error`, the signed counterpart the
+    two loss weights of :func:`loss_weight_problems` already read - the same
+    "finite real, either sign" shape, for the same reason: every reading of this
+    field is a signed entropy in nats, so no endpoint is decidable, but a value
+    that is not a finite real has no reading at all.
+
+    Each row below was measured on a 40-timestep FastSAC run, with ``validate()``
+    returning ``[]`` for every one of them:
+
+    ============================  ===========================================
+    ``target_entropy``            Outcome
+    ============================  ===========================================
+    ``None`` (the default)        trains; ``log_alpha == -0.001801646314``
+    ``-6.0`` (``-num_actions``)   trains; identical to the default
+    ``True``                      **trains against a target entropy of +1.0**
+    ``'-6'``                      trains; ``float()`` coerces it, so the run
+                                  is identical to ``-6.0``
+    ``nan`` / ``inf`` / ``-inf``  raises mid-update, from inside ``torch``
+    ``[-6.0]`` / ``{}``           raises in ``setup``, from ``float()``
+    ============================  ===========================================
+
+    Both failing shapes are what make this a gate rather than a lint:
+
+    * **A boolean is a silent sign flip.** ``bool`` is an ``int`` subclass, so
+      ``target_entropy=True`` is a target entropy of ``+1.0`` where every
+      documented reading of the field is negative - the field's own default is
+      ``-num_actions``, which is ``-6.0`` for this env. The run reported
+      ``success`` and checkpointed ``log_alpha == -0.0018031001091003418``
+      against the honored run's ``-0.001801646314561367``, so it demonstrably
+      drove the temperature somewhere else rather than harmlessly.
+    * **A non-finite value poisons the temperature; a non-real one raises in
+      ``setup``.** ``nan`` makes ``alpha_loss`` ``nan``, the temperature
+      optimizer writes ``nan`` into ``log_alpha``, and ``alpha`` scales the
+      entropy term of *both* the critic's TD target and the actor loss - so the
+      next rollout samples the action distribution from ``nan`` policy means:
+      ``ValueError: Expected parameter loc ... of distribution Normal ... to
+      satisfy the constraint Real()``, a torch message that names that
+      distribution's parameter rather than the field, raised after the env, both
+      networks and a full rollout have been built. A list or a dict raises
+      ``TypeError: float() argument must be a string or a real number`` out of
+      the coercion instead. That is exactly the "deep stack trace" a read-only
+      preflight exists to replace.
+
+    **A numeric string is refused even though ``float()`` coerces it.** That is the
+    one accepting-to-refusing change this gate makes, and it is a consistency one:
+    the field is annotated ``float | None``, so a ``str`` reaches the coercion only
+    by accident of ``float()`` accepting one, and both neighbouring fields of the
+    same temperature block already refuse it - a spec whose ``alpha_lr`` is
+    ``"3e-4"`` is rejected by name while ``target_entropy="-6"`` was not. Accepting
+    it here alone would leave the three fields of one block disagreeing about which
+    spellings a config may use.
+
+    ``None`` is the one value in scope that is not a value: unlike ``init_alpha``
+    and ``alpha_lr``, which are annotated ``float`` with concrete defaults, this
+    field is annotated ``float | None`` and its ``None`` is the documented
+    request for the ``-num_actions`` heuristic, which the coercion above honors.
+    So the sentinel is exempt rather than refused - the only difference in domain
+    between this gate and its two neighbours.
+
+    Like :func:`initial_temperature_problems`, and unlike
+    :func:`temperature_learning_rate_problems`, this is **not** scoped to
+    ``autotune_alpha``: the coercion is unconditional, so a non-real value raises
+    in ``setup`` on either branch - measured with tuning off, ``[-6.0]`` raised
+    the same ``TypeError`` while ``nan`` reached a successful run that simply
+    never spent it. A check conditioned on the tuning branch would therefore let
+    the raising shape through for the untuned one.
+
+    Only the SAC backend optimizes a temperature against a target entropy -
+    ``spec.target_entropy`` appears in ``rl/fast_sac.py`` and nowhere else - so
+    this is scoped like :func:`gae_lambda_problems` rather than
+    :func:`learning_rate_problems`: a backend that does not read the field MUST
+    NOT call this, because per :class:`TrainSpec` a backend ignores the fields it
+    does not support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``target_entropy`` is neither the ``None``
+        sentinel nor a finite real; empty when it can be honored.
+    """
+    value = getattr(spec, "target_entropy", None)
+    if value is None:
+        return []
+    error = finite_number_error(value, "target_entropy", context)
+    return [error] if error is not None else []
+
+
 def _clip_bound_error(value: Any, param: str, context: str) -> str | None:
     """Error text when *value* is not a clip bound its consumer honors.
 
