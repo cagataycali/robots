@@ -7,6 +7,7 @@ device selection, physics parameters, rendering, and headless mode.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,6 +90,108 @@ def _env_switch(name: str) -> bool | None:
     )
 
 
+#: A single USD prim name: an ASCII identifier, first character a letter or
+#: underscore. This is the alphabet
+#: :func:`strands_robots.simulation.isaac.joint_names._tf_make_valid_identifier`
+#: already encodes as USD's own rule -- it replaces every character outside
+#: ``[A-Za-z0-9_]``, and a first character outside ``[A-Za-z_]``, with ``_`` --
+#: so the two spellings of the rule in this package agree by construction.
+_PRIM_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _stage_path_error(value: Any) -> str | None:
+    """Return an error message if ``value`` cannot prefix a USD prim path.
+
+    Every prim :class:`~strands_robots.simulation.isaac.simulation.IsaacSimulation`
+    creates is addressed by a path interpolated from this prefix and an entity
+    name -- ``f"{stage_path}/Robots/{name}"``, and the same shape for
+    ``/Objects/`` and ``/Cameras/``. The name half of that f-string already has
+    a domain: ``add_robot`` refuses a name that cannot address the robot it
+    creates on the shared :func:`strands_robots.utils.entity_name_error`, which
+    rejects a non-``str``, the empty string, and a string containing a NUL.
+    This is the same domain for the other half, so a path the API records is
+    one the API can address regardless of which component the caller got wrong.
+
+    Args:
+        value: The candidate :attr:`IsaacConfig.stage_path`.
+
+    Returns:
+        ``None`` when ``value`` is an absolute USD prim path with at least one
+        component, every component a prim name; otherwise a message naming the
+        field, the value, and the path it would have produced.
+
+    Four spellings are refused, each measured against the unbound
+    ``add_robot`` / ``remove_robot`` (no Isaac Sim or GPU needed -- the
+    procedural branch touches no stage). Before this domain every one of them
+    reported ``status="success"`` and recorded the interpolated string in
+    ``_prim_registry``, which is what :meth:`destroy` releases and counts:
+
+    * **Not a ``str``.** The f-string has no type requirement, so the value's
+      ``repr``-ish text became part of the path: ``stage_path=None`` recorded
+      ``None/Robots/arm`` -- the literal four characters -- ``stage_path=7``
+      recorded ``7/Robots/arm``, and ``stage_path=["/World"]`` recorded
+      ``['/World']/Robots/arm``. ``entity_name_error`` refuses a non-``str``
+      name for the same reason; a non-``str`` prefix is the same value arriving
+      through the other half.
+    * **Not absolute.** ``stage_path="World"`` recorded ``World/Robots/arm``, a
+      relative path. :meth:`IsaacSimulation.get_body_state` routes on exactly
+      that distinction -- ``if body_name.startswith("/")`` takes the stage
+      lookup, and ``elif "/" in body_name`` reads the value as
+      ``robot_name/link_name`` -- so a caller handing back the path the API
+      recorded is routed to the wrong branch, where ``World`` is looked up as a
+      robot name. ``"/"`` alone is refused with it: the root names no
+      component, and prefixing it yields ``//Robots/arm``.
+    * **An empty component.** ``"/World/"`` recorded ``/World//Robots/arm`` and
+      ``"/World//Sub"`` recorded ``/World//Sub/Robots/arm``. A doubled
+      separator is not a path component, and a trailing separator is the
+      likeliest way to write one, because the field is documented as a
+      *prefix*.
+    * **A component that is not a prim name.** ``"/My World"`` and
+      ``"/World\x00x"`` were both recorded verbatim. This is the half that is
+      not merely cosmetic: USD transcodes a prim name outside its identifier
+      alphabet, so the prim does not land at the path that was recorded for it.
+      This package already relies on that transcoding being real and
+      deterministic -- ``demangle_usd_joint_names`` exists to undo it for
+      joint names, where the URDF joint ``1`` imports as ``tn__1_`` -- and a
+      recorded path the stage does not carry is a prim :meth:`destroy` counts
+      and does not release.
+
+    The three ``bool``/numeric-domain fields of this dataclass are validated in
+    :meth:`IsaacConfig.__post_init__` and so is this one: the property is
+    lexical, it needs no engine, and ``stage_path`` has exactly one consumer
+    package. It is kept in this module rather than
+    :mod:`strands_robots.utils` for the reason :data:`ENV_SWITCH_ON` states --
+    AGENTS.md Key Convention 11 -- no other backend has a stage.
+    """
+    if not isinstance(value, str):
+        return (
+            f"IsaacConfig.stage_path must be a str, got {type(value).__name__} {value!r}. "
+            f"Every prim path is interpolated from it, so this one would address "
+            f"robots at {f'{value}/Robots/<name>'!r}. Use an absolute USD prim path "
+            f"such as '/World'."
+        )
+    components = value.split("/")
+    if not value.startswith("/"):
+        return (
+            f"IsaacConfig.stage_path must be an absolute USD prim path starting with '/', "
+            f"got {value!r}, which would address robots at {f'{value}/Robots/<name>'!r} -- "
+            f"a relative path. get_body_state() distinguishes an absolute prim path from a "
+            f"'<robot>/<link>' pair by that leading '/', so a relative prefix makes the path "
+            f"this backend records unusable as the key it records it for. Use '/World'."
+        )
+    if bad := [c for c in components[1:] if not _PRIM_NAME_RE.match(c)]:
+        return (
+            f"IsaacConfig.stage_path={value!r} is not a USD prim path: component "
+            f"{bad[0]!r} is not a prim name (an ASCII identifier matching "
+            f"[A-Za-z_][A-Za-z0-9_]*). It would address robots at "
+            f"{f'{value}/Robots/<name>'!r}; USD transcodes a name outside that "
+            f"alphabet, so the prim would not land at the path recorded for it, and "
+            f"an empty component (a doubled or trailing '/') is not a component at "
+            f"all. Use '/World' or '/World/<Identifier>'."
+        )
+    return None
+
+
 @dataclass
 class IsaacConfig:
     """Configuration for :class:`IsaacSimulation`.
@@ -135,7 +238,15 @@ class IsaacConfig:
     ground_plane : bool
         Whether to add a ground plane on ``create_world()``. Default True.
     stage_path : str
-        USD stage path prefix. Default ``"/World"``.
+        USD stage path prefix, and the root every prim this backend creates is
+        addressed under (``{stage_path}/Robots/{name}``, and the same shape for
+        ``/Objects/`` and ``/Cameras/``). Default ``"/World"``. Must be an
+        absolute USD prim path with at least one component, every component a
+        prim name (an ASCII identifier matching ``[A-Za-z_][A-Za-z0-9_]*``) --
+        the same requirement the name half of that path already carries via
+        :func:`strands_robots.utils.entity_name_error`. A value outside that
+        domain is refused on construction rather than interpolated into a path
+        the stage cannot carry.
     nucleus_url : str | None
         Override Omniverse Nucleus server URL. Default from env var
         ``STRANDS_ISAAC_NUCLEUS_URL`` or None (use Isaac defaults).
@@ -192,6 +303,12 @@ class IsaacConfig:
         # Validate camera dimensions
         if self.camera_width < 1 or self.camera_height < 1:
             raise ValueError(f"camera dimensions must be >= 1, got {self.camera_width}x{self.camera_height}")
+
+        # Validate stage_path. It is the other half of every prim path this
+        # backend interpolates; the name half is already refused on the shared
+        # ``entity_name_error`` domain at each creation site.
+        if (stage_err := _stage_path_error(self.stage_path)) is not None:
+            raise ValueError(stage_err)
 
         # Resolve nucleus_url from environment if not explicitly set
         if self.nucleus_url is None:
