@@ -71,6 +71,18 @@ is*, so the outcomes group that way rather than by severity:
     ``awaiting-first-review`` as passing: if the common case is a finding, the
     finding means nothing.
 
+    Which reviewer depends on a second fact. Where the branch carries
+    ``require_last_push_approval`` and the pusher is known, the pusher's own
+    approval would not count, so the party named is ``a reviewer other than the
+    pusher`` -- the same party ``pusher-only-approval`` names, one review round
+    earlier. Saying "any reviewer" there sends the round to an account that
+    cannot clear the rule and arrives at ``pusher-only-approval``, which needs
+    somebody else anyway; on a repository where one account pushes most heads
+    and reviews most pull requests, that account is the likeliest to be asked.
+    The outcome stays ``missing-approval`` either way: an unreviewed pull
+    request is still the ordinary state, so it must not start gating or
+    counting as a finding merely because the eligible set is narrower.
+
 ``pusher-only-approval``
     A reviewer **other than the pusher** owes it. Not re-derived here; see the
     sibling note below.
@@ -339,10 +351,19 @@ class Blocker:
     outcome: str
     rule: str
     detail: str
+    # The party is a function of the outcome for every outcome but one. An
+    # absent approval is owed by "any reviewer" only where any reviewer's
+    # approval would actually count, and under require_last_push_approval the
+    # pusher's would not -- a second fact, known to the evaluator and not
+    # recoverable from the outcome name. Carried per blocker rather than by
+    # splitting the outcome, because the outcome also decides gating, finding
+    # and exit status, and none of those change: an unreviewed pull request is
+    # still the ordinary state.
+    owed_by_override: str | None = None
 
     @property
     def owed_by(self) -> str:
-        return _OWED_BY.get(self.outcome, NOBODY)
+        return self.owed_by_override or _OWED_BY.get(self.outcome, NOBODY)
 
     @property
     def is_finding(self) -> bool:
@@ -631,13 +652,29 @@ def evaluate(state: PullRequestState, rules: Ruleset) -> tuple[Blocker, ...]:
             else list(state.approvers)
         )
         if not state.approvers:
+            # "any reviewer" over-promises wherever the branch carries
+            # require_last_push_approval: the pusher's approval would not
+            # count, so pointing a review round at that account cannot clear
+            # the rule and lands the pull request in pusher-only-approval,
+            # which needs a different person regardless. Not hypothetical --
+            # measured on #2907, whose head and its only approval both belong
+            # to the same account and which has been blocked ever since. The
+            # pusher is already resolved and already printed in this report's
+            # own table one line below the party it contradicts.
+            discounted = rules.require_last_push_approval and bool(state.pusher)
             found.append(
                 Blocker(
                     MISSING_APPROVAL,
                     "required_approving_review_count",
                     f"{len(state.approvers)} of {rules.required_approving_review_count} "
-                    f"required approvals. Waiting on a first review, which is the "
-                    f"ordinary state.",
+                    + (
+                        f"required approvals. Waiting on a first review from an account "
+                        f"other than {state.pusher}, which pushed the head: under "
+                        f"require_last_push_approval its own approval would not count."
+                        if discounted
+                        else "required approvals. Waiting on a first review, which is the ordinary state."
+                    ),
+                    owed_by_override=OTHER_REVIEWER if discounted else None,
                 )
             )
         elif rules.require_last_push_approval and not eligible:
@@ -657,6 +694,7 @@ def evaluate(state: PullRequestState, rules: Ruleset) -> tuple[Blocker, ...]:
                     "required_approving_review_count",
                     f"{len(eligible)} of {rules.required_approving_review_count} "
                     f"required approvals from an account that did not push the head.",
+                    owed_by_override=(OTHER_REVIEWER if rules.require_last_push_approval and state.pusher else None),
                 )
             )
 

@@ -190,10 +190,17 @@ def test_2574_every_rule_satisfied_and_still_blocked_is_its_own_answer() -> None
 
 
 def test_2497_a_missing_first_review_is_reported_but_is_not_a_finding() -> None:
-    """The ordinary state. A finding that fires on it would mean nothing."""
+    """The ordinary state. A finding that fires on it would mean nothing.
+
+    The party is ``OTHER_REVIEWER`` rather than ``REVIEWER`` because ``MAIN``
+    carries ``require_last_push_approval`` and the fixture's head has a pusher,
+    so that account's approval would not count. Being the ordinary state is
+    about the outcome, not about who is eligible: the two assertions below are
+    what must not change.
+    """
     blockers = mod.evaluate(state(approvers=()), MAIN)
     assert outcomes(blockers) == [mod.MISSING_APPROVAL]
-    assert blockers[0].owed_by == mod.REVIEWER
+    assert blockers[0].owed_by == mod.OTHER_REVIEWER
     assert blockers[0].is_finding is False
 
 
@@ -204,7 +211,7 @@ def test_the_measured_triple_produces_three_different_owners() -> None:
         mod.primary(mod.evaluate(state(), MAIN)).owed_by,
         mod.primary(mod.evaluate(state(approvers=()), MAIN)).owed_by,
     ]
-    assert owners == [mod.AUTHOR, mod.ANYONE, mod.REVIEWER]
+    assert owners == [mod.AUTHOR, mod.ANYONE, mod.OTHER_REVIEWER]
     assert len(set(owners)) == 3
 
 
@@ -239,7 +246,11 @@ def test_2480_a_pending_check_does_not_mask_a_reviewer_who_can_act_now() -> None
     assert outcomes(blockers) == [mod.REQUIRED_CHECK_PENDING, mod.MISSING_APPROVAL]
     assert blockers[0].owed_by == mod.NOBODY
     assert mod.primary(blockers).outcome == mod.MISSING_APPROVAL
-    assert mod.primary(blockers).owed_by == mod.REVIEWER
+    # A reviewer other than the pusher, because MAIN discounts the pusher's own
+    # approval. What this test is about is unchanged: the party is a person, not
+    # NOBODY, so the pending check has not masked a review that can happen now.
+    assert mod.primary(blockers).owed_by == mod.OTHER_REVIEWER
+    assert mod.primary(blockers).owed_by != mod.NOBODY
 
 
 # --------------------------------------------------------------------------
@@ -460,6 +471,86 @@ def test_the_last_push_rule_is_not_applied_when_the_branch_does_not_carry_it() -
     # unsatisfied. Discounting it unconditionally invented a blocker; this is the
     # regression that caught it.
     assert outcomes(blockers) == [mod.NO_UNSATISFIED_RULE]
+
+
+_PARTY_CASES = [
+    # rule carried, pusher, expected party, id
+    (True, "the-author", "other", "carried-and-pusher-known"),
+    (False, "the-author", "any", "rule-not-carried"),
+    (True, None, "any", "pusher-undetermined"),
+    (False, None, "any", "neither"),
+]
+
+
+@pytest.mark.parametrize(("carried", "pusher", "expected", "case"), _PARTY_CASES, ids=[c[3] for c in _PARTY_CASES])
+def test_an_absent_approval_names_a_party_whose_approval_would_actually_count(
+    carried: bool, pusher: str | None, expected: str, case: str
+) -> None:
+    """An unreviewed pull request is owed by whoever can clear the rule as written.
+
+    ``require_last_push_approval`` discounts the pusher's approval, so on a
+    branch that carries it "any reviewer" names a set containing an account
+    whose review cannot satisfy the count. Measured live on 2026-09-06:
+    #3205 and #3212 both read ``missing-approval`` / "any reviewer" with
+    "head pushed by cagataycali" in the same table, and #2907 -- same topology,
+    approved by that account on 2026-09-04 -- has been blocked ever since, so
+    the round the wrong party invites is a round that lands there.
+
+    The two controls are the halves that must not move: without the rule the
+    pusher's approval does count, and an undetermined pusher names nobody to
+    exclude, matching the sibling check's refusal to read an unknown pusher as
+    evidence of a deadlock.
+    """
+    rules = Ruleset(required_approving_review_count=1, require_last_push_approval=carried)
+    blocker = mod.evaluate(state(approvers=(), pusher=pusher), rules)[0]
+    assert blocker.outcome == mod.MISSING_APPROVAL
+    assert blocker.owed_by == (mod.OTHER_REVIEWER if expected == "other" else mod.REVIEWER)
+
+
+def test_narrowing_the_eligible_set_does_not_promote_the_ordinary_state_to_a_finding() -> None:
+    """The outcome decides gating, finding and exit status; only the party moved.
+
+    Splitting the discounted case into its own outcome would have made an
+    unreviewed pull request gate or report red, which is the mistake the
+    module docstring records as "if the common case is a finding, the finding
+    means nothing".
+    """
+    blocker = mod.evaluate(state(approvers=()), MAIN)[0]
+    assert blocker.owed_by == mod.OTHER_REVIEWER
+    assert blocker.is_finding is False
+    assert blocker.is_gating is False
+    assert blocker.is_terminal is False
+
+
+def test_the_report_does_not_name_a_party_its_own_pusher_row_rules_out() -> None:
+    """The contradiction as it was printed: two lines of one report disagreeing."""
+    st = state(approvers=(), pusher="cagataycali")
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "| head pushed by | cagataycali |" in rendered
+    assert f"Next action is owed by {mod.OTHER_REVIEWER}" in rendered
+    assert "owed by any reviewer" not in rendered
+    assert "other than cagataycali" in rendered
+
+
+def test_an_absent_approval_and_a_pusher_only_one_name_the_same_party() -> None:
+    """The states are one review round apart, so they cannot name different people.
+
+    Reaching ``pusher-only-approval`` from ``missing-approval`` costs exactly
+    the review the first state invited. If the two named different parties, the
+    first would be advice to spend a round arriving at the second.
+    """
+    absent = mod.evaluate(state(approvers=(), pusher="the-author"), MAIN)[0]
+    pusher_only = mod.evaluate(state(approvers=("the-author",), pusher="the-author"), MAIN)[0]
+    assert absent.outcome == mod.MISSING_APPROVAL
+    assert pusher_only.outcome == mod.PUSHER_ONLY_APPROVAL
+    assert absent.owed_by == pusher_only.owed_by == mod.OTHER_REVIEWER
+
+
+def test_an_explicit_party_is_only_consulted_when_the_evaluator_set_one() -> None:
+    """Every other outcome keeps taking its party from the table."""
+    assert mod.Blocker(mod.MERGE_CONFLICT, "r", "d").owed_by == mod.AUTHOR
+    assert mod.Blocker(mod.MISSING_APPROVAL, "r", "d").owed_by == mod.REVIEWER
+    assert mod.Blocker(mod.MISSING_APPROVAL, "r", "d", mod.OTHER_REVIEWER).owed_by == mod.OTHER_REVIEWER
 
 
 # --------------------------------------------------------------------------
@@ -1082,7 +1173,7 @@ def test_the_sweep_separates_the_author_clearable_rows(capsys: pytest.CaptureFix
     rendered = mod.render_sweep(rows, [], "o/r")
     assert "1 blocked on something no reviewer can clear:** #1035" in rendered
     assert f"| #1035 | {mod.MERGE_CONFLICT} | {mod.AUTHOR} |" in rendered
-    assert f"| #2497 | {mod.MISSING_APPROVAL} | {mod.REVIEWER} |" in rendered
+    assert f"| #2497 | {mod.MISSING_APPROVAL} | {mod.OTHER_REVIEWER} |" in rendered
 
 
 def test_a_clean_sweep_says_so_rather_than_printing_a_bare_table() -> None:
