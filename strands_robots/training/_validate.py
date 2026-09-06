@@ -146,6 +146,15 @@ its actor and its critics from. It is scoped like
 all three RL backends read the field, for every network they construct - and it
 is the only one of these gates whose field is a *sequence*, so the domain is
 asked of each element in turn and the message names the offending index.
+
+:func:`rl_checkpoint_interval_problems` is the eighteenth, and the second gate on
+the *cadence* axis :func:`checkpoint_cadence_problems` opened: ``log_interval``,
+the field the RL loop paces ``save_checkpoint`` by. It shares that gate's
+:func:`~strands_robots.utils.step_cadence_error` domain because the two fields
+are consumed identically - as the modulus of a periodic-checkpoint test - and
+differ only in which spec names them, so a cadence refused for a supervised run
+cannot be accepted for an RL one. It is scoped like
+:func:`network_width_problems`: all three RL backends run that loop.
 """
 
 from __future__ import annotations
@@ -1646,3 +1655,79 @@ def network_width_problems(spec: TrainSpec, *, context: str) -> list[str]:
         for index, width in enumerate(widths)
         if (error := positive_count_error(width, f"hidden_dims[{index}]", context)) is not None
     ]
+
+
+def rl_checkpoint_interval_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return checkpoint-cadence problems for an RL :class:`RLTrainSpec`.
+
+    ``log_interval`` is how often an RL run writes a checkpoint. Its name and
+    its :class:`RLTrainSpec` entry both said "iterations between progress logs",
+    but no RL module emits a log line at all - the field is read in exactly one
+    expression, the one that decides whether an intermediate checkpoint is
+    written, and all three backends share it::
+
+        if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
+            ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
+
+    So it is the same *kind* of value as
+    :attr:`~strands_robots.training.base.TrainSpec.save_freq` - a periodic
+    checkpoint cadence consumed as a modulus - and it reached that modulus with
+    no domain at all, while the supervised field beside it on the same spec has
+    one. Measured on the inherited loop over a 20-iteration run, against the
+    ``[1, 6, 11, 16, 20]`` an ``int`` cadence of 5 writes:
+
+    ====================  ==============  ====================================
+    ``log_interval``      Verdict         Outcome
+    ====================  ==============  ====================================
+    ``5`` (a control)     accepted        5 checkpoints, at 1, 6, 11, 16, 20
+    ``True``             **accepted**     20 checkpoints - one every iteration
+    ``2.5``              **accepted**     5, at 1, 6, 11, 16, 20 - the schedule
+                                          of ``5``, not of ``2.5``
+    ``0.3``              **accepted**     2, at 1 and 20
+    ``nan``              **accepted**     1, at 20 - the *disabled* mode
+    ``inf``              **accepted**     2, at 1 and 20
+    ``"5"``              **accepted**     ``TypeError`` out of ``train()``
+    ``0``                 accepted        1, at 20 - the documented disable
+    ``-5``                accepted        5, at 1, 6, 11, 16, 20
+    ====================  ==============  ====================================
+
+    The bold rows are why this is a gate. ``nan`` is the worst of them: it
+    satisfies the truthiness guard, never satisfies the modulus, and so silently
+    becomes the disabled mode - a long run that asked to checkpoint every 5
+    iterations keeps only the final one, under ``status="success"``. For RL the
+    intermediate checkpoints are not a convenience: return is non-monotonic in
+    training, so the deployable policy is often an earlier one, and a run that
+    kept only its last iteration cannot be recovered without training again.
+    ``True`` is the opposite failure at the same seam (a modulus of one, a full
+    checkpoint every iteration), ``2.5`` is indistinguishable from the ``5`` a
+    caller who wanted twice as many checkpoints did not write, and ``"5"``
+    raises out of the training loop *after* ``setup`` has built the env, the
+    networks and the optimizers - from a lifecycle whose whole contract is to
+    report a failure as :class:`~strands_robots.training.base.TrainResult`, and
+    past a :meth:`~strands_robots.training.base.Trainer.validate` documented to
+    return every problem a run has.
+
+    Only the *type* is graded, exactly as for :func:`checkpoint_cadence_problems`,
+    and the two disabling spellings are first-class: ``0`` disables periodic
+    saving and leaves the end-of-run fallback in
+    :meth:`~strands_robots.training.rl.base_algo.BaseRLAlgo.train` to write the
+    single final checkpoint, a configuration that loop's own contract tests
+    already pin. A negative is accepted for the same
+    no-floor reason and is *not* the disabled mode here - unlike lerobot's
+    ``save_freq > 0`` test, this loop's guard is bare truthiness, so ``-5`` is
+    the cadence of its magnitude (measured above). Which spelling disables is
+    therefore the loop's own business; the domain's business is that the value
+    is a whole number of iterations.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``log_interval`` is not a whole number of
+        iterations; empty otherwise.
+    """
+    error = step_cadence_error(getattr(spec, "log_interval", 0), "log_interval", context)
+    return [] if error is None else [error]

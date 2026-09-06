@@ -74,6 +74,12 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_clip_range_problems": ("clip_param",),
     "_policy_delay_problems": ("policy_delay",),
     "_td3_noise_problems": ("exploration_noise_std", "target_noise_std", "target_noise_clip"),
+    # The RL checkpoint-interval gate. Its field lives on ``RLTrainSpec`` and no
+    # provider forwards it, so it is graded on the reader scan only - and that
+    # scan is the *secondary* derivation for this guard, whose primary scope is
+    # the BaseRLAlgo hierarchy: PPO inherits the loop that reads the field and
+    # never names it.
+    "_rl_checkpoint_interval_problems": ("log_interval",),
     # The network-architecture gate. Its one field is a *sequence*, and it is
     # scoped like the learning rate across the RL backends (all three build
     # their actor and critics from it) while still being field-scoped overall,
@@ -195,6 +201,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_optimization_epochs_domain.py",
             "test_policy_delay_domain.py",
             "test_rl_run_size_domain.py",
+            "test_rl_checkpoint_interval_domain.py",
             "test_rl_replay_domain.py",
             "test_seed_domain.py",
             "test_td3_noise_domain.py",
