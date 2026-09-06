@@ -124,7 +124,14 @@ class IsaacConfig:
         ``"rtx_pathtracing"``; one of ``("0", "false", "no", "off")``, empty or
         unset leaves the field alone, and any other spelling is refused.
     gravity : tuple[float, float, float]
-        Gravity vector. Default (0.0, 0.0, -9.81) (Z-up convention).
+        Gravity vector. Default (0.0, 0.0, -9.81) (Z-up convention). Read by
+        ``create_world()``, which applies the same domain to it as to its own
+        ``gravity=`` argument: three finite, non-boolean components, Z-aligned
+        (``x`` and ``y`` both zero), or a real scalar taken as the z-component.
+        The domain lives with the engine that spends the value - Isaac's
+        ``PhysicsContext.set_gravity`` takes a signed scalar - and is shared
+        with every other backend's gravity surface, so it is applied there
+        rather than restated here.
     ground_plane : bool
         Whether to add a ground plane on ``create_world()``. Default True.
     stage_path : str
