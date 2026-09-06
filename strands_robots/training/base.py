@@ -518,6 +518,45 @@ class Trainer(ABC):
 
         return checkpoint_cadence_problems(spec, context=self.provider_name)
 
+    def _rl_checkpoint_interval_problems(self, spec: TrainSpec) -> list[str]:
+        """Checkpoint-cadence preflight for the RL loop, on its own field.
+
+        Returns a problem when :attr:`RLTrainSpec.log_interval` is not a whole
+        number of iterations, against the same shared step-cadence domain
+        :meth:`_checkpoint_cadence_problems` holds ``save_freq`` to. A
+        :meth:`validate` implementation whose loop paces ``save_checkpoint`` on
+        ``it % log_interval`` MUST call this: the field is the RL run's
+        checkpoint cadence, and the modulus judges it no more than lerobot's
+        does. ``nan`` satisfies the truthiness guard and never the modulus, so a
+        run that asked to checkpoint every few iterations silently keeps only
+        its final one and still reports ``status="success"`` - the reading that
+        matters most for RL, where return is non-monotonic and the deployable
+        policy is often an earlier checkpoint. ``True`` is a cadence of one, a
+        fraction is a silently different cadence, and a string raises
+        ``TypeError`` out of the loop after ``setup`` has built the env, the
+        networks and the optimizers. Only the type is graded: ``0`` is the
+        documented "no intermediate checkpoints" mode.
+
+        Scoped like :meth:`_network_width_problems` rather than like
+        :meth:`_gae_lambda_problems`: all three RL backends run the same loop
+        over the same field, so there is no RL backend for which reporting on it
+        would be a false rejection. A supervised backend does not read it and
+        MUST NOT report on it - it has ``save_freq`` for the same question.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single problem when the cadence cannot be honored; empty
+            otherwise.
+        """
+        from strands_robots.training._validate import rl_checkpoint_interval_problems
+
+        return rl_checkpoint_interval_problems(spec, context=self.provider_name)
+
     def _validation_episodes_problems(self, spec: TrainSpec) -> list[str]:
         """Held-out-validation preflight shared by every backend that reads it.
 
