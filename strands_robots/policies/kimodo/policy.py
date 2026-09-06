@@ -476,6 +476,8 @@ class KimodoPolicy(Policy):
         diffusion_steps = int(kwargs.get("diffusion_steps", self.config.diffusion_steps))
         guidance_scale = float(kwargs.get("guidance_scale", self.config.guidance_scale))
         seed = kwargs.get("seed", self.config.seed)
+        if error := sampling_seed_error(seed, "KimodoPolicy.get_actions"):
+            raise ValueError(error)
         key = self._sample_key(prompt, diffusion_steps, guidance_scale, seed)
         if self._motion_buffer is None or key != self._buffer_key:
             self._synthesise(

@@ -95,7 +95,7 @@ USABLE = [
 
 
 class TestEverySurfaceThatSetsTheSeedSharesOneDomain:
-    """A seed gets one verdict whichever of the five surfaces receives it."""
+    """A seed gets one verdict whichever of the six surfaces receives it."""
 
     @pytest.mark.parametrize("seed", UNUSABLE)
     def test_the_constructor_refuses_it(self, seed):
@@ -127,18 +127,28 @@ class TestEverySurfaceThatSetsTheSeedSharesOneDomain:
             KimodoConfig.from_json(path)
 
     @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_both_surfaces_state_the_same_domain_and_name_themselves(self, seed):
+    def test_a_per_call_seed_override_in_get_actions_refuses_it(self, seed):
+        """The per-call seed kwarg on get_actions also consults the domain."""
+        policy, _ = _policy(seed=42)
+        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+            asyncio.run(policy.get_actions({}, "waving", seed=seed))
+
+    @pytest.mark.parametrize("seed", UNUSABLE)
+    def test_all_three_surfaces_state_the_same_domain_and_name_themselves(self, seed):
         """One domain, and each message says which surface refused, so a caller
-        knows both what to change and where."""
+        knows what to change and where."""
         with pytest.raises(ValueError) as from_construction:
             KimodoConfig(seed=seed)
         policy, _ = _policy()
         with pytest.raises(ValueError) as from_reseed:
             policy.reset(seed=seed)
+        with pytest.raises(ValueError) as from_get_actions:
+            asyncio.run(policy.get_actions({}, "waving", seed=seed))
 
         domain = "seed must be a whole number or None"
         assert str(from_construction.value).startswith(f"KimodoConfig: {domain}")
         assert str(from_reseed.value).startswith(f"KimodoPolicy.reset: {domain}")
+        assert str(from_get_actions.value).startswith(f"KimodoPolicy.get_actions: {domain}")
 
 
 class TestARefusedSeedChangesNothing:

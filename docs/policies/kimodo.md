@@ -206,10 +206,11 @@ same per-episode motions. Repeating a seed replays the buffered motion rather
 than re-running the sampler for identical frames, and `reset()` without a seed
 only rewinds - neither pays for a diffusion run.
 
-That replay is keyed on the seed, so the seed has to be a whole number and both
-surfaces that set one enforce it: `KimodoConfig` (however the value arrives) and
-`reset(seed=...)`, which stores a per-episode reseed on the frozen config and so
-applies the domain itself. A fractional seed would reach the sampler as itself
+That replay is keyed on the seed, so the seed has to be a whole number and all
+three surfaces that set one enforce it: `KimodoConfig` (however the value
+arrives), `reset(seed=...)` (which stores a per-episode reseed on the frozen
+config and so applies the domain itself), and the per-call `seed` override in
+`get_actions(seed=...)`. A fractional seed would reach the sampler as itself
 and key as `int(seed)`, making `2.5` and `2.9` name one motion - the second
 episode would read as a cache hit and replay the first. `nan` and `inf` cannot
 be keyed at all, and `inf` is what a config file spelling `1e400` parses to.
