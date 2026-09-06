@@ -68,7 +68,7 @@ from numpy.typing import NDArray
 from strands_robots.policies.base import Policy
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
 
-from .config import KimodoConfig
+from .config import KimodoConfig, sampling_seed_error
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +463,15 @@ class KimodoPolicy(Policy):
             The single-element list matches the base ``Policy.get_actions``
             contract (chunked policies return more than one). At the end of the
             sampled buffer the last frame is held (tracker keeps servoing).
+
+        Raises:
+            ValueError: If neither ``instruction`` nor ``text_prompt`` supplies
+                a non-empty prompt, or if a per-call ``seed`` override is
+                outside the domain
+                :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
+                states. The seed is checked before the buffered-motion key is
+                built, so a refused override leaves the held motion and the
+                frame cursor exactly as they were.
         """
         prompt = kwargs.get("text_prompt") or instruction
         if not prompt or not prompt.strip():
@@ -476,6 +485,8 @@ class KimodoPolicy(Policy):
         diffusion_steps = int(kwargs.get("diffusion_steps", self.config.diffusion_steps))
         guidance_scale = float(kwargs.get("guidance_scale", self.config.guidance_scale))
         seed = kwargs.get("seed", self.config.seed)
+        if error := sampling_seed_error(seed, "KimodoPolicy.get_actions"):
+            raise ValueError(error)
         key = self._sample_key(prompt, diffusion_steps, guidance_scale, seed)
         if self._motion_buffer is None or key != self._buffer_key:
             self._synthesise(
@@ -514,11 +525,24 @@ class KimodoPolicy(Policy):
         rather than being eased onto where the previous episode finished.
 
         Args:
-            seed: Sampling seed for the next episode. ``None`` rewinds only,
-                replaying the motion already held. A seed equal to the one that
-                produced the current buffer also replays it rather than
-                re-running the sampler for identical frames.
+            seed: Sampling seed for the next episode, in the domain
+                :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
+                states. ``None`` rewinds only, replaying the motion already
+                held. A seed equal to the one that produced the current buffer
+                also replays it rather than re-running the sampler for
+                identical frames.
+
+        Raises:
+            ValueError: If ``seed`` is outside that domain. Checked before any
+                state is touched, so a refused reseed leaves the policy exactly
+                as it was rather than half-rewound.
         """
+        # The seed is stored on the frozen config below with
+        # ``object.__setattr__``, which does not re-enter ``__post_init__``, so
+        # the domain is applied here instead. Construction and a per-episode
+        # reseed are two spellings of the same setting and give one verdict.
+        if error := sampling_seed_error(seed, "KimodoPolicy.reset"):
+            raise ValueError(error)
         self._frame_cursor = 0
         # A new episode starts the robot afresh, so there is no previously
         # commanded pose to stay continuous with. Forgetting the pose is not
@@ -555,11 +579,20 @@ class KimodoPolicy(Policy):
         (:meth:`get_actions`) build the key here, so the two cannot disagree
         about which inputs identify a motion.
 
+        The seed is coerced with ``int()`` so an integral ``2.0`` and a plain
+        ``2`` name one sample, as they must: they seed the sampler identically.
+        That coercion is safe, and the identity holds, only because
+        :func:`~strands_robots.policies.kimodo.config.sampling_seed_error` has
+        already established that the seed is whole - a fractional seed would key
+        as a DIFFERENT value than the one the sampler received, so the key would
+        name a sample the sampler never produced.
+
         Args:
             prompt: Text prompt the motion was sampled for.
             diffusion_steps: Denoising steps used.
             guidance_scale: Classifier-free-guidance weight used.
-            seed: Sampling seed, or ``None`` for an unseeded sample.
+            seed: Sampling seed, or ``None`` for an unseeded sample. Whole, per
+                the domain above.
 
         Returns:
             A hashable tuple identifying the run.
