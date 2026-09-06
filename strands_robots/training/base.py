@@ -840,6 +840,52 @@ class Trainer(ABC):
 
         return target_entropy_problems(spec, context=self.provider_name)
 
+    def _polyak_coefficient_problems(self, spec: TrainSpec) -> list[str]:
+        """Polyak-coefficient preflight, for a backend that keeps a target network.
+
+        Returns a problem when :attr:`RLTrainSpec.tau` is not a real number in
+        ``(0, 1]``. It is the rate at which a target network tracks its online
+        network, spent in one expression per mirrored critic pair,
+        ``tp.mul_(1.0 - spec.tau).add_(spec.tau * p)``, so it decides whether a
+        separate target network exists at all rather than merely how fast it
+        moves.
+
+        The interval is the one the two on-policy interval gates cite as their
+        precedent - :meth:`_discount_factor_problems` and
+        :meth:`_gae_lambda_problems` both generalize "``tau`` must be in
+        ``(0, 1]``" - and it is half-open where theirs is closed because zero is
+        a degenerate spelling here: it freezes the target parameters at their
+        initialization for the whole run. The upper endpoint stays inside, being
+        the deliberate hard update ``tp = p``.
+
+        The two backends each carried a bare local interval comparison against
+        those bounds instead, which admitted ``True`` as a silent ``tau`` of one -
+        a target network that is a copy of the online network, measured as an
+        exactly zero online-to-target gap in the exported checkpoint of a run
+        that reported success - and raised ``TypeError`` out of the comparison
+        itself on a numeric string, ``None`` or a list, from a :meth:`validate`
+        documented to *return* its problems.
+
+        Only a backend that maintains a target network may call this: like
+        :meth:`_gae_lambda_problems`, and unlike :meth:`_learning_rate_problems`,
+        a backend that does not read the field MUST NOT report on it, because
+        per :class:`TrainSpec` a backend ignores the fields it does not support.
+        PPO has no target network and never reads ``tau``.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``tau`` cannot be honored; empty when it
+            can.
+        """
+        from strands_robots.training._validate import polyak_coefficient_problems
+
+        return polyak_coefficient_problems(spec, context=self.provider_name)
+
     def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
         """Gradient-clip preflight for a backend that clips before it steps.
 

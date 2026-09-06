@@ -194,8 +194,19 @@ class FastSacTrainer(BaseRLAlgo):
         # being a function of the observation, and the run reports success while
         # exporting a deployable checkpoint whose actor is one fixed action.
         problems.extend(self._network_width_problems(spec))
-        if not 0.0 < spec.tau <= 1.0:
-            problems.append(f"tau must be in (0, 1], got {spec.tau}")
+        # tau is the rate at which the target critics track the online ones,
+        # spent as tp.mul_(1.0 - spec.tau).add_(spec.tau * p) per mirrored pair,
+        # so it decides whether a separate target network exists at all. A bare
+        # interval comparison could not carry that: bool is an int subclass, so
+        # True read as the interval's maximum - the hard update tp = p, a target
+        # network that is a copy of the online one, measured as an exactly zero
+        # online-to-target gap in the checkpoint of a run that reported success -
+        # and a numeric string, None or a list raised TypeError out of the
+        # comparison itself, from a validate documented to return its problems.
+        # The interval is unchanged, and is the one the on-policy gamma and lam
+        # gates cite as the precedent they generalize; it is now shared with them
+        # rather than duplicated between this backend and its sibling.
+        problems.extend(self._polyak_coefficient_problems(spec))
         # learning_starts >= batch_size is a relation between two counts, so BOTH
         # operands are asked of the shared count domain and the relation only of
         # two values that are counts. Asking it of batch_size alone was not
