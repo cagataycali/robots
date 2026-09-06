@@ -20,6 +20,7 @@ lifetime is still a legal pair.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import jwt
 import pytest
@@ -33,6 +34,36 @@ DOCUMENTED_DEFAULTS = {"TOKEN_TTL": 86400, "SESSION_MAX_AGE": 2592000, "HANDOFF_
 # Durations that mean something to a human and nothing to ``int()``. Each is a
 # plausible way to ask for one hour, or to annotate the number.
 UNIT_SPELLINGS = ["1h", "60m", "3600s", "1 hour", "3600 # one hour", "0x10", "1e3", "3600.0", "banana", ""]
+
+
+@pytest.fixture(autouse=True)
+def isolated_store(tmp_path, monkeypatch):
+    """Point every store reader in this file at a per-test file.
+
+    The surface cells below mint tokens, and :func:`auth.issue_token` /
+    :func:`auth.issue_handoff` sign with ``_jwt_secret()``, which reads the
+    credential store. :func:`auth._store_path` resolves an unset ``STORE`` to
+    ``~/.strands_dashboard/auth.json`` - the file that decides whether a
+    dashboard on this machine is sealed - so without this redirect these cells
+    both read and WRITE it: on a machine with no store they create one, and on
+    a machine whose store is unparseable :func:`auth._preserve_corrupt` renames
+    the operator's file aside and writes a fresh JWT secret, invalidating every
+    live session token. Both under a green report. A store that parses but
+    carries no ``jwt_secret`` makes two cells fail for a reason that has
+    nothing to do with a duration, so the verdict is decided by what the
+    machine already holds. ``$HOME`` is fresh in CI, so no gate reports any of
+    it. The ten sibling ``test_dashboard_auth_*`` modules that reach the store
+    all carry this redirect; AGENTS.md rule 15 states the same rule for the
+    dataset cache, for the same reason.
+
+    ``monkeypatch.setenv`` rather than a patched module attribute, because the
+    private module copies :func:`_load_auth` builds re-read ``STORE`` from the
+    environment and carry their own caches - an attribute patch would redirect
+    the shared module and leave every copy pointing at the real store.
+    """
+    monkeypatch.setenv(auth._ENV + "STORE", str(tmp_path / "auth.json"))
+    auth._cache = {}
+    yield
 
 
 def _load_auth(monkeypatch, **env):
@@ -100,6 +131,22 @@ KNOBS = {
 def test_every_duration_knob_this_module_reads_is_pinned_here():
     """A fourth duration knob must not arrive with its own bare int() and no pin."""
     assert set(KNOBS) == set(auth._DURATION_DEFAULTS) == set(DOCUMENTED_DEFAULTS)
+
+
+def test_no_module_path_in_this_file_reads_the_real_credential_store(tmp_path, monkeypatch):
+    """Neither module path here may resolve the store a real dashboard is sealed by.
+
+    Both are checked because they resolve it independently: the shared ``auth``
+    module, and the private copy :func:`_load_auth` builds, which re-reads
+    ``STORE`` from the environment. A redirect applied as a module attribute
+    would satisfy the first and leave the second on
+    ``~/.strands_dashboard/auth.json``, where minting a token writes.
+    """
+    home_store = (Path.home() / ".strands_dashboard" / "auth.json").resolve()
+    paths = {"the shared module": auth._store_path(), "_load_auth's copy": _load_auth(monkeypatch)._store_path()}
+    for which, path in paths.items():
+        assert path != home_store, f"{which} resolves the store to the operator's own file: {path}"
+        assert path.is_relative_to(tmp_path), f"{which} resolves the store outside this test's tmp_path: {path}"
 
 
 # --- the defect: a narrowing spelled with a unit resolved to the wide default --
