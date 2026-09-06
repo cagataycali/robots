@@ -1361,6 +1361,12 @@ def torch_device_error(value: Any, param: str, context: str) -> str | None:
     through unguarded, which is the posture every live-sourced domain in this
     module takes when its source cannot be read.
 
+    The refused value is rendered through :func:`_refusal_repr`, as every scalar
+    guard here is: ``repr`` can itself raise - on an ``int`` wider than
+    :func:`sys.get_int_max_str_digits`, or from any third-party ``__repr__`` - and
+    a guard that raises while building a refusal fails on exactly the path that
+    exists so it does not.
+
     Args:
         value: The caller-supplied device.
         param: Field name, quoted in the message so the refusal names the knob.
