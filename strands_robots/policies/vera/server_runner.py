@@ -326,8 +326,19 @@ class DockerServerRunner:
             cmd += ["-e", f"VERA_TRACKER_BACKEND={cfg.tracker_backend}"]
         if cfg.sample_steps is not None:
             cmd += ["-e", f"VERA_SAMPLE_STEPS={cfg.sample_steps}"]
+        # The teacache pair is forwarded as one either/or, mirroring the
+        # subprocess argv above, because that is the shape the server takes: a
+        # threshold is meaningless once the cache is off. Only the "off" half
+        # used to be carried, so the threshold - a bare float, the most
+        # trivially forwardable value on the config, needing none of the
+        # host->container path translation that keeps `algo_config` off this
+        # list - reached the server in one launch mode and not the other. The
+        # entrypoint turns the variable back into `--teacache-thresh`; an `-e`
+        # nothing in the container reads would have been inert.
         if not cfg.teacache:
             cmd += ["-e", "VERA_NO_TEACACHE=1"]
+        else:
+            cmd += ["-e", f"VERA_TEACACHE_THRESH={cfg.teacache_thresh}"]
         if cfg.docker_extra_args:
             cmd += list(cfg.docker_extra_args)
         cmd += [cfg.docker_image]
