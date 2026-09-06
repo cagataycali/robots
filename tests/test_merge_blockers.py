@@ -1306,3 +1306,109 @@ def test_the_step_summary_receives_the_report(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     mod._emit("## a report")
     assert "## a report" in summary.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# A standing request for changes, measured on #3205.
+#
+# It read `missing-approval` owed by "a reviewer other than the pusher" while
+# `reviewDecision` was CHANGES_REQUESTED and the only account that could clear
+# it was the one that had requested the changes. The named party's approval
+# could not have merged it. It stood 15h44m, 12h51m of that after the fix had
+# landed and the thread was resolved.
+# --------------------------------------------------------------------------
+
+
+def test_3205_a_standing_request_for_changes_names_the_account_that_can_clear_it() -> None:
+    """The defect: the report named a party whose approval could not clear it.
+
+    Both rules really are unsatisfied here -- nobody has approved, and a request
+    for changes stands -- but they are owed by different people, and only one of
+    them can move the pull request. So the request must own the next action.
+    """
+    blockers = mod.evaluate(state(approvers=(), change_requesters=("the-reviewer",)), MAIN)
+    assert outcomes(blockers) == [mod.CHANGES_REQUESTED, mod.MISSING_APPROVAL]
+    assert mod.primary(blockers).outcome == mod.CHANGES_REQUESTED
+    assert mod.primary(blockers).owed_by == mod.REQUESTING_REVIEWER
+    # The pre-fix answer, which is the one that misled.
+    assert mod.primary(blockers).owed_by != mod.OTHER_REVIEWER
+
+
+def test_a_third_partys_approval_does_not_clear_a_standing_request_for_changes() -> None:
+    """The count is satisfied and the pull request is still blocked.
+
+    This is the case that makes the two questions genuinely different rather
+    than two spellings of one: with an eligible approval present there is no
+    approval rule left to report, so a check that models only approvals reports
+    nothing at all and the reader concludes the branch is ready.
+    """
+    blockers = mod.evaluate(
+        state(approvers=("another-reviewer",), change_requesters=("the-reviewer",)),
+        MAIN,
+    )
+    assert outcomes(blockers) == [mod.CHANGES_REQUESTED]
+    assert mod.primary(blockers).owed_by == mod.REQUESTING_REVIEWER
+    assert mod.primary(blockers).outcome != mod.NO_UNSATISFIED_RULE
+
+
+def test_a_request_for_changes_is_reported_but_is_not_a_finding() -> None:
+    """Owed by a reviewer, so it is not a state an author-side pass can act on.
+
+    Same reasoning as ``missing-approval``: a finding that fires whenever a
+    review is in progress fires on the ordinary state and stops meaning
+    anything. The report is the point; the exit status is not.
+    """
+    blocker = mod.evaluate(state(change_requesters=("the-reviewer",)), MAIN)[0]
+    assert blocker.outcome == mod.CHANGES_REQUESTED
+    assert blocker.is_finding is False
+    assert blocker.is_gating is False
+
+
+def test_a_request_for_changes_names_the_account_in_its_detail() -> None:
+    """The party is a role; the reason has to say which account holds it.
+
+    ``the reviewer who requested changes`` is not actionable on its own -- the
+    reader has to know who to ask, and on a pull request with several reviewers
+    the report is the only place that is written down.
+    """
+    detail = mod.evaluate(state(change_requesters=("the-reviewer",)), MAIN)[0].detail
+    assert "the-reviewer" in detail
+    blockers = mod.evaluate(state(change_requesters=("alice", "bob")), MAIN)
+    assert "alice" in blockers[0].detail and "bob" in blockers[0].detail
+
+
+def test_no_request_for_changes_reports_no_such_blocker() -> None:
+    """The control. The default fixture is an unblocked review state."""
+    assert mod.CHANGES_REQUESTED not in outcomes(mod.evaluate(state(), MAIN))
+    assert mod.CHANGES_REQUESTED not in outcomes(mod.evaluate(state(change_requesters=()), MAIN))
+
+
+def test_a_request_for_changes_is_not_reported_where_reviews_are_not_required() -> None:
+    """A branch carrying no approval requirement is not blocked by a review.
+
+    Scoped to the rule for the same reason the pusher discount is: reporting it
+    unconditionally would invent a blocker on a branch whose ruleset does not
+    hold the merge for a review at all.
+    """
+    no_reviews = mod.parse_ruleset([])
+    blockers = mod.evaluate(state(approvers=(), change_requesters=("the-reviewer",)), no_reviews)
+    assert mod.CHANGES_REQUESTED not in outcomes(blockers)
+
+
+def test_the_request_for_changes_semantics_come_from_the_sibling_check() -> None:
+    """One owner for "whose position counts", as for the approval side.
+
+    The sweep binds the sibling's resolver rather than deriving standing itself,
+    so the rule that a COMMENTED review retracts nothing cannot hold on one side
+    and lapse on the other.
+    """
+    assert mod.current_change_requesters is not None
+    reviews = [
+        mod.resolve_reviews.__globals__["Review"](
+            author="the-reviewer", state="CHANGES_REQUESTED", submitted_at="2026-09-06T01:24:59Z"
+        ),
+        mod.resolve_reviews.__globals__["Review"](
+            author="the-reviewer", state="COMMENTED", submitted_at="2026-09-06T04:17:25Z"
+        ),
+    ]
+    assert mod.current_change_requesters(reviews) == ("the-reviewer",)

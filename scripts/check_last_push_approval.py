@@ -265,8 +265,8 @@ def _join(names: Sequence[str]) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def current_approvers(reviews: Iterable[Review]) -> tuple[str, ...]:
-    """Return the accounts whose latest position on the change is an approval.
+def _latest_positions(reviews: Iterable[Review]) -> dict[str, Review]:
+    """Return each account's most recent review that expresses a position.
 
     Mirrors how ``reviewDecision`` is computed: a reviewer's standing is their
     most recent review that expresses a position, so ``COMMENTED`` is skipped
@@ -274,6 +274,11 @@ def current_approvers(reviews: Iterable[Review]) -> tuple[str, ...]:
     sequence as returned by the API, which is chronological, with
     ``submitted_at`` only as a tiebreak -- two reviews can share a timestamp to
     the second, and the later one in the list is the later one.
+
+    Held as one function because "whose standing counts" is a single rule with
+    more than one question asked of it -- an approval and a request for changes
+    are the two positions that gate a merge, and resolving them separately is
+    how the two come to disagree about whether a ``COMMENTED`` review retracts.
     """
     latest: dict[str, Review] = {}
     for order, review in enumerate(reviews):
@@ -284,7 +289,29 @@ def current_approvers(reviews: Iterable[Review]) -> tuple[str, ...]:
         held = latest.get(review.author)
         if held is None or (keyed.submitted_at, keyed._order) >= (held.submitted_at, held._order):
             latest[review.author] = keyed
-    return tuple(sorted(a for a, r in latest.items() if r.state == "APPROVED"))
+    return latest
+
+
+def current_approvers(reviews: Iterable[Review]) -> tuple[str, ...]:
+    """Return the accounts whose latest position on the change is an approval."""
+    return tuple(sorted(a for a, r in _latest_positions(reviews).items() if r.state == "APPROVED"))
+
+
+def current_change_requesters(reviews: Iterable[Review]) -> tuple[str, ...]:
+    """Return the accounts whose latest position on the change requests changes.
+
+    A standing ``CHANGES_REQUESTED`` is a merge blocker in its own right and one
+    that only its own author can clear, by approving or by dismissing. It is
+    **not** answerable by an approval from anyone else: with required reviews in
+    force, another account's approval satisfies the count and the pull request
+    stays blocked. So this is a different question from ``current_approvers``
+    with a different owed party, and reading only the approval side reports a
+    reviewer who cannot clear it.
+
+    ``DISMISSED`` is a position and supersedes an earlier request for changes,
+    which is why the shared resolution above is the one that decides standing.
+    """
+    return tuple(sorted(a for a, r in _latest_positions(reviews).items() if r.state == "CHANGES_REQUESTED"))
 
 
 def classify(pusher: str | None, reviews: Iterable[Review]) -> Verdict:
