@@ -227,7 +227,15 @@ open a window.
   parser can read: a URDF joint that omits the optional `<axis>` acts about
   **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
   axes, so a joint read under the other format's default would be reported
-  acting in the perpendicular plane with the load still reporting success. Both
+  acting in the perpendicular plane with the load still reporting success. A
+  default applies only where the format declares one, which is why the two
+  formats answer an omitted `type` differently: MJCF documents `hinge` as the
+  default for a `<joint>`, so an MJCF joint with no `type` is read as a hinge,
+  while URDF requires `type` on every `<joint>`, so a URDF joint that omits it
+  is refused by name - by both readers, `load_urdf` and `urdf_joint_names`.
+  Reading it as `fixed` welded a joint the file never described and returned a
+  robot with fewer actuated DOFs than the file declares, indistinguishable from
+  a deliberate `type="fixed"`. Both
   of MJCF's spellings of a free joint are read - the dedicated `<freejoint>`
   element and `<joint type="free">`, which MuJoCo compiles to the same joint -
   so a floating base is reported rather than absent. `<freejoint>` is how every

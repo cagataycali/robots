@@ -26,6 +26,13 @@ on parse failure):
     * Missing path -> :class:`FileNotFoundError`.
     * Malformed XML / unparseable document -> :class:`ValueError` with the
       file path and the offending element / parser message.
+    * A required attribute the document omits -> :class:`ValueError` naming the
+      element and the attribute. Never a default standing in for it: a URDF
+      ``<joint>`` must declare ``name`` and ``type``, and reading an absent
+      ``type`` as ``fixed`` welded a joint the file never described. An
+      attribute the format itself documents a default for (an MJCF ``<joint>``
+      ``type``, a URDF ``<axis>``) is a declaration of that default and is read
+      as one.
     * Empty document (zero links / zero joints / zero bodies) ->
       :class:`ValueError`. Loaders never silently return a phantom robot.
 
@@ -295,7 +302,26 @@ def load_urdf(path: str) -> ProceduralRobot:
         if not jname:
             raise ValueError(f"URDF loader: <joint> without name attribute in {path}")
 
-        urdf_type = joint_el.get("type", "fixed")
+        # ``type`` is a REQUIRED attribute of a URDF ``<joint>``, so an absent one
+        # is missing information rather than a declaration of a default - unlike
+        # the optional ``<axis>`` below, and unlike MJCF's ``type``, which the
+        # format documents as defaulting to ``hinge``. Defaulting it to ``fixed``
+        # here produced a JointDef byte-identical to the one a deliberate
+        # ``type="fixed"`` produces, so a joint the file failed to declare was
+        # indistinguishable from one the author welded on purpose: the robot came
+        # back with fewer actuated DOFs than the file names, and the load
+        # reported success - the silent ``joint_count`` this module's failure
+        # semantics exist to convert into a message. The empty spelling
+        # (``type=""``) was already refused by name below, so one file was
+        # refused and the other welded for the same missing declaration. Both are
+        # refused now, which is also what MuJoCo - this loader's reference for
+        # the ``<axis>`` default - does with either spelling.
+        urdf_type = joint_el.get("type")
+        if urdf_type is None:
+            raise ValueError(
+                f"URDF loader: <joint name='{jname}'> in {path} states no 'type' attribute; "
+                f"URDF requires it (one of {sorted(_URDF_JOINT_TYPE_MAP)})"
+            )
         jtype = _URDF_JOINT_TYPE_MAP.get(urdf_type)
         if jtype is None:
             raise ValueError(

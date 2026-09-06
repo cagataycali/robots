@@ -96,8 +96,11 @@ def urdf_joint_names(urdf_path: str) -> list[str]:
         If ``urdf_path`` does not exist.
     ValueError
         If the XML is malformed, the root element is not ``<robot>``, or a
-        joint carries no ``name`` attribute - the same fail-loud contract as
-        :func:`strands_robots.simulation.isaac.loaders.load_urdf`.
+        joint omits either of the attributes URDF requires of it - ``name`` or
+        ``type`` - the same fail-loud contract as
+        :func:`strands_robots.simulation.isaac.loaders.load_urdf`. A joint that
+        STATES a type outside the movable set is skipped rather than refused;
+        the loader is the reader that grades the vocabulary.
     """
     try:
         tree = ET.parse(urdf_path)
@@ -109,7 +112,19 @@ def urdf_joint_names(urdf_path: str) -> list[str]:
 
     names: list[str] = []
     for joint_el in root.findall("joint"):
-        jtype = joint_el.get("type", "fixed")
+        # Both of a URDF joint's required attributes are refused when absent,
+        # for the same reason and in the same words: neither has a default to
+        # stand in for it. Reading an absent ``type`` as ``fixed`` dropped the
+        # joint from the candidate pool silently, so a DOF the importer really
+        # named kept its mangled USD name - the #1900 leak this module exists to
+        # close - for a file whose only fault was an omitted attribute. A joint
+        # that STATES a type outside the movable set is still skipped rather
+        # than refused: that is a declared type this function has no named DOF
+        # for, and :func:`~strands_robots.simulation.isaac.loaders.load_urdf` is
+        # the reader that grades the vocabulary.
+        jtype = joint_el.get("type")
+        if jtype is None:
+            raise ValueError(f"URDF joint-name parse: <joint> without type attribute in {urdf_path}")
         if jtype not in _MOVABLE_URDF_JOINT_TYPES:
             continue
         jname = joint_el.get("name")
