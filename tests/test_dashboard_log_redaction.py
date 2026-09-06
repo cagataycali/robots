@@ -524,3 +524,71 @@ class TestTheAccessLogKeepsEveryRequest:
         assert len(written.strip().splitlines()) == 3, "the handshake carrying a credential was dropped"
         assert JWT not in written
         assert "/ws/camera?token=" in written, "which socket was opened is what the access log is for"
+
+
+class TestStraddlingCredentialIsBaked:
+    """A credential that straddles two args must be baked (fail-closed).
+
+    Regression pin for the review thread on PR #3255: per-arg redaction can
+    partially rewrite a credential value that spans two args, after which
+    the full value is no longer a contiguous substring while most of it
+    survives in plaintext once the format string joins them.
+    """
+
+    SECRET = "supersecretvalue1234567890"
+
+    def test_split_across_two_percent_s_args(self) -> None:
+        """Reviewer repro 1: ``"%s%s" % (head_with_key, tail_with_value)``."""
+        r = logging.LogRecord(
+            "x",
+            logging.INFO,
+            __file__,
+            1,
+            "%s%s",
+            (f"/ws?token={self.SECRET[:8]}", self.SECRET[8:]),
+            None,
+        )
+        RedactingFilter().filter(r)
+        msg = r.getMessage()
+        # The surviving tail must not leak: the whole credential is redacted
+        assert self.SECRET[8:] not in msg, f"credential tail leaked in plaintext: {msg!r}"
+        # The args must have been dropped (baked path)
+        assert r.args == () or r.args is None
+
+    def test_head_tail_truncated_url_with_jwt(self) -> None:
+        """Reviewer repro 2: truncated URL logging leaking the JWT signature."""
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZXhwIjo5OX0.c2lnbmF0dXJlX2hlcmVfMTIzNA"
+        url = f"/ws/camera?token={jwt}"
+        r = logging.LogRecord(
+            "x",
+            logging.INFO,
+            __file__,
+            1,
+            "long url %s...%s",
+            (url[:40], url[-40:]),
+            None,
+        )
+        RedactingFilter().filter(r)
+        msg = r.getMessage()
+        # The JWT signature segment must not survive
+        assert "c2lnbmF0dXJlX2hlcmVfMTIzNA" not in msg, f"JWT signature leaked in plaintext: {msg!r}"
+
+    def test_credential_wholly_inside_one_arg_still_uses_per_arg_path(self) -> None:
+        """Control: when the credential IS wholly inside one arg, per-arg redaction suffices."""
+        r = logging.LogRecord(
+            "x",
+            logging.INFO,
+            __file__,
+            1,
+            "%s %s %s %s %s",
+            ("127.0.0.1", "GET", f"/ws?token={self.SECRET}", "HTTP/1.1", 101),
+            None,
+        )
+        RedactingFilter().filter(r)
+        # The credential is gone
+        assert self.SECRET not in r.getMessage()
+        # But the args are preserved (per-arg path, not baked)
+        assert isinstance(r.args, tuple)
+        assert len(r.args) == 5
+        # The int arg is untouched
+        assert r.args[4] == 101

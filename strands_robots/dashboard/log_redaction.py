@@ -175,16 +175,23 @@ class RedactingFilter(logging.Filter):
                 # out of it rather than out of the message. Redact the parts and keep the arity,
                 # so a formatter that unpacks them still has values to unpack.
                 carried = _credential_values(original)
-                record.args = _redacted_args(record.args)
+                original_args = record.args
+                record.args = _redacted_args(original_args)
                 try:
                     rerendered: str | None = record.getMessage()
                 except Exception:  # noqa: BLE001 - a broken record must not break logging
                     rerendered = None
-                if rerendered is None or any(secret in rerendered for secret in carried):
-                    # The credential is only credential-shaped once the format string and the
-                    # args are joined, so no per-arg redaction can reach it. Bake the redacted
-                    # text and drop the args: a formatter reading them positionally then fails
-                    # under ``Handler.emit``'s guard, which is the fail-closed answer.
+                if (
+                    rerendered is None
+                    or any(secret in rerendered for secret in carried)
+                    or not all(_wholly_inside_one_str_arg(secret, original_args) for secret in carried)
+                ):
+                    # The credential is not wholly inside a single str arg - either it
+                    # straddles two args, or it is only credential-shaped once format
+                    # string and args are joined, or re-rendering failed.  Bake the
+                    # redacted text and drop the args: a formatter reading them
+                    # positionally then fails under ``Handler.emit``'s guard, which is
+                    # the fail-closed answer.
                     record.msg = cleaned
                     record.args = ()
         # Each appended rail carries the message rail's guard, and carries it SEPARATELY: a
@@ -208,6 +215,22 @@ class RedactingFilter(logging.Filter):
 
 
 _Args = tuple[object, ...] | Mapping[str, object] | None
+
+
+def _wholly_inside_one_str_arg(secret: str, args: _Args) -> bool:
+    """True when ``secret`` is a contiguous substring of a single ``str`` arg.
+
+    If a credential straddles two args (``"%s%s" % (url[:40], url[-40:])``), per-arg
+    redaction replaces only the half it sees in each arg, and the other half survives in
+    plaintext once the format string joins them.  The caller uses this to decide whether
+    per-arg redaction is sufficient or the whole message must be baked and the args
+    dropped (fail-closed).
+    """
+    if isinstance(args, Mapping):
+        return any(isinstance(v, str) and secret in v for v in args.values())
+    if isinstance(args, tuple):
+        return any(isinstance(v, str) and secret in v for v in args)
+    return False
 
 
 def _redacted_args(args: _Args) -> _Args:
