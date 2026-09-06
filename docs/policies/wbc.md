@@ -106,6 +106,7 @@ than an error:
 | `action_scale` | finite `> 0` | The only path from the network to the joint targets. `0` (or `False`) makes `target_q == default_angles`, discarding the policy; a negative value inverts every offset. |
 | `kps`, `kds` | finite `>= 0`, per component | `kp = 0` with `kd > 0` is a pure-damping joint and stays valid; a *negative* gain makes `(target_q - q) * kp` drive the joint away from its target. |
 | `default_angles`, `cmd_scale`, `rpy_cmd` | finite, per component | Signed quantities (a stance angle, a yaw rate, a roll target), so only finiteness is constrained. |
+| `cmd_scale`, `obs_scales` (arity) | stated, or empty to mean the upstream default | An EMPTY `cmd_scale` means "not stated" and is completed with `(2.0, 2.0, 0.5)` at construction, so it cannot scale the velocity differently from omitting the argument. A wrong NON-empty length is still refused by name. |
 | `obs_scales` values, `height_cmd`, `freq_cmd` | finite | A non-finite scale poisons the observation frame the network is given. |
 
 A `nan`/`inf` anywhere reaches `data.ctrl` as a non-finite torque on all
@@ -179,6 +180,17 @@ WBC reproduces the upstream `GearWbcController` loop (NVlabs/GR00T-WholeBodyCont
   changes what an unnamed sibling is scaled by. `config.obs_scales` is therefore
   always the complete map the frame is built with, whichever spelling the config
   used.
+
+  `cmd_scale` - the velocity scale of the command block - is completed the same
+  way and for the same reason: an empty sequence means "not stated" and resolves
+  to the upstream `(2.0, 2.0, 0.5)`, so `config.cmd_scale` is always the vector
+  the block is built with. Both `_resolve_command` implementations resolve a
+  component the config does not supply from that same table rather than from a
+  bare `1.0` - a second fallback number would scale `omega` by `1.0` where the
+  table says `0.5`, commanding a yaw rate DOUBLE the one asked for (and `vx`/`vy`
+  halved) in the observation's first `command_dim` entries, which a dense network
+  carries to all `num_actions` joint targets. A `cmd_scale` a caller does state is
+  always honored, including a deliberate unit scale.
 - **Action** - the network emits a 15-dim joint-position *offset*; the policy
   forms absolute targets `target_q = default_angles + action_scale * raw` and
   returns them keyed by actuator name. For torque-actuated MuJoCo, convert with
