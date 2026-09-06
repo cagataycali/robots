@@ -981,7 +981,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         timestep : float, optional
             Override physics_dt from config.
         gravity : list[float], optional
-            Override gravity vector from config. [gx, gy, gz].
+            Gravity vector ``[gx, gy, gz]``, or a real scalar taken as the
+            z-component. Omitted, :attr:`IsaacConfig.gravity` is used; either
+            way the value takes the same domain - three finite, non-boolean
+            components, Z-aligned - because this backend's
+            ``PhysicsContext.set_gravity`` takes a signed scalar and cannot
+            honour an off-axis vector.
         ground_plane : bool
             Whether to add a ground plane. Default True.
         terrain : str, optional
@@ -1063,37 +1068,48 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # while the result echoed the full input vector as if applied. Validate
         # up front and reject anything the backend cannot honour, rather than
         # applying a gravity the caller never asked for.
-        if gravity is not None:
-            # Normalize through the shared domain first, so the component count,
-            # the numeric domain and the boolean refusal are the ones every
-            # other gravity surface applies. The local copy coerced a scalar
-            # with ``float()``, and bool is an int subclass, so
-            # ``create_world(gravity=True)`` configured a +1 m/s^2 gravity
-            # pointing *up*; it also keyed on ``isinstance(gravity, (list, tuple))``,
-            # so a NumPy vector - which the other backends accept - was refused
-            # as "not a scalar or vector". The Z-alignment constraint below is
-            # this backend's own and is applied to the normalized components.
-            components, gravity_error = self._normalize_gravity(gravity, "create_world")
-            if components is None:
-                return cast("dict[str, Any]", gravity_error)
-            if components[0] != 0.0 or components[1] != 0.0:
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"create_world: the Isaac backend only supports Z-aligned gravity "
-                                f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
-                                f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
-                                f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
-                                f"arbitrary-direction gravity."
-                            )
-                        }
-                    ],
-                }
-            # Store the normalized components so what the result reports and
-            # what the physics context receives are the same value.
-            gravity = components
+        # Resolved from config-or-argument first, the way ``effective_timestep``
+        # above is: ``IsaacConfig.gravity`` is the same value from the other
+        # owner, and gating the argument alone left every verdict below to
+        # whether the caller happened to spell the value at the call site. Read
+        # from the field, ``(0, -9.81, 0)`` still reached ``set_gravity(0.0)``
+        # and the result still echoed the full vector, a non-finite or
+        # non-numeric component still reached the physics context unexamined,
+        # and a 2-component field raised ``IndexError`` past this method's
+        # structured-error contract. ``gravity_param`` follows the source so the
+        # message names the owner to fix.
+        effective_gravity = self._config.gravity if gravity is None else gravity
+        gravity_param = "gravity" if gravity is not None else "IsaacConfig.gravity"
+        # Normalize through the shared domain, so the component count, the
+        # numeric domain and the boolean refusal are the ones every other
+        # gravity surface applies. The local copy coerced a scalar with
+        # ``float()``, and bool is an int subclass, so
+        # ``create_world(gravity=True)`` configured a +1 m/s^2 gravity pointing
+        # *up*; it also keyed on ``isinstance(gravity, (list, tuple))``, so a
+        # NumPy vector - which the other backends accept - was refused as "not a
+        # scalar or vector". The Z-alignment constraint below is this backend's
+        # own and is applied to the normalized components.
+        components, gravity_error = self._normalize_gravity(effective_gravity, "create_world", gravity_param)
+        if components is None:
+            return cast("dict[str, Any]", gravity_error)
+        if components[0] != 0.0 or components[1] != 0.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"create_world: the Isaac backend only supports Z-aligned gravity "
+                            f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
+                            f"vector like {effective_gravity!r} in {gravity_param!r} cannot be honoured. "
+                            f"Pass a scalar or a [0, 0, gz] vector, or use "
+                            f"create_simulation(backend='mujoco') for arbitrary-direction gravity."
+                        )
+                    }
+                ],
+            }
+        # Store the normalized components so what the result reports and
+        # what the physics context receives are the same value.
+        gravity = components
         with self._lock:
             if self._world_created:
                 return {
@@ -1124,7 +1140,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     from omni.isaac.core import World  # type: ignore[import-not-found]
 
                 dt = timestep if timestep is not None else self._config.physics_dt
-                grav = gravity if gravity is not None else list(self._config.gravity)
+                grav = gravity
 
                 # Create World
                 self._world = World(
@@ -1136,7 +1152,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 # Set gravity
                 # Isaac Sim 5.1: set_gravity takes a scalar magnitude, not a vector.
                 # Extract the Z-component (convention: gravity points along -Z).
-                gravity_magnitude = grav[2] if isinstance(grav, (list, tuple)) else grav
+                gravity_magnitude = grav[2]
                 self._world.get_physics_context().set_gravity(gravity_magnitude)
 
                 # Add ground plane
@@ -1165,7 +1181,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 world_info = {
                     "physics_dt": dt,
                     "rendering_dt": self._config.rendering_dt,
-                    "gravity": list(grav) if isinstance(grav, (list, tuple)) else [0.0, 0.0, float(grav)],
+                    "gravity": list(grav),
                     "ground_plane": bool(ground_plane and self._config.ground_plane),
                     "stage_path": self._config.stage_path,
                     "stage_units_in_meters": 1.0,

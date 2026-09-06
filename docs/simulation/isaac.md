@@ -144,7 +144,7 @@ rejected eagerly. The commonly used fields:
 | `physics_dt` | `float` | `1/120` | Physics timestep (seconds). |
 | `rendering_dt` | `float` | `1/30` | Rendering timestep (seconds). |
 | `render_mode` | `str` | `"headless"` | `"headless"`, `"rtx_realtime"` (raster), or `"rtx_pathtracing"` (photoreal). |
-| `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). |
+| `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). Three finite components, Z-aligned - the same domain `create_world(gravity=...)` takes. |
 | `ground_plane` | `bool` | `True` | Add a ground plane on `create_world()`. |
 | `stage_path` | `str` | `"/World"` | USD stage path prefix. |
 | `nucleus_url` | `str \| None` | `None` | Override Omniverse Nucleus URL (env-resolvable). |
