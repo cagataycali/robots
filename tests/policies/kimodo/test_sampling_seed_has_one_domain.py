@@ -13,8 +13,13 @@ coercion at all and raise out of the private key builder mid-rollout, and
 Four surfaces set this seed - the constructor, ``from_dict``, ``from_json``, and
 a ``KimodoPolicy(seed=...)`` override - and a fifth, ``KimodoPolicy.reset``,
 stores a per-episode reseed with ``object.__setattr__`` and so never re-enters
-``__post_init__``. All five consult ``sampling_seed_error``, so the tables below
-run every spelling past every surface.
+``__post_init__``. A sixth is the per-call ``get_actions(..., seed=...)``
+override the method's own docstring lists: it is read straight from ``kwargs``
+and reaches the sampler and the key without passing through the config at all,
+and ``PolicyRunner.run`` / ``evaluate`` forward ``policy_kwargs`` verbatim to
+every ``get_actions`` call, so it is a routine path rather than a private one.
+All six consult ``sampling_seed_error``, so the tables below run every spelling
+past every surface.
 
 The ACCEPTED rows are controls that hold on both sides of the fix: a whole seed
 of either sign or any width still works, ``2`` and ``2.0`` still deliberately
@@ -64,9 +69,9 @@ def _policy(**cfg_kwargs):
     return KimodoPolicy(config=KimodoConfig(**_FAST, **cfg_kwargs), motion_agent=agent), agent
 
 
-def _pose(policy) -> tuple[float, ...]:
+def _pose(policy, **kwargs) -> tuple[float, ...]:
     obs = {"state": np.zeros(_NUM_JOINTS, dtype=np.float32)}
-    action = asyncio.run(policy.get_actions(obs, "walk forward"))[0]
+    action = asyncio.run(policy.get_actions(obs, "walk forward", **kwargs))[0]
     return tuple(action[joint] for joint in KIMODO_G1_JOINTS)
 
 
@@ -167,6 +172,24 @@ class TestARefusedSeedChangesNothing:
         assert len(agent.seeds) == 1, "a refused reseed must not run the sampler"
         assert _pose(policy) != first, "the cursor must not have been rewound"
 
+    def test_a_refused_per_call_override_leaves_the_held_motion_and_the_cursor_alone(self):
+        """The per-call gate is asked before the buffered-motion key is built.
+
+        ``reset`` stores its reseed on the frozen config with
+        ``object.__setattr__``, so the two surfaces are one refactor away from
+        sharing that write; a refused override must not leave a seed behind, and
+        must not spend a diffusion run or a frame on the way to being refused.
+        """
+        policy, agent = _policy(seed=7)
+        first = _pose(policy)
+
+        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+            _pose(policy, seed=2.5)
+
+        assert policy.config.seed == 7, "a refused override must not write the config"
+        assert len(agent.seeds) == 1, "a refused override must not run the sampler"
+        assert _pose(policy) != first, "the cursor must not have been rewound"
+
 
 class TestASeedTheDomainAcceptsSurvivesBothOfItsUses:
     """The controls: every accepted seed still reaches the sampler and keys itself."""
@@ -206,6 +229,27 @@ class TestASeedTheDomainAcceptsSurvivesBothOfItsUses:
         policy.reset(seed=2.0)
         _pose(policy)
         assert len(agent.seeds) == 1, "the same seed spelled two ways must not re-run the sampler"
+
+    @pytest.mark.parametrize("seed", USABLE)
+    def test_an_accepted_per_call_override_still_reaches_the_sampler(self, seed):
+        """The gate narrows nothing a caller could already ask for.
+
+        ``get_actions(..., seed=...)`` is a documented parameter and
+        ``PolicyRunner`` forwards ``policy_kwargs`` verbatim to every call, so a
+        gate that refused the override itself - rather than the values outside
+        the domain - would take a working knob away from every rollout that
+        passes one.
+        """
+        policy, agent = _policy()
+        _pose(policy, seed=seed)
+        assert agent.seeds == [seed]
+
+    def test_two_distinct_accepted_per_call_seeds_name_two_motions(self):
+        """Re-sampling on a changed per-call seed is what the override is for."""
+        policy, agent = _policy(seed=2)
+        _pose(policy)
+        _pose(policy, seed=9)
+        assert agent.seeds == [2, 9], "the second per-call seed must reach the sampler"
 
     def test_none_still_draws_a_fresh_sample_rather_than_seeding(self):
         policy, agent = _policy()

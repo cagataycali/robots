@@ -463,6 +463,15 @@ class KimodoPolicy(Policy):
             The single-element list matches the base ``Policy.get_actions``
             contract (chunked policies return more than one). At the end of the
             sampled buffer the last frame is held (tracker keeps servoing).
+
+        Raises:
+            ValueError: If neither ``instruction`` nor ``text_prompt`` supplies
+                a non-empty prompt, or if a per-call ``seed`` override is
+                outside the domain
+                :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
+                states. The seed is checked before the buffered-motion key is
+                built, so a refused override leaves the held motion and the
+                frame cursor exactly as they were.
         """
         prompt = kwargs.get("text_prompt") or instruction
         if not prompt or not prompt.strip():

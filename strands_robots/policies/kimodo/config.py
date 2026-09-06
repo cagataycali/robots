@@ -17,7 +17,8 @@ Numeric domains follow the shared helpers in :mod:`strands_robots.utils`:
 * ``transition_frames`` - positive integer, at least 1, matching the domain the
   Kimodo sampler applies to its own ``num_transition_frames``
 * ``seed`` - whole number or ``None``, via :func:`sampling_seed_error`, which is
-  also the domain :meth:`KimodoPolicy.reset` applies to a per-episode reseed
+  also the domain :meth:`KimodoPolicy.reset` applies to a per-episode reseed and
+  :meth:`KimodoPolicy.get_actions` to a per-call override
 
 The default ``model_id`` targets the RP-v1 checkpoint. Alternate model ids are
 accepted verbatim; the loader defers validation to ``from_pretrained``. Note
@@ -98,13 +99,16 @@ def _positive_float(name: str, value: float) -> float:
 def sampling_seed_error(value: Any, context: str) -> str | None:
     """Return why a value cannot seed a Kimodo sampler run.
 
-    The single owner of this domain. Two surfaces set the sampling seed -
+    The single owner of this domain. Three surfaces set the sampling seed -
     :class:`KimodoConfig` (directly, through :meth:`KimodoConfig.from_dict` /
     :meth:`KimodoConfig.from_json`, or through a ``KimodoPolicy(seed=...)``
-    override) and :meth:`KimodoPolicy.reset`, which stores a per-episode reseed
+    override); :meth:`KimodoPolicy.reset`, which stores a per-episode reseed
     on the frozen config with ``object.__setattr__`` and so does not re-enter
-    :meth:`__post_init__`. Both consult this function, so one value gets one
-    verdict whichever way it is spelled.
+    :meth:`__post_init__`; and :meth:`KimodoPolicy.get_actions`, whose
+    documented per-call ``seed=`` override is read straight from ``kwargs`` and
+    reaches both the sampler and the buffered-motion key without passing
+    through the config at all. All three consult this function, so one value
+    gets one verdict whichever way it is spelled.
 
     A seed has to survive being used twice, and that is what the domain here
     protects. It is handed to the sampler, and it is part of the key

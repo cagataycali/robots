@@ -216,8 +216,8 @@ episode would read as a cache hit and replay the first. `nan` and `inf` cannot
 be keyed at all, and `inf` is what a config file spelling `1e400` parses to.
 Either sign and any width is accepted; a seed too wide for `torch.manual_seed`
 is refused by the applier, which names the overflow itself. A refused
-`reset(seed=...)` changes nothing - the held motion and the cursor are left as
-they were.
+`reset(seed=...)` or a refused per-call override changes nothing - the held
+motion and the cursor are left as they were.
 
 ## Chaining prompts into a long-horizon sequence
 
