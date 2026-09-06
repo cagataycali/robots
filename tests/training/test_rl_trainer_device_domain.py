@@ -181,11 +181,18 @@ class TestTheDomainHasOneOwner:
         return names
 
     def test_no_consumer_re_implements_the_domain(self) -> None:
-        """Exactly one function calls ``torch.device``; the rest ask it."""
+        """Exactly one function calls ``torch.device``; the rest ask it.
+
+        The tool's guard is imported as a *function* rather than off its module:
+        a tool and its module share a name on the ``tools`` package, and
+        ``import strands_robots.tools.lerobot_train as mod`` binds by attribute
+        lookup on that package - so in a session that has already touched the
+        tool, ``mod`` is the ``DecoratedFunctionTool``, not the module.
+        """
         import inspect
 
-        import strands_robots.tools.lerobot_train as tool_mod
         from strands_robots import utils
+        from strands_robots.tools.lerobot_train import _torch_device_error as tool_device_error
         from strands_robots.training import _validate
         from strands_robots.training.lerobot import LerobotTrainer
 
@@ -194,7 +201,7 @@ class TestTheDomainHasOneOwner:
 
         for consumer in (
             _validate.torch_device_problems,
-            tool_mod._torch_device_error,
+            tool_device_error,
             LerobotTrainer._device_problems,
         ):
             calls = self._calls(inspect.getsource(consumer))
