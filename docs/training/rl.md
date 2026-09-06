@@ -174,6 +174,35 @@ The off-policy fields on `RLTrainSpec` (`buffer_size`, `batch_size`,
 `target_entropy` defaults to `-num_actions` (the SAC heuristic) when left
 `None`. Like PPO, `FastSacTrainer` trains fine on CPU.
 
+The three fields of the temperature block are each preflighted, on two different
+domains. `init_alpha` (the temperature's starting value) and `alpha_lr` (the rate
+that moves it) must be positive and finite, because the first reaches
+`torch.log` and the second is an optimizer's learning rate. `target_entropy` -
+the constant the temperature is optimized *toward* - is instead any **finite real
+of either sign**, checked against the same shared domain as the on-policy loss
+weights: the field defaults to `-num_actions`, so every reading of it is negative
+and no endpoint is decidable, while a value that is not a finite real has no
+reading at all. Over a 40-timestep run, `validate()` used to return `[]` for all
+of them: `nan`, `inf` and `-inf` made `alpha_loss` non-finite, and since `alpha`
+scales the entropy term of both the critic's TD target and the actor loss, the
+next rollout raised `ValueError` from inside `torch.distributions.Normal` about a
+tensor of `nan` policy means - naming that distribution's parameter rather than
+the field, after the env, both networks and a full rollout had been built.
+`target_entropy=True` was worse than a crash: `bool` is an `int` subclass, so it
+is a target entropy of `+1.0` where the field's own default is `-6.0` for that
+env, and the run reported `status="success"` while checkpointing
+`log_alpha == -0.0018031001091003418` against the honored run's
+`-0.001801646314561367` - it demonstrably drove the temperature somewhere else. A
+list or a dict raised `TypeError` out of the `float()` coercion in `setup`.
+
+`None` is exempt from that domain rather than refused by it: unlike `init_alpha`
+and `alpha_lr`, which are annotated `float` with concrete defaults, this field is
+annotated `float | None` and its `None` is the documented request for the
+heuristic. And the check is not conditioned on `autotune_alpha` even though only
+the tuning branch spends the value, because the coercion that reads it is
+unconditional - with tuning off a list raises the same `TypeError`, while `nan`
+reaches a successful run that simply never spends it.
+
 ## BaseRLAlgo
 
 `BaseRLAlgo` is the abstract RL trainer - a `Trainer` subclass, so RL flows

@@ -108,8 +108,21 @@ class RLTrainSpec(TrainSpec):
             ``target_entropy`` (SAC).
         init_alpha: Initial entropy temperature (SAC).
         alpha_lr: Learning rate for the temperature optimizer (SAC).
-        target_entropy: Target policy entropy; ``None`` uses ``-num_actions``
-            (the SAC heuristic).
+        target_entropy: Target policy entropy, the constant the temperature is
+            optimized toward in ``alpha_loss = -(log_alpha * (logp +
+            target_entropy))``. ``None`` uses ``-num_actions`` (the SAC
+            heuristic). Any finite real, of either sign - the default is
+            negative, so no endpoint is decidable - checked by the preflight
+            through :meth:`Trainer._target_entropy_problems`. ``nan`` and ``inf``
+            poison ``alpha``, which scales the entropy term of both the critic's
+            TD target and the actor loss, so the next rollout raises from inside
+            ``torch.distributions.Normal`` about ``nan`` policy means; ``True``
+            is a silent target of ``+1.0``, a run that reported success while
+            driving the temperature somewhere the caller did not ask for; a list
+            or a dict raises ``TypeError`` out of the ``float()`` coercion in
+            ``setup``. ``None`` is exempt from that domain rather than refused by
+            it, unlike the ``float``-annotated ``init_alpha`` and ``alpha_lr``:
+            it is a request for the heuristic, not a value.
         policy_delay: Critic updates per delayed actor / target update (TD3).
             The actor and the target networks move only every
             ``policy_delay``-th gradient step, so the critics settle before the
