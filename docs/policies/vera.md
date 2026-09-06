@@ -154,10 +154,20 @@ wins over code defaults):
 | `text_prompt` | `VERA_TEXT_PROMPT` | `--text` |
 | `ckpt_root` | `VERA_CKPT_ROOT` | container `/ckpts` mount |
 | `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` |
+| `teacache` / `teacache_thresh` | — | `--no-teacache` / `--teacache-thresh` |
 | `tracker_backend` | `VERA_TRACKER_BACKEND` | IDM tracker |
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
 | `server_ready_timeout` | `VERA_SERVER_READY_TIMEOUT` | readiness wait budget, in seconds |
 | `server_mode` | `VERA_SERVER_MODE` | `subprocess` \| `docker` |
+
+The teacache pair travels as one either/or, and the container takes it the long
+way round: `-e VERA_NO_TEACACHE=1` or `-e VERA_TEACACHE_THRESH=<value>`, which the
+entrypoint turns back into the same `--no-teacache` / `--teacache-thresh` flags
+the subprocess mode passes directly. Both halves have to line up for a value to
+land — `docker run` accepts any environment it is handed, and an `-e` the
+entrypoint does not read is inert — and only the off-switch used to be carried,
+so a tuned `teacache_thresh` applied under `server_mode="subprocess"` and was
+dropped for the server's own default under `server_mode="docker"`.
 
 `embodiment` is checked against that vocabulary before anything is resolved from
 it, because it is the key the rest of the table is looked up by: both default
