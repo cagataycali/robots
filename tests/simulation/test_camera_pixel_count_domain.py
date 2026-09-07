@@ -76,7 +76,7 @@ from __future__ import annotations
 import ast
 import inspect
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -757,6 +757,37 @@ def _isaac_construct(**kwargs: Any) -> Any:
     return IsaacSimulation(**kwargs)
 
 
+def _stored_width(engine: Any) -> Any:
+    """The default width as the engine *stored* it, on the free camera's entry."""
+    return engine._world.cameras["default"].width
+
+
+def _constructible_defaults() -> Iterator[tuple[Any, Any]]:
+    """Yield ``(engine, candidate)`` for every default dimension that constructs.
+
+    One owner for the candidate roster, the world build and the teardown, shared
+    by the two halves of "nothing that builds is unusable later" - the value the
+    constructor stored, which needs no GL context, and spending it on a render,
+    which does. Each half pins the same non-vacuity floor over what this yields,
+    so neither can go quietly vacuous if the roster changes.
+
+    ``5000`` is excluded from the roster rather than skipped inside it: it is
+    above MuJoCo's *offscreen framebuffer* cap, which is a property of the
+    compiled model and stays a render-time check - the shared rule is a floor,
+    as ``test_the_shared_rule_is_a_floor_and_not_a_ceiling`` pins.
+    """
+    for candidate in (*_BAD_DIMS, 1, 16, 640):
+        try:
+            sim = _mujoco_engine(default_width=candidate, default_height=480)
+        except ValueError:
+            continue
+        try:
+            sim.create_world(gravity=[0, 0, -9.81])
+            yield sim, candidate
+        finally:
+            sim.cleanup()
+
+
 #: The three constructors that own the same pair of numbers, keyed by the class
 #: named in the refusal. Newton is reachable here without ``newton`` / ``warp``
 #: because the guard precedes ``ensure_newton()`` - deliberately, so a caller
@@ -841,37 +872,47 @@ class TestTheEngineDefaultResolution:
             legacy = _construction_verdict("default_width", lambda bad=bad: _isaac_construct(default_width=bad))
             assert canonical == legacy == "refused", f"{bad!r}: canonical={canonical}, legacy={legacy}"
 
+    def test_every_default_that_constructs_reaches_the_camera_registry(self):
+        """Half one of "nothing that builds is unusable later": the value stored.
+
+        This is the second way into the field ``add_camera`` guards, and the one
+        this change is about: ``create_world`` copies the constructor's default
+        onto the free camera's ``SimCamera`` entry. It needs no GL context - the
+        entry reads back the same on a host with none - so it is its own case
+        rather than part of the gated one below, and goes on being checked
+        wherever the suite runs. Read back from the registry and not from the
+        attribute the caller passed: a value that round-tripped through the
+        attribute without reaching the camera entry would satisfy an attribute
+        check and leave that second way open.
+        """
+        pytest.importorskip("mujoco")
+        exercised = [candidate for sim, candidate in _constructible_defaults() if _stored_width(sim) == candidate]
+        assert exercised == [1, 16, 640], exercised
+
     @requires_gl
-    def test_every_engine_that_constructs_can_be_rendered_and_observed(self):
-        """The point of refusing here: nothing that builds is unusable later.
+    def test_every_default_that_constructs_can_be_rendered_and_observed(self):
+        """Half two: the stored value is spendable, which is what refusing buys.
 
         Runs the real MuJoCo engine, because the pre-fix failures were all
-        downstream of construction. ``5000`` is excluded rather than skipped: it
-        is above MuJoCo's *offscreen framebuffer* cap, which is a property of
-        the compiled model and stays a render-time check - the shared rule is a
-        floor, as ``test_the_shared_rule_is_a_floor_and_not_a_ceiling`` pins.
+        downstream of construction.
 
         Gated on the shared GL probe: ``render`` and ``get_observation`` both
         need an offscreen context, and on a headless host without EGL/OSMesa
-        they report an error that names neither GL nor this contract.
+        they report an error that names neither GL nor this contract. Measured
+        under MuJoCo's documented ``MUJOCO_GL=disable``: ``render`` reports
+        ``{"status": "error"}`` carrying "Rendering unavailable (no OpenGL
+        context)", and ``get_observation`` omits the image key altogether, so
+        reading it raises ``KeyError: 'default'`` - naming this contract even
+        less than the bare ``'error' != 'success'`` the probe exists to prevent.
         """
         pytest.importorskip("mujoco")
         exercised = []
-        for candidate in (*_BAD_DIMS, 1, 16, 640):
-            try:
-                sim = _mujoco_engine(default_width=candidate, default_height=480)
-            except ValueError:
-                continue
-            try:
-                sim.create_world(gravity=[0, 0, -9.81])
-                assert sim._world.cameras["default"].width == candidate
-                assert sim.render()["status"] == "success"
-                sim.add_robot(name="so101")
-                image = sim.get_observation(robot_name="so101")["default"]
-                assert isinstance(image, np.ndarray)
-                assert image.shape == (480, candidate, 3)
-            finally:
-                sim.cleanup()
+        for sim, candidate in _constructible_defaults():
+            assert sim.render()["status"] == "success"
+            sim.add_robot(name="so101")
+            image = sim.get_observation(robot_name="so101")["default"]
+            assert isinstance(image, np.ndarray)
+            assert image.shape == (480, candidate, 3)
             exercised.append(candidate)
         assert exercised == [1, 16, 640], exercised
 
