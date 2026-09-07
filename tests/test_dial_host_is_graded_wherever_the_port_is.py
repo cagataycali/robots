@@ -448,7 +448,7 @@ BOTH_HALVES_UNUSABLE: dict[str, Any] = {
     "RemotePolicy": lambda host: RemotePolicy(host=host, port=65536),
     "Cosmos3Policy": lambda host: Cosmos3Policy(embodiment="droid", host=host, port=65536),
     "VeraConfig": lambda host: VeraConfig(embodiment="pusht", host=host, server_port=65536),
-    "ReachyMiniDriver": lambda host: _reachy_mini_both_halves(host),
+    "ReachyMiniDriver": _reachy_mini_both_halves,
 }
 
 
