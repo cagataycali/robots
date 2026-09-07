@@ -45,7 +45,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import get_base_dir, resolve_asset_path
+from strands_robots.utils import get_base_dir, resolve_asset_path, safe_join
 
 from .loader import invalidate_cache, normalize_robot_name
 
@@ -125,6 +125,37 @@ def get_user_robots() -> dict[str, Any]:
     return parse_user_robots(user_registry_source())
 
 
+def _asset_relative(resolved_dir: Path, param: str, value: str) -> Path:
+    """Join a registry-stored asset path onto its directory, refusing escapes.
+
+    ``model_xml`` and ``scene_xml`` are stored relative to the robot's asset
+    directory, and every reader joins them back through
+    :func:`~strands_robots.utils.safe_join` - both branches of
+    :func:`~strands_robots.assets.manager.resolve_model_path` and of
+    :func:`~strands_robots.assets.manager.is_robot_asset_present`. Registration
+    makes the same join, so a value the readers refuse is refused here.
+
+    Args:
+        resolved_dir: The robot's asset directory.
+        param: Name of the registration parameter being joined, quoted in the
+            refusal so the caller knows which of the two values to correct.
+        value: The path the caller supplied.
+
+    Returns:
+        The joined path, inside *resolved_dir*.
+
+    Raises:
+        ValueError: *value* escapes *resolved_dir* - it is absolute (a raw join
+            would discard *resolved_dir* entirely) or it traverses out of it.
+    """
+    try:
+        return safe_join(resolved_dir, value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{param}={value!r} must name a file inside the asset directory {resolved_dir}: {exc}"
+        ) from exc
+
+
 def register_robot(
     name: str,
     *,
@@ -183,6 +214,10 @@ def register_robot(
             ``aliases`` entry collides with an existing canonical robot name or
             another robot's alias (the same constraint the loader enforces at
             read time, checked here so the registration cannot brick lookups).
+            Also raised when ``model_xml`` or ``scene_xml`` escapes the asset
+            directory they are declared relative to (see
+            :func:`_asset_relative`), since the readers refuse such a path and
+            the registration would persist a robot that cannot be loaded.
         FileNotFoundError: If ``model_xml`` doesn't exist at the resolved path.
 
     Example::
@@ -231,7 +266,20 @@ def register_robot(
     # dirs that didn't exist yet and surfaced a confusing error only at
     # ``add_robot()`` time.  Now we fail-closed on both conditions so the
     # user gets an immediate, actionable error at registration time.
-    model_path = resolved_dir / model_xml
+    #
+    # The join is the reader's join (:func:`_asset_relative`), so a value that
+    # leaves the asset directory is refused here rather than validated against
+    # a file outside it. Joined raw, an absolute ``model_xml`` discards
+    # ``resolved_dir`` entirely and any existing host file satisfies the check,
+    # and the deferred ``add_robot()`` failure above comes back - now with the
+    # entry already persisted, and with ``_user_asset_path`` naming a directory
+    # the stored path does not live in.
+    model_path = _asset_relative(resolved_dir, "model_xml", model_xml)
+    if scene_xml is not None:
+        # Not existence-checked (a scene is optional and may be authored later),
+        # but contained: it is stored and read back the same way ``model_xml``
+        # is, by ``resolve_model_path(prefer_scene=True)``.
+        _asset_relative(resolved_dir, "scene_xml", scene_xml)
     if not resolved_dir.exists():
         raise FileNotFoundError(
             f"Asset directory does not exist: {resolved_dir}\n"

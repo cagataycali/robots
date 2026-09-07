@@ -47,7 +47,7 @@ from strands_robots.registry import (
 | `list_aliases()` | All 121 aliases, keyed by `normalize_robot_name` (so every key is a spelling a folded query can produce), including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
 | `normalize_robot_name(name)` | The fold every registry lookup applies: lowercase, trimmed, dashes as underscores. Canonical names, aliases and the uniqueness constraints over both are all keyed by it, so this is the rule that predicts which robot a name reaches. |
 | `format_robot_table()` | Pretty-printed robot table. |
-| `register_robot(name, entry)` | Add user-defined robot at runtime. |
+| `register_robot(name, entry)` | Add user-defined robot at runtime. `model_xml`/`scene_xml` must name a file inside `asset_dir`. |
 | `unregister_robot(name)` | Remove a runtime-registered robot. |
 | `list_user_robots()` | Names from `register_robot`. |
 | `user_registry_source()` | Raw bytes of `user_robots.json`, or `None` when absent. What the loader keys its hot-reload cache on, so an edit by another writer is seen even when it lands inside one filesystem timestamp tick. |

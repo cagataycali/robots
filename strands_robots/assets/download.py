@@ -251,7 +251,17 @@ def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False)
     xml_file, asset_dir = asset["model_xml"], asset["dir"]
 
     for search_dir in get_search_paths():
-        model_path = search_dir / asset_dir / xml_file
+        try:
+            model_path = safe_join(search_dir, f"{asset_dir}/{xml_file}")
+        except ValueError:
+            # The resolver makes this same join
+            # (:func:`~strands_robots.assets.manager._resolve_candidates`) and
+            # yields no candidate for an entry that escapes its search path, so
+            # no file on disk can make this robot present. Fetch rather than
+            # report it as already there - the two readings of one entry are
+            # what :func:`_mjcf_missing_meshes` exists to keep together.
+            logger.warning("assets: path traversal blocked for %s: %r", name, f"{asset_dir}/{xml_file}")
+            return True
         if not model_path.exists():
             continue
         try:
@@ -374,8 +384,12 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
 
             dst = safe_join(dest_dir, asset_dir)
             if dst.is_symlink() and dst.resolve() == package_path.resolve():
-                # Validate existing symlink still has the expected XML
-                expected_xml = dst / info["asset"]["model_xml"]
+                # Validate existing symlink still has the expected XML.
+                # Joined through ``safe_join`` so the validation cannot be
+                # satisfied by a file outside the linked directory: raw, an
+                # absolute ``model_xml`` discards *dst* and any existing host
+                # file passes this check for a link that holds no model at all.
+                expected_xml = safe_join(dst, str(info["asset"]["model_xml"]))
                 if expected_xml.exists():
                     results[name] = "downloaded"
                     continue
@@ -392,7 +406,7 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
                 shutil.copytree(str(package_path), str(dst), dirs_exist_ok=True)
 
             # Validate: expected XML must exist in the linked/copied dir
-            expected_xml = dst / info["asset"]["model_xml"]
+            expected_xml = safe_join(dst, str(info["asset"]["model_xml"]))
             if not expected_xml.exists():
                 logger.warning(
                     "robot_descriptions module '%s' linked for %s but "

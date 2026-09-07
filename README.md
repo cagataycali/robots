@@ -505,6 +505,11 @@ metadata:
                   asset_dir="~/robots/my_arm", joints=7, category="arm")
    ```
 
+   `model_xml` and `scene_xml` name a file *inside* `asset_dir` - that is how
+   every reader joins them back - so a value that leaves it (absolute, or `../`)
+   is refused at registration rather than validated against a file the loader
+   will not open.
+
 ## Tools reference
 
 Import any of these and pass to `Agent(tools=[...])`. Each is a Strands
