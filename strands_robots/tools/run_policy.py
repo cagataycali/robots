@@ -101,6 +101,15 @@ def _read_parquet_truth(dataset_root: str | Path) -> dict[str, Any]:
       ``TypeError`` out of this function and past the tool envelope, from a file
       that was perfectly readable.
 
+    A file that cannot be READ is reported the same way, and "read" is graded by
+    ``ValueError`` rather than by ``json.JSONDecodeError`` alone: bytes the
+    declared encoding does not describe raise ``UnicodeDecodeError`` and a number
+    longer than ``sys.get_int_max_str_digits`` raises a plain ``ValueError``,
+    neither of which is a ``json.JSONDecodeError``. Both escaped past the tool
+    envelope from the gate that exists to answer whether the recording produced
+    the episodes it was asked for - the same escape the graded headers above
+    closed for a file that was perfectly readable.
+
     A header that declares something which is not a count is a third outcome,
     distinct from both a usable count and an absent header, so it is reported in
     ``info_problems`` - the spelling both other readers of this file already use
@@ -128,7 +137,7 @@ def _read_parquet_truth(dataset_root: str | Path) -> dict[str, Any]:
     try:
         with info_path.open("r", encoding="utf-8") as f:
             info = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, ValueError) as e:
         return {"info_present": False, "info_path": str(info_path), "error": repr(e)}
     if not isinstance(info, dict):
         # A readable JSON document that is not an object carries no headers at

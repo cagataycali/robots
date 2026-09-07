@@ -339,12 +339,19 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
     the file is absent or unreadable (unknown - e.g. a Hub dataset with no
     materialized local cache), so a definite miss can be flagged without false
     positives on the unknown case.
+
+    Unreadable is ``ValueError`` and not the narrower ``json.JSONDecodeError``:
+    a partially-synced file carries bytes the declared encoding does not
+    describe (``UnicodeDecodeError``) and a number longer than
+    ``sys.get_int_max_str_digits`` raises a plain ``ValueError``, neither of
+    which is a JSON decode error. Both aborted the whole :meth:`LerobotTrainer.validate`
+    preflight instead of leaving this one probe unknown.
     """
     stats_path = os.path.join(dataset_root, "meta", "stats.json")
     try:
         with open(stats_path, encoding="utf-8") as fh:
             stats = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
     return _stats_have_quantiles(stats)
 
@@ -385,13 +392,14 @@ def _dataset_codebase_version(dataset_root: str) -> str | None:
     count). Returns ``None`` when the file is absent, unreadable, or carries no
     string ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
     materialized local cache - so a DEFINITE mismatch can be reported without
-    false positives on the unknown one.
+    false positives on the unknown one. Unreadable is graded by ``ValueError``
+    for the reason :func:`_dataset_quantile_stats_present` carries.
     """
     info_path = os.path.join(dataset_root, "meta", "info.json")
     try:
         with open(info_path, encoding="utf-8") as fh:
             declared = json.load(fh).get("codebase_version")
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
     return declared if isinstance(declared, str) else None
 

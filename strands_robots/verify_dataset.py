@@ -349,9 +349,17 @@ def _verify_video_files(root_path: Path, *, known_unreadable: frozenset[str] = f
         return 0, []
     try:
         info = json.loads(info_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         # An unreadable info.json is already surfaced by the info.json drift
-        # check; do not double-report it here.
+        # check; do not double-report it here. "Unreadable" is that check's
+        # ``ValueError`` and not the narrower ``json.JSONDecodeError``, because
+        # reading this file has more ways to fail than holding something that is
+        # not JSON: bytes the declared encoding does not describe raise
+        # ``UnicodeDecodeError``, and a number longer than
+        # ``sys.get_int_max_str_digits`` raises a plain ``ValueError``. Both are
+        # exactly the truncated / partially-synced file this checker exists to
+        # report, and naming only the JSON one aborted the whole report - every
+        # problem already found included - on the corruption it was looking for.
         return 0, []
 
     features = info.get("features")
