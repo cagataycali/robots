@@ -185,6 +185,28 @@ def _motion_domain_error(rpc_name: str, values: dict[str, Any]) -> dict[str, str
     return None
 
 
+def _motor_selection(motor_ids: str) -> list[str] | None:
+    """Resolve the comma-separated ``motor_ids`` selector into the ids to command.
+
+    ``""``, the declared default, selects every motor and resolves to ``None``,
+    which is the spelling the firmware reads as "all". A non-empty selector that
+    names no motor - ``","``, ``" "``, ``",,"`` - is refused rather than widened:
+    read by truthiness it parsed to ``[]``, was coalesced to ``None`` and torqued
+    every motor, while the reply echoed the caller's own selector as the set
+    acted on. One resolver serves both torque verbs so the two cannot disagree
+    about which spellings select every motor.
+
+    Raises:
+        ValueError: ``motor_ids`` is non-empty and names no motor.
+    """
+    if motor_ids == "":
+        return None
+    ids = [s.strip() for s in motor_ids.split(",") if s.strip()]
+    if not ids:
+        raise ValueError(f"motor_ids names no motor: {motor_ids!r}; pass '' to select every motor")
+    return ids
+
+
 class ReachyMiniDriver(DeviceDriver):
     """Device Connect driver for Pollen Reachy Mini.
 
@@ -460,12 +482,16 @@ class ReachyMiniDriver(DeviceDriver):
         """Enable motors (torque on).
 
         Args:
-            motor_ids: Comma-separated motor IDs (empty = all)
+            motor_ids: Comma-separated motor IDs (empty = all). A non-empty
+                selector that names no motor is refused.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "enableMotors")
-        ids = [s.strip() for s in motor_ids.split(",") if s.strip()] or None
+        try:
+            ids = _motor_selection(motor_ids)
+        except ValueError as exc:
+            return {"status": "error", "reason": str(exc)}
         await self._send_cmd({"torque": True, "ids": ids})
         return {"status": "success", "enabled": motor_ids or "all"}
 
@@ -480,9 +506,13 @@ class ReachyMiniDriver(DeviceDriver):
         to the caller rather than reporting a false ack.
 
         Args:
-            motor_ids: Comma-separated motor IDs (empty = all).
+            motor_ids: Comma-separated motor IDs (empty = all). A non-empty
+                selector that names no motor is refused.
         """
-        ids = [s.strip() for s in motor_ids.split(",") if s.strip()] or None
+        try:
+            ids = _motor_selection(motor_ids)
+        except ValueError as exc:
+            return {"status": "error", "reason": str(exc)}
         await self._send_cmd({"torque": False, "ids": ids})
         return {"status": "success", "disabled": motor_ids or "all"}
 
@@ -491,7 +521,8 @@ class ReachyMiniDriver(DeviceDriver):
         """Disable motors (torque off).
 
         Args:
-            motor_ids: Comma-separated motor IDs (empty = all)
+            motor_ids: Comma-separated motor IDs (empty = all). A non-empty
+                selector that names no motor is refused.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
