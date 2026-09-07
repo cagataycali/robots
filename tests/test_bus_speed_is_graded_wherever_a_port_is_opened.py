@@ -105,7 +105,11 @@ def _refusal(param: str, build: Callable[[Any], Any], value: Any) -> str | None:
         if param in str(error):
             return str(error)
         pytest.fail(f"{param}={value!r} raised a ValueError naming neither surface nor option: {error}")
-    except BaseException as error:  # noqa: BLE001 - any escape is the defect
+    except Exception as error:
+        # Any other escape is the defect under test - pre-fix, `inf` left a
+        # constructor as OverflowError - so the class is reported rather than
+        # asserted. Exception, not BaseException: an interrupt or a pytest
+        # outcome is not something a surface did with the value.
         pytest.fail(f"{param}={value!r} escaped as {type(error).__name__}: {error}")
     return None
 
