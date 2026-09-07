@@ -441,6 +441,16 @@ def test_an_operation_the_read_never_makes_leaves_a_usable_host_usable(operation
     )
 
 
+def _reachy_mini_both_halves(host: Any) -> None:
+    """Construct the driver with both halves of its daemon address unusable."""
+    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+
+    _force_real_device_connect_edge()
+    from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
+
+    ReachyMiniDriver(host=host, api_port=65536)
+
+
 # Each surface with BOTH halves of its address unusable at once. The port keyword
 # differs per surface (``port`` / ``server_port``), so the constructors are
 # written out rather than derived from one signature.
@@ -450,16 +460,6 @@ BOTH_HALVES_UNUSABLE: dict[str, Any] = {
     "VeraConfig": lambda host: VeraConfig(embodiment="pusht", host=host, server_port=65536),
     "ReachyMiniDriver": _reachy_mini_both_halves,
 }
-
-
-def _reachy_mini_both_halves(host: Any) -> None:
-    """Construct the driver with both halves of its daemon address unusable."""
-    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
-
-    _force_real_device_connect_edge()
-    from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
-
-    ReachyMiniDriver(host=host, api_port=65536)
 
 
 @pytest.mark.parametrize("surface", sorted(BOTH_HALVES_UNUSABLE))
