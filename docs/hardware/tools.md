@@ -58,6 +58,11 @@ Passing a value an action ignores is never an error: `action="start"` without a
 
 ### A session is only forgotten once its process is gone
 
+Both verbs answer through `psutil`, which `[lerobot]` supplies alongside
+`lerobot` itself. `lerobot_train` and `lerobot_teleoperate` import it at module
+scope, so it is a requirement of importing either tool rather than of some branch
+inside it - an install that omits it ships both tools and can load neither.
+
 Because the session runs detached, the on-disk session store is the only place
 its pid is recorded - `stop` and `status` both look the session up there. Both
 stores load, modify and write back, so a record a load leaves out is erased from

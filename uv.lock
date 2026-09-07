@@ -4844,6 +4844,7 @@ all = [
     { name = "mujoco" },
     { name = "omegaconf" },
     { name = "onnxruntime" },
+    { name = "psutil" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "pytorch-lightning" },
@@ -4916,9 +4917,11 @@ kimodo = [
 ]
 lerobot = [
     { name = "lerobot", extra = ["dataset", "feetech"], marker = "extra == 'extra-14-strands-robots-lerobot' or (extra == 'extra-14-strands-robots-all' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-lerobot-async' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-molmoact2' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-smolvla' and extra == 'extra-14-strands-robots-vera-sim')" },
+    { name = "psutil" },
 ]
 lerobot-async = [
     { name = "lerobot", extra = ["async", "dataset", "feetech"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
 ]
 mesh = [
     { name = "eclipse-zenoh" },
@@ -4936,6 +4939,7 @@ microduck = [
 ]
 molmoact2 = [
     { name = "lerobot", extra = ["dataset", "feetech", "molmoact2"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
 ]
 motionbricks = [
     { name = "adam-atan2-pytorch" },
@@ -5003,6 +5007,7 @@ sim-newton = [
 ]
 smolvla = [
     { name = "lerobot", extra = ["dataset", "feetech", "smolvla"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
 ]
 vera-sim = [
     { name = "gym-pusht" },
@@ -5104,6 +5109,11 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=4.5.0,<5.0.0" },
     { name = "pillow", specifier = ">=8.0.0,<13.0.0" },
     { name = "plyfile", marker = "extra == 'sim-gs'", specifier = ">=1.0.0,<2.0.0" },
+    { name = "psutil", marker = "extra == 'all'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'lerobot'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'lerobot-async'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'molmoact2'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'smolvla'", specifier = ">=6.0.0,<8.0.0" },
     { name = "pyjwt", marker = "extra == 'all'", specifier = ">=2.0,<3.0" },
     { name = "pyjwt", marker = "extra == 'dashboard'", specifier = ">=2.0,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0,<10.0.0" },

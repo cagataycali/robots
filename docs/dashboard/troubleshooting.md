@@ -170,9 +170,11 @@ process restarts.
 collection**
 
 Optional dependencies missing from your venv, not a broken tree. They surface as
-collection errors on ~17 files; the rest of the suite runs. Install them, or run
-the file you care about with `--no-cov` (a single file otherwise trips the
-global 80% coverage gate).
+collection errors on ~17 files; the rest of the suite runs. `psutil` ships with
+`[lerobot]` (the session tools import it at module scope) and `msgpack` with
+`[groot-service]` / `[cosmos3-service]`, so `[all]` covers both - install the
+extra, or run the file you care about with `--no-cov` (a single file otherwise
+trips the global 80% coverage gate).
 
 ## Still stuck
 
