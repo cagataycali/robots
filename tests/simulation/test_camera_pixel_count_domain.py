@@ -88,6 +88,7 @@ from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import positive_count_error
 
 from .isaac.test_add_camera_numeric_validation import _engine as _isaac_engine
+from .mujoco._gl_probe import requires_gl
 from .newton.test_add_camera_numeric_validation import _engine_stub
 from .newton.test_viewer_port_domain import _viewer_stub
 
@@ -840,6 +841,7 @@ class TestTheEngineDefaultResolution:
             legacy = _construction_verdict("default_width", lambda bad=bad: _isaac_construct(default_width=bad))
             assert canonical == legacy == "refused", f"{bad!r}: canonical={canonical}, legacy={legacy}"
 
+    @requires_gl
     def test_every_engine_that_constructs_can_be_rendered_and_observed(self):
         """The point of refusing here: nothing that builds is unusable later.
 
@@ -848,6 +850,10 @@ class TestTheEngineDefaultResolution:
         is above MuJoCo's *offscreen framebuffer* cap, which is a property of
         the compiled model and stays a render-time check - the shared rule is a
         floor, as ``test_the_shared_rule_is_a_floor_and_not_a_ceiling`` pins.
+
+        Gated on the shared GL probe: ``render`` and ``get_observation`` both
+        need an offscreen context, and on a headless host without EGL/OSMesa
+        they report an error that names neither GL nor this contract.
         """
         pytest.importorskip("mujoco")
         exercised = []
