@@ -67,8 +67,9 @@ from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
+from strands_robots.utils import positive_finite_number_error
 
-from .config import KimodoConfig, sampling_seed_error
+from .config import KimodoConfig, diffusion_steps_error, sampling_seed_error
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +456,9 @@ class KimodoPolicy(Policy):
                 input to the sampler, so supplying one that differs from the
                 value that produced the buffered motion re-samples; supplying
                 the same values drains the existing buffer rather than paying
-                for a run that would return identical frames.
+                for a run that would return identical frames. Each numeric one
+                is held to the same domain its config field is, because an
+                override reaches the sampler without passing through the config.
 
         Returns:
             A single-element list containing a dict mapping each of
@@ -466,12 +469,15 @@ class KimodoPolicy(Policy):
 
         Raises:
             ValueError: If neither ``instruction`` nor ``text_prompt`` supplies
-                a non-empty prompt, or if a per-call ``seed`` override is
-                outside the domain
+                a non-empty prompt, or if a per-call ``diffusion_steps``,
+                ``guidance_scale`` or ``seed`` override is outside the domain
+                its config field is held to -
+                :func:`~strands_robots.policies.kimodo.config.diffusion_steps_error`,
+                :func:`~strands_robots.utils.positive_finite_number_error` and
                 :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
-                states. The seed is checked before the buffered-motion key is
-                built, so a refused override leaves the held motion and the
-                frame cursor exactly as they were.
+                respectively. All three are checked before the buffered-motion
+                key is built, so a refused override leaves the held motion and
+                the frame cursor exactly as they were.
         """
         prompt = kwargs.get("text_prompt") or instruction
         if not prompt or not prompt.strip():
@@ -482,11 +488,31 @@ class KimodoPolicy(Policy):
 
         # (Re)sample on the first call, or whenever any input that determines
         # the motion differs from the one that produced the buffer we hold.
-        diffusion_steps = int(kwargs.get("diffusion_steps", self.config.diffusion_steps))
-        guidance_scale = float(kwargs.get("guidance_scale", self.config.guidance_scale))
+        #
+        # Every one of those inputs is graded here, against the same domain the
+        # matching config field applies, and before the key below is built: an
+        # override is read straight from kwargs and reaches the sampler and the
+        # key without passing through the frozen config, so this is the only
+        # place it can be refused. Grading precedes the conversions further down
+        # for the same reason the seed is graded before ``_sample_key`` coerces
+        # it - int(2.7) is 2 and float(True) is 1.0, so a coerced value is
+        # indistinguishable from one the caller meant, and it discards the held
+        # motion to re-enter the sampler with a number nobody asked for.
+        steps_value = kwargs.get("diffusion_steps", self.config.diffusion_steps)
+        if error := diffusion_steps_error(steps_value, "KimodoPolicy.get_actions"):
+            raise ValueError(error)
+        guidance_value = kwargs.get("guidance_scale", self.config.guidance_scale)
+        if error := positive_finite_number_error(guidance_value, "guidance_scale", "KimodoPolicy.get_actions"):
+            raise ValueError(error)
         seed = kwargs.get("seed", self.config.seed)
         if error := sampling_seed_error(seed, "KimodoPolicy.get_actions"):
             raise ValueError(error)
+        # Both domains admit an integral float (a 100.0 read from a config array
+        # passes, and the config field holds it as given), while the sampler and
+        # the key want the int and the float they are declared as. After the
+        # guards above these conversions can only restate the value.
+        diffusion_steps = int(steps_value)
+        guidance_scale = float(guidance_value)
         key = self._sample_key(prompt, diffusion_steps, guidance_scale, seed)
         if self._motion_buffer is None or key != self._buffer_key:
             self._synthesise(

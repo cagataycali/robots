@@ -132,8 +132,8 @@ it, or a tuned PD law) is required, and is out of scope for this provider.
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `model_id` | str | `nvidia/Kimodo-G1-RP-v1` | HF model id |
-| `diffusion_steps` | int | 100 | 25–200 useful range |
-| `guidance_scale` | float | 7.5 | CFG weight |
+| `diffusion_steps` | int | 100 | 25–200 useful range, ≤500 (the count multiplies the cost of every sample) |
+| `guidance_scale` | float | 7.5 | CFG weight, positive and finite |
 | `num_frames` | int | 120 | ≤196 (RP-v1 max) |
 | `transition_frames` | int | 5 | Native frames a chained segment is eased over |
 | `native_fps` | int | 30 | Sampler native rate |
@@ -156,7 +156,9 @@ KimodoPolicy(config={"diffusion_steps": 25})           # a plain dict
 
 Precedence is per-field override > `config` field > the default in the table. A
 merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
-refused whichever way it arrives.
+refused whichever way it arrives - including as the per-call
+`get_actions(..., diffusion_steps=0)` override below, which reaches the sampler
+without passing through the config and so applies the field's domain itself.
 
 A misspelled knob is refused by the two keyword forms and dropped by the dict
 form. Neither `KimodoPolicy` nor `KimodoConfig` takes `**kwargs`, so
@@ -197,6 +199,12 @@ await policy.get_actions({}, "waving", diffusion_steps=25)          # samples
 policy.reset()                                                      # rewinds
 policy.reset(seed=7); await policy.get_actions({}, "waving")        # samples
 ```
+
+`diffusion_steps`, `guidance_scale` and `seed` are held to the same domains as
+the config fields when they arrive this way, and are checked before the key is
+built: a refused override raises `ValueError` naming
+`KimodoPolicy.get_actions` and leaves the motion in hand and the frame cursor
+exactly as they were, so it costs neither a diffusion run nor a frame.
 
 This is what makes a multi-episode `eval_policy` meaningful for a stochastic
 policy. `PolicyRunner.evaluate` derives a distinct seed per episode and forwards

@@ -8,8 +8,13 @@ at construction time with a clear message rather than deep inside the sampler.
 
 Numeric domains follow the shared helpers in :mod:`strands_robots.utils`:
 
-* ``diffusion_steps`` - positive integer (Kimodo default 100, 25-200 useful range)
-* ``guidance_scale`` - positive finite number (Kimodo default 7.5)
+* ``diffusion_steps`` - positive integer (Kimodo default 100, 25-200 useful
+  range) bounded by :data:`_KIMODO_MAX_DIFFUSION_STEPS`, via
+  :func:`diffusion_steps_error`, which is also the domain
+  :meth:`KimodoPolicy.get_actions` applies to a per-call override
+* ``guidance_scale`` - positive finite number (Kimodo default 7.5), the shared
+  :func:`~strands_robots.utils.positive_finite_number_error` domain, which
+  :meth:`KimodoPolicy.get_actions` applies to a per-call override too
 * ``fps`` - positive integer (Kimodo emits at 30Hz native, upsampled to 50Hz
   for the G1 tracker via SLERP downstream)
 * ``num_frames`` - positive integer bounded by the model's max sequence length
@@ -38,6 +43,11 @@ from strands_robots.utils import positive_finite_number_error, positive_whole_nu
 
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
+# Kimodo's own sampler is useful at 25-200 denoising steps; the ceiling here
+# is deliberately well above that so an experiment is not blocked by it, and
+# exists because the step count is a per-sample compute multiplier - an
+# unbounded one makes a single get_actions call an unbounded diffusion run.
+_KIMODO_MAX_DIFFUSION_STEPS = 500
 _KIMODO_NATIVE_FPS = 30
 _KIMODO_TRACKER_FPS = 50
 # Kimodo's own sampler blends a multi-prompt sequence over its last
@@ -94,6 +104,53 @@ def _positive_float(name: str, value: float) -> float:
     if error := positive_finite_number_error(value, name, "KimodoConfig"):
         raise ValueError(error)
     return float(value)
+
+
+def diffusion_steps_error(value: Any, context: str) -> str | None:
+    """Return why a value cannot be a Kimodo denoising-step count.
+
+    The single owner of this domain, because the domain is a composite one and
+    a composite restated at two surfaces is a domain that can diverge: the sign,
+    integrality, ``bool`` and float-range rules come from
+    :func:`~strands_robots.utils.positive_whole_number_error`, and the ceiling
+    :data:`_KIMODO_MAX_DIFFUSION_STEPS` is this provider's own.
+
+    Two surfaces set the step count. :class:`KimodoConfig` validates the field
+    (directly, through :meth:`KimodoConfig.from_dict` /
+    :meth:`KimodoConfig.from_json`, or through a
+    ``KimodoPolicy(diffusion_steps=...)`` override, all of which re-enter
+    :meth:`__post_init__`); and :meth:`KimodoPolicy.get_actions`, whose
+    documented per-call ``diffusion_steps=`` override is read straight from
+    ``kwargs`` and reaches both the sampler and the buffered-motion key without
+    passing through the config at all. Both consult this function, so one value
+    gets one verdict whichever way it is spelled.
+
+    The step count is spent twice, and both uses are why the domain is not
+    merely advisory. It is handed to the sampler, where it is the number of
+    denoising iterations - ``0`` asks for a sample that was never denoised and
+    ``True`` asks for one iteration, neither of which is a motion a tracker
+    should be asked to follow. And it is part of the key
+    :class:`KimodoPolicy` identifies the buffered motion by, so a value that
+    differs from the one that produced the motion in hand discards that motion
+    and re-enters the sampler mid-rollout.
+
+    Args:
+        value: The caller-supplied step count.
+        context: Message prefix identifying the surface that received it - the
+            class name for a constructor field, the method name otherwise.
+
+    Returns:
+        ``None`` when the step count is usable, otherwise the reason as a string.
+    """
+    if error := positive_whole_number_error(value, "diffusion_steps", context):
+        return error
+    if value > _KIMODO_MAX_DIFFUSION_STEPS:
+        return (
+            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {value} - "
+            "the step count multiplies the cost of every sample, so a run this long is a stall "
+            "rather than a better motion."
+        )
+    return None
 
 
 def sampling_seed_error(value: Any, context: str) -> str | None:
@@ -234,7 +291,8 @@ class KimodoConfig:
 
     def __post_init__(self) -> None:
         # Validate at construction so bad values fail loud.
-        _positive_int("diffusion_steps", self.diffusion_steps, upper=500)
+        if error := diffusion_steps_error(self.diffusion_steps, "KimodoConfig"):
+            raise ValueError(error)
         _positive_float("guidance_scale", self.guidance_scale)
         _positive_int("num_frames", self.num_frames, upper=_KIMODO_MAX_FRAMES)
         _positive_int("transition_frames", self.transition_frames, upper=_KIMODO_MAX_FRAMES)
