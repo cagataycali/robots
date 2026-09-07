@@ -24,12 +24,8 @@ import pytest
 mj = pytest.importorskip("mujoco")
 
 os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
-from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 
-requires_gl = pytest.mark.skipif(
-    not _can_render(),
-    reason="No GL context available (headless CI without EGL/OSMesa)",
-)
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 # Inline robot XML - avoids network dependency on robot model repos
 _ROBOT_XML = """

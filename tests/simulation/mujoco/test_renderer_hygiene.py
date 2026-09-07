@@ -6,14 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
-
-requires_gl = pytest.mark.skipif(
-    not _can_render(),
-    reason="No GL context available (headless CI without EGL/OSMesa)",
-)
-
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.simulation.mujoco._gl_probe import requires_gl
 
 
 @pytest.fixture

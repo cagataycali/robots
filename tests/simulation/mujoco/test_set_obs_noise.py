@@ -28,13 +28,8 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
-from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-
-requires_gl = pytest.mark.skipif(
-    not _can_render(),
-    reason="No OpenGL context available (headless without EGL/OSMesa)",
-)
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 
 @pytest.fixture
