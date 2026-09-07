@@ -78,6 +78,39 @@ def _stop_task_refusal(envelope: object) -> str | None:
     return None
 
 
+def _supplied_policy_port(policy_port: int) -> int | None:
+    """Map the ``execute`` RPC's ``policy_port`` onto the "not supplied" spelling.
+
+    ``execute`` declares ``policy_port: int = 0`` because a JSON-RPC signature
+    cannot spell ``None`` for a declared ``int``, so the integer ``0`` is this
+    surface's documented "use the provider default" sentinel and is the only
+    value that means it.
+
+    Every other value is handed on unchanged, so
+    :meth:`~strands_robots.hardware_robot.Robot._policy_port_error` - the guard
+    that holds ``policy_port`` to the shared
+    :func:`~strands_robots.utils.tcp_port_error` domain and names the value the
+    caller supplied - is the one surface that judges it. Reading the parameter
+    with ``or`` instead conflated the two: ``0.0``, ``False``, ``""`` and ``[]``
+    are falsy without being the sentinel, and once ``or`` had turned them into
+    ``None`` that guard could no longer tell a malformed port from a port that
+    was never sent. It answered "policy_port is required to build a policy" -
+    the report of "a port they had passed was missing" that guard's own
+    docstring says it was written to remove - while the truthy malformed
+    spellings (``5556.7``, ``"5556"``, ``-1``) were refused by name. Same
+    mistake, two answers, decided by truthiness.
+
+    Args:
+        policy_port: The value the RPC received.
+
+    Returns:
+        ``None`` for the integer-``0`` sentinel, else *policy_port* unchanged.
+    """
+    if isinstance(policy_port, int) and not isinstance(policy_port, bool) and policy_port == 0:
+        return None
+    return policy_port
+
+
 class RobotDeviceDriver(DeviceDriver):
     """Device Connect device driver wrapping a strands-robots Robot instance."""
 
@@ -161,7 +194,7 @@ class RobotDeviceDriver(DeviceDriver):
         # in policy_provider), so bind them explicitly to their target fields.
         return self._robot.start_task(
             instruction,
-            policy_port=policy_port or None,
+            policy_port=_supplied_policy_port(policy_port),
             policy_host="localhost",
             policy_provider=policy_provider,
             duration=duration,
