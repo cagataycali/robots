@@ -5,9 +5,9 @@ Every caller-supplied port this package dials is held to one shared domain,
 an unusable port is not refused by the transport, it is *applied*, and surfaces
 much later as an unreachable server that implicates the service the caller was
 trying to reach. The host beside it is interpolated into the same expression,
-``ws://{host}:{port}``, and was held to nothing on two of the three surfaces that
-build one - so a value that is not a host was resolved rather than refused, and
-the resolution discarded the very port the shared domain had just approved:
+``ws://{host}:{port}``, and was held to nothing on all but one of the surfaces
+that build one - so a value that is not a host was resolved rather than refused,
+and the resolution discarded the very port the shared domain had just approved:
 
 * ``host="127.0.0.1/foo"`` parses as host ``127.0.0.1``, path ``/foo:<port>`` and
   port **80**. The validated port becomes part of the path and the client dials a
@@ -21,7 +21,7 @@ the resolution discarded the very port the shared domain had just approved:
 * A non-string is carried into the URI verbatim: ``None`` is dialled as the DNS
   name ``"none"`` and an ``int`` as its digits.
 
-These pin the domain on all three surfaces at once, the shape of the harm against
+These pin the domain on every such surface at once, the shape of the harm against
 the real URI parser, the two documented asymmetries between a stated and an
 unstated address, and the over-reach control that every host a URI *can* carry is
 still accepted identically everywhere.
@@ -32,8 +32,15 @@ that ``zmq``'s own address parse refuses each delimiter spelling at ``connect``
 with the whole address in the message, so the transport there reports what the
 domain would.
 
-Everything here is offline - no server, no socket, and no policy is ever asked
-for an action.
+``ReachyMiniDriver`` is one of these surfaces on the same terms: its ``host`` and
+``api_port`` build the Lite variant's ``ws://<host>:<api_port>/ws/sdk`` target, and
+also the daemon REST URL beside it, so a delimiter in its host discards the port
+there identically. Its own module pins what that does to the daemon probe; the
+cells here are the ones it shares with the policy clients - one address cannot be
+refused by a policy client and dialled by a driver.
+
+Everything here is offline - no server, no socket, no daemon, and no policy is
+ever asked for an action.
 """
 
 from __future__ import annotations
@@ -123,6 +130,25 @@ def _vera_refusal(host: Any) -> str | None:
     return None
 
 
+def _reachy_mini_refusal(host: Any) -> str | None:
+    """Refusal ``ReachyMiniDriver`` gives ``host``.
+
+    The import is deferred into the call because sibling modules install
+    ``device_connect_edge`` stand-ins at import time; the shared helper restores
+    the real package, which is what binds the driver to the real base class.
+    """
+    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+
+    _force_real_device_connect_edge()
+    from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
+
+    try:
+        ReachyMiniDriver(host=host)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
 # The surfaces that build ``ws://{host}:{port}`` from a caller-supplied host.
 # Read through each public constructor, not through the domain function, so the
 # cells grade the behaviour a caller gets rather than the wiring behind it.
@@ -130,6 +156,7 @@ WEBSOCKET_SURFACES: dict[str, Any] = {
     "RemotePolicy": _remote_policy_refusal,
     "Cosmos3Policy": _cosmos3_refusal,
     "VeraConfig": _vera_refusal,
+    "ReachyMiniDriver": _reachy_mini_refusal,
 }
 
 
@@ -150,7 +177,7 @@ def test_every_host_a_uri_can_carry_is_still_accepted_everywhere(surface: str, h
     assert WEBSOCKET_SURFACES[surface](host) is None
 
 
-def test_the_three_surfaces_give_the_same_verdict_on_the_same_host() -> None:
+def test_every_surface_gives_the_same_verdict_on_the_same_host() -> None:
     """One address cannot be refused by one client and dialled by the next."""
     for host in [*UNUSABLE_HOSTS, *USABLE_HOSTS]:
         verdicts = {name: refuse(host) is None for name, refuse in WEBSOCKET_SURFACES.items()}
@@ -254,10 +281,21 @@ def test_the_domain_has_one_owner_and_no_consumer_restates_it() -> None:
         ("cosmos3.policy", inspect.getsource(Cosmos3Policy.__init__)),
         ("inference.client", inspect.getsource(RemotePolicy.__init__)),
         ("vera.config", inspect.getsource(type(VeraConfig(embodiment="pusht")).__post_init__)),
+        ("device_connect.reachy_mini_driver", _reachy_mini_driver_init_source()),
     ):
         called = _domains_called(source)
         assert "dial_host_error" in called, f"{module_name} does not call dial_host_error: {sorted(called)}"
         assert "isprintable" not in source, f"{module_name} restates the host domain"
+
+
+def _reachy_mini_driver_init_source() -> str:
+    """Source of ``ReachyMiniDriver.__init__``, bound to the real base class."""
+    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+
+    _force_real_device_connect_edge()
+    from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
+
+    return inspect.getsource(ReachyMiniDriver.__init__)
 
 
 def _domains_called(source: str) -> set[str]:
@@ -410,7 +448,18 @@ BOTH_HALVES_UNUSABLE: dict[str, Any] = {
     "RemotePolicy": lambda host: RemotePolicy(host=host, port=65536),
     "Cosmos3Policy": lambda host: Cosmos3Policy(embodiment="droid", host=host, port=65536),
     "VeraConfig": lambda host: VeraConfig(embodiment="pusht", host=host, server_port=65536),
+    "ReachyMiniDriver": lambda host: _reachy_mini_both_halves(host),
 }
+
+
+def _reachy_mini_both_halves(host: Any) -> None:
+    """Construct the driver with both halves of its daemon address unusable."""
+    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+
+    _force_real_device_connect_edge()
+    from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
+
+    ReachyMiniDriver(host=host, api_port=65536)
 
 
 @pytest.mark.parametrize("surface", sorted(BOTH_HALVES_UNUSABLE))

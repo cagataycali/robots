@@ -26,7 +26,7 @@ from strands_robots.device_connect.reachy_transport import (
 )
 from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 from strands_robots.tools.reachy import envelope_error
-from strands_robots.utils import finite_number_error, tcp_port_error
+from strands_robots.utils import dial_host_error, finite_number_error, tcp_port_error
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,12 @@ class ReachyMiniDriver(DeviceDriver):
         """Configure the driver for a Reachy Mini reachable at ``host``.
 
         Args:
-            host: Hostname or IP of the Reachy Mini daemon.
+            host: Hostname or IP of the Reachy Mini daemon. Must name a host: a
+                bare hostname or IP literal, since it is interpolated into the
+                daemon URL (``http://<host>:<api_port>``) beside ``api_port``.
+                A URI delimiter there re-cuts that URL and the validated port
+                becomes part of the path. ``reachy-mini.local`` and
+                ``192.168.1.42`` are accepted; ``127.0.0.1/foo`` is not.
             prefix: Zenoh key prefix used by the Wireless variant. Must be a
                 ``/``-joined sequence of mesh identifiers -- a Zenoh wildcard
                 (``*`` / ``**``) would widen the command key to every Mini
@@ -213,17 +218,40 @@ class ReachyMiniDriver(DeviceDriver):
                 Must name a port: an ``int`` in ``[1, 65535]``.
 
         Raises:
-            ValueError: If ``api_port`` cannot address a TCP port, or if
-                ``prefix`` cannot address a single robot's key expressions
-                (see :func:`_key_prefix_error`).
+            ValueError: If ``api_port`` cannot address a TCP port, if ``host``
+                cannot address the host half of the daemon URL (see
+                :func:`~strands_robots.utils.dial_host_error`), or if ``prefix``
+                cannot address a single robot's key expressions (see
+                :func:`_key_prefix_error`).
         """
         # Refused here rather than at first use, and before any base-class state
-        # is allocated. This port is interpolated verbatim into both the daemon
-        # REST URL (``reachy_transport.api``) and the Lite WebSocket target, and
-        # neither refuses it: ``api`` reports every failure as an ``{"error":
-        # ...}`` result rather than raising, so an unusable port is reported as
-        # an unreachable daemon - identically to a reachable port with the
-        # daemon down. Naming the port is the only point a caller can act on.
+        # is allocated. This host and the port below are the two halves of one
+        # address, interpolated into the daemon REST URL
+        # (``reachy_transport.api`` builds ``http://<host>:<api_port><path>``)
+        # and into the Lite WebSocket target (``ws://<host>:<api_port>/ws/sdk``).
+        # Neither is refused downstream: ``api`` reports every failure as an
+        # ``{"error": ...}`` result rather than raising, so an unusable value is
+        # reported as an unreachable daemon - identically to a usable one with
+        # the daemon down - and ``connect()`` reads that result as the Wireless
+        # variant and logs a connection. Naming the value is the only point a
+        # caller can act on.
+        #
+        # The host is graded first, before the port it would have taken: a URI
+        # delimiter inside it re-cuts the URL, and the validated port is the
+        # component that gets discarded. ``host="127.0.0.1/foo"`` builds
+        # ``http://127.0.0.1/foo:8000/...``, which resolves as host
+        # ``127.0.0.1`` with the port in the *path*, so the driver dials :80 - a
+        # port nobody configured, and one the port domain cannot see, because it
+        # is the host half that takes it away. Reporting the port to a caller
+        # who got both wrong would name the component that was discarded rather
+        # than the one that discarded it. Userinfo redirects the dial outright
+        # (``"bot.local@evil.example"`` resolves to ``evil.example``), and a
+        # non-string is carried verbatim, so ``None`` reaches the resolver as
+        # the DNS name "none".
+        if (host_error := dial_host_error(host, "host", type(self).__name__)) is not None:
+            raise ValueError(host_error)
+        # The port half of that address, held to the shared domain for the same
+        # reason, and reported after the host that could have discarded it.
         if (port_error := tcp_port_error(api_port, "api_port", type(self).__name__)) is not None:
             raise ValueError(port_error)
         # Refused alongside the port, and for the same reason: this value is
