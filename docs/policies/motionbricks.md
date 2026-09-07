@@ -142,7 +142,8 @@ policy = create_policy(
 | --- | --- | --- |
 | `style` / `mode` | `int` index or `str` name | Clip mode (e.g. `"walk"`, `"stealth_walk"`, `"walk_boxing"`, `"hand_crawling"`). |
 | `target_velocity` | 2 or 3 entries, every component a finite number | `[vx, vy]` (or `[vx, vy, vz]`) desired planar movement direction (world frame); only the direction is used, and a third entry is projected away. |
-| `target_heading` | 2 or 3 entries, every component a finite number | `[hx, hy]` facing direction, or `target_heading_angle` (radians, any finite float). |
+| `target_heading` | 2 or 3 entries, every component a finite number | `[hx, hy]` facing direction, or `target_heading_angle` (radians, any finite number). |
+| `target_heading_angle` | a finite number of either sign | The same facing direction as an angle in radians. Refused by name on the same grounds as the vector spelling: a `nan`, an `inf`, a `bool` or a numeric string raises `ValueError` naming this key. |
 
 An unknown style or out-of-range index raises `ValueError` listing the
 available modes. A missing `[motionbricks]` install or checkpoint raises
