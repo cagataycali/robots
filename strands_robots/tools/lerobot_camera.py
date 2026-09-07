@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
@@ -291,6 +292,95 @@ def _vocabulary_option_error(action: str, *, color_mode: Any, rotation: Any) -> 
     return None
 
 
+# The cameras ``capture_batch`` reads when the caller names none. Held in one
+# place so the documented default and the resolution below cannot drift apart.
+_DEFAULT_BATCH_CAMERA_IDS: tuple[int | str, ...] = (0, "/dev/video4")
+
+
+def _camera_ids_error(camera_ids: Any) -> str | None:
+    """Error text when ``camera_ids`` is not a usable selection of cameras.
+
+    ``camera_ids`` SELECTS the cameras one ``capture_batch`` call opens, and a
+    selection is read by membership, never by truthiness: ``None`` is the one
+    spelling of "the default robot cameras", so it is the caller's to skip and
+    never reaches here. Every other value is graded.
+
+    Read by truthiness, ``[]`` took the same branch as ``None`` and was widened
+    to the two default cameras, so a caller who selected no camera - which is
+    what a filter that matched nothing produces - had two devices opened and two
+    files written, under ``status="success"`` and a "2/2 cameras" summary
+    quoting a count the caller never asked for. The empty selection is refused
+    rather than widened, which is the verdict the shared name-list domain
+    (:func:`strands_robots.utils.name_list_error`) reserves for the caller. That
+    domain is not reused here because a camera id is legitimately an ``int``
+    index as well as a device-path string, and it accepts names only.
+
+    The other shapes fail the same way that domain describes. A bare string is
+    iterable per character, so ``"/dev/video4"`` opened eleven one-character
+    cameras on eleven threads and reported eleven verdicts about devices the
+    caller never named, instead of one about the parameter. A ``Mapping`` is
+    iterable over its keys, so its values were discarded. A repeated id opens
+    one device twice concurrently and writes two files for it. A one-shot
+    iterator is consumed by the ``len()`` that sizes the thread pool before the
+    loop that submits work reads it. A ``bool`` is an ``int`` subclass, so
+    ``True`` selected camera index 1 without the caller writing a 1.
+
+    Every refusal here precedes the save directory being created, the thread
+    pool being built and any camera being opened, so a refused selection has no
+    partial effect to undo.
+
+    Args:
+        camera_ids: The caller-supplied selection, anything but ``None``.
+
+    Returns:
+        An error message naming the shape and the accepted one, or ``None`` when
+        the selection can be honored as written.
+    """
+    prefix = "capture_batch: camera_ids"
+    accepted = (
+        "a list of distinct camera ids, each an int index or a device path string; "
+        "omit it (None) for the default robot cameras"
+    )
+    if isinstance(camera_ids, str):
+        return (
+            f"{prefix} must be {accepted}, not a single string ({camera_ids!r}). A "
+            f"string is read one camera per character, so pass [{camera_ids!r}] to "
+            f"name one camera."
+        )
+    if isinstance(camera_ids, bytes):
+        return f"{prefix} must be {accepted}, not bytes ({camera_ids!r})."
+    if isinstance(camera_ids, Mapping):
+        return f"{prefix} must be {accepted}, not a mapping - its values would be discarded."
+    if not isinstance(camera_ids, Sequence):
+        return (
+            f"{prefix} must be {accepted}, got {type(camera_ids).__name__}. A one-shot "
+            f"iterator is consumed before the cameras are opened."
+        )
+    ids = list(camera_ids)
+    if not ids:
+        return (
+            f"{prefix}=[] selects no camera, so there is nothing to capture. Omit "
+            f"camera_ids to select the default robot cameras "
+            f"{list(_DEFAULT_BATCH_CAMERA_IDS)!r}, or name the cameras to capture from."
+        )
+    for i, cam_id in enumerate(ids):
+        if isinstance(cam_id, bool) or not isinstance(cam_id, int | str):
+            return (
+                f"{prefix}[{i}] must be an int index or a device path string, got {cam_id!r} ({type(cam_id).__name__})."
+            )
+        if isinstance(cam_id, str) and not cam_id.strip():
+            return f"{prefix}[{i}] is blank ({cam_id!r}); a camera path must name a device."
+    seen: set[int | str] = set()
+    for cam_id in ids:
+        if cam_id in seen:
+            return (
+                f"{prefix} names {cam_id!r} more than once ({ids!r}); each camera is "
+                f"opened once per batch, so name each id once."
+            )
+        seen.add(cam_id)
+    return None
+
+
 @tool
 def lerobot_camera(
     action: str = "list",
@@ -330,7 +420,11 @@ def lerobot_camera(
         filename: Custom filename (without extension). Resolved inside
             save_path; a value naming a location outside it is refused rather
             than written there.
-        camera_ids: List of camera IDs for batch operations
+        camera_ids: Cameras to capture from in one capture_batch call - a list
+            of distinct ids, each an int index or a device path string. Omit it
+            for the default robot cameras. An empty list selects no camera and
+            is refused rather than widened to those defaults; a single id passed
+            as a bare string is refused rather than read one camera per character.
         width: Frame width in pixels (a positive whole number)
         height: Frame height in pixels (a positive whole number)
         fps: Frames per second (a positive whole number)
@@ -401,8 +495,14 @@ def lerobot_camera(
                 warmup,
             )
         elif action == "capture_batch":
-            if not camera_ids:
-                camera_ids = [0, "/dev/video4"]  # Default robot cameras
+            # Read ``is None``: camera_ids selects a SUBSET of the cameras, so
+            # only the absent spelling means the default robot cameras. An empty
+            # selection, a bare string, a mapping or a repeat is refused here,
+            # before the save directory, the thread pool or any camera exists.
+            if camera_ids is None:
+                camera_ids = list(_DEFAULT_BATCH_CAMERA_IDS)
+            elif selection_error := _camera_ids_error(camera_ids):
+                return {"status": "error", "content": [{"text": selection_error}]}
             return _capture_batch_images(
                 camera_type,
                 camera_ids,
