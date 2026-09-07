@@ -146,7 +146,7 @@ def test_a_count_leaves_the_constructor_only_as_a_value_error(value: Any, why: s
         except ValueError:
             continue
         except BaseException as exc:  # noqa: BLE001 - reporting the escape
-            pytest.fail(f"{kwargs} ({why}) escaped as {type(exc).__name__}: {exc}")
+            raise AssertionError(f"{kwargs} ({why}) escaped as {type(exc).__name__}: {exc}") from exc
         vec.close()
 
 
