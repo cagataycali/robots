@@ -206,8 +206,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             substeps: Physics substeps per :meth:`step` call.
             device: Warp device string (e.g. ``"cuda:0"`` or ``"cpu"``).
                 ``None`` selects Warp's default device (GPU when available).
-            default_width: Default render width in pixels.
-            default_height: Default render height in pixels.
+            default_width: Default render width in pixels for the built-in
+                three-quarter view. A positive ``int`` on the shared
+                :func:`~strands_robots.utils.positive_count_error` floor
+                ``add_camera`` and the render family apply, so a resolution one
+                surface refuses is refused at all of them.
+            default_height: Default render height in pixels, same domain.
             **kwargs: Ignored; accepted for forward compatibility. Robot-setup
                 arguments (``robot_name`` / ``robot``) are rejected rather than
                 dropped - use ``Robot("so101", mode="sim")`` or ``add_robot``.
@@ -217,7 +221,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 silently identical to omitting it.
 
         Raises:
-            ValueError: If ``solver`` is not a known solver name.
+            ValueError: If ``solver`` is not a known solver name, or a default
+                render dimension is not a positive integer.
         """
         reject_setup_kwargs(kwargs)
         reject_misspelled_kwargs(kwargs, own_keyword_names(NewtonSimEngine), owner="NewtonSimEngine")
@@ -236,6 +241,26 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # control step from _advance() on the stepping thread.
         self._viewer: Any = None
         self._viewer_kind: str | None = None
+
+        # The built-in view's resolution is a pixel count at the owner that
+        # stores it, on the same shared floor ``add_camera`` applies to a
+        # per-camera dimension and ``_resolve_camera_view`` to a per-call
+        # override. ``_resolve_camera_view`` graded the override alone and its
+        # docstring claimed "the config-time and call-time domains agree" - the
+        # ``self.default_width if width is None else width`` beside it says
+        # otherwise, because the branch that is *not* the override was the one
+        # nothing checked. Every value the override arm refuses reached
+        # ``_render_rgb`` unexamined through the arm next to it.
+        #
+        # Graded before ``ensure_newton()`` deliberately: whether this pair of
+        # numbers is a resolution does not depend on an optional dependency
+        # being installed, and reporting it first means a caller who got the
+        # argument wrong is told that rather than being told to install Newton.
+        # It still follows the teardown state above, so ``__del__`` stays a
+        # clean no-op on the half-constructed instance a refusal leaves.
+        for _param, _value in (("default_width", default_width), ("default_height", default_height)):
+            if (dim_err := positive_count_error(_value, _param, "NewtonSimEngine")) is not None:
+                raise ValueError(dim_err)
 
         self._nt, self._wp = ensure_newton()
         if solver.lower() not in solver_registry():

@@ -143,6 +143,7 @@ from strands_robots.utils import (
     entity_name_error,
     finite_vector_error,
     non_negative_whole_number_error,
+    positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
     published_string_error,
@@ -473,8 +474,16 @@ class MuJoCoSimEngine(
             default_timestep: Default physics timestep (seconds). Can be
                 overridden via ``create_world(timestep=...)``.
             default_width: Default render width (pixels) used when a
-                caller does not pass explicit dimensions to ``render``.
-            default_height: Default render height (pixels).
+                caller does not pass explicit dimensions to ``render``, and
+                copied into the ``SimCamera`` entry registered for every
+                camera that declares no size of its own. A positive ``int``
+                on the shared
+                :func:`~strands_robots.utils.positive_count_error` floor that
+                ``add_camera`` applies to a per-camera dimension - the same
+                quantity cannot have two domains because of which way in it
+                took. The framebuffer *ceiling* stays a render-time check: it
+                is a property of the compiled model, not of this call.
+            default_height: Default render height (pixels), same domain.
             mesh: Optional mesh-networking hook: an already-started mesh
                 client exposing ``.stop()`` (see
                 :func:`strands_robots.mesh.init_mesh`), which ``cleanup()``
@@ -522,6 +531,37 @@ class MuJoCoSimEngine(
         """
         reject_setup_kwargs(kwargs)
         reject_misspelled_kwargs(kwargs, own_keyword_names(MuJoCoSimEngine), owner="MuJoCoSimEngine")
+        # The default render resolution is a pixel count at the owner that
+        # stores it, on the shared floor ``add_camera`` and the render family
+        # already apply to a per-call dimension. It is not an inert fallback:
+        # ``create_world`` copies it into the ``SimCamera`` entry it registers
+        # for the free camera and ``add_robot`` into one entry per model camera,
+        # so it lands in the very field ``add_camera`` guards - one quantity,
+        # two ways in, and only one of them graded.
+        #
+        # Deferring to the render entry points did not make it a late refusal;
+        # it made it three different wrong answers, measured on a so101 scene:
+        # ``0`` published ``observation["default"]`` as a ``(480, 0, 3)``
+        # zero-pixel frame under a success result; ``-1`` and ``inf`` dropped
+        # the image key entirely (``_render_cameras`` logs a per-camera failure
+        # at debug level and keeps going), handing a policy that declares
+        # ``requires_images`` proprioception alone with no signal; and ``True``,
+        # ``2.7``, ``640.0``, ``'640'`` and ``nan`` raised ``TypeError`` out of
+        # ``get_observation``, which :class:`~strands_robots.simulation.base.SimEngine`
+        # documents as returning an observation dict. Every ``render()`` - a
+        # call passing no dimensions at all - was meanwhile refused for a value
+        # its caller never named.
+        #
+        # The floor is all that is decidable here. The offscreen framebuffer cap
+        # is a property of the compiled model, so ``_validate_render_dims`` goes
+        # on applying it to the resolved size once a world exists.
+        #
+        # Placed before ``_init_ros_bridge``, which builds an ``rclpy`` node: a
+        # refusal about a constructor argument should not leave a ROS 2 node
+        # behind it.
+        for _param, _value in (("default_width", default_width), ("default_height", default_height)):
+            if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
+                raise ValueError(dim_err)
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name

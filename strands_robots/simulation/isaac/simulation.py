@@ -787,10 +787,28 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # downstream code only reads from one source of truth.
         if legacy_default_timestep is not None:
             config = dataclasses.replace(config, physics_dt=float(legacy_default_timestep))
+        # The legacy spellings reach the same graded field the canonical name
+        # does, so they cannot be the looser way in. The ``int(...)`` they used
+        # to pass through was not validation: it *defeated* the domain
+        # ``IsaacConfig`` applies to ``camera_width``, which refuses every value
+        # below. ``default_width=True`` stored a 1-pixel camera, ``2.7`` stored
+        # 2 and ``640.0`` / ``'640'`` stored 640 - the caller's value silently
+        # reinterpreted - while ``inf`` raised ``OverflowError``, ``[640]``
+        # ``TypeError`` and ``nan`` a ``ValueError`` from inside ``int()``,
+        # naming neither the parameter nor this class. Graded here on the shared
+        # floor so the refusal quotes the spelling the caller actually used,
+        # then handed over unconverted: a value this domain admits is already an
+        # ``int``, so a coercion could only restate it.
+        for _param, _value in (
+            ("default_width", legacy_default_width),
+            ("default_height", legacy_default_height),
+        ):
+            if _value is not None and (dim_err := positive_count_error(_value, _param, "IsaacSimulation")) is not None:
+                raise ValueError(dim_err)
         if legacy_default_width is not None:
-            config = dataclasses.replace(config, camera_width=int(legacy_default_width))
+            config = dataclasses.replace(config, camera_width=legacy_default_width)
         if legacy_default_height is not None:
-            config = dataclasses.replace(config, camera_height=int(legacy_default_height))
+            config = dataclasses.replace(config, camera_height=legacy_default_height)
         self._config = config
         # Tool-name is informational; some Strands tooling renders it.
         self.tool_name = legacy_tool_name
