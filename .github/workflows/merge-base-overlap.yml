@@ -1,0 +1,110 @@
+# .github/workflows/merge-base-overlap.yml
+#
+# Reports the files a pull request edits that its base branch also changed since
+# the two diverged. A non-empty overlap means the combination has never been
+# compiled: every check on the branch ran against a base that predates those
+# commits, so a green result is evidence about a different tree than the one
+# that would be merged.
+#
+# This exists because `main` went red at 0e636f8 from two individually green,
+# textually non-conflicting pull requests (#1766 and #1763) that both edited
+# _recompile_preserving_state in scene_ops.py. See issue #1770 and
+# scripts/check_merge_base_overlap.py for the full account.
+#
+# It is the targeted form of branch protection's "Require branches to be up to
+# date before merging": that setting demands an update plus a full re-run before
+# every merge, this one only when the branch and its base actually edited the
+# same file. The remedy is self-clearing - merging the base advances the merge
+# base, which both empties the overlap and re-runs the checks against a base
+# containing the landed commits - so no bypass switch is needed.
+#
+# Whether a failure here blocks a merge is a branch-protection decision, not a
+# property of this file. Until the job is added to the required set it surfaces
+# the overlap and leaves the call to the reviewer.
+#
+
+name: Merge Base Overlap Check
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  overlap:
+    name: Detect an untested overlap with the base branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # The BASE branch, not the pull request head. This job reads two different
+      # things from two different places: the *question* is about the branch, but
+      # the *script that answers it* has to come from a tree guaranteed to contain
+      # it, and the branch under review is not that tree.
+      #
+      # A branch that forked before this check landed does not carry the script, so
+      # running it out of the head tree dies before the check begins:
+      #
+      #     python3: can't open file '.../check_merge_base_overlap.py'
+      #     Process completed with exit code 2
+      #
+      # The script reserves exit 1 for a real finding and 0 for clean. 2 is neither,
+      # and the checks UI renders 1 and 2 as the same red X - so the gate accuses a
+      # branch that may have done nothing wrong, and can never report its real
+      # signal there because it never gets far enough to compute one. Nor is such a
+      # branch an edge case: a `pull_request` workflow definition is read from the
+      # merge commit, so this job runs against heads that contain neither it nor
+      # the script. Measured on #1786, forked one commit before the gate it failed.
+      # See issue #1791.
+      #
+      # Checking out the base costs no fidelity, because the script reads no file
+      # from the working tree at all - `git show <rev>:<path>` and
+      # `git diff <a>..<b>` for every input, so only reachability matters, and the
+      # fetch below settles that. The commit under test is named by `--head`
+      # instead, which is what that argument is documented for. Pinned by
+      # tests/test_merge_base_overlap.py::test_the_overlap_does_not_depend_on_the_checked_out_tree
+      - name: Checkout the base branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          ref: ${{ github.base_ref }}
+          # Full history: a merge base cannot be computed in a shallow clone.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # `refs/pull/<n>/head` rather than the head SHA on its own, because it is the
+      # one name that resolves for a fork's branch as well as for a branch in this
+      # repository, and pull requests here come from forks. This only makes the
+      # commit reachable; which commit is checked is still the SHA passed to
+      # `--head` below. A push racing this fetch cannot leave that SHA unreachable,
+      # because the concurrency group above cancels this run when it arrives.
+      - name: Fetch the pull request head
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr/${PR_NUMBER}"
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # Standard library only, so there is nothing to install. The script writes
+      # its report to the job summary and emits a file annotation per
+      # overlapping path.
+      #
+      # `--head` is the pull request's head SHA, deliberately not the default
+      # refs/pull/<n>/merge commit: that commit already contains the base tip, so
+      # the merge base would be the base tip, the base-side path set would be
+      # empty, and this check would pass unconditionally without saying it had
+      # stopped testing anything. Pinned by
+      # tests/test_merge_base_overlap.py::test_a_merge_commit_head_defeats_the_check
+      - name: Check for an untested overlap with the base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_merge_base_overlap.py --base-ref "$BASE_REF" --head "$HEAD_SHA"
