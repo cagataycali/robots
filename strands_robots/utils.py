@@ -914,13 +914,15 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     """Error text when ``value`` is not a usable non-negative whole number.
 
     Shared domain for two families of discrete quantity whose ``0`` is a real
-    setting rather than a degenerate one: the number of physics steps a caller
-    asks a simulation to advance - the ``n_steps`` of every backend's
-    :meth:`~strands_robots.simulation.base.SimEngine.step` - and the two
-    whole-number teleop knobs :mod:`~strands_robots.tools.lerobot_teleoperate`
-    puts on the lerobot CLI, where ``dataset_reset_time_s=0`` is "no operator
-    pause between recorded episodes" and ``replay_episode=0`` is the first
-    episode.
+    setting rather than a degenerate one:
+
+    * The number of physics steps a caller asks a simulation to advance - the
+      ``n_steps`` of every backend's
+      :meth:`~strands_robots.simulation.base.SimEngine.step`.
+    * The two whole-number teleop knobs
+      :mod:`~strands_robots.tools.lerobot_teleoperate` puts on the lerobot CLI,
+      where ``dataset_reset_time_s=0`` is "no operator pause between recorded
+      episodes" and ``replay_episode=0`` is the first episode.
 
     Not the only physics-step count in the tree, and the difference is the
     floor rather than the scalar policy: the ``n_substeps`` of
@@ -1303,7 +1305,7 @@ def dial_host_error(value: Any, param: str, context: str) -> str | None:
 def non_negative_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative integer count.
 
-    Shared domain for two families of discrete quantity whose ``0`` is a
+    Shared domain for three families of discrete quantity whose ``0`` is a
     first-class value rather than a degenerate one:
 
     * The number of control steps a loop executes while an inference request is
@@ -1311,12 +1313,14 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
       (:attr:`~strands_robots.policies.base.Policy.rtc_observed_delay_steps`).
       That count is exactly ``0`` in the dominant case: a synchronous eval loop
       pauses the world during inference, so no step elapses.
-    * A reproducibility seed
-      (:attr:`~strands_robots.training.base.TrainSpec.seed`), where ``0`` is
-      simply a seed. Its appliers disagree about everything outside this domain:
-      ``torch.manual_seed`` reduces a negative seed modulo ``2**64`` (so ``-1``
-      silently becomes ``2**64 - 1`` and collides with a seed a caller could
-      have named), while NumPy's legacy seeder refuses a negative or a float.
+    * A reproducibility seed -
+      :attr:`~strands_robots.training.base.TrainSpec.seed` and the ``seed`` of
+      :meth:`~strands_robots.streaming_dataset.StreamingDatasetReader.open` -
+      where ``0`` is simply a seed. Its appliers disagree about everything
+      outside this domain: ``torch.manual_seed`` reduces a negative seed modulo
+      ``2**64`` (so ``-1`` silently becomes ``2**64 - 1`` and collides with a
+      seed a caller could have named), while NumPy's legacy seeder refuses a
+      negative or a float.
     * The episode counts of the dataset-integrity gate
       (:func:`strands_robots.verify_dataset.verify_dataset`'s ``expected`` and
       ``min_frames``, and the sim facade's
@@ -1327,8 +1331,8 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
       only for a threshold above zero, so a negative or non-finite one disables
       the check instead of failing it.
 
-    Refusing ``0`` would reject the common configuration for both, which is why
-    this is a separate domain rather than a caller of
+    Refusing ``0`` would reject the common configuration for all three, which is
+    why this is a separate domain rather than a caller of
     :func:`positive_count_error`.
 
     In every other respect it mirrors :func:`positive_count_error`: only a true
