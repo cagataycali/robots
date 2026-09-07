@@ -106,7 +106,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
-| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); mutually exclusive with `streaming` |
+| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); refused on a dataset whose `total_tasks` declares more than one task, or declares something that is not a task count, since lerobot's split is a per-task fraction; mutually exclusive with `streaming` |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher; each must be a positive integer. `validate()` refuses `0`, a negative, a `bool` and a non-finite value (none of them read as greater than one, so the selector would route them to the single-process path and the run would proceed on a topology nobody asked for) and a fractional or integral float (`2.7`, `2.0` - greater than one, so they reach the launcher as the worker count) |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
@@ -449,6 +449,20 @@ than launch a run that trains on every episode and logs no validation loss. The
 refusal names the two ways to get the split: point `dataset_root` at a populated
 local copy of the dataset, or pass lerobot's own knobs directly with
 `extra={"dataset.eval_split": 0.1, "eval_steps": 1000}`.
+
+The same `meta/info.json` decides whether the request is expressible at all.
+lerobot holds out `ceil(episodes_in_task * eval_split)` from **every task
+independently**, so one fraction reproduces a global episode count only on a
+single-task dataset: reserving 2 episodes of a three-task dataset would hold out
+3. `validate()` therefore refuses `val_episodes` when `total_tasks` declares more
+than one task, and points at the fraction instead. `total_tasks: 0`, `1`, or no
+such header mean the dataset records no task count - lerobot's own field defaults
+to 0 - and are honored as single-task. A header that declares something which is
+*not* a count (`3.0`, `"3"`, `true`, `-3`, `NaN`) is refused on its own terms and
+names the value it read: the count is what decides expressibility, so an unusable
+declaration is neither single-task nor multi-task, and reading it as the former
+is what let a multi-task dataset reach the per-task ceiling. Repair the header,
+or pass the fraction directly.
 
 `streaming` and `val_episodes` cannot both be honored, so `validate()` refuses
 the pair. lerobot holds out a validation split only on a **map-style** dataset:

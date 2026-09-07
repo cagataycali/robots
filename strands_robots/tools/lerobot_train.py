@@ -477,20 +477,27 @@ class SessionManager:
         return self._load_sessions()
 
 
-def _read_total_tasks(dataset_root: str) -> int:
-    """Return ``total_tasks`` from a LeRobot v3 dataset's ``meta/info.json``.
+def _read_total_tasks(dataset_root: str) -> Any:
+    """Return what ``meta/info.json`` declares for ``total_tasks``, verbatim.
 
-    lerobot's own field defaults to 0, and older datasets may omit it entirely;
-    both mean "no task count recorded" and are returned as 0, which callers
-    treat as single-task.
+    ``None`` when there is no header to read - no ``info.json``, or no such key -
+    which :func:`~strands_robots.utils.validation_split_error` treats as
+    single-task, as lerobot's own field defaults to 0.
+
+    The declaration is handed over unconverted because that guard is where this
+    header's domain lives, and it is the only surface that can tell a usable
+    count from a declaration that is not one. Coercing an unusable declaration
+    to 0 here reported it as the absent case, which the guard honors as
+    single-task: a three-task dataset whose header spelled the count ``3.0`` (or
+    ``"3"``) passed the guard written to refuse exactly that dataset, and lerobot
+    then held out ``ceil(episodes_in_task * eval_split)`` from each of the three.
     """
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.exists():
-        return 0
+        return None
     with open(info_path) as f:
         info = json.load(f)
-    total = info.get("total_tasks")
-    return total if isinstance(total, int) and not isinstance(total, bool) else 0
+    return info.get("total_tasks")
 
 
 def _read_total_episodes(dataset_root: str) -> int:

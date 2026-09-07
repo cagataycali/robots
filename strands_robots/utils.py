@@ -1378,9 +1378,10 @@ def declared_count(value: object) -> int | None:
     :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`, the
     metadata-drift check in
     :func:`~strands_robots.verify_dataset.verify_dataset`, the validation-split
-    denominator in ``strands_robots.training.lerobot``, and the episode count the
-    ``lerobot_train`` tool splits - so the answer lives here: one file, one
-    value, one verdict.
+    denominator in ``strands_robots.training.lerobot``, the episode count the
+    ``lerobot_train`` tool splits, and the task count
+    :func:`validation_split_error` decides that split against - so the answer
+    lives here: one file, one value, one verdict.
 
     A declaration outside the domain is ``None`` (the header declares no count),
     never a nearby number, because every alternative is silently destructive at
@@ -1394,8 +1395,8 @@ def declared_count(value: object) -> int | None:
       a perfectly readable file raises out of readers whose documented answer for
       an unusable header is "unknown", and past a tool envelope.
     * ``bool`` is an ``int`` subclass, so a bare type test reads ``true`` as a
-      one-episode dataset; the neighbouring ``total_tasks`` reader in
-      ``strands_robots.tools.lerobot_train`` already excludes it for that reason.
+      one-episode dataset - and, at the sibling ``total_tasks`` header this same
+      domain grades, as a single-task one.
     * A ``str`` digit and an integral ``float`` are refused rather than coerced,
       because coercing is what let the readers disagree: one accepted ``"2"`` as
       two episodes while another refused it as unusable.
@@ -2980,12 +2981,21 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
     number of episodes than asked, callers refuse and point at the fraction,
     which addresses the per-task behaviour directly.
 
-    A ``total_tasks`` of 0 or ``None`` means the dataset does not record a task
-    count (lerobot's own field defaults to 0), which is treated as single-task.
+    A ``total_tasks`` of 0, or no header at all, means the dataset does not
+    record a task count (lerobot's own field defaults to 0), which is treated as
+    single-task. A header that declares something which is NOT a count is a
+    THIRD outcome and refused on its own terms: the count is what decides
+    whether the request is expressible, so an unusable declaration is neither
+    single-task nor multi-task, and honoring it as the former is exactly how a
+    multi-task dataset reached lerobot's per-task ceiling. The declaration is
+    graded by :func:`declared_count`, the one owner every reader of a LeRobot
+    header count shares, so callers hand this the value their ``meta/info.json``
+    carried rather than a number of their own.
 
     Args:
         val_episodes: The requested held-out episode count, for the message.
-        total_tasks: ``total_tasks`` from the dataset's ``meta/info.json``.
+        total_tasks: The value the dataset's ``meta/info.json`` carried under
+            ``total_tasks``, verbatim, or ``None`` when there is no header.
         context: Caller label the message is prefixed with.
         passthrough_param: Name of the caller's own raw-flag passthrough
             parameter, interpolated into the remedy. Required rather than
@@ -2998,11 +3008,25 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
     Returns:
         The error text, or None when the count can be honored exactly.
     """
-    if not isinstance(total_tasks, int) or isinstance(total_tasks, bool) or total_tasks <= 1:
+    if total_tasks is None:
+        return None
+    declared = declared_count(total_tasks)
+    if declared is None:
+        return (
+            f"{context}: val_episodes={val_episodes} cannot be checked against a dataset whose "
+            f"meta/info.json declares total_tasks={_refusal_repr(total_tasks)}, which is not a "
+            "task count. Whether one global count is expressible depends on how many tasks the "
+            "dataset holds - lerobot holds out ceil(episodes_in_task * eval_split) from every "
+            "task - so a header declaring no usable count is neither single-task nor multi-task, "
+            "and reading it as single-task is what let a three-task dataset spelling its count "
+            "3.0 past this guard. Repair meta/info.json, or pass the fraction directly, e.g. "
+            f"{passthrough_param}={{'dataset.eval_split': 0.1, 'eval_steps': 1000}}."
+        )
+    if declared <= 1:
         return None
     return (
         f"{context}: val_episodes={val_episodes} cannot be reserved exactly on a "
-        f"dataset with {_refusal_str(total_tasks)} tasks. A validation split is a per-task "
+        f"dataset with {_refusal_str(declared)} tasks. A validation split is a per-task "
         "fraction in lerobot (it holds out ceil(episodes_in_task * eval_split) "
         "from every task), so a single global count is not expressible: the "
         "ceiling would be applied once per task. Pass the fraction directly, "
