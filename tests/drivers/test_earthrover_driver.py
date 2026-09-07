@@ -142,8 +142,9 @@ class TestConstructionRefusesTheWrongShape:
             ("http://10.0.0.9:8001/", "http://10.0.0.9:8001"),
             ("10.0.0.9:8001", "http://10.0.0.9:8001"),
             ("https://rover.local:8001", "https://rover.local:8001"),
+            ("HTTP://10.0.0.9:8001", "HTTP://10.0.0.9:8001"),
         ],
-        ids=["default", "trailing-slash", "bare-host-port", "https"],
+        ids=["default", "trailing-slash", "bare-host-port", "https", "uppercase-scheme"],
     )
     def test_the_base_url_is_normalised(self, port: str | None, base: str) -> None:
         assert EarthRoverDriver(port=port)._base == base

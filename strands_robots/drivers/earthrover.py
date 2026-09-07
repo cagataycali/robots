@@ -62,6 +62,26 @@ CAMERA_VIEWS: tuple[str, ...] = ("front", "rear")
 #: Where the vendor's SDK listens when started as documented.
 DEFAULT_SDK_URL = "http://localhost:8001"
 
+#: The schemes this driver speaks. Compared case-insensitively, because a URI
+#: scheme is case-insensitive (RFC 3986 section 3.1) and ``requests`` honours
+#: that: ``HTTP://host:8001/data`` is fetched exactly like ``http://``.
+ACCEPTED_SCHEMES: tuple[str, ...] = ("http", "https")
+
+
+def _declared_scheme(value: str) -> str | None:
+    """The scheme ``value`` declares, lowercased, or ``None`` when it declares none.
+
+    The single owner of "does this value already carry a scheme?", so
+    :func:`base_url_error` and the constructor's normalisation cannot disagree
+    about where the scheme ends. They did while this was a literal
+    ``startswith(("http://", "https://"))`` in both places: the check was
+    case-sensitive, so ``HTTP://localhost:8001`` declared no scheme as far as
+    the normaliser was concerned and was prefixed into
+    ``http://HTTP://localhost:8001``.
+    """
+    scheme, separator, _ = value.partition("://")
+    return scheme.lower() if separator else None
+
 
 def _refuse(reason: str) -> dict[str, Any]:
     """One refusal envelope, so every refusal has the same shape."""
@@ -75,6 +95,36 @@ def base_url_error(value: object, param: str, context: str) -> str | None:
     on the DDS robots, a URL here - so the wrong *shape* is refused at the
     chokepoint with a sentence naming the shape that belongs elsewhere, not by
     ``requests`` failing with "No host supplied" one call later.
+
+    Beyond the shape, the base URL has to address *the host the caller wrote*.
+    Every endpoint below is built from it, so a value whose authority names one
+    host and dials another sends ``POST /control`` - a drive command - to a
+    rover the caller never named, and ``connect_eagerly`` reports success when
+    anything answers there. Two spellings do that, and neither is refused by
+    the transport, which reports only the host it ended up with:
+
+    * **Userinfo.** Everything before an ``@`` in the authority is credentials,
+      so ``bot.local@10.0.0.9:8001`` dials ``10.0.0.9`` while the address still
+      reads as ``bot.local`` - including in ``get_status``, which reports the
+      base URL back verbatim.
+    * **A foreign scheme.** ``ws://10.0.0.9:8001`` has no ``http`` prefix to
+      recognise, so it is prefixed into ``http://ws://10.0.0.9:8001``, whose
+      authority is ``ws:``. The request goes to the host ``ws`` on port 80 and
+      the port the caller wrote is discarded - the same way the host half of a
+      dialled address discards a validated port in
+      :func:`~strands_robots.utils.dial_host_error`.
+
+    That shared domain is deliberately *not* used here. It grades a bare host
+    destined for interpolation into ``ws://{host}:{port}``, where an IPv6
+    literal needs its brackets; the host inside a base URL has already been
+    parsed, so ``http://[::1]:8001`` presents as ``::1`` and would be refused
+    as "not a bare hostname or IP" - a legitimate base URL rejected.
+
+    Everything else unusable here is left to the transport, which already names
+    it: ``http:`` and ``//host`` raise ``InvalidURL: No host supplied``, and an
+    out-of-range port or an embedded space raises ``InvalidURL: Failed to
+    parse``. Both are ``ValueError`` subclasses, so ``connect_eagerly`` converts
+    them into its own reason.
 
     Args:
         value: The candidate base URL.
@@ -91,6 +141,23 @@ def base_url_error(value: object, param: str, context: str) -> str | None:
         return (
             f"{context}: {param} is an HTTP base like {DEFAULT_SDK_URL!r}, got a filesystem "
             f"path {value!r} (that shape belongs to the serial arms or microduck's robotd socket)"
+        )
+    scheme = _declared_scheme(value)
+    if scheme is not None and scheme not in ACCEPTED_SCHEMES:
+        return (
+            f"{context}: {param} must be an {' or '.join(ACCEPTED_SCHEMES)} base URL like "
+            f"{DEFAULT_SDK_URL!r}, got the {scheme!r} address {value!r}. The SDK is plain HTTP, "
+            f"and this is not refused by the transport: {scheme!r} becomes the host, so the "
+            f"request goes to {scheme!r} on port 80 and the port above is discarded"
+        )
+    authority = (value.partition("://")[2] if scheme else value).partition("/")[0]
+    if "@" in authority:
+        named, _, dialled = authority.rpartition("@")
+        return (
+            f"{context}: {param} must name the SDK host directly, got {value!r}. Everything "
+            f"before the '@' is userinfo, so {named!r} is not the host: every request - including "
+            f"POST /control, a drive command - goes to {dialled!r} while the address still reads "
+            f"as {named!r}"
         )
     return None
 
@@ -157,7 +224,7 @@ class EarthRoverDriver:
         base = port or DEFAULT_SDK_URL
         if reason := base_url_error(base, "port", type(self).__name__):
             raise ValueError(reason)
-        if not base.startswith(("http://", "https://")):
+        if _declared_scheme(base) is None:
             base = "http://" + base
         if reason := positive_finite_number_error(timeout_s, "timeout_s", type(self).__name__):
             raise ValueError(reason)

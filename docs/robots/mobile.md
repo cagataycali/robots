@@ -162,6 +162,42 @@ soft-stop frame on the way out rather than cutting the motors dead. Poll
 `get_task_status()`; `stop_task()` reports honestly whether the loop actually
 joined.
 
+## Real hardware: the EarthRover native driver
+
+`earthrover` declares `hardware.lerobot_type`, so `mode="real"` builds the lerobot robot
+by default; `driver="strands"` selects the native driver instead. That driver talks to the
+vendor's [earth-rovers-sdk](https://github.com/frodobots-org/earth-rovers-sdk) over HTTP,
+which proxies to the rover, and `port=` is that SDK's base URL.
+
+```python
+from strands_robots import Robot
+
+rover = Robot("earthrover", mode="real", driver="strands", port="http://10.0.0.9:8001")
+if (reason := rover.connect_eagerly()) is not None:   # proves GET /data answers
+    raise SystemExit(reason)
+
+rover.send_action({"linear": 0.4, "angular": -0.2})    # each axis normalised to [-1, 1]
+rover.cleanup()                                        # sends a parting zero twist
+```
+
+Every endpoint - including `POST /control`, which *drives* - is built from that one
+string, so it has to address the host you wrote. A value whose authority names one host
+and resolves to another is refused at construction, because the transport does not refuse
+it: it reports only the host it ended up with, and `connect_eagerly()` reports success
+whenever something answers there.
+
+| `port=` | Result |
+|---|---|
+| omitted, `http://10.0.0.9:8001`, `10.0.0.9:8001`, `https://rover.local:8001` | Accepted. A bare `host:port` is prefixed with `http://`. |
+| `HTTP://10.0.0.9:8001`, `http://[::1]:8001`, `10.0.0.9:8001/rover-7` | Accepted - the scheme is case-insensitive, an IPv6 literal keeps its brackets, and a path prefix survives for an SDK behind a reverse proxy. |
+| `bot.local@10.0.0.9:8001` | **Refused.** Everything before the `@` is userinfo, so `10.0.0.9` is dialled while the address still reads as `bot.local`. |
+| `ws://10.0.0.9:8001` | **Refused.** The SDK is plain HTTP; left alone, `ws` becomes the host and the port you wrote is discarded. |
+| `/tmp/rover.sock` | **Refused** - that shape belongs to the serial arms. |
+
+A URL that cannot be used at all - `http://`, an out-of-range port, an embedded space -
+is left to `requests`, which already names it; `connect_eagerly()` returns that reason
+rather than raising.
+
 ## See also
 
 - [Humanoids](humanoids.md) - bipedal alternatives.
