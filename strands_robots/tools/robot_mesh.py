@@ -570,6 +570,68 @@ def _numeric_option_error(action: str, *, timeout: Any, limit: Any) -> str | Non
     return None
 
 
+def _decoded_command_body(command: str, label: str) -> dict[str, Any]:
+    """Decode a caller-supplied JSON command body into the mapping the wire takes.
+
+    ``command`` is free text an agent writes, so :func:`json.loads` has three
+    distinct failure modes here and only the first is a
+    :class:`json.JSONDecodeError`:
+
+    * Malformed syntax - the ordinary case.
+    * A number wider than :func:`sys.get_int_max_str_digits` (4300 digits by
+      default). That is well-formed JSON - RFC 8259 bounds no range - which this
+      build cannot construct an ``int`` for, so :mod:`json` raises a plain
+      :class:`ValueError`, outside the subclass every call site narrowed to.
+    * A document nested past the interpreter stack, which :mod:`json`'s
+      recursive-descent scanner reports as :class:`RecursionError` - a
+      :class:`RuntimeError`, outside :class:`ValueError` entirely. The same class
+      :func:`strands_robots.mesh._acl_config._parse_json5` converts, for the same
+      reason: a refusal that leaves its boundary takes the path, the reason and
+      the remedy with it.
+
+    Both of the latter escaped the four sites that used to parse a body inline.
+    On the two pre-pass sites in :func:`robot_mesh` that is an exception raised
+    past the tool's own ``{"status": "error"}`` envelope, and no audit row for a
+    ``broadcast`` or ``send`` that never reached the wire - while every refusal
+    beside them writes one. On the two Device Connect sites the dispatcher's
+    outermost handler absorbs it and reports a caller's malformed body as a
+    transport error.
+
+    Each cause gets its own wording. Reusing "is not valid JSON" for the other
+    two would send the operator hunting a syntax error that is not there, which
+    is the distinction the ACL loader's refusals already draw.
+
+    Args:
+        command: The JSON text the caller supplied. Non-empty; callers refuse an
+            empty body with their own action-specific message first.
+        label: How to name the parameter in a refusal - ``"command"``, or
+            ``"rpc params (command)"`` for the device-native RPC body.
+
+    Returns:
+        The decoded JSON object.
+
+    Raises:
+        ValueError: *command* does not decode to a JSON object. The message
+            names *label* and the cause, so a caller can hand it straight to
+            :func:`_err` without adding a second layer of prose.
+    """
+    try:
+        parsed = json.loads(command)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label} is not valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # Nesting depth, not length: the payload size cap does not bound this,
+        # and the scanner runs out of stack long before a body gets large.
+        raise ValueError(f"{label} is nested too deeply to parse; flatten the body") from exc
+    except ValueError as exc:
+        # Reached only by the int_max_str_digits limit above - JSONDecodeError,
+        # the other ValueError json.loads raises, is handled first.
+        raise ValueError(f"{label} holds a number too wide for this build to read: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{label} must decode to a JSON object (dict)")
+    return parsed
+
+
 # ── #10: robot-less gateway mesh ───────────────────────────────────────────
 # A dashboard / coordinator / logger process has no Robot()/Simulation() in
 # _LOCAL_ROBOTS, so historically every robot_mesh action failed with "no local
@@ -974,11 +1036,9 @@ def _device_connect_dispatch(
             if not command:
                 return _DCResult(_err("send requires command (JSON string)"))
             try:
-                cmd = json.loads(command)
-            except json.JSONDecodeError as exc:
-                return _DCResult(_err(f"command is not valid JSON: {exc}"))
-            if not isinstance(cmd, dict):
-                return _DCResult(_err("command must decode to a JSON object (dict)"))
+                cmd = _decoded_command_body(command, "command")
+            except ValueError as exc:
+                return _DCResult(_err(str(exc)))
             try:
                 cmd = _security.validate_command(cmd)
             except _security.ValidationError as exc:
@@ -1001,12 +1061,9 @@ def _device_connect_dispatch(
             rpc_params: dict[str, Any] = {}
             if command:
                 try:
-                    parsed = json.loads(command)
-                except json.JSONDecodeError as exc:
-                    return _DCResult(_err(f"rpc params (command) is not valid JSON: {exc}"))
-                if not isinstance(parsed, dict):
-                    return _DCResult(_err("rpc params (command) must decode to a JSON object (dict)"))
-                rpc_params = parsed
+                    rpc_params = _decoded_command_body(command, "rpc params (command)")
+                except ValueError as exc:
+                    return _DCResult(_err(str(exc)))
             try:
                 func_name, rpc_params = _security.validate_device_rpc(function, rpc_params)
             except _security.ValidationError as exc:
@@ -1189,13 +1246,10 @@ def robot_mesh(
             _audit_tool_action(action, "*", False, "missing command")
             return _err("broadcast requires command (JSON string)")
         try:
-            parsed = json.loads(command)
-        except json.JSONDecodeError as exc:
-            _audit_tool_action(action, "*", False, f"bad json: {exc}")
-            return _err(f"command is not valid JSON: {exc}")
-        if not isinstance(parsed, dict):
-            _audit_tool_action(action, "*", False, "command not a dict")
-            return _err("command must decode to a JSON object (dict)")
+            parsed = _decoded_command_body(command, "command")
+        except ValueError as exc:
+            _audit_tool_action(action, "*", False, f"bad command body: {exc}")
+            return _err(str(exc))
         try:
             validated_broadcast_cmd = _security.validate_command(parsed)
         except _security.ValidationError as exc:
@@ -1209,13 +1263,10 @@ def robot_mesh(
             _audit_tool_action(action, target, False, "missing command")
             return _err("send requires command (JSON string)")
         try:
-            parsed = json.loads(command)
-        except json.JSONDecodeError as exc:
-            _audit_tool_action(action, target, False, f"bad json: {exc}")
-            return _err(f"command is not valid JSON: {exc}")
-        if not isinstance(parsed, dict):
-            _audit_tool_action(action, target, False, "command not a dict")
-            return _err("command must decode to a JSON object (dict)")
+            parsed = _decoded_command_body(command, "command")
+        except ValueError as exc:
+            _audit_tool_action(action, target, False, f"bad command body: {exc}")
+            return _err(str(exc))
         try:
             validated_send_cmd = _security.validate_command(parsed)
         except _security.ValidationError as exc:
