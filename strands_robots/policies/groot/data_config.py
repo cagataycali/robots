@@ -114,7 +114,7 @@ _CONFIG_FILE = Path(__file__).parent / "data_configs.json"
 
 def _load_config_defs() -> tuple:
     """Load config definitions and aliases from the JSON file."""
-    with open(_CONFIG_FILE) as fh:
+    with open(_CONFIG_FILE, encoding="utf-8") as fh:
         raw = json.load(fh)
     return raw["configs"], raw.get("aliases", {})
 

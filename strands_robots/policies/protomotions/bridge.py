@@ -112,7 +112,7 @@ def _patch_and_load_mjcf(mjcf_path: Path):
     # Write the patched XML back into the SAME directory so MJCF asset paths
     # (mesh files, textures) resolve relative to the original location.
     asset_dir = str(mjcf_path.parent)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", dir=asset_dir, delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", dir=asset_dir, delete=False, encoding="utf-8") as f:
         f.write(xml_str)
         tmp_path = f.name
 

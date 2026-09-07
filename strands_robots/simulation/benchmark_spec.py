@@ -698,7 +698,7 @@ def _load_spec_file(path: str | Path) -> dict[str, Any]:
         raise ValueError(f"Benchmark spec path is not a file: {path}")
 
     suffix = p.suffix.lower()
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
 
     parsed: Any
     if suffix == ".json":

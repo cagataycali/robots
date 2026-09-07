@@ -366,7 +366,7 @@ def load_norm_stats(
 
     def _read_json(path: Path) -> dict[str, Any] | None:
         try:
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
             return data if isinstance(data, dict) else None
         except (OSError, ValueError) as exc:

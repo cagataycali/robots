@@ -1178,7 +1178,7 @@ def _configure_camera_settings(
             config_filename = f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
             config_path = os.path.join(save_path, config_filename)
 
-            with open(config_path, "w") as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(actual_config, f, indent=2)
 
             config_info.extend(

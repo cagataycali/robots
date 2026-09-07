@@ -519,7 +519,7 @@ def _read_total_tasks(dataset_root: str) -> Any:
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.exists():
         return None
-    with open(info_path) as f:
+    with open(info_path, encoding="utf-8") as f:
         info = json.load(f)
     return info.get("total_tasks")
 
@@ -534,7 +534,7 @@ def _read_total_episodes(dataset_root: str) -> int:
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.exists():
         raise FileNotFoundError(f"Dataset metadata not found: {info_path}")
-    with open(info_path) as f:
+    with open(info_path, encoding="utf-8") as f:
         info = json.load(f)
     total = info.get("total_episodes")
     declared = declared_count(total)
@@ -1079,7 +1079,7 @@ def lerobot_train(
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
             log_file = SESSION_DIR / f"{session_name}.log"
-            with open(log_file, "w") as f:
+            with open(log_file, "w", encoding="utf-8") as f:
                 proc = subprocess.Popen(
                     cmd,
                     stdout=f,

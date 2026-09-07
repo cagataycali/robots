@@ -328,7 +328,7 @@ def _load() -> dict[str, Any]:
         identity = _store_identity(path)
         if identity is not None:
             try:
-                raw = path.read_text()
+                raw = path.read_text(encoding="utf-8")
                 cached = _cache.get(identity)
                 if cached is not None and cached.raw == raw:
                     return cached.store
@@ -379,7 +379,7 @@ def _save_locked(store: dict[str, Any]) -> None:
     payload = json.dumps(store, indent=2)
     fd, tmp = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
         os.replace(tmp, path)
     except BaseException:

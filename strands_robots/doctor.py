@@ -634,7 +634,7 @@ def check_hf_auth() -> str:
     hf_token_path = _hf_token_path()
     # ``is_file`` rather than ``exists``: an explicitly empty ``HF_TOKEN_PATH``
     # resolves to ``Path(".")``, a directory that exists, and reading it raises.
-    if hf_token_path.is_file() and hf_token_path.read_text().strip():
+    if hf_token_path.is_file() and hf_token_path.read_text(encoding="utf-8").strip():
         return _pass(f"HuggingFace token found ({hf_token_path})")
     return _warn(
         "No HuggingFace token found",

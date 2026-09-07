@@ -387,7 +387,7 @@ class WBCConfig:
         p = Path(path).expanduser()
         if not p.is_file():
             raise FileNotFoundError(f"WBCConfig file not found: {p}")
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         suffix = p.suffix.lower()
         if suffix == ".json":
             try:

@@ -2107,7 +2107,7 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
     info_path = root_path / "meta" / "info.json"
     if info_path.is_file():
         try:
-            with info_path.open() as f:
+            with info_path.open(encoding="utf-8") as f:
                 raw_total = json.load(f)["total_episodes"]
         except (OSError, ValueError, KeyError, TypeError):
             # Absent key, or a file no reader can parse: the documented unknown,

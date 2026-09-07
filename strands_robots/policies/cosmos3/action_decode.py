@@ -72,7 +72,7 @@ def load_action_stats(domain_name: str) -> dict[str, np.ndarray]:
             "domain's stats are not a substitute even when the action width "
             "matches."
         )
-    with path.open("r") as f:
+    with path.open("r", encoding="utf-8") as f:
         raw = json.load(f)
     return {k: np.asarray(v, dtype=np.float32) for k, v in raw.items() if k in ("q01", "q99")}
 

@@ -580,7 +580,7 @@ def provision_robot(
     ca_path = cert_dir / "AmazonRootCA1.pem"
     _ensure_ca(ca_path)
     endpoint = _discover_endpoint(iot)
-    (cert_dir / "endpoint").write_text(endpoint)
+    (cert_dir / "endpoint").write_text(endpoint, encoding="utf-8")
 
     return ProvisionedThing(
         thing_name=thing_name,
@@ -660,7 +660,7 @@ def provision_operator(
     ca_path = cert_dir / "AmazonRootCA1.pem"
     _ensure_ca(ca_path)
     endpoint = _discover_endpoint(iot)
-    (cert_dir / "endpoint").write_text(endpoint)
+    (cert_dir / "endpoint").write_text(endpoint, encoding="utf-8")
 
     return ProvisionedThing(
         thing_name=thing_name,
@@ -861,8 +861,8 @@ def _create_cert(iot: Any, cert_path: Path, key_path: Path) -> tuple[str, str]:
     cert_arn = resp["certificateArn"]
     cert_id = resp["certificateId"]
 
-    cert_path.write_text(resp["certificatePem"])
-    key_path.write_text(resp["keyPair"]["PrivateKey"])
+    cert_path.write_text(resp["certificatePem"], encoding="utf-8")
+    key_path.write_text(resp["keyPair"]["PrivateKey"], encoding="utf-8")
     try:
         os.chmod(cert_path, 0o600)
         os.chmod(key_path, 0o600)

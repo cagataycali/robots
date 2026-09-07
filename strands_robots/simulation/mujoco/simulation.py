@@ -343,7 +343,7 @@ _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
 # (called on every `strands` invocation). Load once at import, not per access.
-with open(_TOOL_SPEC_PATH) as _f:
+with open(_TOOL_SPEC_PATH, encoding="utf-8") as _f:
     _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
 
 # The actions the schema advertises to a model, derived from the schema rather

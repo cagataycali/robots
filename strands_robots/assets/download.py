@@ -213,14 +213,14 @@ def _mjcf_missing_meshes(model_path: str | os.PathLike[str]) -> list[str]:
             check, and MuJoCo names it on the load that follows.
     """
     model_dir = os.path.dirname(os.path.abspath(os.fspath(model_path)))
-    main = Path(model_path).read_text()
+    main = Path(model_path).read_text(encoding="utf-8")
 
     # (fragment directory relative to model_dir, fragment text)
     fragments: list[tuple[str, str]] = [("", main)]
     for inc in _INCLUDE_RE.findall(main):
         inc_path = os.path.join(model_dir, inc)
         try:
-            text = Path(inc_path).read_text()
+            text = Path(inc_path).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         rel = os.path.relpath(os.path.dirname(os.path.abspath(inc_path)), model_dir)

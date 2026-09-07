@@ -113,7 +113,7 @@ class LeRobotCalibrationManager:
             return None
 
         try:
-            with open(calib_path) as f:
+            with open(calib_path, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Error loading calibration {calib_path}: {e}")
@@ -127,7 +127,7 @@ class LeRobotCalibrationManager:
         calib_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(calib_path, "w") as f:
+            with open(calib_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             return True
         except Exception as e:
@@ -257,7 +257,7 @@ class LeRobotCalibrationManager:
                 "structure": structure,
             }
 
-            with open(output_dir / "backup_manifest.json", "w") as f:
+            with open(output_dir / "backup_manifest.json", "w", encoding="utf-8") as f:
                 json.dump(manifest, f, indent=2)
 
             return True, str(output_dir), copied_count

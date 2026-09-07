@@ -268,7 +268,7 @@ def _read_file() -> dict[str, Any]:
             # write must count as corrupt (browsers already refuse it), so it heals to defaults instead of
             # being handed back to JSON.parse forever.
             data = json.loads(
-                SETTINGS_FILE.read_text(),
+                SETTINGS_FILE.read_text(encoding="utf-8"),
                 parse_constant=lambda c: (_ for _ in ()).throw(ValueError(f"non-finite {c}")),
             )
             if isinstance(data, dict):
@@ -421,7 +421,7 @@ def _write_file(data: dict[str, Any]) -> None:
     payload = json.dumps(data, indent=2, sort_keys=True, allow_nan=False)
     fd, tmp = tempfile.mkstemp(prefix=f"{SETTINGS_FILE.name}.", suffix=".tmp", dir=SETTINGS_FILE.parent)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
         os.replace(tmp, SETTINGS_FILE)
     except BaseException:

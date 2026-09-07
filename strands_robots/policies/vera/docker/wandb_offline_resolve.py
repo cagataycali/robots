@@ -76,7 +76,7 @@ def _index_local_ckpts(ckpt_root: str) -> dict[str, Path]:
     index: dict[str, Path] = {}
     for prov in glob.glob(os.path.join(ckpt_root, "**", "provenance.json"), recursive=True):
         try:
-            data = json.loads(Path(prov).read_text())
+            data = json.loads(Path(prov).read_text(encoding="utf-8"))
         except Exception:
             continue
         if not isinstance(data, dict):

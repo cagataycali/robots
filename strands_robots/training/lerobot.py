@@ -771,7 +771,7 @@ class LerobotTrainer(Trainer):
         if not info_path.exists():
             return None
         try:
-            with open(info_path) as f:
+            with open(info_path, encoding="utf-8") as f:
                 return json.load(f).get("total_tasks")
         except (OSError, ValueError, AttributeError):
             return None

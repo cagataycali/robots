@@ -1072,7 +1072,7 @@ def lerobot_teleoperate(
 
                 if auto_accept_calibration:
                     # Start process with stdin for automatic calibration acceptance
-                    with open(log_file, "w") as f:
+                    with open(log_file, "w", encoding="utf-8") as f:
                         proc = subprocess.Popen(
                             cmd,
                             stdout=f,
@@ -1115,7 +1115,7 @@ def lerobot_teleoperate(
                     threading.Thread(target=auto_respond, daemon=True).start()
                 else:
                     # Start normally without stdin handling
-                    with open(log_file, "w") as f:
+                    with open(log_file, "w", encoding="utf-8") as f:
                         proc = subprocess.Popen(
                             cmd, stdout=f, stderr=subprocess.STDOUT, text=True, start_new_session=True
                         )

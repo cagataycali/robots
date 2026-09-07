@@ -321,7 +321,7 @@ class MotionBricksConfig:
         if suffix != ".json":
             raise ValueError(f"MotionBricksConfig file {p} has unsupported extension {suffix!r}; use .json.")
         try:
-            data = json.loads(p.read_text())
+            data = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
             raise ValueError(f"MotionBricksConfig file {p} is not valid JSON: {e}") from e
         if not isinstance(data, dict):
