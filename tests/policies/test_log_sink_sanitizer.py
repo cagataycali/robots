@@ -68,6 +68,7 @@ from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.curobo.policy import CuroboPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.moveit2.policy import MoveIt2Policy
+from strands_robots.policies.wbc.policy import WBCPolicy
 
 # A payload shaped like the thing an operator would see in a forged line: the
 # second half looks like a record this process never wrote.
@@ -309,6 +310,28 @@ def test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_recor
     assert "JointState(\\nWARNING:root:actuators disabled)" in rendered
 
 
+def test_wbc_reset_seed_with_a_multiline_repr_cannot_split_the_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Alert 1159. ``PolicyServer`` forwards the wire ``seed`` to ``reset``
+    verbatim, by design - the policy owns the domain - and this sink rendered
+    it with ``%r``. A JSON-decoded value cannot carry a raw break through
+    ``repr``, so the escape was incidental to the wire's encoding rather than
+    a decision at the sink; an in-process caller is bound by ``int | None``
+    in the annotation only, and one object with a two-line ``repr`` is what
+    the incidental escape does not survive."""
+    policy = _stub(
+        _history=_stub(reset=lambda: None),
+        _config=_stub(num_actions=15),
+    )
+    with caplog.at_level(logging.DEBUG, logger="strands_robots.policies.wbc.policy"):
+        WBCPolicy.reset(policy, MultilineRepr())  # type: ignore[arg-type]
+
+    rendered = _rendered(caplog)
+    assert not _has_raw_break(rendered), f"record still splits: {rendered!r}"
+    assert "seed=JointState(\\nWARNING:root:actuators disabled)" in rendered
+
+
 # --------------------------------------------------------------------------
 # Property cells: the escape was incidental at these sinks; state it there.
 # --------------------------------------------------------------------------
@@ -385,6 +408,13 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
     },
     "moveit2/policy.py": {
         "MoveIt2Policy._extract_joint_state": ["e", "repr(state)"],
+    },
+    # Alert 1159, outside the #2853 census: the ``seed`` the inference server
+    # forwards verbatim off the wire (``PolicyServer`` owns no domain for it)
+    # reaches this ``reset`` and is rendered into a record. See
+    # :func:`test_wbc_reset_seed_with_a_multiline_repr_cannot_split_the_record`.
+    "wbc/policy.py": {
+        "WBCPolicy.reset": ["repr(seed)"],
     },
 }
 

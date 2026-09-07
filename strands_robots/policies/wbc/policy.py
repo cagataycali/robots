@@ -62,6 +62,7 @@ from typing import Any
 
 import numpy as np
 
+from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy
 from strands_robots.utils import finite_number_error, require_optional, sequence_length
 
@@ -412,7 +413,10 @@ class WBCPolicy(Policy):
         """
         self._history.reset()
         self._prev_action = np.zeros(self._config.num_actions, dtype=np.float64)
-        logger.debug("WBCPolicy.reset: cleared observation history + prev_action (seed=%r)", seed)
+        logger.debug(
+            "WBCPolicy.reset: cleared observation history + prev_action (seed=%s)",
+            sanitize_log_value(repr(seed)),
+        )
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
