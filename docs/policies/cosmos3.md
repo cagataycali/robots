@@ -303,6 +303,14 @@ out = decode_cosmos_chunk_to_targets(
 )
 ```
 
+`stats` takes the quantiles in whatever form you have them — a list straight
+out of a JSON file (the layout the bundled `stats/*_stats.json` files use), a
+tuple, or a NumPy array. Every component must be a finite real number: the
+de-normalization is `0.5 * (a + 1) * (q99 - q01) + q01`, so one `nan` or `inf`
+quantile spreads across the whole chunk and every pose the trajectory composes
+from it, and `denormalize_quantile` refuses it naming the quantile and the
+component rather than returning an all-`nan` trajectory.
+
 `stats_domain` is required whenever `stats` is passed, and must match the
 embodiment's domain. It is not bookkeeping: `umi`, `droid_lerobot`,
 `bridge_orig_lerobot` and `openarm_lerobot` are all 10 columns, so the width
