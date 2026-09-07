@@ -399,19 +399,21 @@ class ProcessorBridge:
         # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
         inert_reason: str | None = None
         if preprocessor is None and postprocessor is None:
-            from .norm_stats import UnknownNormTagError
+            from .norm_stats import NormStatsFilenameError, UnknownNormTagError
 
             try:
                 preprocessor, postprocessor = cls._load_norm_stats_fallback(
                     pretrained_name_or_path, norm_tag=norm_tag, revision=revision
                 )
-            except UnknownNormTagError as exc:
-                # The stats file IS present and usable; the caller named a tag it
-                # does not declare. Record the cause instead of propagating: the
-                # policy narrows on ValueError to treat an absent bridge as
-                # benign, so a raise here degrades to the same passthrough with
-                # its reason at debug, and the load report then blames a missing
-                # postprocessor the checkpoint was never going to ship.
+            except (NormStatsFilenameError, UnknownNormTagError) as exc:
+                # Reachable stats the loader refused to apply: a tag the caller
+                # named that the file does not declare, or a stats filename the
+                # checkpoint's config.json points outside itself. Record the cause
+                # instead of propagating: the policy narrows on ValueError to treat
+                # an absent bridge as benign, so a raise here degrades to the same
+                # passthrough with its reason at debug, and the load report then
+                # blames a missing postprocessor the checkpoint was never going to
+                # ship.
                 inert_reason = str(exc)
 
         # Third fallback: an OLD-FORMAT checkpoint ships no processor configs and
@@ -618,6 +620,9 @@ class ProcessorBridge:
             UnknownNormTagError: If ``norm_tag`` names a tag the recognized stats
                 file does not declare - a caller error, not an absence, so it does
                 not share the ``(None, None)`` verdict.
+            NormStatsFilenameError: If the checkpoint's ``config.json`` declares a
+                ``norm_stats_filename`` that does not name a file inside the
+                checkpoint - likewise a malformed declaration, not an absence.
         """
         from . import norm_stats as _norm_stats
 
