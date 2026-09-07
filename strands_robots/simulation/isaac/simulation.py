@@ -786,6 +786,33 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # ``physics_dt`` / ``camera_width`` / ``camera_height`` fields so
         # downstream code only reads from one source of truth.
         if legacy_default_timestep is not None:
+            # Graded on the domain the surface that spends this quantity applies
+            # to it (:meth:`~strands_robots.simulation.base.SimEngine._validate_timestep`,
+            # which ``create_world`` runs over the effective dt and names
+            # ``physics_dt`` for), and graded *before* the conversion rather than
+            # after. The ``float(...)`` was not validation: it defeated that
+            # domain's boolean arm, whose own reason is that "``float(True)`` is
+            # ``1.0``, so the boolean is unrecoverable once coerced".
+            # ``IsaacSimulation(default_timestep=True)`` stored ``physics_dt =
+            # 1.0`` - a one-second physics step, 120x the default - and
+            # ``create_world()``, the only owner of this field that grades it,
+            # then reported ``status="success"``: the boolean it exists to refuse
+            # had already been converted away, while the canonical
+            # ``IsaacConfig(physics_dt=True)`` spelling of the same value is
+            # refused there. ``numpy.True_`` and ``numpy.bool_(True)`` did the
+            # same; ``nan`` and ``inf`` were stored to be refused a call later;
+            # and ``None``-past-the-sentinel or ``[0.002]`` raised ``TypeError``
+            # out of ``float()`` naming neither the parameter nor this class. The
+            # MuJoCo and Newton engines store their own ``default_timestep``
+            # unconverted for exactly this reason - the world builder can still
+            # see what the caller passed. Here the field is annotated ``float``
+            # and its ``<= 0`` test cannot read a numeric string, so the value is
+            # converted once admitted: a conversion that can only restate a value
+            # this domain already accepted, rather than one that decides it.
+            if (
+                dt_error := self._validate_timestep(legacy_default_timestep, type(self).__name__, "default_timestep")
+            ) is not None:
+                raise ValueError(dt_error["content"][0]["text"])
             config = dataclasses.replace(config, physics_dt=float(legacy_default_timestep))
         # The legacy spellings reach the same graded field the canonical name
         # does, so they cannot be the looser way in. The ``int(...)`` they used

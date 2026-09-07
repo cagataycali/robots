@@ -141,7 +141,7 @@ rejected eagerly. The commonly used fields:
 | `num_envs` | `int` | `1` | Parallel environments. Set to `1024`+ for fleet RL. A positive integer - the same domain `replicate(num_envs=...)` takes. |
 | `device` | `str` | `"cuda:0"` | CUDA device (`cuda:N`). Must be a CUDA device. |
 | `headless` | `bool` | `True` | Run without a GUI (required for cloud/CI). |
-| `physics_dt` | `float` | `1/120` | Physics timestep (seconds). |
+| `physics_dt` | `float` | `1/120` | Physics timestep (seconds). Positive and finite - the domain `create_world()` applies to the effective dt, and the one the legacy `IsaacSimulation(default_timestep=...)` shortcut that writes this field takes as well. |
 | `rendering_dt` | `float` | `1/30` | Rendering timestep (seconds). |
 | `render_mode` | `str` | `"headless"` | `"headless"`, `"rtx_realtime"` (raster), or `"rtx_pathtracing"` (photoreal). |
 | `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). Three finite components, Z-aligned - the same domain `create_world(gravity=...)` takes. |
