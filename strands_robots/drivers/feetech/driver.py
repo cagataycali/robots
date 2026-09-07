@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 from strands_robots.bus_access import bus_lock
 from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
-from strands_robots.utils import boolean_flag_error
+from strands_robots.utils import boolean_flag_error, positive_count_error
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +106,13 @@ class FeetechDriver:
 
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for the SCS
       bus. Optional at construction; the bus opens it on connect.
-    * ``baud_rate`` - integer, defaults to ``1_000_000``. The Feetech default
-      for STS3215 arms; SCS-series can also run at 500_000 or below and a
-      caller who knows better passes it here.
+    * ``baud_rate`` - a positive integer, defaults to ``1_000_000``. The Feetech
+      default for STS3215 arms; SCS-series can also run at 500_000 or below and
+      a caller who knows better passes it here. Held to
+      :func:`~strands_robots.utils.positive_count_error` - the domain
+      :mod:`~strands_robots.tools.serial_tool` holds its own ``baudrate`` to -
+      because pyserial coerces the speed rather than checking it, so a value
+      that is not a count is applied instead of refused.
     * ``motor_ids`` - the servo IDs on the bus, in wire order. Optional at
       construction; the bus discovers them on connect.
     """
@@ -139,7 +143,17 @@ class FeetechDriver:
                 f"multi-bus rigs are not part of {SUPPORTED_ROBOTS}",
             )
         self._port: str | None = port
-        self._baud_rate: int = int(kwargs.pop("baud_rate", 1_000_000))
+        # Graded, not coerced. pyserial takes the speed through its own
+        # ``int()`` and refuses only a negative, so a value this constructor
+        # converted was applied rather than reported: ``2.7`` opened the port at
+        # 2 baud and ``0`` opened it successfully at a speed no servo answers,
+        # while ``get_status`` reported the converted number as the configured
+        # one. The same domain :mod:`~strands_robots.tools.serial_tool` holds
+        # its ``baudrate`` to, because the two reach the same ``serial.Serial``.
+        baud_rate = kwargs.pop("baud_rate", 1_000_000)
+        if (reason := positive_count_error(baud_rate, "baud_rate", f"FeetechDriver({tool_name!r})")) is not None:
+            raise ValueError(reason)
+        self._baud_rate: int = baud_rate
         self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
         # ``motor_ids`` narrows the arm to a subset of SO_ARM_MOTORS. Honoured
         # rather than recorded: a keyword that changes nothing is worse than one

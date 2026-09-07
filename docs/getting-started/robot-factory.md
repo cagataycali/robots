@@ -137,6 +137,15 @@ members it is missing, so a half-built driver fails at the line that registers i
 than on the first agent call. `port=` stays polymorphic - a serial path, an IP address or a
 URL - because only the driver knows how to read it.
 
+`baud_rate=` does not stay polymorphic. Every surface that opens a serial bus - the Feetech
+and Dynamixel drivers, `FeetechBus`, and the `baudrate` of `serial_tool` and `pose_tool` -
+holds it to one domain, a positive integer, and refuses anything else by name at
+construction. pyserial takes the speed through its own `int()` and refuses only a negative,
+so an ungraded value is *applied*: `2.7` opens the port at 2 baud, and `0` opens it
+successfully at a speed no servo answers, after which every read times out exactly as an
+unplugged arm does. A refusal at the line that states the speed is the only place that
+reads as a caller mistake rather than as broken hardware.
+
 A driver has **two** ways to halt its robot and they are not the same contract. `stop_task()`
 returns a status envelope and decides an outcome, so that is what a caller reads. `stop()` is
 the lifecycle hook and is annotated `-> None`, so it carries no verdict at all - which makes

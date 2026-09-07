@@ -1058,7 +1058,7 @@ def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
-    Shared domain for four families of discrete quantity:
+    Shared domain for five families of discrete quantity:
 
     * The knobs that count iterations of a control or rollout loop - the
       simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
@@ -1084,6 +1084,16 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
       building live resources - a physics engine per environment, an OS thread
       per worker - so a count the caller did not mean is not a bad number but
       the wrong number of engines.
+    * The speed a serial bus is opened at - the ``baudrate`` of
+      :mod:`~strands_robots.tools.serial_tool` and the ``baud_rate`` of every
+      surface that opens one: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`,
+      :class:`~strands_robots.drivers.dynamixel.driver.DynamixelDriver`,
+      :class:`~strands_robots.drivers.feetech.bus.FeetechBus` and
+      ``pose_tool``'s motor controller. They all reach one ``serial.Serial``,
+      which takes the speed through its own ``int()`` and refuses only a
+      negative - so a speed that is not a count is applied rather than
+      reported: ``2.7`` opens the port at 2 baud and ``0`` opens it
+      successfully at a speed no servo answers.
 
     It lives here rather than beside one of its callers because those callers
     sit in different layers (:mod:`strands_robots.hardware_robot` must not
