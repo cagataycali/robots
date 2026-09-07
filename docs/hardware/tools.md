@@ -73,6 +73,18 @@ read back by a later one: `/proc/stat`'s boot time is recomputed from the wall
 clock on every read, so a date would move under an NTP correction while the
 kernel's own start ticks do not.
 
+Before either question can be asked, the number has to *be* a process id, and it
+arrives from a file rather than from a caller. So it is graded, not converted:
+`int()` of a value the store should not hold answers about a different process -
+`int(4321.5)` is `4321`, and `true` is pid 1 - or raises on a value `json.load`
+produces from a well-formed file (`1e400`, `NaN`, or the U+FFFD the store's own
+decode policy substitutes for a damaged byte). A `pid` field holding anything but
+a positive integer within the platform's `pid_t` range therefore means "this
+record names no process": `list` and `status` report it as stopped, the teleop
+store prunes it like any other record with no live process, the training store
+keeps it and `stop` refuses it naming the type it found, and nothing is
+signalled either way.
+
 `lerobot_teleoperate` prunes a finished session:
 
 | What the probe reports | Verdict |

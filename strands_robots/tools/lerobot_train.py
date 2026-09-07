@@ -35,9 +35,11 @@ from strands_robots.tools._process_stop import (
     SIGTERM_GRACE_S,
     confirm_exit,
     process_started_since_boot,
+    recorded_pid,
     reused_pid_result,
     session_is_running,
     unstopped_result,
+    unusable_pid_result,
 )
 from strands_robots.utils import (
     declared_count,
@@ -371,7 +373,14 @@ class SessionManager:
         return sessions
 
     def _report_uninspectable(self, sessions: dict[str, Any]) -> None:
-        """Warn for each session whose process exists but cannot be inspected.
+        """Warn for each session this store holds but cannot inspect.
+
+        Two records read that way. One names a pid that exists and may not be
+        read; the other names no pid at all - its ``pid`` field holds something
+        that is not a process id, which
+        :func:`~strands_robots.tools._process_stop.recorded_pid` answers rather
+        than converting, because ``psutil.pid_exists`` raises a ``TypeError`` on a
+        ``str`` or a ``float`` and aborts the action that asked.
 
         ``psutil.pid_exists`` answers existence with a signal; reading the process
         reads ``/proc``, which can be refused. When it raises
@@ -389,8 +398,23 @@ class SessionManager:
             sessions: The loaded records. Inspected only; never modified.
         """
         for name, info in sessions.items():
-            pid = info.get("pid")
-            if not (pid and psutil.pid_exists(pid)):
+            pid = recorded_pid(info)
+            if pid is None:
+                if info.get("pid") is not None:
+                    # A pid field that is not a process id. Nothing can inspect
+                    # it, and converting it would inspect a different process, so
+                    # it is reported for the same reason a denial is: ``list`` and
+                    # ``status`` will read this record as not running, and this is
+                    # the operator's only clue that the run may still be holding
+                    # the GPU under a pid this store no longer names.
+                    logger.warning(
+                        "Training session '%s' records a %s as its PID, which is not a process id; "
+                        "its record is kept, but the run can only be stopped by hand",
+                        name,
+                        type(info.get("pid")).__name__,
+                    )
+                continue
+            if not psutil.pid_exists(pid):
                 continue
             try:
                 # Called for what it raises, not for what it returns: the
@@ -1113,10 +1137,12 @@ def lerobot_train(
             if not session_info:
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
             pid = session_info.get("pid")
-            if not pid:
-                return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
-
-            pid_int = int(pid)
+            pid_int = recorded_pid(session_info)
+            if pid_int is None:
+                # Not a pid, so there is no process this verb could be about. The
+                # signals below would go to whatever ``int()`` of it happened to
+                # name - pid 1 for ``true``, and a live stranger for ``4321.5``.
+                return unusable_pid_result(session_name, pid)
             if psutil.pid_exists(pid_int) and not session_is_running(session_info):
                 # The pid exists but no longer holds the process this record was
                 # written for, so the run is over and the signals below would go

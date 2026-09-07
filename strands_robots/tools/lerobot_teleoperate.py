@@ -29,9 +29,11 @@ from strands_robots.tools._process_stop import (
     SIGTERM_GRACE_S,
     confirm_exit,
     process_started_since_boot,
+    recorded_pid,
     reused_pid_result,
     session_is_running,
     unstopped_result,
+    unusable_pid_result,
 )
 from strands_robots.utils import (
     boolean_flag_error,
@@ -299,6 +301,14 @@ class SessionManager:
         recorded: a pruned record leaves the teleoperation process running with no
         supported way to stop it.
 
+        The pid itself is read through
+        :func:`~strands_robots.tools._process_stop.recorded_pid` rather than
+        converted, so a record whose ``pid`` field is not a process id is dropped
+        like any other with no live process instead of aborting the read: this
+        method's decode policy exists so a damaged store still degrades, and
+        ``int()`` of a damaged pid raises a ``ValueError`` that neither handler
+        below answers.
+
         Returns:
             The surviving session records, keyed by session name.
         """
@@ -317,11 +327,24 @@ class SessionManager:
             # Check if processes are still running and clean up dead sessions
             active_sessions = {}
             for name, info in sessions.items():
+                pid = recorded_pid(info)
+                if pid is None and info.get("pid") is not None:
+                    # The record carries a pid field that is not a process id, so
+                    # nothing here can name the process it was written for - and
+                    # converting it would name a different one. It is dropped like
+                    # any other record with no live process, and said out loud
+                    # because the drop is written back to disk below.
+                    logger.warning(
+                        "Teleop session '%s' records a %s as its PID, which is not a process id; "
+                        "dropping the record - read %s to recover the process it named",
+                        name,
+                        type(info.get("pid")).__name__,
+                        self.sessions_file,
+                    )
                 if not session_is_running(info):
                     continue
                 active_sessions[name] = info
-                pid = info.get("pid")
-                if PID_STARTED_SINCE_BOOT in info and process_started_since_boot(int(pid)) is None:
+                if pid is not None and PID_STARTED_SINCE_BOOT in info and process_started_since_boot(pid) is None:
                     # A record that carries an identity was nonetheless kept on
                     # existence alone, so the read was refused - a process that had
                     # gone away would not have been kept. Said out loud, because
@@ -1178,10 +1201,12 @@ def lerobot_teleoperate(
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
-            if not pid:
-                return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
-
-            pid_int = int(pid)
+            pid_int = recorded_pid(session_info)
+            if pid_int is None:
+                # Not a pid, so there is no process this verb could be about. The
+                # signals below would go to whatever ``int()`` of it happened to
+                # name - pid 1 for ``true``, and a live stranger for ``4321.5``.
+                return unusable_pid_result(session_name, pid)
             if psutil.pid_exists(pid_int) and not session_is_running(session_info):
                 # The pid exists but no longer holds the process this record was
                 # written for, so the session is over and the signals below would

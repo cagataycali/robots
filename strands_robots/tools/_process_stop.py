@@ -21,6 +21,12 @@ stranger as the session, and the ``stop`` verb that verdict invites signals it.
 :func:`confirm_exit` already insists on - captured before the question is asked,
 because a freshly constructed :class:`psutil.Process` captures the identity it is
 being asked to check and so cannot contradict it.
+
+Before either question can be asked there is the number itself, and it arrives
+from a JSON file rather than from a caller. :func:`recorded_pid` is the one
+reader of it, because converting instead of grading is how a record comes to
+name a process it was never written for: ``int(4321.5)`` is a pid the record does
+not carry, and ``int(True)`` is pid 1.
 """
 
 from __future__ import annotations
@@ -54,6 +60,15 @@ PID_STARTED_SINCE_BOOT = "pid_started_since_boot"
 # above that noise, and far below the lifetime of any session, which is the gap a
 # reused pid's own start offset differs by.
 _IDENTITY_TOLERANCE_S = 0.05
+
+#: Largest process id this platform can be asked about. A pid is a ``pid_t``,
+#: a signed 32-bit integer on Linux and macOS, and both ``psutil.pid_exists``
+#: and ``os.kill`` raise ``OverflowError`` above it rather than answering - so a
+#: larger number in a session record cannot name a process, and grading it out
+#: is what keeps that OverflowError from reaching a caller. The real ceiling is
+#: ``/proc/sys/kernel/pid_max``, but that is configurable at runtime, and a
+#: record written before it was lowered still names its process.
+_PID_T_MAX = 2**31 - 1
 
 #: Index of ``starttime`` among the ``/proc/<pid>/stat`` fields that follow the
 #: comm field - field 22 of the whole line, counting from 1. Everything up to and
@@ -146,16 +161,97 @@ def process_started_since_boot(pid: int) -> float | None:
         return None
 
 
+def recorded_pid(info: Mapping[str, Any]) -> int | None:
+    """The process id a session record names, or ``None`` when it names none.
+
+    The read-side counterpart of the pid a session's ``start`` verb wrote, in the
+    shape :func:`~strands_robots.utils.declared_count` uses for a count a file
+    declares: the store is JSON on disk, so the only two answers a reader can act
+    on are the pid itself and the absence of one. A value outside the domain is
+    ``None`` - never a nearby number - because ``int()`` of one aims a signal at a
+    process the record does not name:
+
+    * ``int(4321.5)`` is ``4321``. ``stop`` signals whatever holds that number,
+      which is not the session and need not be related to it at all.
+    * ``bool`` is an ``int`` subclass, so ``true`` is pid 1 - ``init`` on Linux.
+    * ``int("4321")`` and ``int(" 4321 ")`` both succeed, so a store spelling
+      ``psutil.pid_exists`` refuses outright is accepted here instead.
+    * ``int(1e400)`` raises ``OverflowError`` and ``int(float("nan"))``
+      ``ValueError``. Both are values ``json.load`` produces from a well-formed
+      file, and both escape readers whose documented answer for an unusable store
+      is "no sessions" rather than an exception.
+    * ``0`` and any negative number are refused because ``os.kill`` reads them as
+      process *groups*: ``0`` is every process in the caller's own group.
+    * A number above :data:`_PID_T_MAX` is refused because the platform cannot be
+      asked about it; see that constant.
+
+    Args:
+        info: A session record, read for its ``pid`` key.
+
+    Returns:
+        The recorded pid, or ``None`` when the record names no usable one. A
+        ``pid`` key that is present but is not a process id answers ``None`` too;
+        a caller that must tell those apart - to report the difference rather
+        than pass it over - compares against the raw value it read, as
+        :func:`unusable_pid_result` does.
+    """
+    pid = info.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return None
+    return pid if 0 < pid <= _PID_T_MAX else None
+
+
+def unusable_pid_result(session_name: str, recorded: Any) -> dict[str, Any]:
+    """Refuse a ``stop`` for a session record that names no process id.
+
+    Shared by both session tools so one unusable record reads the same whichever
+    one holds it, and split on whether the record carries the key at all: an
+    absent pid is the store's own "this record was never given one", while a
+    present value that is not a pid is a damaged or hand-edited record, and an
+    operator who cannot tell those apart cannot tell which file to look at.
+
+    The type is reported rather than the value, because the type is the mistake:
+    a ``float`` is a truncated pid, a ``str`` is a store written by something
+    other than these tools, and a ``bool`` is pid 1. The value itself is in the
+    file this message points the operator at.
+
+    Args:
+        session_name: Name the session is tracked under.
+        recorded: The raw value the record carried under ``pid``, or ``None``
+            when the key was absent.
+
+    Returns:
+        A tool error result whose ``json`` block carries ``pid_usable: False``.
+    """
+    if recorded is None:
+        text = f"No PID found for session '{session_name}'"
+    else:
+        text = (
+            f"Session '{session_name}' records a {type(recorded).__name__} as its PID, and a process id is "
+            f"a positive integer, so there is nothing this verb can signal. Recover the process from the "
+            f"session store and stop it with 'kill'."
+        )
+    return {
+        "status": "error",
+        "content": [
+            {"text": text},
+            {"json": {"session_name": session_name, "pid_usable": False, "stopped": False}},
+        ],
+    }
+
+
 def session_is_running(info: Mapping[str, Any]) -> bool:
     """Whether the process a session record names is still that process.
 
     Args:
-        info: A session record, read for its ``pid`` and for the identity
-            :data:`PID_STARTED_SINCE_BOOT` names.
+        info: A session record, read through :func:`recorded_pid` for its ``pid``
+            and for the identity :data:`PID_STARTED_SINCE_BOOT` names.
 
     Returns:
         ``True`` while the recorded pid exists *and* still holds the process the
-        record was written for.
+        record was written for. A record naming no usable pid is not running:
+        there is no process to ask about, and answering from a converted number
+        would answer about a different one.
 
         A record carrying no identity - one written before it was recorded - can
         only be answered by existence. Of the two ways the identity read can fail,
@@ -164,14 +260,14 @@ def session_is_running(info: Mapping[str, Any]) -> bool:
         was already gone, while :class:`psutil.AccessDenied` means this user may
         not look - and being unable to look is no evidence that the session ended.
     """
-    pid = info.get("pid")
-    if not pid or not psutil.pid_exists(int(pid)):
+    pid = recorded_pid(info)
+    if pid is None or not psutil.pid_exists(pid):
         return False
     recorded = info.get(PID_STARTED_SINCE_BOOT)
     if isinstance(recorded, bool) or not isinstance(recorded, int | float):
         return True
     try:
-        started = _started_since_boot(int(pid))
+        started = _started_since_boot(pid)
     except psutil.NoSuchProcess:
         return False
     except psutil.AccessDenied:
