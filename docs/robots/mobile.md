@@ -169,6 +169,10 @@ by default; `driver="strands"` selects the native driver instead. That driver ta
 vendor's [earth-rovers-sdk](https://github.com/frodobots-org/earth-rovers-sdk) over HTTP,
 which proxies to the rover, and `port=` is that SDK's base URL.
 
+That transport is `requests`, supplied by `pip install 'strands-robots[earthrover]'`
+(a member of `[all]`). Without it the driver still imports and registers, and
+`connect_eagerly()` returns a reason naming the extra rather than raising.
+
 ```python
 from strands_robots import Robot
 

@@ -13,8 +13,11 @@ rover over WebRTC/RTM, and exposes four endpoints this driver speaks:
   ``{camera}_frame`` field.
 * ``POST /speak`` - text out of the rover's speaker.
 
-``requests`` is imported lazily so the module loads without it; a real
-connection needs it and a running SDK.
+``requests`` is the transport, declared by the ``[earthrover]`` extra
+(``pip install 'strands-robots[earthrover]'``, a member of ``[all]``). It is
+imported lazily so the module loads and registers without it; a real connection
+needs it and a running SDK, and :meth:`EarthRoverDriver.connect_eagerly` reports
+the absent extra rather than raising.
 
 Safety note: a rover is VELOCITY-commanded - unlike an arm, it does not hold
 still when you stop talking to it, and whether the firmware times a twist out
@@ -346,7 +349,10 @@ class EarthRoverDriver:
         try:
             import requests  # noqa: PLC0415 - lazy: the module must load without it
         except ImportError as exc:
-            self._connect_error = f"requests is not installed: {exc}. Install it with: pip install requests"
+            self._connect_error = (
+                f"cannot import requests ({exc}); the EarthRover native driver speaks HTTP to the "
+                "earth-rovers-sdk. Install it with: pip install 'strands-robots[earthrover]'"
+            )
             return self._connect_error
 
         session = requests.Session()

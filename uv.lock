@@ -4851,6 +4851,7 @@ all = [
     { name = "pyyaml" },
     { name = "pyzmq" },
     { name = "qpsolvers", extra = ["daqp"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "requests" },
     { name = "robot-descriptions" },
     { name = "roslibpy" },
     { name = "scipy" },
@@ -4898,6 +4899,9 @@ dev = [
 device-connect = [
     { name = "device-connect-agent-tools" },
     { name = "device-connect-edge" },
+]
+earthrover = [
+    { name = "requests" },
 ]
 groot-service = [
     { name = "msgpack" },
@@ -5133,6 +5137,8 @@ requires-dist = [
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-mujoco'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-newton'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["quadprog"], marker = "extra == 'cosmos3-sim'", specifier = ">=4.0.0" },
+    { name = "requests", marker = "extra == 'all'", specifier = ">=2.28.0,<3.0.0" },
+    { name = "requests", marker = "extra == 'earthrover'", specifier = ">=2.28.0,<3.0.0" },
     { name = "robosuite", marker = "extra == 'vera-sim'", specifier = "==1.4.1" },
     { name = "robot-descriptions", marker = "extra == 'all'", specifier = ">=1.23.0,<2.0.0" },
     { name = "robot-descriptions", marker = "extra == 'sim'", specifier = ">=1.23.0,<2.0.0" },
@@ -5169,7 +5175,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
     { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "motionbricks", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "vera-sim", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "motionbricks", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "vera-sim", "wbc"]
 
 [[package]]
 name = "sympy"
