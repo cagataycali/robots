@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.dataset_recorder import local_dataset_dir
 from strands_robots.utils import (
     finite_number_error,
     lerobot_version,
@@ -201,6 +202,17 @@ class StreamingDatasetReader:
     ) -> StreamingDatasetReader:
         """Open a version-tolerant streaming reader.
 
+        Local datasets:
+            An absent ``root`` is resolved from ``repo_id`` by the rule
+            recording writes through
+            (:func:`~strands_robots.dataset_recorder.local_dataset_dir`), so a
+            ``repo_id`` that is itself a path streams the directory it recorded
+            to with no ``root`` restated. Only that rule is resolved here: an
+            ``owner/name`` id keeps its absent root, which is how
+            ``StreamingLeRobotDataset`` selects LeRobot's revision-safe Hub
+            metadata cache - already the directory a local recording under that
+            id wrote to.
+
         Validation:
             The numeric knobs are checked against
             :data:`_NUMERIC_DOMAINS` before the lerobot import, because
@@ -262,6 +274,20 @@ class StreamingDatasetReader:
         for param, domain in _NUMERIC_DOMAINS.items():
             if error := domain(supplied[param]):
                 raise ValueError(error)
+
+        # A repo_id that is itself a path names a local directory here and does
+        # not to LeRobot, which derives any absent root as
+        # $HF_LEROBOT_HOME/{repo_id} whatever the id looks like. Recording
+        # resolves that rule and writes to the directory the id names, so this
+        # read has to resolve it too or it streams from somewhere the recording
+        # has never been - and StreamingLeRobotDataset only reads a local
+        # dataset at all when it is given a root (streaming_from_local), so the
+        # miss falls through to a Hub lookup for a name that only ever meant a
+        # directory. An owner/name id is left to LeRobot: an absent root is how
+        # it selects the revision-safe Hub metadata cache, which is already
+        # where a local recording under that id wrote to.
+        if root is None and (local := local_dataset_dir(repo_id)) is not None:
+            root = str(local)
 
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
@@ -425,7 +451,8 @@ def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
 
     Args:
         repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or a
-            local repo_id paired with ``root=``.
+            ``repo_id`` that is itself a path, which streams the directory it
+            recorded to with no ``root`` restated.
         **kwargs: Forwarded to :meth:`StreamingDatasetReader.open` - e.g.
             ``root``, ``delta_timestamps``, ``episodes``, ``shuffle``,
             ``buffer_size``, ``max_num_shards``, ``drop_videos``

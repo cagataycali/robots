@@ -1450,7 +1450,9 @@ class DatasetRecordingMixin:
 
         Args:
             repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
-                a local repo_id paired with ``root=``.
+                a ``repo_id`` that is itself a path, which streams the directory
+                it recorded to with no ``root`` restated
+                (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
             **kwargs: Forwarded to
                 :meth:`StreamingDatasetReader.open` - e.g. ``root``,
                 ``delta_timestamps``, ``episodes``, ``shuffle`` (which decides

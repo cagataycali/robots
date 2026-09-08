@@ -194,11 +194,11 @@ absent `root` there outright, because the directory it would derive for a writer
 is the revision-safe Hub snapshot cache; resolving here is what keeps the append
 reachable on the same arguments the recording was made with.
 
-Reading back applies the same rule, so a path-like `repo_id` replays and
-transforms the directory it recorded to with no `root` restated. Only that rule
-is applied on the read side: an `owner/name` id keeps its absent root so LeRobot
-resolves its own revision-safe snapshot cache for a download - which is already
-the directory a local recording under that id wrote to.
+Reading back applies the same rule, so a path-like `repo_id` replays, streams
+and transforms the directory it recorded to with no `root` restated. Only that
+rule is applied on the read side: an `owner/name` id keeps its absent root so
+LeRobot resolves its own revision-safe snapshot cache for a download - which is
+already the directory a local recording under that id wrote to.
 
 Passing an existing **empty** directory - for example one returned by
 `tempfile.mkdtemp()` - is accepted and recorded into:
@@ -989,7 +989,7 @@ from strands_robots import Robot
 
 sim = Robot("so100")
 reader = sim.stream_dataset(
-    "user/my_dataset",                 # or a local repo_id + root=
+    "user/my_dataset",                 # a path-like repo_id needs no root=
     root="/tmp/my_dataset",
     delta_timestamps={                 # optional: stacked time windows + *_is_pad masks
         "observation.state": [-0.0667, -0.0333, 0.0],
@@ -1005,6 +1005,17 @@ for frame in reader:
 # torch DataLoader (shuffles INTERNALLY — do not pass shuffle=True):
 for batch in reader.dataloader(batch_size=64, num_workers=4):
     ...
+```
+
+A `repo_id` that is itself a path (no `owner/name` slash, or `./`-prefixed) is
+resolved to the directory recording wrote to, so the record -> read-back loop
+needs no `root` restated:
+
+```python
+sim.start_recording(repo_id="sim_recording", task="pick the cube", fps=30)
+...
+sim.stop_recording()
+reader = sim.stream_dataset("sim_recording")   # ./sim_recording, not the Hub
 ```
 
 Equivalently, the standalone reader: `from strands_robots import StreamingDatasetReader`.
