@@ -194,6 +194,12 @@ absent `root` there outright, because the directory it would derive for a writer
 is the revision-safe Hub snapshot cache; resolving here is what keeps the append
 reachable on the same arguments the recording was made with.
 
+Reading back applies the same rule, so a path-like `repo_id` replays and
+transforms the directory it recorded to with no `root` restated. Only that rule
+is applied on the read side: an `owner/name` id keeps its absent root so LeRobot
+resolves its own revision-safe snapshot cache for a download - which is already
+the directory a local recording under that id wrote to.
+
 Passing an existing **empty** directory - for example one returned by
 `tempfile.mkdtemp()` - is accepted and recorded into:
 
@@ -929,6 +935,16 @@ plays a recorded episode back through the sim: each recorded frame is one
 control step, applied via `send_action` and integrated for a full control period
 derived from the dataset fps, so a position-servo robot reproduces the recorded
 trajectory. `speed` scales only the wall-clock playback rate.
+
+`root` is resolved from `repo_id` exactly as recording resolves it, so whatever
+id `start_recording` was given replays with nothing restated:
+
+```python
+sim.start_recording(repo_id="sim_recording", task="pick the cube", fps=30)
+...
+sim.stop_recording()
+sim.replay_episode("sim_recording", robot_name="so101")   # same id, same directory
+```
 
 Each recorded action index is bound to an action key. By default those are
 `robot_action_keys(robot_name)` — the robot's **actuator** keys, which is the

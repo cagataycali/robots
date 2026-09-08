@@ -2298,7 +2298,10 @@ class PolicyRunner:
                 non-numeric one is rejected with a structured error before the
                 dataset is downloaded. Refused rather than coerced because the
                 index selects which trajectory reaches the actuators.
-            root: Optional local dataset root override.
+            root: Local dataset directory. When omitted it is resolved from
+                ``repo_id`` by the rule recording writes through, so an id that
+                is itself a path replays the directory it recorded to
+                (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
             speed: Playback speed multiplier (1.0 = real time). Must be a
                 positive, finite number (any real scalar, including a NumPy
                 scalar such as ``np.float32(2.0)``); a non-positive,

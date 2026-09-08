@@ -568,21 +568,56 @@ def _lerobot_home() -> Path:
         return Path.home() / ".cache" / "huggingface" / "lerobot"
 
 
+def local_dataset_dir(repo_id: str) -> Path | None:
+    """The local directory a ``repo_id`` that is itself a path names.
+
+    A ``repo_id`` that is absolute, ``./``-prefixed, or carries no
+    ``owner/name`` slash is read as a local directory. That reading is this
+    repo's, not LeRobot's - ``LeRobotDataset`` resolves any absent root to
+    ``$HF_LEROBOT_HOME/{repo_id}`` whatever the id looks like - so these are
+    exactly the ids whose directory this repo has to state on every surface that
+    opens a dataset by id. Stating it on some of them and not others puts the
+    directory written to and the directory read back in two different places.
+
+    Args:
+        repo_id: HuggingFace dataset id (``owner/name``) or a local path.
+
+    Returns:
+        The directory the id names, or None for an ``owner/name`` Hub id.
+
+        ``None`` is a resolution, not a gap: that id's directory is LeRobot's to
+        derive, and a *reader* must leave it there. An absent root is how
+        LeRobot selects the revision-safe Hub snapshot cache for a download
+        (``snapshot_download(cache_dir=HF_LEROBOT_HUB_CACHE)``); naming the
+        directory instead switches it to a plain ``local_dir=`` materialization
+        and skips the re-download a legacy on-disk layout triggers. A *writer*
+        must never open that shared cache, which is why
+        :func:`resolve_dataset_dir` names ``$HF_LEROBOT_HOME/{repo_id}`` for the
+        same id - the two are the same directory whenever it already exists
+        locally, and they differ only in who owns a download.
+    """
+    if "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
+        return Path(repo_id)
+    return None
+
+
 def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
-    """Resolve the on-disk directory a dataset will live in.
+    """Resolve the on-disk directory a dataset will be WRITTEN to.
 
     * explicit ``root`` -> used verbatim;
-    * a ``repo_id`` that is itself a path (absolute, ``./`` prefixed, or with no
-      ``owner/name`` slash) -> treated as a local directory;
+    * a ``repo_id`` that is itself a path -> the directory it names
+      (:func:`local_dataset_dir`);
     * otherwise ``$HF_LEROBOT_HOME/{repo_id}``.
 
-    The middle rule is this repo's reading, not LeRobot's: ``LeRobotDataset``
-    resolves any absent root to ``$HF_LEROBOT_HOME/{repo_id}`` whatever the id
-    looks like. So this is the resolution callers get, and
-    :meth:`DatasetRecorder.create` hands the result down as an explicit ``root``
-    rather than letting the writer resolve a second time - otherwise the
-    directory inspected before the write and the directory written to are two
-    different places for exactly the ids the middle rule covers.
+    Every writing entry point hands the result down as an explicit ``root``
+    rather than letting LeRobot resolve a second time - otherwise the directory
+    inspected before the write and the directory written to are two different
+    places for exactly the ids the middle rule covers.
+
+    This is the writer's resolution: the third rule names a concrete directory
+    for a Hub id because a writer must not be handed LeRobot's shared snapshot
+    cache. A reader resolves the middle rule only and leaves the third to
+    LeRobot; see :func:`local_dataset_dir` on why the two differ.
 
     Args:
         repo_id: HuggingFace dataset id (``owner/name``) or a local path.
@@ -593,8 +628,8 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """
     if root:
         return Path(root)
-    if "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
-        return Path(repo_id)
+    if (local := local_dataset_dir(repo_id)) is not None:
+        return local
     return _lerobot_home() / repo_id
 
 
@@ -1937,7 +1972,12 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
             once the shared guard has round-tripped it, so an accepted index
             reaches the O(1) episode-row lookup rather than the last-resort
             frame scan a float index falls through to.
-        root: Optional local dataset root override.
+        root: Local dataset directory. When omitted, a ``repo_id`` that is
+            itself a path is read as the directory it names - the same one the
+            recording entry points write to, so the id that recorded a dataset
+            reads it back. An ``owner/name`` id keeps an absent root so LeRobot
+            resolves its own revision-safe cache
+            (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
 
     Returns:
         Tuple of (dataset, episode_start, episode_length) on success.
@@ -1973,7 +2013,23 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id=repo_id, root=root)
+    # The directory to read, resolved by the same rule the recording was written
+    # through. A ``repo_id`` that is itself a path is a local directory here as
+    # it is there (:func:`local_dataset_dir`); forwarding the caller's ``None``
+    # unresolved sent the read somewhere the recording never was, because
+    # LeRobot reads an absent root as ``$HF_LEROBOT_HOME/{repo_id}`` whatever
+    # the id looks like. So the id that recorded a dataset could not read it
+    # back: the miss falls through to a Hub lookup for a dataset name that only
+    # ever named a directory.
+    #
+    # Only that rule is resolved here. An ``owner/name`` id keeps its absent
+    # root, which is how LeRobot selects the revision-safe snapshot cache for a
+    # download - and it already reads back what a local write put at
+    # ``$HF_LEROBOT_HOME/{repo_id}``, since that is the same directory LeRobot
+    # derives. Resolving it here would move Hub downloads out of that cache for
+    # no gain.
+    read_root = Path(root) if root else local_dataset_dir(repo_id)
+    ds = LeRobotDataset(repo_id=repo_id, root=str(read_root) if read_root is not None else None)
 
     num_episodes = ds.meta.total_episodes if hasattr(ds.meta, "total_episodes") else len(ds.meta.episodes)
     if episode >= num_episodes:
