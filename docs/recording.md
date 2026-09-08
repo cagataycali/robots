@@ -188,6 +188,12 @@ the directory the dataset is then written into. LeRobot derives an absent root
 as `$HF_LEROBOT_HOME/{repo_id}` for any id, so letting it derive one of its own
 would part company with the rule above for exactly the path-like ids.
 
+`DatasetRecorder.resume` - the append entry point - forwards the same resolved
+directory, so the `repo_id` that created a dataset reopens it. LeRobot refuses an
+absent `root` there outright, because the directory it would derive for a writer
+is the revision-safe Hub snapshot cache; resolving here is what keeps the append
+reachable on the same arguments the recording was made with.
+
 Passing an existing **empty** directory - for example one returned by
 `tempfile.mkdtemp()` - is accepted and recorded into:
 
@@ -664,6 +670,7 @@ Append to existing dataset (requires `lerobot>=0.5.2`):
 
 ```python
 recorder = DatasetRecorder.resume(repo_id="user/my_dataset", task="pick up the blue cube")
+# root=None -> $HF_LEROBOT_HOME/user/my_dataset, the directory create() wrote to
 recorder.add_frame(observation, action)
 recorder.save_episode()
 recorder.finalize()

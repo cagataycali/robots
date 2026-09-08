@@ -1267,7 +1267,14 @@ class DatasetRecorder:
 
         Args:
             repo_id: HuggingFace dataset ID (same as the original recording).
-            root: Local dataset directory (same as the original recording).
+            root: Local dataset directory. When omitted, the directory this
+                ``repo_id`` resolves to
+                (:func:`~strands_robots.dataset_recorder.resolve_dataset_dir`) -
+                the same one :meth:`create` writes to, so the id that created a
+                dataset reopens it. It is forwarded to LeRobot as an explicit
+                root either way; LeRobot refuses an absent one, because the
+                directory it derives for a writer would be the revision-safe Hub
+                snapshot cache.
             task: Default task description for appended frames.
             vcodec: Video codec for the per-camera MP4 streams (default
                 "h264"; routed into the version-appropriate encoder
@@ -1314,8 +1321,19 @@ class DatasetRecorder:
                 "Use overwrite=True for a fresh single-session dataset."
             )
 
+        # The directory to append into, resolved once by the same rule
+        # :meth:`create` writes through and forwarded as an explicit ``root`` for
+        # the same reason: an absent root is not LeRobot's to derive here.
+        # ``LeRobotDataset.resume`` refuses one outright - the directory it would
+        # derive is the revision-safe Hub snapshot cache, which a DatasetWriter
+        # must not open - so forwarding the caller's ``None`` unresolved made the
+        # append entry point unreachable on exactly the arguments ``create``
+        # accepts: the ``repo_id`` that created a dataset could not reopen it, and
+        # the refusal asked for the directory this resolver already names.
+        dataset_dir = resolve_dataset_dir(repo_id, root)
+
         resume_sig = inspect.signature(LeRobotDatasetCls.resume).parameters
-        resume_kwargs: dict[str, Any] = dict(repo_id=repo_id, root=root)
+        resume_kwargs: dict[str, Any] = dict(repo_id=repo_id, root=str(dataset_dir))
         # Mirror create()'s version-tolerant codec routing.
         resume_kwargs.update(_codec_create_kwargs(resume_sig, vcodec, context="resume"))
         if "streaming_encoding" in resume_sig:

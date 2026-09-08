@@ -31,10 +31,12 @@ the inspected directory is the written directory by construction. The ordinary
 ``owner/name`` id is unaffected: both resolutions already agreed on
 ``$HF_LEROBOT_HOME/{repo_id}`` there, which the controls below hold.
 
-``DatasetRecorder.resume`` is deliberately untouched. It forwards ``repo_id`` /
-``root`` to ``LeRobotDataset.resume`` without resolving or preparing anything, so
-it has no second resolution to disagree with, and LeRobot refuses an absent root
-there itself with a message that names the fix.
+``DatasetRecorder.resume`` resolves the same way, for a different reason: it
+prepares nothing, so it has no second resolution to disagree with, but LeRobot
+refuses an absent root outright there - a writer must not open the Hub snapshot
+cache - which left the append entry point unreachable on the arguments ``create``
+accepts. See
+``tests/test_dataset_append_reopens_what_the_repo_id_created.py``.
 """
 
 from __future__ import annotations
