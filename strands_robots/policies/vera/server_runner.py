@@ -41,6 +41,7 @@ def _require_vera_installed(python_executable: str) -> None:
         [python_executable, "-c", "import vera"],
         capture_output=True,
         text=True,
+        errors="replace",
     )
     if probe.returncode != 0:
         raise ImportError(
@@ -153,6 +154,7 @@ class VeraServerRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             bufsize=1,
             env=env,
         )
@@ -276,6 +278,7 @@ class DockerServerRunner:
             [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
             capture_output=True,
             text=True,
+            errors="replace",
         )
         return name in out.stdout.split()
 
@@ -367,7 +370,7 @@ class DockerServerRunner:
         else:
             cmd = self._build_run_command()
             logger.info("starting VERA container: %s", " ".join(cmd))
-            res = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603 - list args
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")  # noqa: S603 - list args
             if res.returncode != 0:
                 raise RuntimeError(f"failed to start VERA container (exit {res.returncode}):\n{res.stderr.strip()}")
             self._started_container = True
@@ -408,6 +411,7 @@ class DockerServerRunner:
                 [self._docker(), "logs", "--tail", str(lines), self._container_name()],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=10,
             )
             return (out.stdout + out.stderr).strip()
@@ -423,7 +427,7 @@ class DockerServerRunner:
         name = self._container_name()
         try:
             subprocess.run(  # noqa: S603 - list args
-                [self._docker(), "stop", name], capture_output=True, text=True, timeout=30
+                [self._docker(), "stop", name], capture_output=True, text=True, errors="replace", timeout=30
             )
             logger.info("VERA container %s stopped", name)
         except Exception as e:  # noqa: BLE001

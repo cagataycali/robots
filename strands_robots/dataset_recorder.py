@@ -257,6 +257,7 @@ def sync_dataset_to_bucket(
             [hf, "buckets", "create", bucket] + (["--private"] if private else []),
             capture_output=True,
             text=True,
+            errors="replace",
         )
         blob = (cp.stderr + cp.stdout).lower()
         # An already-created bucket is the normal case for a daily re-sync, so it
@@ -274,7 +275,7 @@ def sync_dataset_to_bucket(
     if delete:
         cmd.append("--delete")
     logger.info("Syncing %s -> %s", local_root, dest)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     if proc.returncode != 0:
         return {
             "status": "error",

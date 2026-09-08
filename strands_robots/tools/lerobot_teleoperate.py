@@ -1166,7 +1166,7 @@ def lerobot_teleoperate(
                 }
             else:
                 # Start in foreground
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
                 return {
                     "status": "success" if result.returncode == 0 else "error",
@@ -1382,7 +1382,7 @@ def lerobot_teleoperate(
                 return {"status": "error", "content": [{"text": f"Replay command build failed: {str(e)}"}]}
 
             # Execute replay
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
             content_lines = [
                 "**Episode Replay Complete**",

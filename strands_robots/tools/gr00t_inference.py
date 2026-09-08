@@ -1152,6 +1152,7 @@ def _find_gr00t_containers() -> dict[str, Any]:
             ["docker", "ps", "-a", "--format", "{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}"],
             capture_output=True,
             text=True,
+            errors="replace",
             check=True,
         )
 
@@ -1237,7 +1238,9 @@ def _signal_service_pids(exec_prefix: list[str], pids: list[str], signal: str) -
     """
     for pid in pids:
         if pid:
-            subprocess.run([*exec_prefix, "kill", signal, pid], capture_output=True, text=True, check=False)
+            subprocess.run(
+                [*exec_prefix, "kill", signal, pid], capture_output=True, text=True, errors="replace", check=False
+            )
 
 
 def _service_pids_in_container(container_name: str, port: int) -> list[str]:
@@ -1257,6 +1260,7 @@ def _service_pids_in_container(container_name: str, port: int) -> list[str]:
             ["docker", "exec", container_name, "pgrep", "-f", f"inference_service.py.*--port {port}"],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
     except (subprocess.CalledProcessError, OSError):
@@ -1277,7 +1281,9 @@ def _service_pids_on_host(port: int) -> list[str]:
         ``lsof`` is unavailable).
     """
     try:
-        result = subprocess.run(["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["lsof", "-t", f"-i:{port}"], capture_output=True, text=True, errors="replace", check=False
+        )
     except (subprocess.CalledProcessError, OSError):
         return []
     if result.returncode != 0:
@@ -1555,7 +1561,7 @@ def _start_service(
         )
 
         # Start service
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=True)
 
         # Wait for service to start
         wire_protocol = "HTTP" if http_server else "ZMQ"
@@ -1631,6 +1637,7 @@ def _image_exists(image_name: str) -> bool:
             ["docker", "image", "inspect", image_name],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
         return result.returncode == 0
@@ -1651,6 +1658,7 @@ def _container_state(name: str) -> str:
             ["docker", "inspect", "--format", "{{.State.Status}}", name],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
         if result.returncode != 0:
@@ -1710,18 +1718,21 @@ def _build_image(
                 ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", repo_tag],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 check=True,
             )
             subprocess.run(
                 ["git", "-C", str(dest), "checkout", repo_tag],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 check=True,
             )
             subprocess.run(
                 ["git", "-C", str(dest), "submodule", "update", "--init", "--recursive"],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 check=True,
             )
         else:
@@ -1739,6 +1750,7 @@ def _build_image(
                 ],
                 capture_output=True,
                 text=True,
+                errors="replace",
                 check=True,
             )
 
@@ -1759,6 +1771,7 @@ def _build_image(
             cwd=str(dest),
             capture_output=True,
             text=True,
+            errors="replace",
             check=True,
             env={**os.environ, "DOCKER_BUILDKIT": os.environ.get("DOCKER_BUILDKIT", "1")},
         )
@@ -1879,6 +1892,7 @@ def _container_has_wrapper_mount(name: str) -> bool:
             ["docker", "inspect", "--format", "{{range .Mounts}}{{.Destination}}\n{{end}}", name],
             capture_output=True,
             text=True,
+            errors="replace",
             check=False,
         )
         if result.returncode != 0:
@@ -2047,7 +2061,7 @@ def _start_container(
         cmd.extend(container_command.split())
 
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=True)
     except subprocess.CalledProcessError as e:
         return {"status": "error", "message": f"docker run failed: {e.stderr or e}"}
 
@@ -2092,7 +2106,7 @@ def _remove_container(*, name: str, remove_volumes: bool) -> dict[str, Any]:
     cmd.append(name)
 
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, errors="replace", check=True)
     except subprocess.CalledProcessError as e:
         return {"status": "error", "message": f"docker rm failed: {e.stderr or e}"}
 
