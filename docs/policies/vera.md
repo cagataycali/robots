@@ -230,6 +230,18 @@ and instantly tears it down. `inf` is refused for the opposite reason: it makes
 `while time.monotonic() < deadline` unable to end, and the raise that ends it is
 what tears the launched server down.
 
+Under `server_mode="docker"` that budget also needs the loop's own calls to
+return. The wait probes the port (bounded at 1 s) and asks the daemon whether the
+container is still listed, and a docker client whose daemon has stopped answering
+— a wedged container runtime shim leaves the container running and the daemon
+mute — blocks in that second call, so the deadline is never re-read. Every
+`docker` *query* is therefore bounded at 10 s, and one that does not answer
+raises `docker did not answer 'ps' for container ... within 10s, so whether it is
+running is unknown` and tears down the container the runner launched. That is
+reported as its own cause rather than as the container having exited, which is an
+answer the query never got. `docker run` is not a query and stays unbounded: it
+may pull the image, and it runs before any readiness budget starts.
+
 `motion_plan_scale` takes the same domain as the two IK scales below: a positive
 finite number, or `None` to leave the server's own scale alone. `0` is not the
 opt-out — it scales the plan to nothing — so `None` is the off switch and `0` is

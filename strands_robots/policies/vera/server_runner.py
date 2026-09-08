@@ -61,6 +61,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Seconds one ``docker`` *query* may take to answer. A query asks the daemon
+# something (is this container listed, what did it log); it is not the container
+# doing work, so it either answers in well under a second or the daemon is not
+# answering at all - a wedged containerd or GPU runtime shim is the usual cause
+# on the hosts this server runs on, and the container it manages can keep
+# running through it. ``_tail_logs`` and ``stop`` already bound their queries;
+# this names the bound so the readiness wait can share it. The ``docker run``
+# that launches the container is deliberately NOT a query: it may pull the
+# image, which is legitimately long, and it happens before any readiness
+# budget starts.
+_DOCKER_QUERY_TIMEOUT = 10.0
+
 
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     """True if a TCP connection to ``host:port`` succeeds (server is listening)."""
@@ -271,15 +283,35 @@ class DockerServerRunner:
         return self.config.docker_container_name or f"vera-server-{self.config.embodiment}"
 
     def _container_running(self) -> bool:
+        """True while the daemon lists the named container as running.
+
+        Raises:
+            RuntimeError: if the daemon does not answer within
+                :data:`_DOCKER_QUERY_TIMEOUT`. Whether the container is running
+                is then unknown, and ``False`` would be an answer this call did
+                not get: it is the one the readiness wait reports as "exited
+                before becoming ready", naming a cause that may not have
+                happened.
+        """
         import subprocess
 
         name = self._container_name()
-        out = subprocess.run(  # noqa: S603 - list args, no shell
-            [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            errors="replace",
-        )
+        try:
+            out = subprocess.run(  # noqa: S603 - list args, no shell
+                [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=_DOCKER_QUERY_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"docker did not answer 'ps' for container {name} within "
+                f"{_DOCKER_QUERY_TIMEOUT:.0f}s, so whether it is running is unknown. "
+                "The daemon is unresponsive - check 'docker info' and the docker "
+                "service; a wedged container runtime shim does not stop the "
+                "container, only the daemon's answers about it."
+            ) from e
         return name in out.stdout.split()
 
     def _build_run_command(self) -> list[str]:
@@ -353,7 +385,16 @@ class DockerServerRunner:
     # -- lifecycle ----------------------------------------------------------
 
     def is_running(self) -> bool:
-        """Return True while the server container is running."""
+        """Return True while the server container is running.
+
+        Raises:
+            RuntimeError: if the ``docker`` daemon does not answer the query
+                within :data:`_DOCKER_QUERY_TIMEOUT` (see
+                :meth:`_container_running`). The subprocess runner's
+                :meth:`VeraServerRunner.is_running` reads ``Popen.poll()`` and
+                cannot block; this one asks another process, so it can only
+                report an answer it actually got.
+        """
         return self._container_running()
 
     def start(self) -> None:
@@ -387,11 +428,22 @@ class DockerServerRunner:
         assert timeout is not None  # guaranteed by VeraConfig.__post_init__
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self._started_container and not self._container_running():
-                logs = self._tail_logs()
-                raise RuntimeError(
-                    f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
-                )
+            if self._started_container:
+                try:
+                    alive = self._container_running()
+                except RuntimeError:
+                    # The daemon stopped answering. Both blocking calls in this
+                    # loop body are bounded so the deadline above is reached and
+                    # not merely written, and giving up here tears down the
+                    # container this runner launched for the same reason the
+                    # timeout below does.
+                    self.stop()
+                    raise
+                if not alive:
+                    logs = self._tail_logs()
+                    raise RuntimeError(
+                        f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
+                    )
             if _port_open(cfg.host, int(cfg.server_port or 0)):
                 logger.info("VERA server ready on %s:%s", cfg.host, cfg.server_port)
                 return
@@ -412,7 +464,7 @@ class DockerServerRunner:
                 capture_output=True,
                 text=True,
                 errors="replace",
-                timeout=10,
+                timeout=_DOCKER_QUERY_TIMEOUT,
             )
             return (out.stdout + out.stderr).strip()
         except Exception as e:  # noqa: BLE001
