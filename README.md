@@ -1186,6 +1186,12 @@ touches ROS 2.
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
 | `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
 | `STRANDS_MESH_FILTER_INTERFACES` | Comma-separated network interface names (e.g. `eth0,wlan0`) the per-message size caps (`low_pass_filter`) are bound to. Unset or blank binds the caps to every link (Zenoh's wildcard), which is the safe default: an enumerated list that misses a NIC exempts that NIC from the cap | unset (all interfaces) |
+| `STRANDS_MESH_MAX_CMD_BYTES` | Per-message byte cap on `cmd` / `broadcast` topics, applied at the transport (an over-cap message is dropped before the JSON parser runs) and pre-checked by `Mesh.send` so the sender fails loudly instead. Integer in `[128, 16777216]`; a value outside it, or not an integer, raises at session build naming the variable | `16384` (16 KiB) |
+| `STRANDS_MESH_MAX_CAMERA_BYTES` | Per-message byte cap on `camera` topics, ingress only. Integer in `[1024, 134217728]`; out of range or non-integer raises | `1048576` (1 MiB) |
+| `STRANDS_MESH_MAX_SAFETY_BYTES` | Per-message byte cap on `safety/*` topics, both flows. Integer in `[128, 1048576]`; out of range or non-integer raises | `4096` (4 KiB) |
+| `STRANDS_MESH_CMD_RATE_HZ` | Transport-level rate cap on inbound `cmd` publishes per peer; faster publishes are dropped before parsing, so a flood costs the receiver almost nothing. Finite float in `[0.001, 10000]`; `nan`/`inf` or out of range raises rather than disabling the cap | `20.0` |
+| `STRANDS_MESH_SAFETY_RATE_HZ` | The same cap for `safety/*` publishes, kept lower so a peer holding any fleet cert cannot flood `safety/estop` with novel timestamps past the replay cache. Finite float in `[0.001, 1000]` | `2.0` |
+| `STRANDS_MESH_MAX_SESSIONS` | Zenoh `transport/unicast/max_sessions`: how many peers one session accepts. Integer in `[1, 65535]` | `256` |
 | `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix on every mesh key-expression. The Zenoh `namespace` config field provides routing isolation -- two fleets with different namespaces cannot exchange messages even when their key-expressions collide, so this is the knob that keeps a co-located test fleet from receiving a production fleet's commands. Must match on every peer of one fleet; a mismatch is silent (peers connect at the transport layer and exchange no application traffic). Empty / whitespace values fall back to the default so `STRANDS_MESH_NAMESPACE=""` cannot accidentally produce keys like `"//presence"` | `strands` |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `STRANDS_MESH_AUDIT_PSK` | Pre-shared key that keys the per-record HMAC in the audit log. When set, `verify_audit_integrity` refuses a record whose HMAC does not match and refuses the whole log if the PSK changes mid-run; when unset, the `sig` field is absent and a writer with directory access can edit records without failing the check. Set on every peer that writes to the same directory | unset |
@@ -1209,6 +1215,7 @@ touches ROS 2.
 | `STRANDS_TELEOP_SLEW_ABS` | Per-joint speed bound for the local `teleoperate()` loop, in frame units per second (default accommodates degree-valued and range-0-100 devices; cannot be disabled) | `500.0` |
 | `STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, `_ODOM_HZ`, `_HEALTH_HZ`, `_LIDAR_SUMMARY_HZ`, `_HAND_HZ`, `_MAP_INFO_HZ` | Per-topic sensor publish rate; `0` (or any non-positive value) switches that topic off. A value the loop cannot pace itself with keeps the built-in rate | per topic: `10`/`10`/`10`/`0.5`/`5`/`50`/`0.2` |
 | `STRANDS_MESH_CAMERA_HZ` | Camera publish rate; opt-in because frames are large. Unset, non-positive, or unusable leaves camera publishing off | `0` (off) |
+| `STRANDS_MESH_CAMERA_DISABLED` | Privacy kill switch for the camera publisher: `true`/`1`/`yes`/`on` publishes no frames at all (nothing built, signed or sent) whatever `STRANDS_MESH_CAMERA_HZ` says; `false`/`0`/`no`/`off` leaves it to the rate. Any other spelling raises rather than silently re-enabling a privacy flag | unset (cameras follow the rate) |
 | `STRANDS_MESH_STREAM_HZ` | Per-step task telemetry rate while a robot or a rollout is executing. Non-positive or unusable -- unparsable, or non-finite like `inf`/`nan` -- switches step publishing off rather than changing the rate, so an unreadable value cannot remove the throttle | `10` |
 | `STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S` | How long a robot-less `robot_mesh` gateway waits once at bring-up for presence to populate before the first `peers` read. `0` means do not wait; a value no sleep can honor -- unparsable, negative, or non-finite -- falls back to the default | `3` |
 | `STRANDS_MESH_MAX_PEERS` | Peer registry cap; evicts oldest on overflow | `1024` |
@@ -1251,6 +1258,7 @@ other spelling is refused. See
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL (when `nucleus_url` is not passed) | unset (Isaac defaults) |
 | `STRANDS_ISAAC_HEADLESS` | On forces headless; off forces a window | unset (uses `headless` kwarg) |
 | `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
+| `STRANDS_ISAAC_CAMERA_WARMUP_STEPS` | Render-bearing world steps `add_camera` takes before returning, so a new RTX camera's first `get_rgba()` is a real frame rather than the empty buffer the pipeline returns until it has been stepped. Raise on a slow GPU. Positive integer; anything else falls back to the default | `10` |
 
 </details>
 

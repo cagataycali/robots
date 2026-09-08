@@ -9,8 +9,8 @@ introduced without such a test was undocumented by default and the omission
 was silent in the reassuring direction - the code honoured it, the tests that
 set it passed, and no page a reader could reach named it.
 
-Measured on the tree this arrived in, the package read 59 distinct ``STRANDS_*``
-names and seven appeared in no page at all:
+Measured on the tree this arrived in, the package read 88 distinct ``STRANDS_*``
+names and fifteen appeared in no page at all:
 
 - ``STRANDS_MESH_CAMERA_S3_BUCKET`` and ``_PREFIX`` - the two that turn the
   camera S3 offload on. The TTL that only matters once it is on,
@@ -22,9 +22,24 @@ names and seven appeared in no page at all:
   constrains.
 - ``STRANDS_MESH_BRIDGE_DEDUP_STRICT``, ``STRANDS_MESH_FILTER_INTERFACES``,
   ``STRANDS_ROBOTS_VERBOSE_MUJOCO`` - each the only spelling of its posture.
+- Eight read through a resolver rather than ``os.getenv``: six mesh transport
+  bounds (``STRANDS_MESH_MAX_SESSIONS``, ``_MAX_CMD_BYTES``,
+  ``_MAX_CAMERA_BYTES``, ``_MAX_SAFETY_BYTES``, ``_CMD_RATE_HZ``,
+  ``_SAFETY_RATE_HZ``), the camera privacy switch
+  ``STRANDS_MESH_CAMERA_DISABLED`` - read through an import alias - and
+  Isaac's ``STRANDS_ISAAC_CAMERA_WARMUP_STEPS``. These are the ones a walk
+  that only recognises the direct spellings cannot see.
 
 The population is derived from the package by AST rather than listed here, so
-a variable added later is graded on arrival. A page is any of ``README.md`` and
+a variable added later is graded on arrival. A read is either a direct one -
+``os.getenv``, ``os.environ.get`` / ``setdefault`` / ``[...]`` - or a call to a
+function that reads the environment through one of its own parameters
+(``_int_env("STRANDS_MESH_MAX_SESSIONS", ...)``); that set of resolvers is
+derived from the tree too, to a fixed point so a resolver that delegates to
+another is included, and an import alias (``_bool_env as _zc_bool_env``) is
+followed. Twenty-nine of the 88 names reach the environment only that way,
+so recognising the four direct spellings alone reports a clean tree that is
+not one. A page is any of ``README.md`` and
 ``docs/**/*.md``: ``docs/security.md`` already owns the AWS IoT credentials
 and the mesh TLS material, graded by their own reference tests, and this test
 does not move them. It also honours the README's shorthand for a family of
@@ -68,9 +83,9 @@ _FULL_NAME = re.compile(r"(?<![A-Z0-9_])(STRANDS_[A-Z0-9_]+)(?![A-Z0-9_])")
 _SHORTHAND = re.compile(r"`(_[A-Z0-9_]+)`")
 
 #: Floors so a walk that silently reads nothing fails rather than passing. The
-#: tree this arrived in read 59 names across 62 sites and documented them on
+#: tree this arrived in read 88 names across 107 sites and documented them on
 #: 6 pages; both floors sit well below that.
-MINIMUM_NAMES_READ = 40
+MINIMUM_NAMES_READ = 60
 MINIMUM_PAGES_NAMING_ONE = 3
 
 
@@ -113,26 +128,112 @@ def _is_environ(node: ast.AST) -> bool:
     )
 
 
-def _names_read_from_source(source: str, label: str) -> dict[str, list[str]]:
-    """``{name: [label:line, ...]}`` for every own-prefix key *source* reads."""
+def _direct_key(node: ast.AST) -> ast.AST | None:
+    """The key expression of a direct read of the environment, or None."""
+    if isinstance(node, ast.Call):
+        if not node.args:
+            return None
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr == "getenv" or (func.attr in ("get", "setdefault") and _is_environ(func.value)):
+                return node.args[0]
+            return None
+        if isinstance(func, ast.Name) and func.id == "getenv":
+            return node.args[0]
+        return None
+    if isinstance(node, ast.Subscript) and _is_environ(node.value):
+        return node.slice
+    return None
+
+
+def _callee(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return func.id if isinstance(func, ast.Name) else None
+
+
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    """``{local name: imported name}`` for every ``from m import f as g``."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.asname:
+                    aliases[alias.asname] = alias.name.rsplit(".", 1)[-1]
+    return aliases
+
+
+def _read_key(node: ast.AST, resolvers: dict[str, int], aliases: dict[str, str]) -> ast.AST | None:
+    """The key expression of a read, direct or through a resolver, or None."""
+    key = _direct_key(node)
+    if key is not None:
+        return key
+    if isinstance(node, ast.Call):
+        name = _callee(node)
+        index = resolvers.get(aliases.get(name or "", name or ""))
+        if index is not None and len(node.args) > index:
+            return node.args[index]
+    return None
+
+
+def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, int]:
+    """``{function name: index of the parameter it reads the environment through}``.
+
+    A function is a resolver when its body reads the environment - directly, or
+    through a resolver already found - with a key that is one of its own
+    positional parameters. Iterated to a fixed point so ``hz_from_env`` is found
+    even when it only delegates to ``_float_env``.
+    """
+    functions = [
+        (node, _import_aliases(tree))
+        for tree in trees.values()
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    resolvers: dict[str, int] = {}
+    grown = True
+    while grown:
+        grown = False
+        for function, aliases in functions:
+            if function.name in resolvers:
+                continue
+            parameters = [arg.arg for arg in function.args.posonlyargs + function.args.args]
+            for node in ast.walk(function):
+                key = _read_key(node, resolvers, aliases)
+                if isinstance(key, ast.Name) and key.id in parameters:
+                    resolvers[function.name] = parameters.index(key.id)
+                    grown = True
+                    break
+    return resolvers
+
+
+def names_read(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
+    """``{name: [label:line, ...]}`` for every own-prefix key the trees read."""
+    resolvers = environment_resolvers(trees)
     found: dict[str, list[str]] = {}
-    for node in ast.walk(ast.parse(source, filename=label)):
-        if not isinstance(node, (ast.Call, ast.Subscript)):
-            continue
-        key = _environment_key(node)
-        if key is not None and key.startswith(OWN_PREFIX):
-            found.setdefault(key, []).append(f"{label}:{node.lineno}")
+    for label, tree in trees.items():
+        aliases = _import_aliases(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Call, ast.Subscript)):
+                continue
+            key = _read_key(node, resolvers, aliases)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str) and key.value.startswith(OWN_PREFIX):
+                found.setdefault(key.value, []).append(f"{label}:{node.lineno}")
     return found
 
 
-def names_read_by_the_package() -> dict[str, list[str]]:
-    """Every ``STRANDS_*`` variable the package reads, with the sites that read it."""
-    found: dict[str, list[str]] = {}
-    for module in sorted(PACKAGE.rglob("*.py")):
-        label = str(module.relative_to(REPO_ROOT))
-        for name, sites in _names_read_from_source(module.read_text(encoding="utf-8"), label).items():
-            found.setdefault(name, []).extend(sites)
-    return found
+def _parse(sources: dict[str, str]) -> dict[str, ast.AST]:
+    return {label: ast.parse(source, filename=label) for label, source in sources.items()}
+
+
+def package_trees() -> dict[str, ast.AST]:
+    return _parse(
+        {
+            str(module.relative_to(REPO_ROOT)): module.read_text(encoding="utf-8")
+            for module in sorted(PACKAGE.rglob("*.py"))
+        }
+    )
 
 
 def documented_names(pages: dict[str, str]) -> set[str]:
@@ -157,7 +258,7 @@ def _load_pages() -> dict[str, str]:
 
 
 def test_every_environment_variable_the_package_reads_is_documented() -> None:
-    read = names_read_by_the_package()
+    read = names_read(package_trees())
     pages = _load_pages()
     documented = documented_names(pages)
 
@@ -196,15 +297,53 @@ class TestTheReadShapesAreAllRecognised:
         ],
     )
     def test_a_read_is_seen_however_it_is_spelled(self, source: str) -> None:
-        assert list(_names_read_from_source(source, "probe.py")) == ["STRANDS_PROBE"]
+        assert list(names_read(_parse({"probe.py": source}))) == ["STRANDS_PROBE"]
+
+    def test_a_read_through_a_resolver_is_seen(self) -> None:
+        source = (
+            "import os\n"
+            "def _int_env(name, default):\n"
+            '    return int(os.getenv(name, "") or default)\n'
+            'CAP = _int_env("STRANDS_PROBE", 4)\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:4"]}
+
+    def test_a_resolver_that_delegates_to_another_is_seen(self) -> None:
+        source = (
+            "import os\n"
+            "def _float_env(name, default):\n"
+            '    return float(os.getenv(name, "") or default)\n'
+            "def hz_from_env(default, name):\n"
+            "    return _float_env(name, default)\n"
+            'HZ = hz_from_env(10.0, "STRANDS_PROBE")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:6"]}
+
+    def test_a_resolver_imported_under_an_alias_is_seen(self) -> None:
+        trees = _parse(
+            {
+                "config.py": 'import os\ndef _bool_env(name, default=False):\n    return os.getenv(name, "") == "1"\n',
+                "core.py": 'from .config import _bool_env as _zc_bool_env\nON = _zc_bool_env("STRANDS_PROBE")\n',
+            }
+        )
+        assert names_read(trees) == {"STRANDS_PROBE": ["core.py:2"]}
+
+    def test_a_function_that_only_names_the_variable_in_a_message_is_not_a_resolver(self) -> None:
+        """Passing the name to a refusal's wording is not a read of it."""
+        source = (
+            "def _refuse(name, raw):\n"
+            '    raise ValueError(f"{name}={raw!r} is unusable")\n'
+            '_refuse("STRANDS_PROBE", "x")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {}
 
     def test_a_name_inside_a_string_literal_is_not_a_read(self) -> None:
         """Shipped Lambda source is text to this process, not a read it makes."""
         source = 'BODY = """\nimport os\n_TABLE = os.environ.get("STRANDS_PROBE")\n"""\n'
-        assert _names_read_from_source(source, "probe.py") == {}
+        assert names_read(_parse({"probe.py": source})) == {}
 
     def test_a_name_outside_the_owned_prefix_is_not_graded(self) -> None:
-        assert _names_read_from_source('import os\nx = os.getenv("MUJOCO_GL")\n', "probe.py") == {}
+        assert names_read(_parse({"probe.py": 'import os\nx = os.getenv("MUJOCO_GL")\n'})) == {}
 
 
 class TestAPageDocumentsANameOnlyByNamingIt:
