@@ -181,6 +181,13 @@ recording and where `LeRobotDataset` later reads it back from -
 `resolve_dataset_dir` is the one owner of those rules and every backend's
 `start_recording` applies it.
 
+Being the one owner is what makes `overwrite` mean something: the resolved
+directory is forwarded to `LeRobotDataset.create` as an explicit `root`, so the
+directory inspected (and, under `overwrite=True`, deleted) before the write is
+the directory the dataset is then written into. LeRobot derives an absent root
+as `$HF_LEROBOT_HOME/{repo_id}` for any id, so letting it derive one of its own
+would part company with the rule above for exactly the path-like ids.
+
 Passing an existing **empty** directory - for example one returned by
 `tempfile.mkdtemp()` - is accepted and recorded into:
 
