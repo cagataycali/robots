@@ -39,15 +39,26 @@ while the rollout surfaces that share its destination accepted them.
 These tests pin both halves: the seed is applied on the path that dropped it, and
 the one shared domain answers for it at every surface that accepts one.
 
-Measuring the applied half needs a policy whose output depends on the RNG state,
-and the RNG a rollout seed sets is the *process-global* one. Reading it straight
+Measuring the applied half needs a policy whose output depends on the seed, and
+the RNG ``set_eval_seed`` sets is the *process-global* one. Reading it straight
 from ``random.random()`` made the replay comparison depend on being its only
 reader: any other thread in the interpreter that draws from it between two of the
 policy's queries shifts the action sequence, and the comparison reads that as an
-unapplied seed. :func:`_fork_global_rng` takes the measurement off that shared
-object instead - a private generator whose state is copied from the global one at
-the statement after ``set_eval_seed``, so the draws still come from the stream
-the seed selected and nothing later can perturb them.
+unapplied seed. Copying the global state into a private generator after
+``set_eval_seed`` narrows that window without closing it - ``set_eval_seed``
+continues into NumPy and torch after ``random.seed``, so the copy is taken
+hundreds of microseconds later at best, and a reader on a 2 ms period still
+moved the measurement.
+
+So the policy here does not read the global object at all. Every seeded rollout
+surface forwards the seed it applied to ``policy.reset(seed=...)`` - the contract
+a service-mode policy relies on, because its sampler runs in a process
+``set_eval_seed`` cannot reach - and :class:`_Jitter` seeds a private
+``random.Random`` from that value, exactly as such a policy would. What the
+comparison then observes is the forwarded seed; that the loop also applies each
+one with ``set_eval_seed`` is a *call*, and is counted as one, at the same
+seam the unseeded cell counts ``random.seed``. The global reseed itself is
+pinned with no rollout at all in ``test_set_eval_seed_requires_a_seed.py``.
 """
 
 from __future__ import annotations
@@ -121,30 +132,16 @@ _ARM_XML = """<mujoco model="arm">
 """
 
 
-def _fork_global_rng() -> random.Random:
-    """A private generator continuing the process-global stream from right now.
-
-    ``setstate`` copies the state rather than sharing it, so the fork reads
-    whatever ``set_eval_seed`` last wrote to the global RNG - the reseed under
-    test - and is then immune to every other reader of it.
-    """
-    forked = random.Random()
-    forked.setstate(random.getstate())
-    return forked
-
-
 class _Jitter(Policy):
-    """Draws each action from the stream the seed selects - what a seed pins.
+    """Draws each action from a generator seeded by the forwarded seed.
 
     A deterministic policy cannot tell a seeded rollout from an unseeded one, so
     the reproducibility half of the contract is unobservable without a policy
-    whose output depends on the RNG state the seed is supposed to fix.
+    whose output depends on the seed it was handed.
 
-    It reads that state once per reset, through :func:`_fork_global_rng`. Every
-    rollout surface applies the seed with ``set_eval_seed`` and then calls
-    ``reset`` on the next statement, so the fork is taken from the state the seed
-    produced; the draws are the ones the global RNG would have yielded, without
-    the whole rollout being exposed to whatever else in the process reads it.
+    It is the service-mode shape: ``reset(seed=...)`` seeds a private
+    ``random.Random`` and every draw comes from that object, so nothing else in
+    the process can move the measurement - there is no shared reader to race.
     """
 
     def __init__(self) -> None:
@@ -162,15 +159,16 @@ class _Jitter(Policy):
 
     def reset(self, seed: int | None = None) -> None:
         self.reset_seeds.append(seed)
-        self._rng = _fork_global_rng()
+        self._rng = random.Random(seed)
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, float]]:
         if self._rng is None:
-            # An unseeded rollout applies no seed and so calls no reset; fork on
-            # first use, which reads the global state without advancing it.
-            self._rng = _fork_global_rng()
+            # An unseeded rollout forwards no seed and so calls no reset. A
+            # private generator from entropy keeps the global object unread here
+            # too, so the unseeded cell's count of reseed calls is not disturbed.
+            self._rng = random.Random()
         value = self._rng.random()
         self.drawn.append(value)
         return [{key: value - 0.5 for key in self.keys}]
@@ -217,7 +215,14 @@ class TestTheSeedIsAppliedOnTheEvalPath:
         assert runs[0], "the policy must have been queried, or nothing is measured"
         assert runs[0] == runs[1], "a seeded eval must replay identically"
 
-    def test_a_stray_global_draw_mid_rollout_does_not_change_the_replay(self, arm_xml: Path) -> None:
+    @pytest.mark.parametrize(
+        "where",
+        ["between two of the policy's queries", "inside set_eval_seed, after random.seed"],
+        ids=["between-queries", "inside-set_eval_seed"],
+    )
+    def test_a_stray_global_draw_mid_rollout_does_not_change_the_replay(
+        self, arm_xml: Path, monkeypatch: pytest.MonkeyPatch, where: str
+    ) -> None:
         """The stream the seed selects is not the rollout's alone to read.
 
         ``set_eval_seed`` reseeds the *process-global* RNG, and everything else in
@@ -227,41 +232,96 @@ class TestTheSeedIsAppliedOnTheEvalPath:
         assertion above could fail for a draw the rollout never made, on a branch
         that touched no RNG code, and report it as an unapplied seed.
 
-        The stray reader here is a ``success_fn``, which the eval loop calls after
-        each step: a real consumer of the same global object, in one run of the
-        pair, at a step of this test's choosing. The episode seeds are compared
-        too, so a divergence can only come from the reading, not the seeding.
+        The stray reader is a real consumer of the same global object, in one run
+        of the pair, placed by this test - a synchronous stand-in for a thread, so
+        the case is deterministic. Two placements, because two instruments were
+        exposed differently: a ``success_fn`` drawing after step 3 refuses a
+        policy that reads ``random.random()`` directly; a draw made inside
+        ``set_eval_seed`` after ``random.seed`` - here, from a NumPy reseed that
+        also draws - refuses a policy that copies the global state once
+        ``set_eval_seed`` returns, since ``set_eval_seed`` continues into NumPy
+        and torch after ``random.seed`` and the copy is of whatever the shared
+        object holds by then. The episode seeds are compared too, so a divergence
+        can only come from the reading, not the seeding.
         """
+        np = pytest.importorskip("numpy")
+        real_numpy_seed = np.random.seed
 
-        def replay(interfere_at: int | None) -> tuple[list[float], list[Any]]:
+        def replay(noisy: bool) -> tuple[list[float], list[Any]]:
             steps = 0
 
             def success_fn(observation: dict[str, Any]) -> bool:
                 nonlocal steps
                 steps += 1
-                if steps == interfere_at:
+                if noisy and where.startswith("between") and steps == 3:
                     random.random()
                 return False
 
-            sim, policy = _sim_and_policy(arm_xml)
-            result = sim.eval_policy(
-                robot_name="arm",
-                policy_object=policy,
-                n_episodes=2,
-                max_steps=4,
-                control_frequency=30.0,
-                seed=7,
-                success_fn=success_fn,
-            )
-            sim.cleanup()
+            def numpy_seed_that_also_draws(seed: Any) -> None:
+                real_numpy_seed(seed)
+                random.random()
+
+            with pytest.MonkeyPatch.context() as patch:
+                if noisy and where.startswith("inside"):
+                    patch.setattr(np.random, "seed", numpy_seed_that_also_draws)
+                sim, policy = _sim_and_policy(arm_xml)
+                result = sim.eval_policy(
+                    robot_name="arm",
+                    policy_object=policy,
+                    n_episodes=2,
+                    max_steps=4,
+                    control_frequency=30.0,
+                    seed=7,
+                    success_fn=success_fn,
+                )
+                sim.cleanup()
             assert result["status"] == "success", _text(result)
             return list(policy.drawn), list(policy.reset_seeds)
 
-        quiet, quiet_seeds = replay(None)
-        noisy, noisy_seeds = replay(3)
+        quiet, quiet_seeds = replay(noisy=False)
+        noisy, noisy_seeds = replay(noisy=True)
         assert quiet, "the policy must have been queried, or nothing is measured"
         assert quiet_seeds == noisy_seeds, "the seed derivation must be identical, or nothing is isolated"
-        assert quiet == noisy, "a draw the rollout did not make changed what a seeded eval replayed"
+        assert quiet == noisy, f"a draw the rollout did not make ({where}) changed what a seeded eval replayed"
+
+    def test_every_seed_forwarded_to_the_policy_was_applied_with_set_eval_seed(
+        self, arm_xml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The loop reseeds the process RNGs per episode, and the policy is told.
+
+        The policy above measures the forwarded seed, not the global reseed, so
+        the reseed has to be pinned as what it is - a call. ``set_eval_seed`` is
+        applied once with the master seed and once per episode, and each
+        per-episode value is the one ``policy.reset`` receives, in order: a
+        service-mode policy and an in-process one are then seeded alike.
+        Deleting the per-episode ``set_eval_seed`` from ``evaluate`` leaves the
+        forwarded seeds intact and fails only here.
+        """
+        import strands_robots.simulation.policy_runner as runner_mod
+
+        real = runner_mod.set_eval_seed
+        applied: list[int] = []
+
+        def recording(seed: int) -> None:
+            applied.append(seed)
+            real(seed)
+
+        monkeypatch.setattr(runner_mod, "set_eval_seed", recording)
+        sim, policy = _sim_and_policy(arm_xml)
+        result = sim.eval_policy(
+            robot_name="arm",
+            policy_object=policy,
+            n_episodes=2,
+            max_steps=3,
+            control_frequency=30.0,
+            seed=7,
+        )
+        sim.cleanup()
+        assert result["status"] == "success", _text(result)
+        assert len(policy.reset_seeds) == 2, "one forwarded seed per episode"
+        assert applied == [7, *policy.reset_seeds], (
+            f"set_eval_seed applied {applied}; the policy was handed {policy.reset_seeds}"
+        )
 
     def test_two_evals_at_different_seeds_draw_different_actions(self, arm_xml: Path) -> None:
         """Non-vacuity: the equality above is the seed's doing, not determinism."""

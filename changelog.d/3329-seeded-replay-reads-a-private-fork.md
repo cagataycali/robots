@@ -1,23 +1,34 @@
-### Tests: the seeded-replay measurement is taken off the process-global RNG
+### Tests: the seeded-replay measurement no longer reads the process-global RNG
 
 `tests/simulation/test_rollout_seed_is_applied_or_refused.py` measures the
 applied half of the rollout seed contract with a policy whose actions depend on
-the RNG state, and the RNG a rollout seed sets is the process-global one. The
-policy drew straight from `random.random()`, so the comparison of two seeded
-evals also assumed the rollout was that object's only reader for the length of
-the rollout. It is not: any other thread in the interpreter that draws from it
-between two of the policy's queries shifts every action after it, and the
-comparison reports that as an unapplied seed. The test failed that way once on a
-branch whose diff touched no RNG code, taking a required check with it.
+the seed, and the RNG `set_eval_seed` sets is the process-global one. The policy
+drew straight from `random.random()`, so the comparison of two seeded evals also
+assumed the rollout was that object's only reader for the length of the rollout.
+It is not: any other thread in the interpreter that draws from it between two of
+the policy's queries shifts every action after it, and the comparison reports
+that as an unapplied seed. The test failed that way once on a branch whose diff
+touched no RNG code, taking a required check with it.
 
-The policy now reads the seeded stream through a private `random.Random` whose
-state is copied from the global one in `reset` - the statement after
-`set_eval_seed` on every rollout surface. The draws are still the ones the global
-RNG would have yielded, so the seed is still what the comparison observes, but a
-later reader of the global object cannot reach them. A new case pins it: one run
-of a seeded pair has a `success_fn` that draws once from the global RNG mid
-rollout, and the two runs must still replay identically while deriving identical
-episode seeds.
+Copying the global state into a private generator after `set_eval_seed` was
+measured and is not enough: `set_eval_seed` continues into NumPy and torch after
+`random.seed`, so the copy is taken hundreds of microseconds later at best, and a
+background reader on a 2 ms period still failed the file 1 run in 3. The policy
+now reads the global object zero times. Every seeded rollout surface forwards the
+seed it applied to `policy.reset(seed=...)` - the contract a service-mode policy
+relies on - and the test policy seeds a private `random.Random` from that value,
+exactly as such a policy would. Under the same 2 ms reader the file is green
+across repeated runs.
+
+Two cases pin it. One run of a seeded pair has a stray draw from the global RNG
+in one of two places - a `success_fn` drawing mid rollout, or a NumPy reseed that
+also draws, which sits inside `set_eval_seed` after `random.seed` - and the two
+runs must still replay identically while deriving identical episode seeds; the
+first placement refuses the direct reader, the second refuses the state copy.
+And because the policy no longer observes the per-episode reseed, that reseed is
+counted as the call it is: every seed `policy.reset` receives was applied with
+`set_eval_seed`, in order, so deleting the per-episode reseed from `evaluate`
+fails that cell and nothing else.
 
 The unseeded case is measured at the appliers instead of at the state they write.
 `assert random.getstate() != expected` could not see the side effect it guarded -
