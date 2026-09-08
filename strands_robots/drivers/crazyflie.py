@@ -217,6 +217,15 @@ ACTION_KEYS: tuple[str, ...] = ("vx", "vy", "vz", "wz", "z")
 HOVER_SETPOINT = "send_hover_setpoint"
 VELOCITY_SETPOINT = "send_velocity_world_setpoint"
 
+#: What a CRTP write raises once the link is no longer usable. Enumerated once
+#: because both halves of the driver need the same set and must not drift: the
+#: setpoint repeater ends its loop on it, and every caller-facing flight verb
+#: turns it into a refusal. ``AttributeError`` is the shape a write takes after
+#: the link handle is gone (``cflib`` reaches through ``Crazyflie.link``, which
+#: is ``None`` once the link closed); ``OSError`` and ``RuntimeError`` are what
+#: the radio and the CRTP stack raise for a link that no longer answers.
+LINK_WRITE_ERRORS: tuple[type[BaseException], ...] = (AttributeError, OSError, RuntimeError)
+
 
 def _refuse(reason: str) -> dict[str, Any]:
     """The driver's error envelope, one shape for every refusal path."""
@@ -706,7 +715,8 @@ class CrazyflieDriver:
                 f"send_action: {self._tool_name} is not armed; the firmware refuses to spin the "
                 "motors until arming succeeds. Reconnect to retry the arming request."
             )
-        self._latch(translated)
+        if (reason := self._latch(translated)) is not None:
+            return _refuse(reason)
         method, args = translated
         return _ok({"commanded": method, "args": list(args), "setpoint_hz": self._setpoint_hz})
 
@@ -769,8 +779,17 @@ class CrazyflieDriver:
         if not self._armed:
             return _refuse(f"takeoff: {self._tool_name} is not armed; reconnect to retry the arming request.")
         self._halt_repeater()
-        self._commander().send_notify_setpoint_stop()
-        self._high_level().takeoff(float(height), float(duration))
+        try:
+            self._commander().send_notify_setpoint_stop()
+        except LINK_WRITE_ERRORS as exc:
+            return _refuse(
+                f"takeoff: the link refused the setpoint-priority handover, so the climb was not "
+                f"commanded - the high-level commander would have ignored it: {exc}"
+            )
+        try:
+            self._high_level().takeoff(float(height), float(duration))
+        except LINK_WRITE_ERRORS as exc:
+            return _refuse(f"takeoff: the link refused the climb: {exc}")
         return _ok({"commanded": "takeoff", "height": float(height), "duration": float(duration)})
 
     def land(self, duration: float = 2.0) -> dict[str, Any]:
@@ -799,9 +818,17 @@ class CrazyflieDriver:
         if not self.is_connected:
             return _refuse(f"land: {self._tool_name} is not connected ({self._connect_error or 'no link'})")
         self._halt_repeater()
-        commander = self._commander()
-        commander.send_notify_setpoint_stop()
-        self._high_level().land(0.0, float(duration))
+        try:
+            self._commander().send_notify_setpoint_stop()
+        except LINK_WRITE_ERRORS as exc:
+            return _refuse(
+                f"land: the link refused the setpoint-priority handover, so the descent was not "
+                f"commanded - the high-level commander would have ignored it: {exc}"
+            )
+        try:
+            self._high_level().land(0.0, float(duration))
+        except LINK_WRITE_ERRORS as exc:
+            return _refuse(f"land: the link refused the descent: {exc}")
         return _ok({"commanded": "land", "duration": float(duration)})
 
     def emergency_stop(self) -> dict[str, Any]:
@@ -819,7 +846,14 @@ class CrazyflieDriver:
         if not self.is_connected:
             return _refuse(f"emergency_stop: {self._tool_name} is not connected")
         self._halt_repeater()
-        self._commander().send_stop_setpoint()
+        try:
+            self._commander().send_stop_setpoint()
+        except LINK_WRITE_ERRORS as exc:
+            return _refuse(
+                f"emergency_stop: the link refused the motor cut, so the motors were NOT cut. The "
+                f"setpoint stream has already been stopped, so the firmware supervisor decides what "
+                f"happens next - use a hardware cutoff: {exc}"
+            )
         return _ok({"commanded": "send_stop_setpoint", "note": "motors cut; an airborne aircraft falls"})
 
     # ------------------------------------------------------------------ #
@@ -1127,11 +1161,30 @@ class CrazyflieDriver:
     # Setpoint stream.                                                   #
     # ------------------------------------------------------------------ #
 
-    def _latch(self, setpoint: tuple[str, tuple[float, float, float, float]]) -> None:
-        """Record the setpoint and make sure the repeater is running."""
+    def _latch(self, setpoint: tuple[str, tuple[float, float, float, float]]) -> str | None:
+        """Record the setpoint and make sure the repeater is running.
+
+        Returns:
+            ``None`` once the setpoint is on the wire and the repeater is
+            running, or the reason the first write did not reach the aircraft.
+            :meth:`send_action` turns that reason into a refusal, which is the
+            report :meth:`_repeat_loop` defers to when it ends its own loop on
+            the same :data:`LINK_WRITE_ERRORS`.
+
+        A refused write leaves the stream holding exactly what it was holding.
+        The previous setpoint is restored rather than left replaced, because on
+        an airframe the latched setpoint is what the repeater feeds the
+        firmware's supervisor: dropping a working hover because a *later*
+        command was refused would turn one refused write into a thrust cut.
+        """
         with self._cache_lock:
-            self._setpoint = setpoint
-        self._send_setpoint(setpoint)
+            previous, self._setpoint = self._setpoint, setpoint
+        try:
+            self._send_setpoint(setpoint)
+        except LINK_WRITE_ERRORS as exc:
+            with self._cache_lock:
+                self._setpoint = previous
+            return f"send_action: the link refused the setpoint, so it never reached the aircraft: {exc}"
         if self._repeater is None or not self._repeater.is_alive():
             self._repeater_stop.clear()
             self._repeater = threading.Thread(
@@ -1140,6 +1193,7 @@ class CrazyflieDriver:
                 daemon=True,
             )
             self._repeater.start()
+        return None
 
     def _repeat_loop(self) -> None:
         """Re-send the latched setpoint until asked to stop.
@@ -1171,7 +1225,7 @@ class CrazyflieDriver:
                     return
                 try:
                     self._send_setpoint(setpoint)
-                except (AttributeError, OSError, RuntimeError) as exc:
+                except LINK_WRITE_ERRORS as exc:
                     logger.warning("Crazyflie setpoint stream stopped: %s", exc)
                     return
 

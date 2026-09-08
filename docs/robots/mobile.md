@@ -53,10 +53,20 @@ cf = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")
 if (reason := cf.connect_eagerly()) is not None:
     raise SystemExit(reason)
 
-cf.takeoff(height=0.5, duration=2.0)
-cf.set_twist(vx=0.2, wz=1.0, z=0.5)   # 0.2 m/s forward, 1.0 rad/s yaw, holding 0.5 m
-cf.land()                              # descends under control
-cf.cleanup()
+# Every flight verb answers with an envelope, including for a link that went quiet
+# after connecting - so read `status` rather than assuming the write landed. Each
+# step is checked before the next is issued: after a refused takeoff there is no
+# altitude for the twist to hold.
+try:
+    env = cf.takeoff(height=0.5, duration=2.0)
+    if env["status"] == "success":
+        env = cf.set_twist(vx=0.2, wz=1.0, z=0.5)  # 0.2 m/s fwd, 1.0 rad/s yaw, 0.5 m
+    if env["status"] == "success":
+        env = cf.land()                            # descends under control
+    if env["status"] != "success":
+        print(env["content"][0]["text"])
+finally:
+    cf.cleanup()  # lands if it is still flying, then releases the radio
 ```
 
 Install the client library with the `crazyflie` extra:
@@ -65,7 +75,7 @@ GPLv3 and this project is Apache-2.0, so the copyleft dependency is only install
 caller who names it. Without it the driver still imports and registers; it reports a
 reason naming this extra instead of connecting.
 
-Four things behave differently from a ground robot, and each one is a way to break the
+Five things behave differently from a ground robot, and each one is a way to break the
 aircraft if you assume otherwise:
 
 | | What to know |
@@ -74,6 +84,7 @@ aircraft if you assume otherwise:
 | **Units** | `wz` is **rad/s**, as everywhere else in this package. `cflib` wants deg/s, and the driver is the only place that conversion happens. |
 | **Setpoints are a stream** | The firmware supervisor cuts thrust when the setpoint stream goes quiet, so one `send_action` latches a setpoint and a background repeater keeps it alive at `setpoint_hz` (default 20 Hz). It returns when the setpoint is latched, not when the motion is done. |
 | **`stop` lands** | `stop()` / `stop_task()` / `cleanup()` all perform a controlled descent. Cutting the motors - an airborne aircraft *falls* - is the separately named `emergency_stop()`, and the agent tool schema cannot reach it. |
+| **A link can go quiet in flight** | `is_connected` reads True for a link that opened and then stopped answering - the handle is live and only the write finds out. So every flight verb returns an error envelope for a write the radio would not carry, rather than raising: check `status` on `send_action` / `set_twist` / `takeoff` / `land` / `emergency_stop`, not just on `connect_eagerly()`. Two of those refusals carry a consequence worth acting on - a refused priority handover means the climb or descent was *not* commanded, and a refused `emergency_stop` means the motors are **still turning** with the setpoint stream already stopped, so only a hardware cutoff will stop the aircraft. |
 
 The flight envelope is the driver's, not the SDK's: `cflib` imposes no ceiling and the
 firmware attempts whatever arrives. A setpoint outside it is **refused by name**, never
