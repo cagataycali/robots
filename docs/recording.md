@@ -652,6 +652,20 @@ recorder.save_episode()
 recorder.finalize()
 ```
 
+### A failed import names the install that fixes it
+
+`create()` and `resume()` import `lerobot.datasets.lerobot_dataset`, which fails
+for four unrelated reasons that need four different instructions - so the
+`ImportError` says which one happened, exactly as every backend's
+`start_recording` does:
+
+| Cause | What the error says to do |
+|-------|---------------------------|
+| lerobot itself is absent | `pip install 'strands-robots[lerobot]'` |
+| lerobot is installed, but a package its dataset stack needs (`datasets`, `pandas`, `pyarrow`, `av`, `torchcodec`) is not | `pip install 'lerobot[dataset]'` - installing lerobot alone does not pull those in |
+| lerobot is installed but does not provide that module (an out-of-range or from-source lerobot) | `pip install 'strands-robots[lerobot]'`, which pins the supported range |
+| the import failed with nothing missing (a binary conflict between installed packages) | No install fixes it; reconcile the conflicting packages |
+
 ### Schema column names must be distinct
 
 `camera_keys`, `joint_names` and `action_names` each declare the recorded

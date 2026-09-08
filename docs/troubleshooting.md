@@ -62,7 +62,9 @@ description: Error → fix table for the most common gotchas across install, sim
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `start_recording` fails: lerobot missing | `[lerobot]` not installed | `uv pip install "strands-robots[lerobot]"` |
+| `start_recording` / `DatasetRecorder.create` fails: `lerobot is not installed` | `[lerobot]` not installed | `uv pip install "strands-robots[lerobot]"` |
+| `lerobot X is installed, but 'pyarrow' (or `datasets`, `pandas`, `av`, `torchcodec`), which its dataset stack needs, is not` | lerobot is installed **without** its `[dataset]` extra. Installing lerobot again does not pull those in | `uv pip install "lerobot[dataset]"` |
+| `...importing its dataset stack failed ... a conflict between installed packages` | Nothing is missing (commonly a `pandas` built against a different `numpy`), so no install of lerobot or its extra fixes it | Reconcile the conflicting packages |
 | Need MP4 without LeRobot | - | Use `start_cameras_recording` / `stop_cameras_recording` |
 | Empty MP4 files | Stopped before any frames | Check `get_recording_status()` frame count |
 | Push fails | Not logged into HF | `hf auth login` (the `huggingface-cli` entry point is not published at the declared `huggingface_hub>=1.5` floor) |

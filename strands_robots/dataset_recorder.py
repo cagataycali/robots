@@ -521,6 +521,12 @@ def _get_lerobot_dataset_class():
 
     Supports test mocking: if ``strands_robots.dataset_recorder.LeRobotDataset``
     has been set (by a test mock), returns that class directly.
+
+    Raises:
+        ImportError: The dataset stack did not import, carrying the diagnosis
+            :func:`_describe_lerobot_import_failure` composes for that exact
+            failure - which of its four causes applied, and the install that
+            fixes it (or that no install does).
     """
     # Support test mocking: check module-level overrides
     this_module = sys.modules[__name__]
@@ -536,9 +542,14 @@ def _get_lerobot_dataset_class():
 
         return LeRobotDataset
     except (ImportError, ValueError, RuntimeError) as exc:
-        raise ImportError(
-            f"lerobot not available ({exc}). Install with: pip install lerobot\nRequired for LeRobotDataset recording."
-        ) from exc
+        # The same import, the same three exception classes and the same four
+        # causes :func:`lerobot_dataset_import_error` reports, so the diagnosis
+        # has one owner. This raise used to compose its own - "lerobot not
+        # available. Install with: pip install lerobot" - which
+        # :func:`_describe_lerobot_import_failure` records as not a usable
+        # instruction for three of the four: lerobot is installed, so the
+        # command names a package that is already there and changes nothing.
+        raise ImportError(f"{_describe_lerobot_import_failure(exc)}\nRequired for LeRobotDataset recording.") from exc
 
 
 def _lerobot_home() -> Path:
