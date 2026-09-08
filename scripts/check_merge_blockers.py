@@ -88,7 +88,10 @@ is*, so the outcomes group that way rather than by severity:
     sibling note below.
 
 ``required-check-pending``
-    Nobody. The answer is not in yet.
+    Nobody. The answer is not in yet. Whether the merge is then anybody's to
+    perform is a separate fact the report carries: with auto-merge armed,
+    GitHub performs it, and a poll-to-merge loop is redundant (29 of the 30
+    pull requests merged before 2026-09-08 03:30 were merged that way).
 
 ``merge-state-unknown``
     Nobody, for now, and the same shape as the entry above one field over.
@@ -347,6 +350,32 @@ _STALE_STATE_REMEDY: tuple[str, ...] = (
     "access token.",
 )
 
+# Printed beside, never instead of, the remedy above. Auto-merge is not a rule
+# and changes no outcome; it changes who performs the merge once the outcome
+# clears, which is the one thing the two waiting outcomes leave the reader to
+# decide. Formatted with the login so the row and the note name one account.
+_AUTO_MERGE_NOTE: tuple[str, ...] = (
+    "",
+    "### Auto-merge is armed",
+    "",
+    "{login} armed auto-merge, so GitHub performs the squash itself the moment",
+    "every rule is satisfied. A pass that polls the required check in order to",
+    "merge is waiting to perform a merge that is not its to make: measured on",
+    "#3314 and #3315, both landed within one second of `call-test-lint` going",
+    "green, twenty minutes into such a poll.",
+    "",
+    "If this reads `no-unsatisfied-rule` with auto-merge armed, re-read `merged`",
+    "before attempting anything: auto-merge has not fired either, which is more",
+    "often the terminal state arriving late than a stale computation. Only if the",
+    "pull request is still open is the manual attempt worth making, because its",
+    "REST refusal names the requirement auto-merge is also waiting on.",
+)
+
+# The outcomes whose remedy the note changes. Both wait for the rules to be
+# satisfied and then expect somebody to merge; with auto-merge armed, GitHub is
+# that somebody. Every other outcome is owed by a person regardless.
+_AUTO_MERGE_DECIDES: frozenset[str] = frozenset({REQUIRED_CHECK_PENDING, NO_UNSATISFIED_RULE})
+
 
 @dataclass(frozen=True)
 class Blocker:
@@ -433,6 +462,12 @@ class PullRequestState:
     # fixture describes an unblocked review state unchanged.
     change_requesters: tuple[str, ...] = ()
     pusher: str | None = None
+    # The account that armed auto-merge, or ``None``. Not a rule and never a
+    # blocker: it decides who performs the merge once every rule is satisfied,
+    # which is the one question the outcomes above leave open. Read because the
+    # remedy for ``required-check-pending`` and ``no-unsatisfied-rule`` is
+    # different when GitHub will perform the merge itself.
+    auto_merge_by: str | None = None
 
 
 # --------------------------------------------------------------------------
@@ -933,6 +968,12 @@ def resolve_state(repo: str, pr: int, token: str) -> PullRequestState:
         raise ValueError(f"unexpected payload for {repo}#{pr}")
     head_sha = ((payload.get("head") or {}).get("sha")) or ""
     base_ref = ((payload.get("base") or {}).get("ref")) or ""
+    # ``auto_merge`` is null when nothing is armed and an object naming the
+    # account otherwise. A shape that is neither reads as not armed: the field
+    # decides only who performs the merge, so it must not fail the read.
+    auto_merge = payload.get("auto_merge") or {}
+    enabled_by = (auto_merge.get("enabled_by") or {}) if isinstance(auto_merge, dict) else {}
+    login = enabled_by.get("login") if isinstance(enabled_by, dict) else None
     reviews = resolve_reviews(repo, pr, token)
     return PullRequestState(
         number=pr,
@@ -948,6 +989,7 @@ def resolve_state(repo: str, pr: int, token: str) -> PullRequestState:
         approvers=current_approvers(reviews),
         change_requesters=current_change_requesters(reviews),
         pusher=resolve_pusher(repo, head_sha, token) if head_sha else None,
+        auto_merge_by=str(login) if login else None,
     )
 
 
@@ -1025,6 +1067,7 @@ def _next_action(blockers: Sequence[Blocker]) -> list[str]:
 
 def render(state: PullRequestState, rules: Ruleset, blockers: Sequence[Blocker], repo: str) -> str:
     """Render one pull request's blockers, the party owing each named first."""
+    auto_merge = f"armed by {state.auto_merge_by}" if state.auto_merge_by else "not armed"
     lines = [
         "## Merge blockers",
         "",
@@ -1043,6 +1086,7 @@ def render(state: PullRequestState, rules: Ruleset, blockers: Sequence[Blocker],
         f"| unresolved review threads | {state.unresolved_threads} |",
         f"| current approvals | {_join(state.approvers)} |",
         f"| head pushed by | {state.pusher or '(undetermined)'} |",
+        f"| auto-merge | {auto_merge} |",
         "",
         "| unsatisfied rule | owed by | detail |",
         "|---|---|---|",
@@ -1060,6 +1104,8 @@ def render(state: PullRequestState, rules: Ruleset, blockers: Sequence[Blocker],
         ]
     if any(b.outcome == NO_UNSATISFIED_RULE for b in blockers):
         lines += list(_STALE_STATE_REMEDY)
+    if state.auto_merge_by and any(b.outcome in _AUTO_MERGE_DECIDES for b in blockers):
+        lines += [line.format(login=state.auto_merge_by) for line in _AUTO_MERGE_NOTE]
     return "\n".join(lines)
 
 
@@ -1078,6 +1124,8 @@ class SweepRow:
 
     pr: int
     blockers: tuple[Blocker, ...]
+    # Carried so the sweep can say which waiting rows GitHub will merge itself.
+    auto_merge_by: str | None = None
 
     @property
     def is_finding(self) -> bool:
@@ -1108,7 +1156,7 @@ def sweep(repo: str, token: str) -> tuple[list[SweepRow], list[int], Ruleset]:
                 cache[state.base_ref] = resolve_ruleset(repo, state.base_ref, token)
             rules = cache[state.base_ref]
             last = rules
-            rows.append(SweepRow(pr, evaluate(state, rules)))
+            rows.append(SweepRow(pr, evaluate(state, rules), state.auto_merge_by))
         except (urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError) as exc:
             print(
                 f"check_merge_blockers: {repo}#{pr} lookup failed, not evaluated: {exc}",
@@ -1163,12 +1211,13 @@ def render_sweep(rows: Sequence[SweepRow], skipped: Sequence[int], repo: str) ->
             "",
         ]
     lines += [
-        "| pull request | unsatisfied rule(s) | owed by |",
-        "|---|---|---|",
+        "| pull request | unsatisfied rule(s) | owed by | auto-merge |",
+        "|---|---|---|---|",
     ]
     for row in rows:
         outcomes = ", ".join(b.outcome for b in row.blockers)
-        lines.append(f"| #{row.pr} | {outcomes} | {row.primary.owed_by} |")
+        armed = "armed" if row.auto_merge_by else "-"
+        lines.append(f"| #{row.pr} | {outcomes} | {row.primary.owed_by} | {armed} |")
     if skipped:
         lines += [
             "",

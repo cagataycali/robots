@@ -1155,9 +1155,162 @@ def test_no_report_string_carries_a_non_ascii_character() -> None:
         mod.render_sweep([mod.SweepRow(1, mod.evaluate(state(unresolved_threads=1), MAIN))], [2], "o/r"),
         mod.render_sweep([], [], "o/r"),
         "\n".join(mod._STALE_STATE_REMEDY),
+        "\n".join(mod._AUTO_MERGE_NOTE),
     ]
     for report in reports:
         report.encode("ascii")
+
+
+# --------------------------------------------------------------------------
+# Auto-merge. Not a rule and never a blocker: it decides who performs the merge
+# once every rule is satisfied, which is the one question the two waiting
+# outcomes leave open. Measured 2026-09-08: 29 of the last 30 merged pull
+# requests carried ``autoMergeRequest`` (SQUASH), and a scheduled pass polled
+# #3314 and #3315 for twenty minutes in order to merge them; both merged
+# themselves the second ``call-test-lint`` went green (03:21:42 and 03:28:07).
+# --------------------------------------------------------------------------
+
+
+def _resolve_state_with_payload(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> Any:
+    """Run ``resolve_state`` against one pull request payload, transport stubbed."""
+    monkeypatch.setattr(mod, "_get", lambda url, token: payload)
+    monkeypatch.setattr(mod, "resolve_reviews", lambda *a: [])
+    monkeypatch.setattr(mod, "resolve_unresolved_threads", lambda *a: 0)
+    monkeypatch.setattr(mod, "resolve_check_conclusions", lambda *a: {REQUIRED: None})
+    monkeypatch.setattr(mod, "resolve_check_suites", lambda *a: (None,))
+    monkeypatch.setattr(mod, "resolve_pusher", lambda *a: "the-author")
+    return mod.resolve_state("o/r", 3314, "t")
+
+
+def test_the_resolved_state_carries_the_account_that_armed_auto_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read is the fix, as with ``merged``: the key was in the payload all along.
+
+    ``GET /repos/{owner}/{repo}/pulls/{n}`` returns ``auto_merge`` as an object
+    naming the account that armed it, in the same response ``resolve_state``
+    was already taking six keys from. This is the shape #3314 and #3315 read
+    while the pass polled them.
+    """
+    resolved = _resolve_state_with_payload(
+        monkeypatch,
+        {
+            "head": {"sha": "b6c49eca"},
+            "base": {"ref": "main"},
+            "draft": False,
+            "merged": False,
+            "mergeable": True,
+            "mergeable_state": "blocked",
+            "auto_merge": {"enabled_by": {"login": "octocat"}, "merge_method": "squash"},
+        },
+    )
+    assert resolved.auto_merge_by == "octocat"
+
+
+@pytest.mark.parametrize(
+    "auto_merge",
+    [None, {}, {"enabled_by": None}, "absent"],
+    ids=["null", "empty-object", "null-enabled-by", "key-absent"],
+)
+def test_a_null_auto_merge_field_reads_as_not_armed(monkeypatch: pytest.MonkeyPatch, auto_merge: Any) -> None:
+    """``auto_merge: null`` is the documented unarmed shape; a malformed one must not raise.
+
+    The field decides only who performs the merge, so a shape this check does
+    not recognise reads as not armed rather than failing the whole read and
+    reporting nothing about a pull request whose rules it could evaluate.
+    """
+    payload: dict[str, Any] = {
+        "head": {"sha": "b6c49eca"},
+        "base": {"ref": "main"},
+        "draft": False,
+        "merged": False,
+        "mergeable": True,
+        "mergeable_state": "blocked",
+    }
+    if auto_merge != "absent":
+        payload["auto_merge"] = auto_merge
+    assert _resolve_state_with_payload(monkeypatch, payload).auto_merge_by is None
+
+
+def test_a_pending_check_under_auto_merge_says_the_merge_is_not_the_readers_to_make() -> None:
+    """The defect: ``required-check-pending`` owed by nobody invites a poll-to-merge loop.
+
+    On #3314 and #3315 the check was the only unsatisfied rule and auto-merge
+    was armed, so the merge was GitHub's to perform and it did, within a second
+    of the check going green. The outcome is unchanged -- the answer is still
+    not in -- but the report now says whose merge it will be.
+    """
+    st = state(auto_merge_by="octocat", check_conclusions={REQUIRED: None})
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.REQUIRED_CHECK_PENDING]
+    assert f"Outcome: **{mod.REQUIRED_CHECK_PENDING}**" in rendered
+    assert "| auto-merge | armed by octocat |" in rendered
+    assert "not its to make" in rendered
+    assert "#3314 and #3315" in rendered
+
+
+def test_the_auto_merge_note_is_absent_when_nothing_is_armed() -> None:
+    """The control: the same pending check with nothing armed keeps its original report."""
+    st = state(auto_merge_by=None, check_conclusions={REQUIRED: None})
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "| auto-merge | not armed |" in rendered
+    assert "Auto-merge is armed" not in rendered
+    assert "not its to make" not in rendered
+
+
+def test_the_auto_merge_note_is_not_printed_for_an_outcome_it_does_not_change() -> None:
+    """Auto-merge does not resolve a thread: the #2566 owner is the author regardless.
+
+    The row still says who armed it, because that is a fact about the pull
+    request; the note is withheld, because it would tell the reader to stand
+    back from a merge that is not going to happen until the author acts.
+    """
+    st = state(auto_merge_by="octocat", unresolved_threads=1)
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.UNRESOLVED_THREADS]
+    assert "| auto-merge | armed by octocat |" in rendered
+    assert "Auto-merge is armed" not in rendered
+    assert mod.primary(blockers).owed_by == mod.AUTHOR
+
+
+def test_the_stale_state_case_under_auto_merge_says_to_re_read_merged_first() -> None:
+    """The #2574 remedy stands, and gains a first step where auto-merge is armed.
+
+    Every rule satisfied, still ``blocked``, auto-merge armed: auto-merge has
+    not fired either, which is more often ``merged`` arriving late than a stale
+    computation. The existing remedy is kept, because the REST refusal names the
+    requirement auto-merge is also waiting on -- but only if the pull request is
+    still open, which is what the re-read establishes.
+    """
+    st = state(auto_merge_by="octocat")
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.NO_UNSATISFIED_RULE]
+    assert "Attempt the merge." in rendered
+    assert "re-read `merged`" in rendered
+    # The note follows the remedy it qualifies rather than displacing it.
+    assert rendered.index("Attempt the merge.") < rendered.index("re-read `merged`")
+
+
+def test_auto_merge_changes_no_outcome_owner_or_finding() -> None:
+    """Precedence lives in the evaluator, and auto-merge is not a rule it evaluates.
+
+    The same fixtures with and without the field must produce identical
+    blockers: a change to any outcome, owner or finding here would make the
+    exit status depend on a fact that is not a rule.
+    """
+    for overrides in (
+        {},
+        {"check_conclusions": {REQUIRED: None}},
+        {"check_conclusions": {REQUIRED: None}, "approvers": ()},
+        {"unresolved_threads": 1},
+        {"mergeable": False},
+    ):
+        armed = mod.evaluate(state(auto_merge_by="octocat", **overrides), MAIN)
+        unarmed = mod.evaluate(state(**overrides), MAIN)
+        assert armed == unarmed
 
 
 # --------------------------------------------------------------------------
@@ -1174,6 +1327,19 @@ def test_the_sweep_separates_the_author_clearable_rows(capsys: pytest.CaptureFix
     assert "1 blocked on something no reviewer can clear:** #1035" in rendered
     assert f"| #1035 | {mod.MERGE_CONFLICT} | {mod.AUTHOR} |" in rendered
     assert f"| #2497 | {mod.MISSING_APPROVAL} | {mod.OTHER_REVIEWER} |" in rendered
+
+
+def test_the_sweep_marks_which_rows_are_armed() -> None:
+    """A sweep that polls waiting rows to merge them needs to know which ones GitHub will merge."""
+    pending = mod.evaluate(state(check_conclusions={REQUIRED: None}), MAIN)
+    rows = [
+        mod.SweepRow(3314, pending, auto_merge_by="octocat"),
+        mod.SweepRow(2480, pending),
+    ]
+    rendered = mod.render_sweep(rows, [], "o/r")
+    assert "| pull request | unsatisfied rule(s) | owed by | auto-merge |" in rendered
+    assert f"| #3314 | {mod.REQUIRED_CHECK_PENDING} | {mod.NOBODY} | armed |" in rendered
+    assert f"| #2480 | {mod.REQUIRED_CHECK_PENDING} | {mod.NOBODY} | - |" in rendered
 
 
 def test_a_clean_sweep_says_so_rather_than_printing_a_bare_table() -> None:
