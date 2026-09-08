@@ -296,17 +296,28 @@ class TestTheSeedIsAppliedOnTheEvalPath:
         service-mode policy and an in-process one are then seeded alike.
         Deleting the per-episode ``set_eval_seed`` from ``evaluate`` leaves the
         forwarded seeds intact and fails only here.
-        """
-        import strands_robots.simulation.policy_runner as runner_mod
 
-        real = runner_mod.set_eval_seed
+        The seam is the namespace ``evaluate`` resolves the name in, not the
+        module a fresh ``import strands_robots.simulation.policy_runner``
+        returns. That statement resolves through the *package attribute*, and a
+        sibling that re-imports the runner to measure its import
+        (``test_policy_runner.py``'s mujoco-leak cell) rebinds that attribute to
+        a fresh module object; ``monkeypatch`` restores the ``sys.modules``
+        entry it deleted, not the attribute the re-import wrote. Patching the
+        fresh object recorded nothing on the ordered run while the same cell
+        passed alone. The ``PolicyRunner`` this file binds at collection is the
+        class ``eval_policy`` instantiates, so its ``evaluate`` globals are the
+        dict the call reads whatever the attribute holds.
+        """
+        seam = PolicyRunner.evaluate.__globals__
+        assert seam["set_eval_seed"] is set_eval_seed, "the seam must be the one this file imported"
         applied: list[int] = []
 
         def recording(seed: int) -> None:
             applied.append(seed)
-            real(seed)
+            set_eval_seed(seed)
 
-        monkeypatch.setattr(runner_mod, "set_eval_seed", recording)
+        monkeypatch.setitem(seam, "set_eval_seed", recording)
         sim, policy = _sim_and_policy(arm_xml)
         result = sim.eval_policy(
             robot_name="arm",
