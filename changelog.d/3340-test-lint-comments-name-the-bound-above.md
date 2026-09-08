@@ -1,4 +1,4 @@
-### Documentation: the apt step's comments and the bound grader's message point at the job bound, not at a number it no longer holds
+### Docs: the apt step's comments and the bound grader's message point at the job bound, not at a number it no longer holds
 
 #2457 raised `test-lint.yml`'s job bound 45 -> 60, and three places kept saying
 45 in the present tense: two comments on the apt step ("rather than at the
