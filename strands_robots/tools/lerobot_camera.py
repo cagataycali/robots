@@ -14,8 +14,15 @@ FPS``, ``Fast``/``Slow``, ``Good``/``Slow``), so a corrected clock is reported
 as a device measurement. The absolute stamps this tool writes - a filename's
 date, a report's ``Timestamp`` line - are the other half of that boundary and
 stay on ``datetime.now()``.
+
+RealSense support needs the Intel SDK (``pyrealsense2``) in addition to lerobot,
+which is what ``REALSENSE_AVAILABLE`` reports; importing lerobot's RealSense
+camera classes does not establish it, because lerobot requires the SDK at its
+call sites rather than at import. Every surface that reports the SDK absent
+names the same install, :data:`REALSENSE_SDK_ABSENT`.
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -38,7 +45,14 @@ try:
         from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
         from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
-        REALSENSE_AVAILABLE = True
+        # These modules import whether or not the Intel SDK is installed: lerobot
+        # binds ``pyrealsense2`` to None behind an availability flag and requires
+        # it at the call sites instead. So the import succeeding says the camera
+        # classes exist, not that a RealSense camera can be opened - that is what
+        # the SDK decides, and it is the question every use of this flag asks. It
+        # is probed under the import name, which is the one both the
+        # ``pyrealsense2`` and the ``pyrealsense2-macosx`` distribution provide.
+        REALSENSE_AVAILABLE = importlib.util.find_spec("pyrealsense2") is not None
     except ImportError:
         REALSENSE_AVAILABLE = False
         RealSenseCamera = None
@@ -51,6 +65,16 @@ from strands import tool
 
 from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
 from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+
+# The one remedy for an absent RealSense SDK, so every surface that reports it
+# reports the same install. It names lerobot's ``intelrealsense`` extra rather
+# than the ``pyrealsense2`` distribution because the extra is what carries the
+# per-platform split - on macOS the wheel ships as ``pyrealsense2-macosx``, so a
+# bare ``pip install pyrealsense2`` there installs nothing that can be imported.
+REALSENSE_SDK_ABSENT = (
+    "The Intel RealSense SDK (pyrealsense2) is not installed, so RealSense "
+    "cameras cannot be opened. Install with: pip install 'lerobot[intelrealsense]'"
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -414,7 +438,9 @@ def lerobot_camera(
             - "preview": Show live preview from camera
             - "test": Test camera functionality and performance
             - "configure": Configure camera settings and save
-        camera_type: Camera type ("opencv" or "realsense")
+        camera_type: Camera type ("opencv" or "realsense"). "realsense" needs
+            the Intel SDK installed on top of lerobot; without it the action is
+            refused naming that install, rather than reported as unsupported.
         camera_id: Camera device ID (int for index, str for path like "/dev/video0")
         save_path: Directory to save captured images/videos
         filename: Custom filename (without extension). Resolved inside
@@ -711,7 +737,7 @@ def _list_camera_details(camera_type: str, camera_id: int | str | None = None) -
             if not REALSENSE_AVAILABLE and camera_type.lower() == "realsense":
                 details.append(" **RealSense Camera System:**")
                 details.append("   - SDK Available:  Not installed")
-                details.append("   - Install with: `pip install pyrealsense2`")
+                details.append(f"   - {REALSENSE_SDK_ABSENT}")
             else:
                 details.append(f"**Unknown camera type: {camera_type}**")
 
@@ -1330,7 +1356,13 @@ def _create_camera(
         )
         return OpenCVCamera(config)
 
-    elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
+    elif camera_type.lower() == "realsense":
+        # "realsense" is a supported type on every platform this package runs
+        # on, so an absent SDK is reported as the absent SDK. Falling through to
+        # the unsupported-type refusal below would answer a question the caller
+        # did not ask, and send them looking for a spelling that does not exist.
+        if not REALSENSE_AVAILABLE:
+            raise ImportError(REALSENSE_SDK_ABSENT, name="pyrealsense2")
         config = RealSenseCameraConfig(serial_number_or_name=str(camera_id), fps=fps, width=width, height=height)
         return RealSenseCamera(config)
 
