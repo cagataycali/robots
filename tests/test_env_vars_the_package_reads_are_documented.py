@@ -39,7 +39,22 @@ derived from the tree too, to a fixed point so a resolver that delegates to
 another is included, and an import alias (``_bool_env as _zc_bool_env``) is
 followed. Twenty-nine of the 88 names reach the environment only that way,
 so recognising the four direct spellings alone reports a clean tree that is
-not one. A page is any of ``README.md`` and
+not one.
+
+A key need not be a literal at the read site either. A module can bind the
+name once and read through the binding - ``RDZV_TIMEOUT_ENV =
+"STRANDS_TRAIN_RDZV_TIMEOUT_S"`` and then ``os.environ.get(RDZV_TIMEOUT_ENV)``
+- which is the shape a module reaches for when the same name is also spelled
+into a refusal or a log line. The walk follows a ``Name`` key to a module-scope
+string constant, and a receiver that selects the environment conditionally
+(``(env if env is not None else os.environ).get(KEY)``, the injectable-mapping
+idiom) counts as ``os.environ``. Measured on the tree this arrived in, three
+names reached the environment only that way and appeared in no page:
+``STRANDS_TRAIN_EXTRA_FLAGS_ALLOW`` - the allowlist a headless ``lerobot_train``
+refusal names as its own remedy - and ``STRANDS_TRAIN_RDZV_TIMEOUT_S`` /
+``STRANDS_TRAIN_LOCAL_ADDR``, the two bounds on an elastic launch's rendezvous.
+A ``Name`` bound anywhere else (a parameter, a local) still names nothing a
+page could spell and is not graded. A page is any of ``README.md`` and
 ``docs/**/*.md``: ``docs/security.md`` already owns the AWS IoT credentials
 and the mesh TLS material, graded by their own reference tests, and this test
 does not move them. It also honours the README's shorthand for a family of
@@ -123,6 +138,14 @@ def _environment_key(node: ast.AST) -> str | None:
 
 
 def _is_environ(node: ast.AST) -> bool:
+    """Is ``node`` the environment mapping - outright, or on one arm of a conditional?
+
+    ``(env if env is not None else os.environ)`` is how a function takes an
+    injectable mapping and still reads the real environment by default, and the
+    read is a read of the environment on the arm a caller does not override.
+    """
+    if isinstance(node, ast.IfExp):
+        return _is_environ(node.body) or _is_environ(node.orelse)
     return (isinstance(node, ast.Attribute) and node.attr == "environ") or (
         isinstance(node, ast.Name) and node.id == "environ"
     )
@@ -208,18 +231,57 @@ def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, int]:
     return resolvers
 
 
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    """``{name: value}`` for every module-scope ``NAME = "literal"`` in ``tree``.
+
+    Only the module body is read, so a parameter or a local of the same name
+    inside a function is not mistaken for the constant. A name bound twice at
+    module scope keeps its last binding, which is what the reads after it see.
+    """
+    constants: dict[str, str] = {}
+    body = getattr(tree, "body", [])
+    for statement in body:
+        if isinstance(statement, ast.Assign):
+            targets = statement.targets
+            value = statement.value
+        elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+            targets = [statement.target]
+            value = statement.value
+        else:
+            continue
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                constants[target.id] = value.value
+    return constants
+
+
+def _key_string(key: ast.AST, constants: dict[str, str]) -> str | None:
+    """The string a key expression names: a literal, or a module constant bound to one."""
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        return key.value
+    if isinstance(key, ast.Name):
+        return constants.get(key.id)
+    return None
+
+
 def names_read(trees: dict[str, ast.AST]) -> dict[str, list[str]]:
     """``{name: [label:line, ...]}`` for every own-prefix key the trees read."""
     resolvers = environment_resolvers(trees)
     found: dict[str, list[str]] = {}
     for label, tree in trees.items():
         aliases = _import_aliases(tree)
+        constants = _module_string_constants(tree)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.Call, ast.Subscript)):
                 continue
             key = _read_key(node, resolvers, aliases)
-            if isinstance(key, ast.Constant) and isinstance(key.value, str) and key.value.startswith(OWN_PREFIX):
-                found.setdefault(key.value, []).append(f"{label}:{node.lineno}")
+            if key is None:
+                continue
+            name = _key_string(key, constants)
+            if name is not None and name.startswith(OWN_PREFIX):
+                found.setdefault(name, []).append(f"{label}:{node.lineno}")
     return found
 
 
@@ -327,6 +389,35 @@ class TestTheReadShapesAreAllRecognised:
             }
         )
         assert names_read(trees) == {"STRANDS_PROBE": ["core.py:2"]}
+
+    def test_a_read_through_a_module_constant_is_seen(self) -> None:
+        """The name is bound once and read through the binding, as ``_inproc`` does."""
+        source = 'import os\nKEY_ENV = "STRANDS_PROBE"\nx = os.environ.get(KEY_ENV, "")\n'
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:3"]}
+
+    def test_a_module_constant_handed_to_a_resolver_is_seen(self) -> None:
+        source = (
+            "import os\n"
+            'KEY_ENV = "STRANDS_PROBE"\n'
+            "def _int_env(name, default):\n"
+            '    return int(os.getenv(name, "") or default)\n'
+            "CAP = _int_env(KEY_ENV, 4)\n"
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:5"]}
+
+    def test_a_read_off_a_conditional_environment_receiver_is_seen(self) -> None:
+        """``(env if env is not None else os.environ).get(...)`` - the injectable-mapping idiom."""
+        source = (
+            "import os\n"
+            "def read(env=None):\n"
+            '    return (env if env is not None else os.environ).get("STRANDS_PROBE", "")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:3"]}
+
+    def test_a_name_bound_only_inside_a_function_is_not_a_module_constant(self) -> None:
+        """A local of the constant's shape names nothing a page could spell; it stays ungraded."""
+        source = 'import os\ndef read():\n    key = "STRANDS_PROBE"\n    return os.getenv(key)\n'
+        assert names_read(_parse({"probe.py": source})) == {}
 
     def test_a_function_that_only_names_the_variable_in_a_message_is_not_a_resolver(self) -> None:
         """Passing the name to a refusal's wording is not a read of it."""
