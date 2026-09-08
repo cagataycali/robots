@@ -156,10 +156,10 @@ def test_shallow_clone_invokes_git_for_valid_url() -> None:
     assert args[-2:] == ["https://github.com/o/r.git", "/tmp/dest"]
 
 
-# _copy_and_clean
+# _copy_external_tree
 
 
-def test_copy_and_clean_skips_docs_and_images(tmp_path: Path) -> None:
+def test_copy_external_tree_skips_docs_and_images(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
     (src / "model.xml").write_text("x")
@@ -167,7 +167,7 @@ def test_copy_and_clean_skips_docs_and_images(tmp_path: Path) -> None:
     (src / "preview.png").write_text("img")
     (src / "mesh.stl").write_text("m")
     dst = tmp_path / "dst"
-    dl._copy_and_clean(src, dst)
+    dl._copy_external_tree(src, dst)
     assert (dst / "model.xml").exists()
     assert (dst / "mesh.stl").exists()
     assert not (dst / "README.md").exists()
@@ -585,7 +585,7 @@ def test_git_download_reports_copy_failure(tmp_path: Path) -> None:
 
     with (
         patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone),
-        patch(f"{_MOD}._copy_and_clean", side_effect=OSError("disk full")),
+        patch(f"{_MOD}._copy_external_tree", side_effect=OSError("disk full")),
     ):
         results = dl._download_via_git({"panda": info}, tmp_path)
     assert results["panda"].startswith("failed:")
@@ -610,7 +610,7 @@ def test_github_download_reports_copy_failure(tmp_path: Path) -> None:
 
     with (
         patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone),
-        patch(f"{_MOD}._copy_and_clean", side_effect=OSError("permission denied")),
+        patch(f"{_MOD}._copy_external_tree", side_effect=OSError("permission denied")),
     ):
         result = dl._download_from_github("myrobot", info, tmp_path)
     assert result.startswith("failed:")
@@ -686,3 +686,98 @@ def test_git_download_rejects_nested_symlink_inside_asset_dir(tmp_path: Path, mo
     # The nested symlink target must not have been copied.
     assert not (dest / "panda" / "cfg").exists()
     assert not (dest / "panda" / "cfg" / "passwd").exists()
+
+
+def test_rd_copy_fallback_rejects_nested_symlink_inside_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``robot_descriptions`` copy fallback must not follow a symlink out of the package.
+
+    Sibling of :func:`test_git_download_rejects_nested_symlink_inside_asset_dir`
+    for the other route into the same upstream trees: ``robot_descriptions``
+    clones the very repositories the git fallback treats as untrusted, so its
+    copy is subject to the same escape.  The copy is taken whenever the cache
+    cannot hold a symlink - a FAT/exFAT card on an edge robot, or Windows
+    without the privilege - which is exactly the host that must be guarded.
+    """
+    pkg = tmp_path / "rd_cache" / "panda_mj_description"
+    pkg.mkdir(parents=True)
+    (pkg / "model.xml").write_text("<mujoco/>")
+    outside = tmp_path / "outside_secrets"
+    outside.mkdir()
+    (outside / "id_rsa").write_text("PRIVATE KEY MATERIAL")
+    (pkg / "assets").symlink_to(outside, target_is_directory=True)
+
+    def _no_symlinks(self: Path, target: object, target_is_directory: bool = False) -> None:
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "symlink_to", _no_symlinks)
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("panda", robot_descriptions_module="panda_mj_description")
+    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+        results = dl._download_via_robot_descriptions({"panda": info}, dest)
+
+    # The model itself still lands, so the guard costs the caller nothing...
+    assert results["panda"] == "downloaded"
+    assert (dest / "panda" / "model.xml").exists()
+    # ...but the symlink target from outside the package must not be in the cache.
+    assert not (dest / "panda" / "assets").exists()
+    assert not (dest / "panda" / "assets" / "id_rsa").exists()
+
+
+def test_rd_copy_fallback_keeps_what_the_symlink_would_have_exposed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy fallback lands the same files the preferred symlink would expose.
+
+    The clone routes strip docs and preview images from a description
+    repository; the ``robot_descriptions`` route must not, or a cache that
+    cannot hold a symlink would silently hold fewer files than one that can.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "model.xml").write_text("<mujoco/>")
+    (pkg / "README.md").write_text("doc")
+    (pkg / "texture.png").write_text("img")
+
+    def _no_symlinks(self: Path, target: object, target_is_directory: bool = False) -> None:
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "symlink_to", _no_symlinks)
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("panda", robot_descriptions_module="panda_mj_description")
+    with patch(f"{_MOD}.importlib.import_module", return_value=SimpleNamespace(PACKAGE_PATH=str(pkg))):
+        results = dl._download_via_robot_descriptions({"panda": info}, dest)
+
+    assert results["panda"] == "downloaded"
+    assert (dest / "panda" / "README.md").exists()
+    assert (dest / "panda" / "texture.png").exists()
+
+
+def test_every_asset_tree_copy_goes_through_the_one_owner() -> None:
+    """No module copies an external tree with a bare ``shutil.copytree``.
+
+    The escape above existed because one of two copies in the same module
+    carried the symlink guard.  Pin the rule rather than the two sites: the only
+    ``shutil.copytree`` call in the package is the one inside
+    :func:`~strands_robots.assets.download._copy_external_tree`, so a new copy
+    route cannot reintroduce a following copy without moving this line.
+    """
+    import ast
+
+    import strands_robots
+
+    root = Path(strands_robots.__file__).parent
+    callers: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef):
+                continue
+            for node in ast.walk(func):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "copytree":
+                    callers.append(f"{path.relative_to(root)} in {func.name}()")
+
+    assert callers == ["assets/download.py in _copy_external_tree()"], callers

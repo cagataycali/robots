@@ -216,6 +216,16 @@ Reference: `strands_robots.tools.gr00t_inference`.
 - **Calibration files** under `~/.cache/huggingface/lerobot/calibration/` define how joint commands map to the physical device. Protect them as integrity-sensitive configuration - corrupted or swapped calibration can produce unexpected motion.
 - **The `serial_tool` is broad.** It can enumerate and write to any serial port the process can see, not just the intended robot. Scope it out of agents that do not need raw device access (see [Tool scoping](#prompt-injection)).
 
+## Robot asset cache (`STRANDS_ASSETS_DIR`)
+
+`download_assets` / `auto_download_robot` populate the asset cache from trees this process did not author: a shallow `git clone` of MuJoCo Menagerie, a custom GitHub source named by a registry entry, or a `robot_descriptions` package that clones the same upstream repositories on first import. All three are treated identically:
+
+- **A symlink inside a downloaded tree is never followed into the cache.** `shutil.copytree` follows nested symlinks by default, so a description carrying `robot_dir/assets -> /home/<user>/.ssh` would copy host files into the cache and the download would still report `downloaded`. Every copy goes through one owner that skips symlinked entries and logs each one it skipped, so a model left incomplete by an intra-tree link is diagnosable rather than merely wrong. The `robot_descriptions` route is included: it prefers to symlink the installed package directory whole, and the copy it falls back to when the cache cannot hold a symlink (a FAT/exFAT card, or Windows without the privilege) is guarded the same way.
+- **A path component from a registry entry cannot escape the cache.** `asset.dir` and `asset.source.subdir` are joined with `safe_join`, which rejects a `../` component lexically and - for the clone trees, whose own symlinks may escape - re-checks containment after full symlink resolution. That second check is what covers a *root* that is itself a symlink out of the clone, which the nested-entry filter above cannot see.
+- **The cache is ordinary filesystem state.** Point `STRANDS_ASSETS_DIR` at a directory only the account running the agent can write; a writable cache is a way to swap the MJCF a `mode="real"` robot is built from.
+
+Reference: `strands_robots.assets.download`, `strands_robots.utils.safe_join`.
+
 ## ROS 2 / DDS bridge command surface
 
 `Robot(ros2_bridge=True)` can expose an inbound `/<robot>/joint_command` topic that drives the physical arm. Because **any participant on the DDS domain can publish to it**, the command surface is hardened:
