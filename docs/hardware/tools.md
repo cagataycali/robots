@@ -204,6 +204,19 @@ tool, `pose_tool`, and the native `FeetechDriver` bus - reads both from there.
 Addressing an SCS-series servo needs a second word order and a second full scale
 rather than a scale option, so no surface here offers one.
 
+### A stored pose is stored whole, or the tool reports that it was not
+
+`store_pose` and `delete_pose` rewrite the *whole* pose library for a robot -
+`<robot_id>_poses.json` under `.strands_robots/poses/` in the working directory -
+so a write that lands partially loses every posture the arm had, not just the one
+being changed. The document is therefore serialized before the destination is
+touched and committed through a temp sibling plus `os.replace`. A full disk, or a
+joint angle JSON cannot represent (a NumPy scalar), leaves the stored library
+exactly as it was, with no temp file beside it, and the tool answers
+`status="error"` naming the pose it did not store and the postures that are
+unchanged - rather than reporting a named posture that no later `load_pose` can
+find.
+
 ### A mesh wait budget is bounded where the command body cannot carry it
 
 `robot_mesh` takes four numeric options. `duration` and `policy_port` travel

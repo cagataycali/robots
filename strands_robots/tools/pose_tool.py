@@ -13,6 +13,7 @@ This tool provides comprehensive pose management for robotic arms, including:
 
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -147,14 +148,62 @@ class PoseManager:
                 self.poses = {}
 
     def _save_poses(self) -> None:
-        """Save poses to storage."""
+        """Store the pose library in full, or leave the stored one untouched.
+
+        Every write here rewrites the WHOLE library: :meth:`store_pose` and
+        :meth:`delete_pose` change one entry and store the document back. A
+        write that lands partially therefore does not lose the pose being
+        changed, it loses every pose the file held - and :meth:`_load_poses`
+        reports an unparseable file as *no poses* (an error line, then an empty
+        library), so the loss surfaces as poses that were stored simply not
+        being there.
+
+        So the document is serialized in full *before* the destination is
+        touched, and the text is committed through a temp file in the same
+        directory plus :func:`os.replace` - the sequence
+        :func:`strands_robots.registry.user_registry._save_user_registry`
+        documents for its own whole-document store, for the same two reasons:
+
+        * Serializing first is what keeps a rejected write harmless.
+          ``json.dump`` encodes straight into the stream it is given, so a
+          value it cannot encode - a NumPy scalar read off a joint, say -
+          raises only after a prefix of the new document has replaced the old
+          one on disk.
+        * :func:`os.replace` is atomic within a directory, so a full disk or an
+          I/O error during the commit leaves the previous library intact rather
+          than truncated, and a concurrent reader observes one whole document
+          or the other, never a prefix.
+
+        The temp file is written with :meth:`pathlib.Path.write_text` rather
+        than :func:`tempfile.mkstemp` so the library keeps the ordinary
+        umask-derived mode a plain ``open(path, "w")`` gave it: replacing its
+        contents is not the moment to decide who may read it.
+
+        Raises:
+            ValueError: A pose holds a value JSON cannot represent. Raised
+                before the stored library is touched, so it is still the last
+                one that loaded; the originating ``TypeError`` stays on
+                ``__cause__``, naming the offending type.
+            OSError: The temp file could not be written or renamed. The stored
+                library is likewise unchanged, and no temp file is left behind.
+        """
+        data = {name: pose.to_dict() for name, pose in self.poses.items()}
         try:
-            data = {name: pose.to_dict() for name, pose in self.poses.items()}
-            with open(self.pose_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            logger.info(f"Saved {len(self.poses)} poses for robot {self.robot_id}")
-        except Exception as e:
-            logger.error(f"Failed to save poses: {e}")
+            payload = json.dumps(data, indent=2) + "\n"
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"a pose is not JSON-serializable, so the library cannot be stored in {self.pose_file}: "
+                f"{exc}. The stored library is unchanged. Pass only JSON types (str, int, float, bool, "
+                "None, list, dict) - a NumPy scalar read off a joint must be converted first."
+            ) from exc
+        tmp = self.pose_file.with_suffix(self.pose_file.suffix + ".tmp")
+        try:
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, self.pose_file)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+        logger.info(f"Saved {len(self.poses)} poses for robot {self.robot_id}")
 
     def store_pose(
         self,
@@ -163,7 +212,25 @@ class PoseManager:
         description: str | None = None,
         safety_bounds: dict[str, tuple[float, float]] | None = None,
     ) -> RobotPose:
-        """Store a new pose."""
+        """Store a named pose, in the library on disk as well as in memory.
+
+        Args:
+            name: Name the pose is stored under; an existing pose of that name
+                is replaced.
+            positions: Joint angles in degrees.
+            description: Optional free-text note.
+            safety_bounds: Optional per-joint ``(low, high)`` limits.
+
+        Returns:
+            The stored pose.
+
+        Raises:
+            ValueError: The pose holds a value JSON cannot represent.
+            OSError: The library could not be committed to disk.
+
+        Either way the pose is stored nowhere - not on disk, and not in the
+        in-memory library (see :meth:`_save_poses`).
+        """
         pose = RobotPose(
             name=name,
             positions=positions.copy(),
@@ -171,8 +238,20 @@ class PoseManager:
             description=description,
             safety_bounds=safety_bounds,
         )
+        previous = self.poses.get(name)
         self.poses[name] = pose
-        self._save_poses()
+        try:
+            self._save_poses()
+        except (OSError, ValueError):
+            # The library on disk is the one that loaded, so the library in
+            # memory must be too: leaving the pose here would let the next
+            # successful store resurrect a pose this call already reported it
+            # could not keep.
+            if previous is None:
+                del self.poses[name]
+            else:
+                self.poses[name] = previous
+            raise
         return pose
 
     def get_pose(self, name: str) -> RobotPose | None:
@@ -184,10 +263,27 @@ class PoseManager:
         return list(self.poses.keys())
 
     def delete_pose(self, name: str) -> bool:
-        """Delete a pose."""
+        """Delete a pose from the library on disk as well as in memory.
+
+        Args:
+            name: Pose to delete.
+
+        Returns:
+            True when a pose of that name was deleted, False when none existed.
+
+        Raises:
+            ValueError: A pose holds a value JSON cannot represent.
+            OSError: The library could not be committed to disk. The pose is
+                then deleted nowhere - it is still in the stored library and
+                still in the in-memory one (see :meth:`_save_poses`).
+        """
         if name in self.poses:
-            del self.poses[name]
-            self._save_poses()
+            deleted = self.poses.pop(name)
+            try:
+                self._save_poses()
+            except (OSError, ValueError):
+                self.poses[name] = deleted
+                raise
             return True
         return False
 
@@ -1034,7 +1130,24 @@ def pose_tool(
             if not pose_name:
                 return {"status": "error", "content": [{"text": "pose_name required"}]}
 
-            if pose_manager.delete_pose(pose_name):
+            try:
+                deleted = pose_manager.delete_pose(pose_name)
+            except (OSError, ValueError) as exc:
+                # Same reason the partial-arm case below refuses: this one
+                # persists, so a success reported over a library that still
+                # holds the pose would be read as a deletion that happened.
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Not deleting '{pose_name}': the pose library could not be stored "
+                                f"({exc}). All {len(pose_manager.list_poses())} stored poses are unchanged."
+                            )
+                        }
+                    ],
+                }
+            if deleted:
                 return {"status": "success", "content": [{"text": f"Deleted pose '{pose_name}'"}]}
             else:
                 return {"status": "error", "content": [{"text": f"Pose '{pose_name}' not found"}]}
@@ -1160,7 +1273,26 @@ def pose_tool(
                         ],
                     }
 
-                pose = pose_manager.store_pose(pose_name, current_positions, description)
+                try:
+                    pose = pose_manager.store_pose(pose_name, current_positions, description)
+                except (OSError, ValueError) as exc:
+                    # A stored pose is a durable named posture, so the same rule
+                    # as the partial-arm refusal above applies to the write
+                    # itself: a library that could not be committed leaves the
+                    # arm's postures as they were, and saying otherwise would
+                    # have the caller believe this posture is recoverable.
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Not storing '{pose_name}': the pose library could not be stored "
+                                    f"({exc}). All {len(pose_manager.list_poses())} previously stored "
+                                    "poses are unchanged."
+                                )
+                            }
+                        ],
+                    }
 
                 pos_text = "\n".join(
                     [
