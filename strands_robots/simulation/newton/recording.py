@@ -4,7 +4,7 @@ The engine-independent recording lifecycle (``stop_recording`` /
 ``save_episode`` / ``get_recording_status`` / ``stream_dataset`` and the
 ``_is_recording`` / ``_active_recorder`` / ``_active_dataset_root`` overrides)
 lives in :class:`~strands_robots.simulation.recording.DatasetRecordingMixin`,
-which is backend-agnostic. This subclass adds the two Newton-specific halves:
+which is backend-agnostic. This subclass adds the Newton-specific parts:
 
 * :meth:`start_recording` declares the dataset schema from the live Newton
   scene - joint names from every robot (namespaced for multi-robot scenes) and
@@ -13,6 +13,10 @@ which is backend-agnostic. This subclass adds the two Newton-specific halves:
   :class:`~strands_robots.simulation.base.SimEngine` run-policy loop calls every
   control step. It feeds joint state + action + rendered camera frames to the
   active :class:`~strands_robots.dataset_recorder.DatasetRecorder`.
+* :meth:`_release_run_policy_hook` lowers the ``policy_running`` flag the hook
+  builder raised, when the rollout that hook served ends. The claim and its
+  release are one contract, and only the shared facade knows where the rollout
+  ends, so it calls this in a ``finally`` around every rollout it drives.
 
 The recorder, episode-boundary flushing (``save_episode``), and the canonical
 parquet-correctness contract are identical to the MuJoCo backend - the
@@ -572,3 +576,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 )
 
         return _hook
+
+    def _release_run_policy_hook(self, robot_name: str) -> None:
+        """Lower the ``policy_running`` flag :meth:`_make_run_policy_hook` raised.
+
+        Nothing lowered it, so a recorded rollout left the robot marked as
+        driven for the rest of the session. On this backend the flag is what
+        :meth:`~strands_robots.simulation.models.SimRobot.request_policy_stop`
+        reports as ``was_running``, and that answer is the whole verdict of the
+        stop paths that reach a backend exposing no ``stop_policy`` - the
+        Device Connect ``stop`` RPC among them - so an idle simulation reported
+        a halted rollout that had finished on its own.
+
+        Args:
+            robot_name: The robot whose rollout has ended. A robot removed
+                mid-rollout, or a world torn down under it, has nothing to
+                release.
+        """
+        world = self._world
+        if world is not None and registered(world.robots, robot_name):
+            world.robots[robot_name].policy_running = False

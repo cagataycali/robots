@@ -2963,25 +2963,28 @@ class SimEngine(ABC):
                         int(duration * control_frequency),
                     )
                 on_frame = self._make_run_policy_hook(robot_name, instruction)
-                result = runner.run(
-                    robot_name,
-                    policy,
-                    instruction=instruction,
-                    duration=duration,
-                    n_steps=n_steps,
-                    control_frequency=control_frequency,
-                    action_horizon=action_horizon,
-                    fast_mode=fast_mode,
-                    video=VideoConfig.from_dict(video),
-                    on_frame=on_frame,
-                    max_onframe_failures=max_onframe_failures,
-                    control_substeps=control_substeps,
-                    policy_kwargs=policy_kwargs,
-                    seed=seed,
-                    async_rtc=async_rtc,
-                    rtc_inference_timeout_s=rtc_inference_timeout_s,
-                    stop_when=stop_when_fn,
-                )
+                try:
+                    result = runner.run(
+                        robot_name,
+                        policy,
+                        instruction=instruction,
+                        duration=duration,
+                        n_steps=n_steps,
+                        control_frequency=control_frequency,
+                        action_horizon=action_horizon,
+                        fast_mode=fast_mode,
+                        video=VideoConfig.from_dict(video),
+                        on_frame=on_frame,
+                        max_onframe_failures=max_onframe_failures,
+                        control_substeps=control_substeps,
+                        policy_kwargs=policy_kwargs,
+                        seed=seed,
+                        async_rtc=async_rtc,
+                        rtc_inference_timeout_s=rtc_inference_timeout_s,
+                        stop_when=stop_when_fn,
+                    )
+                finally:
+                    self._release_run_policy_hook(robot_name)
                 completed = 1 if result.get("status") == "success" else 0
                 contract = self._episode_contract_fields(
                     requested=1, completed=completed, saved=0, flush_deferred=recording
@@ -3344,25 +3347,28 @@ class SimEngine(ABC):
             ep_seed = None if seed is None else seed + ep
             ep_video = self._episode_video_config(video, ep)
             on_frame = self._make_run_policy_hook(robot_name, instruction)
-            result = runner.run(
-                robot_name,
-                policy,
-                instruction=instruction,
-                duration=duration,
-                n_steps=n_steps,
-                control_frequency=control_frequency,
-                action_horizon=action_horizon,
-                fast_mode=fast_mode,
-                video=ep_video,
-                on_frame=on_frame,
-                max_onframe_failures=max_onframe_failures,
-                control_substeps=control_substeps,
-                policy_kwargs=policy_kwargs,
-                seed=ep_seed,
-                async_rtc=async_rtc,
-                rtc_inference_timeout_s=rtc_inference_timeout_s,
-                stop_when=stop_when,
-            )
+            try:
+                result = runner.run(
+                    robot_name,
+                    policy,
+                    instruction=instruction,
+                    duration=duration,
+                    n_steps=n_steps,
+                    control_frequency=control_frequency,
+                    action_horizon=action_horizon,
+                    fast_mode=fast_mode,
+                    video=ep_video,
+                    on_frame=on_frame,
+                    max_onframe_failures=max_onframe_failures,
+                    control_substeps=control_substeps,
+                    policy_kwargs=policy_kwargs,
+                    seed=ep_seed,
+                    async_rtc=async_rtc,
+                    rtc_inference_timeout_s=rtc_inference_timeout_s,
+                    stop_when=stop_when,
+                )
+            finally:
+                self._release_run_policy_hook(robot_name)
             ep_json = self._extract_json_payload(result)
             ep_record: dict[str, Any] = {"episode": ep, **ep_json}
             total_steps += int(ep_json.get("n_steps", 0) or 0)
@@ -4563,6 +4569,34 @@ class SimEngine(ABC):
 
         Returns:
             Callable or ``None``.
+        """
+        return None
+
+    def _release_run_policy_hook(self, robot_name: str) -> None:
+        """Release whatever :meth:`_make_run_policy_hook` claimed for the rollout.
+
+        The other half of the hook seam. A backend whose hook builder marks the
+        robot as driven -- ``policy_running``, the per-robot flag its motion
+        primitives and its busy guards refuse on -- has to lower it when the
+        rollout ends, and only this facade knows when that is: the closure is
+        called per frame and cannot see its own last one.
+
+        Called in a ``finally`` around every rollout driven here (the
+        single-episode :meth:`run_policy` path and each episode of
+        :meth:`_run_episodes`), so a rollout that ends for any reason --
+        completion, a cooperative stop, or a raise -- leaves the robot idle.
+        That is the guarantee
+        :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine._drive_rollout`
+        states for the MuJoCo backend, which reaches it through its own
+        ``run_policy`` override; a backend without such an override reaches it
+        here.
+
+        Args:
+            robot_name: The robot whose rollout has ended.
+
+        Returns:
+            ``None``. Default: nothing was claimed, so nothing is released.
+            Override alongside :meth:`_make_run_policy_hook`.
         """
         return None
 

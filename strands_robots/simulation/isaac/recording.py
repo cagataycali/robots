@@ -4,7 +4,7 @@ The engine-independent recording lifecycle (``stop_recording`` /
 ``save_episode`` / ``get_recording_status`` / ``stream_dataset`` and the
 ``_is_recording`` / ``_active_recorder`` / ``_active_dataset_root`` overrides)
 lives in :class:`~strands_robots.simulation.recording.DatasetRecordingMixin`,
-which is backend-agnostic. This subclass adds the two Isaac-specific halves:
+which is backend-agnostic. This subclass adds the Isaac-specific parts:
 
 * :meth:`start_recording` declares the dataset schema from the live Isaac
   scene - joint names from every robot (namespaced for multi-robot scenes) and
@@ -20,6 +20,10 @@ which is backend-agnostic. This subclass adds the two Isaac-specific halves:
   so multi-cam recordings never capture a stale secondary product), and
   ``IsaacSimulation.get_observation`` forces images on while a recording is
   active even when the driving policy sets ``requires_images = False``.
+* :meth:`_release_run_policy_hook` lowers the ``policy_running`` flag the hook
+  builder raised, when the rollout that hook served ends. The claim and its
+  release are one contract, and only the shared facade knows where the rollout
+  ends, so it calls this in a ``finally`` around every rollout it drives.
 
 **State seam**: Isaac's ``self._world`` is the Isaac Sim ``World`` handle, not
 the :class:`~strands_robots.simulation.models.SimWorld` the shared mixin's
@@ -51,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.models import registered
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     camera_schema_key_collision_error,
@@ -659,3 +663,32 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 )
 
         return _hook
+
+    def _release_run_policy_hook(self, robot_name: str) -> None:
+        """Lower the ``policy_running`` flag :meth:`_make_run_policy_hook` raised.
+
+        The hook builder marks the robot as driven so a motion primitive and
+        the rollout cannot race on the same articulation's PD targets, and
+        :meth:`~strands_robots.simulation.isaac.motion_primitives.IsaacMotionPrimitivesMixin._primitive_resolve_robot`
+        refuses on exactly that flag. Nothing lowered it, so a recorded rollout
+        left the robot marked driven for the rest of the session: every
+        primitive answered ``Cannot 'set_gripper' on 'so100' while its policy
+        is running ... wait for the rollout to finish``, and
+        :meth:`~strands_robots.simulation.isaac.simulation.IsaacSimulation.run_multi_policy`
+        answered ``policy already running ... Stop it first`` - two remedies
+        for a rollout that had already ended, and neither reachable (Isaac
+        exposes no ``stop_policy``).
+
+        ``run_multi_policy`` lowers the flag in its own ``finally`` for the
+        loop it owns; this is the same release for the rollout the shared
+        facade owns, so the flag means "a loop is driving this robot" on both
+        paths. ``policy_instruction`` / ``policy_steps`` stay as the last
+        rollout's record, as they do on the MuJoCo backend.
+
+        Args:
+            robot_name: The robot whose rollout has ended. A robot removed
+                mid-rollout has nothing to release.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is not None:
+            robot.policy_running = False
