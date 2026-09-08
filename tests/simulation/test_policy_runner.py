@@ -13,7 +13,6 @@ pure-Python ``FakeSim`` stub, plus the real-backend behaviours:
 from __future__ import annotations
 
 import base64
-import importlib
 import inspect
 import io
 import os
@@ -39,6 +38,7 @@ from strands_robots.simulation.policy_runner import (
     _extract_frame_ndarray,
     _RolloutVideoWriter,
 )
+from tests._module_reimport import reimport
 from tests.simulation.mujoco._gl_probe import requires_gl
 
 #
@@ -144,13 +144,18 @@ def test_policy_runner_import_does_not_pull_in_mujoco(monkeypatch):
     asserts only that the entries just deleted are gone, which is true whatever
     the runner's top level does.
 
-    Both removals go through ``monkeypatch`` so the entries are put back.
+    Every removal goes through ``monkeypatch`` so the entries are put back.
     Leaving the runner out of ``sys.modules`` does not undo its import, it
     orphans the references siblings already hold -
     ``test_rollout_video_realtime_fps`` and
     ``test_rollout_durations_survive_a_clock_step`` bind the module and patch
     attributes on it, and ``test_recording_frame_loss_is_not_tolerated`` reads
     its entry directly.
+
+    The re-import goes through :func:`tests._module_reimport.reimport` because
+    the entry is not the only thing it rebinds: it also binds the fresh module
+    as ``policy_runner`` on ``strands_robots.simulation``, and restoring one
+    without the other leaves the two paths naming different objects.
     """
     runner = "strands_robots.simulation.policy_runner"
 
@@ -159,8 +164,7 @@ def test_policy_runner_import_does_not_pull_in_mujoco(monkeypatch):
         monkeypatch.delitem(sys.modules, mod)
 
     # Force a fresh import of the runner module, and perform it.
-    monkeypatch.delitem(sys.modules, runner, raising=False)
-    importlib.import_module(runner)
+    reimport(monkeypatch, runner)
 
     leaked = [m for m in sys.modules if m.startswith("mujoco")]
     assert not leaked, (

@@ -35,6 +35,7 @@ from strands_robots.tools.g1._motion_switcher import (
     decode_fsm_id,
     read_fsm_id,
 )
+from tests._module_reimport import reimport
 
 
 class _FakeSwitcherClient:
@@ -373,16 +374,20 @@ class TestModuleImportsWithoutTheSDK:
         binds it at module level and patches
         :func:`_load_motion_switcher_client` on it, and against an orphan that
         patch is invisible to the driver's own lazy import.
+
+        Putting the entry back is not enough on its own, which is why the
+        re-import goes through :func:`tests._module_reimport.reimport`: the
+        import also binds the fresh module as ``_motion_switcher`` on
+        ``strands_robots.tools.g1``, and a sibling that binds the module inside
+        a cell reads that attribute rather than the restored entry.
         """
-        import importlib
         import sys
 
         # Snapshot the SDK modules present before the re-import.
         before = {k for k in sys.modules if k.startswith("unitree_sdk2py")}
 
         # Force a fresh import so the module's top-level runs again.
-        monkeypatch.delitem(sys.modules, "strands_robots.tools.g1._motion_switcher", raising=False)
-        importlib.import_module("strands_robots.tools.g1._motion_switcher")
+        reimport(monkeypatch, "strands_robots.tools.g1._motion_switcher")
 
         after = {k for k in sys.modules if k.startswith("unitree_sdk2py")}
         # The re-import must not have added any new ``unitree_sdk2py`` entries.
