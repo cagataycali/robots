@@ -69,6 +69,16 @@ stores load, modify and write back, so a record a load leaves out is erased from
 disk by the next session started or stopped. What a load counts as "finished"
 therefore decides whether a session stays stoppable.
 
+Loading and writing back is also why the *write* has to land whole. Both tools
+write the same file, so a store that lands partially does not lose the session
+being changed - it loses every session the file held, in both tools at once, and
+both load paths report an unparseable store as *no sessions*. So the map is
+serialized in full before the destination is opened and committed through a temp
+file plus an atomic rename: a full disk during a training run leaves the previous
+store intact rather than truncated, and a record holding a value JSON cannot
+represent is refused naming the store, with everything already recorded still
+listed and still stoppable.
+
 A pid alone cannot answer that, because the kernel hands the number back out once
 the process holding it exits. Each record therefore also carries the identity of
 the process it was written for - how long after boot that process started - and

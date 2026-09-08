@@ -34,15 +34,25 @@ reason: subtracting an ungraded stamp from the clock turns a record that states
 no usable start into a duration - the ``0`` an absent key defaults to renders as
 the whole epoch, a little under fifty-seven years - and reports it beside a
 running flag that is correct.
+
+Reading a record presupposes that the file still holds one, which is what
+:func:`store_sessions` is for. Every session store here is a whole document: a
+verb that starts or stops one session loads every record, changes that one, and
+writes them all back. A write that lands partially therefore does not lose the
+session being changed, it loses every session the file held - and the load path
+reports an unparseable store as *no sessions*, so the loss surfaces as an arm
+that is still being driven by a process no verb can name.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -315,6 +325,74 @@ def unusable_pid_result(session_name: str, recorded: Any) -> dict[str, Any]:
             {"json": {"session_name": session_name, "pid_usable": False, "stopped": False}},
         ],
     }
+
+
+def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
+    """Replace a session store whole, or leave the stored one untouched.
+
+    Both session verbs persist a whole document: :meth:`add_session` and
+    :meth:`remove_session` load every record, change one entry, and store the
+    map back. So a write that lands partially does not lose the session being
+    changed - it loses every session the file held, and the load path reports an
+    unparseable store as *no sessions*. Both stores go to the same file, and the
+    records in it are the only place a detached process's pid is written down, so
+    the loss is not cosmetic: the processes keep running, ``list`` reports none,
+    and ``stop`` answers that the session was not found.
+
+    The document is therefore serialized in full *before* the destination is
+    touched, and the text is committed through a temp file in the same directory
+    plus :func:`os.replace` - the sequence
+    :func:`strands_robots.registry.user_registry._save_user_registry` documents
+    for its own whole-document store, for the same two reasons:
+
+    * Serializing first is what keeps a rejected write harmless. ``json.dump``
+      encodes straight into the stream it is given, so a value it cannot encode
+      raises only after a prefix of the new document has replaced the stored one.
+    * :func:`os.replace` is atomic within a directory, so a full disk or an I/O
+      error during the commit leaves the previous store intact rather than
+      truncated, and a concurrent reader observes one whole document or the
+      other, never a prefix.
+
+    The temp file is written with :meth:`pathlib.Path.write_text` rather than
+    :func:`tempfile.mkstemp` so the store keeps the ordinary umask-derived mode a
+    plain ``open(path, "w")`` gave it: replacing its contents is not the moment
+    to decide who may read it.
+
+    Args:
+        sessions_file: The store to replace. Its parent directory must exist -
+            both callers create it when their module loads.
+        sessions: The whole session map to store.
+
+    Raises:
+        ValueError: A record holds a value JSON cannot represent. Raised before
+            the stored store is touched, so it still holds what it last held;
+            the originating ``TypeError`` stays on ``__cause__``, naming the
+            offending type.
+        OSError: The temp file could not be written or renamed. The stored store
+            is likewise unchanged, and no temp file is left behind.
+    """
+    try:
+        # Name the encoding the reader names, so the store's spelling is a
+        # property of the file rather than of the locale that wrote it.
+        payload = json.dumps(dict(sessions), indent=2)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"a session record is not JSON-serializable, so the store cannot be written to "
+            f"{sessions_file}: {exc}. The stored sessions are unchanged, so every session "
+            f"already recorded stays stoppable. Pass only JSON types (str, int, float, bool, "
+            f"None, list, dict)."
+        ) from exc
+
+    tmp = sessions_file.with_suffix(sessions_file.suffix + ".tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, sessions_file)
+    except OSError:
+        # The commit did not happen, so the stored document is the previous one.
+        # Leaving the temp file behind would put a second, partial store next to
+        # it under a name the load path does not read.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def session_is_running(info: Mapping[str, Any]) -> bool:

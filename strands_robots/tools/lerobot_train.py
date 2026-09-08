@@ -39,6 +39,7 @@ from strands_robots.tools._process_stop import (
     reused_pid_result,
     session_is_running,
     session_uptime,
+    store_sessions,
     unstopped_result,
     unusable_pid_result,
 )
@@ -439,11 +440,14 @@ class SessionManager:
                 )
 
     def _save_sessions(self, sessions: dict[str, Any]) -> None:
+        """Store the session map in full, or leave the stored one untouched.
+
+        :func:`~strands_robots.tools._process_stop.store_sessions` owns the
+        sequence, because losing this store is what makes a live session
+        unstoppable and both session tools write the same file.
+        """
         try:
-            # Name the encoding the reader names, so the store's spelling is a
-            # property of the file rather than of the locale that wrote it.
-            with open(self.sessions_file, "w", encoding="utf-8") as f:
-                json.dump(sessions, f, indent=2)
+            store_sessions(self.sessions_file, sessions)
         except OSError as e:
             logger.error(f"Error saving sessions: {e}")
 
