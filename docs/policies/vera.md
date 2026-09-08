@@ -242,6 +242,32 @@ reported as its own cause rather than as the container having exited, which is a
 answer the query never got. `docker run` is not a query and stays unbounded: it
 may pull the image, and it runs before any readiness budget starts.
 
+Readiness is a *port* probe, so it says nothing about whether the server will
+answer. `VeraWebsocketClient` therefore states its own budget: `read_timeout`
+(seconds, the same positive-finite domain, default 600) bounds every read off the
+live connection - the metadata handshake and each endpoint reply. `open_timeout`
+does not cover it, because that budget ends when the HTTP upgrade completes, and
+`websockets`' `recv()` has no deadline of its own: a server whose listener
+accepted the connection while the checkpoint was still loading onto the GPU held
+the first read with no way back to the caller, which is the state `start()`
+returns in. A read that expires reports `accepted the connection but sent no
+metadata handshake within read_timeout=Ns`, separately from the "could not reach
+the VERA policy server ... start it first" hint - that one is written for a server
+that is *absent*, and pointing an operator at a server already running names the
+one thing that is not wrong. Raise the budget for a slower model:
+`VeraPolicy(client=VeraWebsocketClient(host, port, read_timeout=1800))`.
+
+A read that expires also *discards* the connection. The reply it missed is still
+produced and still queued on the socket, so the next request would read the
+previous request's answer - a well-formed `[H, D]` chunk computed for an
+observation the arm has already moved past, with nothing in it to say so. The
+next call opens a fresh connection instead, which is the rule `RemotePolicy`
+states for the same wire. The handshake is discarded on the same terms: published
+before its metadata frame was read, a failed handshake left a live connection
+cached behind the refusal it had just raised, and `get_server_metadata()` then
+answered `{}` - empty action geometry that `_ensure_started` accepts as the
+handshake.
+
 `motion_plan_scale` takes the same domain as the two IK scales below: a positive
 finite number, or `None` to leave the server's own scale alone. `0` is not the
 opt-out — it scales the plan to nothing — so `None` is the off switch and `0` is

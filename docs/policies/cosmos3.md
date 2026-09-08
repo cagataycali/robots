@@ -54,6 +54,19 @@ lands in the path. Both are read only when this constructor builds the client; a
 injected `client=` owns its own address. `host="0.0.0.0"` reaches a server bound
 on every interface.
 
+The client's own `read_timeout` - `Cosmos3WebsocketClient(host, port, read_timeout=1800)`,
+injected as `client=` - bounds every read off the live connection - the metadata handshake
+and each action chunk - as a positive finite number of seconds (default 600).
+`websockets`' `recv()` has no deadline of its own, so without it a server that
+accepted the connection and then went quiet, with a checkpoint still loading onto
+the GPU or a wedged forward pass, held the calling thread indefinitely: the
+`ConnectionError` that tells an operator how to start the server is raised from
+`except OSError`, and a listening server never produces one. A read that expires
+reports `accepted the connection but sent no ... within read_timeout=Ns` - kept
+distinct from the "start it first" hint, which is the wrong advice for a server
+that is already running - and discards the connection, so the reply it missed
+cannot be read as the answer to the next observation.
+
 ## Embodiments
 
 | Embodiment | Robot hardware | Strands sim asset |
