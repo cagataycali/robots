@@ -2575,6 +2575,7 @@ class RenderingMixin:
         import time as _time
 
         from strands_robots.rendering.video import encode_clip
+        from strands_robots.simulation.recording import encoder_absent_flush_refusal
 
         elapsed = _time.monotonic() - state["started_mono"]
         lines = [
@@ -2613,45 +2614,14 @@ class RenderingMixin:
                     encode_clip(to_encode, path, fps=state["fps"])
                     frames_written = len(to_encode)
                 except ImportError as exc:
-                    # Fires on the first camera holding frames, before any
-                    # writer is opened, so nothing is encoded and no buffer is
-                    # touched. Report it the way the expired-join refusal
-                    # reports its own recoverable state - counts included, and
-                    # naming the verb that encodes them - because the caller
-                    # here can follow that advice for the same reason: the
-                    # recording is left registered. See
-                    # :meth:`_flush_and_deregister_cameras_recording`.
-                    #
-                    # The encoder's own text is quoted rather than a fixed
-                    # "imageio not installed" diagnosis: two different modules
-                    # can be the one missing (``imageio``, or the MP4 plugin it
-                    # leaves optional), so a fixed line names the wrong one half
-                    # the time and prescribes a remedy that leaves the encode
-                    # exactly as impossible. ``encode_clip`` raises through
-                    # ``require_optional``, which names the module actually
-                    # absent and the extra of this package that supplies it at
-                    # the version it is tested against.
+                    # Fires on the first camera holding frames, before any writer
+                    # is opened, so nothing is encoded and no buffer is touched.
+                    # The retention that makes its remedy followable is
+                    # :meth:`_flush_and_deregister_cameras_recording`'s, and the
+                    # wording is the shared owner's - see
+                    # :func:`~strands_robots.simulation.recording.encoder_absent_flush_refusal`.
                     buffered = {_c: len(state["buffers"][_c]) for _c in state["cameras"]}
-                    return {
-                        "status": "error",
-                        "content": [
-                            {
-                                "text": (
-                                    f"{exc}\n"
-                                    f"Nothing was encoded and nothing was dropped: camera recording "
-                                    f"{state['name']!r} is left registered holding {buffered}. Install "
-                                    f"the encoder and call stop_cameras_recording() again to flush it."
-                                )
-                            },
-                            {
-                                "json": {
-                                    "stopped": False,
-                                    "recording": state["name"],
-                                    "buffered_frames": buffered,
-                                }
-                            },
-                        ],
-                    }
+                    return encoder_absent_flush_refusal(exc, state["name"], buffered)
                 except Exception as e:  # noqa: BLE001 - best-effort flush must never raise
                     flush_error = f"{type(e).__name__}: {e}"
                     logger.warning("camera recorder flush failed for %r -> %s: %s", cam, path, flush_error)

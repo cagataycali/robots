@@ -555,6 +555,16 @@ text and as `phase` in its JSON block:
 `[idle]` is therefore a promise that nothing is pending, which is why the
 settled-but-registered state gets its own name instead of borrowing it.
 
+The Isaac backend exposes the same pair. It captures through the `on_frame` hook
+`start_cameras_recording` returns rather than a daemon thread, so it has no join
+to expire and none of the thread-dependent phases above. The encoder-absence rule
+is the same one, and both recorders word it from one place
+(`encoder_absent_flush_refusal`): nothing is encoded and nothing is dropped, the
+refusal carries `stopped: False` with the per-camera buffered counts, the
+recording stays registered, and installing the encoder and calling
+`stop_cameras_recording` again encodes the frames it kept. A start is refused for
+as long as those frames are registered, for the same reason.
+
 `fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
 must be positive whole numbers - the same domain `run_policy(video={...})`,
 `start_recording(fps=...)` and the shared encoder

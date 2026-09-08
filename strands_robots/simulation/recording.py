@@ -199,6 +199,63 @@ def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) 
     }
 
 
+def encoder_absent_flush_refusal(reason: object, name: str, buffered: Mapping[str, int]) -> dict[str, Any]:
+    """The refusal a raw-camera flush owes buffers whose encoder is not installed.
+
+    A ``stop_cameras_recording`` flush is best-effort and never-raises, so every
+    other way an encode can fail is folded into its success envelope and the
+    recording is deregistered. The absent encoder is the one exception, and it is
+    the reason this refusal exists rather than being one more artifact line:
+    :func:`~strands_robots.rendering.require_clip_encoder` raises before any
+    writer is opened, so NO camera was written and NO buffer was touched. The
+    frames are all still in memory, and the remedy - install the encoder, call
+    the verb again - is only followable while the recording is still registered.
+
+    Deregistering there discarded exactly the frames the message promised were
+    recoverable. So the envelope and the retention are one decision, and this is
+    the one place that words it: both raw-camera recorders (MuJoCo's daemon-
+    thread capture and Isaac's ``on_frame`` capture) return it, which is what
+    keeps the two from drifting into different answers about the same absence.
+
+    Args:
+        reason: The encoder's own refusal - an ``ImportError`` raised through
+            :func:`~strands_robots.utils.require_optional`. It is quoted rather
+            than re-diagnosed: ``imageio`` and the MP4 plugin it leaves optional
+            are two different absences, so a fixed line names the wrong module
+            half the time and prescribes an install that changes nothing.
+        name: The registered recording's tag, echoed so a caller holding several
+            knows which one is still resident.
+        buffered: Frames held per camera, which is what the caller loses by not
+            following the remedy.
+
+    Returns:
+        A tool-style error envelope whose ``json`` carries ``stopped=False``,
+        ``recording`` and ``buffered_frames`` - the state a caller needs to
+        decide, without parsing the message.
+    """
+    held = dict(buffered)
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{reason}\n"
+                    f"Nothing was encoded and nothing was dropped: camera recording "
+                    f"{name!r} is left registered holding {held}. Install "
+                    f"the encoder and call stop_cameras_recording() again to flush it."
+                )
+            },
+            {
+                "json": {
+                    "stopped": False,
+                    "recording": name,
+                    "buffered_frames": held,
+                }
+            },
+        ],
+    }
+
+
 def recorder_dataset_fps(recorder: Any) -> int | None:
     """Read the frame rate of a live recorder's dataset, or None if unavailable.
 

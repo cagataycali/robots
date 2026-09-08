@@ -5571,8 +5571,31 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 return {"status": "error", "content": [{"text": "No world created. Call create_world() first."}]}
 
             rec_state = self._cams_rec_state
-            if rec_state and rec_state.get("running"):
+            if rec_state:
                 cur = rec_state["name"]
+                if not rec_state.get("running"):
+                    # Registered but no longer capturing: the only way to reach
+                    # this is a flush that refused because the encoder is absent
+                    # and therefore kept the frames (see
+                    # :meth:`stop_cameras_recording`). A start replaces the
+                    # attribute, so proceeding would discard exactly the frames
+                    # that refusal promised were still recoverable - quietly, and
+                    # under ``status="success"``.
+                    buffered = {cam: len(rec_state["buffers"][cam]) for cam in rec_state["cameras"]}
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Camera recording {cur!r} is still registered with frames no flush "
+                                    f"has read: {buffered}. Install the encoder and call "
+                                    f"stop_cameras_recording() first to encode them. Starting a new "
+                                    f"recording here would discard them."
+                                )
+                            },
+                            {"json": {"recording": cur, "buffered_frames": buffered}},
+                        ],
+                    }
                 return {
                     "status": "error",
                     "content": [{"text": f"Already recording '{cur}'. Call stop_cameras_recording() first."}],
@@ -5672,31 +5695,49 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ``{name}__{camera}.mp4`` under the ``output_dir`` passed to
         :meth:`start_cameras_recording`, using ``imageio`` (the same
         encoder the MuJoCo recorder uses). Idempotent: a no-op success
-        when nothing is recording.
+        when nothing is registered.
 
         Best-effort: per-camera flush failures are reported in the result
         (``frames`` / ``errors`` / ``size_kb``) but never raise, so a
-        partial encode still yields a structured success response.
+        partial encode still yields a structured success response - and the
+        recording is deregistered, because every camera was offered to the
+        encoder and there is nothing left to flush.
+
+        The absent encoder is the one exception, and it is why this verb can
+        be called twice: the probe raises before any writer is opened, so no
+        frame was written and none was dropped. The recording stays
+        registered holding its buffers, and a later call - once the encoder
+        is installed - encodes them (see
+        :func:`~strands_robots.simulation.recording.encoder_absent_flush_refusal`,
+        which the MuJoCo recorder returns for the same absence). Capture has
+        already stopped either way, so a retained recording cannot grow.
 
         Returns
         -------
         dict
             Standard ``{"status", "content": [{"text"}, {"json"}]}``
-            envelope. ``json`` carries ``recording`` (the tag) and an
-            ``artifacts`` list of ``{camera, path, frames, errors,
-            size_kb}`` per camera.
+            envelope. On success ``json`` carries ``recording`` (the tag) and
+            an ``artifacts`` list of ``{camera, path, frames, errors,
+            size_kb}`` per camera. When no encoder is installed it is instead
+            an error envelope carrying ``stopped=False`` and
+            ``buffered_frames``, and the frames are still there to flush.
         """
         import os as _os
         import time as _time
 
         with self._lock:
             state = getattr(self, "_cams_rec_state", None)
-            if not state or not state.get("running"):
+            if not state:
                 return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
+            # Stops the ``on_frame`` capture (it gates on this flag), so the
+            # buffers are settled and this thread is their only reader. The
+            # registration itself is NOT dropped here: a flush that cannot
+            # encode leaves the frames to be flushed by a later call, and only a
+            # flush that encoded deregisters (below).
             state["running"] = False
-            self._cams_rec_state = None
 
         from strands_robots.rendering.video import encode_clip
+        from strands_robots.simulation.recording import encoder_absent_flush_refusal
 
         elapsed = _time.monotonic() - state["started_mono"]
         lines = [
@@ -5718,19 +5759,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     encode_clip(frames_buffer, path, fps=state["fps"])
                     frames_written = len(frames_buffer)
                 except ImportError as exc:
-                    # Quote the encoder's own refusal rather than asserting
-                    # which module is missing: ``encode_clip`` needs both
-                    # ``imageio`` and the MP4 plugin ``imageio`` itself leaves
-                    # optional, and it raises through ``require_optional``,
-                    # which names the one actually absent plus the extra of
-                    # this package that supplies it. A fixed
-                    # "imageio not installed" line claims the wrong module
-                    # whenever it is the plugin that is missing, and sends the
-                    # caller to an install that changes nothing.
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"{exc}"}],
-                    }
+                    # Fires on the first camera holding frames, before any writer
+                    # is opened, so nothing is encoded and no buffer is touched.
+                    # Returning here leaves ``_cams_rec_state`` registered, which
+                    # is what makes the remedy the message names followable - the
+                    # shared owner words both recorders' answer to this absence.
+                    buffered = {_c: len(state["buffers"][_c]) for _c in state["cameras"]}
+                    return encoder_absent_flush_refusal(exc, state["name"], buffered)
                 except (RuntimeError, ValueError) as e:
                     # ``encode_clip`` refused the clip: ``RuntimeError`` when it
                     # wrote no file, ``ValueError`` when it will not encode at
@@ -5763,11 +5798,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 artifact["flush_error"] = flush_error
             artifacts.append(artifact)
 
+        # Every camera was offered to the encoder, so there is nothing left to
+        # flush: drop the registration that kept the frames reachable.
+        tag = state["name"]
+        with self._lock:
+            if self._cams_rec_state is state:
+                self._cams_rec_state = None
+
         return {
             "status": "success",
             "content": [
                 {"text": "\n".join(lines)},
-                {"json": {"recording": state["name"], "artifacts": artifacts}},
+                {"json": {"recording": tag, "artifacts": artifacts}},
             ],
         }
 
