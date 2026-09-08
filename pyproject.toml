@@ -270,6 +270,24 @@ microduck = [
 crazyflie = [
     "cflib>=0.1.25,<0.2.0",
 ]
+# Universal Robots RTDE client for the UR native driver
+# (strands_robots/drivers/ur.py). ur_rtde is the single distribution that supplies
+# both importables the driver resolves -- rtde_control (servoJ, speedJ, the
+# freedrive and dashboard verbs) and rtde_receive (joint positions and velocities,
+# the TCP pose, the safety and robot mode words) -- so one requirement is the
+# remedy for either name.
+#
+# Deliberately NOT a member of [all]: ur_rtde is a compiled Boost/pybind11
+# binding whose published wheels cover manylinux x86_64/i686 and win_amd64 only,
+# up to cp312. On a Python 3.13 interpreter or an aarch64 host -- the edge
+# machines this project runs on -- pip falls back to the sdist and needs a C++
+# toolchain plus Boost to build it, so folding it into [all] would put a compiler
+# in front of `pip install strands-robots[all]`. The driver degrades cleanly
+# without the SDK (_resolve_rtde returns a reason naming this extra), so [all]
+# still imports, registers and tests it. See docs/robots/arms.md.
+ur = [
+    "ur-rtde>=1.6.0,<2.0.0",
+]
 # HTTP transport for the EarthRover Mini Plus native driver
 # (strands_robots/drivers/earthrover.py). The driver talks to the vendor's
 # earth-rovers-sdk over HTTP -- GET /data for telemetry, POST /control to drive --

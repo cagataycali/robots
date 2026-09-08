@@ -66,10 +66,10 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 import strands_robots
+from tests.uv_lock_closure import lock_closure
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_LOCK = _REPO_ROOT / "uv.lock"
 
 #: The shipped package, reached through the imported module so a layout change
 #: cannot silently narrow the scan to nothing.
@@ -133,50 +133,10 @@ def _requirements(extra: str | None) -> list[Requirement]:
     return [Requirement(text) for text in declared]
 
 
-def _locked_packages() -> dict[str, list[dict]]:
-    with _LOCK.open("rb") as handle:
-        locked = tomllib.load(handle)["package"]
-    by_name: dict[str, list[dict]] = {}
-    for package in locked:
-        by_name.setdefault(package["name"], []).append(package)
-    return by_name
-
-
-def _requested_extras(entry: dict) -> tuple[str, ...]:
-    """Extras a lock dependency entry asks for. uv spells the key ``extra``."""
-    requested = entry.get("extra", ())
-    return tuple(requested) if isinstance(requested, list) else (requested,)
-
-
-def _lock_closure(extra: str | None) -> frozenset[str]:
-    """Distributions an install of *extra* resolves to (``None`` for the base set).
-
-    Walked over ``uv.lock`` rather than resolved live, so the check is offline.
-    Markers are not evaluated, which makes the result a superset -- see the
-    module docstring for why that direction is the safe one here.
-    """
-    by_name = _locked_packages()
-    root_extras: tuple[str, ...] = () if extra is None else (extra,)
-    seen: set[tuple[str, tuple[str, ...]]] = set()
-    pending: list[tuple[str, tuple[str, ...]]] = [("strands-robots", root_extras)]
-    while pending:
-        name, extras = pending.pop()
-        if (name, extras) in seen:
-            continue
-        seen.add((name, extras))
-        for package in by_name.get(name, []):
-            entries = list(package.get("dependencies", []))
-            optional = package.get("optional-dependencies", {})
-            for group in extras:
-                entries += optional.get(group, [])
-            pending += [(entry["name"], _requested_extras(entry)) for entry in entries]
-    return frozenset(str(canonicalize_name(name)) for name, _ in seen)
-
-
 def _every_closure() -> dict[str | None, frozenset[str]]:
     extras: list[str | None] = [None]
     extras += sorted(_manifest()["optional-dependencies"])
-    return {extra: _lock_closure(extra) for extra in extras}
+    return {extra: lock_closure(extra) for extra in extras}
 
 
 def _module_scope_imports(source: Path) -> set[str]:
@@ -226,7 +186,7 @@ def test_the_lerobot_extra_declares_the_process_dependency() -> None:
 @pytest.mark.parametrize("extra", _EXTRAS_REACHING_THE_SESSION_TOOLS)
 def test_every_extra_that_ships_the_session_tools_locks_psutil(extra: str) -> None:
     """Each extra carrying the session tools' stack resolves to a psutil."""
-    closure = _lock_closure(extra)
+    closure = lock_closure(extra)
     assert "psutil" in closure, (
         f"[{extra}] locks {len(closure)} distributions and psutil is not among "
         "them, so an install of that extra ships the session tools and none of "

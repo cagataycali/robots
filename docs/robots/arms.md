@@ -113,7 +113,8 @@ arm.send_action({"elbow_joint": 1.40})     # one servoJ setpoint, radians
 arm.run_policy(policy, n_steps=500)        # streamed rollout at control_frequency
 ```
 
-Needs the SDK: `pip install ur_rtde`. `port=` is the controller's address; the RTDE
+Needs the SDK: `pip install 'strands-robots[ur]'`, which declares the `ur_rtde`
+build the driver's two interfaces come from. `port=` is the controller's address; the RTDE
 port is fixed at 30004 by the protocol, so a different suffix is refused rather than
 dialled.
 

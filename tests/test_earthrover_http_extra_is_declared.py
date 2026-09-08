@@ -56,10 +56,10 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from strands_robots.drivers.earthrover import EarthRoverDriver
+from tests.uv_lock_closure import lock_closure
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_LOCK = _REPO_ROOT / "uv.lock"
 
 #: The extra that owns the transport, and the bundle that folds it in. Both must
 #: resolve to it: the first is the remedy the driver prints, the second is what
@@ -81,40 +81,6 @@ def _development_environment_dependencies() -> list[Requirement]:
         data = tomllib.load(handle)
     declared = data["tool"]["hatch"]["envs"]["default"].get("dependencies", [])
     return [Requirement(text) for text in declared]
-
-
-def _lock_closure(extra: str) -> frozenset[str]:
-    """Distributions an install of *extra* resolves to, walked over ``uv.lock``.
-
-    uv's own resolution of this manifest, so the claim that an extra supplies the
-    transport is checked rather than asserted, and offline. Markers are not
-    evaluated, which makes the result a superset -- the safe direction for a rule
-    that fails a manifest.
-    """
-    with _LOCK.open("rb") as handle:
-        locked = tomllib.load(handle)["package"]
-    by_name: dict[str, list[dict]] = {}
-    for package in locked:
-        by_name.setdefault(package["name"], []).append(package)
-
-    seen: set[tuple[str, tuple[str, ...]]] = set()
-    pending: list[tuple[str, tuple[str, ...]]] = [("strands-robots", (extra,))]
-    while pending:
-        name, extras = pending.pop()
-        if (name, extras) in seen:
-            continue
-        seen.add((name, extras))
-        for package in by_name.get(name, []):
-            entries = list(package.get("dependencies", []))
-            optional = package.get("optional-dependencies", {})
-            for group in extras:
-                entries += optional.get(group, [])
-            for entry in entries:
-                # uv spells the requested-extras key `extra`, singular.
-                requested = entry.get("extra", ())
-                asked = tuple(requested) if isinstance(requested, list) else (requested,)
-                pending.append((entry["name"], asked))
-    return frozenset(str(canonicalize_name(name)) for name, _ in seen)
 
 
 def test_the_extra_declares_the_http_transport() -> None:
@@ -150,7 +116,7 @@ def test_the_bundle_folds_the_extra_in() -> None:
 @pytest.mark.parametrize("extra", _EXTRAS_SHIPPING_THE_TRANSPORT)
 def test_an_install_of_the_extra_locks_the_transport(extra: str) -> None:
     """Each extra that must ship the transport resolves to it in the lock."""
-    closure = _lock_closure(extra)
+    closure = lock_closure(extra)
     assert "requests" in closure, (
         f"[{extra}] locks {len(closure)} distributions and requests is not among "
         "them, so an install of it ships the EarthRover driver and no transport for it"

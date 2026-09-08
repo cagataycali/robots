@@ -249,9 +249,9 @@ def _resolve_rtde() -> tuple[Any, Any] | str:
 
     Returns:
         ``(rtde_control, rtde_receive)`` on success, or a reason naming the
-        module that failed and the package that supplies it. Both modules come
-        from the single ``ur_rtde`` distribution, so one pip line is the remedy
-        for either name.
+        module that failed and the extra that supplies it. Both modules come
+        from the single ``ur_rtde`` distribution, which ``[ur]`` declares, so one
+        install line is the remedy for either name.
     """
     import importlib
 
@@ -261,7 +261,7 @@ def _resolve_rtde() -> tuple[Any, Any] | str:
     except ImportError as exc:
         return (
             f"the ur_rtde SDK is not importable ({exc}). It supplies both rtde_control and "
-            "rtde_receive; install it with 'pip install ur_rtde'."
+            "rtde_receive; install it with: pip install 'strands-robots[ur]'"
         )
     return control, receive
 
