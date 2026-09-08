@@ -32,6 +32,7 @@ from strands_robots.tools._process_stop import (
     recorded_pid,
     reused_pid_result,
     session_is_running,
+    session_uptime,
     unstopped_result,
     unusable_pid_result,
 )
@@ -992,7 +993,8 @@ def lerobot_teleoperate(
             "command": "full_command_executed",
             "log_file": "/tmp/session.log",  # for background sessions
             "sessions": {...},  # for list action
-            "uptime": 123.45,  # session uptime in seconds
+            "uptime": 123.45,  # session uptime in seconds; None when the
+                               # record states no usable start time
             "is_running": true  # for status action
         }
     """
@@ -1272,8 +1274,7 @@ def lerobot_teleoperate(
 
             if sessions:
                 for name, info in sessions.items():
-                    uptime = time.time() - info.get("start_time", 0)
-                    uptime_min = uptime / 60
+                    _, uptime_text = session_uptime(info)
                     pid = info.get("pid")
                     is_running = session_is_running(info)
 
@@ -1282,7 +1283,7 @@ def lerobot_teleoperate(
                             f"**{name}**",
                             f"   - Action: {info.get('action', 'Unknown')}",
                             f"   - PID: {pid}",
-                            f"   - Uptime: {uptime_min:.1f} min",
+                            f"   - Uptime: {uptime_text}",
                             f"   - Status: {'Running' if is_running else 'Stopped'}",
                             f"   - Robot: {info.get('robot_type', 'Unknown')}",
                             f"   - Teleop: {info.get('teleop_type', 'Unknown')}",
@@ -1309,16 +1310,14 @@ def lerobot_teleoperate(
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
-            start_time: float = float(session_info.get("start_time") or 0)
-            uptime = time.time() - start_time
-            uptime_min = uptime / 60
+            uptime, uptime_text = session_uptime(session_info)
             is_running = session_is_running(session_info)
 
             content_lines = [
                 f"**Session Status: `{session_name}`**",
                 f"PID: {pid}",
                 f"Action: {session_info.get('action', 'Unknown')}",
-                f"Uptime: {uptime_min:.1f} min",
+                f"Uptime: {uptime_text}",
                 f"Status: {'Running' if is_running else 'Stopped'}",
                 f"Robot: {session_info.get('robot_type', 'Unknown')}",
                 f"Teleop: {session_info.get('teleop_type', 'Unknown')}",

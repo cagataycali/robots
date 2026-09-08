@@ -38,6 +38,7 @@ from strands_robots.tools._process_stop import (
     recorded_pid,
     reused_pid_result,
     session_is_running,
+    session_uptime,
     unstopped_result,
     unusable_pid_result,
 )
@@ -987,7 +988,10 @@ def lerobot_train(
         Dict with ``status`` ("success" or "error") and a ``content`` list of
         ``{"text": ...}`` items, plus action-specific keys (``session_name``,
         ``pid``, ``command``, ``log_file``, ``output_dir``, ``sessions``,
-        ``is_running``, ``uptime``).
+        ``is_running``, ``uptime``). ``uptime`` is seconds, and is ``None`` when
+        the session record states no usable start time - see
+        :func:`~strands_robots.tools._process_stop.session_uptime`, which is what
+        the reported ``Uptime`` field says instead.
     """
     session_manager = SessionManager()
 
@@ -1199,7 +1203,7 @@ def lerobot_train(
             lines = [f"**Active Training Sessions** ({len(sessions)})", ""]
             if sessions:
                 for name, info in sessions.items():
-                    uptime_min = (time.time() - info.get("start_time", 0)) / 60
+                    _, uptime_text = session_uptime(info)
                     pid = info.get("pid")
                     is_running = session_is_running(info)
                     lines.extend(
@@ -1207,7 +1211,7 @@ def lerobot_train(
                             f"**{name}**",
                             f"   - Action: {info.get('action', 'Unknown')}",
                             f"   - PID: {pid}",
-                            f"   - Uptime: {uptime_min:.1f} min",
+                            f"   - Uptime: {uptime_text}",
                             f"   - Status: {'Running' if is_running else 'Stopped'}",
                             f"   - Policy: {info.get('policy_type', 'Unknown')}",
                             f"   - Output: {info.get('output_dir', 'Unknown')}",
@@ -1232,13 +1236,13 @@ def lerobot_train(
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
-            uptime = time.time() - float(session_info.get("start_time") or 0)
+            uptime, uptime_text = session_uptime(session_info)
             is_running = session_is_running(session_info)
             lines = [
                 f"**Session Status: `{session_name}`**",
                 f"PID: {pid}",
                 f"Action: {session_info.get('action', 'Unknown')}",
-                f"Uptime: {uptime / 60:.1f} min",
+                f"Uptime: {uptime_text}",
                 f"Status: {'Running' if is_running else 'Stopped'}",
                 f"Policy: {session_info.get('policy_type', 'Unknown')}",
                 f"Output dir: {session_info.get('output_dir', 'Unknown')}",
