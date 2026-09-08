@@ -979,7 +979,8 @@ reader = sim.stream_dataset(
         "observation.state": [-0.0667, -0.0333, 0.0],
         "action": [0.0, 0.0333, 0.0667],
     },
-    shuffle=False,                     # chronological for replay/eval
+    buffer_size=1,                     # capture order for replay/eval:
+    max_num_shards=1,                  # one reservoir slot, one shard
 )
 print(reader.num_episodes, reader.num_frames, reader.fps)
 for frame in reader:
@@ -991,6 +992,16 @@ for batch in reader.dataloader(batch_size=64, num_workers=4):
 ```
 
 Equivalently, the standalone reader: `from strands_robots import StreamingDatasetReader`.
+
+`shuffle` is **not** the read-order knob, and `shuffle=False` on its own reads
+shuffled frames with nothing reporting it. It selects only which generator
+drives the reordering (a generator reseeded from `seed` on every exhaustion, or
+the dataset's advancing one), so it decides reproducibility *across epochs* —
+lerobot documents it as "whether to shuffle the dataset across exhaustions".
+`StreamingLeRobotDataset` reorders either way: it samples a shard at random per
+frame and yields from a reservoir buffer. Capture order is therefore
+`buffer_size=1` (a reservoir of one cannot reorder) plus `max_num_shards=1`
+(a single shard has nothing to interleave), as above.
 
 Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
 `episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,

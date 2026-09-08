@@ -160,12 +160,16 @@ _NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
 class StreamingDatasetReader:
     """Version-tolerant wrapper over lerobot's StreamingLeRobotDataset.
 
+    ``shuffle`` is not the read-order knob - see :meth:`open`'s "Ordering"
+    note. Capture order is ``buffer_size=1`` plus ``max_num_shards=1``.
+
     Example (in-process eval / replay):
         reader = StreamingDatasetReader.open(
             "strands-robots/pick-place",
             delta_timestamps={"observation.images.front": [-0.2, -0.1, 0.0],
                               "action": [0.0, 0.1, 0.2]},
-            shuffle=False,            # chronological for replay/eval
+            buffer_size=1,            # capture order: a reservoir of one
+            max_num_shards=1,         # capture order: one shard to interleave
         )
         for frame in reader:
             ...  # raw tensors; normalize via reader.meta.stats if needed
@@ -205,6 +209,22 @@ class StreamingDatasetReader:
             the same way with or without the extra installed, rather than a
             NumPy error part-way through iteration, a shard count of zero that
             streams no frames, or a tolerance that switches the grid check off.
+
+        Ordering:
+            ``shuffle`` does not decide read order, and passing
+            ``shuffle=False`` alone reads shuffled frames. It selects only
+            which generator drives the reordering -
+            ``np.random.default_rng(seed)``, reseeded identically on every
+            exhaustion, versus the dataset's own advancing one - so it decides
+            reproducibility ACROSS epochs, matching lerobot's own "whether to
+            shuffle the dataset across exhaustions". ``StreamingLeRobotDataset``
+            reorders either way, at two levels: it samples a shard at random per
+            frame, and it yields from a reservoir buffer of ``buffer_size``.
+            Capture order therefore needs ``buffer_size=1`` (a reservoir of one
+            has nothing to reorder) together with ``max_num_shards=1`` (a single
+            shard has nothing to interleave). Nothing reports a shuffled read,
+            so an eval or replay loop that asked for order with ``shuffle``
+            alone silently consumes frames out of order.
 
         Raises:
             ValueError: A numeric knob (``tolerance_s``, ``buffer_size``,
@@ -418,7 +438,8 @@ def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
         import strands_robots
 
         reader = strands_robots.stream_dataset(
-            "lerobot/svla_so100_pickplace", shuffle=False
+            "lerobot/svla_so100_pickplace",
+            buffer_size=1, max_num_shards=1,  # capture order, not shuffle=False
         )
         for frame in reader:
             ...
