@@ -30,8 +30,11 @@ no guard may rest on, so the order itself is pinned too.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import logging
 import math
+import textwrap
 import time
 from typing import Any
 
@@ -39,7 +42,7 @@ import pytest
 
 from strands_robots.mesh import session as mesh_session
 from strands_robots.mesh.core import Mesh
-from strands_robots.mesh.session import PEER_TIMEOUT, get_peer, prune_peers, update_peer
+from strands_robots.mesh.session import PEER_TIMEOUT, PeerInfo, get_peer, get_peers, prune_peers, update_peer
 
 
 @pytest.fixture
@@ -252,3 +255,62 @@ class TestTheMeshSurfaceForwardsRatherThanRevalidates:
         update_peer("rover-1", "robot", "h", {})
         with pytest.raises(ValueError, match="max_age_s"):
             mesh.get_peer("rover-1", max_age_s=float("nan"))
+
+
+class TestOneSpellingOfTheReachabilityVerdict:
+    """The ``PEER_TIMEOUT`` comparison lives in exactly one member of ``PeerInfo``.
+
+    ``reachable`` is the field a fleet view renders as alive-or-not and the
+    field a dispatcher's failover trigger reads, and
+    :meth:`~strands_robots.mesh.session.PeerInfo.to_dict` is the only surface
+    that hands it out: every public accessor
+    (:func:`~strands_robots.mesh.session.get_peers`,
+    :func:`~strands_robots.mesh.session.get_peer`,
+    :attr:`~strands_robots.mesh.core.Mesh.peers`,
+    :attr:`~strands_robots.mesh.core.Mesh.peers_by_id` and
+    :meth:`~strands_robots.mesh.core.Mesh.get_peer`) answers with the dict
+    that method builds, and the ``PeerInfo`` objects themselves never leave
+    the module-private registry. A second member comparing against
+    ``PEER_TIMEOUT`` is therefore a second spelling of one rule that no
+    consumer can reach, free to drift from the row with nothing to report it -
+    and the threshold is exactly the kind of value retention turns into an
+    operator knob.
+
+    Keyed on the constant rather than on the shape of the comparison: a member
+    hard-coding ``10.0`` instead of naming ``PEER_TIMEOUT`` is a different
+    defect, and naming the constant is what makes the rule findable.
+    """
+
+    def test_only_to_dict_compares_the_age_against_the_timeout(self) -> None:
+        """No member other than the one every consumer reads spells the verdict."""
+        parsed = ast.parse(textwrap.dedent(inspect.getsource(PeerInfo))).body[0]
+        assert isinstance(parsed, ast.ClassDef), "PeerInfo is no longer a class"
+        owners = {
+            member.name
+            for member in parsed.body
+            if isinstance(member, ast.FunctionDef)
+            and any(isinstance(node, ast.Name) and node.id == "PEER_TIMEOUT" for node in ast.walk(member))
+        }
+
+        assert "to_dict" in owners, (
+            "no member of PeerInfo names PEER_TIMEOUT, so this scan is reading the "
+            "wrong source and would pass however many spellings the verdict had"
+        )
+        assert owners == {"to_dict"}, (
+            f"PeerInfo spells the reachability verdict in {sorted(owners)}. The row "
+            "to_dict emits is the only spelling a consumer can reach, so a second one "
+            "is unreadable code free to drift from the field the fleet actually reads."
+        )
+
+    def test_the_registry_answers_with_rows_rather_than_peer_objects(self, registry: Any) -> None:
+        """The premise the rule above rests on, and it holds either way.
+
+        It is what makes a second spelling *unreadable* rather than merely
+        unread: a consumer never holds a ``PeerInfo``, so a member of that
+        class is reachable only from inside this module.
+        """
+        update_peer("rover-1", "robot", "h", {})
+
+        assert all(isinstance(row, dict) for row in get_peers()), "get_peers stopped answering with rows"
+        row = _row("rover-1")
+        assert "reachable" in row, "the row every consumer reads stopped carrying the verdict"

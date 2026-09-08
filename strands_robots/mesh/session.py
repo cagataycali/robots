@@ -490,20 +490,6 @@ class PeerInfo:
         """Seconds since the last heartbeat."""
         return time.monotonic() - self.last_seen_mono
 
-    @property
-    def reachable(self) -> bool:
-        """Whether a heartbeat arrived within :data:`PEER_TIMEOUT`.
-
-        This is the verdict consumers previously inferred from a peer's
-        *absence*: with retention off the two readings agree, but under
-        ``STRANDS_MESH_PEER_RETENTION_S`` a peer can be present in the
-        registry while out of contact, and presence alone stops meaning
-        "alive". Derived from :attr:`age` on the same monotonic reading, so
-        no clock correction can flip it; a description of what this process
-        observed, never an authorization to command the peer.
-        """
-        return self.age <= PEER_TIMEOUT
-
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a plain dict (JSON-friendly).
 
@@ -514,6 +500,16 @@ class PeerInfo:
         described on :attr:`last_seen_mono`, ``reachable`` is the verdict
         derived from it, and ``peer_id`` is the key the registry files it
         under.
+
+        ``reachable`` is the verdict that a heartbeat arrived within
+        :data:`PEER_TIMEOUT`, and this method is the only place that
+        comparison is made: ``PeerInfo`` objects never leave the
+        module-private registry, so every consumer reads the verdict off this
+        row. It is the reading consumers previously inferred from a peer's
+        *absence* - with retention off the two agree, but under
+        ``STRANDS_MESH_PEER_RETENTION_S`` a peer can be present while out of
+        contact, and presence alone stops meaning "alive". It describes what
+        this process observed, never an authorization to command the peer.
 
         Spread last, a payload carrying any of those five names replaced the
         local reading. An ``age`` the sender chooses defeats every staleness
@@ -647,8 +643,9 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
     """Remove peers whose silence has outlived what the fleet tolerates.
 
     Out of contact is not gone. A peer past *timeout* stops being
-    ``reachable`` (see :attr:`PeerInfo.reachable`) but is deleted only once
-    its silence exceeds ``max(timeout, STRANDS_MESH_PEER_RETENTION_S)``.
+    ``reachable`` (the field :meth:`PeerInfo.to_dict` reports) but is deleted
+    only once its silence exceeds
+    ``max(timeout, STRANDS_MESH_PEER_RETENTION_S)``.
     With retention unset (the default ``0``) that maximum is *timeout* and
     behavior is unchanged: silent peers are deleted at the timeout, exactly
     as before. With retention set, a satellite between ground-station passes
