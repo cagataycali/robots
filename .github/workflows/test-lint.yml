@@ -47,17 +47,20 @@ jobs:
 
       - name: Install system dependencies (OpenGL for MuJoCo)
         # The step's own ceiling, so a stall is reaped here rather than at the
-        # job's 45 - only the step-level bound marks the step that stalled, and
-        # a job-level reap renders as a rollup FAILURE with no reason (#2442).
+        # job bound above - only the step-level bound marks the step that
+        # stalled, and a job-level reap renders as a rollup FAILURE with no
+        # reason (#2442).
         # Sized from the observed band: 31 successful runs put this step at
         # p50 33s and max 455s (7m35s). That band was exceeded twice on
         # 2026-08-19 - #2488 (14:27:49Z) and #2489 (15:07:23Z) were both reaped
         # here, 40 minutes apart, by multi-minute mirror stalls rather than by
         # anything in their diffs - so the headroom was restored by cutting what
         # the step downloads (the install below, -30.5%) rather than by raising
-        # this number, because the rest of the job costs up to ~32 min and
-        # anything above ~13 lets a slow apt push the job into the 45-minute
-        # reap it is meant to prevent.
+        # this number, because the rest of the job then cost up to ~32 min and
+        # anything above ~13 let a slow apt push the job into the job-level
+        # reap it is meant to prevent. Those figures were sized against the
+        # 45-minute job bound of the time; #2457 raised it to 60, and #3143
+        # re-measures the band against that.
         timeout-minutes: 12
         run: |
           # The GitHub runner image preconfigures third-party apt repos (e.g.
