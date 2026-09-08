@@ -2612,7 +2612,7 @@ class RenderingMixin:
                 try:
                     encode_clip(to_encode, path, fps=state["fps"])
                     frames_written = len(to_encode)
-                except ImportError:
+                except ImportError as exc:
                     # Fires on the first camera holding frames, before any
                     # writer is opened, so nothing is encoded and no buffer is
                     # touched. Report it the way the expired-join refusal
@@ -2621,13 +2621,23 @@ class RenderingMixin:
                     # here can follow that advice for the same reason: the
                     # recording is left registered. See
                     # :meth:`_flush_and_deregister_cameras_recording`.
+                    #
+                    # The encoder's own text is quoted rather than a fixed
+                    # "imageio not installed" diagnosis: two different modules
+                    # can be the one missing (``imageio``, or the MP4 plugin it
+                    # leaves optional), so a fixed line names the wrong one half
+                    # the time and prescribes a remedy that leaves the encode
+                    # exactly as impossible. ``encode_clip`` raises through
+                    # ``require_optional``, which names the module actually
+                    # absent and the extra of this package that supplies it at
+                    # the version it is tested against.
                     buffered = {_c: len(state["buffers"][_c]) for _c in state["cameras"]}
                     return {
                         "status": "error",
                         "content": [
                             {
                                 "text": (
-                                    "imageio not installed. pip install imageio imageio-ffmpeg\n"
+                                    f"{exc}\n"
                                     f"Nothing was encoded and nothing was dropped: camera recording "
                                     f"{state['name']!r} is left registered holding {buffered}. Install "
                                     f"the encoder and call stop_cameras_recording() again to flush it."

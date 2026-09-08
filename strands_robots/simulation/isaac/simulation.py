@@ -5717,10 +5717,19 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 try:
                     encode_clip(frames_buffer, path, fps=state["fps"])
                     frames_written = len(frames_buffer)
-                except ImportError:
+                except ImportError as exc:
+                    # Quote the encoder's own refusal rather than asserting
+                    # which module is missing: ``encode_clip`` needs both
+                    # ``imageio`` and the MP4 plugin ``imageio`` itself leaves
+                    # optional, and it raises through ``require_optional``,
+                    # which names the one actually absent plus the extra of
+                    # this package that supplies it. A fixed
+                    # "imageio not installed" line claims the wrong module
+                    # whenever it is the plugin that is missing, and sends the
+                    # caller to an install that changes nothing.
                     return {
                         "status": "error",
-                        "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
+                        "content": [{"text": f"{exc}"}],
                     }
                 except (RuntimeError, ValueError) as e:
                     # ``encode_clip`` refused the clip: ``RuntimeError`` when it

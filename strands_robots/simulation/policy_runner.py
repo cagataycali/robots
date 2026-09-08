@@ -48,13 +48,13 @@ import numpy as np
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import collect_required_bodies, resolve_chunk_length
+from strands_robots.rendering.video import require_clip_encoder
 from strands_robots.utils import (
     non_negative_whole_number_error,
     positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
     process_rss_mb,
-    require_optional,
 )
 
 if TYPE_CHECKING:
@@ -566,12 +566,22 @@ class _RolloutVideoWriter:
                 ],
             }
 
-        imageio = require_optional(
-            "imageio",
-            pip_install="imageio imageio-ffmpeg",
-            extra="sim-mujoco",
-            purpose="video recording",
-        )
+        # Through the shared owner rather than a local ``imageio`` probe: the
+        # writer below passes libx264 knobs, so this rollout needs the MP4
+        # plugin ``imageio`` leaves optional, not merely ``imageio``. Probing
+        # only the latter accepted an install where ``get_writer`` then routed
+        # the ``.mp4`` to another plugin and rejected ``quality`` as a
+        # ``TypeError``, which reached the caller as "Policy failed: ..." beside
+        # a 0-byte MP4.
+        #
+        # Returned as this method's error envelope, like every other setup
+        # failure above it: an absent encoder is a fact about the install, and
+        # the rollout is what the caller asked for - it can proceed without the
+        # recording only if it is told, and told before the loop runs.
+        try:
+            imageio = require_clip_encoder(resolved, purpose="video recording")
+        except ImportError as exc:
+            return None, {"status": "error", "content": [{"text": f"video recording: {exc}"}]}
         os.makedirs(os.path.dirname(os.path.abspath(resolved)), exist_ok=True)
         # A rollout renders at most one frame per applied control step, so the
         # video cannot carry more than ``control_frequency`` unique frames per

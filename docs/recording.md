@@ -510,6 +510,19 @@ it, and neither start verb probes the encoder, so the flush is the first call
 that needs one. It reports before opening any writer, so every buffer is intact
 and installing the encoder and calling again writes them.
 
+"No encoder" covers two modules, not one: `imageio` declares the plugin that
+actually writes MP4 -- `imageio_ffmpeg` -- as an optional extra of its own, so an
+install can have `imageio` and still no MP4 writer (`[vera-sim]` declares
+`imageio` alone). The flush requires both, and quotes whichever is missing, so
+the remedy it prints is the one that works:
+
+```
+'imageio_ffmpeg' is required for MP4 video encoding (encode_clip)
+Install with:
+  pip install 'strands-robots[sim-mujoco]'
+  pip install imageio-ffmpeg
+```
+
 ```python
 result = sim.stop_cameras_recording()
 if result["status"] == "error":

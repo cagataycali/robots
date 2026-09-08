@@ -17,7 +17,9 @@ The library home of the Gaussian-splat hybrid-render layer (issue #1537):
   lighting derived from the background scene (issue #2323), plus the
   :mod:`~strands_robots.rendering.color` helpers that pin the layer
   color-space contract.
-* :func:`encode_clip` / :func:`mjpeg_frames` -- shared media utilities.
+* :func:`encode_clip` / :func:`mjpeg_frames` -- shared media utilities,
+  with :func:`require_clip_encoder` as the one owner of which encoder
+  modules a given output container needs.
 """
 
 from .backgrounds import (
@@ -43,7 +45,7 @@ from .ibl import (
     environment_map_cache_path,
     render_environment_map,
 )
-from .video import encode_clip, mjpeg_frames
+from .video import encode_clip, mjpeg_frames, require_clip_encoder
 
 __all__ = [
     "GSPLAT_SCENES",
@@ -72,5 +74,6 @@ __all__ = [
     "plane_depth",
     "relative_luminance",
     "render_environment_map",
+    "require_clip_encoder",
     "srgb_to_linear",
 ]
