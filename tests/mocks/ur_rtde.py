@@ -14,6 +14,7 @@ motion commands, so a test can assert on the vector that reached the wire.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 #: A plausible measured pose, in the driver's joint order. Not all zeros: a
@@ -42,6 +43,13 @@ class FakeReceive:
         self.robot_mode = 7  # RUNNING
         self.safety_mode = 1  # NORMAL
         self.disconnected = False
+        # Called once at the start of the next ``getRobotMode``, then cleared. A
+        # controller whose RTDE link stalls mid-register-read parks its caller
+        # here, which is how a test puts a driver thread *inside*
+        # ``send_action`` - past the interface read that setpoint started from
+        # and before its ``servoJ``. Nothing else in the driver reads this
+        # register on that path, so arming it targets exactly that window.
+        self.on_next_mode_read: Callable[[], None] | None = None
 
     def getActualQ(self) -> list[float]:  # noqa: N802 - the SDK's own spelling
         return list(self.q)
@@ -59,6 +67,9 @@ class FakeReceive:
         return list(MEASURED_WRENCH)
 
     def getRobotMode(self) -> int:  # noqa: N802
+        hook, self.on_next_mode_read = self.on_next_mode_read, None
+        if hook is not None:
+            hook()
         return self.robot_mode
 
     def getSafetyMode(self) -> int:  # noqa: N802
@@ -78,6 +89,10 @@ class FakeControl:
         self.servo_stops = 0
         self.accepts = True
         self.disconnected = False
+        # Called once at the start of the next ``servoStop``, then cleared. A
+        # test uses it to sequence another thread's write attempt strictly
+        # inside the deceleration command, instead of timing it.
+        self.on_servo_stop: Callable[[], None] | None = None
 
     def servoJ(  # noqa: N802 - the SDK's own spelling
         self,
@@ -92,6 +107,9 @@ class FakeControl:
         return self.accepts
 
     def servoStop(self) -> None:  # noqa: N802
+        hook, self.on_servo_stop = self.on_servo_stop, None
+        if hook is not None:
+            hook()
         self.servo_stops += 1
 
     def disconnect(self) -> None:

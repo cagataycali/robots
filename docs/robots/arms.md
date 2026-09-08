@@ -143,9 +143,12 @@ waits up to two seconds for its thread and decelerates the arm with `servoStop`;
 policy blocking on a remote inference call outlasts that budget, and the envelope then
 carries `status="error"` with `stopped=False` and a reason naming the timeout, matching
 what `get_task_status()` says about the same loop. The arm is decelerated either way,
-and no further setpoint reaches the controller - the loop re-reads the stop signal after
-the policy returns and before it writes. `stop()` carries no verdict (the driver protocol
-annotates it `-> None`); read `stop_task()` when the outcome matters.
+and no further setpoint reaches the controller. That takes two re-reads rather than one:
+the loop re-reads the stop signal after the policy returns, and `send_action` re-reads the
+driver's halt counter immediately before `servoJ`. Between those two it reads both mode
+registers and the measured pose - three RTDE round trips to the same controller, during
+which a halt was otherwise answered by one more setpoint. `stop()` carries no verdict (the
+driver protocol annotates it `-> None`); read `stop_task()` when the outcome matters.
 
 Joint keys are the arm's own names, in RTDE wire order, and the MuJoCo assets declare
 them identically - so an action dict recorded in simulation streams to the controller
