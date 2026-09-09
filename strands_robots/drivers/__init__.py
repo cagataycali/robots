@@ -21,6 +21,7 @@ from strands_robots.drivers.base import (
     DRIVER_CHOICES,
     DRIVER_SURFACE,
     HardwareDriver,
+    drifted_driver_parameters,
     halt_failure_detail,
     missing_driver_members,
 )
@@ -127,6 +128,7 @@ __all__ = [
     "DRIVER_CHOICES",
     "DRIVER_SURFACE",
     "HardwareDriver",
+    "drifted_driver_parameters",
     "driver_choice_error",
     "get_native_driver_class",
     "halt_failure_detail",

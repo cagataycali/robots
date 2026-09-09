@@ -375,7 +375,7 @@ class TestDriver:
 
     def test_run_policy_refuses(self) -> None:
         driver = DynamixelDriver(tool_name="koch")
-        result = driver.run_policy(policy=None)  # type: ignore[arg-type]
+        result = driver.run_policy(policy_object=None)  # type: ignore[arg-type]
         assert result["status"] == "error"
         assert _NOT_WIRED in result["content"][0]["text"]
 

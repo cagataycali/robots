@@ -53,6 +53,7 @@ interpreted by the driver that receives it.
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -219,6 +220,13 @@ DRIVER_CHOICES = ("auto", DEFAULT_DRIVER, "strands")
 DRIVER_SURFACE: tuple[str, ...] = tuple(sorted(name for name in dir(HardwareDriver) if not name.startswith("_")))
 
 
+#: Stand-in receiver for binding an *unbound* verb in
+#: :func:`drifted_driver_parameters`. Binding a signature that still declares
+#: ``self`` needs something in that slot, and it is never called or read - a
+#: driver class is graded before any instance of it exists.
+_UNBOUND_SELF = object()
+
+
 def missing_driver_members(candidate: object) -> tuple[str, ...]:
     """Report which :data:`DRIVER_SURFACE` members ``candidate`` does not have.
 
@@ -236,6 +244,55 @@ def missing_driver_members(candidate: object) -> tuple[str, ...]:
         satisfies the whole surface.
     """
     return tuple(name for name in DRIVER_SURFACE if not hasattr(candidate, name))
+
+
+def drifted_driver_parameters(candidate: object) -> tuple[tuple[str, str], ...]:
+    """Report verbs whose parameters ``candidate`` spells differently from the Protocol.
+
+    :func:`missing_driver_members` answers whether the *names on the class* are
+    all there, and that is all it can answer: it is ``hasattr``, so a driver
+    that renames a documented parameter satisfies it completely. A driver is
+    invoked as an agent tool, and a dispatcher that spells the contract's own
+    parameter names as keywords is the ordinary caller - so a renamed parameter
+    is not a style difference, it is a ``TypeError`` raised past dispatch in
+    place of the status envelope every verb here promises to return.
+
+    The check is the call a conforming caller makes: bind every parameter
+    :class:`HardwareDriver` declares for the verb, by keyword. That admits the
+    freedoms a driver legitimately has - extra parameters of its own, its own
+    ordering, absorbing the ones it ignores in ``**kwargs`` - and refuses only
+    the one thing no caller can work around, a required parameter reachable
+    solely under a name the contract does not document.
+
+    Args:
+        candidate: A driver class or a built driver instance.
+
+    Returns:
+        ``(verb, reason)`` pairs in sorted order, ``reason`` being the binding
+        failure; empty when every verb accepts the contract's own spelling.
+    """
+    drifted: list[tuple[str, str]] = []
+    for verb in DRIVER_SURFACE:
+        declared = getattr(HardwareDriver, verb, None)
+        implemented = getattr(candidate, verb, None)
+        if not callable(declared) or not callable(implemented):
+            continue
+        try:
+            contract = inspect.signature(declared)
+            actual = inspect.signature(implemented)
+        except (TypeError, ValueError):  # pragma: no cover - builtins/C callables
+            continue
+        keywords = {
+            name: None
+            for name, parameter in contract.parameters.items()
+            if name != "self" and parameter.kind in (parameter.POSITIONAL_OR_KEYWORD, parameter.KEYWORD_ONLY)
+        }
+        bound = actual.parameters.get("self") is not None
+        try:
+            actual.bind(*((_UNBOUND_SELF,) if bound else ()), **keywords)
+        except TypeError as e:
+            drifted.append((verb, str(e)))
+    return tuple(sorted(drifted))
 
 
 def halt_failure_detail(envelope: dict[str, Any]) -> str | None:

@@ -334,23 +334,35 @@ class FeetechDriver:
 
     def start_task(
         self,
-        task: str,
+        instruction: str,
         robot_name: str | None = None,
-        policy: Policy | None = None,
+        policy_object: Policy | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Refuse: the bus is live, but no policy control loop drives it yet."""
-        del task, robot_name, policy, kwargs
+        """Refuse: the bus is live, but no policy control loop drives it yet.
+
+        The parameters are spelled the way
+        :meth:`~strands_robots.drivers.base.HardwareDriver.start_task` declares
+        them, so a caller that names them as keywords reaches this refusal
+        instead of a :class:`TypeError`. A refusal is a contract too: the day
+        the loop lands, no caller changes.
+        """
+        del instruction, robot_name, policy_object, kwargs
         return _refuse(f"start_task: {_NO_POLICY_LOOP}")
 
     def run_policy(
         self,
-        policy: Policy,
+        policy_object: Policy,
         robot_name: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Refuse: the bus is live, but no policy control loop drives it yet."""
-        del policy, robot_name, kwargs
+        """Refuse: the bus is live, but no policy control loop drives it yet.
+
+        ``policy_object`` is the name
+        :meth:`~strands_robots.drivers.base.HardwareDriver.run_policy` declares;
+        see :meth:`start_task` for why the refusal honours it.
+        """
+        del policy_object, robot_name, kwargs
         return _refuse(f"run_policy: {_NO_POLICY_LOOP}")
 
     def get_task_status(self) -> dict[str, Any]:

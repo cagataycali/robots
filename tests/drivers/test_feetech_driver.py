@@ -271,9 +271,9 @@ class TestPolicyRefusals:
         }
 
     def test_run_policy_refuses_naming_the_policy_loop(self) -> None:
-        # ``policy=None`` because the refusal fires before the argument is
-        # inspected.
-        result = FeetechDriver(tool_name="so101").run_policy(policy=None)  # type: ignore[arg-type]
+        # ``policy_object=None`` because the refusal fires before the argument
+        # is inspected.
+        result = FeetechDriver(tool_name="so101").run_policy(policy_object=None)  # type: ignore[arg-type]
         assert result == {
             "status": "error",
             "content": [{"text": f"run_policy: {_NO_POLICY_LOOP}"}],
