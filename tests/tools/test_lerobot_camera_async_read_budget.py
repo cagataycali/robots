@@ -228,13 +228,26 @@ class TestTheBudgetCannotBeDroppedAgain:
     """Structural pins: selecting the asynchronous read implies taking a budget."""
 
     def test_every_handler_that_selects_the_asynchronous_read_takes_a_budget(self) -> None:
-        def params(obj: Any) -> Any:
-            return inspect.signature(obj).parameters
+        """A handler is a function returning the tool's envelope, not a guard.
 
-        handlers = [obj for obj in vars(cam_mod).values() if inspect.isfunction(obj)]
-        selects = {obj.__name__ for obj in handlers if "async_mode" in params(obj)}
-        takes = {obj.__name__ for obj in handlers if "timeout_ms" in params(obj)}
+        The population is taken from the return annotation rather than from
+        every function in the module: the flag is also read by the preflight
+        guards, which answer refusal text and open no camera, so a guard that
+        reads the flag without a budget is correct rather than a violation.
+        """
 
+        def signature(obj: Any) -> Any:
+            return inspect.signature(obj)
+
+        handlers = [
+            obj
+            for obj in vars(cam_mod).values()
+            if inspect.isfunction(obj) and signature(obj).return_annotation == dict[str, Any]
+        ]
+        selects = {obj.__name__ for obj in handlers if "async_mode" in signature(obj).parameters}
+        takes = {obj.__name__ for obj in handlers if "timeout_ms" in signature(obj).parameters}
+
+        assert selects, "no handler selects the asynchronous read; the population is empty"
         assert selects == takes, f"selects the asynchronous read without a budget: {selects - takes}"
 
     def test_every_asynchronous_action_carries_the_guard_row(self) -> None:

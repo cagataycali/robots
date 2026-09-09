@@ -64,7 +64,11 @@ except ImportError as e:
 from strands import tool
 
 from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
-from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 # The one remedy for an absent RealSense SDK, so every surface that reports it
 # reports the same install. It names lerobot's ``intelrealsense`` extra rather
@@ -149,6 +153,76 @@ _ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
 }
 
 
+_ACTION_POSTURE_FLAGS: dict[str, tuple[str, ...]] = {
+    "capture": ("async_mode", "warmup"),
+    "capture_batch": ("async_mode", "warmup"),
+    "record": ("async_mode", "warmup"),
+    "preview": ("async_mode", "warmup"),
+    "test": ("async_mode", "warmup"),
+    "configure": ("save_config", "warmup"),
+}
+
+
+def _posture_flag_error(action: str, *, async_mode: Any, warmup: Any, save_config: Any) -> str | None:
+    """Error text for the first posture flag ``action`` consumes but cannot read.
+
+    These three select a *posture* rather than scaling a quantity, and each was
+    read by truthiness - so every non-empty string, the spellings a caller
+    reaches for when opting out included, selected the affirmative posture.
+    Measured on ``eecaa80`` against a recording camera stand-in:
+
+    * ``save_config="false"`` wrote the configuration file, so a caller who
+      spelled the opt-out got a durable artifact on disk under
+      ``status="success"``;
+    * ``warmup="false"`` was handed to ``Camera.connect`` as the string, was
+      persisted into that file as ``"warmup": "false"`` - a string in the one
+      field of that document declared a boolean, beside the integer geometry and
+      rate that are validated - and was reported on the line above it as
+      ``Warmup: on``, so the file, the report and the caller disagree three ways
+      about one posture;
+    * ``async_mode="false"`` selected the asynchronous read path, which the
+      plain boolean ``False`` does not: one ``async_read`` and no synchronous
+      read, against zero and one.
+
+    It runs ahead of :func:`_numeric_option_error` because that guard's
+    ``timeout_ms`` row is *gated* on this flag - the synchronous read consumes no
+    budget, so an option no handler reads is not refused. Reading the gate by
+    truthiness switched the row off from outside its own table: ``async_mode=0``
+    with ``timeout_ms=-5`` was answered ``status="success"``, an unusable budget
+    accepted because a falsy value that is not a declared spelling of *off*
+    discarded the row. Ordered the other way the refusal also names the wrong
+    parameter - ``async_mode="false", timeout_ms=-5`` reported ``capture:
+    timeout_ms must be > 0``, sending the caller to correct a budget whose only
+    problem was the flag that selected it.
+
+    Keyed by action, and holding only the flags each handler is actually passed,
+    for the reason the numeric table is: ``discover`` and ``list`` take none of
+    the three, so a value neither consults is not refused. The domain itself
+    belongs to neither surface, so it delegates to
+    :func:`~strands_robots.utils.boolean_flag_error` - the one owner the sibling
+    ``lerobot_train`` and ``lerobot_calibrate`` builders already consult - exactly
+    as the numeric rows delegate their spans and counts. What stays here is the
+    roster and the report order, which puts ``save_config`` ahead of ``warmup``
+    so the flag that writes a file is named before the one that only opens a
+    camera.
+
+    Args:
+        action: The requested action; decides which flags are effective.
+        async_mode: Whether the asynchronous read path is selected, as supplied.
+        warmup: Whether the camera is warmed on connection, as supplied.
+        save_config: Whether the configuration is written to a file, as supplied.
+
+    Returns:
+        An error message naming the action and the flag, or ``None`` when every
+        flag this action reads is a boolean.
+    """
+    supplied = {"async_mode": async_mode, "warmup": warmup, "save_config": save_config}
+    for param in _ACTION_POSTURE_FLAGS.get(action, ()):
+        if error := boolean_flag_error(supplied[param], param, action):
+            return error
+    return None
+
+
 def _numeric_option_error(
     action: str,
     *,
@@ -182,7 +256,10 @@ def _numeric_option_error(
     preview's frame period.
 
     ``timeout_ms`` is only effective under ``async_mode``: the synchronous read
-    takes no timeout, so a value it never consumes is not refused.
+    takes no timeout, so a value it never consumes is not refused. That makes the
+    flag a gate on this table, so it is a boolean by the time it is read here -
+    :func:`_posture_flag_error` runs first, and a truthy spelling of *off* can no
+    longer switch the row off from outside the table.
 
     **The frame count is a product, so one factor's sign does not decide whether a
     frame can be captured.** ``positive_finite_number_error`` reads
@@ -464,16 +541,27 @@ def lerobot_camera(
             refused if it names a location outside it.
         capture_duration: Duration for video recording (positive seconds)
         preview_duration: Duration for preview display (positive seconds)
-        async_mode: Use async reading for better performance
+        async_mode: Use async reading for better performance. A boolean; it
+            selects a read path rather than scaling one, so any other value is
+            refused rather than read as its opposite.
         timeout_ms: Timeout for async operations (positive milliseconds; read only when async_mode is on)
-        warmup: Enable camera warmup on connection
-        save_config: Save camera configuration to file
+        warmup: Enable camera warmup on connection. A boolean, refused rather
+            than read by truthiness - it is also recorded in the saved
+            configuration, so a non-boolean would persist there.
+        save_config: Save camera configuration to file. A boolean, refused
+            rather than read by truthiness: it writes a file, so a truthy
+            spelling of off would leave one behind.
 
     Returns:
         Dict containing status and detailed camera operation results
     """
 
     try:
+        # Ahead of the numeric guard: that guard's ``timeout_ms`` row is gated on
+        # ``async_mode``, so the gate is checked before it decides a row.
+        posture_error = _posture_flag_error(action, async_mode=async_mode, warmup=warmup, save_config=save_config)
+        if posture_error:
+            return {"status": "error", "content": [{"text": posture_error}]}
         numeric_error = _numeric_option_error(
             action,
             width=width,
