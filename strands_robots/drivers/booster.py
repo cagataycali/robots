@@ -53,7 +53,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, telemetry_float_list, undeclared_verb_error
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
@@ -326,9 +326,12 @@ def parse_low_state(msg: Any, state_field: str) -> dict[str, Any]:
             :data:`CMD_TYPE_STATE_FIELD`.
 
     Returns:
-        ``{"joints", "velocities", "torques", "temperatures", "imu"}``. Absent
-        fields are omitted rather than defaulted: a snapshot that reports a
-        zeroed IMU the robot never sent is worse than one that reports none.
+        ``{"joints", "velocities", "torques", "temperatures", "imu"}``. Each
+        IMU vector is read through
+        :func:`~strands_robots.drivers.base.telemetry_float_list`, so a field
+        the ``LowState`` does not carry lands ``None`` rather than a reading: a
+        snapshot that reports a zeroed IMU the robot never sent is worse than
+        one that reports none.
     """
     snapshot: dict[str, Any] = {}
     motors = getattr(msg, state_field, None) or []
@@ -339,9 +342,9 @@ def parse_low_state(msg: Any, state_field: str) -> dict[str, Any]:
     imu = getattr(msg, "imu_state", None)
     if imu is not None:
         snapshot["imu"] = {
-            "rpy": [float(v) for v in getattr(imu, "rpy", []) or []],
-            "gyro": [float(v) for v in getattr(imu, "gyro", []) or []],
-            "acc": [float(v) for v in getattr(imu, "acc", []) or []],
+            "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
+            "gyro": telemetry_float_list(getattr(imu, "gyro", None)),
+            "acc": telemetry_float_list(getattr(imu, "acc", None)),
         }
     return snapshot
 
