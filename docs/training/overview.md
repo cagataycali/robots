@@ -101,7 +101,8 @@ supports and **ignores the rest** (the same tolerance rule as
 |-------|---------|-------|
 | `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
-| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes` |
+| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes`. A posture flag, so `validate()` requires a boolean rather than reading it by truthiness: `"false"` is truthy and would stream, and beside `val_episodes` it was refused with "set streaming=False" at a caller who had spelled exactly that |
+| `resume` | continue from the last checkpoint under `output_dir` | lerobot, GR00T, SageMaker. A posture flag, checked like `streaming`: on lerobot a truthy `resume` swaps the spec-built config for the checkpoint's own, so `"false"` would silently drop `steps`, `global_batch_size` and `save_freq` from the run it was meant to start fresh |
 | `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |

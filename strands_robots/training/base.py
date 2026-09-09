@@ -590,6 +590,45 @@ class Trainer(ABC):
 
         return validation_episodes_problems(spec, context=self.provider_name)
 
+    def _resume_problems(self, spec: TrainSpec) -> list[str]:
+        """Resume-posture preflight shared by every backend that reads it.
+
+        Returns a problem when :attr:`TrainSpec.resume` is not a boolean,
+        against the one shared :func:`~strands_robots.utils.boolean_flag_error`
+        domain. A :meth:`validate` implementation whose backend reads the field
+        - by name or by forwarding it through a table - MUST call this ahead of
+        that read, because the field selects a *posture* and every reader tests
+        it by truthiness: a truthy spelling of off (``"false"``) resumes, and on
+        LeRobot a resume replaces the spec-built config with the checkpoint's,
+        so the run size and cadence the caller set never reach the run.
+
+        A backend that does not read the field MUST NOT call this, for the same
+        reason :meth:`_validation_episodes_problems` gives.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import resume_problems
+
+        return resume_problems(spec, context=self.provider_name)
+
+    def _streaming_problems(self, spec: TrainSpec) -> list[str]:
+        """Streaming-posture preflight shared by every backend that reads it.
+
+        The peer of :meth:`_resume_problems` for :attr:`TrainSpec.streaming`,
+        kept separate because the two fields have different readers. A backend
+        whose ``validate`` branches on the field itself (LeRobot refuses
+        ``streaming`` beside ``val_episodes``) MUST consult this first and read
+        the field only when it reports nothing, so a misread posture is refused
+        by the flag's own name rather than by the option it selected.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import streaming_problems
+
+        return streaming_problems(spec, context=self.provider_name)
+
     def _lora_hyperparameter_problems(self, spec: TrainSpec) -> list[str]:
         """LoRA adapter preflight shared by every backend that reads it.
 

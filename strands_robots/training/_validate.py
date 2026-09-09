@@ -167,6 +167,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.tools._path_validation import validate_save_path
 from strands_robots.utils import (
+    boolean_flag_error,
     finite_number_error,
     non_negative_count_error,
     positive_count_error,
@@ -762,6 +763,94 @@ def validation_episodes_problems(spec: TrainSpec, *, context: str) -> list[str]:
         return []
     error = positive_count_error(spec.val_episodes, "val_episodes", context)
     return [] if error is None else [error]
+
+
+def _posture_flag_problems(spec: TrainSpec, fields: Sequence[str], *, context: str) -> list[str]:
+    """One problem per field in *fields* that is not a boolean, in that order."""
+    problems: list[str] = []
+    for param in fields:
+        error = boolean_flag_error(getattr(spec, param), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
+def resume_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return resume-posture problems for a :class:`TrainSpec`.
+
+    ``resume`` selects one of two postures - continue the run under
+    ``output_dir`` from its last checkpoint, or start a fresh one there - and
+    every backend that reads it does so by truthiness. Every non-empty string is
+    truthy, so ``"false"``, ``"no"`` and ``"0"`` - the spellings a caller reaches
+    for when opting *out* - select the resume, and what that resume does with
+    the rest of the spec is the reason this is a preflight problem rather than a
+    downstream one:
+
+    * LeRobot's ``build_config`` returns the checkpoint's own ``train_config.json``
+      in place of a config built from the spec when ``resume`` is truthy and a
+      checkpoint exists, so the fresh run that was asked for silently becomes a
+      resume of a previous configuration and the spec's ``steps``,
+      ``global_batch_size``, ``save_freq`` and learning rate never reach it.
+      That is the same defect the sibling ``lerobot_train`` tool's argv
+      builder already refuses for its own ``resume``, reached here through the
+      provider-agnostic ``train_policy`` tool one layer up.
+    * LeRobot's ``train`` clears a stale *empty* ``output_dir`` only when
+      ``not spec.resume``, so a truthy opt-out leaves it for lerobot to refuse as
+      already existing - a refusal whose remedy the caller already followed.
+    * GR00T emits ``--resume_from_checkpoint`` and passes the raw value as
+      ``FinetuneConfig.resume_from_checkpoint``, and SageMaker forwards the raw
+      value as a hyperparameter string, so the container is told ``"false"``
+      where the wrapped trainer expects a boolean it can test.
+
+    The falsy non-booleans invert the other way: ``0``, ``None`` and ``""`` take
+    the fresh-start branch without being a declared spelling of it. Nothing
+    reports either direction, because nothing raised.
+
+    The flag is checked against the one shared
+    :func:`~strands_robots.utils.boolean_flag_error` domain rather than parsed:
+    it arrives already typed, and a vocabulary would only move which spellings
+    invert. The check is placed ahead of every read the backend makes of the
+    field, so no reader ever sees a value it can only misread.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``resume`` is not a boolean; empty otherwise.
+    """
+    return _posture_flag_problems(spec, ("resume",), context=context)
+
+
+def streaming_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return streaming-posture problems for a :class:`TrainSpec`.
+
+    ``streaming`` selects whether the dataset is materialized or streamed, and
+    the two backends that read it do so by truthiness, so the same inversion
+    :func:`resume_problems` describes applies: ``"false"`` streams. On LeRobot it
+    also *gates* another check - ``validate`` refuses ``streaming`` together with
+    ``val_episodes`` because a held-out split annuls the stream - so a truthy
+    opt-out beside a split was refused with "set streaming=False to keep the
+    validation split", a remedy the caller had already spelled. That is why the
+    backend consults this gate ahead of the pair check rather than beside it: a
+    posture guard placed after the option it gates still refuses, but names the
+    option the misread posture selected rather than the flag.
+
+    Kept separate from :func:`resume_problems` because the two fields have
+    different readers - GR00T reads ``resume`` and ignores ``streaming`` - and a
+    backend that ignores a field MUST NOT report on it (see :class:`TrainSpec`).
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        A single problem when ``streaming`` is not a boolean; empty otherwise.
+    """
+    return _posture_flag_problems(spec, ("streaming",), context=context)
 
 
 def lora_hyperparameter_problems(spec: TrainSpec, *, context: str) -> list[str]:

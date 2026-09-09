@@ -340,6 +340,8 @@ class SagemakerTrainer(Trainer):
         problems.extend(self._seed_problems(spec))
         problems.extend(self._validation_episodes_problems(spec))
         problems.extend(self._lora_hyperparameter_problems(spec))
+        problems.extend(self._resume_problems(spec))
+        problems.extend(self._streaming_problems(spec))
 
         # --- the hyperparameter mapping itself ---
         problems.extend(hyperparameter_problems(spec))

@@ -867,7 +867,9 @@ class LerobotTrainer(Trainer):
         ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
         size (``steps`` / ``global_batch_size``), a ``device`` torch can parse,
         single-node only
-        (``num_nodes == 1``), a ``val_episodes``
+        (``num_nodes == 1``), a boolean ``resume`` and ``streaming`` (each
+        selects a posture, so each is checked rather than read by truthiness -
+        ``streaming`` ahead of the pair check it gates), a ``val_episodes``
         split below the dataset total and not asked for alongside ``streaming``
         (lerobot's split path is map-style only), a local dataset format version
         the installed lerobot can read, usable LoRA hyperparameters when
@@ -920,6 +922,13 @@ class LerobotTrainer(Trainer):
         problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
         problems.extend(self._seed_problems(spec))
+        problems.extend(self._resume_problems(spec))
+        # Captured rather than extended blind: the streaming / val_episodes pair
+        # check below branches on the flag, and a flag that is not a boolean
+        # would select that branch by truthiness - so the pair was refused with
+        # "set streaming=False" at a caller who had spelled exactly that.
+        streaming_problems = self._streaming_problems(spec)
+        problems.extend(streaming_problems)
         problems.extend(self._device_problems())
         # Captured rather than extended blind: the multi-node refusal below
         # compares num_nodes, which is only a meaningful comparison once this
@@ -943,7 +952,7 @@ class LerobotTrainer(Trainer):
 
         if not val_problems and spec.val_episodes is not None:
             total = self._dataset_total_episodes(spec.dataset_root) if spec.dataset_root else None
-            if spec.streaming:
+            if not streaming_problems and spec.streaming:
                 # Decided from the two fields alone, ahead of every count-derived
                 # check below, because the pair delivers neither field whatever
                 # the episode count is. That count is only readable from a local
