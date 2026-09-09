@@ -227,6 +227,27 @@ exactly as it was, with no temp file beside it, and the tool answers
 unchanged - rather than reporting a named posture that no later `load_pose` can
 find.
 
+### A calibration survives a write that could not finish
+
+A calibration is the one file these tools handle that is not derived data: its
+homing offsets and joint travel limits are recorded by disabling torque and moving
+*one physical arm* by hand, so a stored one that is lost costs the procedure, not a
+re-run. Both writers of that store - `save_calibration` and the `"restore"` action -
+therefore commit through a temp sibling plus `os.replace` instead of writing over
+the stored file.
+
+`"restore"` is the sharper of the two, because it is the path a lost calibration is
+recovered on. With `overwrite=True` a write that could not finish used to destroy
+the calibration it was replacing *and* fail to install the backup, so restoring a
+backup over a working arm could leave neither. Now a refused write leaves the
+stored measurement byte-identical and still loadable, and the action reports
+`status="error"` with the count it did restore.
+
+This matters more than the report, because nothing downstream flags the loss: a
+truncated calibration still `exists()`, `load_calibration` reads it as `None`, and
+`action="view"` renders its path, size and timestamp under `status="success"` with
+no motors in it.
+
 ### A mesh wait budget is bounded where the command body cannot carry it
 
 `robot_mesh` takes four numeric options. `duration` and `policy_port` travel

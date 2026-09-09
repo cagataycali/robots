@@ -21,9 +21,12 @@ Based on LeRobot's calibration system:
 
 import json
 import logging
+import os
 import re
 import shutil
+from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +55,61 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 # Calibration JSON: {motor_name: {id, drive_mode, homing_offset, range_min, range_max}}
 CalibrationMotorData = dict[str, int]
 CalibrationData = dict[str, CalibrationMotorData]
+
+
+def _commit_calibration(path: Path, fill: Callable[[Path], Any]) -> None:
+    """Replace ``path`` with a whole file, or leave the one already there alone.
+
+    A calibration is a measurement of one physical robot - the homing offsets
+    and joint travel limits recorded by moving that arm by hand - so losing a
+    stored one costs the procedure, not a re-run. Writing into the destination
+    cannot offer that, because the stream is truncated before the first byte of
+    the replacement lands: a value the encoder rejects, or a disk that fills,
+    leaves a prefix where the measurement was. Every reader here then reports
+    that prefix as *no calibration* while
+    :meth:`LeRobotCalibrationManager.calibration_exists` still answers ``True``,
+    so the loss surfaces as a calibration that lists and views but has no
+    motors.
+
+    ``fill`` therefore writes a temp file in the destination's own directory and
+    :func:`os.replace` commits it - the sequence
+    :func:`strands_robots.registry.user_registry._save_user_registry` documents
+    for its own whole-document store, and for the same reason: ``os.replace`` is
+    atomic within a directory, so a failed commit leaves the previous file
+    intact rather than truncated, and a concurrent reader observes one whole
+    calibration or the other, never a prefix.
+
+    The temp name carries a second suffix rather than replacing ``.json``, so
+    the ``*.json`` globs that enumerate this store cannot mistake an
+    uncommitted file for a calibration. Its mode is whatever ``fill`` gives it,
+    which keeps ``shutil.copy2``'s copied permissions and a plain write's
+    umask-derived ones: replacing a file's contents is not the moment to decide
+    who may read it.
+
+    Args:
+        path: The calibration file to replace. Its parent must exist; both
+            callers create it.
+        fill: Writes the whole replacement to the temp path it is given.
+
+    The handler is ``Exception`` rather than ``BaseException`` because the temp
+    name is provably not one this store's enumerations read - so an interrupt that
+    strands one costs nothing a later commit does not clear, and the wider handler
+    would only add a site to the enumerated set in ``AGENTS.md`` without buying a
+    reader anything.
+
+    Raises:
+        Exception: Whatever ``fill`` or the commit raises, after removing the temp
+            file. ``path`` still holds what it last held, and no partial file is
+            left beside it under a name the readers would pick up.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        fill(tmp)
+        os.replace(tmp, path)
+    except Exception:
+        # The commit did not happen, so ``path`` is the previous calibration.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class LeRobotCalibrationManager:
@@ -120,15 +178,29 @@ class LeRobotCalibrationManager:
             return None
 
     def save_calibration(self, device_type: str, device_model: str, device_id: str, data: CalibrationData) -> bool:
-        """Save calibration data to file"""
+        """Save calibration data to file.
+
+        The calibration is serialized in full before the stored file is touched
+        and committed through :func:`_commit_calibration`, so a value JSON
+        cannot represent is rejected while the previous measurement is still on
+        disk. ``CalibrationData`` is a type alias rather than a runtime check,
+        so such a value reaches here from any caller holding a motor reading
+        that is not a plain ``int``.
+
+        Returns:
+            ``True`` when the stored file is the calibration passed in.
+            ``False`` when it could not be written, in which case the file
+            holds whatever it held before - reported rather than raised, which
+            is the contract callers already had.
+        """
         calib_path = self.get_calibration_path(device_type, device_model, device_id)
 
         # Ensure parent directory exists
         calib_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(calib_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            payload = json.dumps(data, indent=2)
+            _commit_calibration(calib_path, lambda tmp: tmp.write_text(payload, encoding="utf-8"))
             return True
         except Exception as e:
             logger.error(f"Error saving calibration {calib_path}: {e}")
@@ -292,7 +364,12 @@ class LeRobotCalibrationManager:
                             continue  # Skip existing files unless overwrite is True
 
                         dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(calib_file, dest_file)
+                        # Restoring is the path a lost measurement is recovered
+                        # on, so it is the last one that may damage the
+                        # calibration it is writing over: copy into a temp
+                        # sibling and commit, keeping copy2's preserved mode
+                        # and mtime.
+                        _commit_calibration(dest_file, partial(shutil.copy2, calib_file))
                         restored_count += 1
 
             return True, f"Successfully restored {restored_count} calibrations", restored_count
