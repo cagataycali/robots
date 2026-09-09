@@ -5297,6 +5297,16 @@ class MuJoCoSimEngine(
 
         A second ``start_policy`` on the *same* robot is still rejected.
 
+        Every request :meth:`run_policy` refuses is refused here too, before the
+        submit: the horizon, the seed, the video config, the provider keyword
+        bags, the recording rate, and the policy configuration itself (provider
+        resolution plus the provider's own
+        :meth:`~strands_robots.policies.base.Policy.preflight` hook, via
+        :meth:`~strands_robots.simulation.base.SimEngine._preflight_policy_config`).
+        A refusal raised on the worker instead would be discarded with the
+        future, leaving the caller a ``status="success"`` for a rollout that
+        never produced an action.
+
         accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
         alternate horizon specification; run_policy converts to duration.
         """
@@ -5365,11 +5375,21 @@ class MuJoCoSimEngine(
         # frames separately, which is correct for live control but interleaves
         # for a shared recorder. start_policy while recording is left to the
         # caller's intent (run_multi_policy is the recommended recording path).
-        # Resolve the provider synchronously. run_policy performs this check
-        # too, but it runs on the worker below: a raise there is captured in
-        # the future and this method would still report "Policy started",
-        # leaving the caller with a success for a rollout that never began.
-        if err := self._unresolvable_policy_provider_error(policy_provider, policy_config):
+        # Pre-flight the whole policy configuration synchronously. run_policy
+        # performs this check too, but it runs on the worker below, and nothing
+        # reads that future's result: an error returned there is discarded while
+        # this method has already reported "Policy started", so the caller holds
+        # a success for a rollout that never produced an action and
+        # ``list_policies_running`` then reports nothing running - the same
+        # reading as a rollout that completed. Both halves of the verdict have
+        # to be given here, not just provider resolution: the provider's own
+        # ``preflight`` hook refuses a configuration it can see up front (a
+        # camera the model's image features cannot be routed from, an
+        # unexecutable action-chunk count), and that refusal is what run_policy
+        # returns to a blocking caller. This builds no policy and downloads no
+        # weights, and it is skipped for a pre-built ``policy_object`` for the
+        # same reason run_policy skips it - the provider is then unused.
+        if policy_object is None and (err := self._preflight_policy_config(robot_name, policy_provider, policy_config)):
             return err
 
         # Claim the robot on THIS thread, before the submit. A stop issued

@@ -1139,34 +1139,6 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": str(e)}]}
         return None
 
-    def _unresolvable_policy_provider_error(
-        self,
-        policy_provider: str,
-        policy_config: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """Report an unresolvable ``policy_provider`` as a structured error.
-
-        For surfaces that cannot use :meth:`_preflight_policy_config` because
-        they build the policy elsewhere -- notably a ``start_policy`` that
-        submits the rollout to a worker thread -- this gives the same verdict
-        synchronously, so the caller is refused instead of being told a
-        rollout started that could never build its policy.
-
-        Args:
-            policy_provider: Provider name / smart string.
-            policy_config: Provider kwargs (the policy_config).
-
-        Returns:
-            A ``status=error`` dict when the provider cannot be resolved;
-            ``None`` when it resolves.
-        """
-        from strands_robots.policies import policy_provider_error
-
-        reason = policy_provider_error(policy_provider, **(policy_config or {}))
-        if reason is None:
-            return None
-        return {"status": "error", "content": [{"text": reason}]}
-
     # Object management
 
     @abstractmethod

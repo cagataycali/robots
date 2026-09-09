@@ -233,7 +233,14 @@ class TestTheProbeCostsNoConstruction:
 
 
 class TestTheGuardPrecedesTheSubmit:
-    """Pinned structurally: a guard below the submit is a false success again."""
+    """Pinned structurally: a guard below the submit is a false success again.
+
+    The verdict is given by ``_preflight_policy_config``, which reports an
+    unresolvable provider as its first act and then runs the provider's own
+    ``preflight`` hook - so ``start_policy`` refuses everything ``run_policy``
+    refuses about a policy configuration, not just the name (see
+    ``tests/simulation/mujoco/test_start_policy_refuses_what_run_policy_refuses.py``).
+    """
 
     def test_start_policy_checks_the_provider_before_submitting(self):
         src = inspect.getsource(mujoco_simulation)
@@ -246,7 +253,7 @@ class TestTheGuardPrecedesTheSubmit:
                 if index == 0:
                     continue  # the docstring names these symbols in prose
                 segment = ast.get_source_segment(src, statement) or ""
-                if "_unresolvable_policy_provider_error" in segment and checked is None:
+                if "_preflight_policy_config" in segment and checked is None:
                     checked = index
                 if "self._executor.submit(" in segment and submitted is None:
                     submitted = index
