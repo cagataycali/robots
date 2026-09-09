@@ -5,7 +5,6 @@ state as structured RPCs and events via Device Connect's DeviceDriver interface.
 """
 
 import logging
-from collections.abc import Mapping
 from typing import Any
 
 from device_connect_edge.drivers import (
@@ -19,7 +18,7 @@ from device_connect_edge.drivers import (
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
 from strands_robots.device_connect._authz import attached_runtime, authz_error, is_authorized_caller
-from strands_robots.mesh.core import _reports_failure_to_stop
+from strands_robots.mesh.core import _reported_a_rollout_in_flight, _reports_failure_to_stop
 from strands_robots.mesh.security import is_safe_policy_provider
 from strands_robots.teleop_mixin import _stop_reported_stopped
 
@@ -502,29 +501,3 @@ class SimulationDeviceDriver(DeviceDriver):
             joints: Dict of joint name -> position (radians)
         """
         pass
-
-
-def _reported_a_rollout_in_flight(answer: Mapping[str, Any]) -> bool | None:
-    """Whether a ``stop_policy`` answer says a rollout really was in flight.
-
-    Reads the ``was_running`` key
-    :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.stop_policy`
-    puts in its ``json`` block. Tri-state on purpose, in the same conservative
-    direction as :func:`~strands_robots.mesh.core._reports_failure_to_stop`: an
-    envelope that reports the fact neither way is not read as either one.
-    Counting silence as a halt names a robot the answer never mentioned;
-    counting it as idle lets the caller state "no rollout was in flight" on no
-    evidence. Both are the affirmative lie this verb exists to stop telling.
-
-    Args:
-        answer: One envelope returned by a stop verb.
-
-    Returns:
-        ``True`` or ``False`` as the answer reports it, or ``None`` when the
-        answer carries no verdict at all.
-    """
-    for block in answer.get("content", []):
-        payload = block.get("json")
-        if isinstance(payload, dict) and "was_running" in payload:
-            return bool(payload["was_running"])
-    return None

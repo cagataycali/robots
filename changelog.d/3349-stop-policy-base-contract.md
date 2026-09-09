@@ -33,6 +33,23 @@ have - `run_policy(n_steps=...)` and `run_policy(stop_when=...)`. The Device
 Connect `stop` RPC now reads that verb and enumerates through the ABC's own
 `list_robots`, so no path reaches into a backend's private registry.
 
+Making the verb universal also changed which branch of `Mesh._dispatch` a
+Newton or Isaac peer takes on the `{"action": "stop"}` fanout `emergency_stop`
+broadcasts: it now passes the `hasattr(r, "stop_policy")` probe and lands in the
+fleet-wide leg, whose population was `_active_policy_robots()` - a registry only
+MuJoCo keeps. On those backends that leg answered `ok=True, "no policies
+running"` for a rollout in flight, where before the promotion the same peer
+failed the probe and answered `ok=False`, so the fleet accounting scored a robot
+still executing as halted with no error and no log. The leg now asks every robot
+`list_robots` names when the engine keeps no registry - `stop_policy` is
+idempotent and reports `was_running` itself, the same population choice the
+Device Connect RPC makes - names as `stopped` only the robots whose answer did
+not say `was_running=False`, carries a backend's refusal through as
+`not_stopped`, and answers `ok=False` for a peer that can enumerate neither its
+rollouts nor its robots. The `was_running` reader both aggregating paths use
+now has one owner, `strands_robots.mesh.core._reported_a_rollout_in_flight`,
+beside the refusal predicate they already share.
+
 The counterpart's own description is corrected in the same change, because it is
 what sent callers looking for a stop that was not there. `start_policy`'s summary
 line read "Start policy execution in a background thread (non-blocking)" while

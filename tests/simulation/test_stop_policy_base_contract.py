@@ -257,6 +257,7 @@ class TestTheStopRpcReadsTheVerb:
 
     @staticmethod
     def _driver(sim: Any) -> Any:
+        pytest.importorskip("device_connect_edge")
         from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 
         driver = SimulationDeviceDriver.__new__(SimulationDeviceDriver)
@@ -293,6 +294,96 @@ class TestTheStopRpcReadsTheVerb:
         answer = self._driver(_MinimalEngine())._stop_one_rollout("arm")
         assert answer["status"] == "error"
         assert _reports_failure_to_stop(answer) is True
+
+
+# --------------------------------------------------------------------------- #
+# The mesh fleet stop is the verb's other remote reader                        #
+# --------------------------------------------------------------------------- #
+class TestTheFleetStopAsksEveryRobotWhenThereIsNoRegistry:
+    """Putting ``stop_policy`` on the base flips a probe this diff does not touch.
+
+    :meth:`~strands_robots.mesh.Mesh._dispatch` gates its sim stop branch on
+    ``hasattr(r, "stop_policy")``, and the no-``robot_name`` leg - the shape
+    :meth:`~strands_robots.mesh.Mesh.emergency_stop` broadcasts - enumerated
+    ``_active_policy_robots``, which only MuJoCo defines. So the moment the verb
+    became universal, a Newton peer entered that leg with an empty population
+    and answered ``ok=True, "no policies running"`` while a rollout was in
+    flight, where pre-promotion it failed the probe and answered ``ok=False``.
+    A semantic conflict the diff cannot show, graded here so the mutation table
+    has a mesh row.
+    """
+
+    @staticmethod
+    def _fleet_stop(engine: Any) -> dict[str, Any]:
+        from strands_robots.mesh import Mesh
+
+        return Mesh(engine, peer_id="sim-1", peer_type="simulation")._dispatch({"action": "stop"})
+
+    @staticmethod
+    def _flagged(result: dict[str, Any]) -> bool:
+        from strands_robots.mesh.core import _peers_that_did_not_stop
+
+        return bool(_peers_that_did_not_stop([{"responder_id": "sim-1", "result": result}]))
+
+    def test_a_newton_rollout_in_flight_is_halted_by_the_fleet_stop(self) -> None:
+        engine = _newton_engine(policy_running=True)
+        result = self._fleet_stop(engine)
+        assert result["ok"] is True
+        assert result["stopped"] == ["arm"]
+        assert engine._world.robots["arm"].policy_running is False
+        assert self._flagged(result) is False
+
+    def test_an_idle_robot_is_asked_but_not_named_as_halted(self) -> None:
+        engine = _newton_engine(policy_running=False)
+        result = self._fleet_stop(engine)
+        assert result["ok"] is True
+        assert result["stopped"] == []
+        assert _verdicts(result["results"]["arm"]) == [{"robot": "arm", "was_running": False}]
+
+    def test_a_backend_with_no_claim_is_scored_as_not_stopped(self) -> None:
+        """The base refusal reaches the fleet accounting as a refusal, not a halt."""
+        result = self._fleet_stop(_MinimalEngine())
+        assert result["ok"] is False
+        assert result["not_stopped"] == ["arm"]
+        assert self._flagged(result) is True
+
+    def test_the_fleet_and_the_named_stop_agree_about_one_rollout(self) -> None:
+        """Both remote readers derive the verdict from the same answer."""
+        from strands_robots.mesh import Mesh
+
+        fleet = _newton_engine(policy_running=True)
+        named = _newton_engine(policy_running=True)
+        fleet_result = self._fleet_stop(fleet)
+        named_result = Mesh(named, peer_id="sim-1", peer_type="simulation")._dispatch(
+            {"action": "stop", "robot_name": "arm"}
+        )
+        assert fleet_result["stopped"] == ["arm"]
+        assert _verdicts(named_result) == [{"robot": "arm", "was_running": True}]
+        assert self._flagged(fleet_result) is self._flagged(named_result) is False
+
+    def test_a_peer_that_cannot_enumerate_answers_conservatively(self) -> None:
+        """Neither a registry nor ``list_robots``: nothing can be named as halted."""
+
+        class _Opaque:
+            def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
+                return {"status": "success", "content": []}
+
+        result = self._fleet_stop(_Opaque())
+        assert result["ok"] is False
+        assert "_Opaque" in result["error"]
+        assert self._flagged(result) is True
+
+    def test_the_was_running_reader_has_one_owner(self) -> None:
+        """Both aggregating readers import the reader; neither spells a second copy."""
+        import inspect
+
+        pytest.importorskip("device_connect_edge")
+        from strands_robots.device_connect import sim_driver
+        from strands_robots.mesh import core
+
+        assert sim_driver._reported_a_rollout_in_flight is core._reported_a_rollout_in_flight
+        assert "was_running" not in inspect.getsource(sim_driver.SimulationDeviceDriver.stop)
+        assert inspect.getsource(sim_driver).count('"was_running"') == 0
 
 
 # --------------------------------------------------------------------------- #

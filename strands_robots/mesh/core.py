@@ -383,6 +383,38 @@ def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
     return result.get("ok") is False or result.get("status") == "error"
 
 
+def _reported_a_rollout_in_flight(answer: Mapping[str, Any]) -> bool | None:
+    """Whether a ``stop_policy`` answer says a rollout really was in flight.
+
+    Reads the ``was_running`` key
+    :meth:`~strands_robots.simulation.base.SimEngine.stop_policy` puts in its
+    ``json`` block. Tri-state on purpose, in the same conservative direction as
+    :func:`_reports_failure_to_stop`: an envelope that reports the fact neither
+    way is not read as either one. Counting silence as a halt names a robot the
+    answer never mentioned; counting it as idle lets the caller state "no
+    rollout was in flight" on no evidence. Both are the affirmative lie the
+    stop verb exists to stop telling.
+
+    Lives beside its sibling predicate because it has the same two readers and
+    the same reason for one owner: the fleet-wide branch of
+    :meth:`Mesh._dispatch` and the Device Connect ``stop`` RPC both aggregate
+    per-robot ``stop_policy`` answers, and a second copy of this read is how
+    the two would come to name different robots as halted.
+
+    Args:
+        answer: One envelope returned by a stop verb.
+
+    Returns:
+        ``True`` or ``False`` as the answer reports it, or ``None`` when the
+        answer carries no verdict at all.
+    """
+    for block in answer.get("content", []):
+        payload = block.get("json")
+        if isinstance(payload, dict) and "was_running" in payload:
+            return bool(payload["was_running"])
+    return None
+
+
 def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
     """Identify responders that explicitly reported they did NOT stop.
 
@@ -2187,11 +2219,41 @@ class Mesh(SensorLoopsMixin):
                 try:
                     if robot_name:
                         return dict(r.stop_policy(robot_name))
-                    # No robot_name: stop every active rollout in the world.
-                    active = list(r._active_policy_robots()) if hasattr(r, "_active_policy_robots") else []
-                    if not active:
-                        return {"ok": True, "stopped": [], "note": "no policies running"}
-                    results = {name: dict(r.stop_policy(name)) for name in active}
+                    # No robot_name: stop every rollout in the world. The
+                    # population is the engine's own choice of registry when
+                    # it keeps one (MuJoCo's ``_active_policy_robots`` prunes
+                    # finished Futures), and otherwise EVERY robot the ABC's
+                    # ``list_robots`` names: ``stop_policy`` is idempotent and
+                    # reports ``was_running`` itself, so asking an idle robot
+                    # costs nothing and the verdict is read rather than
+                    # guessed. Before ``stop_policy`` was on the base this
+                    # branch was unreachable for Newton and Isaac; once it was,
+                    # the registry-only population answered ``ok=True, "no
+                    # policies running"`` for a Newton rollout in flight --
+                    # the same silent false negative the terminal ``ok=False``
+                    # below exists to refuse, reached from the other side.
+                    # An engine that cannot enumerate its robots cannot say
+                    # what it halted, so it answers conservatively.
+                    if hasattr(r, "_active_policy_robots"):
+                        targets = list(r._active_policy_robots())
+                        if not targets:
+                            return {"ok": True, "stopped": [], "note": "no policies running"}
+                    elif hasattr(r, "list_robots"):
+                        targets = list(r.list_robots())
+                        if not targets:
+                            return {"ok": True, "stopped": [], "note": "no robots in this world"}
+                    else:
+                        logger.error(
+                            "[safety] %s: stop requested but %s enumerates neither its rollouts nor its "
+                            "robots; NOTHING was stopped on this peer",
+                            self.peer_id,
+                            type(r).__name__,
+                        )
+                        return {
+                            "ok": False,
+                            "error": f"{type(r).__name__} cannot enumerate rollouts in flight; nothing was stopped",
+                        }
+                    results = {name: dict(r.stop_policy(name)) for name in targets}
                     # ``ok`` is derived from the per-robot answers, never
                     # assumed. Reporting ok=True here counted a refused
                     # stop as a halt: the refusal sat in ``results``, which
@@ -2200,9 +2262,16 @@ class Mesh(SensorLoopsMixin):
                     # the fleet had halted. This is the ONLY stop path that
                     # aggregates -- both sibling branches return the stop
                     # verb's own answer, so a refusal reaches the
-                    # accounting through them unchanged.
+                    # accounting through them unchanged. ``stopped`` names
+                    # only the robots whose answer did not say ``was_running``
+                    # is False: with the whole world as the population, an
+                    # idle robot is asked too, and it was not halted.
                     refused = sorted(n for n, res in results.items() if _reports_failure_to_stop(res))
-                    stopped = [n for n in results if n not in set(refused)]
+                    stopped = [
+                        n
+                        for n, res in results.items()
+                        if n not in set(refused) and _reported_a_rollout_in_flight(res) is not False
+                    ]
                     if refused:
                         logger.error(
                             "[safety] %s: stop_policy refused for %d of %d active rollout(s): %s; "

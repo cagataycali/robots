@@ -4025,7 +4025,7 @@ class SimEngine(ABC):
             Whether a rollout was in flight when the stop arrived, or ``None``
             when this backend keeps no durable claim to move. ``None`` is a stated
             absence of a verdict, not a ``False``: the tri-state matches
-            :func:`~strands_robots.device_connect.sim_driver._reported_a_rollout_in_flight`,
+            :func:`~strands_robots.mesh.core._reported_a_rollout_in_flight`,
             which reads "reported neither way" as neither, so a backend with
             nothing to report cannot be quoted as having reported an idle robot.
             Default: ``None`` - nothing was claimed, so nothing can be released.
