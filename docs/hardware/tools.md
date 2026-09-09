@@ -278,6 +278,33 @@ the parameter instead of surfacing as `Tool execution failed`. Only `action="res
 consults the flag, so no other action is refused for it, and the two postures it is
 declared over are unchanged - `True` restores over the existing file, `False` keeps it.
 
+### `smooth` is checked, so a word for "no" cannot change the trajectory
+
+`pose_tool`'s `smooth` selects one of two ways to reach the same joint targets,
+not a magnitude: interpolate over `steps * step_delay` seconds, or write each
+`Goal_Position` once and let the servo travel at its own speed. It was read by
+truthiness, and the two undeclared halves invert in opposite directions:
+
+| `smooth=` | Trajectory written | Trajectory asked for |
+|-----------|--------------------|----------------------|
+| `True` (default) | 21 increments, paced | same |
+| `False` | one write per motor | same |
+| `0`, `""`, `None`, `[]` | one write per motor | the default, interpolated |
+| `"false"`, `"no"`, `"off"`, `"0"` | 21 increments, paced | one write per motor |
+
+The falsy half is the sharper one, because this flag defaults to `True`: it
+*removes* an interpolation the caller never asked to leave, and what reaches the
+bus is a single write to the far end of the travel - the full-travel jump this
+tool already refuses `steps=True` for. The flag also decides whether `steps` and
+`step_delay` are read at all, so `smooth="false", steps=0` was refused for
+`steps` - an option the caller's own posture said nobody would read.
+
+Both halves are now refused against the shared boolean domain, ahead of the
+`steps` / `step_delay` check so a bad flag is named as the flag. Only
+`"load_pose"` and `"move_multiple"` consult it: `"reset_to_home"` interpolates
+unconditionally and supplies its own, and every other action moves in one shot,
+so none of them is refused for it. The two declared postures are unchanged.
+
 ### A mesh wait budget is bounded where the command body cannot carry it
 
 `robot_mesh` takes four numeric options. `duration` and `policy_port` travel

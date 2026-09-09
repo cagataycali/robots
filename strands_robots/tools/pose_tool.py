@@ -25,7 +25,12 @@ from strands import tool
 
 from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION, decode_word, encode_word
 from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
-from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    finite_number_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +40,9 @@ logger = logging.getLogger(__name__)
 # ``steps`` and ``step_delay`` are only consumed on the interpolated path, so an
 # action that moves in one shot never reads them and must never be refused for
 # them. ``reset_to_home`` interpolates unconditionally; ``load_pose`` and
-# ``move_multiple`` interpolate only when the caller leaves ``smooth`` truthy.
+# ``move_multiple`` interpolate only when the caller leaves ``smooth`` true, so
+# they are also the actions that read ``smooth`` at all and the ones it is
+# checked for.
 _INTERPOLATING_ACTIONS = frozenset({"load_pose", "move_multiple"})
 _ALWAYS_INTERPOLATING_ACTIONS = frozenset({"reset_to_home"})
 
@@ -52,7 +59,51 @@ def _interpolates(action: str, smooth: bool) -> bool:
     """
     if action in _ALWAYS_INTERPOLATING_ACTIONS:
         return True
-    return action in _INTERPOLATING_ACTIONS and bool(smooth)
+    return action in _INTERPOLATING_ACTIONS and smooth
+
+
+def _smooth_posture_error(action: str, smooth: Any) -> str | None:
+    """Error text when ``smooth`` is not a spelling of a posture this action reads.
+
+    ``smooth`` selects between two trajectories towards the same targets, not a
+    quantity: interpolate over ``steps * step_delay`` seconds, or write each
+    goal position once. Read by truthiness, the two undeclared halves fail in
+    opposite directions and neither reports itself.
+
+    A falsy non-boolean - ``0``, ``""``, ``None``, ``[]`` - takes the one-shot
+    branch, and the flag defaults to ``True``, so it silently *removes* the
+    interpolation a caller never asked to leave. What arrives at the servo is a
+    single write to the far end of the travel: the full-travel jump this module
+    already refuses ``steps=True`` for, on the grounds that it is "exactly the
+    path a caller asking to interpolate wanted to avoid". Every non-empty string
+    is truthy, so the opt-out spellings ``"false"``, ``"no"``, ``"off"`` and
+    ``"0"`` select the *interpolating* branch instead - and, because this flag
+    also decides whether ``steps`` and ``step_delay`` are read at all, the
+    caller is then refused for one of those options while believing they had
+    spelled nobody reading them.
+
+    It is checked only for the actions that consult it, matching
+    :func:`_smooth_move_option_error`: ``reset_to_home`` interpolates
+    unconditionally and passes its own ``smooth=True``, and every other action
+    moves in one shot, so neither reads the caller's flag and neither may be
+    refused for it.
+
+    The check is ordered ahead of :func:`_smooth_move_option_error` so a bad
+    flag is named as the flag. Behind it, the refusal names ``steps`` or
+    ``step_delay`` - sending the caller to correct a value whose only problem
+    was the posture that decided it would be read.
+
+    Args:
+        action: The requested action; decides whether the flag is read.
+        smooth: The interpolation posture, as supplied.
+
+    Returns:
+        An error message naming the action and the flag, or ``None`` when the
+        action ignores it or the value is a boolean.
+    """
+    if action not in _INTERPOLATING_ACTIONS:
+        return None
+    return boolean_flag_error(smooth, "smooth", action)
 
 
 def _smooth_move_option_error(action: str, *, smooth: bool, steps: Any, step_delay: Any) -> str | None:
@@ -96,7 +147,7 @@ def _smooth_move_option_error(action: str, *, smooth: bool, steps: Any, step_del
         An error message naming the action and the option, or ``None`` when the
         action reads neither option or both values are usable.
     """
-    if not _interpolates(action, bool(smooth)):
+    if not _interpolates(action, smooth):
         return None
     if error := positive_count_error(steps, "steps", action):
         return error
@@ -1016,7 +1067,13 @@ def pose_tool(
             value is held to the same domain as ``position``, and the first that
             is not names the motor it came from.
         description: Description for stored poses
-        smooth: Use smooth interpolated movement
+        smooth: Interpolate towards the targets over ``steps * step_delay``
+            seconds instead of writing each goal position once. A boolean:
+            it selects one of two trajectories, so a value that is only
+            truthy or only falsy is refused rather than read as one of
+            them - ``smooth=0`` would drop the interpolation this defaults
+            to, and ``smooth="false"`` would keep it. Read only by
+            ``load_pose`` and ``move_multiple``.
         steps: Number of increments for an interpolated move. A positive
             integer - it divides the travel and bounds the write loop.
         step_delay: Seconds between increments of an interpolated move. A
@@ -1026,15 +1083,23 @@ def pose_tool(
             (the default 20 x 0.05s = ~1s).
 
     Both interpolation options are read only by ``load_pose`` and
-    ``move_multiple`` (when ``smooth`` is left truthy) and by
-    ``reset_to_home``, which always interpolates; any other action ignores them
-    and is never refused for them.
+    ``move_multiple`` (when ``smooth`` is left true) and by ``reset_to_home``,
+    which always interpolates; any other action ignores them and is never
+    refused for them. ``smooth`` itself is read only by the first two -
+    ``reset_to_home`` supplies its own - so only those two are refused for it.
 
     Returns:
         Dict containing status and response content, or an error dict when an
         interpolation option or a joint target the requested action reads cannot
         be honored.
     """
+
+    # ``smooth`` decides which of two trajectories reaches the servos, and it
+    # also decides whether the two options below are read at all - so it is
+    # checked first, and a bad flag is named as the flag rather than surfacing
+    # as a refusal for an option the caller's posture says nobody reads.
+    if posture_error := _smooth_posture_error(action, smooth):
+        return {"status": "error", "content": [{"text": posture_error}]}
 
     # Both interpolation options are consumed on a live servo bus - one as a
     # divisor and loop bound, one as the pause between goal positions - so an

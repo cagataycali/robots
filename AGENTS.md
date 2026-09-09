@@ -2092,11 +2092,21 @@ which side the enum is on.
   `tests/tools/test_lerobot_camera_posture_flag_domain.py`, which derives the roster
   from the tool's own signature so a fourth flag cannot be added without the domain,
   and whose ordering cell fails when the two guards are swapped.
+  A gate whose flag defaults to `True` inverts in the sharper direction, because a falsy
+  non-boolean then *removes* a behaviour the caller never asked to leave. `pose_tool`'s
+  `smooth` chooses between interpolating towards the joint targets over
+  `steps * step_delay` seconds and writing each goal position once, and it decides whether
+  those two options are read - so `smooth="false", steps=0` was refused for `steps`, and
+  `smooth=0` wrote 2 goal positions where `True` writes 42 over 21 increments, sending the
+  arm to the far end of its travel in one write: the full-travel jump the same module
+  already refuses `steps=True` for. Pinned by
+  `tests/tools/test_pose_tool_smooth_posture_flag_domain.py`.
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
   `tests/mesh/test_iot_provisioning_flag_domain.py`,
-  `tests/rendering/test_key_light_posture_flag_domain.py` and
+  `tests/rendering/test_key_light_posture_flag_domain.py`,
+  `tests/tools/test_pose_tool_smooth_posture_flag_domain.py` and
   `tests/test_ros2_command_surface_flag_domain.py`, each of which parametrizes over
   `boolean_flag_error` itself rather than a copied spelling list, so a spelling added to
   the shared domain is covered without an edit.
