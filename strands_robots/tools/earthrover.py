@@ -94,10 +94,11 @@ def rover_move(
 
     Args:
         driver: The live EarthRoverDriver handle the orchestrator constructed.
-        linear: Forward speed, ``-1.0`` to ``1.0`` (clamped by the driver);
-            negative is reverse.
-        angular: Turn rate, ``-1.0`` to ``1.0`` (clamped by the driver);
-            positive is left.
+        linear: Forward speed, ``-1.0`` to ``1.0``; negative is reverse. A
+            value outside that envelope is refused by the driver, not clamped
+            onto full speed.
+        angular: Turn rate, ``-1.0`` to ``1.0``; positive is left. Refused
+            outside the envelope, as ``linear`` is.
         duration_s: How long to hold the twist before the forced stop, in
             seconds - at most :data:`MAX_MOVE_DURATION_S`. ``None`` sends the
             twist and returns immediately.

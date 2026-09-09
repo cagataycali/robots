@@ -195,6 +195,15 @@ rover.send_action({"linear": 0.4, "angular": -0.2})    # each axis normalised to
 rover.cleanup()                                        # sends a parting zero twist
 ```
 
+Both axes are a fraction of full speed, so `1.0` is already the fastest value there is and
+a magnitude above it is **refused by name**, never clamped - the same disposition as the
+Crazyflie envelope above, for the reason the rover makes sharper: it is velocity-commanded,
+so a twist it was not asked for keeps running until the next command. Clamping sent every
+out-of-range magnitude at full speed, which is exactly what a caller writing the value on a
+percent scale needs to be told about: `linear=1` and `linear=100` are the same command once
+both saturate. `lamp` is read as a boolean rather than for truthiness, so `lamp="off"`
+is refused instead of switching the headlamp on.
+
 Every endpoint - including `POST /control`, which *drives* - is built from that one
 string, so it has to address the host you wrote. A value whose authority names one host
 and resolves to another is refused at construction, because the transport does not refuse

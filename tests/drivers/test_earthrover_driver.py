@@ -22,10 +22,12 @@ from strands_robots.drivers.base import HardwareDriver, missing_driver_members
 from strands_robots.drivers.earthrover import (
     CAMERA_VIEWS,
     DEFAULT_SDK_URL,
+    DRIVE_AXIS_LIMIT,
     DRIVE_CHANNELS,
     EarthRoverDriver,
     base_url_error,
     detect_image_format,
+    drive_axis_error,
 )
 
 _DATA = {
@@ -254,15 +256,14 @@ class TestSendActionReachesTheWire:
         ("action", "expected"),
         [
             ({"linear": 0.5, "angular": -0.25}, {"linear": 0.5, "angular": -0.25}),
-            ({"linear": 2.0}, {"linear": 1.0, "angular": 0.0}),
-            ({"angular": -3.0}, {"linear": 0.0, "angular": -1.0}),
+            ({"linear": 1.0, "angular": -1.0}, {"linear": 1.0, "angular": -1.0}),
             ({}, {"linear": 0.0, "angular": 0.0}),
             ({"lamp": True}, {"linear": 0.0, "angular": 0.0, "lamp": 1}),
-            ({"lamp": 0}, {"linear": 0.0, "angular": 0.0, "lamp": 0}),
+            ({"lamp": False}, {"linear": 0.0, "angular": 0.0, "lamp": 0}),
         ],
-        ids=["plain", "clamp-linear", "clamp-angular", "empty-is-stop", "lamp-on", "lamp-off"],
+        ids=["plain", "full-speed-both-ways", "empty-is-stop", "lamp-on", "lamp-off"],
     )
-    def test_the_posted_command_is_the_clamped_twist(
+    def test_the_posted_command_is_the_callers_twist(
         self, session: _FakeSession, action: dict[str, Any], expected: dict[str, float]
     ) -> None:
         driver = _live_driver(session)
@@ -294,8 +295,23 @@ class TestSendActionRefusesRatherThanGuesses:
             ({"linear": float("nan")}, "linear"),
             ({"angular": float("inf")}, "angular"),
             ({"linear": "fast"}, "linear"),
+            ({"linear": 2.0}, "outside the normalised drive envelope"),
+            ({"linear": 30.0}, "percent or SI scale"),
+            ({"angular": -3.0}, "outside the normalised drive envelope"),
+            ({"lamp": "off"}, "lamp"),
+            ({"lamp": 1}, "lamp"),
         ],
-        ids=["typo-channel", "nan", "inf", "string"],
+        ids=[
+            "typo-channel",
+            "nan",
+            "inf",
+            "string",
+            "linear-past-full-speed",
+            "linear-on-a-percent-scale",
+            "angular-past-full-speed",
+            "lamp-spelled-off",
+            "lamp-as-an-int",
+        ],
     )
     def test_a_bad_action_is_refused_before_the_wire(
         self, session: _FakeSession, action: dict[str, Any], needle: str
@@ -310,6 +326,57 @@ class TestSendActionRefusesRatherThanGuesses:
     def test_the_channel_refusal_names_the_valid_set(self, session: _FakeSession) -> None:
         refusal = _live_driver(session).send_action({"warp": 9})
         assert str(list(DRIVE_CHANNELS)) in refusal["content"][0]["text"]
+
+    def test_a_twist_past_full_speed_is_not_sent_at_full_speed(self, session: _FakeSession) -> None:
+        """The scale is no longer collapsed onto the fastest command there is.
+
+        Both axes are a fraction of full speed, so clamping mapped every
+        out-of-range magnitude onto the same wire value: on a nought-to-a-hundred
+        percent model a crawl and a top speed were the identical command, and the
+        rover holds a twist until the next one arrives. Neither request is
+        guessed at now, and the grading property is that nothing reached
+        ``/control`` - a refusal that still posted would stop the wheels only by
+        accident.
+        """
+        driver = _live_driver(session)
+        posts_before = len(session.posts)
+        crawl, flat_out = (driver.send_action({"linear": value}) for value in (5.0, 100.0))
+        assert crawl["status"] == "error" and flat_out["status"] == "error"
+        assert len(session.posts) == posts_before
+
+    def test_move_refuses_the_same_envelope_send_action_does(self, session: _FakeSession) -> None:
+        driver = _live_driver(session)
+        posts_before = len(session.posts)
+        assert driver.move(2.0, 0.0)["status"] == "error"
+        assert len(session.posts) == posts_before
+
+
+class TestTheDriveEnvelopeIsTheNormalisedRange:
+    """:func:`drive_axis_error`'s domain, graded as a set rather than a constant.
+
+    The bound is pinned by what it discriminates - every magnitude up to and
+    including :data:`DRIVE_AXIS_LIMIT` is commandable and everything past it is
+    not - so widening the envelope fails the refused cells and narrowing it fails
+    the accepted ones. An ``== 1.0`` assertion would survive both.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [0.0, 0.5, -0.5, DRIVE_AXIS_LIMIT, -DRIVE_AXIS_LIMIT],
+        ids=["stop", "forward", "reverse", "full-speed", "full-reverse"],
+    )
+    def test_a_magnitude_inside_the_envelope_is_commandable(self, value: float) -> None:
+        assert drive_axis_error(value, "linear", "send_action") is None
+
+    @pytest.mark.parametrize(
+        "value",
+        [DRIVE_AXIS_LIMIT + 1e-9, 1.5, -1.5, 30.0, -100.0],
+        ids=["just-past-full-speed", "half-again", "reverse-half-again", "percent-scale", "far-past"],
+    )
+    def test_a_magnitude_outside_the_envelope_names_the_axis_and_the_surface(self, value: float) -> None:
+        reason = drive_axis_error(value, "angular", "send_action")
+        assert reason is not None
+        assert "angular" in reason and "send_action" in reason
 
     @pytest.mark.parametrize(
         ("post_response", "needle"),

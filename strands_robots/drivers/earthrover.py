@@ -42,7 +42,7 @@ import threading
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
-from strands_robots.utils import finite_number_error, positive_finite_number_error
+from strands_robots.utils import boolean_flag_error, finite_number_error, positive_finite_number_error
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -58,6 +58,11 @@ SUPPORTED_ROBOTS: tuple[str, ...] = ("earthrover",)
 
 #: The whole control surface of a differential-drive base with a headlamp.
 DRIVE_CHANNELS: tuple[str, ...] = ("linear", "angular", "lamp")
+
+#: Magnitude bound on ``linear`` and ``angular``. The SDK's ``/control``
+#: endpoint takes each axis normalised, so this is the whole envelope: ``1.0``
+#: is already full speed and there is no faster value to ask for.
+DRIVE_AXIS_LIMIT: float = 1.0
 
 #: The camera views the SDK serves under ``/v2/<view>``.
 CAMERA_VIEWS: tuple[str, ...] = ("front", "rear")
@@ -89,6 +94,50 @@ def _declared_scheme(value: str) -> str | None:
 def _refuse(reason: str) -> dict[str, Any]:
     """One refusal envelope, so every refusal has the same shape."""
     return {"status": "error", "content": [{"text": reason}]}
+
+
+def drive_axis_error(value: object, param: str, context: str) -> str | None:
+    """Report why ``value`` is not a commandable drive axis, or ``None``.
+
+    Refuses rather than clamping, which is the disposition the module docstring's
+    safety note argues for: a rover is **velocity**-commanded, so a twist it was
+    never asked for keeps being executed until the next command arrives. Clamping
+    maps every out-of-range magnitude onto full speed, so the most common way to
+    get one of these numbers wrong - writing it on the wrong scale - produces the
+    fastest motion the base has, indefinitely, and reports success. A caller on a
+    nought-to-a-hundred percent model then cannot tell its slowest crawl from its
+    top speed: ``1`` and ``100`` are the same wire command once both saturate.
+
+    This is :func:`~strands_robots.drivers.crazyflie.twist_error`'s reasoning at
+    a lower speed, and the same rule
+    :mod:`~strands_robots.drivers.feetech.bus` states for a joint target. It is
+    the opposite disposition to
+    :func:`~strands_robots.drivers.robotiq.protocol.aperture_mm_to_counts`, which
+    clamps and says why: that axis is a bounded *position*, so the endpoint of
+    the stroke really is what "200 mm on an 85 mm gripper" meant. A velocity has
+    no such endpoint to land on.
+
+    Args:
+        value: The axis value as supplied.
+        param: Which axis, to quote in the reason.
+        context: Calling surface to quote in the reason.
+
+    Returns:
+        A reason naming the axis and the bound it broke, or ``None`` when the
+        value is a finite magnitude inside the envelope.
+    """
+    if (reason := finite_number_error(value, param, context)) is not None:
+        return reason
+    magnitude = float(cast("float", value))
+    if abs(magnitude) > DRIVE_AXIS_LIMIT:
+        return (
+            f"{context}: {param}={magnitude} is outside the normalised drive envelope "
+            f"[-{DRIVE_AXIS_LIMIT}, {DRIVE_AXIS_LIMIT}] - the SDK's /control endpoint takes "
+            f"a fraction of full speed, so {DRIVE_AXIS_LIMIT} is already the fastest value "
+            "there is. A value on a percent or SI scale is the usual cause; divide it down "
+            "rather than letting it saturate, because a rover holds the twist it was given."
+        )
+    return None
 
 
 def base_url_error(value: object, param: str, context: str) -> str | None:
@@ -456,15 +505,19 @@ class EarthRoverDriver:
 
         Args:
             action: Values for :data:`DRIVE_CHANNELS` - ``linear`` and
-                ``angular`` in ``[-1, 1]`` (clamped), plus an optional ``lamp``
-                truthy flag. An absent axis is commanded ``0.0``, because a
-                twist is a complete statement of intent: "turn" also means
-                "stop driving forward".
+                ``angular`` inside ``[-1, 1]``, plus an optional ``lamp``
+                boolean. An axis outside the envelope is refused by
+                :func:`drive_axis_error` rather than clamped onto full speed,
+                and ``lamp`` is read as a boolean rather than for truthiness, so
+                ``"off"`` cannot switch the headlamp on. An absent axis is
+                commanded ``0.0``, because a twist is a complete statement of
+                intent: "turn" also means "stop driving forward".
             robot_name: Accepted for parity; this driver fronts one rover.
 
         Returns:
-            A success envelope naming the commanded twist as sent (after
-            clamping and ``turn_sign``), or a refusal naming what was wrong.
+            A success envelope naming the commanded twist as sent (the caller's
+            axes, with ``turn_sign`` applied), or a refusal naming what was
+            wrong. Nothing reaches the SDK on a refusal.
         """
         session = self._session
         if session is None or not self._connected:
@@ -474,12 +527,14 @@ class EarthRoverDriver:
         if bad:
             return _refuse(f"send_action: unknown drive channel(s) {bad}; valid: {list(DRIVE_CHANNELS)}")
         for axis in ("linear", "angular"):
-            if axis in action and (reason := finite_number_error(action[axis], axis, "send_action")):
+            if axis in action and (reason := drive_axis_error(action[axis], axis, "send_action")):
                 return _refuse(reason)
+        if "lamp" in action and (reason := boolean_flag_error(action["lamp"], "lamp", "send_action")):
+            return _refuse(reason)
 
         command: dict[str, float] = {
-            "linear": max(-1.0, min(1.0, float(action.get("linear", 0.0)))),
-            "angular": self._turn_sign * max(-1.0, min(1.0, float(action.get("angular", 0.0)))),
+            "linear": float(action.get("linear", 0.0)),
+            "angular": self._turn_sign * float(action.get("angular", 0.0)),
         }
         if "lamp" in action:
             command["lamp"] = 1 if action["lamp"] else 0
@@ -503,8 +558,9 @@ class EarthRoverDriver:
         """Command a twist by axis - sugar over :meth:`send_action`.
 
         Args:
-            linear: Forward speed, ``[-1, 1]``.
-            angular: Turn rate, ``[-1, 1]``, positive left.
+            linear: Forward speed, inside ``[-1, 1]``; outside it is refused.
+            angular: Turn rate, inside ``[-1, 1]``, positive left; outside it is
+                refused.
 
         Returns:
             :meth:`send_action`'s envelope.
