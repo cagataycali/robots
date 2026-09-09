@@ -54,6 +54,7 @@ from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
+    boolean_flag_error,
     dds_domain_id_error,
     is_boolean,
     non_negative_count_error,
@@ -1848,6 +1849,39 @@ class SimEngine(ABC):
         return None
 
     @staticmethod
+    def _validate_posture_flags(method: str, **flags: Any) -> dict[str, Any] | None:
+        """Refuse a posture flag that is not a boolean, naming the flag.
+
+        A flag that selects one of two *postures* - pace the loop or run it
+        unpaced, reset the scene between episodes or carry it over, install the
+        WBC torque shim or leave the actuators as they are, overlap inference
+        with actuation or drain each chunk first - is checked rather than read
+        by truthiness. Every non-empty string is truthy, so ``"false"``,
+        ``"no"``, ``"off"`` and ``"0"`` select the posture the word asks to
+        skip, while ``0``, ``""`` and ``[]`` take the other branch without ever
+        being a declared spelling of it. Nothing raises and nothing logs on
+        either half, so the wrong posture is indistinguishable from the right
+        one until the rollout's telemetry is read.
+
+        Thin binding of :func:`~strands_robots.utils.boolean_flag_error` to this
+        class's tool-error envelope, the inverse of the numeric bindings above
+        (which refuse a ``bool`` because it would pass as a silent ``1``). Flags
+        are checked in the order given and the first refusal is returned, so a
+        caller who mistyped two sees the first named.
+
+        Args:
+            method: Public method name the message is prefixed with.
+            **flags: The posture flags to check, keyed by parameter name.
+
+        Returns:
+            A structured error, or ``None`` when every flag is a boolean.
+        """
+        for param, value in flags.items():
+            if message := boolean_flag_error(value, param, method):
+                return {"status": "error", "content": [{"text": message}]}
+        return None
+
+    @staticmethod
     def _validate_seed(seed: Any, method: str) -> dict[str, Any] | None:
         """Reject an unusable RNG seed at the public API.
 
@@ -2522,7 +2556,11 @@ class SimEngine(ABC):
                 and physics allow. When False (default) the loop is paced on a
                 deadline at ``control_frequency``, so the wall clock a step
                 spends working is subtracted from the period rather than added
-                to it and ``duration`` is honored whatever a step costs.
+                to it and ``duration`` is honored whatever a step costs. Must be
+                a boolean: it selects a posture rather than scaling a quantity,
+                so a value of any other type is reported as a structured caller
+                error rather than read by truthiness - a truthy ``"false"``
+                would otherwise run the loop unpaced.
             video: Optional video-recording config dict. Accepted keys:
                 ``path`` (str, output MP4 - required to enable recording),
                 ``fps`` (int, default 30), ``camera`` (str, default backend
@@ -2622,7 +2660,10 @@ class SimEngine(ABC):
             reset_between: When running multiple episodes, reset the sim to its
                 initial state between episodes (default ``True``). The reset
                 never fires after the final episode. Set ``False`` to chain
-                episodes from the end state of the previous one.
+                episodes from the end state of the previous one. Must be a
+                boolean, reported as a structured caller error otherwise - a
+                falsy ``0`` would otherwise chain the episodes without being a
+                declared spelling of that.
             async_rtc: When ``True``, overlap policy inference with action
                 execution so the next action chunk is computed in the
                 background while the current chunk is still draining (latency
@@ -2631,10 +2672,13 @@ class SimEngine(ABC):
                 so chunk-emitting VLA/flow-matching policies (pi0, pi0.5,
                 pi0-FAST, SmolVLA, MolmoAct2) get latency masking automatically
                 while single-step policies stay synchronous; an explicit
-                ``True``/``False`` always wins. Forwarded verbatim to
-                :meth:`PolicyRunner.run`; see its docstring for the full
-                contract (provider-agnostic, RTC-policy seam blending, thread
-                safety).
+                ``True``/``False`` always wins, and a supplied value must be one
+                of those two: any other type is reported as a structured caller
+                error rather than read by truthiness, since a truthy ``"false"``
+                would otherwise start the background inference thread it reads
+                as declining. Forwarded verbatim to :meth:`PolicyRunner.run`;
+                see its docstring for the full contract (provider-agnostic,
+                RTC-policy seam blending, thread safety).
             rtc_inference_timeout_s: Optional hard per-chunk timeout (seconds)
                 for the async-RTC prefetch. When set, a stuck inference surfaces
                 as a structured ``status=error`` result (carrying the RTC
@@ -2650,7 +2694,10 @@ class SimEngine(ABC):
                 PD and the gait diverges, so the documented quickstart silently
                 falls over without it. Set ``False`` to manage the controller
                 yourself or to drive a torque-actuated scene directly. No-op for
-                non-WBC policies and on backends without the hook.
+                non-WBC policies and on backends without the hook. Must be a
+                boolean, reported as a structured caller error otherwise - a
+                falsy ``0`` would otherwise skip the shim without being a
+                declared spelling of that.
             stop_when: Optional semantic early-return condition: end the
                 rollout as soon as the WORLD reaches a state, not only when
                 the step budget runs out - which turns a monolithic rollout
@@ -2824,6 +2871,26 @@ class SimEngine(ABC):
         # policy construction, backend hook creation, clocks, or rollout work.
         if observer_error := optional_callable_error(observer, "observer", "run_policy"):
             return {"status": "error", "content": [{"text": observer_error}]}
+
+        # The posture flags are checked next, for the same reason and ahead of
+        # everything they select: ``fast_mode`` decides whether the runner
+        # acquires a pacer, ``reset_between`` whether ``reset`` runs between
+        # episodes, ``wbc_install_torque_control`` whether the torque shim is
+        # installed on the scene. Read by truthiness, ``"false"`` selected the
+        # posture the word asks to skip and ``0`` took the other branch without
+        # being a declared spelling of it - a two-episode ``reset_between=0``
+        # carried episode one's end state into episode two and reported
+        # success. ``async_rtc`` is the same flag with a ``None`` sentinel that
+        # means "resolve from the policy", so only a supplied value is checked.
+        if err := self._validate_posture_flags(
+            "run_policy",
+            fast_mode=fast_mode,
+            reset_between=reset_between,
+            wbc_install_torque_control=wbc_install_torque_control,
+        ):
+            return err
+        if async_rtc is not None and (err := self._validate_posture_flags("run_policy", async_rtc=async_rtc)):
+            return err
 
         robot_name = self._resolve_single_robot(robot_name)
 
@@ -4153,7 +4220,12 @@ class SimEngine(ABC):
         inference with action-chunk execution, evaluating a chunk-emitting
         policy under the realistic control latency it faces in deployment.
         It is forwarded to :meth:`PolicyRunner.evaluate`; the default keeps
-        the success-rate synchronous and bit-stable. ``rtc_inference_timeout_s``
+        the success-rate synchronous and bit-stable. It must be a boolean -
+        a value of any other type is reported as a structured caller error
+        rather than read by truthiness, since a truthy ``"false"`` would
+        otherwise evaluate under the latency it reads as declining, and a
+        success rate measured that way is not the one the caller asked for.
+        ``rtc_inference_timeout_s``
         bounds each async inference (structured error instead of a hung
         rollout). For benchmark-style latency masking use
         :meth:`run_policy` (``async_rtc=...``).
@@ -4262,6 +4334,13 @@ class SimEngine(ABC):
             ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
             ``rtc_max_inference_ms``.
         """
+        # Same posture-flag rule as run_policy, ahead of robot resolution: an
+        # evaluation is the one place a misread here would be trusted as a
+        # number, since a success rate carries no field saying which pipeline
+        # produced it.
+        if err := self._validate_posture_flags("eval_policy", async_rtc=async_rtc):
+            return err
+
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}

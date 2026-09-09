@@ -239,7 +239,11 @@ def run_policy(
             Must be a positive integer, reported before the rollout starts
             for the same reason.
         fast_mode: Skip real-time sleep between steps (default True for
-            rollouts - wall-clock pacing slows headless eval).
+            rollouts - wall-clock pacing slows headless eval). Must be a
+            boolean; it selects a posture rather than scaling a quantity, so
+            any other type is reported before the rollout starts rather than
+            read by truthiness - a truthy ``"false"`` would otherwise run the
+            episodes unpaced.
         dataset_root: When set, the tool drives the full recording
             cycle: ``start_recording(root=dataset_root, ...)`` -> N
             rollouts with per-episode save_episode -> ``stop_recording``
@@ -408,6 +412,19 @@ def run_policy(
                 f"above the {MAX_EVAL_SEED} ceiling every rollout surface accepts. Lower the seed or "
                 "the episode count."
             )
+
+    # The pacing posture is checked before step 2 for the same reason as the
+    # options around it: the facade refuses a non-boolean fast_mode itself, but
+    # only once this tool has already created the dataset it was asked to
+    # record into, so every episode would then be reported as refused beside
+    # an empty dataset. Read by truthiness, as it was, ``fast_mode="false"`` ran
+    # every episode unpaced and ``fast_mode=0`` paced them, neither a declared
+    # spelling. The domain is the shared one, so a spelling the facade refuses
+    # is refused here with the same words.
+    from strands_robots.utils import boolean_flag_error
+
+    if flag_error := boolean_flag_error(fast_mode, "fast_mode", "run_policy"):
+        return _err(flag_error)
 
     if video is not None and not isinstance(video, dict):
         return _err(

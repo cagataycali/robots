@@ -2111,6 +2111,25 @@ which side the enum is on.
   arm to the far end of its travel in one write: the full-travel jump the same module
   already refuses `steps=True` for. Pinned by
   `tests/tools/test_pose_tool_smooth_posture_flag_domain.py`.
+- **A facade that binds its numeric knobs to the tool-error envelope binds its flags the
+  same way, and a surface that submits to a worker checks them before the submit.**
+  `SimEngine.run_policy` validates `control_frequency`, `seed`, `action_horizon` and the
+  rest through `_validate_*` bindings of the shared numeric domains, while the four
+  posture flags in the same signature - `fast_mode`, `reset_between`,
+  `wbc_install_torque_control` and `async_rtc` - were read by truthiness one layer down:
+  `reset_between=0` on a two-episode call started episode two from wherever episode one
+  left the arm, and `async_rtc="false"` reported `rtc_async_enabled=True` beside the
+  background inference thread the caller had declined. `_validate_posture_flags` is the
+  binding, called ahead of robot resolution so a refused call builds no policy. A flag
+  whose `None` is a documented sentinel (`async_rtc` on `run_policy`, "resolve from the
+  policy") is checked only when supplied; the same name declared as a plain `bool` on
+  `eval_policy` refuses `None` with everything else. MuJoCo's `start_policy` repeats the
+  check before `executor.submit`, for the reason its sibling knobs already do: a refusal
+  produced on the worker is discarded with the future and the caller reads "started". The
+  `run_policy` tool checks its own `fast_mode` before `start_recording(overwrite=True)`,
+  so the facade's refusal cannot arrive after the dataset it was asked to record into has
+  been emptied. Pinned by `tests/simulation/test_run_policy_posture_flag_domain.py`,
+  whose roster is read from the facade's signature so a fifth flag cannot skip the domain.
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,

@@ -5348,8 +5348,9 @@ class MuJoCoSimEngine(
         A second ``start_policy`` on the *same* robot is still rejected.
 
         Every request :meth:`run_policy` refuses is refused here too, before the
-        submit: the horizon, the seed, the video config, the provider keyword
-        bags, the recording rate, and the policy configuration itself (provider
+        submit: the pacing posture, the horizon, the seed, the video config, the
+        provider keyword bags, the recording rate, and the policy configuration
+        itself (provider
         resolution plus the provider's own
         :meth:`~strands_robots.policies.base.Policy.preflight` hook, via
         :meth:`~strands_robots.simulation.base.SimEngine._preflight_policy_config`).
@@ -5384,7 +5385,12 @@ class MuJoCoSimEngine(
         # default path, when n_steps is omitted) via _validate_duration. The
         # seed is covered for the same reason and was not: an unusable one
         # reached NumPy on the worker thread, where the raise was swallowed, so
-        # the caller read "started" and the rollout ran unseeded.
+        # the caller read "started" and the rollout ran unseeded. The pacing
+        # posture is covered for the same reason: read by truthiness on the
+        # worker, fast_mode="false" ran the rollout unpaced under a "started"
+        # that named no problem.
+        if err := self._validate_posture_flags("start_policy", fast_mode=fast_mode):
+            return err
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
             return err
         resolved_duration, resolved_n_steps, horizon_error = self._resolve_horizon(
