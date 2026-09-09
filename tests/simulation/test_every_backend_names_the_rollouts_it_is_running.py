@@ -35,6 +35,7 @@ is what ``stop_policy`` does for a halt it cannot stand behind.
 
 from __future__ import annotations
 
+import importlib.util
 import textwrap
 import types
 from typing import Any
@@ -43,13 +44,7 @@ import pytest
 
 from strands_robots.simulation.base import SimEngine
 
-try:  # pragma: no cover - exercised by the skip
-    import newton  # noqa: F401
-    import warp  # noqa: F401
-
-    _HAS_NEWTON = True
-except ImportError:  # pragma: no cover
-    _HAS_NEWTON = False
+_HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
 _ROBOT = "so101"
 
