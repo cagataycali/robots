@@ -1,0 +1,75 @@
+{
+  "tree_file": "/home/cagatay/actions-runner-harness/_work/_temp/robots-src/strands_robots/tools/lerobot_camera.py",
+  "read_path": {
+    "True": {
+      "status": "success",
+      "async": 1,
+      "sync": 0
+    },
+    "False": {
+      "status": "success",
+      "async": 0,
+      "sync": 1
+    },
+    "\"false\"": {
+      "status": "error",
+      "async": 0,
+      "sync": 0
+    },
+    "0": {
+      "status": "error",
+      "async": 0,
+      "sync": 0
+    }
+  },
+  "on_disk": {
+    "save_config=True, warmup=False": {
+      "status": "success",
+      "files": 1,
+      "persisted_warmup": false,
+      "persisted_type": "bool",
+      "report": "Warmup: off",
+      "driver_saw": [
+        false
+      ]
+    },
+    "save_config=\"false\"": {
+      "status": "error",
+      "files": 0,
+      "persisted_warmup": null,
+      "persisted_type": null,
+      "report": null,
+      "driver_saw": []
+    },
+    "save_config=True, warmup=\"false\"": {
+      "status": "error",
+      "files": 0,
+      "persisted_warmup": null,
+      "persisted_type": null,
+      "report": null,
+      "driver_saw": []
+    }
+  },
+  "gate": {
+    "True": {
+      "status": "error",
+      "names": "timeout_ms",
+      "first_line": "capture: timeout_ms must be > 0, got -5."
+    },
+    "False": {
+      "status": "success",
+      "names": null,
+      "first_line": " **Image Capture Success!**"
+    },
+    "\"false\"": {
+      "status": "error",
+      "names": "async_mode",
+      "first_line": "capture: async_mode must be a boolean, got 'false'. It selects a postu"
+    },
+    "0": {
+      "status": "error",
+      "names": "async_mode",
+      "first_line": "capture: async_mode must be a boolean, got 0. It selects a posture rat"
+    }
+  }
+}

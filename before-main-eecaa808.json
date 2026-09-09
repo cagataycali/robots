@@ -1,0 +1,79 @@
+{
+  "tree_file": "/tmp/basewt-34341679915/strands_robots/tools/lerobot_camera.py",
+  "read_path": {
+    "True": {
+      "status": "success",
+      "async": 1,
+      "sync": 0
+    },
+    "False": {
+      "status": "success",
+      "async": 0,
+      "sync": 1
+    },
+    "\"false\"": {
+      "status": "success",
+      "async": 1,
+      "sync": 0
+    },
+    "0": {
+      "status": "success",
+      "async": 0,
+      "sync": 1
+    }
+  },
+  "on_disk": {
+    "save_config=True, warmup=False": {
+      "status": "success",
+      "files": 1,
+      "persisted_warmup": false,
+      "persisted_type": "bool",
+      "report": "Warmup: off",
+      "driver_saw": [
+        false
+      ]
+    },
+    "save_config=\"false\"": {
+      "status": "success",
+      "files": 1,
+      "persisted_warmup": true,
+      "persisted_type": "bool",
+      "report": "Warmup: on",
+      "driver_saw": [
+        true
+      ]
+    },
+    "save_config=True, warmup=\"false\"": {
+      "status": "success",
+      "files": 1,
+      "persisted_warmup": "false",
+      "persisted_type": "str",
+      "report": "Warmup: on",
+      "driver_saw": [
+        "false"
+      ]
+    }
+  },
+  "gate": {
+    "True": {
+      "status": "error",
+      "names": "timeout_ms",
+      "first_line": "capture: timeout_ms must be > 0, got -5."
+    },
+    "False": {
+      "status": "success",
+      "names": null,
+      "first_line": " **Image Capture Success!**"
+    },
+    "\"false\"": {
+      "status": "error",
+      "names": "timeout_ms",
+      "first_line": "capture: timeout_ms must be > 0, got -5."
+    },
+    "0": {
+      "status": "success",
+      "names": null,
+      "first_line": " **Image Capture Success!**"
+    }
+  }
+}
