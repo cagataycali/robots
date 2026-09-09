@@ -1357,15 +1357,39 @@ class G1Driver:
         motion-switcher API and arrives on a different topic.  Writing this
         field to :attr:`_mode_machine` (rather than :attr:`_fsm_id`) keeps the
         two ranges separate: ``[0, 255]`` for the echo, arbitrary for the gate.
+
+        Each ``IMUState_`` vector is read through ``getattr(imu, name, None)``
+        and coerced by
+        :func:`~strands_robots.drivers.base.telemetry_float_list`, so a field
+        the message does not carry lands ``None`` rather than a typed default.
+        The twin driver
+        :meth:`~strands_robots.drivers.go2.Go2Driver._on_lowstate`
+        reads the same four names the same way, and it is the stricter half of
+        the rule here: a default-carrying read cannot fail, and every default
+        this IMU could take is a well-formed
+        reading of a robot that is fine -- ``[0.0, 0.0, 0.0]`` rpy is perfectly
+        level, ``[1.0, 0.0, 0.0, 0.0]`` is upright, and a zero accelerometer is
+        free fall, which a standing robot never reports because gravity is
+        always on one axis.  Those constants are published to
+        ``strands/{peer_id}/imu`` by
+        :class:`~strands_robots.mesh.sensors.SensorLoopsMixin` for as long as
+        the robot runs, so a fleet reading attitude off the wire would be told
+        a falling humanoid is level.  ``None`` says the field was not read,
+        which is what the ``g1_imu`` verb documents for every one of them.
+
+        Because each field is coerced on its own, one unreadable vector reports
+        itself as ``None`` and leaves the other three intact, rather than
+        raising past the dict and abandoning a frame that carried three good
+        readings.
         """
         try:
             imu = getattr(msg, "imu_state", None)
             if imu is not None:
                 self._imu = {
-                    "rpy": [float(x) for x in getattr(imu, "rpy", [0.0, 0.0, 0.0])[:3]],
-                    "gyroscope": [float(x) for x in getattr(imu, "gyroscope", [0.0, 0.0, 0.0])[:3]],
-                    "accelerometer": [float(x) for x in getattr(imu, "accelerometer", [0.0, 0.0, 0.0])[:3]],
-                    "quaternion": [float(x) for x in getattr(imu, "quaternion", [1.0, 0.0, 0.0, 0.0])[:4]],
+                    "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
+                    "gyroscope": telemetry_float_list(getattr(imu, "gyroscope", None)),
+                    "accelerometer": telemetry_float_list(getattr(imu, "accelerometer", None)),
+                    "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
                     "t": time.time(),
                 }
             mode_machine = getattr(msg, "mode_machine", None)

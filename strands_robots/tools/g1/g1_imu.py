@@ -75,6 +75,12 @@ def g1_imu(driver: Any) -> dict[str, Any]:
     ``present=False`` and every field ``None``; the verb does not
     fabricate a reading the driver does not have.
 
+    ``present=True`` with an individual field ``None`` is the same rule one
+    level down: the ``LowState`` arrived, but that vector was not in it (or
+    not at its declared width), so ``_on_lowstate`` cached ``None`` for it
+    rather than a typed default.  A caller must therefore check each field it
+    reads, not just ``present``.
+
     Args:
         driver: An object with a ``_snapshot(attr: str)`` method
             returning the cached sensor dict (in practice a
