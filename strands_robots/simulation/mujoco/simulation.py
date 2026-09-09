@@ -6575,26 +6575,6 @@ class MuJoCoSimEngine(
             "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
         }
 
-    def list_policies_running(self) -> dict[str, Any]:
-        """Return the names of robots currently running a policy.
-
-        Useful for inspecting concurrent-policy state when running two or
-        more VLA arms in the same scene (GH #114). Always returns a
-        success dict so the LLM can parse it uniformly. Prunes stale
-        completed Future entries as a side effect.
-        """
-        active = self._active_policy_robots()
-        if not active:
-            return {
-                "status": "success",
-                "content": [{"text": "No policies running."}],
-            }
-        robot_lines = "\n".join(f"  - {n}" for n in active)
-        return {
-            "status": "success",
-            "content": [{"text": f"Active policies ({len(active)}):\n{robot_lines}"}],
-        }
-
     # Cleanup
 
     # Cooperative-stop budget (seconds) - how long a caller-facing action waits

@@ -4144,6 +4144,57 @@ class SimEngine(ABC):
         """
         return None
 
+    def list_policies_running(self) -> dict[str, Any]:
+        """Name the robots a rollout is driving right now.
+
+        The public reader of the in-flight population, promoted here from the
+        MuJoCo engine so it answers on every backend: ``docs/simulation/overview.md``
+        lists it in the Policy action table with no backend qualifier, and
+        documents :meth:`stop_policy` -- on this ABC since a robot's stop became
+        a base contract -- as deriving its verdict from "the same in-flight
+        population ``list_policies_running`` reads". Only one of that documented
+        pair existed on Newton and Isaac; asking for the other raised
+        ``AttributeError``. ``docs/device-connect.md`` makes the same promise for
+        the Device Connect stop, whose driver runs on any backend.
+
+        The population comes from :meth:`_rollouts_in_flight`, the one seam the
+        mesh's reporting surfaces also ask, so a peer polled over the wire and a
+        caller holding the engine cannot be told different things about the same
+        instant. MuJoCo's override of that seam delegates to its own registry
+        reader, so the prune this verb used to perform still happens.
+
+        Returns:
+            ``status="success"`` naming the robots in flight, or reporting that
+            none are, when this backend reports a population.
+            ``status="error"`` when it reports none at all: "no policies
+            running" is an affirmative claim, and a backend that cannot
+            enumerate its rollouts has no evidence for it. That mirrors
+            :meth:`stop_policy`, which refuses rather than reporting a halt it
+            cannot stand behind, and names the seam to override.
+        """
+        names = self._rollouts_in_flight()
+        if names is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"list_policies_running: {type(self).__name__} keeps no rollout registry, so "
+                            "which robots are running a policy cannot be reported. Reporting none would be "
+                            "an affirmative claim about robots this backend cannot see. Fix by overriding "
+                            "_rollouts_in_flight."
+                        )
+                    }
+                ],
+            }
+        if not names:
+            return {"status": "success", "content": [{"text": "No policies running."}]}
+        robot_lines = "\n".join(f"  - {n}" for n in names)
+        return {
+            "status": "success",
+            "content": [{"text": f"Active policies ({len(names)}):\n{robot_lines}"}],
+        }
+
     def replay_episode(
         self,
         repo_id: str,

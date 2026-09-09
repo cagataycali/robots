@@ -58,7 +58,8 @@ it routes every robot through the simulation's own `stop_policy` and answers wit
 the rollouts that really were in flight (`stopped`) and any that refused
 (`not_stopped`, under `status="error"`), so an idle simulation and a halted
 rollout are different answers and either can be checked against
-`list_policies_running`. A simulation with nothing to halt answers
+`list_policies_running`, which is a `SimEngine` verb and so answers whichever
+backend the driver is holding. A simulation with nothing to halt answers
 `status="success"` with an empty `stopped` list — never an error, because a peer
 reported as "did not stop" when it had nothing to stop is the false alarm that
 teaches an operator to ignore the warning.
