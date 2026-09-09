@@ -5075,13 +5075,63 @@ class MuJoCoSimEngine(
             self._policy_rates.pop(stale, None)
 
     def _active_policy_robots(self) -> list[str]:
-        """Names of robots with a live (not-done) policy Future.
+        """Names of robots a rollout is driving right now, in either shape.
 
-        Prunes stale entries as a side-effect so the returned list is
-        authoritative. Callers can introspect via ``list_policies_running``.
+        BOTH shapes, because a caller asking what is in flight is not asking how
+        it was launched: :meth:`start_policy` submits a Future and registers it
+        here, while :meth:`run_policy` drives the rollout on its caller's thread
+        and registers nothing. This answered from the Future table alone, so a
+        blocking rollout was invisible to every reader of this population for as
+        long as it drove the arm - measured on one arm at 20 Hz:
+
+        * :meth:`list_policies_running` answered "No policies running.",
+        * the mesh ``status`` command answered ``idle`` with an empty
+          ``robots_running``, and its state topic published ``active=False``,
+        * the ``{"action": "stop"}`` fanout
+          :meth:`~strands_robots.mesh.Mesh.emergency_stop` broadcasts answered
+          ``ok=True, "no policies running"`` and halted nothing, which
+          :func:`~strands_robots.mesh.core._peers_that_did_not_stop` reads as a
+          peer that stopped - so the operator was told the fleet had halted
+          while the rollout drove the arm for the remaining 8 of its 10 seconds.
+          That is the affirmative lie the surrounding stop branches are
+          commented against, reached through the population instead of the
+          verdict.
+
+        :meth:`stop_policy` was the one surface that read the per-robot claim as
+        well, so it and ``list_policies_running`` reported opposite facts about
+        the same instant ("Stopped on 'arm'" with ``was_running=True`` against
+        "No policies running.") - the two-sources drift #2833 is about, and the
+        thing ``docs/simulation/overview.md`` promised could not happen. The
+        union is spelled once, here, and every reader inherits it.
+
+        ``policy_running`` is the flag the launching thread raises around every
+        rollout this engine drives (``_announce_rollout``) and
+        :meth:`_release_run_policy_hook` lowers in a ``finally`` when the
+        rollout ends for any reason, so it covers the shape the Future table
+        cannot see and a finished rollout leaves it down.
+
+        Returns:
+            The names, Future-backed rollouts first in registration order and
+            then any robot holding the claim without one, each robot once.
+            Prunes stale Future entries as a side effect, so the list is
+            authoritative. :meth:`list_policies_running` is the public reader.
         """
         self._prune_done_futures()
-        return list(self._policy_threads.keys())
+        names = list(self._policy_threads.keys())
+        world = self._world
+        if world is None:
+            return names
+        registered_names = set(names)
+        # Snapshot the registry: this read must answer for a status command and
+        # for a stop, and a scene teardown racing either would otherwise raise
+        # "dictionary changed size during iteration" out of a surface whose
+        # whole job is to answer.
+        names.extend(
+            name
+            for name, robot in tuple(world.robots.items())
+            if name not in registered_names and getattr(robot, "policy_running", False)
+        )
+        return names
 
     def _active_rollout_rates(self) -> dict[str, float]:
         """Capture rate of every ``start_policy`` rollout still in flight.
@@ -6453,16 +6503,17 @@ class MuJoCoSimEngine(
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]
-        # Answer from the same source :meth:`list_policies_running` answers
-        # from, not from the flag alone. A rollout is in flight from the moment
-        # its Future is registered, and the two surfaces reported opposite facts
-        # about the same instant while the flag was still down (#2833). The flag
-        # is now raised by the launcher, so the union only widens the answer at
-        # the tail of a rollout whose Future has not yet been pruned - where
-        # "there was one" is still the honest reading.
+        # Read the population :meth:`_active_policy_robots` owns instead of
+        # re-deriving it: both rollout shapes count, and that verb is where both
+        # are spelled. This surface used to be the only one that unioned the
+        # per-robot claim in, which is why it and :meth:`list_policies_running`
+        # reported opposite facts about a blocking rollout at the same instant
+        # (#2833).
         was_running = robot_name in self._active_policy_robots()
         # Durable: moves this robot's claim out of date, so a worker that has
-        # not yet reached its first frame cannot raise the flag back over it.
+        # not yet reached its first frame cannot raise the flag back over it. Its
+        # own return stays in the OR because the claim can be raised in the
+        # window between the read above and this write.
         was_running = robot.request_policy_stop() or was_running
         msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
         # The verdict travels as data as well as prose. A programmatic caller -

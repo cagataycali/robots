@@ -235,8 +235,11 @@ each with an `active` flag:
 ```
 
 `active` means *this robot is executing a policy right now*. It is read from the
-same running-policy registry the `status` command answers `robots_running` from,
-so polling the topic and asking a peer directly never disagree. The scene's idle
+same in-flight population the `status` command answers `robots_running` from,
+so polling the topic and asking a peer directly never disagree. A rollout counts
+however it was launched: one submitted in the background by `start_policy` and one
+being driven right now by the blocking `run_policy`, which registers no future,
+both read `true`. The scene's idle
 arms read `false`, which is what makes the one arm running a rollout
 identifiable, and the flag clears when that policy is stopped or its duration
 expires. Which robots *exist* is a separate question, answered by `sim_robots` on
