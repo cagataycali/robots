@@ -4115,6 +4115,35 @@ class SimEngine(ABC):
         """
         return None
 
+    def _rollouts_in_flight(self) -> tuple[str, ...] | None:
+        """Names of this world's robots a rollout is driving right now.
+
+        The reporting counterpart of :meth:`_request_policy_stop`, and the one
+        population every remote reader of "is a rollout in flight" asks for:
+        :meth:`~strands_robots.mesh.Mesh._dispatch`'s ``status`` command and the
+        ``robots`` section of its state topic. Reporting a rollout is a strictly
+        weaker requirement than halting one - a backend whose per-robot record
+        carries a bare flag cannot keep a stop it promises (#2833), but that flag
+        is a perfectly good answer to what is running - so a backend may well
+        answer here and still refuse :meth:`stop_policy`.
+
+        Tri-state, for the reason ``_request_policy_stop`` is: ``None`` is a
+        stated absence of a verdict and not an empty population. A backend
+        keeping no rollout claim that answered ``()`` would have every reader
+        publish "nothing is running" on no evidence, which is the affirmative
+        lie :meth:`stop_policy` and
+        :func:`~strands_robots.mesh.core._reported_a_rollout_in_flight` are both
+        written against - and the state topic renders an empty population as
+        ``active=false`` on every robot in the world.
+
+        Returns:
+            The names, in any order, when this backend can enumerate the
+            rollouts it is driving; ``()`` when it can and none is; ``None``
+            when it keeps no such claim, or when the world it would read is
+            gone. Default: ``None`` - the ABC itself owns no registry.
+        """
+        return None
+
     def replay_episode(
         self,
         repo_id: str,

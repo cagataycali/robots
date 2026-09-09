@@ -5133,6 +5133,22 @@ class MuJoCoSimEngine(
         )
         return names
 
+    def _rollouts_in_flight(self) -> tuple[str, ...]:
+        """MuJoCo override: the population :meth:`_active_policy_robots` owns.
+
+        The base seam every remote reader asks
+        (:meth:`~strands_robots.simulation.base.SimEngine._rollouts_in_flight`),
+        answered by delegation rather than by a second walk of the registry:
+        the union of the Future table and the per-robot claim is spelled once,
+        in :meth:`_active_policy_robots`, and the two-sources drift that method
+        documents is exactly what a re-derivation here would reintroduce.
+
+        Returns:
+            The names, never ``None``: this engine always holds the registry, so
+            an empty result really does mean nothing is in flight.
+        """
+        return tuple(self._active_policy_robots())
+
     def _active_rollout_rates(self) -> dict[str, float]:
         """Capture rate of every ``start_policy`` rollout still in flight.
 

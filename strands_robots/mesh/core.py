@@ -1495,7 +1495,16 @@ class Mesh(SensorLoopsMixin):
                 world_robots = getattr(world, "robots", None)
                 if isinstance(world_robots, dict):
                     running = self._running_policy_robots()
-                    snapshot["robots"] = {name: {"active": name in running} for name in world_robots}
+                    # A backend that reports no in-flight population gets its
+                    # robots named with no ``active`` flag at all. An absent
+                    # flag reads as "not reported", which is what absence means
+                    # in every other section of this snapshot; ``false`` would
+                    # be an affirmative "this robot is idle" published on no
+                    # evidence, and a peer whose rollouts are invisible is
+                    # exactly where that lie lands.
+                    snapshot["robots"] = {
+                        name: ({"active": name in running} if running is not None else {}) for name in world_robots
+                    }
                 # Per-robot joint extraction for SimRobot children on the mesh.
                 # SimRobot has joint_names + namespace; read qpos/qvel from world.
                 joint_names = getattr(r, "joint_names", None)
@@ -1534,14 +1543,23 @@ class Mesh(SensorLoopsMixin):
 
         return snapshot if len(snapshot) > 2 else None
 
-    def _running_policy_robots(self) -> frozenset[str]:
+    def _running_policy_robots(self) -> frozenset[str] | None:
         """Names of this world's robots currently executing a policy.
 
-        The running-policy registry is the same source the ``status`` command
-        reads in :meth:`_dispatch`, so the state topic and an on-demand status
-        answer agree about which rollout is live. A ``SimRobot`` child peer
-        keeps no registry of its own and consults the parent ``Simulation``
-        through the ``_sim_parent`` backref that peer wiring installs.
+        The one population both reporting surfaces read - this method IS what
+        the ``status`` command answers ``robots_running`` from in
+        :meth:`_dispatch` - so the state topic and an on-demand status answer
+        cannot disagree about which rollout is live. It is asked of the backend
+        through
+        :meth:`~strands_robots.simulation.base.SimEngine._rollouts_in_flight`,
+        the seam every backend answers from the rollout claim it already keeps,
+        rather than of one engine's own registry method: probing for the MuJoCo
+        spelling left a Newton peer with a rollout genuinely in flight reporting
+        ``{"status": "unknown"}`` and ``active=false`` on every robot.
+
+        A ``SimRobot`` child peer keeps no registry of its own and consults the
+        parent ``Simulation`` through the ``_sim_parent`` backref that peer
+        wiring installs.
 
         A registry that raises is left to reach :meth:`_read_state`'s section
         handler, which names ``sim_world`` in ``degraded``. That is the
@@ -1550,15 +1568,20 @@ class Mesh(SensorLoopsMixin):
         substituting a flag here is what would make the fault unreportable.
 
         Returns:
-            The names, empty when no peer in this chain keeps such a registry.
-            Nothing then runs a policy on those robots through the simulation
-            API, so none of them is executing one.
+            The names; an empty set when a peer in this chain reports the
+            population and nothing is in flight; and ``None`` when no peer
+            reports one at all. ``None`` is a stated absence of a verdict, not
+            an idle world - the tri-state of the seam it reads, kept because
+            "no robot is running a policy" is an affirmative claim and a peer
+            that cannot enumerate its rollouts has no evidence for it.
         """
         for holder in (self.robot, getattr(self.robot, "_sim_parent", None)):
-            probe = getattr(holder, "_active_policy_robots", None)
+            probe = getattr(holder, "_rollouts_in_flight", None)
             if callable(probe):
-                return frozenset(probe())
-        return frozenset()
+                names = probe()
+                if names is not None:
+                    return frozenset(names)
+        return None
 
     # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:
@@ -2173,19 +2196,23 @@ class Mesh(SensorLoopsMixin):
         if action == "status":
             if hasattr(r, "get_task_status"):
                 return dict(r.get_task_status())
-            # Sim peer: synthesize a structured status from the running-
-            # policy registry so a rollout is wire-visible. Previously sims
+            # Sim peer: synthesize a structured status from the in-flight
+            # population so a rollout is wire-visible. Previously sims
             # answered {"status": "unknown"} and their state topic hardcoded
             # active=True - a running sim policy was invisible on the wire.
-            if hasattr(r, "_active_policy_robots"):
-                try:
-                    active = list(r._active_policy_robots())
-                    return {
-                        "status": "running" if active else "idle",
-                        "robots_running": active,
-                    }
-                except Exception:  # noqa: BLE001 - status must not raise
-                    pass
+            # Read through :meth:`_running_policy_robots`, the state topic's
+            # own reader, so the two surfaces answer from one call; a second
+            # probe here is how they came to disagree for a child peer, and
+            # how a backend the state topic can read stayed "unknown".
+            try:
+                running = self._running_policy_robots()
+            except Exception:  # noqa: BLE001 - status must not raise
+                running = None
+            if running is not None:
+                return {
+                    "status": "running" if running else "idle",
+                    "robots_running": sorted(running),
+                }
             ts = getattr(r, "_task_state", None)
             return {"status": getattr(getattr(ts, "status", None), "value", "unknown")}
         if action == "stop":

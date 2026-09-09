@@ -13,9 +13,9 @@ the set ``status`` reports running, in every phase of a real rollout, from a
 parent ``Simulation`` peer and from a ``SimRobot`` child peer alike.
 
 Also pinned, so the measurement cannot be traded for the old shortcut: a peer
-that keeps no policy registry still gets its ``robots`` section, and a registry
-that raises is named in ``degraded`` rather than answered with a fabricated
-flag.
+that reports no in-flight population still gets its ``robots`` section, with no
+flag beside the names rather than an invented one, and a population that cannot
+be read is named in ``degraded`` rather than answered with a fabricated flag.
 """
 
 from __future__ import annotations
@@ -40,6 +40,14 @@ def _active_names(snapshot: dict[str, Any] | None) -> set[str]:
     robots = snapshot.get("robots")
     assert isinstance(robots, dict), f"no robots section in the snapshot: {sorted(snapshot)}"
     return {name for name, entry in robots.items() if entry["active"]}
+
+
+def _unflagged_names(snapshot: dict[str, Any] | None) -> set[str]:
+    """The robots the snapshot names without saying whether one is running."""
+    assert snapshot is not None, "the peer published nothing on the state topic"
+    robots = snapshot.get("robots")
+    assert isinstance(robots, dict), f"no robots section in the snapshot: {sorted(snapshot)}"
+    return {name for name, entry in robots.items() if "active" not in entry}
 
 
 def _await(predicate: Any, what: str) -> None:
@@ -175,7 +183,7 @@ class _WorldStub:
 
 
 class _NoRegistryRobot:
-    """A peer holding a sim world but keeping no running-policy registry."""
+    """A peer holding a sim world but reporting no in-flight population."""
 
     tool_name_str = "worldbot"
 
@@ -184,20 +192,20 @@ class _NoRegistryRobot:
 
 
 class _DataAttributeRobot(_NoRegistryRobot):
-    """A peer carrying the registry's name as data rather than as a method."""
+    """A peer carrying the population's name as data rather than as a method."""
 
-    _active_policy_robots: list[str] = ["arm0"]
+    _rollouts_in_flight: tuple[str, ...] = ("arm0",)
 
 
 class _RaisingRegistryRobot(_NoRegistryRobot):
-    """A peer whose running-policy registry cannot be read."""
+    """A peer whose in-flight population cannot be read."""
 
-    def _active_policy_robots(self) -> list[str]:
+    def _rollouts_in_flight(self) -> tuple[str, ...]:
         raise RuntimeError("policy registry unreadable")
 
 
-class TestAPeerThatKeepsNoPolicyRegistry:
-    """Deriving the flag must not cost the section, nor invent a rollout."""
+class TestAPeerThatReportsNoPopulation:
+    """Deriving the flag must not cost the section, nor invent a verdict."""
 
     def test_its_robots_section_is_still_published(self) -> None:
         snapshot = mesh_core.Mesh(_NoRegistryRobot(), peer_id="no-registry")._read_state()
@@ -205,17 +213,24 @@ class TestAPeerThatKeepsNoPolicyRegistry:
         assert set(snapshot["robots"]) == {"arm0", "arm1"}
         assert snapshot["sim_time"] == 12.5
 
-    def test_none_of_its_robots_is_reported_active(self) -> None:
-        """No policy runs through the simulation API on such a peer."""
-        assert _active_names(mesh_core.Mesh(_NoRegistryRobot(), peer_id="no-reg2")._read_state()) == set()
+    def test_its_robots_carry_no_flag_rather_than_a_false_one(self) -> None:
+        """``active=false`` here is an affirmative "this robot is idle".
 
-    def test_the_registry_name_carried_as_data_is_not_a_registry(self) -> None:
+        Such a peer cannot enumerate its rollouts, so it has no evidence for
+        that claim: a robot it drives through some path this API cannot see
+        reads exactly the same. Absence is how every other section of the
+        snapshot spells "the probe had nothing to report".
+        """
+        snapshot = mesh_core.Mesh(_NoRegistryRobot(), peer_id="no-reg2")._read_state()
+        assert _unflagged_names(snapshot) == {"arm0", "arm1"}
+
+    def test_the_population_name_carried_as_data_is_not_a_population(self) -> None:
         """Only something callable is consulted, so a peer that happens to carry
-        the name as an attribute reads as keeping no registry rather than having
+        the name as an attribute reads as reporting nothing rather than having
         its names taken for a rollout.
         """
         snapshot = mesh_core.Mesh(_DataAttributeRobot(), peer_id="data-attr")._read_state()
-        assert _active_names(snapshot) == set()
+        assert _unflagged_names(snapshot) == {"arm0", "arm1"}
         assert snapshot is not None
         assert set(snapshot["robots"]) == {"arm0", "arm1"}
 

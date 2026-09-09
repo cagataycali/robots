@@ -2562,6 +2562,25 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return None
         return world.robots[robot_name].request_policy_stop()
 
+    def _rollouts_in_flight(self) -> tuple[str, ...] | None:
+        """Newton override: the robots holding the rollout claim right now.
+
+        The reporting half of the same per-robot flag
+        :meth:`_request_policy_stop` moves and
+        :meth:`~strands_robots.simulation.newton.recording.NewtonRecordingMixin._make_run_policy_hook`
+        raises, so the mesh ``status`` command and its state topic answer for a
+        Newton rollout instead of reporting ``unknown`` and ``active=false``
+        while one is in flight.
+
+        Returns:
+            The names, or ``None`` when the world is gone - there is then no
+            registry to read, and no verdict to give.
+        """
+        world = self._world
+        if world is None:
+            return None
+        return tuple(name for name, robot in tuple(world.robots.items()) if getattr(robot, "policy_running", False))
+
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release resources (alias for :meth:`destroy`)."""
         self.destroy()

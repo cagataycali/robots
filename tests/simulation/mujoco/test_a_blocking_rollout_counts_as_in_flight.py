@@ -73,11 +73,16 @@ def _readings(sim: Any) -> dict[str, Any]:
     disagreement rather than as two unrelated failures.
     """
     mesh = Mesh(sim, peer_id="sim-1", peer_type="simulation")
+    reported = mesh._running_policy_robots()
+    # Never ``None`` here: the population reader is tri-state so a backend
+    # keeping no rollout claim cannot be quoted as reporting an idle world, and
+    # this engine always holds the registry.
+    assert reported is not None, "a MuJoCo peer always reports its in-flight population"
     return {
         "population": sim._active_policy_robots(),
         "list_policies_running": sim.list_policies_running()["content"][0]["text"],
         "mesh_status": mesh._dispatch({"action": "status"}),
-        "state_topic": sorted(mesh._running_policy_robots()),
+        "state_topic": sorted(reported),
     }
 
 

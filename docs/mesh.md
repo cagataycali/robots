@@ -235,20 +235,25 @@ each with an `active` flag:
 ```
 
 `active` means *this robot is executing a policy right now*. It is read from the
-same in-flight population the `status` command answers `robots_running` from,
-so polling the topic and asking a peer directly never disagree. A rollout counts
-however it was launched: one submitted in the background by `start_policy` and one
-being driven right now by the blocking `run_policy`, which registers no future,
-both read `true`. The scene's idle
-arms read `false`, which is what makes the one arm running a rollout
-identifiable, and the flag clears when that policy is stopped or its duration
-expires. Which robots *exist* is a separate question, answered by `sim_robots` on
-the presence topic.
+same in-flight population the `status` command answers `robots_running` from -
+one call, `_rollouts_in_flight`, which every simulation backend answers from the
+per-robot rollout claim it already keeps - so polling the topic and asking a peer
+directly never disagree, on any backend. A rollout counts however it was
+launched: one submitted in the background by `start_policy` and one being driven
+right now by the blocking `run_policy`, which registers no future, both read
+`true`. The scene's idle arms read `false`, which is what makes the one arm
+running a rollout identifiable, and the flag clears when that policy is stopped
+or its duration expires. Which robots *exist* is a separate question, answered by
+`sim_robots` on the presence topic.
 
-A peer that keeps no such registry reports every robot `false` - nothing runs a
-policy on them through the simulation API. A registry that cannot be read is a
-failing probe, so it is named under `sim_world` in `degraded` rather than
-answered with a flag nobody measured.
+A peer that reports no in-flight population at all - a backend keeping no rollout
+claim, or one whose world has been torn down - still has its robots named, with
+**no `active` key beside them**, and the `status` command answers `unknown`. An
+absent flag reads as "not reported"; `false` would be an affirmative "this robot
+is idle" published on no evidence, which is indistinguishable from a rollout the
+peer cannot see. A population that cannot be read is a failing probe, so it is
+named under `sim_world` in `degraded` rather than answered with a flag nobody
+measured.
 
 ### Pose orientation
 

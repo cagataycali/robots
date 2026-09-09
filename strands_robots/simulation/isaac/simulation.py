@@ -4126,6 +4126,29 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             # coasting on stale targets while its siblings advance.
             raise RuntimeError(f"run_multi_policy: failed to set joint targets on '{robot_name}': {e}") from e
 
+    def _rollouts_in_flight(self) -> tuple[str, ...] | None:
+        """Isaac override: the robots holding the rollout claim right now.
+
+        The base seam
+        (:meth:`~strands_robots.simulation.base.SimEngine._rollouts_in_flight`)
+        answered from ``policy_running`` - the same per-robot flag every
+        policy-driving loop here sets and :meth:`run_multi_policy` already
+        trusts as a population for its busy guard - so the mesh ``status``
+        command reports a rollout on this backend instead of ``unknown``.
+
+        Reporting is a weaker requirement than halting, which is why this
+        engine answers here while :meth:`stop_policy` still refuses: a bare
+        flag is not a durable claim to move (#2833), but it is a true answer to
+        what is running.
+
+        Returns:
+            The names, or ``None`` before :meth:`create_world` - there is then
+            no world whose rollouts could be enumerated.
+        """
+        if not self._world_created:
+            return None
+        return tuple(name for name, robot in tuple(self._robots.items()) if robot.policy_running)
+
     def run_multi_policy(
         self,
         policies: dict[str, Policy],
