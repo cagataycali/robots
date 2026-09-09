@@ -40,8 +40,9 @@ the prescribed remedy was the hang.
 
 from __future__ import annotations
 
+import contextlib
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -321,6 +322,33 @@ class TestTheFleetStopAsksEveryRobotWhenThereIsNoRegistry:
         return Mesh(engine, peer_id="sim-1", peer_type="simulation")._dispatch({"action": "stop"})
 
     @staticmethod
+    @contextlib.contextmanager
+    def _at_error() -> Iterator[list[str]]:
+        """Collect ``mesh.core`` ERROR records emitted inside the block.
+
+        Reads the module's own logger rather than ``caplog``, whose handler sits
+        on the root logger for the whole test: an assertion over every record in
+        the process would be graded by any other logger that happened to speak.
+        """
+        import logging
+
+        records: list[str] = []
+
+        class _Collect(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        logger = logging.getLogger("strands_robots.mesh.core")
+        handler = _Collect(level=logging.ERROR)
+        logger.addHandler(handler)
+        previous, logger.level = logger.level, min(logger.level or logging.ERROR, logging.ERROR)
+        try:
+            yield records
+        finally:
+            logger.removeHandler(handler)
+            logger.level = previous
+
+    @staticmethod
     def _flagged(result: dict[str, Any]) -> bool:
         from strands_robots.mesh.core import _peers_that_did_not_stop
 
@@ -373,6 +401,48 @@ class TestTheFleetStopAsksEveryRobotWhenThereIsNoRegistry:
         assert result["ok"] is False
         assert "_Opaque" in result["error"]
         assert self._flagged(result) is True
+
+    def test_the_unenumerable_refusal_is_loud_in_the_log(self) -> None:
+        """An unstoppable peer must be loud in the log, not only in the return.
+
+        The property ``tests/mesh/test_estop_stop_honesty.py`` already pins for
+        the terminal "no ``stop_task``" branch, which this leg now sits beside:
+        the return reaches the BROADCASTER's accounting, while the log is what a
+        console on the robot itself shows. Removing the ``logger.error`` leaves
+        the return intact, so nothing but this grades it.
+        """
+
+        class _Opaque:
+            def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
+                return {"status": "success", "content": []}
+
+        with self._at_error() as records:
+            self._fleet_stop(_Opaque())
+
+        assert any("NOTHING was stopped" in m and "_Opaque" in m for m in records), records
+
+    def test_the_refusal_log_does_not_call_the_robots_it_asked_active_rollouts(self) -> None:
+        """The denominator is the population asked, which is not the in-flight count.
+
+        Widening the population is what makes the distinction matter: on a
+        backend that keeps no rollout registry every robot is asked, so a
+        message reading "N of M active rollout(s)" reports how many rollouts
+        were in flight - the one thing a backend on the refusing default cannot
+        know, and the reason it refuses.
+        """
+
+        class _ThreeRobots(_MinimalEngine):
+            def list_robots(self) -> list[str]:
+                return ["arm", "gripper", "base"]
+
+        with self._at_error() as records:
+            result = self._fleet_stop(_ThreeRobots())
+
+        assert result["not_stopped"] == ["arm", "base", "gripper"], result
+        refusals = [m for m in records if "stop_policy refused" in m]
+        assert refusals, records
+        assert "3 of 3 robot(s) asked" in refusals[0], refusals
+        assert "active rollout" not in refusals[0], refusals
 
     def test_the_was_running_reader_has_one_owner(self) -> None:
         """Both aggregating readers read one definition; neither spells a second copy.

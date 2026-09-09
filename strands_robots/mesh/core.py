@@ -2274,7 +2274,7 @@ class Mesh(SensorLoopsMixin):
                     ]
                     if refused:
                         logger.error(
-                            "[safety] %s: stop_policy refused for %d of %d active rollout(s): %s; "
+                            "[safety] %s: stop_policy refused for %d of %d robot(s) asked: %s; "
                             "those policies may still be executing",
                             self.peer_id,
                             len(refused),

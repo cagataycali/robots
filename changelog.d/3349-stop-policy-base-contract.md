@@ -50,6 +50,16 @@ rollouts nor its robots. The `was_running` reader both aggregating paths use
 now has one owner, `strands_robots.mesh.core._reported_a_rollout_in_flight`,
 beside the refusal predicate they already share.
 
+Widening that population also moved what the branch's own safety log means. It
+read `"stop_policy refused for %d of %d active rollout(s)"`, and the denominator
+is now every robot the engine was asked about - so on a backend running the
+refusing default the message reported how many rollouts were in flight, which is
+the single fact that backend refuses BECAUSE it cannot know. It names the robots
+asked instead. The refusal on the leg for a peer that enumerates neither its
+rollouts nor its robots is logged as well as returned, the way the terminal
+"exposes no `stop_task`" branch beside it already is: the return reaches the
+broadcaster's accounting, while the log is what a console on the robot shows.
+
 The counterpart's own description is corrected in the same change, because it is
 what sent callers looking for a stop that was not there. `start_policy`'s summary
 line read "Start policy execution in a background thread (non-blocking)" while

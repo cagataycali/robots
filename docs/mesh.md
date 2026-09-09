@@ -49,6 +49,34 @@ results = sim_a.mesh.broadcast({"action": "status"}, timeout=2.0)
 sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 ```
 
+## What a fleet e-stop reaches
+
+`emergency_stop()` broadcasts `{"action": "stop"}` with no `robot_name`, so each
+peer decides which of its own robots that reaches. A hardware peer stops its
+task. A simulation peer asks every rollout it could be running: the rollouts its
+backend reports as in flight where it keeps such a registry (MuJoCo prunes
+finished ones), and otherwise every robot the engine lists. `stop_policy` is
+idempotent and reports `was_running` itself, so asking an idle robot costs
+nothing and the verdict is read rather than guessed - `stopped` names only the
+robots whose answer did not say they were idle.
+
+The peer's `ok` is derived from those per-robot answers, never assumed:
+
+```python
+responses = sim_a.mesh.emergency_stop()
+# {"ok": True,  "stopped": ["arm"], "results": {...}}          the rollout halted
+# {"ok": True,  "stopped": [],      "results": {...}}          asked, none was running
+# {"ok": False, "stopped": [], "not_stopped": ["arm"], ...}    a stop was refused
+```
+
+A refusal puts the peer in `peers_not_stopped`, which `emergency_stop()` logs at
+CRITICAL and carries in the safety envelope. A backend that keeps no durable
+per-robot rollout claim refuses, and that refusal is what you want: on the safety
+path an acknowledgement that nothing was running is an affirmative answer given
+on no evidence. Bound such a rollout instead of stopping it -
+`run_policy(n_steps=...)` caps its length and `run_policy(stop_when={...})` ends
+it as soon as the world reaches a state.
+
 ## Recovering from an emergency stop
 
 `emergency_stop()` latches a **lockout** on every peer that receives it. While a
