@@ -48,8 +48,8 @@ if TYPE_CHECKING:
 
 from strands_robots.bus_access import bus_lock
 from strands_robots.drivers.base import undeclared_verb_error
-from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
-from strands_robots.utils import boolean_flag_error, positive_count_error
+from strands_robots.drivers.feetech.bus import DEFAULT_TIMEOUT_S, SO_ARM_MOTORS, FeetechBus
+from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,12 @@ class FeetechDriver:
       that is not a count is applied instead of refused.
     * ``motor_ids`` - the servo IDs on the bus, in wire order. Optional at
       construction; the bus discovers them on connect.
+    * ``timeout`` - how long a read waits for a servo's reply, in seconds,
+      defaulting to :data:`~strands_robots.drivers.feetech.bus.DEFAULT_TIMEOUT_S`.
+      Forwarded to the bus rather than recorded, for the reason ``motor_ids`` is:
+      a caller who lengthens the window for a slow servo, and gets the default
+      window and six motors that did not answer, has been told nothing. Held to
+      :func:`~strands_robots.utils.positive_finite_number_error`.
     """
 
     tool_type = _TOOL_TYPE
@@ -154,6 +160,13 @@ class FeetechDriver:
         if (reason := positive_count_error(baud_rate, "baud_rate", f"FeetechDriver({tool_name!r})")) is not None:
             raise ValueError(reason)
         self._baud_rate: int = baud_rate
+        # Forwarded, not recorded. The bus has this knob, so a ``timeout`` left
+        # in ``self._extras`` is not an extension waiting for a downstream
+        # package - it is a window the caller set and the bus never saw.
+        timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT_S)
+        if (reason := positive_finite_number_error(timeout, "timeout", f"FeetechDriver({tool_name!r})")) is not None:
+            raise ValueError(reason)
+        self._timeout: float = float(timeout)
         self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
         # ``motor_ids`` narrows the arm to a subset of SO_ARM_MOTORS. Honoured
         # rather than recorded: a keyword that changes nothing is worse than one
@@ -169,7 +182,7 @@ class FeetechDriver:
                     f"ids {sorted(known)} map to {[known[i] for i in sorted(known)]}",
                 )
             motors = {known[i]: SO_ARM_MOTORS[known[i]] for i in self._motor_ids}
-        self._bus = FeetechBus(port=self._port, baud_rate=self._baud_rate, motors=motors)
+        self._bus = FeetechBus(port=self._port, baud_rate=self._baud_rate, motors=motors, timeout=self._timeout)
         self._connect_error: str | None = None
         # Extras from the caller are kept for a downstream driver package
         # to consume; refusing them here would refuse a valid future

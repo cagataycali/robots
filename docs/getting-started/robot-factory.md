@@ -146,6 +146,14 @@ successfully at a speed no servo answers, after which every read times out exact
 unplugged arm does. A refusal at the line that states the speed is the only place that
 reads as a caller mistake rather than as broken hardware.
 
+The read window is the same shape. `timeout=` - on `FeetechBus`, and on `FeetechDriver`, which
+forwards a caller's window to it - is how long a read waits for a servo's reply, and it is held
+to a positive finite number at construction. pyserial takes `0`, `nan`, `inf` and `None`
+verbatim, and each of them leaves the read looking at an empty buffer that the retry loop cannot
+tell from a servo that never answered, so a healthy arm reports as motors that did not reply. A
+keyword a driver *records* instead of forwarding fails the same way one layer earlier: the caller
+lengthens the window, the bus opens at its default, and nothing says so.
+
 A driver has **two** ways to halt its robot and they are not the same contract. `stop_task()`
 returns a status envelope and decides an outcome, so that is what a caller reads. `stop()` is
 the lifecycle hook and is annotated `-> None`, so it carries no verdict at all - which makes

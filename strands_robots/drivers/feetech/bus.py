@@ -45,7 +45,7 @@ from strands_robots.drivers.feetech.protocol import (
     read_packet,
     sync_write_packet,
 )
-from strands_robots.utils import positive_count_error, require_optional
+from strands_robots.utils import positive_count_error, positive_finite_number_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,11 @@ _REGISTER_WIDTH: Final[int] = 2
 #: :func:`~strands_robots.drivers.feetech.protocol.parse_status_packet` skips.
 _READ_BUFFER: Final[int] = 10
 
+#: Seconds a read waits for a servo's reply. Named rather than spelled
+#: twice: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`
+#: forwards a caller's window to this bus and defaults to the same one.
+DEFAULT_TIMEOUT_S: Final[float] = 1.0
+
 #: Seconds to let a servo answer before reading. The vendor SDK polls; a fixed
 #: settle is enough at 1 Mbaud for a two-byte reply and keeps the read simple.
 _REPLY_SETTLE_S: Final[float] = 0.01
@@ -176,10 +181,19 @@ class FeetechBus:
             only a negative, so an unusable value opens the port at a speed no
             servo answers instead of reporting itself.
         motors: The servos on this bus, defaulting to :data:`SO_ARM_MOTORS`.
-        timeout: Serial read timeout in seconds.
+        timeout: How long a read waits for a servo's reply, in seconds;
+            :data:`DEFAULT_TIMEOUT_S` unless a caller knows the bus answers
+            slower. Held to the same domain as ``baud_rate`` and for the same
+            reason: pyserial accepts ``0``, ``nan``, ``inf`` and ``None`` as a
+            timeout, and every one of them makes :meth:`_read_one` see an empty
+            buffer it cannot tell from a servo that never answered - so a
+            healthy arm reports as motors that did not reply, naming neither
+            this bus nor the value that decided it. The two pyserial does
+            refuse it refuses from inside :meth:`connect`, naming neither.
 
     Raises:
-        ValueError: ``baud_rate`` is not a positive integer.
+        ValueError: ``baud_rate`` is not a positive integer, or ``timeout`` is
+            not a positive finite number.
     """
 
     def __init__(
@@ -187,9 +201,11 @@ class FeetechBus:
         port: str | None,
         baud_rate: int = 1_000_000,
         motors: dict[str, MotorSpec] | None = None,
-        timeout: float = 1.0,
+        timeout: float = DEFAULT_TIMEOUT_S,
     ) -> None:
         if (reason := positive_count_error(baud_rate, "baud_rate", type(self).__name__)) is not None:
+            raise ValueError(reason)
+        if (reason := positive_finite_number_error(timeout, "timeout", type(self).__name__)) is not None:
             raise ValueError(reason)
         self.port = port
         self.baud_rate = baud_rate
