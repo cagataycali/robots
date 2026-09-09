@@ -82,8 +82,8 @@ Selected actions:
 | Action | What |
 |--------|------|
 | `run_policy(robot_name, ...)` | Blocking policy rollout. |
-| `start_policy(robot_name, ...)` | Async rollout (background thread). |
-| `stop_policy(robot_name)` | Stop running policy. |
+| `start_policy(robot_name, ...)` | Rollout in a background thread on MuJoCo; a blocking passthrough to `run_policy` on the other backends. `describe()['methods']['start_policy']` states which one the engine you hold implements. |
+| `stop_policy(robot_name)` | Cooperatively stop a rollout; the `json` block reports `was_running`. Refused (naming the class) by a backend with no durable per-robot claim. |
 | `run_multi_policy(policies, ...)` | Synchronized multi-robot rollout, one merged frame per step. |
 | `eval_policy(robot_name, n_episodes, ...)` | Multi-episode evaluation. |
 | `evaluate_benchmark(benchmark_name, ...)` | Run registered benchmark. |

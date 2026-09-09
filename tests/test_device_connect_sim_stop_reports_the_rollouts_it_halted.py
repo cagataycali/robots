@@ -101,7 +101,7 @@ class _World:
 
 
 class _SimPeer:
-    """A simulation exposing the two attributes both stop routers look for.
+    """A simulation exposing the three surfaces both stop routers look for.
 
     Deliberately not a ``Mock``: ``hasattr`` is what the routers test, and a
     mock answers every ``hasattr`` truthfully-by-fabrication. ``stop_policy``
@@ -134,6 +134,15 @@ class _SimPeer:
         if self._world is not None:
             for name in self._active:
                 self._world.robots[name].policy_running = True
+
+    def list_robots(self) -> list[str]:
+        """The ABC's own accessor, which the driver's stop enumerates through.
+
+        Abstract on ``SimEngine``, so a stand-in for a simulation has to answer
+        it; ``_world.robots`` is only the MuJoCo/Newton spelling of the same
+        registry and the Isaac engine has no such attribute.
+        """
+        return [] if self._world is None else list(self._world.robots)
 
     def _active_policy_robots(self) -> list[str]:
         return list(self._active)

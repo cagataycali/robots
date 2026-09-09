@@ -3134,6 +3134,16 @@ class MuJoCoSimEngine(
         # spec + action dispatcher; listing them completes the start/stop/list
         # lifecycle on the discovery surface (the resource-management sibling of
         # run_policy's blocking rollout).
+        # start_policy's inherited entry states the base engine's SYNCHRONOUS
+        # reading, which is wrong for this backend -- and it is the entry a
+        # caller reads to tell the two apart, so it is corrected here rather
+        # than left describing another engine.
+        base["methods"]["start_policy"] = (
+            "(robot_name: str, policy_provider='mock', ...) -> dict  # on THIS "
+            "engine it submits the rollout to the ThreadPoolExecutor and returns "
+            "immediately (background, non-blocking); stop_policy ends it and "
+            "list_policies_running reports what is in flight"
+        )
         base["methods"]["stop_policy"] = (
             "(robot_name: str) -> dict  # cooperatively stop the background "
             "policy started by start_policy on robot_name; idempotent (succeeds "

@@ -676,8 +676,14 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         is running ... wait for the rollout to finish``, and
         :meth:`~strands_robots.simulation.isaac.simulation.IsaacSimulation.run_multi_policy`
         answered ``policy already running ... Stop it first`` - two remedies
-        for a rollout that had already ended, and neither reachable (Isaac
-        exposes no ``stop_policy``).
+        for a rollout that had already ended, and at the time neither was even
+        reachable, because Isaac exposed no ``stop_policy``. It inherits one now
+        (:meth:`~strands_robots.simulation.base.SimEngine.stop_policy`), which
+        on this backend states why it cannot help - the per-robot record here
+        carries a bare ``policy_running`` flag and not the durable claim
+        ``SimRobot.request_policy_stop`` writes - rather than raising
+        ``AttributeError``. The release below is what makes the remedy
+        unnecessary in the first place.
 
         ``run_multi_policy`` lowers the flag in its own ``finally`` for the
         loop it owns; this is the same release for the rollout the shared

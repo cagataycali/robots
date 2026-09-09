@@ -219,6 +219,11 @@ def _make_mock_sim(tool_name="so100_sim"):
     # reads the verdict out of the answer, so a bare ``MagicMock`` here observes
     # neither half of what the verb does. See ``tests._sim_stop_policy_stand_in``.
     sim.stop_policy.side_effect = stop_policy_stand_in(world)
+    # ``list_robots`` is an ABSTRACT method of the SimEngine ABC, so a stand-in
+    # for a simulation has to answer it: the driver's stop enumerates through it
+    # rather than off ``sim._world.robots``, which is only the MuJoCo/Newton
+    # spelling of the registry. A bare ``MagicMock`` returns a mock, not a list.
+    sim.list_robots.return_value = list(world.robots)
     sim.start_policy.return_value = {"status": "success", "content": [{"text": "Policy started"}]}
     sim.get_state.return_value = {"status": "success", "content": [{"text": "State info"}]}
     sim.get_features.return_value = {"status": "success", "content": [{"json": {"features": {}}}]}

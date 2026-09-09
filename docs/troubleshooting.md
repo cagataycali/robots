@@ -85,7 +85,7 @@ description: Error → fix table for the most common gotchas across install, sim
 |---------|--------------|-----|
 | Agent picks wrong action | Tool spec confusion | Rephrase instruction; check `robot.tool_spec` |
 | `Agent(tools=[robot])` errors | `strands-agents` missing | `uv pip install strands-agents` |
-| Agent hangs | Long-running action | Use `start_policy` instead of `run_policy` |
+| Agent hangs | Long-running action | Bound the rollout: `run_policy(n_steps=...)`, or `stop_when={'predicate': ...}` to end it on a world state. On MuJoCo `start_policy` also returns immediately; on the other backends it is a blocking passthrough, so it is not the fix there |
 | Bedrock/Anthropic auth fails | Provider credentials | See [Strands Agents docs](https://strandsagents.com/) |
 
 Bug reports: [GitHub issues](https://github.com/strands-labs/robots/issues) - include `pip show strands-robots`, Python + OS, minimal repro, full stack trace.

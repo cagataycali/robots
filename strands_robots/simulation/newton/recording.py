@@ -583,10 +583,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Nothing lowered it, so a recorded rollout left the robot marked as
         driven for the rest of the session. On this backend the flag is what
         :meth:`~strands_robots.simulation.models.SimRobot.request_policy_stop`
-        reports as ``was_running``, and that answer is the whole verdict of the
-        stop paths that reach a backend exposing no ``stop_policy`` - the
-        Device Connect ``stop`` RPC among them - so an idle simulation reported
-        a halted rollout that had finished on its own.
+        reports as ``was_running``, and that answer is the whole verdict every
+        stop path here reports - :meth:`_request_policy_stop` hands it to
+        :meth:`~strands_robots.simulation.base.SimEngine.stop_policy`, and the
+        Device Connect ``stop`` RPC reads that - so a flag left raised made an
+        idle simulation report a halted rollout that had finished on its own.
 
         Args:
             robot_name: The robot whose rollout has ended. A robot removed

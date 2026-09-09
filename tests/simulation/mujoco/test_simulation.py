@@ -1155,6 +1155,14 @@ class TestPolicyExecution:
         assert "robot_name" in methods["stop_policy"]
         assert "-> dict" in methods["list_policies_running"]
 
+        # start_policy's own entry says WHICH of the two implementations this
+        # engine has. The base surface describes its synchronous passthrough, so
+        # an entry inherited unchanged would advertise the wrong engine here --
+        # the one place a caller looks to tell a 0.001s call from a 3s one.
+        assert "background" in methods["start_policy"]
+        assert "non-blocking" in methods["start_policy"]
+        assert "synchronous" not in methods["start_policy"]
+
         # The advertisement is only useful if the methods it names are real and
         # invocable: list before start reports none, stop is idempotent.
         listed = sim_with_robot.list_policies_running()

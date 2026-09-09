@@ -2442,6 +2442,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "(the base contract's synchronous passthrough to run_policy on this backend; "
                     "only MuJoCo runs a policy on a background thread)"
                 ),
+                "stop_policy": (
+                    "(robot_name: str) -> dict  (cooperatively end a rollout in flight; this "
+                    "backend answers from the durable per-robot claim, so the json block reports "
+                    "was_running. robot_name is required, never defaulted to the sole robot)"
+                ),
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, speed=1.0, "
                     "action_key_map=None) -> dict  (replay a recorded LeRobotDataset episode "
@@ -2534,6 +2539,28 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "With multiple robots, pass robot_name explicitly (from 'robots')."
             ),
         }
+
+    def _request_policy_stop(self, robot_name: str) -> bool | None:
+        """Newton override: move this robot's rollout claim out of date.
+
+        The stop half of the flag this backend already raises and lowers around
+        a rollout (see
+        :meth:`~strands_robots.simulation.newton.recording.NewtonRecordingMixin._make_run_policy_hook`
+        and its ``_release_run_policy_hook``), so
+        :meth:`~strands_robots.simulation.base.SimEngine.stop_policy` reports the
+        same fact those two do instead of refusing for want of a registry.
+
+        Args:
+            robot_name: A robot in this world.
+
+        Returns:
+            Whether a rollout was in flight, or ``None`` when the world (or the
+            robot) is gone - there is no claim to move, and no verdict to give.
+        """
+        world = self._world
+        if world is None or not registered(world.robots, robot_name):
+            return None
+        return world.robots[robot_name].request_policy_stop()
 
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release resources (alias for :meth:`destroy`)."""

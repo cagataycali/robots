@@ -21,12 +21,14 @@ driven for the rest of the session:
   while its policy is running ... Wait for the rollout to finish (Isaac policy
   loops clear the flag on exit)`` and ``run_multi_policy`` answered ``policy
   already running on 'so100'. Stop it first`` -- two remedies for a rollout
-  that had already ended, and neither reachable (Isaac exposes no
-  ``stop_policy``).
+  that had already ended, and at the time neither was reachable, because Isaac
+  exposed no ``stop_policy`` at all. It inherits ``SimEngine.stop_policy`` now,
+  which on Isaac states why it cannot help instead of raising
+  ``AttributeError``; the release below is what makes the remedy unnecessary.
 * Newton: ``SimRobot.request_policy_stop`` reported ``was_running=True``, and
-  that is the whole verdict of the stop paths that reach a backend exposing no
-  ``stop_policy`` -- so the Device Connect ``stop`` RPC reported a halted
-  rollout on an idle simulation.
+  that is the whole verdict every stop path here reports -- ``stop_policy``
+  reads it through ``_request_policy_stop`` -- so the Device Connect ``stop``
+  RPC reported a halted rollout on an idle simulation.
 
 The release now has one owner: ``SimEngine._release_run_policy_hook``, called
 in a ``finally`` around every rollout the facade drives. The cells below pin
@@ -239,14 +241,18 @@ class TestIsaacFreesTheRobotItsRecordingHookClaimed:
 
     def test_another_rollout_is_reachable_after_a_recorded_rollout(self, monkeypatch):
         # ``run_multi_policy``'s busy check reads the same flag, and its remedy
-        # ("Stop it first") names a verb this backend does not expose.
+        # ("Stop it first") names a verb that on this backend answers with a
+        # stated refusal rather than a halt -- so the release below, not the
+        # remedy, is what makes the next rollout reachable.
         _stub_rollout(monkeypatch)
         engine = self._engine()
 
         assert engine.run_policy("so100", n_steps=3)["status"] == "success"
 
         assert engine._robots["so100"].policy_running is False
-        assert not hasattr(engine, "stop_policy")
+        refusal = engine.stop_policy("so100")
+        assert refusal["status"] == "error"
+        assert "IsaacSimulation keeps no durable per-robot rollout claim" in refusal["content"][0]["text"]
 
 
 class TestNewtonDoesNotReportAHaltOnAnIdleSimulation:
@@ -278,12 +284,14 @@ class TestNewtonDoesNotReportAHaltOnAnIdleSimulation:
 
         driver = SimulationDeviceDriver.__new__(SimulationDeviceDriver)
         driver._sim = engine
-        # The fallback the driver documents for a backend exposing no
-        # ``stop_policy``: the flag write IS the verdict, so a stale flag is
-        # reported as a rollout this stop halted.
+        # The driver reads ``stop_policy``, which on this backend hands the flag
+        # write to ``_request_policy_stop``: the flag IS the verdict, so a stale
+        # flag would be reported as a rollout this stop halted.
         answer = driver._stop_one_rollout("so100")
 
-        assert answer["content"][0]["json"] == {"robot": "so100", "was_running": False}
+        assert answer["status"] == "success"
+        verdicts = [b["json"] for b in answer["content"] if "json" in b]
+        assert verdicts == [{"robot": "so100", "was_running": False}]
 
 
 class TestMuJoCoWasAlreadyCorrect:
