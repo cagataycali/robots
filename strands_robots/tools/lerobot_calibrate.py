@@ -33,6 +33,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.utils import boolean_flag_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -339,7 +340,34 @@ class LeRobotCalibrationManager:
             return False, str(e), copied_count
 
     def restore_calibrations(self, backup_dir: Path, overwrite: bool = False) -> tuple[bool, str, int]:
-        """Restore calibrations from backup"""
+        """Restore calibrations from a backup directory.
+
+        Args:
+            backup_dir: Directory a previous :meth:`backup_calibrations` wrote.
+            overwrite: Whether an existing calibration is written over. This is a
+                confirmation gate in front of the only write in this module that
+                destroys a measurement, so it is checked against the shared
+                boolean domain rather than read by truthiness - ``not "false"``
+                is ``False``, so the spellings a caller reaches for when opting
+                out selected the overwrite they spell the refusal of.
+
+        Returns:
+            ``(succeeded, message, restored_count)``. A restore that skipped
+            every existing file because *overwrite* is ``False`` succeeds with a
+            count of 0.
+
+        Raises:
+            ValueError: If *overwrite* is not a boolean, or *backup_dir* is not a
+                usable save path.
+        """
+        # Checked before the backup is read, so the refusal cannot arrive after
+        # the calibration it was refusing to overwrite is already gone. The
+        # atomic commit below keeps a *failed* write from damaging the previous
+        # measurement, but an overwrite this flag was read as authorising is a
+        # successful write - there is nothing left to recover from.
+        if text := boolean_flag_error(overwrite, "overwrite", "LeRobotCalibrationManager.restore_calibrations"):
+            raise ValueError(text)
+
         backup_dir = Path(validate_save_path(str(backup_dir), label="backup_dir"))
 
         if not backup_dir.exists():
@@ -466,7 +494,9 @@ def lerobot_calibrate(
         query: Search query for search action
         output_dir: Output directory for backup action
         backup_dir: Backup directory for restore action
-        overwrite: Whether to overwrite existing files during restore
+        overwrite: Whether to overwrite existing files during restore. Must be a
+            boolean; the string spellings of an opt-out are refused rather than
+            read as the overwrite they spell the refusal of
         base_path: Custom base path for calibrations (default: ~/.cache/huggingface/lerobot/calibration)
 
     Returns:
@@ -652,6 +682,13 @@ def lerobot_calibrate(
         elif action == "restore":
             if not backup_dir:
                 return {"status": "error", "content": [{"text": "**restore** action requires: backup_dir"}]}
+
+            # The facade checks the flag it forwards: reached through the tool,
+            # a non-boolean would otherwise surface as the generic
+            # "Tool execution failed" of the outer handler rather than as a
+            # refusal naming the parameter and the values it accepts.
+            if text := boolean_flag_error(overwrite, "overwrite", "lerobot_calibrate"):
+                return {"status": "error", "content": [{"text": f"**{text}**"}]}
 
             success, message, count = manager.restore_calibrations(Path(backup_dir), overwrite)
 

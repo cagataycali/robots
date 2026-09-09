@@ -2057,6 +2057,13 @@ which side the enum is on.
   after the deletion it was refusing. Pinned by
   `tests/test_dataset_recorder_posture_flag_domain.py`, which also records why
   the neighbouring surfaces are out of scope.
+  A calibration restore is the same shape with no recovery path: neither
+  `LeRobotCalibrationManager.restore_calibrations` nor the `lerobot_calibrate` facade
+  checked the `overwrite` they share, so `overwrite="false"` wrote the backup over every
+  existing calibration - a physical measurement of one arm's homing offset and travel
+  limits, recoverable only by re-calibrating the hardware - while the tool reported
+  ``Overwrite mode: `false` `` beside a restored count of 1. Pinned by
+  `tests/tools/test_calibration_restore_overwrite_flag_domain.py`.
 - **A flag whose misread only shows up in a rendered frame is checked at construction.**
   Where the branch a flag selects is applied later - a fitted transform, a compositing
   decision - the misread has no error to surface at, so it reads as a scene that looks
