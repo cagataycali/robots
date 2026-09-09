@@ -2077,6 +2077,21 @@ which side the enum is on.
   supplied it, not where the branch is taken. Pinned by
   `tests/rendering/test_gsplat_background_posture_flag_domain.py`, which measures the
   branch each of the four selects.
+- **A flag that gates whether a numeric row is READ is checked ahead of the numeric
+  guard.** `lerobot_camera` refuses `timeout_ms` only under `async_mode`, because the
+  synchronous read consumes no budget and an option no handler reads must not be
+  refused - so the numeric table's own row is switched on and off by a posture flag
+  from outside the table. Read by truthiness, that gate admitted `timeout_ms=-5` under
+  `async_mode=0` (`status="success"` on an unusable budget) and, under
+  `async_mode="false"`, refused the *budget* by name for a caller whose only mistake was
+  the flag. The order is the point: a posture guard placed after the numeric guard still
+  refuses, but names the value the gate selected rather than the gate, sending the
+  caller to correct the wrong parameter. Scope the roster per action, as
+  `_ACTION_POSTURE_FLAGS` mirrors `_ACTION_NUMERIC_OPTIONS`, so `discover` and `list` -
+  which consume none of the three flags - refuse none of them. Pinned by
+  `tests/tools/test_lerobot_camera_posture_flag_domain.py`, which derives the roster
+  from the tool's own signature so a fourth flag cannot be added without the domain,
+  and whose ordering cell fails when the two guards are swapped.
 - Pinned by `tests/simulation/mujoco/test_actuate_robot_posture_flag_domain.py`,
   `tests/simulation/test_recording_posture_flag_domain.py`,
   `tests/tools/test_lerobot_teleoperate_flag_domain.py`,
