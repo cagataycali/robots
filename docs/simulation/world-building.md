@@ -286,12 +286,31 @@ differently-sized object while `add_object` reports success:
 | Shape | Components consumed |
 |-------|---------------------|
 | `box` / `ellipsoid` | `[x, y, z]` - all three full edge lengths / diameters |
-| `cylinder` / `capsule` | `[diameter, unused, full height]` - three (index 1 is ignored) |
+| `cylinder` | `[diameter, unused, full height]` - three (index 1 is ignored) |
+| `capsule` | `[diameter, unused, cylinder-section length]` - three (index 1 is ignored). The two caps add `size[0] / 2` at each end, so the object stands `size[2] + size[0]` tall |
 | `sphere` | `[diameter]` - one is enough |
 | `plane` | `[x]` or `[x, y]` visual half-widths (`y` mirrors `x` when omitted) |
 | `mesh` | none - the asset's own units define the extent |
 
 At most 3 components are accepted; omit `size` entirely for the 5 cm default.
+
+`add_object`'s success text reports the extent the geom **compiled to**, read
+back off the model, never the request. The two agree only for `box` and
+`ellipsoid`, the shapes that consume all three components; for every other row
+in the table the request holds a value the geom does not carry, and echoing it
+stated an extent the object does not have:
+
+```python
+sim.add_object("ball", shape="sphere", size=[0.05, 0.09, 0.2])
+# 'ball' added: sphere at [0.0, 0.0, 0.0], size=[0.05, 0.05, 0.05], 0.1kg
+#   the ball is 5 cm across in every axis; 0.09 and 0.2 described nothing
+sim.add_object("rod", shape="capsule", size=[0.05, 0.0, 0.9])
+# 'rod' added: capsule at [0.0, 0.0, 0.0], size=[0.05, 0.05, 0.95], 0.1kg
+#   0.95 m tall, not the 0.9 m asked for - the caps add the diameter
+sim.add_object("floor", shape="plane", size=[1.0, 2.0], is_static=True)
+# 'floor' added: plane at [0.0, 0.0, 0.0], size=[1.0, 2.0] visual half-widths
+#   (infinite for collision), static
+```
 
 `set_geom_properties(size=...)` resizes an existing geom and takes a *different*
 convention for the same word: the compiled geom's own MuJoCo `geom_size`
@@ -392,9 +411,10 @@ sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
 # asset (collision uses its convex hull), 0.1kg
 ```
 
-Because no `size` component is consumed, the success text reports the extent
-read back off the compiled geom rather than echoing the request - the request
-carries no extent for a mesh, and the asset can be any size.
+As for every shape, the success text reports the extent read back off the
+compiled geom rather than echoing the request - and for a mesh the request
+carries no extent at all, so there is nothing else it could report. The asset
+can be any size.
 
 ### A mesh geom collides as its convex hull
 
