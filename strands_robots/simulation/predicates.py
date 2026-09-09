@@ -1307,10 +1307,16 @@ def _base_yaw_beyond(yaw: float, robot: str | None = None) -> BoolPredicate:
     half-revolution); the yaw wraps at +-pi, so a goal at or beyond pi is not a
     well-defined single-turn heading (measuring cumulative revolutions would
     need integrated-angle tracking, out of scope here just as ``base_beyond_x``
-    does not track total path length). It is a pure heading test - roll and
-    pitch do NOT affect the yaw, so a base that merely tips (without turning
-    about the vertical) never satisfies a yaw goal; position and height do not
-    affect it either. Because the yaw of a fully toppled base is ill-defined,
+    does not track total path length). That bound is enforced rather than merely
+    documented: :func:`make_predicate` refuses ``|yaw| >= pi``, because such a goal
+    is satisfied by no heading the base can report - or, below ``-pi``, by every
+    one - and so scores the rollout the same way whatever it does. A goal written
+    in degrees, the way that region is usually reached, is named as such in the
+    refusal.
+
+    It is a pure heading test - roll and pitch do NOT affect the yaw, so a base
+    that merely tips (without turning about the vertical) never satisfies a yaw
+    goal; position and height do not affect it either. Because the yaw of a fully toppled base is ill-defined,
     pair it with ``base_tipped`` in a ``failure`` clause so a "turned then fell"
     rollout is rejected on the tilt, not scored as a valid turn.
 
@@ -1969,7 +1975,9 @@ _NUMBER_SEQUENCE_ANNOTATIONS = frozenset({"list[float]", "list[int]", "tuple[flo
 # negative tolerance is not a looser bound, it is an unsatisfiable one. The
 # signed params keep both signs: ``z_offset`` is a signed offset, ``z``/``x``/
 # ``y``/``yaw``/``value``/``target`` are coordinates, ``vx``/``vy``/``wz`` are
-# velocity components and ``weight`` scales a reward term.
+# velocity components and ``weight`` scales a reward term. ``yaw`` keeps both
+# signs too, but is additionally bounded to the range a heading can be measured
+# in - see :data:`_HEADING_PARAM_NAMES`.
 #
 # Read from the param NAME for the same reason the domain above is read from the
 # annotation: a predicate added later is covered by naming its tolerance the way
@@ -1978,6 +1986,40 @@ _NUMBER_SEQUENCE_ANNOTATIONS = frozenset({"list[float]", "list[int]", "tuple[flo
 # as a substring, so a param that merely contains the letters is untouched.
 _TOLERANCE_PARAM_NAMES = frozenset({"tol", "threshold"})
 _TOLERANCE_PARAM_SUFFIX = "_tol"
+
+
+# Numeric params that name a HEADING: an angle read back from the base
+# quaternion through ``atan2``, whose range is ``(-pi, pi]``. A threshold outside
+# that range is not a distant goal, it is a constant - no orientation the base can
+# report satisfies ``heading > yaw`` at or above ``+pi``, and every one satisfies
+# it at or below ``-pi`` - so the clause carries no information about the rollout.
+# That is the same permanently-decided clause :data:`_TOLERANCE_PARAM_NAMES`
+# refuses a negative tolerance for, reached by a different route: a goal written
+# in DEGREES (``yaw: 90``, ``yaw: 180``) or a radian goal past a half-revolution.
+# ``base_yaw_beyond``'s own docstring already states the bound; this holds it.
+#
+# The bound is on the REPRESENTABLE range, not on the author's intent, which is
+# why it does not conflict with the signed-coordinate policy above: a negative
+# heading goal stays accepted (a right-of-spawn heading a base at the identity
+# spawn already reads ``True`` on, exactly as ``base_beyond_x(x=-2.0)`` does),
+# and only the region where no measurable heading exists is refused. A heading
+# COMMAND is unbounded for the same reason - ``ros_bridge.navigate_to`` encodes
+# its ``yaw`` as a quaternion, where any angle wraps to a real goal pose - so the
+# domain belongs to the predicate that compares against ``atan2``, not to the name
+# in general.
+#
+# Read from the param NAME for the same reason the tolerance domain is: a
+# predicate added later is covered by naming its heading the way the shipped one
+# does, with no per-predicate table to drift out of step with the registry.
+_HEADING_PARAM_NAMES = frozenset({"yaw"})
+
+
+def _is_heading_param(param: str) -> bool:
+    """True when ``param`` names a heading and so is bounded to the ``atan2`` range.
+
+    See :data:`_HEADING_PARAM_NAMES` for why the domain is read from the name.
+    """
+    return param in _HEADING_PARAM_NAMES
 
 
 def _is_tolerance_param(param: str) -> bool:
@@ -1991,10 +2033,12 @@ def _is_tolerance_param(param: str) -> bool:
 def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, Any]) -> str | None:
     """Return an error message if a numeric kwarg for *name* is outside its domain.
 
-    Two domains are enforced: every numeric kwarg must be a finite number, and a
+    Three domains are enforced: every numeric kwarg must be a finite number, a
     kwarg that names a TOLERANCE must additionally be ``>= 0`` (see
-    :func:`_is_tolerance_param`). Both refuse for the same reason - a value that
-    compiles clean and makes the clause unsatisfiable.
+    :func:`_is_tolerance_param`), and a kwarg that names a HEADING must lie
+    strictly inside ``(-pi, pi)`` (see :func:`_is_heading_param`). All three
+    refuse for the same reason - a value that compiles clean and leaves the clause
+    permanently decided.
 
     A spec kwarg is coerced with a bare ``float(...)`` inside the factory and
     then closed over, so a ``nan``/``inf`` threshold or weight compiles clean
@@ -2026,6 +2070,17 @@ def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, 
     velocity component whose sign is a direction, and ``body_below_z``'s ``z`` is
     a coordinate.
 
+    A heading goal reaches the same permanently-decided clause by a fourth route,
+    and the value that gets there is the one an author is most likely to write:
+    ``yaw`` is compared against a heading read from the base quaternion through
+    ``atan2``, whose range is ``(-pi, pi]``, so a goal in DEGREES (``yaw: 90``,
+    ``yaw: 180``) is satisfied by no orientation the base can report, and a goal at
+    or below ``-pi`` is satisfied by every one - constant either way, and accepted
+    at registration under ``status="success"``. Only the unmeasurable region is
+    refused: a negative heading inside the range keeps its signed-coordinate
+    meaning, and a heading COMMAND (``ros_bridge.navigate_to``, which encodes
+    ``yaw`` as a quaternion) is a different surface with no such bound.
+
     Only params the factory annotates as numeric are constrained, so a ``str``
     body name, a ``bool`` flag and a ``str | None`` robot selector are untouched,
     and a predicate registered via :func:`register_predicate` without
@@ -2056,6 +2111,19 @@ def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, 
                     "distance, an absolute difference or a squared magnitude, none of which is ever "
                     "negative - so a negative value makes the clause unsatisfiable rather than loose."
                 )
+            # A heading is compared against the base yaw, which ``atan2`` only ever
+            # reports inside ``(-pi, pi]``, so a goal outside that range decides the
+            # clause for every orientation instead of scoring one. ``float(...)`` is
+            # safe here for the same reason it is above.
+            if _is_heading_param(param) and abs(float(value)) >= math.pi:
+                return (
+                    f"{context}: {param} must lie strictly inside (-pi, pi), got {value!r}. It is a "
+                    "heading compared against the base yaw, which is read from the base quaternion "
+                    "through atan2 and so only ever reports an angle in (-pi, pi] - at or above +pi "
+                    "no orientation satisfies the clause and at or below -pi every one does, making "
+                    "it constant rather than a goal. A magnitude this large is usually degrees: "
+                    f"{math.pi / 2.0:.4f} is 90 deg and {math.radians(30.0):.4f} is 30 deg."
+                )
         elif annotation in _NUMBER_SEQUENCE_ANNOTATIONS:
             if (err := finite_vector_error(context, param, value)) is not None:
                 return err
@@ -2070,8 +2138,9 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     the valid set; bad kwargs surface as whatever ``TypeError`` the factory
     raises.
 
-    Every numeric kwarg is held to a finite domain here - and a tolerance kwarg
-    additionally to a non-negative one - rather than in the
+    Every numeric kwarg is held to a finite domain here - a tolerance kwarg
+    additionally to a non-negative one and a heading kwarg to the measurable
+    ``(-pi, pi)`` range - rather than in the
     spec compiler, because this is the only choke point every predicate call
     passes through: ``staged_reward`` builds its per-stage ``reward`` /
     ``advance_when`` calls by calling back into this function, so a guard in
@@ -2089,8 +2158,9 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
 
     Raises:
         ValueError: If ``name`` is unknown, a kwarg the factory annotates as
-            numeric is not a finite number, or a kwarg that names a tolerance
-            is negative.
+            numeric is not a finite number, a kwarg that names a tolerance is
+            negative, or a kwarg that names a heading lies outside the
+            ``(-pi, pi)`` range a heading can be measured in.
         TypeError: If required factory kwargs are missing.
     """
     factory = PREDICATE_REGISTRY.get(name)

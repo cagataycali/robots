@@ -16,10 +16,11 @@ left / counter-clockwise turn from the identity spawn). These tests set a KNOWN
 base pose directly on the sim and assert the threshold, that it reads the YAW
 axis (a pure roll/pitch does NOT trip it, distinguishing it from ``base_tipped``),
 position/height independence, that x-position does NOT trip it (distinct from
-``base_beyond_x``), live tracking, fixed-base degradation, and that a real
-``DeclarativeBenchmark`` whose success is ``base_yaw_beyond`` and failure is
-``base_tipped`` + ``base_below_z`` succeeds once the base turns and is vetoed if
-it falls. They are GL-free (``get_observation`` with ``skip_images``) so they run
+``base_beyond_x``), live tracking, fixed-base degradation, that a goal outside the
+range a heading can be measured in is refused at registration rather than scoring
+every rollout the same way, and that a real ``DeclarativeBenchmark`` whose success
+is ``base_yaw_beyond`` and failure is ``base_tipped`` + ``base_below_z`` succeeds
+once the base turns and is vetoed if it falls. They are GL-free (``get_observation`` with ``skip_images``) so they run
 in CI without a display.
 """
 
@@ -38,6 +39,7 @@ from strands_robots.simulation.predicates import (
     _reset_resolution_warnings,
     make_predicate,
     predicate_kind,
+    register_predicate,
 )
 
 # Floating base with a NAMED free joint (a humanoid's floating_base_joint) plus
@@ -195,9 +197,10 @@ def test_base_yaw_beyond_tracks_the_live_base_heading(sim):
 
 
 def test_base_yaw_beyond_accepts_a_negative_threshold(sim):
-    """yaw is an unvalidated world heading (mirrors base_beyond_x/y): a negative
+    """yaw is a SIGNED world heading (mirrors base_beyond_x/y): a negative
     threshold is a right-of-spawn heading a base at the identity spawn already
-    reads True on."""
+    reads True on. It is bounded to the range a heading can be measured in (see
+    TestAHeadingGoalMustBeReachable) but not to one sign."""
     sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
     pred = make_predicate("base_yaw_beyond", yaw=-0.5)
     _set_base_pose(sim, _axis_quat("z", 0.0))
@@ -280,3 +283,194 @@ def test_declarative_turn_benchmark_succeeds_on_turn_and_is_vetoed_by_a_fall(sim
     # rollout (a toppled base's yaw is ill-defined, so the tilt is the terminal).
     _set_base_pose(sim, _axis_quat("y", 90.0), z=0.8)
     assert bench.is_failure(sim) is True
+
+
+# Headings the base can actually report. ``atan2`` returns a value in (-pi, pi],
+# so this samples that whole interval - it is the set every case below reads its
+# verdict from, which is what makes "no heading satisfies this goal" a measurement
+# rather than an argument about the formula.
+_MEASURABLE_HEADINGS = [
+    -math.pi + 1e-9,  # the open end: a heading arbitrarily close to -pi, never -pi
+    *(-math.pi + i * (2.0 * math.pi) / 240.0 for i in range(1, 240)),
+    math.pi,  # the closed end: atan2(0, -1) really does report +pi
+]
+
+# Goals no measurable heading discriminates, and why each one is reached.
+_UNREACHABLE_GOALS = [
+    pytest.param(180.0, id="180-written-as-degrees"),
+    pytest.param(90.0, id="90-written-as-degrees"),
+    pytest.param(math.degrees(1.0), id="one-radian-converted-to-degrees"),
+    pytest.param(math.pi, id="exactly-plus-pi"),
+    pytest.param(-math.pi, id="exactly-minus-pi"),
+    pytest.param(-4.0, id="past-minus-pi"),
+    pytest.param(2.0 * math.pi, id="a-full-revolution"),
+]
+
+# Goals that do discriminate, including both boundaries.
+_REACHABLE_GOALS = [
+    pytest.param(1.0, id="the-shipped-go2-turn-left-goal"),
+    pytest.param(0.0, id="any-left-turn-at-all"),
+    pytest.param(-1.0, id="a-right-of-spawn-heading"),
+    pytest.param(math.pi - 1e-6, id="just-inside-plus-pi"),
+    pytest.param(-math.pi + 1e-6, id="just-inside-minus-pi"),
+]
+
+
+def _discriminates(goal: float) -> bool:
+    """Whether SOME measurable heading meets ``goal`` and some other does not.
+
+    A goal that fails this decides the clause before the rollout starts: the
+    success verdict is the same for every orientation the base can reach, so the
+    clause reports on the goal rather than on the robot. This is the property the
+    domain exists to protect, stated here in the test rather than as the
+    implementation's ``abs(yaw) >= pi`` - which is why moving that bound in either
+    direction is caught below.
+    """
+    met = [h > goal for h in _MEASURABLE_HEADINGS]
+    return any(met) and not all(met)
+
+
+class TestAHeadingGoalMustBeReachable:
+    """A turn goal outside the measurable heading range is refused, not compiled.
+
+    The heading is read from ``base_quat`` through ``atan2``, which only ever
+    reports an angle in ``(-pi, pi]``. A goal at or above ``+pi`` is therefore met
+    by no orientation the base can reach and a goal at or below ``-pi`` is met by
+    every one - so the success clause is decided before the rollout starts, under
+    ``status="success"`` at registration. Measured on the pre-fix tree with a go2
+    posed at 61 headings spanning 0..pi: ``yaw=1.0`` read True at 41 of them,
+    ``yaw=57.3`` (1 rad written as degrees) and ``yaw=180`` at 0, and ``yaw=-4.0``
+    at all 61 including the spawn pose - all four accepted, none refused. Degrees
+    is the route that matters: the docstring quotes the goal as "~57 deg", so the
+    unit is in the author's hands and the wrong one compiles clean.
+
+    This is the same permanently-decided clause a negative tolerance produces (see
+    ``test_predicate_tolerance_sign_domain``), reached by a different route, and it
+    is refused at the same choke point.
+    """
+
+    def test_the_sweep_reads_the_range_the_predicate_can_report(self, sim):
+        """Non-vacuity: the sampled headings really are what the base reports.
+
+        Every verdict below rests on :data:`_MEASURABLE_HEADINGS` covering the
+        ``atan2`` range, so that is measured against the live predicate instead of
+        assumed - a sample set that missed the interval would make the
+        discrimination cases vacuous.
+        """
+        sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+        pred = make_predicate("base_yaw_beyond", yaw=0.0)
+        _set_base_pose(sim, _axis_quat("z", -90.0))
+        assert pred(sim) is False
+        _set_base_pose(sim, _axis_quat("z", 90.0))
+        assert pred(sim) is True
+        assert min(_MEASURABLE_HEADINGS) > -math.pi, "the range is open at -pi"
+        assert max(_MEASURABLE_HEADINGS) == math.pi, "and closed at +pi"
+        _set_base_pose(sim, _axis_quat("z", 180.0))
+        assert make_predicate("base_yaw_beyond", yaw=math.pi - 1e-6)(sim) is True, (
+            "a half-revolution reports +pi, so the closed end is reachable"
+        )
+
+    @pytest.mark.parametrize("goal", _UNREACHABLE_GOALS)
+    def test_a_goal_no_heading_discriminates_is_refused(self, goal):
+        with pytest.raises(ValueError) as excinfo:
+            make_predicate("base_yaw_beyond", yaw=goal)
+        message = str(excinfo.value)
+        assert "base_yaw_beyond" in message
+        assert "yaw" in message
+        assert "(-pi, pi)" in message
+        assert repr(goal) in message
+
+    @pytest.mark.parametrize("goal", _REACHABLE_GOALS)
+    def test_a_goal_some_heading_discriminates_is_accepted(self, goal):
+        assert callable(make_predicate("base_yaw_beyond", yaw=goal))
+
+    @pytest.mark.parametrize("goal", _UNREACHABLE_GOALS)
+    def test_the_refused_goals_are_exactly_the_ones_no_heading_discriminates(self, goal):
+        """The bound is pinned by the property, not by the number pi.
+
+        Widening it (to ``2 * pi``, say) admits a goal this asserts nothing can
+        discriminate; narrowing it (to ``1.0``) refuses one the sibling case above
+        asserts is usable. Both cases have to hold for the bound to be right.
+        """
+        assert not _discriminates(goal)
+
+    @pytest.mark.parametrize("goal", _REACHABLE_GOALS)
+    def test_the_accepted_goals_are_all_discriminating(self, goal):
+        assert _discriminates(goal)
+
+    def test_a_refused_goal_would_have_scored_every_pose_alike(self, sim):
+        """Why it is refused, in the units of the predicate itself.
+
+        Read through the live predicate rather than the formula: the factory is
+        called past the domain guard so the pre-fix behaviour is exercised on a
+        real posed base, and the verdict is the same at a heading the goal was
+        meant to reject and at one it was meant to accept.
+        """
+        sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+        degrees_goal = PREDICATE_REGISTRY["base_yaw_beyond"](yaw=180.0)
+        reachable_goal = make_predicate("base_yaw_beyond", yaw=1.0)
+        for heading_deg in (0.0, 60.0, 170.0):
+            _set_base_pose(sim, _axis_quat("z", heading_deg))
+            assert degrees_goal(sim) is False, "no reachable heading meets a degrees-spelled goal"
+        _set_base_pose(sim, _axis_quat("z", 0.0))
+        assert reachable_goal(sim) is False
+        _set_base_pose(sim, _axis_quat("z", 60.0))
+        assert reachable_goal(sim) is True
+
+    def test_a_declarative_benchmark_is_refused_at_compile_not_at_rollout(self, sim):
+        """The refusal reaches the surface a benchmark author actually writes.
+
+        ``DeclarativeBenchmark`` compiles its clauses through ``make_predicate``,
+        so the goal is refused while the spec is being read - not by a rollout that
+        burns its whole step budget reporting an honest miss.
+        """
+        sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+        spec = {
+            "name": "turn-left-in-degrees",
+            "default_robot": "humanoid",
+            "max_steps": 1000,
+            "success": {"all": [{"predicate": "base_yaw_beyond", "yaw": 180}]},
+            "failure": {"any": [{"predicate": "base_tipped", "tol": 0.7}]},
+        }
+        with pytest.raises(ValueError, match=r"\(-pi, pi\)"):
+            DeclarativeBenchmark.from_dict(spec)
+        # The same spec in radians compiles and scores the turn it was written for.
+        spec["success"] = {"all": [{"predicate": "base_yaw_beyond", "yaw": math.radians(90.0)}]}
+        bench = DeclarativeBenchmark.from_dict(spec)
+        _set_base_pose(sim, _axis_quat("z", 30.0))
+        assert bench.is_success(sim) is False
+        _set_base_pose(sim, _axis_quat("z", 120.0))
+        assert bench.is_success(sim) is True
+
+    def test_a_heading_on_a_later_registered_predicate_is_covered(self):
+        """The domain is read from the param name, so it needs no registry edit."""
+
+        def _factory(yaw=0.0):
+            def check(_sim):
+                return False
+
+            return check
+
+        # The domain is read from ``__annotations__`` by param name, and this module
+        # does not postpone annotation evaluation, so a literal ``yaw: float`` here
+        # would store the ``float`` CLASS where the guard reads the string form.
+        # Declared the way the module sees a shipped factory instead.
+        _factory.__annotations__["yaw"] = "float"
+        register_predicate("probe_heading_domain", _factory)
+        try:
+            with pytest.raises(ValueError, match="yaw"):
+                make_predicate("probe_heading_domain", yaw=180.0)
+            assert callable(make_predicate("probe_heading_domain", yaw=1.0))
+        finally:
+            PREDICATE_REGISTRY.pop("probe_heading_domain", None)
+
+    def test_a_non_finite_goal_still_reports_finiteness(self):
+        """The pre-existing reason is not displaced by the new one.
+
+        ``nan`` is not comparable to pi, so the heading check must sit behind the
+        finiteness guard whose coercion it depends on.
+        """
+        for value in (math.nan, math.inf, -math.inf):
+            with pytest.raises(ValueError, match="finite") as excinfo:
+                make_predicate("base_yaw_beyond", yaw=value)
+            assert "(-pi, pi)" not in str(excinfo.value)
