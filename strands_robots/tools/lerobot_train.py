@@ -44,6 +44,7 @@ from strands_robots.tools._process_stop import (
     unusable_pid_result,
 )
 from strands_robots.utils import (
+    boolean_flag_error,
     declared_count,
     positive_count_error,
     stale_output_dir_is_clearable,
@@ -622,6 +623,85 @@ def _save_freq_error(value: Any) -> str | None:
     return step_cadence_error(value, "save_freq", "lerobot_train")
 
 
+# Every boolean this argv is built from, in the order each takes effect. The
+# order is the report order: ``resume`` decides whether any of the others reach
+# the argv at all, the mutually-exclusive pair is judged next, and the two
+# per-policy flags last.
+#
+# The invariant: this roster is exactly the set of ``bool`` parameters
+# :func:`build_train_command` declares. A flag added to that signature without a
+# place here is a flag read by truthiness again.
+_ARGV_FLAGS: tuple[str, ...] = (
+    "resume",
+    "lora",
+    "train_expert_only",
+    "gradient_checkpointing",
+    "push_to_hub",
+)
+
+
+def _flag_error(supplied: dict[str, Any], context: str) -> str | None:
+    """Error text for the first flag in :data:`_ARGV_FLAGS` that is not a boolean.
+
+    Each of these selects a *posture*, not a magnitude, and each was read by
+    truthiness - so the words a caller reaches for when opting out selected the
+    affirmative posture, because every non-empty string is truthy. Measured on
+    ``12dc48d`` with ``policy_type="act"`` unless noted:
+
+    * ``resume="false"`` built ``--config_path=<ckpt> --resume=true`` and
+      returned, so the fresh run that was asked for became a resume of a
+      previous config and every other flag - ``--policy.device``, ``--steps``,
+      ``--batch_size``, ``--save_freq`` - was silently dropped from the argv;
+    * ``lora="false"`` emitted ``--peft.method_type=LORA``, training an adapter
+      the caller opted out of;
+    * ``gradient_checkpointing="false"`` on ``pi0`` emitted
+      ``--policy.gradient_checkpointing=true``;
+    * ``push_to_hub="no"`` emitted ``--policy.push_to_hub=no``, a token only
+      lerobot's own parser inside the detached process can refuse.
+
+    The other three answered with a refusal whose remedy the caller had already
+    followed, which is worse than the silent posture because it cannot be acted
+    on: ``lora="false", train_expert_only="false"`` raised "lora and
+    train_expert_only are mutually exclusive ... Pick one fine-tuning strategy"
+    at a caller who picked neither, ``train_expert_only="false"`` raised "only
+    valid for ['pi0', 'pi05', 'smolvla'] policies, not 'act'", and
+    ``gradient_checkpointing="false"`` on ``act`` raised "drop
+    gradient_checkpointing=" at a caller who had spelled exactly that.
+
+    None of the silent postures is reported anywhere. The argv goes to a process
+    launched detached, the tool answers ``status="success"`` with a pid and a log
+    path, and lerobot parses every one of those argvs without complaint - it is
+    simply told the opposite posture. That is the same reason the run-size
+    numerics, ``device`` and ``save_freq`` in this argv are refused up front, and
+    these five are the postures beside them carried through unchecked.
+
+    The domain belongs to neither surface, so this delegates to
+    :func:`~strands_robots.utils.boolean_flag_error` - the one owner the mesh
+    provisioning entry points and the sibling ``lerobot_teleoperate`` builder
+    already consult - exactly as :func:`_save_freq_error` delegates the cadence in
+    this same argv. What stays here is the roster and the report order.
+
+    No coercion follows the check: every reader either gates a ``cmd.append`` or
+    selects a literal, and the numpy booleans ``boolean_flag_error`` also accepts
+    drive both correctly.
+
+    Args:
+        supplied: Every flag named in :data:`_ARGV_FLAGS`, as given by the caller.
+        context: The surface doing the refusing, named in the message. Both
+            surfaces that read these flags refuse them - the builder for the argv
+            it is about to write, and the tool before the approval gate it
+            consults for ``push_to_hub`` - so the message says which one.
+
+    Returns:
+        An error message naming the flag and its domain, or ``None`` when all
+        five are usable.
+    """
+    for param in _ARGV_FLAGS:
+        if error := boolean_flag_error(supplied[param], param, context):
+            return error
+    return None
+
+
 def build_train_command(
     dataset_root: str,
     policy_type: str = "act",
@@ -671,7 +751,9 @@ def build_train_command(
     cadence as "disables periodic saving".
 
     Raises:
-        ValueError: if ``lora`` and ``train_expert_only`` are both set (both
+        ValueError: if any of the five booleans in :data:`_ARGV_FLAGS` is not a
+            boolean (see :func:`_flag_error`), if ``lora`` and
+            ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if
             ``train_expert_only`` is requested for a non-expert policy, if
             ``num_gpus`` is not a positive integer, if a supplied ``steps``
@@ -680,6 +762,20 @@ def build_train_command(
             ``device`` is not a device string torch can parse or its
             ``save_freq`` is not a whole number of steps.
     """
+    # Refused before the pair below is judged, so the message names the flag that
+    # is not a boolean rather than blaming the combination two unusable values
+    # happen to spell.
+    if flag_error := _flag_error(
+        {
+            "resume": resume,
+            "lora": lora,
+            "train_expert_only": train_expert_only,
+            "gradient_checkpointing": gradient_checkpointing,
+            "push_to_hub": push_to_hub,
+        },
+        "build_train_command",
+    ):
+        raise ValueError(flag_error)
     if lora and train_expert_only:
         raise ValueError(
             "lora and train_expert_only are mutually exclusive (both freeze the VLM). Pick one fine-tuning strategy."
@@ -923,6 +1019,14 @@ def lerobot_train(
         resumable checkpoint exists, a fresh run starts and a stale empty
         ``output_dir`` is cleared so lerobot's "already exists" guard does not trip.
 
+    Postures:
+        ``resume``, ``lora``, ``train_expert_only``, ``gradient_checkpointing`` and
+        ``push_to_hub`` each select a posture rather than scaling a quantity, so each
+        is checked rather than parsed: a truthy spelling of off - ``"false"``, ``"no"``,
+        ``"0"`` - is refused before the run starts, instead of selecting the affirmative
+        posture it reads as the opposite of. Only ``start`` reads them, so no other
+        action is refused for one.
+
     Actions:
         start: launch a new training run (default).
         status: report a run's PID, uptime, running flag, and recent log tail.
@@ -1001,6 +1105,29 @@ def lerobot_train(
 
     try:
         if action == "start":
+            # The five argv postures, refused by the tool before anything is
+            # launched, prompted or deleted. The builder below refuses them too -
+            # it is public, and owns the argv - but it is reached too late for two
+            # of the readers here: ``push_to_hub`` is consulted by the operator
+            # approval gate further down, so an opt-out spelled ``"false"`` asked
+            # a human to approve a Hub publication nobody requested, and a
+            # refusal placed after the preflight would report the same caller
+            # mistake differently depending on whether lerobot happens to be
+            # installed. Scoped to ``start`` because no other action reads them:
+            # refusing a flag ``status`` never looks at would be a false
+            # rejection, which is the rule the numeric knobs already follow.
+            if flag_error := _flag_error(
+                {
+                    "resume": resume,
+                    "lora": lora,
+                    "train_expert_only": train_expert_only,
+                    "gradient_checkpointing": gradient_checkpointing,
+                    "push_to_hub": push_to_hub,
+                },
+                "lerobot_train",
+            ):
+                return {"status": "error", "content": [{"text": flag_error}]}
+
             # Preflight: lerobot must be importable and the dataset must exist.
             try:
                 import lerobot  # noqa: F401
