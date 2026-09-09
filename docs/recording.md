@@ -1048,6 +1048,29 @@ part-way through iteration, and a `tolerance_s` of `inf` switched off the
 delta-grid check below. `tolerance_s=0` is accepted and means "require an exact
 grid match"; `seed=0` is accepted and is simply a seed.
 
+The five boolean kwargs (`streaming`, `shuffle`, `return_uint8`,
+`validate_deltas`, `drop_videos`) are checked there too, on the same domain the
+recording postures use ([A posture flag must be a
+boolean](#a-posture-flag-must-be-a-boolean)) and for the same reason - read by
+truthiness, each selected the branch the caller was opting *out* of:
+
+```python
+reader = sim.stream_dataset("user/d", drop_videos="false")  # ValueError: drop_videos must be a boolean
+reader = sim.stream_dataset("user/d", validate_deltas=0)    # same refusal
+```
+
+`drop_videos="false"` (also `"no"`, `"off"`, `"0"`) is truthy, so it *removed*
+the camera keys from `delta_timestamps` - the opposite of the opt-out it spells -
+and when nothing but camera keys were requested it reported
+`drop_videos=True requires ...`, naming a value the caller had never passed and
+pointing at a remedy that lands on the silent proprio-only stream. Falsy
+non-booleans took the other branch just as silently: `validate_deltas=0` skipped
+the delta-grid check, so an off-grid `delta_timestamps` that `validate_deltas=True`
+refuses opened and streamed; `return_uint8=None` streamed float32 at ~4x the
+bandwidth with the warning about that cost suppressed by the same truthiness; and
+`streaming=0` failed inside LeRobot on `num_shards`. `reader.dataloader(shuffle=...)`
+needs no such check - it discards the key whatever it held.
+
 One kwarg is **not** tolerant-forwarded because its absence changes semantics:
 `repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
 floors — so a resolver-conformant install always has it. On an environment
