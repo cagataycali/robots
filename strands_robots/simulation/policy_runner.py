@@ -68,6 +68,7 @@ from strands_robots.simulation.observers import (
     StoppedReason,
 )
 from strands_robots.utils import (
+    boolean_flag_error,
     non_negative_whole_number_error,
     optional_callable_error,
     positive_count_error,
@@ -1412,6 +1413,11 @@ class PolicyRunner:
                 step that overruns its period drops the missed deadlines
                 instead of chasing them, so a slow step is followed by a gap
                 rather than by a burst of back-to-back actions.
+                Must be a boolean: the flag selects one of those two postures
+                rather than scaling a quantity, so a truthy spelling of *off*
+                raises ``ValueError`` rather than being read as True - the
+                domain the wire schema already applies to this field before
+                forwarding it here.
             video: Optional :class:`VideoConfig` - set ``video.path`` to enable
                 MP4 recording via :meth:`SimEngine.render`.
             on_frame: Optional hook ``(step_idx, obs, action) -> None`` called
@@ -1669,6 +1675,27 @@ class PolicyRunner:
         # the caller's request. See SimEngine._validate_action_horizon.
         if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.run"):
             raise ValueError(horizon_error)
+        # ``fast_mode`` selects a POSTURE - paced on a deadline at
+        # ``control_frequency``, or unpaced - and it was the one rollout knob of
+        # this signature read by truthiness. Every non-empty string is truthy, so
+        # ``"false"`` / ``"no"`` / ``"off"`` / ``"0"`` removed the pacer from a
+        # rollout that asked for real time, while ``0`` / ``""`` / ``None`` /
+        # ``[]`` installed one in a rollout that asked to run free, neither ever
+        # being a declared spelling of the branch it took. Measured on a MuJoCo
+        # rollout of 30 steps at 30Hz: ``False`` took 1.001s, ``"false"`` 0.006s
+        # - the same 30 actions issued as fast as physics allowed, which is the
+        # burst the Ticker's dropped-deadline policy exists to prevent, and it
+        # falsifies both claims the pacing rewrite above was made to hold
+        # (``duration`` in wall-clock seconds, ``fast_mode=False`` as real-time
+        # pacing). The wire schema already holds this exact field to the boolean
+        # domain before forwarding it into this runner
+        # (:func:`~strands_robots.mesh.security.validate_command`, which refuses
+        # ``fast_mode`` unless ``isinstance(value, bool)``), so a value an
+        # untrusted ``tell()`` could not get past the transport was reachable
+        # from every local caller. Raised rather than returned for the same
+        # reason as the domains around it.
+        if fast_mode_error := boolean_flag_error(fast_mode, "fast_mode", "PolicyRunner.run"):
+            raise ValueError(fast_mode_error)
         # The horizon is a PAIR, and it is resolved here, so both halves are
         # validated here. ``n_steps`` whenever it is given: that is the exact
         # condition SimEngine._resolve_horizon refuses it on, so a step count

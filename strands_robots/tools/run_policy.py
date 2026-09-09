@@ -239,7 +239,11 @@ def run_policy(
             Must be a positive integer, reported before the rollout starts
             for the same reason.
         fast_mode: Skip real-time sleep between steps (default True for
-            rollouts - wall-clock pacing slows headless eval).
+            rollouts - wall-clock pacing slows headless eval). Must be a
+            boolean, reported before the loop starts for the same reason
+            ``control_frequency`` is: it is forwarded verbatim to every episode,
+            and this tool reaches the rollout's own refusal only after step 2
+            has replaced any dataset at ``dataset_root``.
         dataset_root: When set, the tool drives the full recording
             cycle: ``start_recording(root=dataset_root, ...)`` -> N
             rollouts with per-episode save_episode -> ``stop_recording``
@@ -351,13 +355,30 @@ def run_policy(
     # only its timing changes, from after the destruction to before it.
     # ``strands_robots.utils`` imports nothing from the package, so this keeps
     # the module's lazy-import convention without pulling in the sim stack.
-    from strands_robots.utils import positive_count_error, positive_finite_number_error
+    from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
     if freq_error := positive_finite_number_error(control_frequency, "control_frequency", "run_policy"):
         return _err(freq_error)
 
     if horizon_error := positive_count_error(action_horizon, "action_horizon", "run_policy"):
         return _err(horizon_error)
+
+    # The third knob forwarded verbatim to every episode, and the only posture
+    # among them: ``fast_mode`` selects real-time pacing or none, and was read by
+    # truthiness, so ``"false"`` / ``"no"`` / ``"off"`` / ``"0"`` ran the rollout
+    # unpaced for a caller who spelled the opt-out. Checked here for both reasons
+    # the two above are. The rollout entry point refuses it one layer down, but
+    # this loop reaches that refusal only INSIDE the per-episode ``try``, which
+    # converts it into ``n_episodes`` identical "Episode N raised" records -
+    # after step 2 removed an existing dataset at ``dataset_root`` and replaced
+    # it with an empty one. Measured with the facade guard in place and this one
+    # absent, against a dataset holding one recorded episode: it came back
+    # ``total_episodes=0, total_frames=0`` under ``0/2 episodes ok``. The domain
+    # is the one the wire schema already applies to this field before forwarding
+    # it to the same rollout, so a spelling this tool accepts is one no caller
+    # of it can act on.
+    if fast_mode_error := boolean_flag_error(fast_mode, "fast_mode", "run_policy"):
+        return _err(fast_mode_error)
 
     # The one rule between two of this tool's own parameters, and the only one
     # whose refusal no downstream guard can reach in time. Each rate is already

@@ -54,6 +54,7 @@ from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
+    boolean_flag_error,
     dds_domain_id_error,
     is_boolean,
     non_negative_count_error,
@@ -1768,6 +1769,41 @@ class SimEngine(ABC):
         return SimEngine._validate_positive_int(action_horizon, param, method)
 
     @staticmethod
+    def _validate_posture_flag(value: Any, param: str, method: str) -> dict[str, Any] | None:
+        """Reject a non-boolean posture flag at the public API.
+
+        A posture flag selects a BRANCH rather than scaling a quantity, so there
+        is no value to clamp and no partial effect: the rollout either paces
+        itself, resets between episodes and installs the controller a policy
+        needs, or it does not. Read by truthiness, every non-empty string picks
+        the affirmative branch - so ``"false"``, ``"no"``, ``"off"`` and ``"0"``,
+        the spellings a caller reaches for when opting out, selected the posture
+        being opted out of - while ``0``, ``""``, ``None`` and ``[]`` picked the
+        other one without ever being a declared spelling of it, which matters
+        most for the two flags of this surface that default to ``True``: they
+        silently REMOVE behaviour a rollout was going to get.
+
+        The domain is delegated to
+        :func:`~strands_robots.utils.boolean_flag_error` - the same rule the
+        recording postures, the manipulation flags and the mesh wire schema
+        apply - so a spelling refused for one posture of a rollout cannot be
+        honoured for the next. Returns a structured ``{"status": "error", ...}``
+        dict to surface, or ``None`` when the value is valid.
+
+        Args:
+            value: The caller-supplied flag.
+            param: Parameter name, for the message.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None``.
+        """
+        text = boolean_flag_error(value, param, method)
+        if text is None:
+            return None
+        return {"status": "error", "content": [{"text": text}]}
+
+    @staticmethod
     def _validate_per_robot_mapping(
         mapping: Mapping[Any, Any], driven: Iterable[str], param: str, method: str
     ) -> dict[str, Any] | None:
@@ -2523,6 +2559,10 @@ class SimEngine(ABC):
                 deadline at ``control_frequency``, so the wall clock a step
                 spends working is subtracted from the period rather than added
                 to it and ``duration`` is honored whatever a step costs.
+                Must be a boolean - the flag selects one of two postures rather
+                than scaling a quantity, so a truthy spelling of *off* such as
+                ``"false"`` is refused rather than read as True (see
+                :meth:`_validate_posture_flag`).
             video: Optional video-recording config dict. Accepted keys:
                 ``path`` (str, output MP4 - required to enable recording),
                 ``fps`` (int, default 30), ``camera`` (str, default backend
@@ -2622,7 +2662,9 @@ class SimEngine(ABC):
             reset_between: When running multiple episodes, reset the sim to its
                 initial state between episodes (default ``True``). The reset
                 never fires after the final episode. Set ``False`` to chain
-                episodes from the end state of the previous one.
+                episodes from the end state of the previous one. Must be a
+                boolean, and checked only when ``n_episodes > 1`` - a
+                single-episode rollout reads it nowhere.
             async_rtc: When ``True``, overlap policy inference with action
                 execution so the next action chunk is computed in the
                 background while the current chunk is still draining (latency
@@ -2649,7 +2691,10 @@ class SimEngine(ABC):
                 uniform ``kp=500`` servo would override SONIC's tuned per-joint
                 PD and the gait diverges, so the documented quickstart silently
                 falls over without it. Set ``False`` to manage the controller
-                yourself or to drive a torque-actuated scene directly. No-op for
+                yourself or to drive a torque-actuated scene directly. Must be a
+                boolean, for the reason ``fast_mode`` must be: a falsy
+                non-boolean silently withheld the shim this flag exists to
+                install. No-op for
                 non-WBC policies and on backends without the hook.
             stop_when: Optional semantic early-return condition: end the
                 rollout as soon as the WORLD reaches a state, not only when
@@ -2866,6 +2911,29 @@ class SimEngine(ABC):
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "run_policy"):
             return err
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
+            return err
+        # The postures of this signature, checked on the shared boolean domain
+        # for the reason the quantities above are checked on theirs: each one
+        # selects a branch, and reading one by truthiness took the branch the
+        # caller spelled the opposite of. Measured on a MuJoCo rollout before
+        # these three lines existed, every row reporting status="success":
+        # ``fast_mode="false"`` ran 30 steps at 30Hz in 0.006s instead of the
+        # 1.001s ``False`` takes, issuing the whole rollout as one burst;
+        # ``reset_between="no"`` reset between episodes while ``0``, ``""``,
+        # ``None`` and ``[]`` did not, so every episode after the first began in
+        # the state the previous one ended in and was recorded as independent;
+        # and ``wbc_install_torque_control=None`` skipped the torque shim a
+        # position-servo humanoid needs for a stable gait, which is the one
+        # thing that flag exists to install.
+        if err := self._validate_posture_flag(fast_mode, "fast_mode", "run_policy"):
+            return err
+        # Read only between episodes (``if reset_between and ep < n_episodes -
+        # 1``), so a single-episode rollout consumes it nowhere - the same
+        # condition ``duration`` and ``max_steps`` are checked under, and this
+        # layer does not report on a parameter the rollout will not read.
+        if n_episodes > 1 and (err := self._validate_posture_flag(reset_between, "reset_between", "run_policy")):
+            return err
+        if err := self._validate_posture_flag(wbc_install_torque_control, "wbc_install_torque_control", "run_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
             return err

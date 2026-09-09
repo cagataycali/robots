@@ -5397,6 +5397,12 @@ class MuJoCoSimEngine(
                 return err
         if err := self._validate_action_horizon(action_horizon, "start_policy"):
             return err
+        # Same reason, for this surface's one posture flag: unchecked,
+        # ``fast_mode="false"`` submitted an unpaced rollout under a
+        # ``status="success"``, and post-guard the refusal would otherwise be
+        # produced on the worker - where nothing reads it - instead of here.
+        if err := self._validate_posture_flag(fast_mode, "fast_mode", "start_policy"):
+            return err
         if err := self._validate_seed(seed, "start_policy"):
             return err
         # Same reason as the horizon guards above: a malformed video config
