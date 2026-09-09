@@ -52,6 +52,7 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimRobot, SimWorld
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
+_SRC = Path(__file__).resolve().parents[2] / "strands_robots"
 _JOINTS = ("j1", "j2")
 
 
@@ -374,14 +375,32 @@ class TestTheFleetStopAsksEveryRobotWhenThereIsNoRegistry:
         assert self._flagged(result) is True
 
     def test_the_was_running_reader_has_one_owner(self) -> None:
-        """Both aggregating readers import the reader; neither spells a second copy."""
+        """Both aggregating readers read one definition; neither spells a second copy.
+
+        Ownership is graded through ``__module__`` and the source tree, never
+        through object identity. ``tests/mesh/test_resume_env_validation.py``
+        reloads ``strands_robots.mesh.core``, and :func:`importlib.reload`
+        re-executes a module in its own namespace, so every ``from
+        strands_robots.mesh.core import ...`` binding taken before that reload
+        keeps the pre-reload function object while the module attribute is
+        rebound to a fresh one. An ``is`` comparison therefore grades import
+        order rather than the number of definitions: it holds for this file
+        alone and breaks as soon as a device-connect suite imports the driver
+        before the reload runs. The two facts below are what "one owner"
+        actually means, and neither can be moved by an import generation.
+        """
         import inspect
 
         pytest.importorskip("device_connect_edge")
         from strands_robots.device_connect import sim_driver
         from strands_robots.mesh import core
 
-        assert sim_driver._reported_a_rollout_in_flight is core._reported_a_rollout_in_flight
+        assert sim_driver._reported_a_rollout_in_flight.__module__ == core.__name__
+        assert sorted(
+            path.relative_to(_SRC).as_posix()
+            for path in _SRC.rglob("*.py")
+            if re.search(r"^def _reported_a_rollout_in_flight\b", path.read_text(encoding="utf-8"), re.MULTILINE)
+        ) == ["mesh/core.py"]
         assert "was_running" not in inspect.getsource(sim_driver.SimulationDeviceDriver.stop)
         assert inspect.getsource(sim_driver).count('"was_running"') == 0
 
