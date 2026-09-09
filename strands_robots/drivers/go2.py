@@ -73,7 +73,13 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import (
+    telemetry_float,
+    telemetry_float_list,
+    telemetry_int,
+    telemetry_int_list,
+    undeclared_verb_error,
+)
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
@@ -1254,17 +1260,17 @@ class Go2Driver:
         imu = getattr(msg, "imu_state", None)
         if imu is not None:
             self._imu = {
-                "quaternion": _to_float_list(getattr(imu, "quaternion", None)),
-                "gyroscope": _to_float_list(getattr(imu, "gyroscope", None)),
-                "accelerometer": _to_float_list(getattr(imu, "accelerometer", None)),
-                "rpy": _to_float_list(getattr(imu, "rpy", None)),
+                "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
+                "gyroscope": telemetry_float_list(getattr(imu, "gyroscope", None)),
+                "accelerometer": telemetry_float_list(getattr(imu, "accelerometer", None)),
+                "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
             }
         bms = getattr(msg, "bms_state", None)
         if bms is not None:
             self._battery = {
-                "pct": _to_float(getattr(bms, "soc", None)),
-                "current": _to_float(getattr(bms, "current", None)),
-                "cycle": _to_int(getattr(bms, "cycle", None)),
+                "pct": telemetry_float(getattr(bms, "soc", None)),
+                "current": telemetry_float(getattr(bms, "current", None)),
+                "cycle": telemetry_int(getattr(bms, "cycle", None)),
             }
         motors = getattr(msg, "motor_state", None)
         if motors is not None:
@@ -1275,10 +1281,10 @@ class Go2Driver:
                 except (IndexError, KeyError, TypeError):
                     continue
                 joints[name] = {
-                    "q": _to_float(getattr(motor, "q", None)),
-                    "dq": _to_float(getattr(motor, "dq", None)),
-                    "tau_est": _to_float(getattr(motor, "tau_est", None)),
-                    "temperature": _to_int(getattr(motor, "temperature", None)),
+                    "q": telemetry_float(getattr(motor, "q", None)),
+                    "dq": telemetry_float(getattr(motor, "dq", None)),
+                    "tau_est": telemetry_float(getattr(motor, "tau_est", None)),
+                    "temperature": telemetry_int(getattr(motor, "temperature", None)),
                 }
             self._joints = joints
 
@@ -1294,73 +1300,14 @@ class Go2Driver:
             msg: The decoded ``unitree_go`` ``SportModeState_``.
         """
         self._sport = {
-            "mode": _to_int(getattr(msg, "mode", None)),
-            "gait_type": _to_int(getattr(msg, "gait_type", None)),
-            "body_height": _to_float(getattr(msg, "body_height", None)),
-            "position": _to_float_list(getattr(msg, "position", None)),
-            "velocity": _to_float_list(getattr(msg, "velocity", None)),
-            "yaw_speed": _to_float(getattr(msg, "yaw_speed", None)),
-            "foot_force": _to_int_list(getattr(msg, "foot_force", None)),
+            "mode": telemetry_int(getattr(msg, "mode", None)),
+            "gait_type": telemetry_int(getattr(msg, "gait_type", None)),
+            "body_height": telemetry_float(getattr(msg, "body_height", None)),
+            "position": telemetry_float_list(getattr(msg, "position", None)),
+            "velocity": telemetry_float_list(getattr(msg, "velocity", None)),
+            "yaw_speed": telemetry_float(getattr(msg, "yaw_speed", None)),
+            "foot_force": telemetry_int_list(getattr(msg, "foot_force", None)),
         }
-
-
-def _to_float(value: Any) -> float | None:
-    """Coerce an SDK scalar to ``float``, or ``None`` when it is not numeric."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_int(value: Any) -> int | None:
-    """Coerce an SDK scalar to ``int``, or ``None`` when it is not numeric."""
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_float_list(value: Any) -> list[float] | None:
-    """Coerce an SDK sequence to ``list[float]``, or ``None`` when unusable.
-
-    Returns ``None`` rather than a partial list when any element fails to
-    convert: half a quaternion is worse than no quaternion, because a consumer
-    cannot tell it is half.
-    """
-    if value is None or isinstance(value, (str, bytes)):
-        return None
-    try:
-        items = list(value)
-    except TypeError:
-        return None
-    out: list[float] = []
-    for item in items:
-        coerced = _to_float(item)
-        if coerced is None:
-            return None
-        out.append(coerced)
-    return out
-
-
-def _to_int_list(value: Any) -> list[int] | None:
-    """Coerce an SDK sequence to ``list[int]``, or ``None`` when unusable."""
-    if value is None or isinstance(value, (str, bytes)):
-        return None
-    try:
-        items = list(value)
-    except TypeError:
-        return None
-    out: list[int] = []
-    for item in items:
-        coerced = _to_int(item)
-        if coerced is None:
-            return None
-        out.append(coerced)
-    return out
 
 
 class _ControlLoop:

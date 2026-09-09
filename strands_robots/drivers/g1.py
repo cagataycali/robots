@@ -49,7 +49,13 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import (
+    telemetry_float,
+    telemetry_float_list,
+    telemetry_int,
+    telemetry_int_list,
+    undeclared_verb_error,
+)
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
@@ -1372,7 +1378,7 @@ class G1Driver:
         """Decode ``rt/lf/bmsstate`` into :attr:`_battery`.
 
         Every field is read through ``getattr(msg, name, None)`` and coerced
-        by :func:`_to_float` / :func:`_to_int`, so a name the message does
+        by :func:`telemetry_float` / :func:`telemetry_int`, so a name the message does
         not carry lands ``None`` in the record rather than a typed default.
         That distinction is the whole contract here: ``getattr`` with a
         ``0`` default cannot fail and ``0`` is a well-formed reading, so a
@@ -1391,9 +1397,9 @@ class G1Driver:
         """
         try:
             self._battery = {
-                "pct": _to_float(getattr(msg, "soc", None)),
-                "current": _to_float(getattr(msg, "current", None)),
-                "cycle": _to_int(getattr(msg, "cycle", None)),
+                "pct": telemetry_float(getattr(msg, "soc", None)),
+                "current": telemetry_float(getattr(msg, "current", None)),
+                "cycle": telemetry_int(getattr(msg, "cycle", None)),
                 "t": time.time(),
             }
         except Exception as exc:  # noqa: BLE001
@@ -1480,10 +1486,10 @@ class G1Driver:
         """
         try:
             self._mainboard = {
-                "fan_state": _to_int_list(getattr(msg, "fan_state", None)),
-                "temperature": _to_float_list(getattr(msg, "temperature", None)),
-                "value": _to_float_list(getattr(msg, "value", None)),
-                "state": _to_int_list(getattr(msg, "state", None)),
+                "fan_state": telemetry_int_list(getattr(msg, "fan_state", None)),
+                "temperature": telemetry_float_list(getattr(msg, "temperature", None)),
+                "value": telemetry_float_list(getattr(msg, "value", None)),
+                "state": telemetry_int_list(getattr(msg, "state", None)),
                 "t": time.time(),
             }
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
@@ -1509,10 +1515,10 @@ class G1Driver:
         """
         try:
             self._pressure = {
-                "pressure": _to_float_list(getattr(msg, "pressure", None)),
-                "temperature": _to_float_list(getattr(msg, "temperature", None)),
-                "lost": _to_int(getattr(msg, "lost", None)),
-                "reserve": _to_int(getattr(msg, "reserve", None)),
+                "pressure": telemetry_float_list(getattr(msg, "pressure", None)),
+                "temperature": telemetry_float_list(getattr(msg, "temperature", None)),
+                "lost": telemetry_int(getattr(msg, "lost", None)),
+                "reserve": telemetry_int(getattr(msg, "reserve", None)),
                 "t": time.time(),
             }
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
@@ -1533,82 +1539,6 @@ class G1Driver:
             if value is None:
                 return None
             return dict(value)
-
-
-def _to_int(value: Any) -> int | None:
-    """Coerce ``value`` to ``int``, or return ``None`` if it will not.
-
-    ``BmsState_.cycle`` is declared integer, but the value landing here comes
-    from ``getattr(msg, name, None)`` at :meth:`G1Driver._on_bms`, so a
-    firmware that renames the field yields ``None`` at this call.  Returning
-    ``None`` decidably rather than raising keeps the DDS thread's decoder
-    swallowing nothing silently, and the ``g1_battery`` verb reports the
-    missing field as ``None`` in the envelope instead of dropping the whole
-    reading.  The same rule is why no caller passes a typed default: ``0``
-    would be indistinguishable from a real zero-cycle pack.
-    """
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_float(value: Any) -> float | None:
-    """Coerce ``value`` to ``float``, or return ``None`` if it will not.
-
-    The float counterpart of :func:`_to_int`, for ``BmsState_``'s ``soc`` and
-    ``current``.  Same rule: the caller passes ``getattr(msg, name, None)``
-    rather than a typed default, so a renamed or undeclared field reaches the
-    ``g1_battery`` envelope as ``None`` instead of a plausible ``0.0``.
-    """
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_int_list(value: Any) -> list[int] | None:
-    """Coerce ``value`` (a vector IDL field) to ``list[int]``, or ``None``.
-
-    Vector fields on the ``MainBoardState_`` IDL - ``fan_state`` -- arrive as
-    an iterable whose element type is declared integer on the current
-    firmware.  Copying into a plain ``list`` here (rather than storing the
-    IDL sequence) means the ``_snapshot`` accessor's ``dict(value)`` copy
-    already carries a list a caller can mutate without racing the DDS
-    thread's next write, and it turns a bytes-like or string value (which
-    would otherwise iterate as characters) into ``None``.
-    """
-    if value is None:
-        return None
-    if isinstance(value, (str, bytes, bytearray)):
-        return None
-    try:
-        return [int(item) for item in value]
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_float_list(value: Any) -> list[float] | None:
-    """Coerce ``value`` (a vector IDL field) to ``list[float]``, or ``None``.
-
-    Vector fields on the ``MainBoardState_`` IDL - ``temperature`` -- are a
-    float sequence on the current firmware.  Same copy-into-list rule as
-    :func:`_to_int_list`: the returned list is fresh, so a caller mutating
-    the ``g1_mainboard`` verb's envelope does not race the DDS thread that
-    writes the cache.
-    """
-    if value is None:
-        return None
-    if isinstance(value, (str, bytes, bytearray)):
-        return None
-    try:
-        return [float(item) for item in value]
-    except (TypeError, ValueError):
-        return None
 
 
 def _refuse(reason: str) -> dict[str, Any]:

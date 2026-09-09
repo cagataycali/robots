@@ -163,6 +163,17 @@ naming what may still be moving; `strands_robots.drivers.halt_failure_detail` re
 reason out of one. Discarding it returns from shutdown reporting the robot as stopped on the
 one surface that has no way to say otherwise.
 
+A driver that decodes its own telemetry decides, field by field, whether a reading exists. The
+convention is to read every field as `getattr(msg, name, None)` and coerce it, because a *typed*
+default is a well-formed value: a firmware that renames a field would publish a plausible constant
+rather than an absence. `strands_robots.drivers.base` owns that coercion -- `telemetry_float`,
+`telemetry_int`, `telemetry_float_list`, `telemetry_int_list` -- so the answer does not depend on
+which driver asked. Each returns `None` for anything that is not a reading, including a `bool`
+(`float(True)` is `1.0`, indistinguishable from a real one-percent pack) and a bytes-like value
+(`str`, `bytes`, `bytearray`, `memoryview` all iterate, so a raw buffer would otherwise decode as a
+vector of the wrong length). The vector readers are all-or-nothing and return a fresh list, so a
+caller mutating the envelope does not race the callback thread's next write.
+
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python
