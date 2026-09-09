@@ -33,6 +33,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.utils import boolean_flag_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -339,7 +340,29 @@ class LeRobotCalibrationManager:
             return False, str(e), copied_count
 
     def restore_calibrations(self, backup_dir: Path, overwrite: bool = False) -> tuple[bool, str, int]:
-        """Restore calibrations from backup"""
+        """Restore calibrations from backup.
+
+        ``overwrite`` selects a posture - keep or replace a calibration that is
+        already on disk - so it is checked against the shared boolean domain
+        rather than read by truthiness. Read by truthiness, every non-empty
+        string is the affirmative posture: ``overwrite="false"``, ``"no"`` and
+        ``"0"`` each replaced every existing calibration for a caller who had
+        spelled the opt-out, and the tool reported ``Overwrite mode: false``
+        beside the files it had just replaced. Restoring is the path a lost
+        measurement is recovered on, so the file this overwrites is usually the
+        one the operator cannot re-measure; the check therefore runs before the
+        backup directory is even resolved, so a refused flag leaves nothing
+        touched.
+
+        Returns:
+            ``(ok, message, restored_count)``. A refused ``overwrite`` is
+            ``(False, <reason naming the flag>, 0)``, the same shape a missing
+            backup directory reports on.
+        """
+        flag_error = boolean_flag_error(overwrite, "overwrite", "restore_calibrations")
+        if flag_error is not None:
+            return False, flag_error, 0
+
         backup_dir = Path(validate_save_path(str(backup_dir), label="backup_dir"))
 
         if not backup_dir.exists():
@@ -466,7 +489,10 @@ def lerobot_calibrate(
         query: Search query for search action
         output_dir: Output directory for backup action
         backup_dir: Backup directory for restore action
-        overwrite: Whether to overwrite existing files during restore
+        overwrite: Whether to replace a calibration that already exists at the
+            destination during restore. A boolean only: a string such as
+            "false" is refused rather than read as the posture it spells the
+            opposite of, since every non-empty string is truthy
         base_path: Custom base path for calibrations (default: ~/.cache/huggingface/lerobot/calibration)
 
     Returns:
@@ -652,6 +678,14 @@ def lerobot_calibrate(
         elif action == "restore":
             if not backup_dir:
                 return {"status": "error", "content": [{"text": "**restore** action requires: backup_dir"}]}
+
+            # Only this action reads ``overwrite``, so only this action refuses
+            # an unusable one; a caller listing calibrations is never refused
+            # for a flag the request ignores. The manager checks it again at
+            # the read, for a caller driving that method directly.
+            flag_error = boolean_flag_error(overwrite, "overwrite", "lerobot_calibrate")
+            if flag_error is not None:
+                return {"status": "error", "content": [{"text": f"**Restore failed:** {flag_error}"}]}
 
             success, message, count = manager.restore_calibrations(Path(backup_dir), overwrite)
 
