@@ -248,6 +248,36 @@ truncated calibration still `exists()`, `load_calibration` reads it as `None`, a
 `action="view"` renders its path, size and timestamp under `status="success"` with
 no motors in it.
 
+Committing the write covers a write that *fails*. It does not cover a write the tool
+was told to make, which is the next section.
+
+### `overwrite` is checked, so a word for "no" cannot arm the write
+
+`overwrite` is the confirmation gate in front of that same write - the only one in
+this tool that replaces a measurement - and it is checked against the shared boolean
+domain rather than read by truthiness. `not "false"` is `False`, so read by
+truthiness the words a caller reaches for when opting out selected the overwrite they
+spell the refusal of:
+
+```python
+lerobot_calibrate(action="restore", backup_dir=..., overwrite="false")
+```
+
+used to answer `status="success"`, and rendered the posture back as supplied
+(`Overwrite mode: false`) beside a count of the calibrations it had just replaced - the report agreeing with the caller about a
+posture the code had not taken. `"no"`, `"off"`, `"0"` and any non-zero number read
+the same way; `None`, `0` and `""` took the skip branch without being a declared
+spelling of it. Neither the atomic commit above nor the backup helps, because this
+write succeeds and nothing in a backup reconstructs the measurement it replaced.
+
+Both surfaces that read the flag now refuse a non-boolean:
+`LeRobotCalibrationManager.restore_calibrations` raises `ValueError` ahead of reading
+the backup directory, so a refusal cannot arrive after the file it was protecting is
+gone, and the `lerobot_calibrate` facade refuses ahead of that so the message names
+the parameter instead of surfacing as `Tool execution failed`. Only `action="restore"`
+consults the flag, so no other action is refused for it, and the two postures it is
+declared over are unchanged - `True` restores over the existing file, `False` keeps it.
+
 ### A mesh wait budget is bounded where the command body cannot carry it
 
 `robot_mesh` takes four numeric options. `duration` and `policy_port` travel
