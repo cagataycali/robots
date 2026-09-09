@@ -68,6 +68,14 @@ def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": text}]}
 
 
+#: Reported for a header the file declares no usable count under - an absent
+#: key, or a declaration outside the count domain. ``declared_count`` refuses
+#: every negative, so no real declaration can collide with this sentinel, and
+#: the gate below already initialises both totals to it for the case where
+#: there is no dataset to read at all.
+_NO_COUNT = -1
+
+
 def _read_parquet_truth(dataset_root: str | Path) -> dict[str, Any]:
     """Read ground-truth episode/frame counts from ``meta/info.json``.
 
@@ -77,22 +85,84 @@ def _read_parquet_truth(dataset_root: str | Path) -> dict[str, Any]:
     async-flushed and can lag (see HB#372 forensics + e2e verifier's
     two-phase wait pattern), so we explicitly DO NOT depend on them here.
 
+    Both headers are graded by :func:`~strands_robots.utils.declared_count`, the
+    one owner every reader of this file shares, rather than coerced with
+    ``int()``. Coercing was destructive in both directions at the one surface
+    that exists to catch a fabricated episode count:
+
+    * ``2.5`` truncated to ``2`` and ``true`` counted as one episode, so a
+      header no writer could have produced was reported to the caller AS parquet
+      truth - and agreed with the requested count, which is the silent collapse
+      this gate was written to catch. The same header is "metadata is corrupt"
+      to :func:`~strands_robots.verify_dataset.verify_dataset` and to
+      :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`.
+    * ``1e400`` (a well-formed JSON number ``json.load`` parses to ``inf``),
+      ``NaN`` and ``null`` raised ``OverflowError`` / ``ValueError`` /
+      ``TypeError`` out of this function and past the tool envelope, from a file
+      that was perfectly readable.
+
+    A file that cannot be READ is reported the same way, and "read" is graded by
+    ``ValueError`` rather than by ``json.JSONDecodeError`` alone: bytes the
+    declared encoding does not describe raise ``UnicodeDecodeError`` and a number
+    longer than ``sys.get_int_max_str_digits`` raises a plain ``ValueError``,
+    neither of which is a ``json.JSONDecodeError``. Both escaped past the tool
+    envelope from the gate that exists to answer whether the recording produced
+    the episodes it was asked for - the same escape the graded headers above
+    closed for a file that was perfectly readable.
+
+    A header that declares something which is not a count is a third outcome,
+    distinct from both a usable count and an absent header, so it is reported in
+    ``info_problems`` - the spelling both other readers of this file already use
+    - rather than collapsing into either. The count itself then reads
+    :data:`_NO_COUNT`.
+
+    Args:
+        dataset_root: Dataset root holding ``meta/info.json``.
+
+    Returns:
+        ``info_present`` plus, when the header was readable, the two graded
+        counts, any ``info_problems`` naming a declaration that is not a count,
+        and the declared ``fps``.
+
     Returns a partial result on missing fields rather than raising, so the
     caller can surface a structured error instead of a stack trace.
     """
+    # Lazy, like every other strands_robots import in this module: a caller who
+    # runs without recording pulls in no extra module.
+    from strands_robots.utils import declared_count
+
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.is_file():
         return {"info_present": False, "info_path": str(info_path)}
     try:
         with info_path.open("r", encoding="utf-8") as f:
             info = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+    except (OSError, ValueError) as e:
         return {"info_present": False, "info_path": str(info_path), "error": repr(e)}
+    if not isinstance(info, dict):
+        # A readable JSON document that is not an object carries no headers at
+        # all - the same "nothing to verify against" as an unreadable file.
+        # Reading it as one raised AttributeError past the tool envelope.
+        return {
+            "info_present": False,
+            "info_path": str(info_path),
+            "error": f"meta/info.json holds a JSON {type(info).__name__}, not an object",
+        }
+
+    counts: dict[str, int] = {}
+    info_problems: list[str] = []
+    for key in ("total_episodes", "total_frames"):
+        raw = info.get(key)
+        declared = declared_count(raw)
+        counts[key] = _NO_COUNT if declared is None else declared
+        if key in info and declared is None:
+            info_problems.append(f"meta/info.json {key}={raw!r} is not a count - metadata is corrupt")
     return {
         "info_present": True,
         "info_path": str(info_path),
-        "total_episodes": int(info.get("total_episodes", -1)),
-        "total_frames": int(info.get("total_frames", -1)),
+        "total_episodes": counts["total_episodes"],
+        "total_frames": counts["total_frames"],
+        "info_problems": info_problems,
         "fps": info.get("fps"),
     }
 
@@ -134,7 +204,10 @@ def run_policy(
        ``total_episodes`` / ``total_frames`` read from
        ``meta/info.json`` AFTER ``stop_recording`` returns, NOT
        self-reported by the loop. Mismatch with ``n_episodes`` is surfaced
-       as ``warnings=[...]`` for the verifier to act on.
+       as ``warnings=[...]`` for the verifier to act on. Both counts are
+       graded by ``declared_count``, so a header that declares something
+       which is not a count reads ``-1`` and is reported as corrupt
+       metadata rather than coerced into agreement with the request.
 
     Args:
         simulation: Live ``Simulation`` (or compatible) handle.
@@ -230,8 +303,8 @@ def run_policy(
 
             {
                 "n_episodes_requested": int,
-                "n_episodes_actual": int,      # parquet-truth
-                "n_frames_actual": int,        # parquet-truth
+                "n_episodes_actual": int,      # parquet-truth, -1 if unread
+                "n_frames_actual": int,        # parquet-truth, -1 if unread
                 "dataset_root": str | None,
                 "warnings": [str, ...],        # mismatch flags
                 "episodes": [
@@ -489,8 +562,8 @@ def run_policy(
                 )
 
     # ---- 5. Parquet-truth gate -----------------------------------------
-    n_actual_eps = -1
-    n_actual_frames = -1
+    n_actual_eps = _NO_COUNT
+    n_actual_frames = _NO_COUNT
     warnings_: list[str] = []
     truth: dict[str, Any] = {}
 
@@ -505,7 +578,18 @@ def run_policy(
         else:
             n_actual_eps = truth["total_episodes"]
             n_actual_frames = truth["total_frames"]
-            if n_actual_eps != n_episodes:
+            # A header that declares something which is not a count is reported
+            # as itself. The guard below can only compare a COUNT, and naming
+            # the save_episode boundary for a corrupt header would report the
+            # wrong cause - that boundary may have fired for every episode.
+            warnings_.extend(truth["info_problems"])
+            if n_actual_eps == _NO_COUNT:
+                if not truth["info_problems"]:
+                    warnings_.append(
+                        f"meta/info.json under {dataset_root!r} declares no "
+                        "total_episodes - cannot verify the episode count."
+                    )
+            elif n_actual_eps != n_episodes:
                 warnings_.append(
                     f"FABRICATION GUARD: requested {n_episodes} episodes, "
                     f"meta/info.json:total_episodes={n_actual_eps}. The "

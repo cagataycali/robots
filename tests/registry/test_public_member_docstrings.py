@@ -55,6 +55,7 @@ _EXPECTED_FUNCTIONS = {
     "discovery.py::list_urdf_discoverable",
     "discovery.py::urdf_descriptions_module",
     "loader.py::invalidate_cache",
+    "loader.py::normalize_robot_name",
     "loader.py::reload",
     "policies.py::build_policy_kwargs",
     "policies.py::get_policy_provider",

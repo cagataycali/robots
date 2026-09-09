@@ -7,8 +7,11 @@ device selection, physics parameters, rendering, and headless mode.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from strands_robots.utils import positive_count_error
 
 # Supported render modes
 RENDER_MODES = ("headless", "rtx_realtime", "rtx_pathtracing")
@@ -89,6 +92,108 @@ def _env_switch(name: str) -> bool | None:
     )
 
 
+#: A single USD prim name: an ASCII identifier, first character a letter or
+#: underscore. This is the alphabet
+#: :func:`strands_robots.simulation.isaac.joint_names._tf_make_valid_identifier`
+#: already encodes as USD's own rule -- it replaces every character outside
+#: ``[A-Za-z0-9_]``, and a first character outside ``[A-Za-z_]``, with ``_`` --
+#: so the two spellings of the rule in this package agree by construction.
+_PRIM_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _stage_path_error(value: Any) -> str | None:
+    """Return an error message if ``value`` cannot prefix a USD prim path.
+
+    Every prim :class:`~strands_robots.simulation.isaac.simulation.IsaacSimulation`
+    creates is addressed by a path interpolated from this prefix and an entity
+    name -- ``f"{stage_path}/Robots/{name}"``, and the same shape for
+    ``/Objects/`` and ``/Cameras/``. The name half of that f-string already has
+    a domain: ``add_robot`` refuses a name that cannot address the robot it
+    creates on the shared :func:`strands_robots.utils.entity_name_error`, which
+    rejects a non-``str``, the empty string, and a string containing a NUL.
+    This is the same domain for the other half, so a path the API records is
+    one the API can address regardless of which component the caller got wrong.
+
+    Args:
+        value: The candidate :attr:`IsaacConfig.stage_path`.
+
+    Returns:
+        ``None`` when ``value`` is an absolute USD prim path with at least one
+        component, every component a prim name; otherwise a message naming the
+        field, the value, and the path it would have produced.
+
+    Four spellings are refused, each measured against the unbound
+    ``add_robot`` / ``remove_robot`` (no Isaac Sim or GPU needed -- the
+    procedural branch touches no stage). Before this domain every one of them
+    reported ``status="success"`` and recorded the interpolated string in
+    ``_prim_registry``, which is what :meth:`destroy` releases and counts:
+
+    * **Not a ``str``.** The f-string has no type requirement, so the value's
+      ``repr``-ish text became part of the path: ``stage_path=None`` recorded
+      ``None/Robots/arm`` -- the literal four characters -- ``stage_path=7``
+      recorded ``7/Robots/arm``, and ``stage_path=["/World"]`` recorded
+      ``['/World']/Robots/arm``. ``entity_name_error`` refuses a non-``str``
+      name for the same reason; a non-``str`` prefix is the same value arriving
+      through the other half.
+    * **Not absolute.** ``stage_path="World"`` recorded ``World/Robots/arm``, a
+      relative path. :meth:`IsaacSimulation.get_body_state` routes on exactly
+      that distinction -- ``if body_name.startswith("/")`` takes the stage
+      lookup, and ``elif "/" in body_name`` reads the value as
+      ``robot_name/link_name`` -- so a caller handing back the path the API
+      recorded is routed to the wrong branch, where ``World`` is looked up as a
+      robot name. ``"/"`` alone is refused with it: the root names no
+      component, and prefixing it yields ``//Robots/arm``.
+    * **An empty component.** ``"/World/"`` recorded ``/World//Robots/arm`` and
+      ``"/World//Sub"`` recorded ``/World//Sub/Robots/arm``. A doubled
+      separator is not a path component, and a trailing separator is the
+      likeliest way to write one, because the field is documented as a
+      *prefix*.
+    * **A component that is not a prim name.** ``"/My World"`` and
+      ``"/World\x00x"`` were both recorded verbatim. This is the half that is
+      not merely cosmetic: USD transcodes a prim name outside its identifier
+      alphabet, so the prim does not land at the path that was recorded for it.
+      This package already relies on that transcoding being real and
+      deterministic -- ``demangle_usd_joint_names`` exists to undo it for
+      joint names, where the URDF joint ``1`` imports as ``tn__1_`` -- and a
+      recorded path the stage does not carry is a prim :meth:`destroy` counts
+      and does not release.
+
+    The three ``bool``/numeric-domain fields of this dataclass are validated in
+    :meth:`IsaacConfig.__post_init__` and so is this one: the property is
+    lexical, it needs no engine, and ``stage_path`` has exactly one consumer
+    package. It is kept in this module rather than
+    :mod:`strands_robots.utils` for the reason :data:`ENV_SWITCH_ON` states --
+    AGENTS.md Key Convention 11 -- no other backend has a stage.
+    """
+    if not isinstance(value, str):
+        return (
+            f"IsaacConfig.stage_path must be a str, got {type(value).__name__} {value!r}. "
+            f"Every prim path is interpolated from it, so this one would address "
+            f"robots at {f'{value}/Robots/<name>'!r}. Use an absolute USD prim path "
+            f"such as '/World'."
+        )
+    components = value.split("/")
+    if not value.startswith("/"):
+        return (
+            f"IsaacConfig.stage_path must be an absolute USD prim path starting with '/', "
+            f"got {value!r}, which would address robots at {f'{value}/Robots/<name>'!r} -- "
+            f"a relative path. get_body_state() distinguishes an absolute prim path from a "
+            f"'<robot>/<link>' pair by that leading '/', so a relative prefix makes the path "
+            f"this backend records unusable as the key it records it for. Use '/World'."
+        )
+    if bad := [c for c in components[1:] if not _PRIM_NAME_RE.match(c)]:
+        return (
+            f"IsaacConfig.stage_path={value!r} is not a USD prim path: component "
+            f"{bad[0]!r} is not a prim name (an ASCII identifier matching "
+            f"[A-Za-z_][A-Za-z0-9_]*). It would address robots at "
+            f"{f'{value}/Robots/<name>'!r}; USD transcodes a name outside that "
+            f"alphabet, so the prim would not land at the path recorded for it, and "
+            f"an empty component (a doubled or trailing '/') is not a component at "
+            f"all. Use '/World' or '/World/<Identifier>'."
+        )
+    return None
+
+
 @dataclass
 class IsaacConfig:
     """Configuration for :class:`IsaacSimulation`.
@@ -124,18 +229,39 @@ class IsaacConfig:
         ``"rtx_pathtracing"``; one of ``("0", "false", "no", "off")``, empty or
         unset leaves the field alone, and any other spelling is refused.
     gravity : tuple[float, float, float]
-        Gravity vector. Default (0.0, 0.0, -9.81) (Z-up convention).
+        Gravity vector. Default (0.0, 0.0, -9.81) (Z-up convention). Read by
+        ``create_world()``, which applies the same domain to it as to its own
+        ``gravity=`` argument: three finite, non-boolean components, Z-aligned
+        (``x`` and ``y`` both zero), or a real scalar taken as the z-component.
+        The domain lives with the engine that spends the value - Isaac's
+        ``PhysicsContext.set_gravity`` takes a signed scalar - and is shared
+        with every other backend's gravity surface, so it is applied there
+        rather than restated here.
     ground_plane : bool
         Whether to add a ground plane on ``create_world()``. Default True.
     stage_path : str
-        USD stage path prefix. Default ``"/World"``.
+        USD stage path prefix, and the root every prim this backend creates is
+        addressed under (``{stage_path}/Robots/{name}``, and the same shape for
+        ``/Objects/`` and ``/Cameras/``). Default ``"/World"``. Must be an
+        absolute USD prim path with at least one component, every component a
+        prim name (an ASCII identifier matching ``[A-Za-z_][A-Za-z0-9_]*``) --
+        the same requirement the name half of that path already carries via
+        :func:`strands_robots.utils.entity_name_error`. A value outside that
+        domain is refused on construction rather than interpolated into a path
+        the stage cannot carry.
     nucleus_url : str | None
         Override Omniverse Nucleus server URL. Default from env var
         ``STRANDS_ISAAC_NUCLEUS_URL`` or None (use Isaac defaults).
     camera_width : int
-        Default camera width in pixels. Default 640.
+        Default camera width in pixels, for every camera and render call that
+        does not state one of its own. Default 640. Must be a positive integer
+        on :func:`strands_robots.utils.positive_count_error` -- the same shared
+        pixel floor ``add_camera`` and the render family already apply to the
+        ``width`` they take instead of this default, so one resolution cannot be
+        refused at the call site and accepted from the config.
     camera_height : int
-        Default camera height in pixels. Default 480.
+        Default camera height in pixels. Default 480. Same domain as
+        ``camera_width``.
     enable_rtx_sensors : bool
         Enable RTX-accelerated sensors (camera, LiDAR). Default True.
     verbose : bool
@@ -170,9 +296,24 @@ class IsaacConfig:
         if not self.device.startswith("cuda"):
             raise ValueError(f"Isaac Sim requires a CUDA device, got {self.device!r}. Use 'cuda:0', 'cuda:1', etc.")
 
-        # Validate num_envs
-        if self.num_envs < 1:
-            raise ValueError(f"num_envs must be >= 1, got {self.num_envs}")
+        # Validate num_envs on the shared count domain
+        # (:func:`strands_robots.utils.positive_count_error`) -- the same domain
+        # ``camera_width`` / ``camera_height`` take a few lines below, and the
+        # same one :meth:`~strands_robots.simulation.isaac.IsaacSimulation.replicate`
+        # applies to the ``num_envs`` *argument* it takes instead of this
+        # default, so the two owners of one environment count reach one verdict.
+        # The hand-rolled ``< 1`` test this replaces is the shape that domain's
+        # docstring warns about, and the shape ``RLTrainSpec.num_envs`` was
+        # moved off for the same reason: it tests only the floor, so it read
+        # ``True`` as a count of 1 while refusing ``False``, and let ``4.0``,
+        # ``2.7``, ``nan`` and ``inf`` through to be stored and reported as an
+        # environment count -- the init log formats this field with ``%d``, so a
+        # stored ``2.7`` was announced as ``num_envs=2`` and a stored ``nan``
+        # made that logging call raise. A ``str``, ``None`` or a list raised
+        # ``TypeError`` from the comparison itself, naming neither the field nor
+        # a remedy.
+        if (envs_err := positive_count_error(self.num_envs, "num_envs", type(self).__name__)) is not None:
+            raise ValueError(envs_err)
 
         # Validate physics_dt
         if self.physics_dt <= 0:
@@ -182,9 +323,28 @@ class IsaacConfig:
         if self.rendering_dt <= 0:
             raise ValueError(f"rendering_dt must be > 0, got {self.rendering_dt}")
 
-        # Validate camera dimensions
-        if self.camera_width < 1 or self.camera_height < 1:
-            raise ValueError(f"camera dimensions must be >= 1, got {self.camera_width}x{self.camera_height}")
+        # Validate camera dimensions on the shared pixel floor
+        # (:func:`strands_robots.utils.positive_count_error`) that ``add_camera``
+        # and ``_render_frame`` already apply to the ``width`` / ``height``
+        # arguments they take *instead of* these defaults, so the two owners of
+        # one resolution reach one verdict. The hand-rolled ``< 1`` pair this
+        # replaces is the shape that domain's docstring warns about: it tests
+        # only the floor, so it read ``True`` as a width of 1, let ``640.0``,
+        # ``640.5``, ``nan`` and ``inf`` through to ``np.zeros((h, w, 3))`` as
+        # ``TypeError: 'float' object cannot be interpreted as an integer`` --
+        # raised out of ``render``, whose contract is a ``{"status": "error"}``
+        # dict -- and raised ``TypeError`` from the comparison itself for a
+        # ``str`` or ``None``, rather than naming the field. Each field is
+        # graded separately so the message names the one to fix.
+        for param, value in (("camera_width", self.camera_width), ("camera_height", self.camera_height)):
+            if (dim_err := positive_count_error(value, param, type(self).__name__)) is not None:
+                raise ValueError(dim_err)
+
+        # Validate stage_path. It is the other half of every prim path this
+        # backend interpolates; the name half is already refused on the shared
+        # ``entity_name_error`` domain at each creation site.
+        if (stage_err := _stage_path_error(self.stage_path)) is not None:
+            raise ValueError(stage_err)
 
         # Resolve nucleus_url from environment if not explicitly set
         if self.nucleus_url is None:

@@ -69,9 +69,28 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_optimization_epochs_problems": ("num_learning_epochs",),
     "_temperature_learning_rate_problems": ("alpha_lr",),
     "_initial_temperature_problems": ("init_alpha",),
+    "_target_entropy_problems": ("target_entropy",),
     "_gradient_clip_problems": ("max_grad_norm",),
     "_loss_weight_problems": ("value_loss_coef", "entropy_coef"),
     "_clip_range_problems": ("clip_param",),
+    "_policy_delay_problems": ("policy_delay",),
+    # The Polyak-coefficient gate. Its field lives on ``RLTrainSpec`` and no
+    # provider forwards it, so it is graded on the reader scan only - and that
+    # scan finds two backends rather than one, since both off-policy backends
+    # maintain a target network.
+    "_polyak_coefficient_problems": ("tau",),
+    "_td3_noise_problems": ("exploration_noise_std", "target_noise_std", "target_noise_clip"),
+    # The RL checkpoint-interval gate. Its field lives on ``RLTrainSpec`` and no
+    # provider forwards it, so it is graded on the reader scan only - and that
+    # scan is the *secondary* derivation for this guard, whose primary scope is
+    # the BaseRLAlgo hierarchy: PPO inherits the loop that reads the field and
+    # never names it.
+    "_rl_checkpoint_interval_problems": ("log_interval",),
+    # The network-architecture gate. Its one field is a *sequence*, and it is
+    # scoped like the learning rate across the RL backends (all three build
+    # their actor and critics from it) while still being field-scoped overall,
+    # since a supervised backend takes its architecture from the checkpoint.
+    "_network_width_problems": ("hidden_dims",),
 }
 
 
@@ -184,10 +203,16 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_launch_topology_domain.py",
             "test_lora_hyperparameter_domain.py",
             "test_loss_weight_domain.py",
+            "test_network_width_domain.py",
             "test_optimization_epochs_domain.py",
+            "test_policy_delay_domain.py",
+            "test_polyak_coefficient_domain.py",
             "test_rl_run_size_domain.py",
+            "test_rl_checkpoint_interval_domain.py",
             "test_rl_replay_domain.py",
             "test_seed_domain.py",
+            "test_target_entropy_domain.py",
+            "test_td3_noise_domain.py",
             "test_temperature_learning_rate_domain.py",
             "test_validation_episodes_domain.py",
         }

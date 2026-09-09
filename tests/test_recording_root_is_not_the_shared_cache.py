@@ -54,11 +54,15 @@ test resolving the shared home -- the fallback test named above, which compares
 a path and reads nothing -- and the full unit suite's failure set is unchanged
 with a stray dataset planted at all six ids the offenders used.
 
-``DatasetRecorder.resume`` is deliberately not an entry point here: unlike
-``create`` it forwards ``repo_id`` / ``root`` to ``LeRobotDataset`` without
-resolving the pair itself and without ``_prepare_create_target``, so it neither
-resolves the shared home in this repo nor inspects the target first. The
-instrumentation agrees - no ``resume`` test reached the home.
+``DatasetRecorder.resume`` is deliberately not an entry point here. It resolves
+the pair through the same resolver ``create`` does, so it does reach the shared
+home for an absent root - but it has no ``_prepare_create_target``, so it never
+inspects or writes that directory: the resolved path is handed straight to the
+injected fake dataset class. The exposure this module guards is the *inspection*
+of a shared path before the fake is reached, which is what a planted dataset
+turns into a ``FileExistsError``; computing a path nothing reads is not it. The
+instrumentation agrees - no ``resume`` test reached the home when it was
+recorded, and the ids the ``resume`` tests use are unchanged.
 
 ``tests_integ/`` deliberately records real datasets and may want the shared
 home, so the scan is scoped to ``tests/``.

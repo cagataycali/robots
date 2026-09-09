@@ -380,14 +380,14 @@ class Trainer(ABC):
         return rl_run_size_problems(spec, context=self.provider_name)
 
     def _rl_replay_problems(self, spec: TrainSpec) -> list[str]:
-        """Replay-loop count preflight for the off-policy (FastSAC) backend.
+        """Replay-loop count preflight for the off-policy (SAC / TD3) backends.
 
         Returns problems for :attr:`RLTrainSpec.buffer_size` /
         :attr:`RLTrainSpec.batch_size` / :attr:`RLTrainSpec.gradient_steps` - the
-        three caller-supplied counts of a SAC replay loop (the buffer capacity,
-        the transitions sampled per gradient step, and the updates per iteration)
-        - against the same shared positive-count domain the run-size and
-        launch-topology gates use.
+        three caller-supplied counts of an off-policy replay loop (the buffer
+        capacity, the transitions sampled per gradient step, and the updates per
+        iteration) - against the same shared positive-count domain the run-size
+        and launch-topology gates use.
 
         A :meth:`validate` that reads any of the three MUST call this instead of
         comparing the value itself. Each is consumed directly as a count (a
@@ -399,8 +399,9 @@ class Trainer(ABC):
         :func:`~strands_robots.training._validate.rl_replay_problems` for the
         measured table.
 
-        Only FastSAC reads these fields; PPO sizes its minibatches from
-        ``num_mini_batches`` and never reads them, so it must not report on them.
+        Only the off-policy backends (FastSAC and FastTD3) read these fields;
+        PPO sizes its minibatches from ``num_mini_batches`` and never reads
+        them, so it must not report on them.
 
         Imported lazily for the same reason as :meth:`_security_problems` - to
         keep the ``base -> _validate`` import one-way at runtime.
@@ -516,6 +517,45 @@ class Trainer(ABC):
         from strands_robots.training._validate import checkpoint_cadence_problems
 
         return checkpoint_cadence_problems(spec, context=self.provider_name)
+
+    def _rl_checkpoint_interval_problems(self, spec: TrainSpec) -> list[str]:
+        """Checkpoint-cadence preflight for the RL loop, on its own field.
+
+        Returns a problem when :attr:`RLTrainSpec.log_interval` is not a whole
+        number of iterations, against the same shared step-cadence domain
+        :meth:`_checkpoint_cadence_problems` holds ``save_freq`` to. A
+        :meth:`validate` implementation whose loop paces ``save_checkpoint`` on
+        ``it % log_interval`` MUST call this: the field is the RL run's
+        checkpoint cadence, and the modulus judges it no more than lerobot's
+        does. ``nan`` satisfies the truthiness guard and never the modulus, so a
+        run that asked to checkpoint every few iterations silently keeps only
+        its final one and still reports ``status="success"`` - the reading that
+        matters most for RL, where return is non-monotonic and the deployable
+        policy is often an earlier checkpoint. ``True`` is a cadence of one, a
+        fraction is a silently different cadence, and a string raises
+        ``TypeError`` out of the loop after ``setup`` has built the env, the
+        networks and the optimizers. Only the type is graded: ``0`` is the
+        documented "no intermediate checkpoints" mode.
+
+        Scoped like :meth:`_network_width_problems` rather than like
+        :meth:`_gae_lambda_problems`: all three RL backends run the same loop
+        over the same field, so there is no RL backend for which reporting on it
+        would be a false rejection. A supervised backend does not read it and
+        MUST NOT report on it - it has ``save_freq`` for the same question.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single problem when the cadence cannot be honored; empty
+            otherwise.
+        """
+        from strands_robots.training._validate import rl_checkpoint_interval_problems
+
+        return rl_checkpoint_interval_problems(spec, context=self.provider_name)
 
     def _validation_episodes_problems(self, spec: TrainSpec) -> list[str]:
         """Held-out-validation preflight shared by every backend that reads it.
@@ -686,7 +726,7 @@ class Trainer(ABC):
         writes a checkpoint holding non-finite parameters, both under a
         successful result.
 
-        Only the off-policy backend tunes a temperature, so unlike
+        Only the SAC backend tunes a temperature, so unlike
         :meth:`_learning_rate_problems` a backend that does not read the field
         MUST NOT call this: per :class:`TrainSpec` a backend ignores the fields it
         does not support, so reporting on one it never reads would be a false
@@ -746,6 +786,130 @@ class Trainer(ABC):
         from strands_robots.training._validate import initial_temperature_problems
 
         return initial_temperature_problems(spec, context=self.provider_name)
+
+    def _target_entropy_problems(self, spec: TrainSpec) -> list[str]:
+        """Target-entropy preflight, for backends that tune a temperature.
+
+        Returns a problem when :attr:`RLTrainSpec.target_entropy` is neither the
+        ``None`` sentinel nor a finite real of either sign. It is the third field
+        of FastSAC's temperature block, and a backend that builds that block MUST
+        call this **alongside** :meth:`_initial_temperature_problems` and
+        :meth:`_temperature_learning_rate_problems`: those two guard the
+        temperature's starting value and the rate that moves it, and this one the
+        constant it is moved *toward*, so guarding two of the three leaves the
+        third to the arithmetic that spends it.
+
+        The domain is signed, which is why it is
+        :func:`~strands_robots.utils.finite_number_error` rather than the
+        positive-finite domain its two neighbours read: the field defaults to
+        ``-num_actions``, so every reading of it is a negative entropy in nats and
+        no endpoint is decidable. ``target_entropy=True`` is therefore not merely
+        a flag read as a number but a silent sign flip - a target of ``+1.0`` -
+        and a run that took it reported success while checkpointing a different
+        temperature. ``nan`` poisons ``alpha``, which scales the entropy term of
+        both the critic target and the actor loss, and the next rollout raises
+        from inside ``torch.distributions.Normal`` about ``nan`` policy means; a
+        list or a dict raises ``TypeError`` out of the ``float()`` coercion in
+        ``setup``.
+
+        ``None`` is exempt rather than refused: unlike ``init_alpha`` and
+        ``alpha_lr`` this field is annotated ``float | None``, and ``None`` is the
+        documented request for the ``-num_actions`` heuristic.
+
+        Like :meth:`_initial_temperature_problems` this is not scoped to
+        ``autotune_alpha``: the coercion in ``setup`` is unconditional, so a
+        non-real value raises on either branch.
+
+        Only a backend that optimizes a temperature against a target entropy may
+        call this: like :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``target_entropy`` cannot be honored;
+            empty when it can.
+        """
+        from strands_robots.training._validate import target_entropy_problems
+
+        return target_entropy_problems(spec, context=self.provider_name)
+
+    def _polyak_coefficient_problems(self, spec: TrainSpec) -> list[str]:
+        """Polyak-coefficient preflight, for a backend that keeps a target network.
+
+        Returns a problem when :attr:`RLTrainSpec.tau` is not a real number in
+        ``(0, 1]``. It is the rate at which a target network tracks its online
+        network, spent in one expression per mirrored critic pair,
+        ``tp.mul_(1.0 - spec.tau).add_(spec.tau * p)``, so it decides whether a
+        separate target network exists at all rather than merely how fast it
+        moves.
+
+        The interval is the one the two on-policy interval gates cite as their
+        precedent - :meth:`_discount_factor_problems` and
+        :meth:`_gae_lambda_problems` both generalize "``tau`` must be in
+        ``(0, 1]``" - and it is half-open where theirs is closed because zero is
+        a degenerate spelling here: it freezes the target parameters at their
+        initialization for the whole run. The upper endpoint stays inside, being
+        the deliberate hard update ``tp = p``.
+
+        The two backends each carried a bare local interval comparison against
+        those bounds instead, which admitted ``True`` as a silent ``tau`` of one -
+        a target network that is a copy of the online network, measured as an
+        exactly zero online-to-target gap in the exported checkpoint of a run
+        that reported success - and raised ``TypeError`` out of the comparison
+        itself on a numeric string, ``None`` or a list, from a :meth:`validate`
+        documented to *return* its problems.
+
+        Only a backend that maintains a target network may call this: like
+        :meth:`_gae_lambda_problems`, and unlike :meth:`_learning_rate_problems`,
+        a backend that does not read the field MUST NOT report on it, because
+        per :class:`TrainSpec` a backend ignores the fields it does not support.
+        PPO has no target network and never reads ``tau``.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``tau`` cannot be honored; empty when it
+            can.
+        """
+        from strands_robots.training._validate import polyak_coefficient_problems
+
+        return polyak_coefficient_problems(spec, context=self.provider_name)
+
+    def _spec_device_problems(self, spec: TrainSpec) -> list[str]:
+        """Device preflight for a backend that places its tensors from the spec.
+
+        Returns a problem when :attr:`RLTrainSpec.device` is not a device string
+        torch can parse. Distinct from
+        :meth:`~strands_robots.training.lerobot.LerobotTrainer._device_problems`,
+        which grades that trainer's ``device`` *constructor* knob: this one grades
+        the field on the spec, which is where the from-scratch RL backends carry
+        it. Both consult one domain,
+        :func:`~strands_robots.utils.torch_device_error`.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``device`` cannot be honored; empty when
+            it can or when it is unstated.
+        """
+        from strands_robots.training._validate import torch_device_problems
+
+        return torch_device_problems(spec, context=self.provider_name)
 
     def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
         """Gradient-clip preflight for a backend that clips before it steps.
@@ -865,6 +1029,124 @@ class Trainer(ABC):
         from strands_robots.training._validate import clip_range_problems
 
         return clip_range_problems(spec, context=self.provider_name)
+
+    def _policy_delay_problems(self, spec: TrainSpec) -> list[str]:
+        """Policy-delay preflight for a backend that delays its actor updates.
+
+        Returns a problem when :attr:`RLTrainSpec.policy_delay` is not a
+        positive integer. A :meth:`validate` implementation whose update gates
+        the actor / target step on ``update_count % policy_delay == 0`` MUST
+        call this, because the modulus judges nothing and its silent reading is
+        the worst one: a value the test can never satisfy (``nan``, since
+        ``n % nan`` is ``nan`` and compares unequal to everything) trains the
+        critics for the whole run while the deployable actor never takes a
+        gradient step - the run reports success and checkpoints an untrained
+        policy. ``True`` is a silent delay of one, a fraction a silently
+        different cadence, ``0`` a ``ZeroDivisionError`` and a string a
+        ``TypeError`` - each from inside the update loop, after the env, the
+        networks, the optimizers and the replay buffer are built.
+
+        ``1`` is inside the domain: a delay of one is TD3 with the delay
+        disabled, a configuration rather than a defect.
+
+        Only a backend that delays its policy may call this: like
+        :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``policy_delay`` cannot be honored;
+            empty otherwise.
+        """
+        from strands_robots.training._validate import policy_delay_problems
+
+        return policy_delay_problems(spec, context=self.provider_name)
+
+    def _td3_noise_problems(self, spec: TrainSpec) -> list[str]:
+        """Noise-scale preflight for a backend built on a deterministic actor.
+
+        Returns a problem per unusable :attr:`RLTrainSpec.exploration_noise_std`
+        / :attr:`RLTrainSpec.target_noise_std` /
+        :attr:`RLTrainSpec.target_noise_clip` - the three scalars of TD3's two
+        noise mechanisms: the exploration noise that is a deterministic
+        policy's only exploration once the random warmup ends, and the target
+        policy smoothing that keeps the critic from exploiting its own sharp
+        errors. A :meth:`validate` implementation that reads any of the three
+        MUST call this, because the multiplications that consume them judge
+        nothing: zero silently removes the mechanism (a collection that never
+        explores; plain clipped double-Q reported as the smoothed algorithm), a
+        negative scale is silently the identical distribution (Gaussian noise
+        is symmetric) while a negative clip inverts the clamp into a constant
+        bias, and a non-finite value poisons the actions or the TD target under
+        a run that keeps stepping. Positive infinity has no "disable" reading
+        here, unlike the clip bounds of :meth:`_gradient_clip_problems` - an
+        infinite std is a coin-flip between the action bounds, not a large
+        noise - so the domain is the plain positive-finite one.
+
+        Only a backend that explores and smooths this way may call this: like
+        :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the
+        fields MUST NOT report on them, because per :class:`TrainSpec` a
+        backend ignores the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            One problem per noise scalar that cannot be honored; empty when all
+            three can.
+        """
+        from strands_robots.training._validate import td3_noise_problems
+
+        return td3_noise_problems(spec, context=self.provider_name)
+
+    def _network_width_problems(self, spec: TrainSpec) -> list[str]:
+        """Hidden-layer-width preflight for a from-scratch RL backend.
+
+        Returns a problem per unusable width in
+        :attr:`RLTrainSpec.hidden_dims`, named by index. A :meth:`validate`
+        implementation that builds its networks from the field MUST call this,
+        because the loop that expands it judges nothing and neither does
+        ``nn.Linear``: a width of zero is a legal layer whose activation is
+        empty, so the layer after it emits its bias alone and the network's
+        output stops depending on the observation at all. The run still
+        collects, still trains its critics against that constant, still returns
+        ``status="success"``, and still exports a deployable checkpoint - one
+        whose actor commands a single fixed action in every state. The empty
+        sequence is a genuine linear policy and stays accepted, so the domain
+        is per element rather than on the length.
+
+        Scoped like :meth:`_learning_rate_problems` rather than like
+        :meth:`_gae_lambda_problems`: every from-scratch RL backend builds its
+        actor and critics from this field, so there is no RL backend for which
+        reporting on it would be a false rejection. A supervised backend, which
+        fine-tunes a pretrained policy whose architecture comes from the
+        checkpoint rather than from the spec, does not read it and must not
+        report on it.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            One problem per width that cannot be honored, or a single problem
+            when the field is not a sequence of widths; empty when it is usable.
+        """
+        from strands_robots.training._validate import network_width_problems
+
+        return network_width_problems(spec, context=self.provider_name)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.

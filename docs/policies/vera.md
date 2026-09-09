@@ -84,6 +84,11 @@ robot is drivable iff (its `action_space` matches a served embodiment) **and**
 **IK bridge** that maps the 6-DoF end-effector deltas to joint targets and
 auto-discovers the end-effector frame from the compiled MuJoCo model — so any
 kinematically-compatible 6/7-DoF arm can be driven once a matching IDM exists.
+The bridge solves against one compiled model, and the simulation rebinds the
+policy on every rollout, so it is rebuilt whenever the model or the frame
+changes: one policy object reused across rollouts of a scene that was rebuilt
+(a robot re-placed, an object added) solves in the world it is currently bound
+to, not the one it first saw.
 
 ## Checkpoints
 
@@ -142,16 +147,41 @@ wins over code defaults):
 
 | kwarg | env var | maps to |
 |-------|---------|---------|
-| `embodiment` | — | `--embodiment` |
+| `embodiment` | — | `--embodiment` (`pusht` \| `mimicgen` \| `allegro` \| `droid`) |
+| `host` | — | `--host` (a bare hostname or IP literal; `[::1]` for IPv6) |
 | `server_port` / `vis_port` | `VERA_SERVER_PORT` / `VERA_VIS_PORT` | `--port` / `--vis-port` |
 | `algo_config` | `VERA_ALGO_CONFIG` | `--algo-config` (swap to the omni planner) |
 | `dynamics_run_id` | `VERA_DYNAMICS_RUN_ID` | `--dynamics-run-id` |
 | `text_prompt` | `VERA_TEXT_PROMPT` | `--text` |
 | `ckpt_root` | `VERA_CKPT_ROOT` | container `/ckpts` mount |
-| `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` |
+| `sample_steps` | `VERA_SAMPLE_STEPS` | `--sample-steps` (positive whole count of denoise steps) |
+| `teacache` / `teacache_thresh` | — | `--no-teacache` / `--teacache-thresh` |
 | `tracker_backend` | `VERA_TRACKER_BACKEND` | IDM tracker |
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
+| `server_ready_timeout` | `VERA_SERVER_READY_TIMEOUT` | readiness wait budget, in seconds |
 | `server_mode` | `VERA_SERVER_MODE` | `subprocess` \| `docker` |
+
+The teacache pair travels as one either/or, and the container takes it the long
+way round: `-e VERA_NO_TEACACHE=1` or `-e VERA_TEACACHE_THRESH=<value>`, which the
+entrypoint turns back into the same `--no-teacache` / `--teacache-thresh` flags
+the subprocess mode passes directly. Both halves have to line up for a value to
+land — `docker run` accepts any environment it is handed, and an `-e` the
+entrypoint does not read is inert — and only the off-switch used to be carried,
+so a tuned `teacache_thresh` applied under `server_mode="subprocess"` and was
+dropped for the server's own default under `server_mode="docker"`.
+
+`embodiment` is checked against that vocabulary before anything is resolved from
+it, because it is the key the rest of the table is looked up by: both default
+ports, the render width, the checkpoint-root variable that is probed, the
+container name and the server's own `--embodiment` flag. Each of those six
+readers does something different with a name no table has an entry for, and the
+two lookups that carried their own fallback fell back on mimicgen's values, so an
+unrecognised spelling resolved to a configuration indistinguishable from
+`embodiment="mimicgen"` — and because the runner reuses a server that is already
+listening, a mistyped `pusht` would dial 8800 and roll out against a running
+mimicgen server under a success. `docker/entrypoint.sh` already refuses the same
+four-name vocabulary with `exit 2`, but only for `server_mode="docker"` and only
+after the image has started, so the config holds it too.
 
 Both ports take the shared TCP-port domain every port-dialing provider applies:
 an `int` in `[1, 65535]`, or `None` for the per-embodiment default. The value is
@@ -160,7 +190,83 @@ it, the runner launches the server on it, and `VeraConfig.server_uri` reports it
 — so a value outside the range is not merely refused late but resolved
 differently by each of them. `vis_port = 0` is the one exception and disables the
 live viewer (`--vis-port` is omitted). The `VERA_*_PORT` overrides go through the
-same check.
+same check, including when the value they carry is `0`: an override is applied
+because it is present, not because it is truthy, so a port means the same thing
+whichever spelling named it. `VERA_SERVER_PORT=0` is refused exactly as
+`server_port=0` is, and `VERA_VIS_PORT=0` disables the viewer exactly as
+`vis_port=0` does.
+
+`host` is the other half of that URI, and it is checked in the same funnel for
+the same reason: `ws://{host}:{port}` is one expression, so a host a URI cannot
+carry does not name a bad address — it names a *different* address, and the port
+is the component it takes. It must be a bare hostname or IP literal, with no `/`,
+`?`, `#`, `@`, `:` (outside a bracketed IPv6 literal such as `[::1]`), whitespace
+or control character. `host="127.0.0.1/foo"` parses as host `127.0.0.1`, path
+`/foo:8820` and port **80**, and `host="ws://127.0.0.1"` — the shape a caller who
+pastes a URI supplies — parses as host `ws` on port 80: both discard the port the
+TCP-port domain just accepted, which the port half cannot see. `""` is refused
+naming `"0.0.0.0"` as the spelling that reaches a server bound on every
+interface, because `""` is the one unusable host the readiness probe *accepted* —
+it maps a bind-only host to loopback, so the runner reported `VERA server ready`
+and the client then raised `InvalidURI` past the `OSError` channel that carries
+its "could not reach the VERA policy server" hint. A non-string never reaches a
+URI at all: it is handed to `socket.getaddrinfo`, which answers with a `TypeError`
+naming neither the field nor a fix. Whether the host *resolves*, and whether
+anything is listening on it, are facts about the network that the constructor
+cannot know and that the readiness probe already reports.
+
+`server_ready_timeout` is the span the readiness wait allows the server to open
+its websocket: a positive finite number of seconds, the shared continuous-span
+domain (`positive_finite_number_error`) a `duration` in seconds already takes, or
+`None` to apply `VERA_SERVER_READY_TIMEOUT` else 600. Both waits raise
+`did not become ready ... within Ns (WAN model load can be slow - raise
+server_ready_timeout / VERA_SERVER_READY_TIMEOUT if needed)`, so the environment
+spelling is read on the config: a remedy a failure names has to be one, and
+following that advice has to change the next attempt. `0` is not an opt-out, for
+the reason it is not one for `motion_plan_scale` — `_ensure_started` probes the
+port and reuses an already-listening server *before* it launches anything, so
+"do not wait" needs no zero budget, and a zero budget only ever launches a server
+and instantly tears it down. `inf` is refused for the opposite reason: it makes
+`while time.monotonic() < deadline` unable to end, and the raise that ends it is
+what tears the launched server down.
+
+Under `server_mode="docker"` that budget also needs the loop's own calls to
+return. The wait probes the port (bounded at 1 s) and asks the daemon whether the
+container is still listed, and a docker client whose daemon has stopped answering
+— a wedged container runtime shim leaves the container running and the daemon
+mute — blocks in that second call, so the deadline is never re-read. Every
+`docker` *query* is therefore bounded at 10 s, and one that does not answer
+raises `docker did not answer 'ps' for container ... within 10s, so whether it is
+running is unknown` and tears down the container the runner launched. That is
+reported as its own cause rather than as the container having exited, which is an
+answer the query never got. `docker run` is not a query and stays unbounded: it
+may pull the image, and it runs before any readiness budget starts.
+
+Readiness is a *port* probe, so it says nothing about whether the server will
+answer. `VeraWebsocketClient` therefore states its own budget: `read_timeout`
+(seconds, the same positive-finite domain, default 600) bounds every read off the
+live connection - the metadata handshake and each endpoint reply. `open_timeout`
+does not cover it, because that budget ends when the HTTP upgrade completes, and
+`websockets`' `recv()` has no deadline of its own: a server whose listener
+accepted the connection while the checkpoint was still loading onto the GPU held
+the first read with no way back to the caller, which is the state `start()`
+returns in. A read that expires reports `accepted the connection but sent no
+metadata handshake within read_timeout=Ns`, separately from the "could not reach
+the VERA policy server ... start it first" hint - that one is written for a server
+that is *absent*, and pointing an operator at a server already running names the
+one thing that is not wrong. Raise the budget for a slower model:
+`VeraPolicy(client=VeraWebsocketClient(host, port, read_timeout=1800))`.
+
+A read that expires also *discards* the connection. The reply it missed is still
+produced and still queued on the socket, so the next request would read the
+previous request's answer - a well-formed `[H, D]` chunk computed for an
+observation the arm has already moved past, with nothing in it to say so. The
+next call opens a fresh connection instead, which is the rule `RemotePolicy`
+states for the same wire. The handshake is discarded on the same terms: published
+before its metadata frame was read, a failed handshake left a live connection
+cached behind the refusal it had just raised, and `get_server_metadata()` then
+answered `{}` - empty action geometry that `_ensure_started` accepts as the
+handshake.
 
 `motion_plan_scale` takes the same domain as the two IK scales below: a positive
 finite number, or `None` to leave the server's own scale alone. `0` is not the
@@ -171,6 +277,38 @@ with a best-effort `configure` call whose failure is logged at INFO and does not
 stop the rollout, so a value `float()` cannot convert is neither applied nor
 reported. `VERA_MOTION_PLAN_SCALE` goes through the same check; an unparsable
 spelling still falls back to `None`, as it does for the ports.
+
+The two video-planner sampler knobs take the same treatment, for a reason
+specific to how they travel. `sample_steps` and `teacache_thresh` are read
+nowhere but the launch command, which carries them as *text* —
+`str(cfg.sample_steps)` and `str(cfg.teacache_thresh)` in the subprocess argv,
+`VERA_SAMPLE_STEPS=` and `VERA_TEACACHE_THRESH=` in the container's `-e` overlay
+— so a value nothing here inspects is handed to the server, and the server can
+only report it in one of two ways, neither naming the field. A token its flag's
+own type cannot parse (`'2.7'`, `'nan'`, `'True'` for an `int` flag) makes the
+server exit before it opens its port, and the readiness wait answers `VERA
+server exited early (code N) ... common causes are missing checkpoints (set
+VERA_CKPT_ROOT / ckpt_root) or CUDA OOM` — two causes that are not the cause. A
+token it *can* parse starts a server on a setting nobody asked for: `0` or `-5`
+denoise steps, a threshold of `nan` (below nothing) or `inf` (below everything).
+Which of the two happens is not a property of the value being usable, only of
+how `str()` spells it, and `start()` already refuses a locally-decidable cause
+in the same place — `_require_vera_installed` exists so a missing install does
+not surface as that same opaque early exit.
+
+So `sample_steps` takes the shared count domain `render_width` takes and is
+converted to `int`, and `teacache_thresh` takes the shared continuous domain
+`motion_plan_scale` takes and is converted to `float`. The conversion is
+load-bearing on the count: `sample_steps=20 / 2` is a positive whole number the
+domain accepts, `str(10.0)` is `'10.0'`, and `--sample-steps` cannot parse that —
+converting after the check is what puts `10` on the command line. `0` is not the
+threshold's opt-out; `teacache=False` is, and it emits `--no-teacache` in place of
+the flag. The documented quality cliff above `0.15` is guidance about output
+quality rather than a bound, so `0.25` stays a legitimate request. The threshold
+is checked whatever `teacache` is set to, because `VeraConfig` is a plain
+dataclass and the flag can be turned on after construction. `VERA_SAMPLE_STEPS`
+goes through the same check on the effective value; an unparsable spelling still
+falls back to `None`, as it does for the ports.
 
 ### IK conversion knobs
 

@@ -114,8 +114,12 @@ fi
 if [[ -n "${VERA_SAMPLE_STEPS:-}" ]]; then
     ARGS+=(--sample-steps "${VERA_SAMPLE_STEPS}")
 fi
+# Teacache is one either/or, matching the host-side runner: `--no-teacache`
+# turns the DiT cache off, and a threshold only means something while it is on.
 if [[ "${VERA_NO_TEACACHE:-0}" == "1" ]]; then
     ARGS+=(--no-teacache)
+elif [[ -n "${VERA_TEACACHE_THRESH:-}" ]]; then
+    ARGS+=(--teacache-thresh "${VERA_TEACACHE_THRESH}")
 fi
 
 if [[ "${USE_OFFLINE_RESOLVE}" == "1" ]]; then

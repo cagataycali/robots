@@ -190,10 +190,17 @@ def test_2574_every_rule_satisfied_and_still_blocked_is_its_own_answer() -> None
 
 
 def test_2497_a_missing_first_review_is_reported_but_is_not_a_finding() -> None:
-    """The ordinary state. A finding that fires on it would mean nothing."""
+    """The ordinary state. A finding that fires on it would mean nothing.
+
+    The party is ``OTHER_REVIEWER`` rather than ``REVIEWER`` because ``MAIN``
+    carries ``require_last_push_approval`` and the fixture's head has a pusher,
+    so that account's approval would not count. Being the ordinary state is
+    about the outcome, not about who is eligible: the two assertions below are
+    what must not change.
+    """
     blockers = mod.evaluate(state(approvers=()), MAIN)
     assert outcomes(blockers) == [mod.MISSING_APPROVAL]
-    assert blockers[0].owed_by == mod.REVIEWER
+    assert blockers[0].owed_by == mod.OTHER_REVIEWER
     assert blockers[0].is_finding is False
 
 
@@ -204,7 +211,7 @@ def test_the_measured_triple_produces_three_different_owners() -> None:
         mod.primary(mod.evaluate(state(), MAIN)).owed_by,
         mod.primary(mod.evaluate(state(approvers=()), MAIN)).owed_by,
     ]
-    assert owners == [mod.AUTHOR, mod.ANYONE, mod.REVIEWER]
+    assert owners == [mod.AUTHOR, mod.ANYONE, mod.OTHER_REVIEWER]
     assert len(set(owners)) == 3
 
 
@@ -239,7 +246,11 @@ def test_2480_a_pending_check_does_not_mask_a_reviewer_who_can_act_now() -> None
     assert outcomes(blockers) == [mod.REQUIRED_CHECK_PENDING, mod.MISSING_APPROVAL]
     assert blockers[0].owed_by == mod.NOBODY
     assert mod.primary(blockers).outcome == mod.MISSING_APPROVAL
-    assert mod.primary(blockers).owed_by == mod.REVIEWER
+    # A reviewer other than the pusher, because MAIN discounts the pusher's own
+    # approval. What this test is about is unchanged: the party is a person, not
+    # NOBODY, so the pending check has not masked a review that can happen now.
+    assert mod.primary(blockers).owed_by == mod.OTHER_REVIEWER
+    assert mod.primary(blockers).owed_by != mod.NOBODY
 
 
 # --------------------------------------------------------------------------
@@ -462,6 +473,86 @@ def test_the_last_push_rule_is_not_applied_when_the_branch_does_not_carry_it() -
     assert outcomes(blockers) == [mod.NO_UNSATISFIED_RULE]
 
 
+_PARTY_CASES = [
+    # rule carried, pusher, expected party, id
+    (True, "the-author", "other", "carried-and-pusher-known"),
+    (False, "the-author", "any", "rule-not-carried"),
+    (True, None, "any", "pusher-undetermined"),
+    (False, None, "any", "neither"),
+]
+
+
+@pytest.mark.parametrize(("carried", "pusher", "expected", "case"), _PARTY_CASES, ids=[c[3] for c in _PARTY_CASES])
+def test_an_absent_approval_names_a_party_whose_approval_would_actually_count(
+    carried: bool, pusher: str | None, expected: str, case: str
+) -> None:
+    """An unreviewed pull request is owed by whoever can clear the rule as written.
+
+    ``require_last_push_approval`` discounts the pusher's approval, so on a
+    branch that carries it "any reviewer" names a set containing an account
+    whose review cannot satisfy the count. Measured live on 2026-09-06:
+    #3205 and #3212 both read ``missing-approval`` / "any reviewer" with
+    "head pushed by cagataycali" in the same table, and #2907 -- same topology,
+    approved by that account on 2026-09-04 -- has been blocked ever since, so
+    the round the wrong party invites is a round that lands there.
+
+    The two controls are the halves that must not move: without the rule the
+    pusher's approval does count, and an undetermined pusher names nobody to
+    exclude, matching the sibling check's refusal to read an unknown pusher as
+    evidence of a deadlock.
+    """
+    rules = Ruleset(required_approving_review_count=1, require_last_push_approval=carried)
+    blocker = mod.evaluate(state(approvers=(), pusher=pusher), rules)[0]
+    assert blocker.outcome == mod.MISSING_APPROVAL
+    assert blocker.owed_by == (mod.OTHER_REVIEWER if expected == "other" else mod.REVIEWER)
+
+
+def test_narrowing_the_eligible_set_does_not_promote_the_ordinary_state_to_a_finding() -> None:
+    """The outcome decides gating, finding and exit status; only the party moved.
+
+    Splitting the discounted case into its own outcome would have made an
+    unreviewed pull request gate or report red, which is the mistake the
+    module docstring records as "if the common case is a finding, the finding
+    means nothing".
+    """
+    blocker = mod.evaluate(state(approvers=()), MAIN)[0]
+    assert blocker.owed_by == mod.OTHER_REVIEWER
+    assert blocker.is_finding is False
+    assert blocker.is_gating is False
+    assert blocker.is_terminal is False
+
+
+def test_the_report_does_not_name_a_party_its_own_pusher_row_rules_out() -> None:
+    """The contradiction as it was printed: two lines of one report disagreeing."""
+    st = state(approvers=(), pusher="cagataycali")
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "| head pushed by | cagataycali |" in rendered
+    assert f"Next action is owed by {mod.OTHER_REVIEWER}" in rendered
+    assert "owed by any reviewer" not in rendered
+    assert "other than cagataycali" in rendered
+
+
+def test_an_absent_approval_and_a_pusher_only_one_name_the_same_party() -> None:
+    """The states are one review round apart, so they cannot name different people.
+
+    Reaching ``pusher-only-approval`` from ``missing-approval`` costs exactly
+    the review the first state invited. If the two named different parties, the
+    first would be advice to spend a round arriving at the second.
+    """
+    absent = mod.evaluate(state(approvers=(), pusher="the-author"), MAIN)[0]
+    pusher_only = mod.evaluate(state(approvers=("the-author",), pusher="the-author"), MAIN)[0]
+    assert absent.outcome == mod.MISSING_APPROVAL
+    assert pusher_only.outcome == mod.PUSHER_ONLY_APPROVAL
+    assert absent.owed_by == pusher_only.owed_by == mod.OTHER_REVIEWER
+
+
+def test_an_explicit_party_is_only_consulted_when_the_evaluator_set_one() -> None:
+    """Every other outcome keeps taking its party from the table."""
+    assert mod.Blocker(mod.MERGE_CONFLICT, "r", "d").owed_by == mod.AUTHOR
+    assert mod.Blocker(mod.MISSING_APPROVAL, "r", "d").owed_by == mod.REVIEWER
+    assert mod.Blocker(mod.MISSING_APPROVAL, "r", "d", mod.OTHER_REVIEWER).owed_by == mod.OTHER_REVIEWER
+
+
 # --------------------------------------------------------------------------
 # Precedence.
 # --------------------------------------------------------------------------
@@ -546,6 +637,129 @@ def test_an_unknown_mergeability_does_not_read_as_the_stale_state_case() -> None
     st = state(mergeable=None)
     rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
     assert "Attempt the merge" not in rendered
+
+
+# --------------------------------------------------------------------------
+# A merged pull request. ``mergeable`` is null here for the same reason it is
+# null while GitHub computes, and the two need opposite reports. Measured on
+# 2026-09-05 immediately after #3219 and #3230 squashed: both read
+# ``state: closed``, ``merged: true``, ``mergeable: null``,
+# ``mergeable_state: unknown``, byte-identical to open #3205 in every field this
+# script read, and all three reported ``merge-state-unknown`` owed by nobody
+# with the remedy "re-read ... settles on a later read". It does not settle:
+# #2586 still read null fourteen days after it merged.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("merged", "expected"),
+    [(False, mod.MERGE_STATE_UNKNOWN), (True, mod.ALREADY_MERGED)],
+    ids=["open-and-recomputing", "already-merged"],
+)
+def test_a_merged_pull_request_and_an_open_recomputing_one_do_not_read_the_same(merged: bool, expected: str) -> None:
+    """One field apart, and it is the field that decides whether waiting helps.
+
+    Both rows are ``mergeable=None``, ``merge_state="unknown"`` -- the whole
+    observable difference is ``merged``, which the pull request payload already
+    carries beside the two keys the script was reading. The open row is the
+    genuine transient #2585 was written for and must keep its re-read; the
+    merged row must not get it, because no read will ever change it.
+    """
+    st = state(merged=merged, mergeable=None, merge_state="unknown")
+    assert outcomes(mod.evaluate(st, MAIN)) == [expected]
+
+
+def test_a_merged_pull_request_is_not_offered_a_remedy_that_cannot_terminate() -> None:
+    """The cost was a polling cycle: the reassuring reading is also the wrong one.
+
+    "No party owes an action; the answer is not in yet" is literally true of a
+    merged pull request and describes the opposite situation -- the answer is
+    in, and it is that the change already landed. Every deferral this report can
+    print is asserted absent, because each one sends the caller back to a wait
+    with no terminating condition.
+    """
+    st = state(merged=True, mergeable=None, merge_state="unknown")
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+
+    assert mod.primary(blockers).is_terminal is True
+    assert "already merged into main" in rendered
+    assert "terminal rather than not-in-yet" in rendered
+    for deferral in (
+        "settles on a later read",
+        "Re-read the pull request",
+        "Attempt the merge",
+        "the answer is not in yet",
+        "necessary but not sufficient",
+        mod.MERGE_STATE_UNKNOWN,
+    ):
+        assert deferral not in rendered, f"a merged pull request was told to {deferral!r}"
+
+
+def test_a_merged_pull_request_leaves_no_rule_unsatisfied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every rule below is short-circuited, and the exit status stays clean.
+
+    Posed with three rules unsatisfied at once, because that is what makes the
+    short-circuit the point rather than an artefact of a quiet fixture: on a
+    change already sitting on the base, "0 of 1 approvals" is not an
+    outstanding obligation and a red check on a superseded head is not a
+    finding. A finding here would exit 1 and open an author-side warning on a
+    pull request whose author has nothing left to do.
+    """
+    st = state(
+        merged=True,
+        mergeable=None,
+        merge_state="unknown",
+        approvers=(),
+        unresolved_threads=2,
+        check_conclusions={REQUIRED: "failure"},
+    )
+    blockers = mod.evaluate(st, MAIN)
+
+    assert outcomes(blockers) == [mod.ALREADY_MERGED]
+    assert mod.primary(blockers).owed_by == mod.NOBODY
+    assert mod.primary(blockers).is_finding is False
+
+    monkeypatch.setattr(mod, "resolve_ruleset", lambda repo, ref, token: MAIN)
+    monkeypatch.setattr(mod, "resolve_state", lambda repo, pr, token: st)
+    assert mod.main(["--repo", "o/r", "--pr", "1", "--token", "t"]) == 0
+
+
+def test_the_resolved_state_carries_the_merged_key_it_already_fetched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read is the fix; the fixtures above cannot see a key nobody reads.
+
+    ``resolve_state`` fetched the whole pull request object and took five keys
+    from it. ``merged`` was in the same response the whole time, so this pins
+    the wiring rather than the classification: without it the field keeps its
+    ``False`` default and every merged pull request reports the transient again.
+    """
+    monkeypatch.setattr(
+        mod,
+        "_get",
+        lambda url, token: {
+            "head": {"sha": "b6c49eca"},
+            "base": {"ref": "main"},
+            "draft": False,
+            "merged": True,
+            "mergeable": None,
+            "mergeable_state": "unknown",
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_reviews", lambda *a: [])
+    monkeypatch.setattr(mod, "resolve_unresolved_threads", lambda *a: 0)
+    monkeypatch.setattr(mod, "resolve_check_conclusions", lambda *a: {})
+    monkeypatch.setattr(mod, "resolve_check_suites", lambda *a: ())
+    monkeypatch.setattr(mod, "resolve_pusher", lambda *a: "the-author")
+
+    resolved = mod.resolve_state("o/r", 3219, "t")
+
+    assert resolved.merged is True
+    # And it lands where the classification reads it.
+    assert outcomes(mod.evaluate(resolved, MAIN)) == [mod.ALREADY_MERGED]
 
 
 def test_the_next_action_line_names_one_owner_when_a_gating_blocker_is_present() -> None:
@@ -941,9 +1155,162 @@ def test_no_report_string_carries_a_non_ascii_character() -> None:
         mod.render_sweep([mod.SweepRow(1, mod.evaluate(state(unresolved_threads=1), MAIN))], [2], "o/r"),
         mod.render_sweep([], [], "o/r"),
         "\n".join(mod._STALE_STATE_REMEDY),
+        "\n".join(mod._AUTO_MERGE_NOTE),
     ]
     for report in reports:
         report.encode("ascii")
+
+
+# --------------------------------------------------------------------------
+# Auto-merge. Not a rule and never a blocker: it decides who performs the merge
+# once every rule is satisfied, which is the one question the two waiting
+# outcomes leave open. Measured 2026-09-08: 29 of the last 30 merged pull
+# requests carried ``autoMergeRequest`` (SQUASH), and a scheduled pass polled
+# #3314 and #3315 for twenty minutes in order to merge them; both merged
+# themselves the second ``call-test-lint`` went green (03:21:42 and 03:28:07).
+# --------------------------------------------------------------------------
+
+
+def _resolve_state_with_payload(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> Any:
+    """Run ``resolve_state`` against one pull request payload, transport stubbed."""
+    monkeypatch.setattr(mod, "_get", lambda url, token: payload)
+    monkeypatch.setattr(mod, "resolve_reviews", lambda *a: [])
+    monkeypatch.setattr(mod, "resolve_unresolved_threads", lambda *a: 0)
+    monkeypatch.setattr(mod, "resolve_check_conclusions", lambda *a: {REQUIRED: None})
+    monkeypatch.setattr(mod, "resolve_check_suites", lambda *a: (None,))
+    monkeypatch.setattr(mod, "resolve_pusher", lambda *a: "the-author")
+    return mod.resolve_state("o/r", 3314, "t")
+
+
+def test_the_resolved_state_carries_the_account_that_armed_auto_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The read is the fix, as with ``merged``: the key was in the payload all along.
+
+    ``GET /repos/{owner}/{repo}/pulls/{n}`` returns ``auto_merge`` as an object
+    naming the account that armed it, in the same response ``resolve_state``
+    was already taking six keys from. This is the shape #3314 and #3315 read
+    while the pass polled them.
+    """
+    resolved = _resolve_state_with_payload(
+        monkeypatch,
+        {
+            "head": {"sha": "b6c49eca"},
+            "base": {"ref": "main"},
+            "draft": False,
+            "merged": False,
+            "mergeable": True,
+            "mergeable_state": "blocked",
+            "auto_merge": {"enabled_by": {"login": "octocat"}, "merge_method": "squash"},
+        },
+    )
+    assert resolved.auto_merge_by == "octocat"
+
+
+@pytest.mark.parametrize(
+    "auto_merge",
+    [None, {}, {"enabled_by": None}, "absent"],
+    ids=["null", "empty-object", "null-enabled-by", "key-absent"],
+)
+def test_a_null_auto_merge_field_reads_as_not_armed(monkeypatch: pytest.MonkeyPatch, auto_merge: Any) -> None:
+    """``auto_merge: null`` is the documented unarmed shape; a malformed one must not raise.
+
+    The field decides only who performs the merge, so a shape this check does
+    not recognise reads as not armed rather than failing the whole read and
+    reporting nothing about a pull request whose rules it could evaluate.
+    """
+    payload: dict[str, Any] = {
+        "head": {"sha": "b6c49eca"},
+        "base": {"ref": "main"},
+        "draft": False,
+        "merged": False,
+        "mergeable": True,
+        "mergeable_state": "blocked",
+    }
+    if auto_merge != "absent":
+        payload["auto_merge"] = auto_merge
+    assert _resolve_state_with_payload(monkeypatch, payload).auto_merge_by is None
+
+
+def test_a_pending_check_under_auto_merge_says_the_merge_is_not_the_readers_to_make() -> None:
+    """The defect: ``required-check-pending`` owed by nobody invites a poll-to-merge loop.
+
+    On #3314 and #3315 the check was the only unsatisfied rule and auto-merge
+    was armed, so the merge was GitHub's to perform and it did, within a second
+    of the check going green. The outcome is unchanged -- the answer is still
+    not in -- but the report now says whose merge it will be.
+    """
+    st = state(auto_merge_by="octocat", check_conclusions={REQUIRED: None})
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.REQUIRED_CHECK_PENDING]
+    assert f"Outcome: **{mod.REQUIRED_CHECK_PENDING}**" in rendered
+    assert "| auto-merge | armed by octocat |" in rendered
+    assert "not its to make" in rendered
+    assert "#3314 and #3315" in rendered
+
+
+def test_the_auto_merge_note_is_absent_when_nothing_is_armed() -> None:
+    """The control: the same pending check with nothing armed keeps its original report."""
+    st = state(auto_merge_by=None, check_conclusions={REQUIRED: None})
+    rendered = mod.render(st, MAIN, mod.evaluate(st, MAIN), "o/r")
+    assert "| auto-merge | not armed |" in rendered
+    assert "Auto-merge is armed" not in rendered
+    assert "not its to make" not in rendered
+
+
+def test_the_auto_merge_note_is_not_printed_for_an_outcome_it_does_not_change() -> None:
+    """Auto-merge does not resolve a thread: the #2566 owner is the author regardless.
+
+    The row still says who armed it, because that is a fact about the pull
+    request; the note is withheld, because it would tell the reader to stand
+    back from a merge that is not going to happen until the author acts.
+    """
+    st = state(auto_merge_by="octocat", unresolved_threads=1)
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.UNRESOLVED_THREADS]
+    assert "| auto-merge | armed by octocat |" in rendered
+    assert "Auto-merge is armed" not in rendered
+    assert mod.primary(blockers).owed_by == mod.AUTHOR
+
+
+def test_the_stale_state_case_under_auto_merge_says_to_re_read_merged_first() -> None:
+    """The #2574 remedy stands, and gains a first step where auto-merge is armed.
+
+    Every rule satisfied, still ``blocked``, auto-merge armed: auto-merge has
+    not fired either, which is more often ``merged`` arriving late than a stale
+    computation. The existing remedy is kept, because the REST refusal names the
+    requirement auto-merge is also waiting on -- but only if the pull request is
+    still open, which is what the re-read establishes.
+    """
+    st = state(auto_merge_by="octocat")
+    blockers = mod.evaluate(st, MAIN)
+    rendered = mod.render(st, MAIN, blockers, "o/r")
+    assert outcomes(blockers) == [mod.NO_UNSATISFIED_RULE]
+    assert "Attempt the merge." in rendered
+    assert "re-read `merged`" in rendered
+    # The note follows the remedy it qualifies rather than displacing it.
+    assert rendered.index("Attempt the merge.") < rendered.index("re-read `merged`")
+
+
+def test_auto_merge_changes_no_outcome_owner_or_finding() -> None:
+    """Precedence lives in the evaluator, and auto-merge is not a rule it evaluates.
+
+    The same fixtures with and without the field must produce identical
+    blockers: a change to any outcome, owner or finding here would make the
+    exit status depend on a fact that is not a rule.
+    """
+    for overrides in (
+        {},
+        {"check_conclusions": {REQUIRED: None}},
+        {"check_conclusions": {REQUIRED: None}, "approvers": ()},
+        {"unresolved_threads": 1},
+        {"mergeable": False},
+    ):
+        armed = mod.evaluate(state(auto_merge_by="octocat", **overrides), MAIN)
+        unarmed = mod.evaluate(state(**overrides), MAIN)
+        assert armed == unarmed
 
 
 # --------------------------------------------------------------------------
@@ -959,7 +1326,20 @@ def test_the_sweep_separates_the_author_clearable_rows(capsys: pytest.CaptureFix
     rendered = mod.render_sweep(rows, [], "o/r")
     assert "1 blocked on something no reviewer can clear:** #1035" in rendered
     assert f"| #1035 | {mod.MERGE_CONFLICT} | {mod.AUTHOR} |" in rendered
-    assert f"| #2497 | {mod.MISSING_APPROVAL} | {mod.REVIEWER} |" in rendered
+    assert f"| #2497 | {mod.MISSING_APPROVAL} | {mod.OTHER_REVIEWER} |" in rendered
+
+
+def test_the_sweep_marks_which_rows_are_armed() -> None:
+    """A sweep that polls waiting rows to merge them needs to know which ones GitHub will merge."""
+    pending = mod.evaluate(state(check_conclusions={REQUIRED: None}), MAIN)
+    rows = [
+        mod.SweepRow(3314, pending, auto_merge_by="octocat"),
+        mod.SweepRow(2480, pending),
+    ]
+    rendered = mod.render_sweep(rows, [], "o/r")
+    assert "| pull request | unsatisfied rule(s) | owed by | auto-merge |" in rendered
+    assert f"| #3314 | {mod.REQUIRED_CHECK_PENDING} | {mod.NOBODY} | armed |" in rendered
+    assert f"| #2480 | {mod.REQUIRED_CHECK_PENDING} | {mod.NOBODY} | - |" in rendered
 
 
 def test_a_clean_sweep_says_so_rather_than_printing_a_bare_table() -> None:
@@ -1092,3 +1472,109 @@ def test_the_step_summary_receives_the_report(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     mod._emit("## a report")
     assert "## a report" in summary.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# A standing request for changes, measured on #3205.
+#
+# It read `missing-approval` owed by "a reviewer other than the pusher" while
+# `reviewDecision` was CHANGES_REQUESTED and the only account that could clear
+# it was the one that had requested the changes. The named party's approval
+# could not have merged it. It stood 15h44m, 12h51m of that after the fix had
+# landed and the thread was resolved.
+# --------------------------------------------------------------------------
+
+
+def test_3205_a_standing_request_for_changes_names_the_account_that_can_clear_it() -> None:
+    """The defect: the report named a party whose approval could not clear it.
+
+    Both rules really are unsatisfied here -- nobody has approved, and a request
+    for changes stands -- but they are owed by different people, and only one of
+    them can move the pull request. So the request must own the next action.
+    """
+    blockers = mod.evaluate(state(approvers=(), change_requesters=("the-reviewer",)), MAIN)
+    assert outcomes(blockers) == [mod.CHANGES_REQUESTED, mod.MISSING_APPROVAL]
+    assert mod.primary(blockers).outcome == mod.CHANGES_REQUESTED
+    assert mod.primary(blockers).owed_by == mod.REQUESTING_REVIEWER
+    # The pre-fix answer, which is the one that misled.
+    assert mod.primary(blockers).owed_by != mod.OTHER_REVIEWER
+
+
+def test_a_third_partys_approval_does_not_clear_a_standing_request_for_changes() -> None:
+    """The count is satisfied and the pull request is still blocked.
+
+    This is the case that makes the two questions genuinely different rather
+    than two spellings of one: with an eligible approval present there is no
+    approval rule left to report, so a check that models only approvals reports
+    nothing at all and the reader concludes the branch is ready.
+    """
+    blockers = mod.evaluate(
+        state(approvers=("another-reviewer",), change_requesters=("the-reviewer",)),
+        MAIN,
+    )
+    assert outcomes(blockers) == [mod.CHANGES_REQUESTED]
+    assert mod.primary(blockers).owed_by == mod.REQUESTING_REVIEWER
+    assert mod.primary(blockers).outcome != mod.NO_UNSATISFIED_RULE
+
+
+def test_a_request_for_changes_is_reported_but_is_not_a_finding() -> None:
+    """Owed by a reviewer, so it is not a state an author-side pass can act on.
+
+    Same reasoning as ``missing-approval``: a finding that fires whenever a
+    review is in progress fires on the ordinary state and stops meaning
+    anything. The report is the point; the exit status is not.
+    """
+    blocker = mod.evaluate(state(change_requesters=("the-reviewer",)), MAIN)[0]
+    assert blocker.outcome == mod.CHANGES_REQUESTED
+    assert blocker.is_finding is False
+    assert blocker.is_gating is False
+
+
+def test_a_request_for_changes_names_the_account_in_its_detail() -> None:
+    """The party is a role; the reason has to say which account holds it.
+
+    ``the reviewer who requested changes`` is not actionable on its own -- the
+    reader has to know who to ask, and on a pull request with several reviewers
+    the report is the only place that is written down.
+    """
+    detail = mod.evaluate(state(change_requesters=("the-reviewer",)), MAIN)[0].detail
+    assert "the-reviewer" in detail
+    blockers = mod.evaluate(state(change_requesters=("alice", "bob")), MAIN)
+    assert "alice" in blockers[0].detail and "bob" in blockers[0].detail
+
+
+def test_no_request_for_changes_reports_no_such_blocker() -> None:
+    """The control. The default fixture is an unblocked review state."""
+    assert mod.CHANGES_REQUESTED not in outcomes(mod.evaluate(state(), MAIN))
+    assert mod.CHANGES_REQUESTED not in outcomes(mod.evaluate(state(change_requesters=()), MAIN))
+
+
+def test_a_request_for_changes_is_not_reported_where_reviews_are_not_required() -> None:
+    """A branch carrying no approval requirement is not blocked by a review.
+
+    Scoped to the rule for the same reason the pusher discount is: reporting it
+    unconditionally would invent a blocker on a branch whose ruleset does not
+    hold the merge for a review at all.
+    """
+    no_reviews = mod.parse_ruleset([])
+    blockers = mod.evaluate(state(approvers=(), change_requesters=("the-reviewer",)), no_reviews)
+    assert mod.CHANGES_REQUESTED not in outcomes(blockers)
+
+
+def test_the_request_for_changes_semantics_come_from_the_sibling_check() -> None:
+    """One owner for "whose position counts", as for the approval side.
+
+    The sweep binds the sibling's resolver rather than deriving standing itself,
+    so the rule that a COMMENTED review retracts nothing cannot hold on one side
+    and lapse on the other.
+    """
+    assert mod.current_change_requesters is not None
+    reviews = [
+        mod.resolve_reviews.__globals__["Review"](
+            author="the-reviewer", state="CHANGES_REQUESTED", submitted_at="2026-09-06T01:24:59Z"
+        ),
+        mod.resolve_reviews.__globals__["Review"](
+            author="the-reviewer", state="COMMENTED", submitted_at="2026-09-06T04:17:25Z"
+        ),
+    ]
+    assert mod.current_change_requesters(reviews) == ("the-reviewer",)

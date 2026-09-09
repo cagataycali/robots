@@ -32,11 +32,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
-from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, positive_finite_number_error, tcp_port_error
+from strands_robots.policies.base import Policy, chunk_count_error, required_bodies_error
+from strands_robots.utils import (
+    dial_host_error,
+    name_list_error,
+    positive_finite_number_error,
+    tcp_port_error,
+)
 
 if TYPE_CHECKING:
     from websockets.sync.client import ClientConnection
@@ -49,13 +55,95 @@ DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_CONNECT_TIMEOUT = 10.0
 
 
+#: Metadata fields the ``ready`` handshake advertises as a per-inference chunk
+#: count. Both are consumed as slice bounds over the action chunk, so they share
+#: :func:`~strands_robots.policies.base.chunk_count_error`'s domain with the
+#: constructor parameters a locally-loaded checkpoint is held to.
+_MIRRORED_CHUNK_COUNTS = ("execution_horizon", "actions_per_step")
+
+#: Metadata fields advertised as a capability flag. JSON spells a boolean
+#: ``true``/``false``, so anything else is a peer that does not speak this
+#: protocol - and a non-empty string is TRUTHY, which is how a peer answering
+#: ``"no"`` used to turn a capability ON.
+_MIRRORED_FLAGS = ("requires_images", "supports_rtc")
+
+
+def _metadata_refusal(metadata: Mapping[str, Any]) -> str | None:
+    """Report why advertised policy metadata cannot be mirrored.
+
+    The handshake is the one place a peer's own numbers become this policy's
+    introspection answers, so it is where they have to be checked. Reading them
+    unchecked is not merely lenient, it is silent: the chunk counts land behind
+    :attr:`Policy.execution_horizon`'s ``max(1, int(...))``, which is documented
+    on :func:`~strands_robots.policies.base.chunk_count_error` as "silently
+    destructive" for exactly this reason - a count no consumer can execute
+    becomes ``1``, so an advertised ``0`` turns a chunk-emitting remote policy
+    into a single-step one and :meth:`Policy.is_chunk_emitting` reports
+    ``False``, which takes the rollout off the async-RTC path with nothing said.
+
+    Holding the wire to ``chunk_count_error``'s domain is what that function
+    asks for: it exists so "the same chunk count cannot be refused by a local
+    checkpoint and accepted by the server serving it", and this handshake is the
+    place the server does the accepting.
+
+    ``required_bodies`` is held to
+    :func:`~strands_robots.policies.base.required_bodies_error` for the same
+    reason, and it is the field where reading unchecked was least visible: the
+    mirror used to KEEP the entries it could use and drop the rest, so a peer
+    advertising ``["torso_link", 42]`` became a proxy declaring
+    ``("torso_link",)`` - a declaration nobody made. The robot host then resolved
+    that shorter set against its scene, merged poses for it, and reported a
+    successful rollout, while the served tracker's second anchor link never
+    arrived. Dropping a body name is not a smaller request; it is a pose the
+    observation never carries, and the served policy reads ``base_quat`` - the
+    pelvis - in its place. A declaration the local owner refuses by name has to
+    be refused here too, which is the whole of what
+    :func:`~strands_robots.policies.base.collect_required_bodies` means by "two
+    surfaces ask it and must not disagree".
+
+    A field the handshake omits is not refused - the client keeps its own
+    default for it, which is what makes a peer advertising a subset of the
+    metadata (an older server, a third-party implementation) still usable.
+
+    Args:
+        metadata: The ``metadata`` payload of a ``ready`` or ``reset`` reply.
+
+    Returns:
+        Refusal text naming the field and the value, or ``None`` when every
+        advertised field is one this client can mirror.
+    """
+    for param in _MIRRORED_CHUNK_COUNTS:
+        if param in metadata and (error := chunk_count_error(metadata[param], param, "the served policy")):
+            return error
+    for param in _MIRRORED_FLAGS:
+        value = metadata.get(param, False)
+        if param in metadata and not isinstance(value, bool):
+            return (
+                f"the served policy advertised {param}={value!r} ({type(value).__name__}), which is not a JSON boolean."
+            )
+    if "provider_name" in metadata and not isinstance(metadata["provider_name"], str):
+        name = metadata["provider_name"]
+        return f"the served policy advertised provider_name={name!r} ({type(name).__name__}), which is not a string."
+    if "required_bodies" in metadata and (
+        error := required_bodies_error(metadata["required_bodies"], "required_bodies", "the served policy")
+    ):
+        return error
+    return None
+
+
 class RemotePolicy(Policy):
     """Client-side policy that runs inference on a remote :class:`PolicyServer`.
 
     Args:
         endpoint: Full server URL, e.g. ``ws://gpu-box:8765``. When given it
             takes precedence over ``host``/``port``.
-        host: Server host (used when ``endpoint`` is not given).
+        host: Server host (used when ``endpoint`` is not given). Must be a bare
+            hostname or IP literal a URI can carry - no ``/``, ``:``, scheme or
+            credentials, and IPv6 bracketed (``"[::1]"``) - because it is
+            interpolated into ``ws://<host>:<port>`` and the parse gives a
+            delimiter to a later component, taking the validated ``port`` with
+            it. Pass a full URL as ``endpoint`` instead. ``"0.0.0.0"`` reaches a
+            server bound on every interface.
         port: Server port (used when ``endpoint`` is not given). Must be an
             ``int`` in ``[1, 65535]``: this client has to dial the port, so
             unlike :class:`~strands_robots.inference.PolicyServer` - which
@@ -81,7 +169,7 @@ class RemotePolicy(Policy):
     otherwise leave the client silently connected to the default endpoint.
 
     Raises:
-        ValueError: If ``port`` cannot address a server to dial, or if
+        ValueError: If ``host`` or ``port`` cannot address a server to dial, or if
             ``connect_timeout`` / ``request_timeout`` is not a positive finite
             number.
         ConnectionError: On first use, if the server cannot be reached.
@@ -104,8 +192,16 @@ class RemotePolicy(Policy):
         # the caller still holds the value, before ``uri`` exists at all.
         # ``endpoint`` supersedes ``host``/``port``, so the port is validated
         # only when it is the effective spelling.
-        if not endpoint and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
-            raise ValueError(port_error)
+        # ``host`` is the other half of that same URI and is carried into it
+        # verbatim, so it is graded on the same terms and refused first: a
+        # delimiter in the host gives the path everything after it, ``port``
+        # among it, and the parse then dials :80 - which makes the port's own
+        # verdict unreadable rather than wrong.
+        if not endpoint:
+            if (host_error := dial_host_error(host, "host", type(self).__name__)) is not None:
+                raise ValueError(host_error)
+            if (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+                raise ValueError(port_error)
         # A timeout that names no budget is refused here, while the caller still
         # holds the value, because the transport's own reaction to one is
         # indistinguishable from an absent server: ``0``, a negative and ``True``
@@ -254,22 +350,46 @@ class RemotePolicy(Policy):
                 self._connect()
 
     def _apply_metadata(self, metadata: dict[str, Any]) -> None:
-        """Mirror the server policy's introspection metadata locally."""
+        """Mirror the server policy's introspection metadata locally.
+
+        Every advertised field is checked before ANY is applied, so a refusal
+        leaves the mirror exactly as it was rather than half-updated with the
+        fields that happened to be read before the offending one.
+
+        The coercions this used to apply are gone with the check that replaces
+        them: ``int()`` truncated an advertised ``8.9`` to ``8`` and parsed a
+        ``"16"`` that no local checkpoint would be allowed to pass, ``bool()``
+        turned the truthy string ``"no"`` into ``True``, and the
+        ``required_bodies`` filter kept the entries it could use while dropping
+        the rest, mirroring a declaration the peer never advertised.
+
+        Args:
+            metadata: The ``metadata`` payload of a ``ready`` handshake or of a
+                ``reset`` reply, which re-advertises it once the server policy
+                has firmed up.
+
+        Raises:
+            ConnectionError: If a field the peer advertised is not one this
+                client can mirror, per :func:`_metadata_refusal`.
+        """
         if not metadata:
             return
+        if refusal := _metadata_refusal(metadata):
+            raise ConnectionError(
+                f"PolicyServer at {self.uri} advertised metadata this client cannot mirror: {refusal}"
+            )
         self._remote_provider_name = metadata.get("provider_name", self._remote_provider_name)
-        self._requires_images = bool(metadata.get("requires_images", self._requires_images))
-        self.actions_per_step = int(metadata.get("actions_per_step", self.actions_per_step))
-        self.supports_rtc = bool(metadata.get("supports_rtc", self.supports_rtc))
-        self._execution_horizon = int(metadata.get("execution_horizon", self._execution_horizon))
-        # A JSON array of names. Coerced to the shape the robot host's runtime
-        # validates rather than trusted verbatim, so a peer sending something
-        # else cannot make the local resolver report the proxy as the declaring
-        # class; a server built on this release refuses a malformed declaration
-        # before it advertises one.
-        advertised = metadata.get("required_bodies")
-        if isinstance(advertised, list | tuple):
-            self._required_bodies = tuple(name for name in advertised if isinstance(name, str) and name.strip())
+        self._requires_images = metadata.get("requires_images", self._requires_images)
+        self.actions_per_step = metadata.get("actions_per_step", self.actions_per_step)
+        self.supports_rtc = metadata.get("supports_rtc", self.supports_rtc)
+        self._execution_horizon = metadata.get("execution_horizon", self._execution_horizon)
+        # A JSON array of names, applied verbatim: the refusal above already held
+        # it to the domain the robot host's runtime validates, so there is
+        # nothing left to coerce and no entry to drop. Mirroring it exactly is
+        # what makes this proxy the declaring class for the set the peer really
+        # advertised - see ``collect_required_bodies``.
+        if "required_bodies" in metadata:
+            self._required_bodies = tuple(metadata["required_bodies"])
 
     def close(self) -> None:
         """Close the WebSocket connection. Safe to call more than once."""
@@ -447,7 +567,14 @@ class RemotePolicy(Policy):
                 self._reset_seed = seed
                 return
             reply = self._request({"type": protocol.MSG_RESET, "seed": seed})
-            self._apply_metadata(reply.get("metadata", {}))
+            try:
+                self._apply_metadata(reply.get("metadata", {}))
+            except ConnectionError:
+                # Same rule the handshake follows: a connection whose metadata
+                # this client rejected must not be handed to the next request,
+                # or the refusal is raised once and then served on silently.
+                self._discard_connection()
+                raise
 
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

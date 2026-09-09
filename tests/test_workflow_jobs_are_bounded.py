@@ -133,6 +133,13 @@ def _suite_step_bounds() -> list[int]:
     return [int(match.group(1)) for line in text.splitlines() if (match := _STEP_TIMEOUT_MINUTES.match(line))]
 
 
+def _suite_job() -> Job:
+    """The ``test-lint.yml:test-lint`` job -- the one required check."""
+    suite = [j for j in _ALL_JOBS if j.workflow == "test-lint.yml" and j.job_id == "test-lint"]
+    assert len(suite) == 1, "test-lint.yml:test-lint is the required check and must exist"
+    return suite[0]
+
+
 _JOBS_KEY = re.compile(r"^jobs:\s*$")
 _TOP_LEVEL_KEY = re.compile(r"^\S")
 _JOB_HEADER = re.compile(r"^ {2}([A-Za-z0-9_-]+):\s*$")
@@ -257,7 +264,7 @@ class TestEveryRunnerJobIsBounded:
         minutes = job.timeout_minutes
         assert minutes is not None and 0 < minutes <= _CEILING_MINUTES, (
             f"{job.ref} declares timeout-minutes: {minutes}, outside 1..{_CEILING_MINUTES}; "
-            f"the widest job in this tree is the 45-minute suite"
+            f"the widest job in this tree is the {_suite_job().timeout_minutes}-minute suite"
         )
 
 
@@ -304,10 +311,7 @@ class TestTheSuiteBoundClearsTheMeasuredBand:
     """The one required check is the job the incident actually happened on."""
 
     def test_the_suite_job_is_bounded_above_its_observed_ceiling(self) -> None:
-        suite = [j for j in _ALL_JOBS if j.workflow == "test-lint.yml" and j.job_id == "test-lint"]
-        assert len(suite) == 1, "test-lint.yml:test-lint is the required check and must exist"
-
-        minutes = suite[0].timeout_minutes
+        minutes = _suite_job().timeout_minutes
         assert minutes is not None, "the required check is unbounded (#2239)"
         assert _SUITE_FLOOR_MINUTES <= minutes <= _CEILING_MINUTES, (
             f"the suite bound is {minutes} min; it must clear the measured band "
@@ -327,10 +331,7 @@ class TestTheSuiteBoundClearsTheMeasuredBand:
         against the former 45-minute bound, the step bound had quietly stopped
         being able to fire first.
         """
-        suite = [j for j in _ALL_JOBS if j.workflow == "test-lint.yml" and j.job_id == "test-lint"]
-        assert len(suite) == 1, "test-lint.yml:test-lint is the required check and must exist"
-
-        minutes = suite[0].timeout_minutes
+        minutes = _suite_job().timeout_minutes
         assert minutes is not None, "the required check is unbounded (#2239)"
 
         step_bounds = _suite_step_bounds()

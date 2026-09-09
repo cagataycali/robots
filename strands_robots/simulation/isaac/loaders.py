@@ -26,6 +26,13 @@ on parse failure):
     * Missing path -> :class:`FileNotFoundError`.
     * Malformed XML / unparseable document -> :class:`ValueError` with the
       file path and the offending element / parser message.
+    * A required attribute the document omits -> :class:`ValueError` naming the
+      element and the attribute. Never a default standing in for it: a URDF
+      ``<joint>`` must declare ``name`` and ``type``, and reading an absent
+      ``type`` as ``fixed`` welded a joint the file never described. An
+      attribute the format itself documents a default for (an MJCF ``<joint>``
+      ``type``, a URDF ``<axis>``) is a declaration of that default and is read
+      as one.
     * Empty document (zero links / zero joints / zero bodies) ->
       :class:`ValueError`. Loaders never silently return a phantom robot.
 
@@ -295,7 +302,26 @@ def load_urdf(path: str) -> ProceduralRobot:
         if not jname:
             raise ValueError(f"URDF loader: <joint> without name attribute in {path}")
 
-        urdf_type = joint_el.get("type", "fixed")
+        # ``type`` is a REQUIRED attribute of a URDF ``<joint>``, so an absent one
+        # is missing information rather than a declaration of a default - unlike
+        # the optional ``<axis>`` below, and unlike MJCF's ``type``, which the
+        # format documents as defaulting to ``hinge``. Defaulting it to ``fixed``
+        # here produced a JointDef byte-identical to the one a deliberate
+        # ``type="fixed"`` produces, so a joint the file failed to declare was
+        # indistinguishable from one the author welded on purpose: the robot came
+        # back with fewer actuated DOFs than the file names, and the load
+        # reported success - the silent ``joint_count`` this module's failure
+        # semantics exist to convert into a message. The empty spelling
+        # (``type=""``) was already refused by name below, so one file was
+        # refused and the other welded for the same missing declaration. Both are
+        # refused now, which is also what MuJoCo - this loader's reference for
+        # the ``<axis>`` default - does with either spelling.
+        urdf_type = joint_el.get("type")
+        if urdf_type is None:
+            raise ValueError(
+                f"URDF loader: <joint name='{jname}'> in {path} states no 'type' attribute; "
+                f"URDF requires it (one of {sorted(_URDF_JOINT_TYPE_MAP)})"
+            )
         jtype = _URDF_JOINT_TYPE_MAP.get(urdf_type)
         if jtype is None:
             raise ValueError(
@@ -438,6 +464,12 @@ def _parse_sphere_size(el: ET.Element) -> tuple[float, ...]:
 # - free  -> 6-DOF root joint; not part of the actuated chain - "fixed".
 # MJCF's default joint axis: a <joint> that omits ``axis`` acts about +Z.
 _MJCF_DEFAULT_JOINT_AXIS = (0.0, 0.0, 1.0)
+
+# MJCF's default geom type: a <geom> that omits ``type`` is a sphere, and
+# ``size`` then holds its radius. Both readers of the attribute resolve the
+# default through this name, because the two answering one element differently
+# is how a link declared as a ball came to be reported as a box.
+_MJCF_DEFAULT_GEOM_TYPE = "sphere"
 
 _MJCF_JOINT_TYPE_MAP = {
     "hinge": "revolute",
@@ -676,13 +708,25 @@ def _extract_mjcf_shape(
     All three attributes are read through :func:`_class_attrs`, because a geom
     need not spell any of them itself - ``<default>`` inheritance may supply
     them, and a link whose class declares ``type="capsule"`` reads as the
-    fallback box if the element is asked directly.
+    typeless default if the element is asked directly.
+
+    A ``<geom>`` that states no ``type`` at all takes MJCF's documented default
+    (:data:`_MJCF_DEFAULT_GEOM_TYPE`, a sphere), which is also what
+    :func:`_geom_aabb` reads it as - the two answering one element differently
+    is a link reported as a shape its own file does not describe. Read as a box,
+    such a geom loses its stated ``size`` as well as its shape, because the box
+    branch needs three components and a ball declares one.
+
+    A body with no ``<geom>`` at all is the separate case: there is no geometry
+    to name, so it keeps the module's no-geometry box proxy, the same one
+    :func:`_extract_urdf_shape` returns for a link with no ``<visual>`` or
+    ``<collision>``.
     """
     geom = body_el.find("geom")
     if geom is None:
         return "box", (0.05, 0.05, 0.05)
     attrs = _class_attrs(geom, defaults, childclass)
-    gtype = attrs.get("type", "box")
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
     size_str = attrs.get("size", "")
     sizes: list[float] = []
     if size_str:
@@ -1430,7 +1474,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
     # elements rather than restarting at each one, because MuJoCo merges them.
     # Starting from ``{}`` per element lets the last one REPLACE the others, so a
     # ``type`` only the first declares is dropped and every geom resolving
-    # against the root reports the fallback box under a successful load.
+    # against the root reports the 0.05 m fallback proxy under a successful load.
     root_attrs: dict[str, str] = {}
     for el in _mjcf_model_toplevel(root, base_dir):
         if el.tag == "default":
@@ -1444,7 +1488,7 @@ def _mjcf_class_defaults(root: ET.Element, base_dir: str, tag: str) -> dict[str,
             # whole model when the two disagree, and they disagree in shipped
             # assets: Menagerie's ``pal_tiago_dual`` writes ``class="main"`` and
             # gives none of its 46 geoms a class, so 34 of them report the
-            # fallback box for the ``type="mesh"`` that class declares.
+            # 0.05 m fallback proxy for the ``type="mesh"`` that class declares.
             #
             # Registering both spellings cannot shadow a different class,
             # because neither name is available to one: MuJoCo refuses a nested
@@ -1958,7 +2002,8 @@ def _refuse_non_finite_geom(attrs: Mapping[str, str], attribute: str, values: Se
         ValueError: If any component of ``values`` is not finite.
     """
     name = attrs.get("name")
-    where = f"geom {name!r}" if name else f'unnamed <geom type="{attrs.get("type", "sphere")}">'
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
+    where = f"geom {name!r}" if name else f'unnamed <geom type="{gtype}">'
     _refuse_non_finite_placement(where, attribute, values)
 
 
@@ -2020,7 +2065,7 @@ def _geom_aabb(
             (:func:`_refuse_non_finite_geom`).
     """
     attrs = _class_attrs(geom, defaults, childclass)
-    gtype = attrs.get("type", "sphere")
+    gtype = attrs.get("type", _MJCF_DEFAULT_GEOM_TYPE)
     pos = _parse_xyz(attrs.get("pos"))
     _refuse_non_finite_geom(attrs, "pos", pos)
     size_str = attrs.get("size", "")

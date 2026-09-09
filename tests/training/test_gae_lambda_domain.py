@@ -45,7 +45,7 @@ from tests.training._spec_field_reads import reads_spec_field
 ON_POLICY = "ppo"
 
 # Backends that read ``gamma`` but never ``lam`` - they must stay quiet about it.
-NO_TRACE_BACKENDS = ("fast_sac", "mock")
+NO_TRACE_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Values outside the closed interval. Above 1 the trace diverges in the horizon;
 # below 0 it either diverges again (|gamma * lam| > 1) or stops accumulating.

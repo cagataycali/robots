@@ -37,7 +37,12 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from strands_robots.utils import boolean_flag_error, finite_number_error, require_optional
+from strands_robots.utils import (
+    boolean_flag_error,
+    finite_number_error,
+    positive_finite_number_error,
+    require_optional,
+)
 
 from .camera import CameraParams
 
@@ -804,23 +809,126 @@ def gsplat_skybox_align_for(name_or_slug: str) -> dict[str, Any]:
     return dict(GSPLAT_SKYBOX_ALIGN.get(slug, {}))
 
 
-def download_gsplat_scene(name: str, cache_dir: str | Path | None = None) -> Path:
+#: Seconds any single socket operation of a preset-scene download may take.
+#:
+#: This bounds a STALLED peer - a wedged CDN edge, a captive-portal proxy that
+#: completes the connection and then says nothing - not a slow one. The presets
+#: are tens to hundreds of megabytes, so a legitimately slow link needs an
+#: unbounded total transfer time; what no honest transfer needs is a minute of
+#: silence mid-body. The deadline therefore applies per socket operation
+#: (connect, and each read of the streamed body), which is exactly the
+#: distinction between a peer that is sending slowly and one that has stopped.
+_SCENE_SOCKET_TIMEOUT_S: float = 60.0
+
+#: Bytes requested per read while streaming a scene body to its ``.part`` file.
+_SCENE_CHUNK_BYTES: int = 1 << 20
+
+
+def _stream_scene_to_file(url: str, dest: Path, timeout: float) -> None:
+    """Stream *url* into *dest*, bounding every socket operation by *timeout*.
+
+    ``urllib.request.urlretrieve`` - what this replaces - accepts no timeout at
+    all (its signature is ``url, filename, reporthook, data``), so it inherits
+    the process-global default socket timeout. That default is ``None``, i.e.
+    block forever, unless some unrelated import mutated it. A peer that accepts
+    the connection and then stops sending held the calling thread indefinitely.
+
+    ``urlopen``'s ``timeout`` reaches the connection object itself - urllib's
+    ``AbstractHTTPHandler.do_open`` forwards it as
+    ``http_class(host, timeout=req.timeout)`` - so it becomes the socket
+    timeout and bounds each ``recv`` of the streamed body, not merely the
+    connect and TLS handshake. Nothing process-global is mutated, so a
+    concurrent download or an unrelated socket in another thread keeps its own
+    deadline; that is the same posture as
+    :mod:`strands_robots.mesh.iot.provision`'s bounded CA fetch.
+
+    ``urlretrieve`` also raised ``ContentTooShortError`` when the body came up
+    short of the declared ``Content-Length``. That check is kept, because the
+    caller renames *dest* onto the cache path and a truncated scene cached as a
+    complete one is worse than a download that failed: every later call reads
+    the short file straight out of the cache. A peer that declares a
+    non-numeric length has declared nothing checkable, and the transfer is
+    accepted on its own terms rather than refused for the header's sake.
+
+    Args:
+        url: the scene's source URL.
+        dest: the ``.part`` sidecar to write the body into.
+        timeout: seconds allowed for any single socket operation.
+
+    Raises:
+        TimeoutError: a socket operation took longer than *timeout*.
+        urllib.error.ContentTooShortError: the body was shorter than the
+            ``Content-Length`` the peer declared.
+        OSError: any other transport or filesystem failure, including the
+            ``urllib.error.URLError`` / ``HTTPError`` subclasses.
+    """
+    import urllib.error
+    import urllib.request
+
+    written = 0
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        headers = response.headers
+        declared = headers.get("Content-Length")
+        with dest.open("wb") as handle:
+            while chunk := response.read(_SCENE_CHUNK_BYTES):
+                handle.write(chunk)
+                written += len(chunk)
+    try:
+        expected = int(declared) if declared is not None else None
+    except ValueError:
+        # An unparseable length is not a truncation signal in either
+        # direction; nothing else spends it, so the body stands on its own.
+        expected = None
+    if expected is not None and written < expected:
+        # The ``(filename, headers)`` pair is the same content ``urlretrieve``
+        # attached to this exception, so a caller that inspected it still can.
+        raise urllib.error.ContentTooShortError(
+            f"retrieval incomplete: got only {written} of {expected} bytes from {url}",
+            (str(dest), headers),
+        )
+
+
+def download_gsplat_scene(
+    name: str,
+    cache_dir: str | Path | None = None,
+    *,
+    timeout: float = _SCENE_SOCKET_TIMEOUT_S,
+) -> Path:
     """Download (and cache) a preset 3DGS scene; return its local path.
 
     The cached file keeps the source URL's extension (``.spz`` or ``.ply``) so
-    the loader can dispatch correctly.
+    the loader can dispatch correctly. The body streams into a ``.part``
+    sidecar that is renamed onto the cache path only once the transfer is
+    complete, so an interrupted download never leaves a truncated file where a
+    later call would read it as a finished one.
+
+    Every socket operation is bounded by ``timeout`` (60 seconds by default):
+    a peer that accepts the connection and then stops sending raises
+    ``TimeoutError`` instead of blocking the calling thread forever. The bound
+    is per operation rather than on the whole transfer because these assets run
+    to hundreds of megabytes, and a slow link is not a stalled one.
 
     Args:
         name: a key of :data:`GSPLAT_SCENES`.
         cache_dir: where to cache (default ``~/.cache/strands_robots/gsplat_scenes``).
+        timeout: seconds allowed for any single socket operation of the fetch.
+            Must be positive and finite - a bound of ``0``, a negative one or
+            ``inf`` states no bound at all.
 
     Returns:
         Local path to the cached scene file.
-    """
-    import urllib.request
 
+    Raises:
+        KeyError: ``name`` is not a preset in :data:`GSPLAT_SCENES`.
+        ValueError: ``timeout`` is not a positive finite number of seconds.
+        TimeoutError: a socket operation took longer than ``timeout``.
+        OSError: the transfer or the write failed (including a body shorter
+            than the peer's declared ``Content-Length``).
+    """
     if name not in GSPLAT_SCENES:
         raise KeyError(f"Unknown scene {name!r}. Known: {list(GSPLAT_SCENES)}")
+    if error := positive_finite_number_error(timeout, "timeout", "download_gsplat_scene"):
+        raise ValueError(error)
     url = GSPLAT_SCENES[name]
     cache = Path(cache_dir) if cache_dir else Path.home() / ".cache" / "strands_robots" / "gsplat_scenes"
     cache.mkdir(parents=True, exist_ok=True)
@@ -831,7 +939,7 @@ def download_gsplat_scene(name: str, cache_dir: str | Path | None = None) -> Pat
         return dest
     logger.info("Downloading 3DGS scene %r -> %s", name, dest)
     tmp = dest.with_suffix(ext + ".part")
-    urllib.request.urlretrieve(url, tmp)
+    _stream_scene_to_file(url, tmp, timeout)
     tmp.rename(dest)
     logger.info("Downloaded %s (%.0f MB)", dest.name, dest.stat().st_size / 1e6)
     return dest

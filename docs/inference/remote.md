@@ -116,6 +116,15 @@ because a WebSocket target is only resolved on first use - an unusable port is
 not rejected by the transport, it surfaces later as an unreachable server and
 implicates the service you were trying to reach.
 
+`host=` is the other half of that same URI and is held to the same terms: a bare
+hostname or IP literal, IPv6 bracketed (`"[::1]"`), with no `/`, `:`, scheme or
+credentials in it. Pass a full URL as `endpoint=` instead. This is not cosmetic -
+the parse hands a delimiter to a later URI component and takes the port with it,
+so `host="127.0.0.1/foo"` reads as host `127.0.0.1`, path `/foo:8765` and port
+**80**: the validated port ends up in the path and the client dials one nobody
+configured. `host="0.0.0.0"` still reaches a server bound on every interface.
+Whether the host resolves is left to the connect path, which already reports it.
+
 Then drive it exactly like a local policy. In simulation:
 
 ```python
@@ -151,6 +160,28 @@ advertises its whole served tree's declaration - a wrapper does not hide the
 policy inside it - and the client declares the same set. A mimic tracker such as
 [ProtoMotions](../policies/protomotions.md) therefore reads its anchor link over
 the wire exactly as it does in-process.
+
+Advertised metadata is held to the same domain the local property is, in the same
+direction the forwarded parameters below are: a peer's numbers become this
+policy's introspection answers, so the handshake is where a locally-loaded
+checkpoint's constructor sits in the remote arrangement. `execution_horizon` and
+`actions_per_step` are slice bounds over the action chunk, so they share
+`chunk_count_error`'s domain with the constructor parameters they mirror - a
+positive `int`, nothing else - `requires_images` / `supports_rtc` must be JSON
+booleans, and `required_bodies` is held to `required_bodies_error`, the same owner
+`collect_required_bodies` asks when the policy is local. Coercing instead is silent
+rather than lenient: an advertised `0` lands behind `execution_horizon`'s
+`max(1, ...)` floor, so a peer declaring a 16-action chunk is mirrored as
+single-step, `is_chunk_emitting()` answers `False`, and the rollout leaves the
+async-RTC path with nothing said; `bool("no")` is `True`, so a peer answering
+`"no"` turns a capability on; and filtering a body list keeps the entries it can
+use, so `["torso_link", 42]` becomes a proxy declaring `("torso_link",)` - a
+declaration nobody made, whose missing pose the served tracker replaces with
+`base_quat`, the pelvis. A repeated name is accepted, because the local owner
+de-duplicates it rather than refusing it. A field the handshake omits is not
+refused - the client keeps its own default, so a server advertising a subset stays
+usable - and a value it cannot mirror raises a `ConnectionError` naming the field,
+the value and the peer, without the connection being cached.
 
 ## Real-Time Chunking across the wire
 

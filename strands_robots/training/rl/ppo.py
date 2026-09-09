@@ -180,6 +180,20 @@ class PpoTrainer(BaseRLAlgo):
         # it reads True, a fraction below one iteration, nan and inf as a single
         # iteration under a successful run.
         problems.extend(self._rl_run_size_problems(spec))
+        # hidden_dims is the shape of every network this backend builds - the
+        # actor and the critics alike. The expansion loop judges nothing and
+        # nn.Linear accepts a width of zero, which makes the activation after it
+        # empty and the next layer's output its bias alone: the policy stops
+        # being a function of the observation, and the run reports success while
+        # exporting a deployable checkpoint whose actor is one fixed action.
+        problems.extend(self._network_width_problems(spec))
+        # device is spent by torch.device itself, which judges nothing: every
+        # network, buffer and rollout tensor is placed on the result. "gpu" and
+        # "cuda:abc" raise out of setup after the preflight passed, and a
+        # non-str ordinal constructs on any host and then dies at the first
+        # .to() with "invalid device ordinal" - the same spec training fine on a
+        # box with more GPUs.
+        problems.extend(self._spec_device_problems(spec))
         # num_envs is the third factor of that same product. Which *counts* are
         # usable is per-backend - this one parallelizes, so any positive count is,
         # while the single-env FastSAC requires exactly 1 - but that a count is
@@ -214,6 +228,15 @@ class PpoTrainer(BaseRLAlgo):
             problems.append(
                 f"rollout_steps ({spec.rollout_steps}) must be divisible by num_mini_batches ({spec.num_mini_batches})"
             )
+        # log_interval is this loop's checkpoint cadence - the modulus of the one
+        # test that decides whether an intermediate checkpoint is written - so it
+        # answers the same question save_freq does for a supervised run and takes
+        # the same shared domain. The modulus judges it not at all: nan never
+        # satisfies it and silently keeps only the final checkpoint of a
+        # successful run, True writes one every iteration, a fraction is a
+        # silently different cadence, and a str raises out of the loop after
+        # setup has built the env, the networks and the optimizers.
+        problems.extend(self._rl_checkpoint_interval_problems(spec))
         return problems
 
     def setup(self, spec: RLTrainSpec) -> None:

@@ -6,9 +6,11 @@ teleoperation subprocess's PID is recorded. So the prune's classification is
 load-bearing: a record dropped by mistake is gone for good, and the process it
 named keeps driving the arm with no supported way to stop it.
 
-Two probes decide the classification. ``psutil.pid_exists`` answers existence;
-``Process(pid).is_running()`` refines it. When the second one raises they
-disagree, and the two ways it can raise mean opposite things:
+Two probes decide the classification. ``psutil.pid_exists`` answers whether the
+number exists; reading the process's start time answers whether it is still the
+one the record was written for, which is what a reused PID changes. When the
+second one raises they disagree, and the two ways it can raise mean opposite
+things:
 
 * ``NoSuchProcess`` - reaped between the two calls, so the record names nothing.
 * ``AccessDenied`` - the process exists and this user may not inspect it (a
@@ -29,13 +31,16 @@ one prunes it.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _process_stop
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -57,6 +62,34 @@ def _live_pid() -> int:
     return pid
 
 
+def _free_pid() -> int:
+    """A PID no process holds, so the host's own verdict for it is "finished".
+
+    Taken from the top of the kernel's range rather than a fixed low number: a
+    low one is exactly what a busy machine is likely to have handed out, which is
+    how a test's verdict comes to depend on the host it runs on.
+    """
+    for candidate in range(4194303, 4194303 - 256, -1):
+        if not tele_mod.psutil.pid_exists(candidate):
+            return candidate
+    raise AssertionError("premise: some PID near the top of the range must be free")
+
+
+#: Start offset a seeded record claims for its process. Any value does: what the
+#: prune reads is whether the process holding the PID reports this one.
+_RECORDED_START_S = 1.0
+
+
+def _identified(pid: int) -> dict[str, Any]:
+    """A session record that names its process, not only the number holding it."""
+    return {
+        "pid": pid,
+        "action": "teleoperate",
+        "start_time": 0.0,
+        tele_mod.PID_STARTED_SINCE_BOOT: _RECORDED_START_S,
+    }
+
+
 def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exception]) -> None:
     """Make every probe of the process raise ``exc`` while ``pid_exists`` stays truthful.
 
@@ -70,6 +103,9 @@ def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exce
         def __init__(self, pid: int) -> None:
             self._pid = pid
 
+        def create_time(self) -> float:
+            raise exc(self._pid)
+
         def is_running(self) -> bool:
             raise exc(self._pid)
 
@@ -77,6 +113,14 @@ def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, module: Any, exc: type[Exce
             raise exc(self._pid)
 
     monkeypatch.setattr(module.psutil, "Process", _Probe)
+    # On Linux the verdict reads /proc/<pid>/stat directly and never consults
+    # the psutil stub above, so the double must sit at that seam too - the same
+    # fix Round 2 applied in test_session_stop_confirms_the_process_exited.py.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: module.psutil.Process(pid).create_time() - module.psutil.boot_time(),
+    )
 
 
 def _stored(mgr: Any) -> dict[str, Any]:
@@ -178,10 +222,14 @@ def test_stop_can_still_reach_a_session_it_could_not_inspect(monkeypatch: pytest
 
 
 def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    """A denied probe is the operator's only clue, so it must not be silent."""
+    """A denied probe is the operator's only clue, so it must not be silent.
+
+    The record names its process, so the denied read is what left the prune with
+    nothing but existence to go on - which is the situation being reported.
+    """
     mgr = SessionManager()
     pid = _live_pid()
-    mgr.add_session("arm_teleop", {"pid": pid, "action": "teleoperate", "start_time": 0.0})
+    mgr.add_session("arm_teleop", _identified(pid))
     _raise_on_probe(monkeypatch, tele_mod, tele_mod.psutil.AccessDenied)
 
     with caplog.at_level("WARNING"):
@@ -198,7 +246,7 @@ def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplo
 def test_a_process_reaped_mid_probe_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
     """``NoSuchProcess`` names nothing, so the record goes - including on disk."""
     mgr = SessionManager()
-    mgr.add_session("racy", {"pid": _live_pid(), "action": "teleoperate", "start_time": 0.0})
+    mgr.add_session("racy", _identified(_live_pid()))
     _raise_on_probe(monkeypatch, tele_mod, tele_mod.psutil.NoSuchProcess)
 
     assert mgr.list_sessions() == {}
@@ -215,22 +263,36 @@ def test_a_pid_that_no_longer_exists_is_still_pruned(monkeypatch: pytest.MonkeyP
     assert _stored(mgr) == {}, "a session whose PID is gone must still be pruned"
 
 
-def test_a_pid_that_is_not_running_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``is_running() -> False`` (a zombie, or a reused PID) is not our session."""
-    mgr = SessionManager()
-    mgr.add_session("zombie", {"pid": _live_pid(), "action": "teleoperate", "start_time": 0.0})
+def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reused PID is not our session, and the recorded identity is what says so.
 
-    class _NotRunning:
+    This case used to be posed as ``is_running() -> False``, which a freshly
+    constructed :class:`psutil.Process` cannot return: it captures the identity at
+    construction, so it agrees with whatever the PID means now. A process that is
+    not ours has to be posed as one whose start time is not the recorded one.
+    """
+    mgr = SessionManager()
+    mgr.add_session("taken_over", _identified(_live_pid()))
+
+    class _AnotherProcess:
         def __init__(self, pid: int) -> None:
             self._pid = pid
 
-        def is_running(self) -> bool:
-            return False
+        def create_time(self) -> float:
+            return tele_mod.psutil.boot_time() + _RECORDED_START_S + 3600.0
 
-    monkeypatch.setattr(tele_mod.psutil, "Process", _NotRunning)
+    monkeypatch.setattr(tele_mod.psutil, "Process", _AnotherProcess)
+    # Route the identity read through the double so the mismatched start time
+    # reaches the verdict on Linux, where the procfs read would otherwise bypass
+    # the psutil stub and happen to mismatch for a different reason.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: _RECORDED_START_S + 3600.0,
+    )
 
     assert mgr.list_sessions() == {}
-    assert _stored(mgr) == {}, "a PID that is not running must still be pruned"
+    assert _stored(mgr) == {}, "a PID held by another process must still be pruned"
 
 
 # The sibling store is held to the same rule in
@@ -238,3 +300,110 @@ def test_a_pid_that_is_not_running_is_still_pruned(monkeypatch: pytest.MonkeyPat
 # checked from here, but only through ``list_sessions`` - a read - and that
 # store's prune reaches disk through ``add_session``/``remove_session``, so the
 # read alone could not see it drop the record. The write paths are graded there.
+
+
+# ---------------------------------------------------------------------------
+# The double has to sit where the verdict is read.
+# ---------------------------------------------------------------------------
+class TestTheVerdictIsControlledWhereItIsAnswered:
+    """A stand-in for the probes above only counts if the prune consults it.
+
+    ``session_is_running`` resolves ``psutil`` from :mod:`strands_robots.tools._process_stop`'s
+    own globals, so rebinding ``lerobot_teleoperate.psutil`` installs a stand-in
+    the prune never looks at. The verdict then falls through to the real host and
+    the record's fate is decided by whether this machine happens to hold the PID
+    the test named -- a pass where it is free, a failure where it is taken, and a
+    grade of nothing either way. ``NoSuchProcess`` had a case written that way,
+    which is why the one above it is worth keeping honest.
+
+    Rebinding a whole module in another module's globals is the right tool when
+    that module is the reader, and it usually is: of the 21 such rebindings in this
+    tree, 20 are sound, 15 of them installing a fake clock. So the census below
+    asks only about ``psutil``, whose answer a second module owns.
+    """
+
+    def test_no_test_reaches_the_prune_by_rebinding_psutil(self) -> None:
+        """No test controls a process probe by rebinding the name ``psutil``."""
+        root = Path(__file__).resolve().parents[2]
+        offenders = []
+        accepted = 0
+        for path in sorted((root / "tests").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "setattr"
+                    and len(node.args) >= 2
+                ):
+                    continue
+                target, name = node.args[0], node.args[1]
+                if isinstance(target, ast.Attribute) and target.attr == "psutil":
+                    accepted += 1
+                elif (
+                    isinstance(target, ast.Name)
+                    and isinstance(name, ast.Constant)
+                    and name.value == "psutil"
+                    # This module carries the one occurrence there is a reason for:
+                    # the case below installs such a stand-in in order to assert
+                    # that the prune does not consult it.
+                    and path.name != Path(__file__).name
+                ):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+        assert accepted, "premise: some test must reach psutil for this rule to be about anything"
+        assert not offenders, (
+            "a stand-in installed as <module>.psutil is not consulted by the prune, whose "
+            "verdict is answered in strands_robots.tools._process_stop; set the attribute on "
+            "the psutil module object instead, and the identity read at "
+            f"_process_stop._started_since_boot, as _raise_on_probe does: {offenders}"
+        )
+
+    def test_a_rebinding_in_the_tool_module_is_not_consulted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rebinding ``tele_mod.psutil`` leaves the prune reading the real host.
+
+        The stand-in would keep the record -- it reports the PID as existing, and a
+        record carrying no identity is answered on existence alone. The record is
+        pruned anyway, and the stand-in is never asked: both halves say the verdict
+        came from the host.
+        """
+        consulted: list[str] = []
+
+        class _WouldKeepIt:
+            NoSuchProcess = tele_mod.psutil.NoSuchProcess
+            AccessDenied = tele_mod.psutil.AccessDenied
+
+            @staticmethod
+            def pid_exists(pid: int) -> bool:
+                consulted.append("pid_exists")
+                return True
+
+            @staticmethod
+            def Process(pid: int):  # noqa: N802 - mirror psutil.Process
+                consulted.append("Process")
+                raise _WouldKeepIt.NoSuchProcess(pid)
+
+        mgr = SessionManager()
+        mgr.add_session("unidentified", {"pid": _free_pid(), "action": "teleoperate", "start_time": 0.0})
+        monkeypatch.setattr(tele_mod, "psutil", _WouldKeepIt)
+
+        assert mgr.list_sessions() == {}, "the stand-in would have kept this record"
+        assert consulted == [], f"the prune must not be reachable this way, but consulted {consulted}"
+
+    def test_the_module_object_is_the_seam_the_prune_reads(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Setting the attribute on the shared psutil object does reach the prune.
+
+        The control for the census above: the rule is about how a double is
+        installed, not about leaving the probes alone.
+        """
+        asked: list[int] = []
+
+        def pid_exists(pid: int) -> bool:
+            asked.append(int(pid))
+            return False
+
+        pid = _live_pid()
+        mgr = SessionManager()
+        mgr.add_session("live", _identified(pid))
+        monkeypatch.setattr(tele_mod.psutil, "pid_exists", pid_exists)
+
+        assert mgr.list_sessions() == {}
+        assert pid in asked, f"the prune must read the module object, but asked {asked}"

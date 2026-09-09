@@ -35,7 +35,13 @@ class _FakeWebsocket:
         self.sent = []
         self.closed = False
 
-    def recv(self):
+    def recv(self, timeout=None):
+        """Hand back the next queued payload.
+
+        ``timeout`` is accepted and ignored: the client states a deadline on
+        every read, and a double that refused the keyword would be pinning its
+        own signature rather than the wire.
+        """
         return self._recv_queue.pop(0)
 
     def send(self, data):

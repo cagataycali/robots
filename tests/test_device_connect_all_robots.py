@@ -521,9 +521,19 @@ class TestEdgeCases:
         assert "joints" not in result
 
     def test_no_inner_robot(self):
-        """robot.robot is None → getState skips observation."""
+        """A host with no inner device and no joint read of its own → no joints.
+
+        The two ``del``s are what make the mock able to state that. A device is
+        resolved through ``bus_access.joint_read_source``, which falls back to
+        the host itself when it holds no inner device -- and a ``MagicMock``
+        answers every attribute, so it auto-creates both a ``bus.sync_read`` and
+        a ``get_observation`` and reads as a perfectly good joint source. Only a
+        host that refuses both routes poses the case named here.
+        """
         robot = _make_mock_robot("so100", _REGISTRY["so100"], task_status="running")
         robot.robot = None
+        del robot.bus
+        del robot.get_observation
         driver = RobotDeviceDriver(robot)
         result = asyncio.run(driver.getState())
         assert result["task_status"] == "running"

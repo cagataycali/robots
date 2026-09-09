@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS, WBCPolicy
+from strands_robots.utils import positive_whole_number_error
 
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
@@ -94,6 +95,55 @@ class WBCTorqueController:
         physics_substeps_per_control: int = _CONTROL_DECIMATION,
         world: Any = None,
     ) -> None:
+        """Bind a resolved actuator set to the PD->torque control loop.
+
+        Normally reached through :meth:`from_sim` / :func:`install_wbc_torque_control`,
+        which resolve every id and address below from the compiled model. A direct
+        caller supplies them itself.
+
+        Args:
+            policy: The :class:`~strands_robots.policies.wbc.policy.WBCPolicy`
+                whose ``compute_torques`` PD law converts this step's position
+                targets to joint torques.
+            leg_waist_actuator_ids: Actuator ids of the WBC-driven leg + waist
+                joints, in :data:`WBC_G1_ALL_JOINTS` order.
+            arm_actuator_ids: Actuator ids of the held arm joints - the ones WBC
+                does not drive - in the same order.
+            leg_waist_qpos_addrs, leg_waist_dof_addrs, arm_qpos_addrs, arm_dof_addrs:
+                ``data.qpos`` / ``data.qvel`` addresses of those two joint sets,
+                positionally aligned with the actuator id lists above, so the PD
+                law reads each joint's own position and velocity.
+            saved_actuator_gains: Original ``(gaintype, biastype, gainprm,
+                biasprm, ctrlrange)`` per actuator id, as captured before the
+                flip to torque mode; :meth:`uninstall` restores them.
+            model: The compiled ``mujoco.MjModel`` these ids index.
+            physics_substeps_per_control: ``mj_step`` calls one applied action is
+                held for, as a positive whole number. This is the control period
+                in physics steps - with the SONIC 0.005 s timestep the upstream
+                ``g1_gear_wbc.yaml`` cadence of ``4`` is one inference per 20 ms
+                (50 Hz), which is the rate the policy's gait clock integrates at.
+                It is the same quantity as
+                :meth:`~strands_robots.simulation.policy_runner.PolicyRunner._control_substeps`'
+                ``control_substeps`` and every backend's ``send_action(n_substeps=)``,
+                and it is held to the same shared domain.
+            world: The world whose ``_backend_state`` registered this controller,
+                so :meth:`uninstall` can release that registration too. ``None``
+                when constructed directly: nothing registered it, so there is
+                nothing to release.
+
+        Raises:
+            ValueError: ``physics_substeps_per_control`` is not a positive whole
+                number. It used to be clamped with ``max(1, int(...))``, so ``0``
+                and a negative collapsed to a single physics step - a quarter of
+                the nominal control period, silently running the gait at 200 Hz
+                where 50 Hz was asked for - a non-integral count was truncated,
+                ``True`` acted as ``1``, and a non-finite one raised
+                ``ValueError: cannot convert float NaN to integer`` naming
+                neither the parameter nor this class. The gait clock integrates
+                at the declared control period, so a substep count that is not
+                the one the caller named makes the commanded gait frequency mean
+                something else while every reported number still looks right.
+        """
         self.policy = policy
         self.leg_waist_actuator_ids = list(leg_waist_actuator_ids)
         self.arm_actuator_ids = list(arm_actuator_ids)
@@ -108,7 +158,14 @@ class WBCTorqueController:
         # constructor directly: nothing registered it, so there is nothing to
         # release.
         self._world = world
-        self.physics_substeps_per_control = max(1, int(physics_substeps_per_control))
+        if text := positive_whole_number_error(
+            physics_substeps_per_control, "physics_substeps_per_control", "WBCTorqueController"
+        ):
+            raise ValueError(text)
+        # ``int()`` after the guard, never before: the shared rule has already
+        # compared the coercion back against the value it was given, so an
+        # integral float lands as the count it names instead of a truncation.
+        self.physics_substeps_per_control = int(physics_substeps_per_control)
         # The default-angle hold target, used until the policy returns its first
         # action (a stable first step: PD against the init pose -> ~0 torque).
         # Use the policy's RESOLVED default_angles (config or G1 SONIC fallback),

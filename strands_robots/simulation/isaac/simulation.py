@@ -786,11 +786,56 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # ``physics_dt`` / ``camera_width`` / ``camera_height`` fields so
         # downstream code only reads from one source of truth.
         if legacy_default_timestep is not None:
+            # Graded on the domain the surface that spends this quantity applies
+            # to it (:meth:`~strands_robots.simulation.base.SimEngine._validate_timestep`,
+            # which ``create_world`` runs over the effective dt and names
+            # ``physics_dt`` for), and graded *before* the conversion rather than
+            # after. The ``float(...)`` was not validation: it defeated that
+            # domain's boolean arm, whose own reason is that "``float(True)`` is
+            # ``1.0``, so the boolean is unrecoverable once coerced".
+            # ``IsaacSimulation(default_timestep=True)`` stored ``physics_dt =
+            # 1.0`` - a one-second physics step, 120x the default - and
+            # ``create_world()``, the only owner of this field that grades it,
+            # then reported ``status="success"``: the boolean it exists to refuse
+            # had already been converted away, while the canonical
+            # ``IsaacConfig(physics_dt=True)`` spelling of the same value is
+            # refused there. ``numpy.True_`` and ``numpy.bool_(True)`` did the
+            # same; ``nan`` and ``inf`` were stored to be refused a call later;
+            # and ``None``-past-the-sentinel or ``[0.002]`` raised ``TypeError``
+            # out of ``float()`` naming neither the parameter nor this class. The
+            # MuJoCo and Newton engines store their own ``default_timestep``
+            # unconverted for exactly this reason - the world builder can still
+            # see what the caller passed. Here the field is annotated ``float``
+            # and its ``<= 0`` test cannot read a numeric string, so the value is
+            # converted once admitted: a conversion that can only restate a value
+            # this domain already accepted, rather than one that decides it.
+            if (
+                dt_error := self._validate_timestep(legacy_default_timestep, type(self).__name__, "default_timestep")
+            ) is not None:
+                raise ValueError(dt_error["content"][0]["text"])
             config = dataclasses.replace(config, physics_dt=float(legacy_default_timestep))
+        # The legacy spellings reach the same graded field the canonical name
+        # does, so they cannot be the looser way in. The ``int(...)`` they used
+        # to pass through was not validation: it *defeated* the domain
+        # ``IsaacConfig`` applies to ``camera_width``, which refuses every value
+        # below. ``default_width=True`` stored a 1-pixel camera, ``2.7`` stored
+        # 2 and ``640.0`` / ``'640'`` stored 640 - the caller's value silently
+        # reinterpreted - while ``inf`` raised ``OverflowError``, ``[640]``
+        # ``TypeError`` and ``nan`` a ``ValueError`` from inside ``int()``,
+        # naming neither the parameter nor this class. Graded here on the shared
+        # floor so the refusal quotes the spelling the caller actually used,
+        # then handed over unconverted: a value this domain admits is already an
+        # ``int``, so a coercion could only restate it.
+        for _param, _value in (
+            ("default_width", legacy_default_width),
+            ("default_height", legacy_default_height),
+        ):
+            if _value is not None and (dim_err := positive_count_error(_value, _param, "IsaacSimulation")) is not None:
+                raise ValueError(dim_err)
         if legacy_default_width is not None:
-            config = dataclasses.replace(config, camera_width=int(legacy_default_width))
+            config = dataclasses.replace(config, camera_width=legacy_default_width)
         if legacy_default_height is not None:
-            config = dataclasses.replace(config, camera_height=int(legacy_default_height))
+            config = dataclasses.replace(config, camera_height=legacy_default_height)
         self._config = config
         # Tool-name is informational; some Strands tooling renders it.
         self.tool_name = legacy_tool_name
@@ -981,7 +1026,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         timestep : float, optional
             Override physics_dt from config.
         gravity : list[float], optional
-            Override gravity vector from config. [gx, gy, gz].
+            Gravity vector ``[gx, gy, gz]``, or a real scalar taken as the
+            z-component. Omitted, :attr:`IsaacConfig.gravity` is used; either
+            way the value takes the same domain - three finite, non-boolean
+            components, Z-aligned - because this backend's
+            ``PhysicsContext.set_gravity`` takes a signed scalar and cannot
+            honour an off-axis vector.
         ground_plane : bool
             Whether to add a ground plane. Default True.
         terrain : str, optional
@@ -1063,37 +1113,48 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         # while the result echoed the full input vector as if applied. Validate
         # up front and reject anything the backend cannot honour, rather than
         # applying a gravity the caller never asked for.
-        if gravity is not None:
-            # Normalize through the shared domain first, so the component count,
-            # the numeric domain and the boolean refusal are the ones every
-            # other gravity surface applies. The local copy coerced a scalar
-            # with ``float()``, and bool is an int subclass, so
-            # ``create_world(gravity=True)`` configured a +1 m/s^2 gravity
-            # pointing *up*; it also keyed on ``isinstance(gravity, (list, tuple))``,
-            # so a NumPy vector - which the other backends accept - was refused
-            # as "not a scalar or vector". The Z-alignment constraint below is
-            # this backend's own and is applied to the normalized components.
-            components, gravity_error = self._normalize_gravity(gravity, "create_world")
-            if components is None:
-                return cast("dict[str, Any]", gravity_error)
-            if components[0] != 0.0 or components[1] != 0.0:
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"create_world: the Isaac backend only supports Z-aligned gravity "
-                                f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
-                                f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
-                                f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
-                                f"arbitrary-direction gravity."
-                            )
-                        }
-                    ],
-                }
-            # Store the normalized components so what the result reports and
-            # what the physics context receives are the same value.
-            gravity = components
+        # Resolved from config-or-argument first, the way ``effective_timestep``
+        # above is: ``IsaacConfig.gravity`` is the same value from the other
+        # owner, and gating the argument alone left every verdict below to
+        # whether the caller happened to spell the value at the call site. Read
+        # from the field, ``(0, -9.81, 0)`` still reached ``set_gravity(0.0)``
+        # and the result still echoed the full vector, a non-finite or
+        # non-numeric component still reached the physics context unexamined,
+        # and a 2-component field raised ``IndexError`` past this method's
+        # structured-error contract. ``gravity_param`` follows the source so the
+        # message names the owner to fix.
+        effective_gravity = self._config.gravity if gravity is None else gravity
+        gravity_param = "gravity" if gravity is not None else "IsaacConfig.gravity"
+        # Normalize through the shared domain, so the component count, the
+        # numeric domain and the boolean refusal are the ones every other
+        # gravity surface applies. The local copy coerced a scalar with
+        # ``float()``, and bool is an int subclass, so
+        # ``create_world(gravity=True)`` configured a +1 m/s^2 gravity pointing
+        # *up*; it also keyed on ``isinstance(gravity, (list, tuple))``, so a
+        # NumPy vector - which the other backends accept - was refused as "not a
+        # scalar or vector". The Z-alignment constraint below is this backend's
+        # own and is applied to the normalized components.
+        components, gravity_error = self._normalize_gravity(effective_gravity, "create_world", gravity_param)
+        if components is None:
+            return cast("dict[str, Any]", gravity_error)
+        if components[0] != 0.0 or components[1] != 0.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"create_world: the Isaac backend only supports Z-aligned gravity "
+                            f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
+                            f"vector like {effective_gravity!r} in {gravity_param!r} cannot be honoured. "
+                            f"Pass a scalar or a [0, 0, gz] vector, or use "
+                            f"create_simulation(backend='mujoco') for arbitrary-direction gravity."
+                        )
+                    }
+                ],
+            }
+        # Store the normalized components so what the result reports and
+        # what the physics context receives are the same value.
+        gravity = components
         with self._lock:
             if self._world_created:
                 return {
@@ -1124,7 +1185,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     from omni.isaac.core import World  # type: ignore[import-not-found]
 
                 dt = timestep if timestep is not None else self._config.physics_dt
-                grav = gravity if gravity is not None else list(self._config.gravity)
+                grav = gravity
 
                 # Create World
                 self._world = World(
@@ -1136,7 +1197,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 # Set gravity
                 # Isaac Sim 5.1: set_gravity takes a scalar magnitude, not a vector.
                 # Extract the Z-component (convention: gravity points along -Z).
-                gravity_magnitude = grav[2] if isinstance(grav, (list, tuple)) else grav
+                gravity_magnitude = grav[2]
                 self._world.get_physics_context().set_gravity(gravity_magnitude)
 
                 # Add ground plane
@@ -1165,7 +1226,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 world_info = {
                     "physics_dt": dt,
                     "rendering_dt": self._config.rendering_dt,
-                    "gravity": list(grav) if isinstance(grav, (list, tuple)) else [0.0, 0.0, float(grav)],
+                    "gravity": list(grav),
                     "ground_plane": bool(ground_plane and self._config.ground_plane),
                     "stage_path": self._config.stage_path,
                     "stage_units_in_meters": 1.0,
@@ -1368,6 +1429,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
 
+        # A full reset re-initializes the scene, so an open recording's buffered
+        # frames are the rollout that just ended - flush them as their own
+        # episode before the teleport. Ahead of the main-thread marshal because
+        # the flush is a dataset write and does not touch the kit runtime. A
+        # PARTIAL reset is deliberately not a boundary: it re-initializes some
+        # envs and this stream records one robot, so whether its rollout ended
+        # is not knowable from ``env_ids`` alone, and cutting an episode there
+        # would split a trajectory that never stopped.
+        flush_note = ""
+        if env_ids is None and (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
+
         def _reset_impl() -> dict[str, Any]:
             with self._lock:
                 # Re-checked under the lock: a pump-marshalled call may race a
@@ -1391,7 +1466,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 self._step_count = 0
 
                 if env_ids is None:
-                    msg = "Full reset complete."
+                    msg = f"{flush_note}Full reset complete."
                 else:
                     msg = f"Partial reset complete for {len(env_ids)} envs."
 
@@ -3304,6 +3379,12 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         prim deletion is delegated to :meth:`destroy` / world teardown in
         Phase 1; only the in-Python registry is updated here.
 
+        "Rooted at" is judged at the USD path boundary, so a robot whose name
+        merely *extends* this one keeps its prim. Prim paths are interpolated
+        from the name (``{stage_path}/Robots/{name}``), so with ``arm`` and
+        ``arm_left`` both live the two paths share a prefix without one
+        containing the other.
+
         Parameters
         ----------
         name : str
@@ -3322,7 +3403,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     "content": [{"text": f"Robot '{name}' not found."}],
                 }
             prim_path = self._robots[name].prim_path
-            self._prim_registry = [p for p in self._prim_registry if not p.startswith(prim_path)]
+            # ``/`` is USD's path separator, so it is what separates a
+            # descendant prim from a sibling that merely shares a prefix. A bare
+            # ``startswith`` test made every robot whose NAME extends this one a
+            # descendant: with ``arm`` and ``arm_left`` both live,
+            # ``remove_robot("arm")`` dropped ``/World/Robots/arm_left`` from the
+            # teardown registry too, leaving a robot that is still registered in
+            # ``_robots`` with zero tracked prims for :meth:`destroy` to release
+            # -- the same corruption an empty name used to cause, reachable from
+            # two ordinary names. The other two removal verbs
+            # (:meth:`remove_object`, :meth:`remove_camera`) ask for their exact
+            # path, which cannot over-match; this one keeps the subtree prune its
+            # docstring promises and bounds it at the separator.
+            self._prim_registry = [
+                p for p in self._prim_registry if p != prim_path and not p.startswith(f"{prim_path}/")
+            ]
             del self._robots[name]
             # A controller closed over this robot's articulation is stale
             # the moment the robot is gone; drop it with the robot.
@@ -5476,8 +5571,31 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 return {"status": "error", "content": [{"text": "No world created. Call create_world() first."}]}
 
             rec_state = self._cams_rec_state
-            if rec_state and rec_state.get("running"):
+            if rec_state:
                 cur = rec_state["name"]
+                if not rec_state.get("running"):
+                    # Registered but no longer capturing: the only way to reach
+                    # this is a flush that refused because the encoder is absent
+                    # and therefore kept the frames (see
+                    # :meth:`stop_cameras_recording`). A start replaces the
+                    # attribute, so proceeding would discard exactly the frames
+                    # that refusal promised were still recoverable - quietly, and
+                    # under ``status="success"``.
+                    buffered = {cam: len(rec_state["buffers"][cam]) for cam in rec_state["cameras"]}
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Camera recording {cur!r} is still registered with frames no flush "
+                                    f"has read: {buffered}. Install the encoder and call "
+                                    f"stop_cameras_recording() first to encode them. Starting a new "
+                                    f"recording here would discard them."
+                                )
+                            },
+                            {"json": {"recording": cur, "buffered_frames": buffered}},
+                        ],
+                    }
                 return {
                     "status": "error",
                     "content": [{"text": f"Already recording '{cur}'. Call stop_cameras_recording() first."}],
@@ -5577,31 +5695,49 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ``{name}__{camera}.mp4`` under the ``output_dir`` passed to
         :meth:`start_cameras_recording`, using ``imageio`` (the same
         encoder the MuJoCo recorder uses). Idempotent: a no-op success
-        when nothing is recording.
+        when nothing is registered.
 
         Best-effort: per-camera flush failures are reported in the result
         (``frames`` / ``errors`` / ``size_kb``) but never raise, so a
-        partial encode still yields a structured success response.
+        partial encode still yields a structured success response - and the
+        recording is deregistered, because every camera was offered to the
+        encoder and there is nothing left to flush.
+
+        The absent encoder is the one exception, and it is why this verb can
+        be called twice: the probe raises before any writer is opened, so no
+        frame was written and none was dropped. The recording stays
+        registered holding its buffers, and a later call - once the encoder
+        is installed - encodes them (see
+        :func:`~strands_robots.simulation.recording.encoder_absent_flush_refusal`,
+        which the MuJoCo recorder returns for the same absence). Capture has
+        already stopped either way, so a retained recording cannot grow.
 
         Returns
         -------
         dict
             Standard ``{"status", "content": [{"text"}, {"json"}]}``
-            envelope. ``json`` carries ``recording`` (the tag) and an
-            ``artifacts`` list of ``{camera, path, frames, errors,
-            size_kb}`` per camera.
+            envelope. On success ``json`` carries ``recording`` (the tag) and
+            an ``artifacts`` list of ``{camera, path, frames, errors,
+            size_kb}`` per camera. When no encoder is installed it is instead
+            an error envelope carrying ``stopped=False`` and
+            ``buffered_frames``, and the frames are still there to flush.
         """
         import os as _os
         import time as _time
 
         with self._lock:
             state = getattr(self, "_cams_rec_state", None)
-            if not state or not state.get("running"):
+            if not state:
                 return {"status": "success", "content": [{"text": "Was not recording cameras."}]}
+            # Stops the ``on_frame`` capture (it gates on this flag), so the
+            # buffers are settled and this thread is their only reader. The
+            # registration itself is NOT dropped here: a flush that cannot
+            # encode leaves the frames to be flushed by a later call, and only a
+            # flush that encoded deregisters (below).
             state["running"] = False
-            self._cams_rec_state = None
 
         from strands_robots.rendering.video import encode_clip
+        from strands_robots.simulation.recording import encoder_absent_flush_refusal
 
         elapsed = _time.monotonic() - state["started_mono"]
         lines = [
@@ -5622,11 +5758,14 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 try:
                     encode_clip(frames_buffer, path, fps=state["fps"])
                     frames_written = len(frames_buffer)
-                except ImportError:
-                    return {
-                        "status": "error",
-                        "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
-                    }
+                except ImportError as exc:
+                    # Fires on the first camera holding frames, before any writer
+                    # is opened, so nothing is encoded and no buffer is touched.
+                    # Returning here leaves ``_cams_rec_state`` registered, which
+                    # is what makes the remedy the message names followable - the
+                    # shared owner words both recorders' answer to this absence.
+                    buffered = {_c: len(state["buffers"][_c]) for _c in state["cameras"]}
+                    return encoder_absent_flush_refusal(exc, state["name"], buffered)
                 except (RuntimeError, ValueError) as e:
                     # ``encode_clip`` refused the clip: ``RuntimeError`` when it
                     # wrote no file, ``ValueError`` when it will not encode at
@@ -5659,11 +5798,18 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 artifact["flush_error"] = flush_error
             artifacts.append(artifact)
 
+        # Every camera was offered to the encoder, so there is nothing left to
+        # flush: drop the registration that kept the frames reachable.
+        tag = state["name"]
+        with self._lock:
+            if self._cams_rec_state is state:
+                self._cams_rec_state = None
+
         return {
             "status": "success",
             "content": [
                 {"text": "\n".join(lines)},
-                {"json": {"recording": state["name"], "artifacts": artifacts}},
+                {"json": {"recording": tag, "artifacts": artifacts}},
             ],
         }
 
@@ -5787,12 +5933,25 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         Parameters
         ----------
         num_envs : int, optional
-            Number of environments. Defaults to config.num_envs.
+            Number of environments, a positive integer on the shared count
+            domain (:func:`strands_robots.utils.positive_count_error`) -- the
+            same domain :class:`~strands_robots.simulation.isaac.IsaacConfig`
+            applies to the ``num_envs`` field this argument is checked
+            *instead of*, so the two owners of one environment count reach one
+            verdict. ``None`` (the default) takes ``config.num_envs``, decided
+            by membership rather than truthiness, so a supplied ``0`` is
+            refused as the count it is instead of read as "not supplied".
 
         Returns
         -------
         dict
-            Status dict with replication info.
+            Status dict with replication info, or ``{"status": "error"}``
+            naming ``num_envs`` when the requested count cannot be honored --
+            the same channel this method's no-world and no-robot refusals use.
+            The resolved count is reported back here, by :meth:`get_state` and
+            by :meth:`destroy` as ``num_envs_released``, and it locks the scene
+            against further ``add_robot`` calls, so a count that is not one
+            cannot be accepted and announced.
         """
         with self._lock:
             if not self._world_created:
@@ -5804,7 +5963,29 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                     "content": [{"text": "Add at least one robot first."}],
                 }
 
-            n = num_envs or self._config.num_envs
+            # Read the requested count by membership, not truthiness, and grade
+            # it before spending it. ``num_envs or self._config.num_envs`` read
+            # a supplied ``0`` as "not supplied" and replicated to the
+            # *configured* count instead, announcing that count under
+            # ``status: "success"`` -- the caller's explicit request discarded
+            # with nothing saying so. Every truthy value was stored unchecked
+            # and reported as an environment count three times over: by this
+            # method, by ``get_state``, and by ``destroy``'s
+            # ``num_envs_released``. ``'4'`` was the worst of them, rendering in
+            # the message below exactly as the int ``4`` does, so the text read
+            # as an ordinary success while the payload carried a ``str``. Every
+            # other config-defaulted argument on this backend already resolves
+            # this way -- ``physics_dt``, ``gravity``, and the ``width`` /
+            # ``height`` pair whose own comment states the rule: "``None`` still
+            # means 'take the config default'; membership decides that, not
+            # truthiness".
+            if (
+                num_envs is not None
+                and (envs_err := positive_count_error(num_envs, "num_envs", "replicate")) is not None
+            ):
+                return {"status": "error", "content": [{"text": envs_err}]}
+
+            n = self._config.num_envs if num_envs is None else num_envs
 
             t0 = time.perf_counter()
             # In full implementation: use omni.isaac.cloner.Cloner

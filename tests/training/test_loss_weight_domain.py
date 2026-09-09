@@ -46,7 +46,7 @@ ON_POLICY = "ppo"
 
 # Backends that read neither weight. Per ``TrainSpec`` a backend ignores the
 # fields it does not support, so reporting on one would be a false rejection.
-NON_COMPOSING_BACKENDS = ("fast_sac", "mock")
+NON_COMPOSING_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # The two weights, with the default each ships.
 WEIGHTS: tuple[tuple[str, float], ...] = (("value_loss_coef", 1.0), ("entropy_coef", 0.0))

@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from strands_robots.registry import normalize_robot_name
+
 REGISTRY_PATH = Path(__file__).resolve().parents[2] / "strands_robots" / "registry" / "robots.json"
 
 
@@ -93,24 +95,23 @@ def _all_canonical_names(registry: dict) -> set[str]:
     return set(registry.keys())
 
 
-def _collect_aliases(registry: dict) -> dict[str, str]:
-    """Return mapping of alias → owning robot name."""
-    out: dict[str, str] = {}
-    for name, info in registry.items():
-        for alias in info.get("aliases", []) or []:
-            out.setdefault(alias, name)
-    return out
-
-
 def test_aliases_unique_across_registry(registry: dict) -> None:
-    """No two robots may declare the same alias - last-loaded would silently win."""
-    seen: dict[str, str] = {}
+    """No two robots may declare the same alias - last-loaded would silently win.
+
+    Compared as lookup keys (:func:`~strands_robots.registry.loader.normalize_robot_name`),
+    not as declared spellings: every reader folds a query before matching it, so
+    ``"My-Arm"`` and ``"my_arm"`` are one alias and comparing them raw passes the
+    very pair whose winner the merge order then decides.
+    """
+    seen: dict[str, tuple[str, str]] = {}
     collisions: list[str] = []
     for name, info in registry.items():
         for alias in info.get("aliases", []) or []:
-            if alias in seen and seen[alias] != name:
-                collisions.append(f"{alias!r} used by {seen[alias]} AND {name}")
-            seen[alias] = name
+            key = normalize_robot_name(alias)
+            if key in seen and seen[key][1] != name:
+                prior_alias, prior_name = seen[key]
+                collisions.append(f"{alias!r} used by {name} AND {prior_alias!r} by {prior_name} (one key: {key!r})")
+            seen[key] = (alias, name)
     assert not collisions, "Alias collisions:\n  " + "\n  ".join(collisions)
 
 
@@ -119,14 +120,17 @@ def test_no_alias_shadows_canonical_name(registry: dict) -> None:
 
     Shadowing causes resolution order to silently determine the winner, which
     is fragile - a future reorder of robots.json could flip which robot a
-    name resolves to.
+    name resolves to. Compared as lookup keys for the same reason as
+    :func:`test_aliases_unique_across_registry`; an alias that folds to its OWN
+    canonical name is just a second spelling of it and is allowed.
     """
     canonical = _all_canonical_names(registry)
     shadows: list[str] = []
     for name, info in registry.items():
         for alias in info.get("aliases", []) or []:
-            if alias in canonical and alias != name:
-                shadows.append(f"{name}.aliases contains {alias!r} which is a canonical robot name")
+            key = normalize_robot_name(alias)
+            if key in canonical and key != name:
+                shadows.append(f"{name}.aliases contains {alias!r}, the canonical robot name {key!r}")
     assert not shadows, "Alias shadows canonical:\n  " + "\n  ".join(shadows)
 
 

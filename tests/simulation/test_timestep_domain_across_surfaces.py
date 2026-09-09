@@ -69,6 +69,16 @@ which is False for ``nan`` and ``inf`` and lets a boolean through. So
 the only thing between that object and a world built on a dt no integrator can
 advance by.
 
+Which is why the second writer of that field mattered. The legacy
+``IsaacSimulation(default_timestep=...)`` shortcut sets ``physics_dt``, and it
+converted the value with ``float()`` first - so ``default_timestep=True`` stored
+``1.0`` and the effective-dt check, the one thing left, accepted it: the boolean
+it refuses had been converted away, exactly as its own reason says ("*the boolean
+is unrecoverable once coerced*"). One backend's two spellings of one dt, one of
+them holding a domain and the other outrunning it. Both MuJoCo and Newton store
+their ``default_timestep`` unconverted, which is what keeps their builder's
+verdict meaningful.
+
 Solver-free: ``NewtonSimEngine.set_timestep`` validates and writes before it
 touches the solver, so the engine here is built via ``__new__`` with only the
 attributes that path reads. The pre-existing Newton pins for this method live in
@@ -555,3 +565,141 @@ class TestTheEngineDefaultSentinelIsArgumentOnly:
     def test_none_is_still_refused_by_the_setter(self) -> None:
         """The setter has no sentinel, so its domain is the stricter one."""
         assert _set(_newton_engine(), None)["status"] == "error"
+
+
+def _legacy_isaac(value: Any) -> Any:
+    """Construct an Isaac engine through the legacy ``default_timestep`` shortcut.
+
+    The shortcut is popped out of ``**kwargs`` in ``IsaacSimulation.__init__`` and
+    written onto ``IsaacConfig.physics_dt``, so it is a second way to set the very
+    field ``create_world`` reads. One funnel, so the off-domain values - which the
+    ``float`` the field is annotated with does not describe - need a single
+    documented ``Any``.
+    """
+    from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+    return IsaacSimulation(default_timestep=value)
+
+
+def _engine_holding(config: Any) -> Any:
+    """An Isaac world builder carrying an already-constructed config.
+
+    Same skeleton as :func:`_isaac_engine` - ``create_world`` reads
+    ``self._config.physics_dt`` before the lock - but fed the config a real
+    constructor produced, so what is measured is the value that survived
+    construction rather than one written by the test.
+    """
+    from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine._config = config
+    return engine
+
+
+def _builder_verdict(engine: Any) -> str:
+    """``"refused"`` or ``"accepted"`` for the dt this engine's config carries.
+
+    An accepted dt proceeds past the guard into the lock the skeleton omits, which
+    is the same signal :class:`TestARefusedWorldBuilderCostsNoSolverWork` rests
+    on; reading it here means acceptance is observed rather than inferred from the
+    absence of a refusal.
+    """
+    try:
+        result = _create_world(engine)
+    except AttributeError:
+        return "accepted"
+    return "refused" if result["status"] == "error" else "accepted"
+
+
+class TestTheIsaacLegacyDefaultCannotOutrunTheWorldBuilder:
+    """The legacy ``default_timestep=`` shortcut writes the field the builder reads.
+
+    ``IsaacSimulation(default_timestep=...)`` is a second owner of
+    ``IsaacConfig.physics_dt``, and it converted the caller's value with
+    ``float()`` before storing it. That conversion is precisely what the shared
+    domain's boolean arm cannot undo - its own reason is that *"``float(True)`` is
+    ``1.0``, so the boolean is unrecoverable once coerced"* - so the check
+    :class:`TestTheConfigGuardCannotSeeEveryUnusableDefault` calls the only thing
+    between a constructed object and an unusable world was blind to whatever the
+    shortcut had already converted. Measured over the roster above:
+
+    * ``True`` and ``numpy.True_`` stored ``physics_dt = 1.0`` and
+      ``create_world()`` then accepted it - a one-second physics step, 120x the
+      default, installed by a value that is not a number, while the canonical
+      ``IsaacConfig(physics_dt=True)`` spelling of that same value is refused
+      there. The module docstring measures what a one-second dt does to a fall:
+      the whole 0.54 m happens between two consecutive observations and the
+      contact resolves 45x worse.
+    * ``nan`` and ``inf`` were stored to be refused one call later, under
+      ``physics_dt`` - the knob the caller never spelled.
+    * ``False``, ``0``, ``0.0``, ``-inf`` and ``-0.002`` were refused, but by the
+      field's own ``<= 0`` test after the conversion, so the message named
+      ``physics_dt`` - the spelling the caller did not use - and quoted the
+      converted value: ``False`` was reported as ``0.0``.
+    * ``[0.002]`` raised ``TypeError`` out of ``float()``, naming neither the
+      parameter nor the class.
+
+    All eleven unusable values below reached a verdict this shortcut's own domain
+    does not: five accepted at construction (three of them into a world the
+    builder accepted too), five refused under the other spelling's name, one
+    ``TypeError``. The four usable ones are unchanged, including the numeric
+    string ``"0.002"``: the shared domain coerces anything ``float()`` accepts,
+    so grading before converting narrows nothing.
+
+    No Isaac install and no GPU: the domain is arithmetic, and the builder
+    skeleton is the one the sibling cells above use.
+    """
+
+    #: ``None`` is the "not supplied" sentinel for this shortcut - it is popped
+    #: from ``kwargs`` with that default - so it is excluded here and pinned as
+    #: the asymmetry it is in :meth:`test_an_unstated_default_leaves_the_field_alone`.
+    UNUSABLE_DEFAULTS = [value for value in UNUSABLE if value is not None]
+
+    @pytest.mark.parametrize("value", UNUSABLE_DEFAULTS, ids=repr)
+    def test_an_unusable_default_is_refused_under_the_spelling_used(self, value: Any) -> None:
+        with pytest.raises(ValueError, match="default_timestep"):
+            _legacy_isaac(value)
+
+    @pytest.mark.parametrize("value", BOOLEANS, ids=repr)
+    def test_a_boolean_default_cannot_reach_a_world_the_builder_accepts(self, value: Any) -> None:
+        """The end-to-end claim: the builder's boolean arm is not outrun.
+
+        Either the shortcut refuses the value, or the builder does. Before the
+        conversion moved behind the domain, neither did: ``physics_dt`` held the
+        ``1.0`` that ``float(True)`` produced and the builder had nothing left to
+        recognise.
+        """
+        try:
+            sim = _legacy_isaac(value)
+        except ValueError:
+            return
+        assert _builder_verdict(_engine_holding(sim._config)) == "refused", (
+            f"default_timestep={value!r} was stored as "
+            f"physics_dt={sim._config.physics_dt!r} and the world builder accepted it"
+        )
+
+    @pytest.mark.parametrize("value", BOOLEANS, ids=repr)
+    def test_both_spellings_of_one_default_reach_one_verdict(self, value: Any) -> None:
+        """The canonical field and the shortcut are two names for one dt."""
+        canonical = _builder_verdict(_isaac_engine(value))
+        try:
+            _legacy_isaac(value)
+        except ValueError:
+            legacy = "refused"
+        else:
+            legacy = "accepted"
+        assert canonical == legacy == "refused"
+
+    @pytest.mark.parametrize("value", USABLE, ids=repr)
+    def test_a_usable_default_is_still_installed(self, value: Any) -> None:
+        """The control: grading before converting must refuse nothing that worked."""
+        sim = _legacy_isaac(value)
+        assert float(sim._config.physics_dt) == pytest.approx(float(value))
+        assert _builder_verdict(_engine_holding(sim._config)) == "accepted"
+
+    def test_an_unstated_default_leaves_the_field_alone(self) -> None:
+        """``None`` is this shortcut's "not supplied", so the field keeps its default."""
+        from strands_robots.simulation.isaac.config import IsaacConfig
+
+        sim = _legacy_isaac(None)
+        assert sim._config.physics_dt == pytest.approx(IsaacConfig().physics_dt)

@@ -65,6 +65,7 @@ _EXPECTED_FUNCTIONS = {
     "ibl.py::derive_key_light",
     "video.py::encode_clip",
     "video.py::mjpeg_frames",
+    "video.py::require_clip_encoder",
 }
 
 

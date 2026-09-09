@@ -2,12 +2,32 @@
 """
 LeRobot-based camera tool for Strands agents.
 Leverages LeRobot's OpenCV and RealSense camera classes for professional camera management.
+
+Every span this tool measures - a connect time, a per-frame capture time, a
+recording's achieved duration - is a duration, so it is measured on
+``time.monotonic()`` and its base carries that clock in its name
+(``..._started_mono``). ``time.time()`` is not a clock but the current opinion
+about the date, and an NTP correction, a ``date -s`` or a resume from suspend
+landing inside one of these windows subtracts the step from the span. The
+performance test then reads that span as a verdict about the camera (``Est.
+FPS``, ``Fast``/``Slow``, ``Good``/``Slow``), so a corrected clock is reported
+as a device measurement. The absolute stamps this tool writes - a filename's
+date, a report's ``Timestamp`` line - are the other half of that boundary and
+stay on ``datetime.now()``.
+
+RealSense support needs the Intel SDK (``pyrealsense2``) in addition to lerobot,
+which is what ``REALSENSE_AVAILABLE`` reports; importing lerobot's RealSense
+camera classes does not establish it, because lerobot requires the SDK at its
+call sites rather than at import. Every surface that reports the SDK absent
+names the same install, :data:`REALSENSE_SDK_ABSENT`.
 """
 
+import importlib.util
 import json
 import logging
 import os
 import time
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
@@ -25,7 +45,14 @@ try:
         from lerobot.cameras.realsense.camera_realsense import RealSenseCamera
         from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig
 
-        REALSENSE_AVAILABLE = True
+        # These modules import whether or not the Intel SDK is installed: lerobot
+        # binds ``pyrealsense2`` to None behind an availability flag and requires
+        # it at the call sites instead. So the import succeeding says the camera
+        # classes exist, not that a RealSense camera can be opened - that is what
+        # the SDK decides, and it is the question every use of this flag asks. It
+        # is probed under the import name, which is the one both the
+        # ``pyrealsense2`` and the ``pyrealsense2-macosx`` distribution provide.
+        REALSENSE_AVAILABLE = importlib.util.find_spec("pyrealsense2") is not None
     except ImportError:
         REALSENSE_AVAILABLE = False
         RealSenseCamera = None
@@ -38,6 +65,16 @@ from strands import tool
 
 from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
 from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+
+# The one remedy for an absent RealSense SDK, so every surface that reports it
+# reports the same install. It names lerobot's ``intelrealsense`` extra rather
+# than the ``pyrealsense2`` distribution because the extra is what carries the
+# per-platform split - on macOS the wheel ships as ``pyrealsense2-macosx``, so a
+# bare ``pip install pyrealsense2`` there installs nothing that can be imported.
+REALSENSE_SDK_ABSENT = (
+    "The Intel RealSense SDK (pyrealsense2) is not installed, so RealSense "
+    "cameras cannot be opened. Install with: pip install 'lerobot[intelrealsense]'"
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -279,6 +316,95 @@ def _vocabulary_option_error(action: str, *, color_mode: Any, rotation: Any) -> 
     return None
 
 
+# The cameras ``capture_batch`` reads when the caller names none. Held in one
+# place so the documented default and the resolution below cannot drift apart.
+_DEFAULT_BATCH_CAMERA_IDS: tuple[int | str, ...] = (0, "/dev/video4")
+
+
+def _camera_ids_error(camera_ids: Any) -> str | None:
+    """Error text when ``camera_ids`` is not a usable selection of cameras.
+
+    ``camera_ids`` SELECTS the cameras one ``capture_batch`` call opens, and a
+    selection is read by membership, never by truthiness: ``None`` is the one
+    spelling of "the default robot cameras", so it is the caller's to skip and
+    never reaches here. Every other value is graded.
+
+    Read by truthiness, ``[]`` took the same branch as ``None`` and was widened
+    to the two default cameras, so a caller who selected no camera - which is
+    what a filter that matched nothing produces - had two devices opened and two
+    files written, under ``status="success"`` and a "2/2 cameras" summary
+    quoting a count the caller never asked for. The empty selection is refused
+    rather than widened, which is the verdict the shared name-list domain
+    (:func:`strands_robots.utils.name_list_error`) reserves for the caller. That
+    domain is not reused here because a camera id is legitimately an ``int``
+    index as well as a device-path string, and it accepts names only.
+
+    The other shapes fail the same way that domain describes. A bare string is
+    iterable per character, so ``"/dev/video4"`` opened eleven one-character
+    cameras on eleven threads and reported eleven verdicts about devices the
+    caller never named, instead of one about the parameter. A ``Mapping`` is
+    iterable over its keys, so its values were discarded. A repeated id opens
+    one device twice concurrently and writes two files for it. A one-shot
+    iterator is consumed by the ``len()`` that sizes the thread pool before the
+    loop that submits work reads it. A ``bool`` is an ``int`` subclass, so
+    ``True`` selected camera index 1 without the caller writing a 1.
+
+    Every refusal here precedes the save directory being created, the thread
+    pool being built and any camera being opened, so a refused selection has no
+    partial effect to undo.
+
+    Args:
+        camera_ids: The caller-supplied selection, anything but ``None``.
+
+    Returns:
+        An error message naming the shape and the accepted one, or ``None`` when
+        the selection can be honored as written.
+    """
+    prefix = "capture_batch: camera_ids"
+    accepted = (
+        "a list of distinct camera ids, each an int index or a device path string; "
+        "omit it (None) for the default robot cameras"
+    )
+    if isinstance(camera_ids, str):
+        return (
+            f"{prefix} must be {accepted}, not a single string ({camera_ids!r}). A "
+            f"string is read one camera per character, so pass [{camera_ids!r}] to "
+            f"name one camera."
+        )
+    if isinstance(camera_ids, bytes):
+        return f"{prefix} must be {accepted}, not bytes ({camera_ids!r})."
+    if isinstance(camera_ids, Mapping):
+        return f"{prefix} must be {accepted}, not a mapping - its values would be discarded."
+    if not isinstance(camera_ids, Sequence):
+        return (
+            f"{prefix} must be {accepted}, got {type(camera_ids).__name__}. A one-shot "
+            f"iterator is consumed before the cameras are opened."
+        )
+    ids = list(camera_ids)
+    if not ids:
+        return (
+            f"{prefix}=[] selects no camera, so there is nothing to capture. Omit "
+            f"camera_ids to select the default robot cameras "
+            f"{list(_DEFAULT_BATCH_CAMERA_IDS)!r}, or name the cameras to capture from."
+        )
+    for i, cam_id in enumerate(ids):
+        if isinstance(cam_id, bool) or not isinstance(cam_id, int | str):
+            return (
+                f"{prefix}[{i}] must be an int index or a device path string, got {cam_id!r} ({type(cam_id).__name__})."
+            )
+        if isinstance(cam_id, str) and not cam_id.strip():
+            return f"{prefix}[{i}] is blank ({cam_id!r}); a camera path must name a device."
+    seen: set[int | str] = set()
+    for cam_id in ids:
+        if cam_id in seen:
+            return (
+                f"{prefix} names {cam_id!r} more than once ({ids!r}); each camera is "
+                f"opened once per batch, so name each id once."
+            )
+        seen.add(cam_id)
+    return None
+
+
 @tool
 def lerobot_camera(
     action: str = "list",
@@ -312,13 +438,19 @@ def lerobot_camera(
             - "preview": Show live preview from camera
             - "test": Test camera functionality and performance
             - "configure": Configure camera settings and save
-        camera_type: Camera type ("opencv" or "realsense")
+        camera_type: Camera type ("opencv" or "realsense"). "realsense" needs
+            the Intel SDK installed on top of lerobot; without it the action is
+            refused naming that install, rather than reported as unsupported.
         camera_id: Camera device ID (int for index, str for path like "/dev/video0")
         save_path: Directory to save captured images/videos
         filename: Custom filename (without extension). Resolved inside
             save_path; a value naming a location outside it is refused rather
             than written there.
-        camera_ids: List of camera IDs for batch operations
+        camera_ids: Cameras to capture from in one capture_batch call - a list
+            of distinct ids, each an int index or a device path string. Omit it
+            for the default robot cameras. An empty list selects no camera and
+            is refused rather than widened to those defaults; a single id passed
+            as a bare string is refused rather than read one camera per character.
         width: Frame width in pixels (a positive whole number)
         height: Frame height in pixels (a positive whole number)
         fps: Frames per second (a positive whole number)
@@ -389,8 +521,14 @@ def lerobot_camera(
                 warmup,
             )
         elif action == "capture_batch":
-            if not camera_ids:
-                camera_ids = [0, "/dev/video4"]  # Default robot cameras
+            # Read ``is None``: camera_ids selects a SUBSET of the cameras, so
+            # only the absent spelling means the default robot cameras. An empty
+            # selection, a bare string, a mapping or a repeat is refused here,
+            # before the save directory, the thread pool or any camera exists.
+            if camera_ids is None:
+                camera_ids = list(_DEFAULT_BATCH_CAMERA_IDS)
+            elif selection_error := _camera_ids_error(camera_ids):
+                return {"status": "error", "content": [{"text": selection_error}]}
             return _capture_batch_images(
                 camera_type,
                 camera_ids,
@@ -599,7 +737,7 @@ def _list_camera_details(camera_type: str, camera_id: int | str | None = None) -
             if not REALSENSE_AVAILABLE and camera_type.lower() == "realsense":
                 details.append(" **RealSense Camera System:**")
                 details.append("   - SDK Available:  Not installed")
-                details.append("   - Install with: `pip install pyrealsense2`")
+                details.append(f"   - {REALSENSE_SDK_ABSENT}")
             else:
                 details.append(f"**Unknown camera type: {camera_type}**")
 
@@ -647,16 +785,16 @@ def _capture_single_image(
         camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
 
         # Connect and capture
-        start_time = time.time()
+        connect_started_mono = time.monotonic()
         camera.connect(warmup=warmup)
-        connect_time = time.time() - start_time
+        connect_time = time.monotonic() - connect_started_mono
 
-        start_time = time.time()
+        capture_started_mono = time.monotonic()
         if async_mode:
             frame = camera.async_read(timeout_ms=timeout_ms)
         else:
             frame = camera.read()
-        capture_time = time.time() - start_time
+        capture_time = time.monotonic() - capture_started_mono
 
         # Save image
         success = cv2.imwrite(file_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -723,7 +861,7 @@ def _capture_batch_images(
 
         results = []
         successful_captures = 0
-        total_time = time.time()
+        batch_started_mono = time.monotonic()
 
         def capture_single_camera(cam_id):
             try:
@@ -739,7 +877,7 @@ def _capture_batch_images(
                 # Create and use camera
                 camera = _create_camera(camera_type, cam_id, width, height, fps, color_mode, rotation)
 
-                start_time = time.time()
+                capture_started_mono = time.monotonic()
                 camera.connect(warmup=warmup)
 
                 if async_mode:
@@ -747,7 +885,7 @@ def _capture_batch_images(
                 else:
                     frame = camera.read()
 
-                capture_time = time.time() - start_time
+                capture_time = time.monotonic() - capture_started_mono
 
                 # Save image
                 success = cv2.imwrite(file_path, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
@@ -784,7 +922,7 @@ def _capture_batch_images(
                 if result["status"] == "success":
                     successful_captures += 1
 
-        total_time = time.time() - total_time
+        total_time = time.monotonic() - batch_started_mono
 
         # Format results and prepare content list
         result_info = [" **Batch Camera Capture Results:**", ""]
@@ -866,7 +1004,7 @@ def _record_video_sequence(
         video_writer = cv2.VideoWriter(video_path, fourcc, fps, (width, height))
 
         frames_captured = 0
-        start_time = time.time()
+        started_mono = time.monotonic()
         target_frames = int(fps * capture_duration)
 
         try:
@@ -883,7 +1021,7 @@ def _record_video_sequence(
 
                 # Progress update every second
                 if frames_captured % fps == 0:
-                    elapsed = time.time() - start_time
+                    elapsed = time.monotonic() - started_mono
                     remaining = capture_duration - elapsed
                     print(f"Recording... {elapsed:.1f}s / {capture_duration:.1f}s ({remaining:.1f}s remaining)")
 
@@ -891,7 +1029,7 @@ def _record_video_sequence(
             video_writer.release()
             camera.disconnect()
 
-        actual_duration = time.time() - start_time
+        actual_duration = time.monotonic() - started_mono
         file_size = os.path.getsize(video_path)
 
         result_info = [
@@ -1036,19 +1174,19 @@ def _test_camera_performance(
         test_results.append(" **Camera Performance Test**\n")
 
         # Connection test
-        start_time = time.time()
+        connect_started_mono = time.monotonic()
         camera = _create_camera(camera_type, camera_id, width, height, fps, color_mode, rotation)
         camera.connect(warmup=warmup)
-        connect_time = time.time() - start_time
+        connect_time = time.monotonic() - connect_started_mono
 
         test_results.append(f"**Connection Test**: {connect_time:.3f}s")
 
         # Frame capture test (sync)
         capture_times = []
         for i in range(10):
-            start_time = time.time()
+            read_started_mono = time.monotonic()
             frame = camera.read()
-            capture_time = time.time() - start_time
+            capture_time = time.monotonic() - read_started_mono
             capture_times.append(capture_time)
 
         avg_sync_time = np.mean(capture_times)
@@ -1065,9 +1203,9 @@ def _test_camera_performance(
         if async_mode:
             async_times = []
             for i in range(10):
-                start_time = time.time()
+                read_started_mono = time.monotonic()
                 frame = camera.async_read(timeout_ms=timeout_ms)
-                async_time = time.time() - start_time
+                async_time = time.monotonic() - read_started_mono
                 async_times.append(async_time)
 
             avg_async_time = np.mean(async_times)
@@ -1166,7 +1304,7 @@ def _configure_camera_settings(
             config_filename = f"camera_config_{camera_type}_{cam_id_safe}_{timestamp}.json"
             config_path = os.path.join(save_path, config_filename)
 
-            with open(config_path, "w") as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(actual_config, f, indent=2)
 
             config_info.extend(
@@ -1218,7 +1356,13 @@ def _create_camera(
         )
         return OpenCVCamera(config)
 
-    elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
+    elif camera_type.lower() == "realsense":
+        # "realsense" is a supported type on every platform this package runs
+        # on, so an absent SDK is reported as the absent SDK. Falling through to
+        # the unsupported-type refusal below would answer a question the caller
+        # did not ask, and send them looking for a spelling that does not exist.
+        if not REALSENSE_AVAILABLE:
+            raise ImportError(REALSENSE_SDK_ABSENT, name="pyrealsense2")
         config = RealSenseCameraConfig(serial_number_or_name=str(camera_id), fps=fps, width=width, height=height)
         return RealSenseCamera(config)
 

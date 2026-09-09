@@ -167,11 +167,13 @@ class VeraPolicy(Policy):
         tracker_backend: IDM point-tracker backend override.
         motion_plan_scale: IDM motion-plan scale (applied live via ``configure``).
         host: Server hostname.
-        image_keys: Explicit ordered camera keys to width-concat. When ``None``
-            the server's ``view_keys`` (from the connect handshake) are used,
-            matched against the observation's image keys. Must be a list of
-            distinct non-blank names; a single key passed as a bare string is
-            refused rather than read one key per character.
+        image_keys: Explicit ordered camera keys to width-concat - a SUBSET of
+            the observation's own image keys. When ``None`` the server's
+            ``view_keys`` (from the connect handshake) are used, matched against
+            the observation's image keys. Must be a list of distinct non-blank
+            names; a single key passed as a bare string is refused rather than
+            read one key per character, and an EMPTY selection is refused rather
+            than widened to that ``None`` default, because it asks for no view.
         action_mapping: ``{action_column_name: robot_actuator_name}`` rename of
             the server's action columns to robot actuator names. When ``None``
             columns keep their server names (``action_0``, ``action_1``, …).
@@ -215,8 +217,28 @@ class VeraPolicy(Policy):
         # keys read out of the observation, and a bare string is iterable per
         # character, so an unchecked one raises KeyError mid-rollout - after the
         # policy server has been launched and the model loaded.
-        if image_keys and (err := name_list_error(image_keys, "image_keys", "VeraPolicy")):
-            raise ValueError(err)
+        #
+        # Read ``is not None``: image_keys selects a SUBSET of the observation's
+        # own image keys, so it takes the membership read that ``teleoperate``'s
+        # ``names``, ``download_robots``' ``names`` and the render path's
+        # ``cameras`` take - where an empty selection resolves to no camera
+        # rather than to every one. ``None`` is the documented "the server's
+        # view_keys, or every image key in the observation"; an empty selection
+        # is the opposite answer, not a spelling of it. Gated on truthiness the
+        # shape check was skipped for ``[]`` and ``""`` and both were erased to
+        # ``None`` below, so a caller who excluded every camera drove the arm
+        # from all of them - width-concatenated into one frame, with no error
+        # and no log line. The emptiness verdict is local because the shared
+        # name-list domain deliberately leaves it to the caller.
+        if image_keys is not None:
+            if err := name_list_error(image_keys, "image_keys", "VeraPolicy"):
+                raise ValueError(err)
+            if not image_keys:
+                raise ValueError(
+                    "VeraPolicy: image_keys=[] selects no camera view, so there is no frame to "
+                    "build. Pass image_keys=None to use the server's view_keys (or every image "
+                    "key in the observation), or name the views to width-concat."
+                )
         # Same reason, same place: the smoothing coefficient blends every
         # commanded joint target with the previous one inside get_actions, so
         # a value outside [0, 1) freezes or diverges the arm mid-rollout
@@ -239,7 +261,7 @@ class VeraPolicy(Policy):
             docker_image=docker_image or "strands-vera-server:latest",
             docker_gpus=docker_gpus or "all",
         )
-        self.image_keys = list(image_keys) if image_keys else None
+        self.image_keys = list(image_keys) if image_keys is not None else None
         self.action_mapping = dict(action_mapping) if action_mapping else None
         self.prompt = prompt
         self._robot_state_keys: list[str] = []
@@ -260,6 +282,10 @@ class VeraPolicy(Policy):
         self._ik_prev_q: dict[str, float] = {}
         self._translation_scale: float = 1.0
         self._ik_bridge: Any = None  # lazily built MinkIKBridge
+        # What that bridge was built from: (mj_model, ee_frame_name, ee_frame_type).
+        # The bridge is only reusable while all three still hold - see
+        # :meth:`_ensure_ik_bridge`.
+        self._ik_bridge_binding: tuple[Any, str, str] | None = None
         self._sim_namespace: str | None = None  # robot namespace for ee-frame scoping
         self._warned_unbound: bool = False
 
@@ -366,6 +392,7 @@ class VeraPolicy(Policy):
         if translation_scale is not None:
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
+        self._ik_bridge_binding = None
 
     def autoconfigure_ik(self, mj_model: Any, namespace: str | None = None, *, force: bool = False) -> bool:
         """Zero-config IK setup: discover the ee-frame from the MjModel.
@@ -481,8 +508,17 @@ class VeraPolicy(Policy):
         self._started = True
 
     def _resolve_view_keys(self, observation_dict: dict[str, Any], meta: dict[str, Any]) -> list[str]:
-        """Ordered camera keys to width-concat: explicit > server views > discovered."""
-        if self.image_keys:
+        """Ordered camera keys to width-concat: explicit > server views > discovered.
+
+        The explicit selection is read ``is not None`` for the reason the
+        constructor refuses an empty one: an empty subset of the observation's
+        image keys asks for no view, and this is the site that would otherwise
+        answer it with every view. The constructor keeps ``[]`` from arriving
+        here, so this read is what holds for an attribute assigned after
+        construction - ``_extract_frame`` then refuses the frame rather than
+        building one from cameras that were excluded.
+        """
+        if self.image_keys is not None:
             return self.image_keys
         obs_image_keys = [k for k, v in observation_dict.items() if _is_image_value(v)]
         server_views = [str(v) for v in meta.get("view_keys", [])]
@@ -741,11 +777,54 @@ class VeraPolicy(Policy):
         return addr
 
     def _ensure_ik_bridge(self, mj_model: Any, ee_frame: str):
-        """Lazily build (and cache) the MinkIKBridge."""
-        if self._ik_bridge is None:
-            from .sim_ik import MinkIKBridge
+        """Return the IK bridge for this model and frame, building it on a miss.
 
-            self._ik_bridge = MinkIKBridge(mj_model, ee_frame, self._ee_frame_type)
+        Keyed on every input the bridge is built from - the compiled model, the
+        end-effector frame name, and the frame type - for the same reason
+        :meth:`_joint_qpos_addr` is keyed on the model. A bridge holds a
+        ``mink.Configuration`` and the tasks built from ONE ``MjModel``, so a
+        bridge built from a superseded model solves against the previous world's
+        kinematics.
+
+        That is reachable through the ordinary rollout path, not just an explicit
+        retarget. The simulation rebinds a policy on every rollout
+        (``bind_policy_sim_context`` -> :meth:`set_sim_context`) and hands it the
+        model compiled *now*, which is a new object after any scene change;
+        :meth:`autoconfigure_ik` returns early once an ee-frame is configured, so
+        the rebind does not re-enter :meth:`set_ik_target` and nothing else
+        invalidated the bridge. Both outcomes were silent at the boundary:
+
+        * the DOF count changed - the stale bridge refuses the seed built from
+          the bound model, naming ``q_init`` and the *superseded* model's ``nq``,
+          which reads as a caller bug;
+        * the DOF count did not change (a robot re-placed, a scene rebuilt) - the
+          solve returns joint targets for geometry that is no longer there, under
+          an action dict shaped exactly like a good one.
+
+        The model is held by identity rather than by ``id()``: an int key keeps
+        nothing alive, so a freed model's address can be reused by the model that
+        replaces it and collide. Holding it pins nothing new - ``self._mj_model``
+        already holds the same object for as long as it is the active model - and
+        this single-slot cache drops a superseded bridge on the next miss.
+
+        Args:
+            mj_model: The compiled ``mujoco.MjModel`` the solve runs against.
+            ee_frame: Name of the end-effector frame the IK tracks.
+
+        Returns:
+            The cached bridge when it was built from this model and frame, else a
+            freshly built one.
+        """
+        binding = (mj_model, ee_frame, self._ee_frame_type)
+        cached = self._ik_bridge
+        held = self._ik_bridge_binding
+        if cached is not None and held is not None and held[0] is mj_model and held[1:] == binding[1:]:
+            return cached
+
+        from .sim_ik import MinkIKBridge
+
+        self._ik_bridge = MinkIKBridge(mj_model, ee_frame, self._ee_frame_type)
+        self._ik_bridge_binding = binding
         return self._ik_bridge
 
     def _ik_chunk_to_action_dicts(

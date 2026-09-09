@@ -357,13 +357,19 @@ def test_list_probes_specific_camera_failure(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_list_realsense_when_sdk_missing_gives_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """Listing a RealSense camera without the SDK reports the install hint
-    instead of pretending the camera type is unknown."""
+    instead of pretending the camera type is unknown.
+
+    The hint names lerobot's ``intelrealsense`` extra rather than the
+    ``pyrealsense2`` distribution, because the extra carries the per-platform
+    split: on macOS the wheel ships as ``pyrealsense2-macosx``, so a bare
+    ``pip install pyrealsense2`` there installs nothing importable.
+    """
     monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
     result = lerobot_camera(action="list", camera_type="realsense")
     assert result["status"] == "success"
     body = _texts(result)
     assert "Not installed" in body
-    assert "pip install pyrealsense2" in body
+    assert "pip install 'lerobot[intelrealsense]'" in body
     _assert_ascii(body)
 
 
@@ -488,14 +494,6 @@ def test_create_camera_realsense_uses_real_config_dataclass_field() -> None:
 
     assert cam.config.serial_number_or_name == "944622072361"
     assert cam.config.fps == 30
-
-
-def test_create_camera_realsense_without_sdk_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Requesting a RealSense camera without the SDK raises a clear
-    unsupported-type error (no silent fallback to OpenCV)."""
-    monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", False)
-    with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
-        cam_mod._create_camera("realsense", "0", 640, 480, 30, "RGB", "NO_ROTATION")
 
 
 # --- frame encoding failure -------------------------------------------------

@@ -989,7 +989,7 @@ def _resolve(name: str, definitions: dict) -> EmbodimentMap:
 def _load_defs() -> tuple[dict, dict]:
     if not _CONFIG_FILE.exists():
         return {}, {}
-    with open(_CONFIG_FILE) as fh:
+    with open(_CONFIG_FILE, encoding="utf-8") as fh:
         raw = json.load(fh)
     return raw.get("configs", {}), raw.get("aliases", {})
 

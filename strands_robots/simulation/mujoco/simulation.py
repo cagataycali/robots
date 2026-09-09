@@ -145,6 +145,7 @@ from strands_robots.utils import (
     finite_vector_error,
     non_negative_whole_number_error,
     optional_callable_error,
+    positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
     published_string_error,
@@ -344,7 +345,7 @@ _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
 # (called on every `strands` invocation). Load once at import, not per access.
-with open(_TOOL_SPEC_PATH) as _f:
+with open(_TOOL_SPEC_PATH, encoding="utf-8") as _f:
     _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
 
 # The actions the schema advertises to a model, derived from the schema rather
@@ -475,8 +476,16 @@ class MuJoCoSimEngine(
             default_timestep: Default physics timestep (seconds). Can be
                 overridden via ``create_world(timestep=...)``.
             default_width: Default render width (pixels) used when a
-                caller does not pass explicit dimensions to ``render``.
-            default_height: Default render height (pixels).
+                caller does not pass explicit dimensions to ``render``, and
+                copied into the ``SimCamera`` entry registered for every
+                camera that declares no size of its own. A positive ``int``
+                on the shared
+                :func:`~strands_robots.utils.positive_count_error` floor that
+                ``add_camera`` applies to a per-camera dimension - the same
+                quantity cannot have two domains because of which way in it
+                took. The framebuffer *ceiling* stays a render-time check: it
+                is a property of the compiled model, not of this call.
+            default_height: Default render height (pixels), same domain.
             mesh: Optional mesh-networking hook: an already-started mesh
                 client exposing ``.stop()`` (see
                 :func:`strands_robots.mesh.init_mesh`), which ``cleanup()``
@@ -524,6 +533,37 @@ class MuJoCoSimEngine(
         """
         reject_setup_kwargs(kwargs)
         reject_misspelled_kwargs(kwargs, own_keyword_names(MuJoCoSimEngine), owner="MuJoCoSimEngine")
+        # The default render resolution is a pixel count at the owner that
+        # stores it, on the shared floor ``add_camera`` and the render family
+        # already apply to a per-call dimension. It is not an inert fallback:
+        # ``create_world`` copies it into the ``SimCamera`` entry it registers
+        # for the free camera and ``add_robot`` into one entry per model camera,
+        # so it lands in the very field ``add_camera`` guards - one quantity,
+        # two ways in, and only one of them graded.
+        #
+        # Deferring to the render entry points did not make it a late refusal;
+        # it made it three different wrong answers, measured on a so101 scene:
+        # ``0`` published ``observation["default"]`` as a ``(480, 0, 3)``
+        # zero-pixel frame under a success result; ``-1`` and ``inf`` dropped
+        # the image key entirely (``_render_cameras`` logs a per-camera failure
+        # at debug level and keeps going), handing a policy that declares
+        # ``requires_images`` proprioception alone with no signal; and ``True``,
+        # ``2.7``, ``640.0``, ``'640'`` and ``nan`` raised ``TypeError`` out of
+        # ``get_observation``, which :class:`~strands_robots.simulation.base.SimEngine`
+        # documents as returning an observation dict. Every ``render()`` - a
+        # call passing no dimensions at all - was meanwhile refused for a value
+        # its caller never named.
+        #
+        # The floor is all that is decidable here. The offscreen framebuffer cap
+        # is a property of the compiled model, so ``_validate_render_dims`` goes
+        # on applying it to the resolved size once a world exists.
+        #
+        # Placed before ``_init_ros_bridge``, which builds an ``rclpy`` node: a
+        # refusal about a constructor argument should not leave a ROS 2 node
+        # behind it.
+        for _param, _value in (("default_width", default_width), ("default_height", default_height)):
+            if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
+                raise ValueError(dim_err)
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
@@ -4139,9 +4179,8 @@ class MuJoCoSimEngine(
         # ``render`` validates its dims, so a bad size fails at config time with
         # a clear message instead of deferring a cryptic GL/Renderer error (or a
         # silent non-positive dimension) to the first rollout that renders it.
-        if dim_err := self._validate_render_dims(width, height):
-            text = dim_err["content"][0]["text"].replace("render:", "add_camera:", 1)
-            return {"status": "error", "content": [{"text": text}]}
+        if dim_err := self._validate_render_dims(width, height, "add_camera"):
+            return dim_err
 
         # reject duplicate camera names.  Previously a second
         # add_camera(name=existing) silently overwrote the registry entry but
@@ -4403,30 +4442,19 @@ class MuJoCoSimEngine(
             return err
 
         # A reset re-initializes the world, which is the start of a new
-        # rollout. If a recording is active with buffered (unsaved) frames,
-        # flush them as their own episode BEFORE the teleport mixes the next
-        # rollout into the same buffer. Without this, a run_policy + reset
-        # collection loop silently merges every rollout into a single
-        # episode_index=0 (total_episodes stuck at 1) - a data-integrity bug
-        # for downstream training/eval that slices by episode. This mirrors
-        # stop_recording, which already auto-flushes the trailing episode.
-        # save_episode() is a no-op on an empty buffer, so resets that are not
-        # preceded by recorded frames (e.g. eval_policy's internal per-episode
-        # resets, which do not feed the recorder) are unaffected. To DISCARD a
+        # rollout, so the frames buffered so far are that rollout's episode.
+        # ``_flush_open_episode_before_reset`` owns the rule for every backend -
+        # see it for what a merged episode costs downstream. To DISCARD a
         # partial rollout instead of flushing it, call clear_episode_buffer()
         # before reset().
         flush_note = ""
-        if self._world._backend_state.get("recording", False):
-            recorder = self._world._backend_state.get("dataset_recorder")
-            pending = getattr(recorder, "episode_frame_count", 0) if recorder is not None else 0
-            if pending > 0:
-                save_result = self.save_episode()
-                if save_result.get("status") != "success":
-                    # save_episode failed -> the recorder poisoned itself and
-                    # the facade already cleared the recording flag. Surface
-                    # the failure rather than resetting into an undefined state.
-                    return save_result
-                flush_note = save_result["content"][0]["text"] + " "
+        if (flush := self._flush_open_episode_before_reset()) is not None:
+            if flush.get("status") != "success":
+                # save_episode failed -> the recorder poisoned itself and
+                # the facade already cleared the recording flag. Surface the
+                # failure rather than resetting into an undefined state.
+                return flush
+            flush_note = flush["content"][0]["text"] + " "
 
         mj = self._mj
         with self._lock:

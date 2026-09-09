@@ -72,6 +72,17 @@ _BOOL_KEYS: set[tuple[str, str]] = {
     ("runtime", "trust_remote_code"),
 }
 
+#: Keys whose value is a number, split by the shape it takes. One owner for the
+#: same reason ``_BOOL_KEYS`` is one: the strict path and the lenient degrade
+#: both have to agree about which keys these are, and the degrade spelled their
+#: union as a second literal tuple -- so the two halves of the numeric domain
+#: could drift apart, and they had, on the value neither literal names.
+#: Keyed by name rather than ``(section, key)``, which is how both paths already
+#: match them.
+_FLOAT_KEYS: tuple[str, ...] = ("temperature", "camera_hz")
+_INT_KEYS: tuple[str, ...] = ("max_tokens", "port")
+_NUMERIC_KEYS: tuple[str, ...] = _FLOAT_KEYS + _INT_KEYS
+
 _lock = threading.RLock()
 # The resolved tree, cached under the path it was resolved from. A `dict | None`
 # rebound through `global` -- and at two of the four write sites through
@@ -133,6 +144,40 @@ def _finite_float(key: str, value: Any) -> float:
     return out
 
 
+def _finite_int(key: str, value: Any) -> int:
+    """An integer key's value, refusing the non-finite numbers ``int()`` cannot convert.
+
+    ``int(float("inf"))`` raises ``OverflowError``, which is neither of the two
+    errors the conversion below catches, so a non-finite value in an integer
+    slot used to escape :class:`CoercionError` altogether: the strict path
+    raised out of :func:`update_strict` instead of reporting the key, and the
+    lenient path raised out of :func:`load` -- where a process-scoped
+    :func:`override` left every later read of the WHOLE tree raising for as
+    long as it was set, since there is no value for the degrade to fall back
+    to if the coercion never returns. ``json.loads`` accepts the bare
+    ``Infinity`` token, so a request body is one of the ways such a value
+    arrives; :func:`_read_file` refuses it for the file for the neighbouring
+    reason, and :func:`_finite_float` refuses it for the other two numeric
+    keys. This is that same refusal for the two whose shape is an integer.
+
+    Non-finite is one class and gets one message, the wording
+    :func:`_finite_float` already uses. ``int(float("nan"))`` happens to raise
+    ``ValueError`` and so was reported -- but as "is not an integer", which
+    describes how the value was spelled rather than what it is.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        raise CoercionError(f"{key}: {value!r} is not a finite number")
+    try:
+        return int(value)
+    except OverflowError:
+        # A non-finite that is not a ``float`` instance, so the check above does
+        # not see it: ``numpy.float32("inf")`` and ``Decimal("Infinity")`` both
+        # convert with an OverflowError rather than one of the two below.
+        raise CoercionError(f"{key}: {value!r} is not a finite number")
+    except (TypeError, ValueError):
+        raise CoercionError(f"{key}: {value!r} is not an integer")
+
+
 def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
     try:
         return _coerce_strict(section, key, value)
@@ -154,7 +199,7 @@ def _coerce(section: str, key: str, value: Any, strict: bool = False) -> Any:
         # fail-closed rather than a passthrough.
         if (section, key) in _BOOL_KEYS:
             return False
-        return None if key in ("temperature", "camera_hz", "max_tokens", "port") else value
+        return None if key in _NUMERIC_KEYS else value
 
 
 # : What "true" and "false" may be spelled like.
@@ -173,34 +218,26 @@ def _coerce_strict(section: str, key: str, value: Any) -> Any:
             if spelled not in _TRUTHY and spelled not in _FALSY:
                 raise CoercionError(f"{key}: {value!r} is not a boolean (use true/false)")
         return _as_bool(value)
-    if key == "temperature":
+    if key in _FLOAT_KEYS:
         if value in (None, ""):
             return None
         out = _finite_float(key, value)
-        if not 0.0 <= out <= 2.0:
+        if key == "temperature" and not 0.0 <= out <= 2.0:
             raise CoercionError(f"temperature: {out} is outside 0..2")
-        return out
-    if key == "camera_hz":
-        if value in (None, ""):
-            return None
-        out = _finite_float(key, value)
-        if not 0.0 < out <= 240.0:
+        if key == "camera_hz" and not 0.0 < out <= 240.0:
             # a publisher sleeps 1/hz between frames: 0 divides by zero,
             # negative sleeps never, huge busy-loops the camera thread.
             raise CoercionError(f"camera_hz: {out} is outside (0, 240]")
         return out
-    if key in ("max_tokens", "port"):
+    if key in _INT_KEYS:
         if value in (None, ""):
             return None
-        try:
-            out = int(value)
-        except (TypeError, ValueError):
-            raise CoercionError(f"{key}: {value!r} is not an integer")
-        if key == "port" and not 1 <= out <= 65535:
-            raise CoercionError(f"port: {out} is outside 1..65535")
-        if key == "max_tokens" and out < 1:
-            raise CoercionError(f"max_tokens: {out} must be at least 1")
-        return out
+        whole = _finite_int(key, value)
+        if key == "port" and not 1 <= whole <= 65535:
+            raise CoercionError(f"port: {whole} is outside 1..65535")
+        if key == "max_tokens" and whole < 1:
+            raise CoercionError(f"max_tokens: {whole} must be at least 1")
+        return whole
     if value is None:
         return None
     if isinstance(value, (dict, list, tuple, set)):
@@ -231,7 +268,7 @@ def _read_file() -> dict[str, Any]:
             # write must count as corrupt (browsers already refuse it), so it heals to defaults instead of
             # being handed back to JSON.parse forever.
             data = json.loads(
-                SETTINGS_FILE.read_text(),
+                SETTINGS_FILE.read_text(encoding="utf-8"),
                 parse_constant=lambda c: (_ for _ in ()).throw(ValueError(f"non-finite {c}")),
             )
             if isinstance(data, dict):
@@ -384,7 +421,7 @@ def _write_file(data: dict[str, Any]) -> None:
     payload = json.dumps(data, indent=2, sort_keys=True, allow_nan=False)
     fd, tmp = tempfile.mkstemp(prefix=f"{SETTINGS_FILE.name}.", suffix=".tmp", dir=SETTINGS_FILE.parent)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(payload)
         os.replace(tmp, SETTINGS_FILE)
     except BaseException:

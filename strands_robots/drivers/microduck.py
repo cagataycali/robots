@@ -46,6 +46,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.policies.microduck import MICRODUCK_JOINT_NAMES
 from strands_robots.utils import (
     boolean_flag_error,
@@ -625,7 +626,7 @@ class MicroduckDriver:
             }
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             # Report the halt outcome rather than assert one.  ``stop`` is the
             # protocol's shutdown hook and returns ``None``: it returns early
             # for a client that is gone and swallows an ``OSError`` from
@@ -635,6 +636,8 @@ class MicroduckDriver:
             # decides the verdict, so the verb returns that envelope rather
             # than re-deriving one.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

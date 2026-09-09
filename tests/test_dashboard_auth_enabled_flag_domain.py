@@ -85,7 +85,11 @@ class TestAnUnrecognizedValueCannotDisableAnEnrolledGate:
         monkeypatch.setenv("STRANDS_DASH_AUTH_ENABLED", "false")
         with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.auth"):
             assert auth.auth_enabled() is False
-        assert caplog.text == ""
+        # Scoped to this function's own logger: ``caplog`` captures every record in
+        # the process, at every level, for the whole test, so a background thread's
+        # record -- a finalizer's teardown report, say -- would otherwise read as
+        # this function reporting.
+        assert [r.getMessage() for r in caplog.records if r.name == auth.logger.name] == []
 
 
 class TestTheRecognizedVocabulariesStillOverride:

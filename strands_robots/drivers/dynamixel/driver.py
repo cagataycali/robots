@@ -47,6 +47,9 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.utils import positive_count_error
+
 if TYPE_CHECKING:
     from strands.types.tools import ToolSpec, ToolUse
 
@@ -90,7 +93,9 @@ class DynamixelDriver:
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for a single
       bus, or a sequence of them for a bimanual rig. Kept polymorphic:
       Aloha's ``ports=[...]`` and the single-bus ``port=`` both land here.
-    * ``baud_rate`` - integer, defaults to ``1_000_000``. The Robotis default.
+    * ``baud_rate`` - a positive integer, defaults to ``1_000_000``. The Robotis
+      default. Held to :func:`~strands_robots.utils.positive_count_error`, the
+      domain every surface that opens a serial bus shares.
     * ``motor_ids`` - the servo IDs on the bus, in wire order. Optional at
       construction; the bus discovers them on connect.
     """
@@ -122,7 +127,13 @@ class DynamixelDriver:
             self._ports = tuple(ports)
         else:
             self._ports = (port,)
-        self._baud_rate: int = int(kwargs.pop("baud_rate", 1_000_000))
+        # Graded, not coerced - the same reason :class:`FeetechDriver` states:
+        # pyserial takes the speed through its own ``int()`` and refuses only a
+        # negative, so a converted value is applied rather than reported.
+        baud_rate = kwargs.pop("baud_rate", 1_000_000)
+        if (reason := positive_count_error(baud_rate, "baud_rate", f"DynamixelDriver({tool_name!r})")) is not None:
+            raise ValueError(reason)
+        self._baud_rate: int = baud_rate
         self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
         self._connected: bool = False
         self._connect_error: str | None = None
@@ -192,12 +203,14 @@ class DynamixelDriver:
                 "status": "success",
                 "content": [{"json": {"joint_state": None, "reason": _NOT_WIRED}}],
             }
-        else:  # "stop"
+        elif action == "stop":
             await self.stop()
             envelope = {
                 "status": "success",
                 "content": [{"text": f"stop: {_NOT_WIRED}"}],
             }
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

@@ -91,11 +91,21 @@ def test_begin_authentication_needs_enrollment_first():
     assert "no credentials" in str(e.value.detail)
 
 
-# --- bonus: a garbage TOKEN_TTL cannot break token minting --------------------
+# --- bonus: a garbage TOKEN_TTL is refused, and minting still works ----------
 
 
-def test_token_ttl_garbage_falls_back_to_default(monkeypatch):
+def test_token_ttl_garbage_is_refused_rather_than_widened(monkeypatch):
+    """This used to assert the fallback: ``banana`` resolved to the 86400 default
+    and minting carried on. Falling back is the WIDER direction for every one of
+    these knobs, so it is now refused by name - see
+    test_dashboard_auth_duration_knobs_are_not_widened.py. What this test came
+    here to protect is unchanged and asserted below: a usable setting still mints
+    a valid session, and the refusal lands at import (where a deployment sees it)
+    rather than turning a serving dashboard's logins into 500s.
+    """
     monkeypatch.setenv("STRANDS_DASH_AUTH_TOKEN_TTL", "banana")
-    assert auth._token_ttl() == 86400
-    token = auth.issue_token("cred1")
-    assert auth.session_is_valid(token)
+    with pytest.raises(ValueError, match="TOKEN_TTL"):
+        auth._token_ttl()
+    monkeypatch.setenv("STRANDS_DASH_AUTH_TOKEN_TTL", "3600")
+    assert auth._token_ttl() == 3600
+    assert auth.session_is_valid(auth.issue_token("cred1"))

@@ -113,7 +113,8 @@ arm.send_action({"elbow_joint": 1.40})     # one servoJ setpoint, radians
 arm.run_policy(policy, n_steps=500)        # streamed rollout at control_frequency
 ```
 
-Needs the SDK: `pip install ur_rtde`. `port=` is the controller's address; the RTDE
+Needs the SDK: `pip install 'strands-robots[ur]'`, which declares the `ur_rtde`
+build the driver's two interfaces come from. `port=` is the controller's address; the RTDE
 port is fixed at 30004 by the protocol, so a different suffix is refused rather than
 dialled.
 
@@ -130,14 +131,24 @@ command the way a servo bus does - it accepts the register and performs nothing:
   proximal joints are held to 120 deg/s - so the same policy cadence can be admitted on
   one arm and refused on the other.
 
+Reads are held to one further rule, and it applies to every surface rather than only to a
+write: each RTDE vector is named by its position against the arm's six joints, so a
+controller answering a different width is refused by name - `state()` and the mesh joint
+read included - instead of being reported as far as it goes. A seven-axis answer is the
+case that makes it load-bearing: naming its first six elements produces a pose that reads
+exactly like a genuine six-axis one. This driver serves six-axis e-Series arms only.
+
 Stopping a rollout is reported rather than asserted. `stop_task()` signals the loop,
 waits up to two seconds for its thread and decelerates the arm with `servoStop`; a
 policy blocking on a remote inference call outlasts that budget, and the envelope then
 carries `status="error"` with `stopped=False` and a reason naming the timeout, matching
 what `get_task_status()` says about the same loop. The arm is decelerated either way,
-and no further setpoint reaches the controller - the loop re-reads the stop signal after
-the policy returns and before it writes. `stop()` carries no verdict (the driver protocol
-annotates it `-> None`); read `stop_task()` when the outcome matters.
+and no further setpoint reaches the controller. That takes two re-reads rather than one:
+the loop re-reads the stop signal after the policy returns, and `send_action` re-reads the
+driver's halt counter immediately before `servoJ`. Between those two it reads both mode
+registers and the measured pose - three RTDE round trips to the same controller, during
+which a halt was otherwise answered by one more setpoint. `stop()` carries no verdict (the
+driver protocol annotates it `-> None`); read `stop_task()` when the outcome matters.
 
 Joint keys are the arm's own names, in RTDE wire order, and the MuJoCo assets declare
 them identically - so an action dict recorded in simulation streams to the controller

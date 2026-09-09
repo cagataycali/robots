@@ -694,6 +694,64 @@ def iter_policy_tree(policy: Policy) -> Iterator[Policy]:
         stack.extend(reversed(tuple(getattr(current, "children", ()))))
 
 
+def required_bodies_error(value: object, param: str, context: str) -> str | None:
+    """Error text when a required-bodies declaration is not a usable list of body names.
+
+    Shared domain for :attr:`Policy.required_bodies` however it is stated: as a
+    property on a policy class, read by :func:`collect_required_bodies`, or as
+    the ``required_bodies`` entry of a
+    :class:`~strands_robots.inference.server.PolicyServer` handshake, mirrored by
+    :class:`~strands_robots.inference.client.RemotePolicy` so the host driving
+    the rollout declares what the policy behind the wire needs.
+
+    It lives here, beside the property it grades, because those two surfaces must
+    not disagree: the same declaration cannot be refused for a policy loaded
+    in-process and accepted for the server serving it. A second copy of the rule
+    on the wire side is how the mirror came to accept declarations the local
+    owner refuses - a mixed list was filtered down to the entries that happened
+    to be well-formed, so the proxy declared a subset the peer never advertised,
+    and the runtime supplied poses for that subset while reporting success.
+
+    Every entry is graded rather than the list as a whole for the same reason
+    :func:`chunk_count_error` refuses a count instead of flooring it: a dropped
+    body name is not a smaller declaration, it is a pose the observation never
+    carries. A whole-body mimic tracker whose anchor link goes unsupplied does
+    not fail - it reads ``base_quat``, the pelvis, and silently tracks the wrong
+    frame (see :attr:`Policy.required_bodies`).
+
+    A repeated name is accepted, unlike :func:`~strands_robots.utils.name_list_error`'s
+    domain: the single consumer here de-duplicates it (``owner.setdefault``
+    below), so a repeat is honored exactly as written rather than being either
+    doubled or collapsed. That is the whole difference between the two domains,
+    and it is why this list of names does not go through that function.
+
+    Args:
+        value: The declaration, as stated by the property or advertised on the wire.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that stated it - the
+            declaring class name, or the peer for an advertised value.
+
+    Returns:
+        An error message naming the offending value, or ``None`` when every
+        entry is a body name the runtime can resolve.
+    """
+    if isinstance(value, str | bytes):
+        return (
+            f"{context}: {param} must be a sequence of body names, not a bare "
+            f"{type(value).__name__} ({value!r}) - a string iterates into one entry per "
+            f"character. Wrap it in a list: [{value!r}]."
+        )
+    if not isinstance(value, Sequence):
+        return (
+            f"{context}: {param} must be a sequence of body names, got {value!r} "
+            f"({type(value).__name__}). Pass the names as a list."
+        )
+    for index, name in enumerate(value):
+        if not isinstance(name, str) or not name.strip():
+            return f"{context}: {param} entries must be non-empty body-name strings, got {name!r} at index {index}."
+    return None
+
+
 def collect_required_bodies(policy: Policy | None) -> dict[str, str]:
     """Body names a policy TREE declares, mapped to the class that declared each.
 
@@ -728,8 +786,12 @@ def collect_required_bodies(policy: Policy | None) -> dict[str, str]:
 
     Raises:
         TypeError: If any policy in the tree declares ``required_bodies`` that
-            is not a sequence of non-empty strings. A bare ``str`` is refused
-            explicitly rather than iterated into one entry per character.
+            is not a sequence of non-empty strings, per
+            :func:`required_bodies_error` - the shared owner of that shape rule,
+            so the wire half of this contract refuses the same declarations. A
+            bare ``str`` is refused explicitly rather than iterated into one
+            entry per character, and a ``Mapping`` rather than read as its keys
+            with its values discarded.
     """
     owner: dict[str, str] = {}
     for member in () if policy is None else iter_policy_tree(policy):
@@ -737,14 +799,8 @@ def collect_required_bodies(policy: Policy | None) -> dict[str, str]:
         if not declared:
             continue
         who = type(member).__name__
-        if isinstance(declared, str):
-            raise TypeError(
-                f"{who}.required_bodies must be a sequence of body names, "
-                f"not a bare str ({declared!r}) - a str iterates into one entry per character. "
-                f"Use a tuple: ('{declared}',)."
-            )
+        if error := required_bodies_error(declared, "required_bodies", who):
+            raise TypeError(error)
         for name in declared:
-            if not isinstance(name, str) or not name.strip():
-                raise TypeError(f"{who}.required_bodies entries must be non-empty body-name strings, got {name!r}.")
             owner.setdefault(name, who)
     return owner

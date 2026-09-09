@@ -9,8 +9,11 @@ those names only when it also brings the extra that supplies them.
 
 ``resolve_allow_insecure`` is pure Python and could live in a stdlib-only
 module. It stays here so the behavioural pin travels with the two entry points
-it guards -- one import path per public name, one place to change the vocabulary
-its refusal quotes. The tests exercise it through
+it guards -- one import path per public name. The string vocabulary it parses is
+owned by the stdlib-only sibling ``_authz``, which needs the same answer for its
+own fallback and cannot import this module (that would drag
+``device_connect_edge`` into a module the native Reachy driver loads), so the
+constant lives there and both readers import it. The tests exercise it through
 ``strands_robots.device_connect.resolve_allow_insecure`` rather than reaching
 into this private module, so pushing the module load a level deeper does not
 change what the suite grades.
@@ -27,6 +30,7 @@ from typing import Any
 
 from device_connect_edge import DeviceRuntime
 
+from strands_robots.device_connect._authz import INSECURE_TRUE, insecure_env_opts_in
 from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 from strands_robots.utils import is_boolean
@@ -38,8 +42,6 @@ __all__ = [
     "init_device_connect_sync",
     "resolve_allow_insecure",
 ]
-
-_INSECURE_TRUE = ("true", "1", "yes")
 
 
 def resolve_allow_insecure(
@@ -92,7 +94,7 @@ def resolve_allow_insecure(
             raise ValueError(
                 f"allow_insecure must be a bool or None, got {explicit!r}. A string "
                 "spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where "
-                f"{_INSECURE_TRUE} opt in and anything else is secure; passed as this "
+                f"{INSECURE_TRUE} opt in and anything else is secure; passed as this "
                 "argument a non-empty string is truthy, so 'false' would enable insecure "
                 "transport rather than refuse it."
             )
@@ -105,7 +107,7 @@ def resolve_allow_insecure(
                 "caller that has already resolved a boolean should pass it as the explicit "
                 "argument instead, where it is checked rather than parsed."
             )
-        return env_value.lower() in _INSECURE_TRUE
+        return insecure_env_opts_in(env_value)
     return False
 
 

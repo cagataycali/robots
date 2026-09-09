@@ -36,6 +36,7 @@ path is a recording stub, and the policy is a structural stub.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import inspect
 import pathlib
 import threading
@@ -465,3 +466,139 @@ class TestTheRegistryDeclarationMatchesTheConstructor:
         from strands_robots.registry.policies import port_reading_providers
 
         assert set(port_reading_providers()) == set(PORT_READING_PROVIDERS)
+
+
+# ── The Device Connect ``execute`` relay ──────────────────────────────────────
+
+#: Falsy ``policy_port`` spellings that are NOT the ``execute`` RPC's integer
+#: ``0`` sentinel. JSON carries every one of them and no policy can be built
+#: from any of them, so each must be reported as invalid rather than as "not
+#: supplied". ``0`` is excluded: it is the documented sentinel, covered on its
+#: own below.
+FALSY_NON_SENTINEL_PORTS: list[Any] = [0.0, False, "", []]
+
+
+def _relay_surfaces() -> dict[str, tuple[bool, bool]]:
+    """:func:`_policy_port_surfaces` applied to the Device Connect relay.
+
+    The module is located with ``find_spec`` and read as text rather than
+    imported: the driver needs the ``[device-connect]`` extra, while this is a
+    source-level rule that holds whether or not that extra is installed.
+    """
+    spec = importlib.util.find_spec("strands_robots.device_connect.robot_driver")
+    assert spec is not None and spec.origin is not None, "the Device Connect relay module is missing"
+    return _policy_port_surfaces(pathlib.Path(spec.origin).read_text(encoding="utf-8"))
+
+
+class TestTheDeviceConnectRelayIsAccountedFor:
+    """The RPC that relays ``policy_port`` to ``start_task`` joins the census.
+
+    :class:`TestEveryPortTakingSurfaceIsAccountedFor` states its rule for "a new
+    task entry point" but reads only :mod:`strands_robots.hardware_robot`, so the
+    Device Connect ``execute`` RPC - which declares ``policy_port`` and hands it
+    to ``start_task`` - was outside the population it scans. Its predicate needs
+    no change to judge it: a bare name, or one wrapped in a call, forwards; a
+    ``policy_port or None`` is neither a check nor a forward.
+    """
+
+    def test_the_relay_hands_the_value_on(self) -> None:
+        surfaces = _relay_surfaces()
+        assert "execute" in surfaces, f"the relay no longer declares policy_port: {sorted(surfaces)}"
+        checks, forwards = surfaces["execute"]
+        assert checks or forwards, (
+            "device_connect execute neither checks policy_port nor hands it on unchanged; "
+            "a value collapsed here cannot be judged by Robot._policy_port_error"
+        )
+
+    def test_a_truthiness_collapse_is_reported(self) -> None:
+        """Non-vacuity: the shape this class exists to catch reads as neither."""
+        planted = (
+            "class D:\n"
+            "    async def execute(self, instruction, policy_port=0):\n"
+            "        return self._robot.start_task(instruction, policy_port=policy_port or None)\n"
+        )
+        assert _policy_port_surfaces(planted) == {"execute": (False, False)}
+
+
+class TestTheDeviceConnectRelayDoesNotCollapseTheValue:
+    """A malformed port sent over Device Connect is named, not called missing.
+
+    ``execute`` reads ``policy_port`` to decide between "a port was supplied"
+    and "use the provider default". Reading it with ``or`` answered that
+    question with truthiness, so every falsy spelling the wire can carry - not
+    just the documented ``0`` - became "not supplied":
+
+    * against a port-dialing provider the arm reported ``"policy_port is
+      required to build a policy"``, the "a port they had passed was missing"
+      report :meth:`Robot._policy_port_error` exists to remove;
+    * against a port-less provider the malformed value was dropped and the task
+      *started*, while a well-formed ``5556`` that provider cannot read was
+      correctly refused - the surface accepted what it could not use and
+      refused what it could.
+
+    Driven through the real ``@rpc`` dispatch (``invoke``), which splats the
+    wire parameters into the method without coercing them to the annotation, so
+    a non-``int`` really does arrive. No hardware is touched: the robot is a
+    recorder that delegates the port decision to the shipped guard.
+    """
+
+    @staticmethod
+    def _relay(port: Any, provider: str = "groot") -> tuple[Any, dict[str, Any]]:
+        """Invoke the real ``execute`` RPC; report what ``start_task`` saw."""
+        from tests.test_device_connect_hardening import _force_real_device_connect_edge, _run
+
+        _force_real_device_connect_edge()
+        from strands_robots.device_connect.robot_driver import RobotDeviceDriver
+
+        seen: list[Any] = []
+
+        class _Recorder:
+            tool_name_str = "so100"
+
+            def start_task(
+                self,
+                instruction: str,
+                policy_port: Any = None,
+                policy_host: str = "localhost",
+                policy_provider: str = "groot",
+                duration: float = 30.0,
+                **kw: Any,
+            ) -> dict[str, Any]:
+                seen.append(policy_port)
+                error = HwRobot._policy_port_error(policy_port, "start_task", policy_provider)
+                return error if error is not None else {"status": "success"}
+
+        result = _run(
+            RobotDeviceDriver(_Recorder()).invoke(
+                "execute",
+                instruction="pick up the cube",
+                policy_provider=provider,
+                policy_port=port,
+                source_device="op-1",
+            )
+        )
+        return (seen[0] if seen else "<start_task not reached>"), result
+
+    @pytest.mark.parametrize("port", FALSY_NON_SENTINEL_PORTS, ids=repr)
+    def test_a_falsy_non_sentinel_port_is_named_not_called_missing(self, port: Any) -> None:
+        forwarded, result = self._relay(port)
+        assert repr(forwarded) == repr(port), f"the relay collapsed {port!r} to {forwarded!r}"
+        text = _text(result)
+        assert "is required" not in text, f"a supplied {port!r} was reported as missing: {text}"
+        assert "policy_port" in text and repr(port) in text, text
+
+    @pytest.mark.parametrize("port", FALSY_NON_SENTINEL_PORTS, ids=repr)
+    def test_a_port_less_provider_does_not_start_on_a_malformed_port(self, port: Any) -> None:
+        _, result = self._relay(port, provider="mock")
+        assert result["status"] == "error", f"a task started on policy_port={port!r}: {result}"
+
+    def test_the_integer_zero_sentinel_still_means_not_supplied(self) -> None:
+        """The documented sentinel is unchanged - it is what the ``int`` signature has instead of ``None``."""
+        forwarded, result = self._relay(0, provider="mock")
+        assert forwarded is None
+        assert result["status"] == "success", result
+
+    def test_a_usable_port_is_handed_on_unchanged(self) -> None:
+        forwarded, result = self._relay(5556, provider="groot")
+        assert forwarded == 5556
+        assert result["status"] == "success", result

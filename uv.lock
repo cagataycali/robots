@@ -4844,12 +4844,14 @@ all = [
     { name = "mujoco" },
     { name = "omegaconf" },
     { name = "onnxruntime" },
+    { name = "psutil" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "pytorch-lightning" },
     { name = "pyyaml" },
     { name = "pyzmq" },
     { name = "qpsolvers", extra = ["daqp"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "requests" },
     { name = "robot-descriptions" },
     { name = "roslibpy" },
     { name = "scipy" },
@@ -4898,6 +4900,9 @@ device-connect = [
     { name = "device-connect-agent-tools" },
     { name = "device-connect-edge" },
 ]
+earthrover = [
+    { name = "requests" },
+]
 groot-service = [
     { name = "msgpack" },
     { name = "pyzmq" },
@@ -4916,9 +4921,11 @@ kimodo = [
 ]
 lerobot = [
     { name = "lerobot", extra = ["dataset", "feetech"], marker = "extra == 'extra-14-strands-robots-lerobot' or (extra == 'extra-14-strands-robots-all' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-lerobot-async' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-molmoact2' and extra == 'extra-14-strands-robots-vera-sim') or (extra == 'extra-14-strands-robots-smolvla' and extra == 'extra-14-strands-robots-vera-sim')" },
+    { name = "psutil" },
 ]
 lerobot-async = [
     { name = "lerobot", extra = ["async", "dataset", "feetech"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
 ]
 mesh = [
     { name = "eclipse-zenoh" },
@@ -4936,6 +4943,7 @@ microduck = [
 ]
 molmoact2 = [
     { name = "lerobot", extra = ["dataset", "feetech", "molmoact2"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
 ]
 motionbricks = [
     { name = "adam-atan2-pytorch" },
@@ -5003,6 +5011,10 @@ sim-newton = [
 ]
 smolvla = [
     { name = "lerobot", extra = ["dataset", "feetech", "smolvla"], marker = "extra == 'extra-14-strands-robots-all' or extra == 'extra-14-strands-robots-lerobot' or extra == 'extra-14-strands-robots-lerobot-async' or extra == 'extra-14-strands-robots-molmoact2' or extra == 'extra-14-strands-robots-smolvla' or extra != 'extra-14-strands-robots-vera-sim'" },
+    { name = "psutil" },
+]
+ur = [
+    { name = "ur-rtde" },
 ]
 vera-sim = [
     { name = "gym-pusht" },
@@ -5104,6 +5116,11 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = ">=4.5.0,<5.0.0" },
     { name = "pillow", specifier = ">=8.0.0,<13.0.0" },
     { name = "plyfile", marker = "extra == 'sim-gs'", specifier = ">=1.0.0,<2.0.0" },
+    { name = "psutil", marker = "extra == 'all'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'lerobot'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'lerobot-async'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'molmoact2'", specifier = ">=6.0.0,<8.0.0" },
+    { name = "psutil", marker = "extra == 'smolvla'", specifier = ">=6.0.0,<8.0.0" },
     { name = "pyjwt", marker = "extra == 'all'", specifier = ">=2.0,<3.0" },
     { name = "pyjwt", marker = "extra == 'dashboard'", specifier = ">=2.0,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0,<10.0.0" },
@@ -5123,6 +5140,8 @@ requires-dist = [
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-mujoco'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-newton'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["quadprog"], marker = "extra == 'cosmos3-sim'", specifier = ">=4.0.0" },
+    { name = "requests", marker = "extra == 'all'", specifier = ">=2.28.0,<3.0.0" },
+    { name = "requests", marker = "extra == 'earthrover'", specifier = ">=2.28.0,<3.0.0" },
     { name = "robosuite", marker = "extra == 'vera-sim'", specifier = "==1.4.1" },
     { name = "robot-descriptions", marker = "extra == 'all'", specifier = ">=1.23.0,<2.0.0" },
     { name = "robot-descriptions", marker = "extra == 'sim'", specifier = ">=1.23.0,<2.0.0" },
@@ -5147,6 +5166,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'cosmos3-diffusers'", specifier = ">=4.40" },
     { name = "transformers", marker = "extra == 'kimodo'", specifier = ">=4.40.0" },
     { name = "trimesh", marker = "extra == 'sim-newton'", specifier = ">=4.0.0,<5.0.0" },
+    { name = "ur-rtde", marker = "extra == 'ur'", specifier = ">=1.6.0,<2.0.0" },
     { name = "usd-core", marker = "extra == 'sim-isaac'", specifier = ">=25.5,<27.0.0" },
     { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.27,<1.0" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.27,<1.0" },
@@ -5159,7 +5179,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
     { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "motionbricks", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "vera-sim", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "motionbricks", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "vera-sim", "wbc"]
 
 [[package]]
 name = "sympy"
@@ -5644,6 +5664,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/76/ec/8e3802fc4a4e31e817b972bbb0e704a484d8c75ec349b3feb45fa9fb54c4/ujson-5.13.0-graalpy312-graalpy250_312_native-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2862f81af44b3a7e74c5d80caa118d736be1991ce6f1d5c723716fa403060cc6", size = 54938, upload-time = "2026-06-14T22:36:32.051Z" },
     { url = "https://files.pythonhosted.org/packages/4a/48/d0e3e511039b86fd1ecfe2bf761c800552d273ef8f19e71de93bf38a909e/ujson-5.13.0-graalpy312-graalpy250_312_native-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c16e07581172f08585b409246f4535dab13ee85af0e3d3cfa8684b653ca44fa8", size = 56115, upload-time = "2026-06-14T22:36:33.349Z" },
     { url = "https://files.pythonhosted.org/packages/81/b5/689613037fe691d18eae075cd141089f3a3156146be14512df92d8a9ae8f/ujson-5.13.0-graalpy312-graalpy250_312_native-win_amd64.whl", hash = "sha256:9bd0f2dd05937c3b089af316884de18c6f6182ddb8ffce597d2e7c7a9ba9f447", size = 41802, upload-time = "2026-06-14T22:36:34.523Z" },
+]
+
+[[package]]
+name = "ur-rtde"
+version = "1.6.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/11/5f3dc66a5ba608830ffa83bdaa8808562172b6332f8aaf9bdafeb22e2df2/ur_rtde-1.6.5.tar.gz", hash = "sha256:3d5b6c6bf73346b806d146f128537abd2afb1d769f4a9c8b3ef5a884fab0bcfa", size = 3428886, upload-time = "2026-08-09T07:52:33.765Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/6a/d61e5e016d6637b5c425ead983573caff143d91a2342e4fdd45a30b12f58/ur_rtde-1.6.5-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:0a9b39a82d731bf7b2cca91fd2218246c22331e4d060e287cc257352d24594a7", size = 4997458, upload-time = "2026-08-09T07:51:49.215Z" },
+    { url = "https://files.pythonhosted.org/packages/69/28/d96a5ba6e759f010d61229d70fed508ef19fe89302d486b26c207c4086d6/ur_rtde-1.6.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f5aeddaba7b7ba99d9edb0e25c3a9ff8f7d5b5641aa4396a5380d884840b6870", size = 4922384, upload-time = "2026-08-09T07:51:51.352Z" },
+    { url = "https://files.pythonhosted.org/packages/61/f6/d55fb42416633d6a4319dc2088430b107b6d28f3dcd3b8a3041f15ca9b03/ur_rtde-1.6.5-cp312-cp312-win_amd64.whl", hash = "sha256:e2fb0b71b9c9a5969695db29bafb1e22f6aac529595cf5001b3114890b34d8ba", size = 2573217, upload-time = "2026-08-09T07:51:53.036Z" },
 ]
 
 [[package]]

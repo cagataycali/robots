@@ -16,27 +16,69 @@ yield a ROS 2 name.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+import strands_robots
+import strands_robots.mesh.rtps_robot as rtps_robot_module
+import strands_robots.tools.use_rtps as use_rtps_module
 from strands_robots.rtps.idl import REGISTRY, have_cyclonedds
-from strands_robots.rtps.mangling import dds_topic_name, dds_type_name, ros_topic_name
-
-# Names the module's topic rule refuses. Shared by both directions so the two
-# cannot come to disagree about what a valid ROS 2 topic name is.
-_MALFORMED_ROS_TOPICS = ("cmd_vel", "", "/", "/bad name", "/a/", "/x;y")
-
-
-@pytest.mark.parametrize(
-    ("ros", "dds"),
-    [
-        ("/turtle1/cmd_vel", "rt/turtle1/cmd_vel"),
-        ("/cmd_vel", "rt/cmd_vel"),
-        ("/a/b/c", "rt/a/b/c"),
-    ],
+from strands_robots.rtps.mangling import (
+    MAX_DDS_TOPIC_LENGTH,
+    ROS_TOPIC_RE,
+    dds_topic_name,
+    dds_type_name,
+    ros_topic_error,
+    ros_topic_name,
 )
-def test_topic_roundtrip(ros: str, dds: str) -> None:
-    assert dds_topic_name(ros) == dds
-    assert ros_topic_name(dds) == ros
+
+# Names ROS 2 refuses, so this module's topic rule has to refuse them too.
+# Shared by both directions so the two cannot come to disagree about what a
+# valid ROS 2 topic name is.
+#
+# The rule is the mapping article's, not a subset of it: a name only this module
+# accepts still maps to a DDS topic, and nothing downstream reports the
+# divergence, because DDS matches by topic name and simply never finds a peer.
+# So each clause the article states gets a row here, keyed by the clause, and
+# the six that a single "invalid topic name" cannot distinguish are the reason
+# the refusal names one.
+_MALFORMED_ROS_TOPICS = (
+    "cmd_vel",  # not absolute
+    "",  # empty
+    "/",  # ends with '/'
+    "/a/",  # ends with '/'
+    "/bad name",  # character outside [A-Za-z0-9_/]
+    "/x;y",  # character outside [A-Za-z0-9_/]
+    "/caf\u00e9",  # a Unicode letter is alnum to Python and not a ROS 2 name character
+    "//cmd_vel",  # empty leading token: "the name //bar is not allowed"
+    "/a//b",  # empty interior token
+    "/1cam",  # token starts with a digit
+    "/a/2b",  # interior token starts with a digit
+    "/a__b",  # repeated underscore
+    "/__leading",  # repeated underscore at the token start
+)
+
+# Names a real ROS 2 graph does carry. Held beside the refusals because
+# tightening a rule is only correct if it narrows to exactly the article's set:
+# a leading single underscore marks a hidden topic and is legal, and a digit
+# inside a token (``turtle1``) is legal - only a leading one is not.
+_WELL_FORMED_ROS_TOPICS = (
+    "/turtle1/cmd_vel",
+    "/cmd_vel",
+    "/a/b/c",
+    "/j/state",
+    "/_hidden/joint_states",
+    "/a1/b2",
+    "/so101/camera_0/image_raw",
+)
+
+
+@pytest.mark.parametrize("ros", _WELL_FORMED_ROS_TOPICS)
+def test_topic_roundtrip(ros: str) -> None:
+    """Every name ROS 2 allows survives the mapping and comes back unchanged."""
+    assert dds_topic_name(ros) == f"rt{ros}"
+    assert ros_topic_name(f"rt{ros}") == ros
 
 
 @pytest.mark.parametrize("bad", _MALFORMED_ROS_TOPICS)
@@ -69,12 +111,10 @@ def test_ros_topic_name_never_hands_back_a_name_dds_topic_name_refuses(bad: str)
     pytest.fail(f"premise: dds_topic_name({recovered!r}) was expected to be refused")
 
 
-@pytest.mark.parametrize(
-    ("ros", "dds"),
-    [("/turtle1/cmd_vel", "rt/turtle1/cmd_vel"), ("/j/state", "rt/j/state")],
-)
-def test_a_valid_topic_survives_the_recovered_name_check(ros: str, dds: str) -> None:
+@pytest.mark.parametrize("ros", _WELL_FORMED_ROS_TOPICS)
+def test_a_valid_topic_survives_the_recovered_name_check(ros: str) -> None:
     """Checking the recovered name must not narrow what a valid graph can carry."""
+    dds = f"rt{ros}"
     assert ros_topic_name(dds) == ros
     assert dds_topic_name(ros_topic_name(dds)) == dds
 
@@ -172,3 +212,96 @@ def test_every_bundled_message_type_mangles_to_the_name_cyclonedds_puts_on_the_w
     for ros_type, idl_cls in sorted(REGISTRY.items()):
         on_the_wire = idl_cls.__idl_typename__
         assert dds_type_name(ros_type) == on_the_wire, ros_type
+
+
+def test_a_refusal_names_the_clause_the_name_broke() -> None:
+    """One message for every mistake makes the caller guess which one they made.
+
+    The rule has six independent clauses and a name can break exactly one of
+    them, so a refusal reading only "invalid topic name" leaves the caller to
+    re-derive the grammar. Each row below asserts the reported clause, which is
+    also what pins that the clauses are reachable rather than dead branches
+    behind whichever check happens to run first.
+    """
+    reported = {}
+    for name in _MALFORMED_ROS_TOPICS:
+        clause = ros_topic_error(name)
+        assert clause is not None, f"{name!r} is in the malformed table and was accepted"
+        reported[name] = clause
+    assert "absolute" in reported["cmd_vel"]
+    assert "absolute" in reported[""]
+    assert "must not end with '/'" in reported["/a/"]
+    assert "ASCII" in reported["/caf\u00e9"]
+    assert "ASCII" in reported["/bad name"]
+    assert "token must not be empty" in reported["//cmd_vel"]
+    assert "token must not be empty" in reported["/a//b"]
+    assert "'1cam'" in reported["/1cam"] and "digit" in reported["/1cam"]
+    assert "'2b'" in reported["/a/2b"] and "digit" in reported["/a/2b"]
+    assert "repeated underscores" in reported["/a__b"]
+    # Six distinct clauses are reachable, so the message carries information
+    # the caller could not have got from the refusal alone.
+    assert len(set(reported.values())) >= 6, sorted(set(reported.values()))
+
+
+@pytest.mark.parametrize("ros", _WELL_FORMED_ROS_TOPICS)
+def test_ros_topic_error_reports_nothing_for_a_name_ros2_allows(ros: str) -> None:
+    assert ros_topic_error(ros) is None
+
+
+def test_ros_topic_error_and_the_pattern_are_one_verdict() -> None:
+    """The message renders the pattern's verdict; it must not be a second rule.
+
+    Two spellings of one rule is the defect this module's own docstring warns
+    about, so the renderer is graded against the pattern over both tables rather
+    than trusted to agree with it.
+    """
+    for name in _WELL_FORMED_ROS_TOPICS + _MALFORMED_ROS_TOPICS:
+        assert (ros_topic_error(name) is None) is bool(ROS_TOPIC_RE.match(name)), name
+
+
+def test_the_dds_length_bound_is_enforced_in_both_directions() -> None:
+    """The mapping bounds the DDS name, so the bound is checked on the mangled form.
+
+    A ROS topic one character inside the bound has a DDS name two characters
+    longer, so a bound applied to the ROS name would let the DDS name past it.
+    """
+    longest_ros = "/" + "a" * (MAX_DDS_TOPIC_LENGTH - len("rt/"))
+    assert len(dds_topic_name(longest_ros)) == MAX_DDS_TOPIC_LENGTH
+    assert ros_topic_name(dds_topic_name(longest_ros)) == longest_ros
+
+    over = longest_ros + "a"
+    with pytest.raises(ValueError, match=f"bounds a DDS topic name at {MAX_DDS_TOPIC_LENGTH}"):
+        dds_topic_name(over)
+    with pytest.raises(ValueError, match=f"bounds a DDS topic name at {MAX_DDS_TOPIC_LENGTH}"):
+        ros_topic_name(f"rt{over}")
+
+
+def test_the_topic_rule_is_spelled_once_in_the_package() -> None:
+    """Every seam that gates "is this a ROS 2 topic" reads the one pattern.
+
+    The rule was spelled three times - here, in the ``use_rtps`` tool, and in
+    the RTPS mobile-base robot - as byte-identical copies, so tightening one
+    left the other two admitting names the mangling refuses. Grading the source
+    is what keeps a fourth seam from starting its own copy: a regex literal is
+    invisible to any behavioural test that does not happen to drive that seam.
+    """
+    package = Path(strands_robots.__file__).parent
+    literal = ROS_TOPIC_RE.pattern
+    spellings = sorted(
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*.py")
+        if literal in path.read_text(encoding="utf-8")
+    )
+    assert spellings == ["rtps/mangling.py"], spellings
+
+    # And the two seams that had a copy now read this one. ``use_rtps`` reads it
+    # through ``ros_topic_error`` - the rendering of this pattern's verdict, which
+    # early-returns on it - rather than by binding the pattern under a name of its
+    # own. That is the stronger form of the property this cell is here to hold:
+    # the tool cannot answer "is this a ROS 2 topic" differently from the mangling
+    # because it does not answer the question at all, and it keeps no topic-rule
+    # name that a later edit could quietly repoint. Asserting an alias no caller
+    # read would grade a vestige instead of the seam.
+    assert use_rtps_module.ros_topic_error is ros_topic_error
+    assert not any(name.endswith("_TOPIC_RE") for name in vars(use_rtps_module))
+    assert rtps_robot_module.RtpsRobot._TOPIC_RE is ROS_TOPIC_RE

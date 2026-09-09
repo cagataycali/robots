@@ -224,7 +224,7 @@ def _nvidia_egl_icd_registered() -> bool:
             continue
         for entry in entries:
             try:
-                if "nvidia" in entry.read_text(errors="replace").lower():
+                if "nvidia" in entry.read_text(encoding="utf-8", errors="replace").lower():
                     return True
             except OSError:
                 continue

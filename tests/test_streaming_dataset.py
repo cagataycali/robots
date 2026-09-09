@@ -261,7 +261,7 @@ def test_sync_to_bucket_builds_cli(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(cmd, capture_output=True, text=True):
+    def fake_run(cmd, **_kwargs):
         calls.append(cmd)
 
         class R:
@@ -361,7 +361,7 @@ def test_sync_to_bucket_bucket_create_failure_surfaces_error(tmp_path, monkeypat
 
     calls = []
 
-    def fake_run(cmd, capture_output=True, text=True):
+    def fake_run(cmd, **_kwargs):
         calls.append(cmd)
 
         class R:
@@ -390,7 +390,7 @@ def test_sync_to_bucket_existing_bucket_proceeds_to_sync(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(cmd, capture_output=True, text=True):
+    def fake_run(cmd, **_kwargs):
         calls.append(cmd)
         is_create = cmd[:3] == ["hf", "buckets", "create"]
 
@@ -416,7 +416,7 @@ def test_sync_to_bucket_sync_failure_surfaces_stderr(tmp_path, monkeypatch):
     rec = _recorder(tmp_path)
     monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
 
-    def fake_run(cmd, capture_output=True, text=True):
+    def fake_run(cmd, **_kwargs):
         is_create = cmd[:3] == ["hf", "buckets", "create"]
 
         class R:
@@ -442,7 +442,7 @@ def test_sync_to_bucket_delete_flag_forwarded(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_run(cmd, capture_output=True, text=True):
+    def fake_run(cmd, **_kwargs):
         calls.append(cmd)
 
         class R:

@@ -64,6 +64,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.tools.reachy import envelope_error
 from strands_robots.utils import finite_number_error, tcp_port_error
 
@@ -342,7 +343,7 @@ class ReachyDriver:
             }
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             # Report the halt outcome rather than assert one.  ``stop`` is the
             # protocol's shutdown hook and returns ``None``: a daemon that
             # refuses the stop is logged and swallowed, so an envelope built
@@ -351,6 +352,8 @@ class ReachyDriver:
             # ``/api/move/stop`` and already decides the verdict, so the verb
             # returns that envelope rather than re-deriving one.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

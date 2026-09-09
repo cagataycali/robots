@@ -4,7 +4,7 @@ The engine-independent recording lifecycle (``stop_recording`` /
 ``save_episode`` / ``get_recording_status`` / ``stream_dataset`` and the
 ``_is_recording`` / ``_active_recorder`` / ``_active_dataset_root`` overrides)
 lives in :class:`~strands_robots.simulation.recording.DatasetRecordingMixin`,
-which is backend-agnostic. This subclass adds the two Newton-specific halves:
+which is backend-agnostic. This subclass adds the Newton-specific parts:
 
 * :meth:`start_recording` declares the dataset schema from the live Newton
   scene - joint names from every robot (namespaced for multi-robot scenes) and
@@ -13,6 +13,10 @@ which is backend-agnostic. This subclass adds the two Newton-specific halves:
   :class:`~strands_robots.simulation.base.SimEngine` run-policy loop calls every
   control step. It feeds joint state + action + rendered camera frames to the
   active :class:`~strands_robots.dataset_recorder.DatasetRecorder`.
+* :meth:`_release_run_policy_hook` lowers the ``policy_running`` flag the hook
+  builder raised, when the rollout that hook served ends. The claim and its
+  release are one contract, and only the shared facade knows where the rollout
+  ends, so it calls this in a ``finally`` around every rollout it drives.
 
 The recorder, episode-boundary flushing (``save_episode``), and the canonical
 parquet-correctness contract are identical to the MuJoCo backend - the
@@ -152,7 +156,9 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 ``run_policy(dataset_cameras=...)`` behaves identically on both
                 engines. Names may be given in either the raw camera name or the
                 schema-safe form (``/`` collapsed to ``__``); an unknown name
-                fails loudly, listing the available cameras. Two scene cameras whose
+                fails loudly, listing the available cameras, and is refused before any dataset is
+                created, resumed or wiped, so a typo costs nothing even under
+                ``overwrite=True``. Two scene cameras whose
                 names collapse onto one dataset column (``arm0/wrist`` and
                 ``arm0__wrist``) are refused before any dataset is created,
                 because the column would be named after whichever of them lost
@@ -272,12 +278,6 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         world._backend_state["last_dataset_root"] = str(dataset_dir)
 
         try:
-            # Resolve create-vs-resume and make the target safe for create():
-            # resume an existing dataset, clear a pre-existing EMPTY root (e.g.
-            # tempfile.mkdtemp()) so create() does not dead-end on FileExistsError,
-            # and wipe on overwrite. See DatasetRecordingMixin._prepare_dataset_target.
-            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
-
             (
                 joint_names,
                 action_names,
@@ -362,6 +362,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
 
             world._backend_state["recording_cameras"] = recording_cameras
+
+            # Create-vs-resume, and the wipe it can perform, are deferred to here
+            # rather than opened with. ``overwrite=True`` deletes the dataset being
+            # replaced, so every refusal this method can still make is made above it:
+            # the camera scoping just above used to sit behind this line, and a single
+            # unknown name in ``cameras=`` refused the call after the existing dataset
+            # had already been removed - the refusal's own remedy ("Add them with
+            # add_camera(...) ... or omit cameras=") asks for a retry against the data
+            # that same call destroyed. Nothing between the target resolution above and
+            # this line reads or writes the dataset directory (the schema is read from
+            # the scene), so the success path is unchanged. Resume an existing dataset,
+            # clear a pre-existing EMPTY root (e.g. tempfile.mkdtemp()) so create() does
+            # not dead-end on FileExistsError, and wipe on overwrite - the four outcomes
+            # of DatasetRecordingMixin._prepare_dataset_target. This is the ordering
+            # camera_schema_key_collision_error already establishes for the scene-level
+            # collision, applied to the last refusal that still followed the wipe.
+            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             if resume_existing:
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
@@ -559,3 +576,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 )
 
         return _hook
+
+    def _release_run_policy_hook(self, robot_name: str) -> None:
+        """Lower the ``policy_running`` flag :meth:`_make_run_policy_hook` raised.
+
+        Nothing lowered it, so a recorded rollout left the robot marked as
+        driven for the rest of the session. On this backend the flag is what
+        :meth:`~strands_robots.simulation.models.SimRobot.request_policy_stop`
+        reports as ``was_running``, and that answer is the whole verdict of the
+        stop paths that reach a backend exposing no ``stop_policy`` - the
+        Device Connect ``stop`` RPC among them - so an idle simulation reported
+        a halted rollout that had finished on its own.
+
+        Args:
+            robot_name: The robot whose rollout has ended. A robot removed
+                mid-rollout, or a world torn down under it, has nothing to
+                release.
+        """
+        world = self._world
+        if world is not None and registered(world.robots, robot_name):
+            world.robots[robot_name].policy_running = False

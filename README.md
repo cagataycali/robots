@@ -505,6 +505,11 @@ metadata:
                   asset_dir="~/robots/my_arm", joints=7, category="arm")
    ```
 
+   `model_xml` and `scene_xml` name a file *inside* `asset_dir` - that is how
+   every reader joins them back - so a value that leaves it (absolute, or `../`)
+   is refused at registration rather than validated against a file the loader
+   will not open.
+
 ## Tools reference
 
 Import any of these and pass to `Agent(tools=[...])`. Each is a Strands
@@ -1154,6 +1159,9 @@ touches ROS 2.
 | `STRANDS_ROBOTS_VIDEO_ROOT` | Opt-in sandbox for video/recording output paths (`run_policy(video=...)`, `start_cameras_recording`). Unset = absolute paths allowed (historic contract); set to confine writes | unset |
 | `STRANDS_ROBOTS_VIDEO_ALLOW_ABS` | Set `1` to re-permit absolute paths when `STRANDS_ROBOTS_VIDEO_ROOT` is set | unset |
 | `STRANDS_TRUST_REMOTE_CODE` | Set `1` to allow HF `trust_remote_code` for `lerobot_local` | unset |
+| `STRANDS_TRAIN_EXTRA_FLAGS_ALLOW` | Comma-separated `lerobot_train` `extra_flags` names pre-approved past the operator gate on the flags that control output paths, telemetry and code loading (`output_dir`, `config_path`, `wandb.enable` / `.project` / `.entity` / `.api_key`, `dataset.root`, `policy.pretrained_path`, `push_to_hub`, `policy.push_to_hub`, `hub_repo_id`). An entry names the blocked flag, so it also clears every argparse abbreviation of it (`ou` for `output_dir`); the two `push_to_hub` spellings are separate flags and one entry clears one of them. A blocked flag no entry names prompts the operator, and is refused where no operator can be prompted - this variable is the headless remedy that refusal names. `BYPASS_TOOL_CONSENT=true` waives the gate for every flag with a WARNING | unset (every blocked flag prompts) |
+| `STRANDS_TRAIN_RDZV_TIMEOUT_S` | Seconds a multi-GPU training launch (`num_gpus > 1` on `LerobotTrainer`, `GrootTrainer` or `Cosmos3Trainer`) may spend in torch's elastic rendezvous before it fails rather than waiting. Handed to torch, whose own defaults are minutes long and spent inside C++ socket code no Python timeout can reach. Junk, zero, negative or non-finite values fall back to the default rather than restoring the unbounded wait | `120` |
+| `STRANDS_TRAIN_LOCAL_ADDR` | Address a multi-GPU training launch publishes as `MASTER_ADDR`. Unset, a single-node launch is pinned to `127.0.0.1` and a multi-node one keeps torch's `getfqdn()` resolution. Set it when a multi-node host's name resolves to a reverse-DNS pointer (`*.in-addr.arpa` / `*.ip6.arpa`), which no peer can dial - the launch warns naming this variable rather than hanging on "Rendezvous'ing worker group" | unset |
 | `STRANDS_ROBOTS_NO_DYLD_SHIM` | Set `1` to disable the macOS auto-fix that puts Homebrew ffmpeg on the dyld path for torchcodec video streaming (see [Recording & streaming datasets](#recording--streaming-datasets)) | unset |
 | `MUJOCO_GL` | MuJoCo GL backend (`egl`, `osmesa`, `glfw`) | auto |
 | `STRANDS_ISAAC_HEADLESS` | Isaac Sim backend: run without a GUI. On (`1`/`true`/`yes`/`on`) = headless, off (`0`/`false`/`no`/`off`) = windowed, any other spelling is refused. Overrides `IsaacConfig(headless=...)` ([#2062](https://github.com/strands-labs/robots/issues/2062)) | unset (config default `true`) |
@@ -1180,6 +1188,13 @@ touches ROS 2.
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
 | `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
+| `STRANDS_MESH_FILTER_INTERFACES` | Comma-separated network interface names (e.g. `eth0,wlan0`) the per-message size caps (`low_pass_filter`) are bound to. Unset or blank binds the caps to every link (Zenoh's wildcard), which is the safe default: an enumerated list that misses a NIC exempts that NIC from the cap | unset (all interfaces) |
+| `STRANDS_MESH_MAX_CMD_BYTES` | Per-message byte cap on `cmd` / `broadcast` topics, applied at the transport (an over-cap message is dropped before the JSON parser runs) and pre-checked by `Mesh.send` so the sender fails loudly instead. Integer in `[128, 16777216]`; a value outside it, or not an integer, raises at session build naming the variable | `16384` (16 KiB) |
+| `STRANDS_MESH_MAX_CAMERA_BYTES` | Per-message byte cap on `camera` topics, ingress only. Integer in `[1024, 134217728]`; out of range or non-integer raises | `1048576` (1 MiB) |
+| `STRANDS_MESH_MAX_SAFETY_BYTES` | Per-message byte cap on `safety/*` topics, both flows. Integer in `[128, 1048576]`; out of range or non-integer raises | `4096` (4 KiB) |
+| `STRANDS_MESH_CMD_RATE_HZ` | Transport-level rate cap on inbound `cmd` publishes per peer; faster publishes are dropped before parsing, so a flood costs the receiver almost nothing. Finite float in `[0.001, 10000]`; `nan`/`inf` or out of range raises rather than disabling the cap | `20.0` |
+| `STRANDS_MESH_SAFETY_RATE_HZ` | The same cap for `safety/*` publishes, kept lower so a peer holding any fleet cert cannot flood `safety/estop` with novel timestamps past the replay cache. Finite float in `[0.001, 1000]` | `2.0` |
+| `STRANDS_MESH_MAX_SESSIONS` | Zenoh `transport/unicast/max_sessions`: how many peers one session accepts. Integer in `[1, 65535]` | `256` |
 | `STRANDS_MESH_NAMESPACE` | Fleet namespace prefix on every mesh key-expression. The Zenoh `namespace` config field provides routing isolation -- two fleets with different namespaces cannot exchange messages even when their key-expressions collide, so this is the knob that keeps a co-located test fleet from receiving a production fleet's commands. Must match on every peer of one fleet; a mismatch is silent (peers connect at the transport layer and exchange no application traffic). Empty / whitespace values fall back to the default so `STRANDS_MESH_NAMESPACE=""` cannot accidentally produce keys like `"//presence"` | `strands` |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `STRANDS_MESH_AUDIT_PSK` | Pre-shared key that keys the per-record HMAC in the audit log. When set, `verify_audit_integrity` refuses a record whose HMAC does not match and refuses the whole log if the PSK changes mid-run; when unset, the `sig` field is absent and a writer with directory access can edit records without failing the check. Set on every peer that writes to the same directory | unset |
@@ -1187,6 +1202,8 @@ touches ROS 2.
 | `STRANDS_MESH_AUDIT_MAX_FILES` | Number of rotated `mesh_audit.jsonl.N` files kept alongside the active file. Older rotations are deleted as new ones arrive; total disk use is bounded by `_MAX_BYTES × _MAX_FILES`. Same clamping/warning behaviour as `_MAX_BYTES`; hard upper cap 100 | `5` |
 | `STRANDS_MESH_CA_PINS` | Additional SHA-256 CA pins (comma-separated 64-char hex) | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Skip CA pin check on download path (break-glass) | `false` |
+| `STRANDS_MESH_CAMERA_S3_BUCKET` | S3 bucket that turns the camera offload on under the `iot` / `bridge` backends: frames are uploaded there and the mesh publishes a presigned URL instead of inline JPEG bytes. Unset leaves camera publishing inline (Zenoh) and logs `offload off` at DEBUG | unset (offload off) |
+| `STRANDS_MESH_CAMERA_S3_PREFIX` | Key prefix inside `STRANDS_MESH_CAMERA_S3_BUCKET`; surrounding `/` are stripped | unset (bucket root) |
 | `STRANDS_MESH_CAMERA_PRESIGN_TTL` | TTL (s) for S3 presigned camera URLs; capped at 3600 | `60` |
 | `STRANDS_MESH_ACL_FILE` | Path to a JSON5 Zenoh ACL file; unset = permissive default. See `examples/mesh/mesh_acl_example.json5` (role-scoped) and `examples/mesh/mesh_acl_strict_per_peer.json5` (per-peer). **⚠️ Required on any WAN/cloud router: mTLS gives identity, not least-privilege — without a topic-level ACL one device cert can read all fleet traffic and command any robot. See [security docs](docs/security.md#production-posture-required-off-trusted-networks).** | unset |
 | `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` | Acknowledgement token with **three** distinct effects, all of them widening the mesh posture — set on a production fleet at your peril. (1) A `STRANDS_MESH_ACL_FILE` with `default_permission: "allow"` **and** one or more `rules` is refused at load by `_acl_config._load_acl_file` with `PermissiveACLError` unless this variable is set to `1`/`true`/`yes` — the allow + rules shape is a blacklist policy where any gap in the rule set exposes the mesh, and the refusal exists so it is not shipped by copy-paste from a lab template. (2) When `STRANDS_MESH_AUTH_MODE=mtls` **and** the resolved ACL is permissive-by-shape (built-in default *or* operator file with `allow` + no rules), `Mesh.start`'s refuse-to-start gate downgrades from `ERROR` refusal to an `INFO` acknowledgement — the token is the opt-in that lets the wire come up under the built-in permissive default. (3) The per-session-open `WARNING` that fires when the built-in permissive default is in use is suppressed — session and start emit one line each about the same posture, so silencing the WARNING here avoids contradicting the operator's explicit opt-in on every session open. Set to `1`/`true`/`yes` (case-insensitive, whitespace-stripped) to accept all three. The acknowledgement does not narrow the ACL; it records that an operator has accepted a wire-open posture. | unset (refuses blacklist ACL, refuses to start under built-in permissive default, warns on every session open) |
@@ -1201,6 +1218,7 @@ touches ROS 2.
 | `STRANDS_TELEOP_SLEW_ABS` | Per-joint speed bound for the local `teleoperate()` loop, in frame units per second (default accommodates degree-valued and range-0-100 devices; cannot be disabled) | `500.0` |
 | `STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, `_ODOM_HZ`, `_HEALTH_HZ`, `_LIDAR_SUMMARY_HZ`, `_HAND_HZ`, `_MAP_INFO_HZ` | Per-topic sensor publish rate; `0` (or any non-positive value) switches that topic off. A value the loop cannot pace itself with keeps the built-in rate | per topic: `10`/`10`/`10`/`0.5`/`5`/`50`/`0.2` |
 | `STRANDS_MESH_CAMERA_HZ` | Camera publish rate; opt-in because frames are large. Unset, non-positive, or unusable leaves camera publishing off | `0` (off) |
+| `STRANDS_MESH_CAMERA_DISABLED` | Privacy kill switch for the camera publisher: `true`/`1`/`yes`/`on` publishes no frames at all (nothing built, signed or sent) whatever `STRANDS_MESH_CAMERA_HZ` says; `false`/`0`/`no`/`off` leaves it to the rate. Any other spelling raises rather than silently re-enabling a privacy flag | unset (cameras follow the rate) |
 | `STRANDS_MESH_STREAM_HZ` | Per-step task telemetry rate while a robot or a rollout is executing. Non-positive or unusable -- unparsable, or non-finite like `inf`/`nan` -- switches step publishing off rather than changing the rate, so an unreadable value cannot remove the throttle | `10` |
 | `STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S` | How long a robot-less `robot_mesh` gateway waits once at bring-up for presence to populate before the first `peers` read. `0` means do not wait; a value no sleep can honor -- unparsable, negative, or non-finite -- falls back to the default | `3` |
 | `STRANDS_MESH_MAX_PEERS` | Peer registry cap; evicts oldest on overflow | `1024` |
@@ -1212,10 +1230,14 @@ touches ROS 2.
 | `STRANDS_MESH_INPUT_AUDIT_EVERY` | Emit `input_stream_applied` audit event every N frames (0 = off) | `100` |
 | `STRANDS_ESTOP_DEDUP_TTL_S` | E-stop fan-out Lambda dedup window (seconds) | `30` |
 | `STRANDS_MESH_DEDUP_TTL` | Window (seconds) the Zenoh<->IoT bridge remembers a delivered `(sender_id, turn_id, command)` triple for cross-transport deduplication. Unparsable, non-positive or non-finite falls back to the default, so a legitimately recurring heartbeat is forgotten again | `120` |
+| `STRANDS_MESH_BRIDGE_DEDUP_STRICT` | `1`/`true`/`yes` makes the Zenoh<->IoT bridge dedup a sample that carries no `(sender_id, turn_id, command)` triple by hashing its whole payload, so a heartbeat-style message arriving on both transports is delivered once. Off delivers such samples as-is. Read once at bridge construction; any other spelling warns and stays off | `0` (off) |
 | `STRANDS_MESH_BRIDGE_TOPICS` | Comma-separated topic suffixes the Zenoh<->IoT bridge forwards (exact match). Unset = the safe default set (`presence,health,safety/event,safety/estop,safety/resume,cmd,response,broadcast`). High-volume topics (`state,pose,imu,odom,lidar`) and LAN-only topics (`camera,input,hand`) are deliberately NOT bridged | default set |
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated topic suffixes the bridge matches as a path **prefix** (so `response` matches `response/<turn-id>`). Extend this (not `STRANDS_MESH_BRIDGE_TOPICS`) when adding an RPC-shape topic with a per-turn tail | `response` |
 | `STRANDS_GR00T_IMAGE` | Container image the `gr00t_inference` tool runs (must pass the image allowlist; agent cannot choose it) | `gr00t:latest` |
 | `STRANDS_GR00T_IMAGE_ALLOW` | Extra image-name patterns (trailing `*` = tag wildcard) added to the built-in allowlist (`gr00t:*`, `nvcr.io/nvidia/isaac-gr00t:*`) | built-in only |
+| `STRANDS_GR00T_REPO_URL` | Git URL `gr00t_inference(action="build_image")` clones Isaac-GR00T from. Operator-only (not a tool parameter); must exact-match the repo-URL allowlist or the build fails closed | `https://github.com/NVIDIA/Isaac-GR00T` |
+| `STRANDS_GR00T_REPO_TAG` | Git ref (tag or branch) checked out from `STRANDS_GR00T_REPO_URL`. Letters, digits and `._/-` only, no leading `-`, so the value can never be read as a `git` option | `n1.7-release` |
+| `STRANDS_GR00T_REPO_URL_ALLOW` | Comma-separated extra clone URLs added to the built-in allowlist (the canonical repo, with and without `.git`). Each entry is exact-matched, never a wildcard, so a look-alike repo cannot slip past. See [security docs](docs/security.md) | built-in only |
 | `STRANDS_GR00T_SERVER_SEED` | Default seed the GR00T determinism wrapper applies at server start and on seedless `reset` calls (used with `gr00t_inference(..., deterministic=True)`; forwarded into the container) | `42` |
 | `STRANDS_GR00T_STRICT_DETERMINISTIC` | `1` makes the determinism wrapper additionally enable `torch.use_deterministic_algorithms(True, warn_only=True)` (slower kernels, strictest reproducibility; forwarded into the container). Best-effort: an op with no deterministic kernel makes torch refuse, degrading the server to non-strict rather than killing it, and the startup banner reports `strict=` as the mode the server ended up in | `0` |
 
@@ -1239,6 +1261,7 @@ other spelling is refused. See
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL (when `nucleus_url` is not passed) | unset (Isaac defaults) |
 | `STRANDS_ISAAC_HEADLESS` | On forces headless; off forces a window | unset (uses `headless` kwarg) |
 | `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
+| `STRANDS_ISAAC_CAMERA_WARMUP_STEPS` | Render-bearing world steps `add_camera` takes before returning, so a new RTX camera's first `get_rgba()` is a real frame rather than the empty buffer the pipeline returns until it has been stepped. Raise on a slow GPU. Positive integer; anything else falls back to the default | `10` |
 
 </details>
 
@@ -1248,6 +1271,7 @@ other spelling is refused. See
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Directory to dump pre/post inference payloads to, e.g. `/tmp/groot-wire`, to verify LOCAL vs SERVICE parity | unset / `10` |
+| `STRANDS_ROBOTS_VERBOSE_MUJOCO` | `1`/`true`/`yes` lets MuJoCo's attach-conflict chatter (`timestep: parent has 0.002, child has 0.005, keeping parent value` and its siblings, emitted on every `add_robot` / world build) reach stderr instead of being captured. Captured lines are re-emitted at DEBUG with a count; every other stderr line is forwarded unchanged either way | unset (captured) |
 
 </details>
 

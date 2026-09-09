@@ -41,6 +41,7 @@ def _require_vera_installed(python_executable: str) -> None:
         [python_executable, "-c", "import vera"],
         capture_output=True,
         text=True,
+        errors="replace",
     )
     if probe.returncode != 0:
         raise ImportError(
@@ -60,11 +61,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Seconds one ``docker`` *query* may take to answer. A query asks the daemon
+# something (is this container listed, what did it log); it is not the container
+# doing work, so it either answers in well under a second or the daemon is not
+# answering at all - a wedged containerd or GPU runtime shim is the usual cause
+# on the hosts this server runs on, and the container it manages can keep
+# running through it. ``_tail_logs`` and ``stop`` already bound their queries;
+# this names the bound so the readiness wait can share it. The ``docker run``
+# that launches the container is deliberately NOT a query: it may pull the
+# image, which is legitimately long, and it happens before any readiness
+# budget starts.
+_DOCKER_QUERY_TIMEOUT = 10.0
+
 
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     """True if a TCP connection to ``host:port`` succeeds (server is listening)."""
-    # 0.0.0.0 is a bind address, not connectable - probe loopback instead.
-    probe_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
+    # 0.0.0.0 is a bind address, not connectable - probe loopback instead. The
+    # empty string used to be mapped here too, and that arm is what let a host a
+    # URI cannot carry be reported as ready; ``VeraConfig`` now refuses it at
+    # construction, naming 0.0.0.0 as the spelling that binds every interface.
+    probe_host = "127.0.0.1" if host == "0.0.0.0" else host
     try:
         with socket.create_connection((probe_host, port), timeout=timeout):
             return True
@@ -150,6 +166,7 @@ class VeraServerRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             bufsize=1,
             env=env,
         )
@@ -173,7 +190,15 @@ class VeraServerRunner:
     def _wait_until_ready(self) -> None:
         """Poll the websocket port until ready, or raise on timeout / early exit."""
         cfg = self.config
-        deadline = time.monotonic() + cfg.server_ready_timeout
+        # ``VeraConfig.__post_init__`` resolves the budget (keyword, else
+        # ``VERA_SERVER_READY_TIMEOUT``, else the default), holds it to the shared
+        # positive-finite-seconds domain and normalizes it to a plain ``float``,
+        # so there is nothing left to coerce or to fall back to here. An ``inf``
+        # used to make this loop unable to end and a ``nan`` used to make it
+        # unable to begin.
+        timeout = cfg.server_ready_timeout
+        assert timeout is not None  # guaranteed by VeraConfig.__post_init__
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
                 code = self._proc.returncode
@@ -189,7 +214,7 @@ class VeraServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA server did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
+            f"within {timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT if needed)."
         )
 
@@ -258,14 +283,35 @@ class DockerServerRunner:
         return self.config.docker_container_name or f"vera-server-{self.config.embodiment}"
 
     def _container_running(self) -> bool:
+        """True while the daemon lists the named container as running.
+
+        Raises:
+            RuntimeError: if the daemon does not answer within
+                :data:`_DOCKER_QUERY_TIMEOUT`. Whether the container is running
+                is then unknown, and ``False`` would be an answer this call did
+                not get: it is the one the readiness wait reports as "exited
+                before becoming ready", naming a cause that may not have
+                happened.
+        """
         import subprocess
 
         name = self._container_name()
-        out = subprocess.run(  # noqa: S603 - list args, no shell
-            [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            out = subprocess.run(  # noqa: S603 - list args, no shell
+                [self._docker(), "ps", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=_DOCKER_QUERY_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"docker did not answer 'ps' for container {name} within "
+                f"{_DOCKER_QUERY_TIMEOUT:.0f}s, so whether it is running is unknown. "
+                "The daemon is unresponsive - check 'docker info' and the docker "
+                "service; a wedged container runtime shim does not stop the "
+                "container, only the daemon's answers about it."
+            ) from e
         return name in out.stdout.split()
 
     def _build_run_command(self) -> list[str]:
@@ -318,8 +364,19 @@ class DockerServerRunner:
             cmd += ["-e", f"VERA_TRACKER_BACKEND={cfg.tracker_backend}"]
         if cfg.sample_steps is not None:
             cmd += ["-e", f"VERA_SAMPLE_STEPS={cfg.sample_steps}"]
+        # The teacache pair is forwarded as one either/or, mirroring the
+        # subprocess argv above, because that is the shape the server takes: a
+        # threshold is meaningless once the cache is off. Only the "off" half
+        # used to be carried, so the threshold - a bare float, the most
+        # trivially forwardable value on the config, needing none of the
+        # host->container path translation that keeps `algo_config` off this
+        # list - reached the server in one launch mode and not the other. The
+        # entrypoint turns the variable back into `--teacache-thresh`; an `-e`
+        # nothing in the container reads would have been inert.
         if not cfg.teacache:
             cmd += ["-e", "VERA_NO_TEACACHE=1"]
+        else:
+            cmd += ["-e", f"VERA_TEACACHE_THRESH={cfg.teacache_thresh}"]
         if cfg.docker_extra_args:
             cmd += list(cfg.docker_extra_args)
         cmd += [cfg.docker_image]
@@ -328,7 +385,16 @@ class DockerServerRunner:
     # -- lifecycle ----------------------------------------------------------
 
     def is_running(self) -> bool:
-        """Return True while the server container is running."""
+        """Return True while the server container is running.
+
+        Raises:
+            RuntimeError: if the ``docker`` daemon does not answer the query
+                within :data:`_DOCKER_QUERY_TIMEOUT` (see
+                :meth:`_container_running`). The subprocess runner's
+                :meth:`VeraServerRunner.is_running` reads ``Popen.poll()`` and
+                cannot block; this one asks another process, so it can only
+                report an answer it actually got.
+        """
         return self._container_running()
 
     def start(self) -> None:
@@ -345,7 +411,7 @@ class DockerServerRunner:
         else:
             cmd = self._build_run_command()
             logger.info("starting VERA container: %s", " ".join(cmd))
-            res = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603 - list args
+            res = subprocess.run(cmd, capture_output=True, text=True, errors="replace")  # noqa: S603 - list args
             if res.returncode != 0:
                 raise RuntimeError(f"failed to start VERA container (exit {res.returncode}):\n{res.stderr.strip()}")
             self._started_container = True
@@ -356,13 +422,28 @@ class DockerServerRunner:
     def _wait_until_ready(self) -> None:
         """Poll the websocket port until ready, or raise on timeout / container exit."""
         cfg = self.config
-        deadline = time.monotonic() + cfg.server_ready_timeout
+        # Same guarantee as the subprocess runner's wait above: the budget is
+        # already resolved and checked on the config.
+        timeout = cfg.server_ready_timeout
+        assert timeout is not None  # guaranteed by VeraConfig.__post_init__
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self._started_container and not self._container_running():
-                logs = self._tail_logs()
-                raise RuntimeError(
-                    f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
-                )
+            if self._started_container:
+                try:
+                    alive = self._container_running()
+                except RuntimeError:
+                    # The daemon stopped answering. Both blocking calls in this
+                    # loop body are bounded so the deadline above is reached and
+                    # not merely written, and giving up here tears down the
+                    # container this runner launched for the same reason the
+                    # timeout below does.
+                    self.stop()
+                    raise
+                if not alive:
+                    logs = self._tail_logs()
+                    raise RuntimeError(
+                        f"VERA container {self._container_name()} exited before becoming ready. Last logs:\n{logs}"
+                    )
             if _port_open(cfg.host, int(cfg.server_port or 0)):
                 logger.info("VERA server ready on %s:%s", cfg.host, cfg.server_port)
                 return
@@ -370,7 +451,7 @@ class DockerServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA container did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
+            f"within {timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT)."
         )
 
@@ -382,7 +463,8 @@ class DockerServerRunner:
                 [self._docker(), "logs", "--tail", str(lines), self._container_name()],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                errors="replace",
+                timeout=_DOCKER_QUERY_TIMEOUT,
             )
             return (out.stdout + out.stderr).strip()
         except Exception as e:  # noqa: BLE001
@@ -397,7 +479,7 @@ class DockerServerRunner:
         name = self._container_name()
         try:
             subprocess.run(  # noqa: S603 - list args
-                [self._docker(), "stop", name], capture_output=True, text=True, timeout=30
+                [self._docker(), "stop", name], capture_output=True, text=True, errors="replace", timeout=30
             )
             logger.info("VERA container %s stopped", name)
         except Exception as e:  # noqa: BLE001

@@ -1,4 +1,4 @@
-"""``StreamingDatasetReader.open`` refuses a numeric knob it cannot honor.
+"""``StreamingDatasetReader.open`` refuses a knob it cannot honor.
 
 ``open`` forwards ``tolerance_s`` / ``buffer_size`` / ``max_num_shards`` /
 ``seed`` into ``StreamingLeRobotDataset``, whose constructor validates only
@@ -7,6 +7,14 @@ downstream of the call that returned successfully, so an unusable value used to
 surface - when it surfaced at all - as a NumPy error part-way through iteration,
 a shard count that streamed nothing, or a grid check that answered the same way
 for every input.
+
+The five boolean flags in the same signature are here for the same reason and
+refused by the same rule the recording postures on the write side already use.
+Read by truthiness, each landed on the branch the caller was opting *out* of:
+every non-empty string is truthy, so ``"false"`` selected *on*, and a falsy
+non-boolean such as ``0`` or ``None`` selected *off* without being a declared
+spelling of it. Two of the five steer ``open`` itself rather than only reaching
+lerobot, which is why they are decided before anything reads them.
 
 The premise tests here measure each consumer directly rather than asserting it
 in prose, so the reason a value is refused stays true against the installed
@@ -30,6 +38,21 @@ import strands_robots.streaming_dataset as sd
 UNUSABLE_TOLERANCES = [-1.0, -1e-9, float("nan"), float("inf"), float("-inf"), True, "1e-4", None, [1e-4]]
 UNUSABLE_COUNTS = [0, -1, -16, 2.7, float("nan"), float("inf"), True, False, "8", None, [8]]
 UNUSABLE_SEEDS = [-1, -42, 2.7, float("nan"), float("inf"), True, False, "42", None, [7]]
+
+# Spellings of a flag no reader of it can honor. The strings are the ones an
+# operator or a config file reaches for when opting OUT, and every one of them
+# is truthy; the rest take the other branch while never being a spelling of it.
+UNUSABLE_FLAGS = ["false", "no", "off", "0", "true", 0, 1, 2.0, float("nan"), None, [], "False"]
+
+# The flags, and for each one a call that would act on it, so a refusal is
+# measured where the value was consumed rather than only where it was named.
+FLAG_CALLS: dict[str, dict[str, Any]] = {
+    "streaming": {},
+    "shuffle": {},
+    "return_uint8": {},
+    "validate_deltas": {"delta_timestamps": {"observation.state": [0.0]}},
+    "drop_videos": {"delta_timestamps": {"observation.state": [0.0], "observation.images.front": [0.0]}},
+}
 
 # Accepted values, one per knob, that must keep reaching the constructor. Annotated
 # because the lists are deliberately heterogeneous - a NumPy scalar tolerance has to
@@ -78,8 +101,30 @@ def lerobot_import_is_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _open(**kwargs: Any) -> Any:
-    """Call ``open`` with a splat so a deliberately off-type value type-checks."""
-    return sd.StreamingDatasetReader.open("org/ds", validate_deltas=False, **kwargs)
+    """Call ``open`` with a splat so a deliberately off-type value type-checks.
+
+    ``validate_deltas=False`` keeps the grid check out of the cases that are not
+    about it, and stays overridable by the ones that are.
+    """
+    return sd.StreamingDatasetReader.open("org/ds", **{"validate_deltas": False, **kwargs})
+
+
+def _open_node() -> Any:
+    """The AST of ``StreamingDatasetReader.open``, for the pairing guards.
+
+    Both tables below are checked against the same signature, so they read it
+    through one reader rather than two that could disagree about what a
+    parameter is.
+    """
+    import ast
+    import inspect
+    import pathlib
+
+    tree = ast.parse(pathlib.Path(inspect.getfile(sd)).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "open":
+            return node
+    raise AssertionError("StreamingDatasetReader.open not found")
 
 
 class TestTheNumericKnobsAreRefusedBeforeTheImport:
@@ -203,18 +248,6 @@ class TestEveryNumericParameterOfOpenHasADomain:
     """
 
     @staticmethod
-    def _open_node() -> Any:
-        import ast
-        import inspect
-        import pathlib
-
-        tree = ast.parse(pathlib.Path(inspect.getfile(sd)).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == "open":
-                return node
-        raise AssertionError("StreamingDatasetReader.open not found")
-
-    @staticmethod
     def _numeric_params(node: Any) -> set[str]:
         import ast
 
@@ -226,7 +259,7 @@ class TestEveryNumericParameterOfOpenHasADomain:
 
     def test_the_signature_declares_exactly_the_four_numeric_knobs(self) -> None:
         """Non-vacuity: a scanner finding nothing would pass every test below."""
-        assert self._numeric_params(self._open_node()) == {
+        assert self._numeric_params(_open_node()) == {
             "tolerance_s",
             "buffer_size",
             "max_num_shards",
@@ -234,13 +267,13 @@ class TestEveryNumericParameterOfOpenHasADomain:
         }
 
     def test_the_domain_table_covers_every_numeric_parameter(self) -> None:
-        assert set(sd._NUMERIC_DOMAINS) == self._numeric_params(self._open_node())
+        assert set(sd._NUMERIC_DOMAINS) == self._numeric_params(_open_node())
 
     def test_the_checked_values_are_the_parameters_themselves(self) -> None:
         """The mapping ``open`` builds must read each knob, not a stale copy."""
         import ast
 
-        node = self._open_node()
+        node = _open_node()
         for stmt in ast.walk(node):
             if (
                 isinstance(stmt, ast.Assign)
@@ -260,10 +293,150 @@ class TestEveryNumericParameterOfOpenHasADomain:
         """The scanner must fail for the shape it exists to catch."""
         import ast
 
-        node = self._open_node()
+        node = _open_node()
         planted = ast.arg(arg="prefetch_depth", annotation=ast.Name(id="int"))
         node.args.kwonlyargs.append(planted)
         assert self._numeric_params(node) - set(sd._NUMERIC_DOMAINS) == {"prefetch_depth"}
+
+
+class TestAFlagIsRefusedUnlessItIsABoolean:
+    """A posture is checked, not parsed - so no spelling of it can invert."""
+
+    @pytest.mark.parametrize("flag", sorted(FLAG_CALLS), ids=str)
+    @pytest.mark.parametrize("value", UNUSABLE_FLAGS, ids=repr)
+    def test_a_non_boolean_flag_is_refused_before_the_import(
+        self, flag: str, value: Any, lerobot_import_is_fatal: None
+    ) -> None:
+        with pytest.raises(ValueError, match=flag):
+            _open(**{flag: value, **FLAG_CALLS[flag]})
+
+    def test_the_message_names_the_surface_the_flag_and_the_value_supplied(self, lerobot_import_is_fatal: None) -> None:
+        """``drop_videos="false"`` used to be reported as ``drop_videos=True``.
+
+        The old refusal was reachable only by a caller who had spelled *off*,
+        and it named the opposite value together with a remedy - pass proprio
+        deltas - that leads to the silent proprio-only stream rather than away
+        from it.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            _open(drop_videos="false", delta_timestamps={"observation.state": [0.0]})
+        text = str(excinfo.value)
+        assert text.startswith("open: drop_videos must be a boolean"), text
+        assert "'false'" in text, text
+        assert "drop_videos=True" not in text, text
+
+
+class TestTheTwoFlagsThatSteerOpenItself:
+    """``drop_videos`` rewrites ``delta_timestamps``; ``validate_deltas`` gates the check.
+
+    The refusals above are measured ahead of the lerobot import. These two are
+    measured with the constructor and lerobot's own grid check reachable,
+    because that is where the effect they used to have was: the deltas the
+    caller asked for arriving stripped of their camera keys, and an off-grid
+    ``delta_timestamps`` opening because a falsy ``0`` read as *skip*.
+    """
+
+    OFF_GRID = {"observation.state": [0.0, 0.017]}  # the 30fps grid is 1/30
+
+    def test_a_non_boolean_validate_deltas_does_not_switch_the_grid_check_off(
+        self, fake_lerobot: type[_FakeStreaming]
+    ) -> None:
+        """``0`` is falsy, and skipping is not a posture it is a spelling of."""
+        pytest.importorskip("lerobot.datasets.feature_utils")
+        with pytest.raises(ValueError, match="validate_deltas"):
+            _open(validate_deltas=0, delta_timestamps=dict(self.OFF_GRID))
+
+    def test_the_boolean_check_still_refuses_the_off_grid_delta(self, fake_lerobot: type[_FakeStreaming]) -> None:
+        """Non-vacuity: ``True`` reaches lerobot's check, which does refuse."""
+        pytest.importorskip("lerobot.datasets.feature_utils")
+        with pytest.raises(ValueError, match="tolerance"):
+            _open(validate_deltas=True, delta_timestamps=dict(self.OFF_GRID))
+
+    def test_the_boolean_opt_out_still_forwards_the_camera_keys(self, fake_lerobot: type[_FakeStreaming]) -> None:
+        """The guard is additive: ``False`` keeps the video the caller asked for."""
+        reader = _open(drop_videos=False, delta_timestamps=dict(FLAG_CALLS["drop_videos"]["delta_timestamps"]))
+        assert "observation.images.front" in reader.dataset.kw["delta_timestamps"]
+
+
+class TestAUsableFlagStillReachesTheConstructor:
+    """The guard is additive: a real boolean is forwarded unchanged."""
+
+    @pytest.mark.parametrize("value", [True, False, np.bool_(True), np.bool_(False)], ids=repr)
+    @pytest.mark.parametrize("flag", ["streaming", "shuffle", "return_uint8"], ids=str)
+    def test_a_boolean_is_forwarded_verbatim(self, flag: str, value: Any, fake_lerobot: type[_FakeStreaming]) -> None:
+        assert _open(**{flag: value}).dataset.kw[flag] == value
+
+    def test_the_flag_defaults_are_all_booleans(self) -> None:
+        """A call passing none of the five must not be refused by its own defaults."""
+        import inspect
+
+        from strands_robots.utils import boolean_flag_error
+
+        defaults = inspect.signature(sd.StreamingDatasetReader.open).parameters
+        for flag in sd._BOOLEAN_FLAGS:
+            assert boolean_flag_error(defaults[flag].default, flag, "open") is None, flag
+
+
+class TestEveryBooleanParameterOfOpenIsInTheTable:
+    """A flag added to the signature but not to the table is forwarded raw.
+
+    The sibling of the numeric pairing guard next door, over the same signature
+    and through the same reader.
+    """
+
+    @staticmethod
+    def _flag_params(node: Any) -> set[str]:
+        import ast
+
+        return {
+            arg.arg
+            for arg in list(node.args.args) + list(node.args.kwonlyargs)
+            if arg.annotation is not None and ast.unparse(arg.annotation) == "bool"
+        }
+
+    def test_the_signature_declares_exactly_the_five_flags(self) -> None:
+        """Non-vacuity: a scanner finding nothing would pass the test below."""
+        assert self._flag_params(_open_node()) == {
+            "streaming",
+            "shuffle",
+            "return_uint8",
+            "validate_deltas",
+            "drop_videos",
+        }
+
+    def test_the_table_covers_every_flag(self) -> None:
+        assert set(sd._BOOLEAN_FLAGS) == self._flag_params(_open_node())
+
+    def test_the_checked_values_are_the_flags_themselves(self) -> None:
+        """The mapping ``open`` builds must read each flag, not a stale copy."""
+        import ast
+
+        for stmt in ast.walk(_open_node()):
+            if (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and stmt.targets[0].id == "supplied_flags"
+                and isinstance(stmt.value, ast.Dict)
+            ):
+                keys = {k.value for k in stmt.value.keys if isinstance(k, ast.Constant)}
+                values = {v.id for v in stmt.value.values if isinstance(v, ast.Name)}
+                assert keys == set(sd._BOOLEAN_FLAGS)
+                assert values == keys
+                return
+        raise AssertionError("open() does not build a `supplied_flags` mapping of its boolean flags")
+
+    def test_a_planted_flag_outside_the_table_is_detected(self) -> None:
+        """The scanner must fail for the shape it exists to catch."""
+        import ast
+
+        node = _open_node()
+        node.args.kwonlyargs.append(ast.arg(arg="force_cache_sync", annotation=ast.Name(id="bool")))
+        assert self._flag_params(node) - set(sd._BOOLEAN_FLAGS) == {"force_cache_sync"}
+
+    def test_the_two_tables_do_not_overlap(self) -> None:
+        """A knob belongs to exactly one domain: ``bool`` is an ``int`` subclass."""
+        assert not set(sd._BOOLEAN_FLAGS) & set(sd._NUMERIC_DOMAINS)
 
 
 class TestWhyEachValueCannotBeHonored:
@@ -322,9 +495,23 @@ class TestTheDataloaderKnobsStayOutOfScope:
                 torch.utils.data.DataLoader([1, 2, 3], batch_size=value)
 
     def test_dataloader_is_not_guarded_here(self) -> None:
-        """Its knobs are absent from the table, and that is deliberate."""
+        """Its knobs are absent from both tables, and that is deliberate."""
         assert "batch_size" not in sd._NUMERIC_DOMAINS
         assert "num_workers" not in sd._NUMERIC_DOMAINS
+        assert "batch_size" not in sd._BOOLEAN_FLAGS
+
+    def test_the_dataloader_shuffle_pop_needs_no_domain(self) -> None:
+        """``kw.pop`` removes the key whatever it held, so every spelling agrees.
+
+        Unlike ``open``'s flags, the value here decides only whether a warning
+        is logged - the key is discarded either way, so a streamed loader is
+        never handed a ``shuffle`` and there is no branch for a truthy spelling
+        of off to invert.
+        """
+        for value in [True, False, "false", 0, None]:
+            kw = {"shuffle": value, "batch_size": 8}
+            kw.pop("shuffle", None)
+            assert kw == {"batch_size": 8}, value
 
 
 class TestTheGuardDoesNotDisturbTheNeighbouringContracts:

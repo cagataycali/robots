@@ -446,10 +446,8 @@ class WBCGaitPolicy(WBCPolicy):
         c = self._config.command_dim
         command = np.zeros(c, dtype=np.float64)
 
-        cmd_scale = np.asarray(self._config.cmd_scale, dtype=np.float64).ravel()
         n_vel = min(3, c)
-        scale = cmd_scale[:n_vel] if cmd_scale.shape[0] >= n_vel else np.ones(n_vel)
-        command[:n_vel] = raw_velocity[:n_vel] * scale
+        command[:n_vel] = raw_velocity[:n_vel] * self._velocity_scale(n_vel)
 
         if c > 3:
             height = kwargs.get("height")

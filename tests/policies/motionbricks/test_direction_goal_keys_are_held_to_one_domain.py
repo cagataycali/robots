@@ -321,7 +321,9 @@ class TestWhatIsUnchanged:
 
     def test_a_heading_angle_is_untouched_by_this_domain(self) -> None:
         # target_heading_angle is a scalar, not a direction vector, so it does not
-        # go through this reader at all.
+        # go through this reader at all. It is not ungraded for that reason: the
+        # scalar spelling is held to the shared scalar domain instead, in
+        # test_a_heading_goal_is_graded_in_either_spelling.py.
         signals = _signals(target_heading_angle=math.pi / 2)
         assert signals["facing_direction"] == pytest.approx([0.0, 1.0, 0.0], abs=1e-9)
 

@@ -42,7 +42,14 @@ resolve_name("franka")    # 'panda'
 resolve_name("g1")        # 'unitree_g1'
 ```
 
-Case-insensitive, hyphens/underscores interchangeable. Full alias map in `registry/robots.json`.
+Case-insensitive, hyphens/underscores interchangeable. That fold is
+`registry.normalize_robot_name`, and it is the rule the registry is keyed by, not
+just the rule queries pass through: a canonical name is stored folded and an
+alias is keyed folded, so an alias declared `"My-Arm"` answers `my_arm`,
+`MY-ARM` and `My-Arm` alike. Two aliases that fold to one key are therefore one
+alias, and `register_robot` refuses an alias that folds onto another robot's name
+or alias rather than letting it resolve to that robot. Full alias map in
+`registry/robots.json`.
 
 ## Real hardware
 
@@ -129,6 +136,15 @@ robot = Robot("unitree_g1", mode="real", driver="strands", port="192.168.123.161
 members it is missing, so a half-built driver fails at the line that registers it rather
 than on the first agent call. `port=` stays polymorphic - a serial path, an IP address or a
 URL - because only the driver knows how to read it.
+
+`baud_rate=` does not stay polymorphic. Every surface that opens a serial bus - the Feetech
+and Dynamixel drivers, `FeetechBus`, and the `baudrate` of `serial_tool` and `pose_tool` -
+holds it to one domain, a positive integer, and refuses anything else by name at
+construction. pyserial takes the speed through its own `int()` and refuses only a negative,
+so an ungraded value is *applied*: `2.7` opens the port at 2 baud, and `0` opens it
+successfully at a speed no servo answers, after which every read times out exactly as an
+unplugged arm does. A refusal at the line that states the speed is the only place that
+reads as a caller mistake rather than as broken hardware.
 
 A driver has **two** ways to halt its robot and they are not the same contract. `stop_task()`
 returns a status envelope and decides an outcome, so that is what a caller reads. `stop()` is

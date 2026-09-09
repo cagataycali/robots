@@ -52,7 +52,7 @@ from tests.training._spec_field_reads import reads_spec_field
 OFF_POLICY = "fast_sac"
 
 # Backends that never read ``init_alpha``.
-NO_TEMPERATURE_BACKENDS = ("ppo", "mock")
+NO_TEMPERATURE_BACKENDS = ("ppo", "fast_td3", "mock")
 
 # Values with no usable logarithm. ``0`` / ``0.0`` / ``False`` give ``-inf`` and a
 # temperature of exactly zero that nothing can move; ``True`` is a silent ``1.0``;

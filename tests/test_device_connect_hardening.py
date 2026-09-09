@@ -429,6 +429,11 @@ def _make_reachy():
     drv = rmd.ReachyMiniDriver.__new__(rmd.ReachyMiniDriver)
     drv._host = "localhost"
     drv._api_port = 8000
+    # ``__new__`` runs no ``__init__``, so every attribute the RPC reads has to be
+    # supplied here. ``_device`` is the DeviceRuntime the driver is attached to,
+    # which the authorization check consults for the transport's posture; a driver
+    # never attached to one has it as None, which is what a bare double is.
+    drv._device = None
     return drv, rmd
 
 

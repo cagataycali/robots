@@ -25,7 +25,10 @@ The well-known goal kwargs a caller passes through ``get_actions`` are:
   Every component must be a finite number; a count outside two or three, a
   ``nan``/``inf`` component or a ``bool`` is refused by name.
 * ``target_heading`` - facing direction as ``[hx, hy]`` (or an angle in radians
-  via ``target_heading_angle``). Absent -> face the movement direction.
+  via ``target_heading_angle``). Absent -> face the movement direction. Both
+  spellings name the same quantity and are refused by name on the same grounds:
+  the vector's components and the angle must each be a finite number, so a
+  ``nan``, an ``inf`` or a ``bool`` is refused whichever spelling carries it.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from typing import Any
 
 import numpy as np
 
-from ...utils import finite_vector_error, sequence_length
+from ...utils import finite_number_error, finite_vector_error, sequence_length
 
 # Default movement / facing direction: walk straight ahead along +x (world).
 _DEFAULT_DIRECTION = (1.0, 0.0, 0.0)
@@ -236,9 +239,41 @@ def _unit_direction(vec: Any, default: tuple[float, float, float], *, method: st
 
 
 def _heading_to_direction(kwargs: dict[str, Any], movement_direction: list[float]) -> list[float]:
-    """Resolve the facing direction from kwargs, defaulting to the movement direction."""
+    """Resolve the facing direction from kwargs, defaulting to the movement direction.
+
+    ``target_heading_angle`` and ``target_heading`` are two spellings of one goal
+    key, and each is graded on the same grounds before it reaches the facing
+    field: a scalar angle against :func:`~strands_robots.utils.finite_number_error`,
+    a direction vector against the component domain in :func:`_unit_direction`.
+    Grading the angle is what makes the two spellings answer alike. A bare
+    ``float()`` read ``True`` as a 1.0 rad heading and a numeric string as an
+    angle, while ``nan`` passed straight through into a ``facing_direction`` of
+    ``[nan, nan, 0.0]`` from a call that reported success - which is the outcome
+    the vector spelling's own domain exists to prevent - and ``inf`` reached
+    :func:`math.cos` to raise a bare ``math domain error`` naming neither this
+    surface nor the key. The shared domain is the one the sibling locomotion
+    family already holds its scalar goal kwarg to
+    (:meth:`~strands_robots.policies.wbc.policy.WBCPolicy._validate_height`),
+    which is also where the grade-then-convert shape below comes from.
+
+    Args:
+        kwargs: The well-known goal kwargs, read for ``target_heading_angle``
+            then ``target_heading``.
+        movement_direction: Direction to face when neither key is given.
+
+    Returns:
+        A unit 3-vector in the world XY plane, as plain floats.
+
+    Raises:
+        ValueError: If ``target_heading_angle`` is not a finite number, or if
+            ``target_heading`` is not a usable planar direction.
+    """
     if kwargs.get("target_heading_angle") is not None:
-        angle = float(kwargs["target_heading_angle"])
+        raw = kwargs["target_heading_angle"]
+        reason = finite_number_error(raw, "target_heading_angle", "build_control_signals")
+        if reason is not None:
+            raise ValueError(reason)
+        angle = float(raw)
         return [math.cos(angle), math.sin(angle), 0.0]
     if kwargs.get("target_heading") is not None:
         return _unit_direction(

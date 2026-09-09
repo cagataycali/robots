@@ -44,7 +44,11 @@ def _open_and_capture_fps(monkeypatch, tmp_path, requested_fps, control_frequenc
         return _FakeWriter()
 
     fake_imageio = types.SimpleNamespace(get_writer=_fake_get_writer)
-    monkeypatch.setattr(policy_runner, "require_optional", lambda *a, **k: fake_imageio)
+    # The rollout recorder resolves its encoder through the shared owner
+    # (``strands_robots.rendering.require_clip_encoder``), which decides which
+    # modules the output container needs; substituting it here is what keeps
+    # this cell about the fps arithmetic rather than about the install.
+    monkeypatch.setattr(policy_runner, "require_clip_encoder", lambda *a, **k: fake_imageio)
 
     video = VideoConfig(path=str(tmp_path / "out.mp4"), fps=requested_fps)
     writer, err = _RolloutVideoWriter.open(_FakeSim(), video, control_frequency)

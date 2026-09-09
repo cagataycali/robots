@@ -64,8 +64,15 @@ def _one_joint_urdf(tmp_path: pathlib.Path, joint_type: str) -> str:
 
 
 def _loader_reads_as_moving(joint_type: str) -> bool:
-    """Whether ``load_urdf`` maps ``joint_type`` onto a moving ``JointDef``."""
-    return loaders._URDF_JOINT_TYPE_MAP.get(joint_type, "fixed") != "fixed"
+    """Whether ``load_urdf`` maps ``joint_type`` onto a moving ``JointDef``.
+
+    Indexed rather than defaulted: the only caller iterates the map's own keys,
+    and a ``"fixed"`` fallback here was a third copy of the one the loader used
+    to apply to an absent ``type`` attribute - now refused, so a fallback
+    standing in for a missing declaration should not survive in the tests that
+    grade the vocabulary either.
+    """
+    return loaders._URDF_JOINT_TYPE_MAP[joint_type] != "fixed"
 
 
 class TestTheLoaderRecordsTheFormat:

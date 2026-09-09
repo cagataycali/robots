@@ -14,6 +14,19 @@ A ROS 2 topic ``/turtle1/cmd_vel`` becomes the DDS topic ``rt/turtle1/cmd_vel``:
   out of scope here),
 * the leading ``/`` is dropped after the prefix join (``rt`` + ``/turtle1/...``).
 
+What counts as a ROS 2 topic name is the mapping article's own rule, in full,
+because a name only this module accepts maps to a DDS topic no ROS 2 node can
+join. ROS 2 refuses a name that is not absolute, ends with ``/``, has an empty
+token (``//bar``), has a token starting with a digit (``/1cam``), contains
+repeated underscores, uses a character outside ``[A-Za-z0-9_/]``, or whose DDS
+form exceeds :data:`MAX_DDS_TOPIC_LENGTH` characters. Accepting one anyway
+produces no error anywhere: DDS matching is by topic name, so the participant
+publishes to a name ``rclpy`` refuses at ``create_publisher`` and no subscriber
+ever appears - the same silent divergence the type mangling below refuses a
+service interface to avoid. So the rule lives here once, as
+:data:`ROS_TOPIC_RE` plus the length bound, and every seam that gates a caller
+name against "is this a ROS 2 topic" reads it rather than restating it.
+
 Type names
 ----------
 A ROS 2 type ``geometry_msgs/msg/Twist`` becomes the DDS type
@@ -44,9 +57,27 @@ from __future__ import annotations
 
 import re
 
-# ROS 2 graph names: leading slash plus alnum/_ segments (tilde/braces are
-# substitution syntax that must already be resolved before mangling).
-_ROS_TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]\Z")
+#: Every fully-qualified ROS 2 topic name, and no other string. Absolute, one
+#: or more non-empty ``/``-delimited tokens of ``[A-Za-z0-9_]`` with no token
+#: starting with a digit, and no repeated underscore anywhere (tilde and braces
+#: are substitution syntax that must already be resolved before mangling). The
+#: one owner of this rule: :mod:`strands_robots.tools.use_rtps` and
+#: :mod:`strands_robots.mesh.rtps_robot` gate caller-supplied names against
+#: this pattern rather than restating it, so they cannot come to disagree with
+#: the mangling about what a ROS 2 topic is.
+ROS_TOPIC_RE = re.compile(r"^(?!.*__)(?:/(?![0-9])[A-Za-z0-9_]+)+\Z")
+
+#: Longest DDS topic name the ROS 2 mapping permits, prefix included. The
+#: mapping article states the bound on the DDS name, so it is checked on the
+#: mangled form rather than on the ROS name - a 255-character ROS topic is
+#: legal and its ``rt``-prefixed DDS name is not.
+MAX_DDS_TOPIC_LENGTH = 256
+
+# Split out from the pattern so a refusal can say which clause failed: one
+# "invalid topic" for six different mistakes sends the caller back to the
+# grammar to guess which of them they made.
+_ASCII_TOPIC_CHARS_RE = re.compile(r"^[A-Za-z0-9_/]*\Z")
+_ASCII_DIGITS = "0123456789"
 
 # Message interfaces only - see the module docstring for why ``srv``/``action``
 # cannot appear here.
@@ -58,6 +89,41 @@ _ROS_SERVICE_TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/(srv|action)/[A-Za-z0-9_]+\Z"
 
 # DDS topic prefixes per the ROS 2 mapping. Only ``rt`` (topics) is used in v1.
 _TOPIC_PREFIX = "rt"
+
+
+def ros_topic_error(ros_topic: str) -> str | None:
+    """Report the ROS 2 name clause *ros_topic* breaks, or ``None`` if it breaks none.
+
+    Args:
+        ros_topic: Candidate absolute ROS 2 topic name.
+
+    Returns:
+        A sentence naming the single clause that refused the name, or ``None``
+        when :data:`ROS_TOPIC_RE` accepts it.
+
+    Note:
+        This renders :data:`ROS_TOPIC_RE`'s verdict, it does not restate it: the
+        pattern decides, and the clauses below only say which part of it the
+        name broke. A caller that needs the verdict as a pattern (a
+        :class:`re.Pattern` seam) reads :data:`ROS_TOPIC_RE`; one that needs a
+        message reads this.
+    """
+    if ROS_TOPIC_RE.match(ros_topic):
+        return None
+    if not ros_topic.startswith("/"):
+        return "expected an absolute name starting with '/'"
+    if not _ASCII_TOPIC_CHARS_RE.match(ros_topic):
+        return "a name may contain only ASCII letters, digits, '_' and '/'"
+    if ros_topic.endswith("/"):
+        return "a name must not end with '/'"
+    if "//" in ros_topic:
+        return "a name token must not be empty, so '//' is not a namespace"
+    if "__" in ros_topic:
+        return "a name must not contain repeated underscores"
+    for token in ros_topic[1:].split("/"):
+        if token[:1] in _ASCII_DIGITS:
+            return f"the name token {token!r} must not start with a digit"
+    return "expected an absolute name like /turtle1/cmd_vel"
 
 
 def _require_ros_topic(ros_topic: str, *, source: str = "") -> None:
@@ -74,10 +140,27 @@ def _require_ros_topic(ros_topic: str, *, source: str = "") -> None:
     Raises:
         ValueError: If *ros_topic* is not a valid absolute ROS 2 topic name.
     """
-    if _ROS_TOPIC_RE.match(ros_topic):
+    clause = ros_topic_error(ros_topic)
+    if clause is None:
         return
     recovered = f" recovered from {source!r}" if source else ""
-    raise ValueError(f"invalid ROS 2 topic {ros_topic!r}{recovered}: expected an absolute name like /turtle1/cmd_vel")
+    raise ValueError(f"invalid ROS 2 topic {ros_topic!r}{recovered}: {clause}")
+
+
+def _require_dds_length(dds_topic: str) -> None:
+    """Refuse a DDS topic name longer than the ROS 2 mapping permits.
+
+    Args:
+        dds_topic: The mangled DDS topic name, prefix included.
+
+    Raises:
+        ValueError: If *dds_topic* exceeds :data:`MAX_DDS_TOPIC_LENGTH`.
+    """
+    if len(dds_topic) > MAX_DDS_TOPIC_LENGTH:
+        raise ValueError(
+            f"DDS topic {dds_topic[:40]!r}... is {len(dds_topic)} characters: the ROS 2 mapping "
+            f"bounds a DDS topic name at {MAX_DDS_TOPIC_LENGTH}, prefix included"
+        )
 
 
 def dds_topic_name(ros_topic: str, *, prefix: str = _TOPIC_PREFIX) -> str:
@@ -90,10 +173,13 @@ def dds_topic_name(ros_topic: str, *, prefix: str = _TOPIC_PREFIX) -> str:
         prefix: DDS domain prefix; ``rt`` for topics (the default).
 
     Raises:
-        ValueError: If *ros_topic* is not a valid absolute ROS 2 topic name.
+        ValueError: If *ros_topic* is not a valid absolute ROS 2 topic name, or
+            if its DDS form exceeds :data:`MAX_DDS_TOPIC_LENGTH` characters.
     """
     _require_ros_topic(ros_topic)
-    return prefix + ros_topic
+    dds_topic = prefix + ros_topic
+    _require_dds_length(dds_topic)
+    return dds_topic
 
 
 def ros_topic_name(dds_topic: str, *, prefix: str = _TOPIC_PREFIX) -> str:
@@ -112,9 +198,11 @@ def ros_topic_name(dds_topic: str, *, prefix: str = _TOPIC_PREFIX) -> str:
         prefix: The DDS domain prefix to strip (default ``rt``).
 
     Raises:
-        ValueError: If *dds_topic* does not begin with ``<prefix>/``, or if what
-            remains after the prefix is not a valid absolute ROS 2 topic name.
+        ValueError: If *dds_topic* exceeds :data:`MAX_DDS_TOPIC_LENGTH`
+            characters, does not begin with ``<prefix>/``, or if what remains
+            after the prefix is not a valid absolute ROS 2 topic name.
     """
+    _require_dds_length(dds_topic)
     head = prefix + "/"
     if not dds_topic.startswith(head):
         raise ValueError(f"DDS topic {dds_topic!r} does not carry the {prefix!r} ROS 2 prefix")

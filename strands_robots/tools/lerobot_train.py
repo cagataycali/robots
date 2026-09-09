@@ -30,14 +30,25 @@ from strands.types.tools import ToolContext
 
 from strands_robots.tools._hitl_audit import log_operator_response
 from strands_robots.tools._process_stop import (
+    PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,
     SIGTERM_GRACE_S,
     confirm_exit,
+    process_started_since_boot,
+    recorded_pid,
+    reused_pid_result,
+    session_is_running,
+    session_uptime,
+    store_sessions,
     unstopped_result,
+    unusable_pid_result,
 )
 from strands_robots.utils import (
+    declared_count,
     positive_count_error,
+    stale_output_dir_is_clearable,
     step_cadence_error,
+    torch_device_error,
     validation_split_error,
     validation_split_fraction,
 )
@@ -106,6 +117,10 @@ def _policy_config_field_names(policy_type: str) -> frozenset[str] | None:
 # that an LLM agent (or prompt injection) could abuse. Gated by a HIL
 # interrupt; operators can pre-approve individual flags via
 # STRANDS_TRAIN_EXTRA_FLAGS_ALLOW or bypass entirely with BYPASS_TOOL_CONSENT.
+#
+# Membership is decided by ``_blocked_flags_named``, not by a whole-key equality
+# test: the argv these keys land in is parsed by argparse, which honors any
+# unambiguous prefix, so an entry here also gates every abbreviation of itself.
 _BLOCKED_EXTRA_FLAGS = frozenset(
     {
         "output_dir",
@@ -145,14 +160,86 @@ def _normalize_hydra_key(key: str) -> str:
     return key.lstrip("-+~")
 
 
+def _abbreviates_flag(candidate: str, flag: str) -> bool:
+    """Whether argparse could resolve the argv spelling ``candidate`` to ``flag``.
+
+    ``extra_flags`` keys are emitted verbatim into the argv of
+    ``lerobot.scripts.lerobot_train``, which parses it with draccus, which
+    builds a stdlib :class:`argparse.ArgumentParser`. That parser leaves
+    ``allow_abbrev`` at its default of ``True``, so any *unambiguous prefix* of
+    a registered option selects that option: ``--ou=/x`` sets ``output_dir``
+    and ``--co=y`` sets ``config_path``. A key is therefore not the flag it
+    reaches, and a gate that compares whole keys does not see the difference.
+
+    A prefix that stops exactly at a dotted-segment boundary is not an
+    abbreviation. draccus registers an option for each nested config as well as
+    for its fields (``--wandb`` beside ``--wandb.project``), and argparse
+    prefers an exact match over any abbreviation, so ``wandb`` names that
+    option rather than the blocked child under it.
+
+    The rule is deliberately conservative in one direction: a prefix that is
+    ambiguous - ``wandb.e``, which could be ``wandb.enable`` or
+    ``wandb.entity`` - is treated as naming both, even though argparse refuses
+    it outright. Gating a spelling the trainer would reject anyway costs a
+    prompt; missing one costs the write.
+
+    Args:
+        candidate: A normalized ``extra_flags`` key, Hydra prefix already off.
+        flag: The blocked flag to judge ``candidate`` against.
+
+    Returns:
+        ``True`` when ``candidate`` is a proper prefix of ``flag`` that does not
+        end at one of ``flag``'s own dotted-segment boundaries.
+    """
+    if not candidate or candidate == flag or not flag.startswith(candidate):
+        return False
+    return flag[len(candidate)] != "."
+
+
+def _blocked_flags_named(key: str) -> tuple[str, ...]:
+    """The blocked flags the argv spelling ``key`` can reach, sorted.
+
+    Exact match first, mirroring argparse: a key that spells a blocked flag in
+    full names that flag and nothing else, however many longer flags it is a
+    prefix of.
+
+    A key is truncated at its first ``=`` before anything else is asked of it,
+    because that is what argparse does with the argv element. Keys are emitted
+    as one element, ``f"--{key}={value}"``, so a key that carries its own ``=``
+    puts the rest of itself in the *value*: ``{"output_dir=/evil/dir": "x"}``
+    emits ``--output_dir=/evil/dir=x`` and sets ``output_dir`` to the perfectly
+    valid path ``/evil/dir=x``. Matching the whole key against the blocklist
+    asked about a name argparse never reads - ``"output_dir".startswith(
+    "output_dir=/evil/dir")`` is ``False`` - so every gated spelling had an
+    ungated ``=``-carrying twin, abbreviations included (``ou=``). No legitimate
+    key carries ``=``; the emitter appends its own.
+
+    Args:
+        key: An ``extra_flags`` key as the caller wrote it, Hydra prefix and all.
+
+    Returns:
+        The blocked flags, or an empty tuple when the key reaches none.
+    """
+    normalized = _normalize_hydra_key(key).split("=", 1)[0]
+    if normalized in _BLOCKED_EXTRA_FLAGS:
+        return (normalized,)
+    return tuple(sorted(flag for flag in _BLOCKED_EXTRA_FLAGS if _abbreviates_flag(normalized, flag)))
+
+
 def _validate_extra_flags(extra_flags: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return list of (raw_key, normalized_key) pairs that are blocked."""
-    blocked_pairs = []
-    for key in extra_flags:
-        normalized = _normalize_hydra_key(key)
-        if normalized in _BLOCKED_EXTRA_FLAGS:
-            blocked_pairs.append((key, normalized))
-    return blocked_pairs
+    """Return the (raw key, blocked flag) pairs ``extra_flags`` reaches.
+
+    One pair per blocked flag a key can reach, so a prefix short enough to
+    abbreviate two of them has to clear both allowlist entries rather than one.
+
+    Args:
+        extra_flags: The passthrough dict, keys as the caller wrote them.
+
+    Returns:
+        Pairs of the caller's own spelling and the blocked flag it names, in the
+        order the keys were supplied.
+    """
+    return [(key, flag) for key in extra_flags for flag in _blocked_flags_named(key)]
 
 
 def _gate_extra_flags(
@@ -179,12 +266,14 @@ def _gate_extra_flags(
         logger.debug("all blocked flags allowed via %s", _EXTRA_FLAGS_ALLOW_ENV)
         return None
 
+    # Reported as the caller's own spellings, deduplicated: one key can name two
+    # blocked flags, and the allowlist check above is what needs it per flag.
+    flag_names = ", ".join(dict.fromkeys(raw for raw, _ in needs_approval))
+
     if os.environ.get(_BYPASS_CONSENT_ENV, "").lower() == "true":
-        flag_names = ", ".join(raw for raw, _ in needs_approval)
         logger.warning("BYPASS_TOOL_CONSENT: allowing blocked extra_flags: %s", flag_names)
         return None
 
-    flag_names = ", ".join(raw for raw, _ in needs_approval)
     block_msg = (
         f"extra_flags {flag_names} blocked for security reasons (controls output paths, telemetry, or code loading)."
     )
@@ -256,8 +345,9 @@ class SessionManager:
 
         Leaving a record out is not needed to avoid over-reporting it either:
         presence here is not the running claim. ``list`` and ``status`` each
-        derive that from ``psutil.pid_exists`` at the moment they are asked, so a
-        retained record reads as running only while its pid really exists.
+        derive that from :func:`~strands_robots.tools._process_stop.session_is_running`
+        at the moment they are asked, so a retained record reads as running only
+        while its pid still holds the process the record was written for.
 
         Returns:
             Every stored session record, keyed by session name. A store that
@@ -285,14 +375,22 @@ class SessionManager:
         return sessions
 
     def _report_uninspectable(self, sessions: dict[str, Any]) -> None:
-        """Warn for each session whose process exists but cannot be inspected.
+        """Warn for each session this store holds but cannot inspect.
 
-        ``psutil.pid_exists`` answers existence and ``Process(pid).is_running()``
-        refines it. When the second raises :class:`psutil.AccessDenied` the
-        process is there and this user may not look at it - a session started
-        under ``sudo`` and later listed as the invoking user reads this way. That
-        denial is the operator's only clue that ``status`` is reporting on a
-        process it cannot see into, so it is said out loud.
+        Two records read that way. One names a pid that exists and may not be
+        read; the other names no pid at all - its ``pid`` field holds something
+        that is not a process id, which
+        :func:`~strands_robots.tools._process_stop.recorded_pid` answers rather
+        than converting, because ``psutil.pid_exists`` raises a ``TypeError`` on a
+        ``str`` or a ``float`` and aborts the action that asked.
+
+        ``psutil.pid_exists`` answers existence with a signal; reading the process
+        reads ``/proc``, which can be refused. When it raises
+        :class:`psutil.AccessDenied` the process is there and this user may not
+        look at it - a session started under ``sudo`` and later listed as the
+        invoking user reads this way. That denial is the operator's only clue that
+        ``status`` is reporting on a process it cannot see into, and that its
+        identity could not be checked either, so it is said out loud.
 
         :class:`psutil.NoSuchProcess` needs no report: it means the run was
         reaped between the two probes, which is the same finished run as a pid
@@ -302,13 +400,30 @@ class SessionManager:
             sessions: The loaded records. Inspected only; never modified.
         """
         for name, info in sessions.items():
-            pid = info.get("pid")
-            if not (pid and psutil.pid_exists(pid)):
+            pid = recorded_pid(info)
+            if pid is None:
+                if info.get("pid") is not None:
+                    # A pid field that is not a process id. Nothing can inspect
+                    # it, and converting it would inspect a different process, so
+                    # it is reported for the same reason a denial is: ``list`` and
+                    # ``status`` will read this record as not running, and this is
+                    # the operator's only clue that the run may still be holding
+                    # the GPU under a pid this store no longer names.
+                    logger.warning(
+                        "Training session '%s' records a %s as its PID, which is not a process id; "
+                        "its record is kept, but the run can only be stopped by hand",
+                        name,
+                        type(info.get("pid")).__name__,
+                    )
+                continue
+            if not psutil.pid_exists(pid):
                 continue
             try:
                 # Called for what it raises, not for what it returns: the
                 # running/finished line is re-derived by ``list`` and ``status``,
-                # so this probe exists only to surface a denial.
+                # so this probe exists only to surface a denial - the same denial
+                # their identity check would meet, since both have to read the
+                # process rather than only signal its number.
                 psutil.Process(pid).is_running()
             except psutil.NoSuchProcess:
                 # Reaped between the two probes: the same finished run as a pid
@@ -325,11 +440,14 @@ class SessionManager:
                 )
 
     def _save_sessions(self, sessions: dict[str, Any]) -> None:
+        """Store the session map in full, or leave the stored one untouched.
+
+        :func:`~strands_robots.tools._process_stop.store_sessions` owns the
+        sequence, because losing this store is what makes a live session
+        unstoppable and both session tools write the same file.
+        """
         try:
-            # Name the encoding the reader names, so the store's spelling is a
-            # property of the file rather than of the locale that wrote it.
-            with open(self.sessions_file, "w", encoding="utf-8") as f:
-                json.dump(sessions, f, indent=2)
+            store_sessions(self.sessions_file, sessions)
         except OSError as e:
             logger.error(f"Error saving sessions: {e}")
 
@@ -388,20 +506,27 @@ class SessionManager:
         return self._load_sessions()
 
 
-def _read_total_tasks(dataset_root: str) -> int:
-    """Return ``total_tasks`` from a LeRobot v3 dataset's ``meta/info.json``.
+def _read_total_tasks(dataset_root: str) -> Any:
+    """Return what ``meta/info.json`` declares for ``total_tasks``, verbatim.
 
-    lerobot's own field defaults to 0, and older datasets may omit it entirely;
-    both mean "no task count recorded" and are returned as 0, which callers
-    treat as single-task.
+    ``None`` when there is no header to read - no ``info.json``, or no such key -
+    which :func:`~strands_robots.utils.validation_split_error` treats as
+    single-task, as lerobot's own field defaults to 0.
+
+    The declaration is handed over unconverted because that guard is where this
+    header's domain lives, and it is the only surface that can tell a usable
+    count from a declaration that is not one. Coercing an unusable declaration
+    to 0 here reported it as the absent case, which the guard honors as
+    single-task: a three-task dataset whose header spelled the count ``3.0`` (or
+    ``"3"``) passed the guard written to refuse exactly that dataset, and lerobot
+    then held out ``ceil(episodes_in_task * eval_split)`` from each of the three.
     """
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.exists():
-        return 0
-    with open(info_path) as f:
+        return None
+    with open(info_path, encoding="utf-8") as f:
         info = json.load(f)
-    total = info.get("total_tasks")
-    return total if isinstance(total, int) and not isinstance(total, bool) else 0
+    return info.get("total_tasks")
 
 
 def _read_total_episodes(dataset_root: str) -> int:
@@ -414,12 +539,13 @@ def _read_total_episodes(dataset_root: str) -> int:
     info_path = Path(dataset_root) / "meta" / "info.json"
     if not info_path.exists():
         raise FileNotFoundError(f"Dataset metadata not found: {info_path}")
-    with open(info_path) as f:
+    with open(info_path, encoding="utf-8") as f:
         info = json.load(f)
     total = info.get("total_episodes")
-    if not isinstance(total, int) or total <= 0:
+    declared = declared_count(total)
+    if declared is None or declared <= 0:
         raise ValueError(f"info.json has no usable 'total_episodes' (got {total!r})")
-    return total
+    return declared
 
 
 def _has_resumable_checkpoint(output_dir: str) -> Path | None:
@@ -444,43 +570,17 @@ def _torch_device_error(device: Any) -> str | None:
     the reason the run-size numerics in the same argv are refused up front, and
     ``device`` is the one token beside them that was carried through unchecked.
 
-    The admitted domain is torch's own, read by handing the value to
-    ``torch.device`` rather than by comparing against a copied list of device
-    types - the same "source the domain live" shape as
-    :func:`_expert_only_policy_types` and :func:`_policy_config_field_names`
-    above. A torch build that gains a backend is admitted here with no change,
-    and torch's own exception enumerates the types it accepts, so the refusal
-    names the admitted set without restating it.
-
-    Only the spelling is graded, never availability: ``torch.device("cuda")``
-    constructs on a CPU-only box and must keep building an argv there, because a
-    queued or containerised run legitimately names a device the dispatching
-    machine does not currently have. A non-``str`` is refused before torch is
-    consulted for that reason - ``torch.device(0)`` reads the accelerator
-    inventory (``Cannot access accelerator device when none is available``),
-    which would make the same request build here and refuse there.
-
-    When torch is not importable the domain is unknown and the value passes
-    through unguarded, as :func:`_policy_config_field_names` documents for its
-    own field set.
+    That reason is why the check happens *at this point in this tool*. The domain
+    itself belongs to neither surface - :class:`~strands_robots.training.lerobot.LerobotTrainer`
+    reaches the identical lerobot field in-process, and the from-scratch RL
+    backends hand the same quantity to ``torch.device`` directly - so it
+    delegates to :func:`~strands_robots.utils.torch_device_error`, the one owner
+    all three consult, exactly as :func:`_save_freq_error` below delegates the
+    cadence in this same argv. The value is asked about as given: this argv
+    carries whatever it is handed, so a falsy device is a token that names
+    nothing rather than a request for the default.
     """
-    if not isinstance(device, str):
-        return (
-            f"lerobot_train: device must be a torch device string, got {type(device).__name__}. "
-            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
-        )
-    try:
-        import torch
-    except Exception:  # noqa: BLE001 - torch missing -> domain unknown, pass through
-        return None
-    try:
-        torch.device(device)
-    except (RuntimeError, ValueError) as e:
-        return (
-            f"lerobot_train: device={device!r} is not a torch device string ({e}). "
-            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
-        )
-    return None
+    return torch_device_error(device, "device", "lerobot_train")
 
 
 def _save_freq_error(value: Any) -> str | None:
@@ -883,12 +983,19 @@ def lerobot_train(
             status/stop).
         extra_flags: Passthrough dict of additional lerobot-train flags, e.g.
             ``{"policy.optimizer_lr": 1e-4}`` -> ``--policy.optimizer_lr=0.0001``.
+            A key that abbreviates a gated flag is gated as that flag, because
+            the trainer's parser honors unambiguous prefixes: ``{"ou": "/x"}``
+            reaches ``output_dir``, so it needs the same approval, and the same
+            ``STRANDS_TRAIN_EXTRA_FLAGS_ALLOW=output_dir`` entry clears it.
 
     Returns:
         Dict with ``status`` ("success" or "error") and a ``content`` list of
         ``{"text": ...}`` items, plus action-specific keys (``session_name``,
         ``pid``, ``command``, ``log_file``, ``output_dir``, ``sessions``,
-        ``is_running``, ``uptime``).
+        ``is_running``, ``uptime``). ``uptime`` is seconds, and is ``None`` when
+        the session record states no usable start time - see
+        :func:`~strands_robots.tools._process_stop.session_uptime`, which is what
+        the reported ``Uptime`` field says instead.
     """
     session_manager = SessionManager()
 
@@ -926,13 +1033,12 @@ def lerobot_train(
             # Default output_dir lives next to the dataset so artifacts are colocated.
             resolved_output_dir = output_dir or str(Path(dataset_root).resolve().parent / "train_out" / job_name)
 
-            # Clear a stale EMPTY output_dir on a fresh (non-resumable) start so
-            # lerobot's "already exists" guard does not crash. Never delete a dir
-            # that holds checkpoints.
-            out_path = Path(resolved_output_dir)
-            if out_path.is_dir() and not _has_resumable_checkpoint(resolved_output_dir):
-                if not any(out_path.iterdir()):
-                    shutil.rmtree(out_path, ignore_errors=True)
+            # Clear a stale EMPTY output_dir on a fresh start so lerobot's
+            # "already exists" guard does not crash. Never delete a dir that
+            # holds checkpoints - the emptiness bound the shared owner applies
+            # subsumes the checkpoint probe that used to be asked here.
+            if stale_output_dir_is_clearable(resolved_output_dir):
+                shutil.rmtree(resolved_output_dir, ignore_errors=True)
 
             if extra_flags:
                 gate_err = _gate_extra_flags(extra_flags, tool_context)
@@ -981,7 +1087,7 @@ def lerobot_train(
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
             log_file = SESSION_DIR / f"{session_name}.log"
-            with open(log_file, "w") as f:
+            with open(log_file, "w", encoding="utf-8") as f:
                 proc = subprocess.Popen(
                     cmd,
                     stdout=f,
@@ -997,6 +1103,10 @@ def lerobot_train(
                 "command": " ".join(cmd),
                 "log_file": str(log_file),
                 "start_time": time.time(),
+                # The identity half of the pid, captured now: the pid alone stops
+                # naming this process the moment it exits, and this record can
+                # outlive it by hours.
+                PID_STARTED_SINCE_BOOT: process_started_since_boot(proc.pid),
                 "policy_type": policy_type,
                 "dataset_root": dataset_root,
                 "output_dir": resolved_output_dir,
@@ -1035,10 +1145,18 @@ def lerobot_train(
             if not session_info:
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
             pid = session_info.get("pid")
-            if not pid:
-                return {"status": "error", "content": [{"text": f"No PID found for session '{session_name}'"}]}
-
-            pid_int = int(pid)
+            pid_int = recorded_pid(session_info)
+            if pid_int is None:
+                # Not a pid, so there is no process this verb could be about. The
+                # signals below would go to whatever ``int()`` of it happened to
+                # name - pid 1 for ``true``, and a live stranger for ``4321.5``.
+                return unusable_pid_result(session_name, pid)
+            if psutil.pid_exists(pid_int) and not session_is_running(session_info):
+                # The pid exists but no longer holds the process this record was
+                # written for, so the run is over and the signals below would go
+                # to a stranger.
+                session_manager.remove_session(session_name)
+                return reused_pid_result(session_name, pid_int)
             try:
                 # Capture the process identity before signalling anything: psutil
                 # records the creation time here, so the escalation and the
@@ -1089,15 +1207,15 @@ def lerobot_train(
             lines = [f"**Active Training Sessions** ({len(sessions)})", ""]
             if sessions:
                 for name, info in sessions.items():
-                    uptime_min = (time.time() - info.get("start_time", 0)) / 60
+                    _, uptime_text = session_uptime(info)
                     pid = info.get("pid")
-                    is_running = bool(pid and psutil.pid_exists(pid))
+                    is_running = session_is_running(info)
                     lines.extend(
                         [
                             f"**{name}**",
                             f"   - Action: {info.get('action', 'Unknown')}",
                             f"   - PID: {pid}",
-                            f"   - Uptime: {uptime_min:.1f} min",
+                            f"   - Uptime: {uptime_text}",
                             f"   - Status: {'Running' if is_running else 'Stopped'}",
                             f"   - Policy: {info.get('policy_type', 'Unknown')}",
                             f"   - Output: {info.get('output_dir', 'Unknown')}",
@@ -1122,13 +1240,13 @@ def lerobot_train(
                 return {"status": "error", "content": [{"text": f"Session '{session_name}' not found"}]}
 
             pid = session_info.get("pid")
-            uptime = time.time() - float(session_info.get("start_time") or 0)
-            is_running = bool(pid and psutil.pid_exists(int(pid)))
+            uptime, uptime_text = session_uptime(session_info)
+            is_running = session_is_running(session_info)
             lines = [
                 f"**Session Status: `{session_name}`**",
                 f"PID: {pid}",
                 f"Action: {session_info.get('action', 'Unknown')}",
-                f"Uptime: {uptime / 60:.1f} min",
+                f"Uptime: {uptime_text}",
                 f"Status: {'Running' if is_running else 'Stopped'}",
                 f"Policy: {session_info.get('policy_type', 'Unknown')}",
                 f"Output dir: {session_info.get('output_dir', 'Unknown')}",

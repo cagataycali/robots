@@ -40,6 +40,79 @@ logger = logging.getLogger(__name__)
 _MIN_CLIP_QUALITY = 1
 _MAX_CLIP_QUALITY = 10
 
+#: The ``imageio`` plugin that writes MP4. ``imageio`` declares it as an
+#: optional ``ffmpeg`` extra of its own, so an install can supply ``imageio``
+#: and still have no MP4 backend behind it - this package's ``[vera-sim]`` extra
+#: is exactly that install, declaring ``imageio`` alone. With the plugin absent
+#: ``imageio`` falls through to whatever other plugin claims the requested
+#: container, and the libx264 knobs every MP4 writer here passes reach a writer
+#: that has never heard of them, so the request fails as a ``TypeError`` naming
+#: a writer the caller never asked for
+#: (``PyAVPlugin.write() got an unexpected keyword argument 'quality'``, or
+#: ``TiffWriter.write() got an unexpected keyword argument 'fps'`` when PyAV is
+#: absent too) rather than as the missing dependency it is.
+_MP4_BACKEND_MODULE = "imageio_ffmpeg"
+
+#: The extra of this package that declares ``imageio`` and its MP4 plugin at the
+#: versions the encoders here are tested against. Named in every refusal, so a
+#: caller is sent to a bounded install rather than to two bare distributions.
+_ENCODER_EXTRA = "sim-mujoco"
+
+#: The one container written without the MP4 plugin: Pillow writes GIF, and
+#: ``imageio`` hard-requires Pillow (this package depends on it outright).
+_GIF_SUFFIX = ".gif"
+
+
+def require_clip_encoder(path: str | Path, purpose: str = "video encoding") -> Any:
+    """Require the encoder modules a clip at ``path`` needs, and return ``imageio``.
+
+    ``imageio`` is not one dependency but two: the package, and the plugin that
+    encodes the container. ``imageio`` declares the MP4 plugin as an optional
+    extra of its own, so probing ``imageio`` alone accepts an install that
+    cannot write an MP4 at all - and ``imageio`` then does not refuse the
+    request either, it falls through to another plugin, which rejects the
+    libx264 knobs as a ``TypeError`` naming a writer the caller never asked for.
+
+    So the container decides which modules have to be present, and this is the
+    one place that decides it: every writer in this package routes its
+    optional-dependency probe through here rather than repeating the rule, which
+    is how the rule came to hold for one writer and not the next.
+
+    Args:
+        path: The intended output path. Only its extension is read:
+            :data:`_GIF_SUFFIX` needs no plugin, anything else is MP4 and needs
+            :data:`_MP4_BACKEND_MODULE`.
+        purpose: What the encoder is being imported for, shown in the refusal so
+            a caller can tell which of several media paths refused.
+
+    Returns:
+        The imported top-level ``imageio`` module. A caller that wants the
+        ``imageio.v2`` API imports it itself; what is returned is the module
+        whose presence this call established.
+
+    Raises:
+        ImportError: naming the module actually absent - which of the two it is
+            depends on the install, so no fixed diagnosis is correct - the
+            distribution that supplies it, and the extra of this package that
+            pins that distribution at a version these encoders are tested
+            against. ``name`` is set to the absent module, so a caller can
+            report it without parsing the message.
+    """
+    module = require_optional(
+        "imageio",
+        pip_install="imageio imageio-ffmpeg",
+        extra=_ENCODER_EXTRA,
+        purpose=purpose,
+    )
+    if Path(path).suffix.lower() != _GIF_SUFFIX:
+        require_optional(
+            _MP4_BACKEND_MODULE,
+            pip_install="imageio-ffmpeg",
+            extra=_ENCODER_EXTRA,
+            purpose=f"MP4 {purpose}",
+        )
+    return module
+
 
 def _clip_quality_error(quality: Any) -> str | None:
     """Error text when ``quality`` is outside the range the clip encoder honors.
@@ -119,8 +192,13 @@ def encode_clip(
         The output path.
 
     Raises:
-        ImportError: if ``imageio`` (and, for MP4, ``imageio-ffmpeg``) is not
-            installed.
+        ImportError: if ``imageio`` is not installed, or - for any container
+            other than ``.gif`` - if ``imageio_ffmpeg``, the plugin that writes
+            MP4, is not installed (``imageio`` declares it as an optional extra
+            of its own, so one can be present without the other). Both are
+            probed before the frames are read and before any writer is opened,
+            so a caller that catches this can install the dependency and retry
+            the same frames.
         ValueError: if ``frames`` is empty, if ``fps`` or ``macro_block_size``
             is not a positive whole number, or if ``quality`` is not a finite
             number in ``[1, 10]`` -- each would silently produce a corrupt,
@@ -145,21 +223,18 @@ def encode_clip(
     # the same reason ``quality`` is not left to the writer's own assert.
     if text := positive_whole_number_error(macro_block_size, "macro_block_size", "encode_clip"):
         raise ValueError(text)
-    require_optional(
-        "imageio",
-        pip_install="imageio imageio-ffmpeg",
-        extra="sim-mujoco",
-        purpose="video encoding (encode_clip)",
-    )
+    # Probed before the frames are read, so a caller whose install cannot write
+    # this container keeps its iterable and can retry after installing.
+    out = Path(path)
+    require_clip_encoder(out, purpose="video encoding (encode_clip)")
     import imageio.v2 as imageio
 
     frame_list: list[Any] = [np.asarray(f) for f in frames]
     if not frame_list:
         raise ValueError(f"encode_clip: no frames to encode for {path}")
-    out = Path(path)
     if out.parent and not out.parent.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
-    if out.suffix.lower() == ".gif":
+    if out.suffix.lower() == _GIF_SUFFIX:
         # Pillow's GIF writer takes per-frame duration (ms), not fps.
         imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps))
     else:

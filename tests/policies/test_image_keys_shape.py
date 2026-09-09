@@ -27,8 +27,18 @@ doubles the width of the frame the model sees.
 
 These tests pin the shared domain
 (:func:`strands_robots.utils.name_list_error`), that all four surfaces that
-receive the value agree on it, that each refusal precedes the expensive work it
-guards, and that a falsy value keeps its "not supplied" meaning.
+receive the value agree on the SHAPE, and that each refusal precedes the
+expensive work it guards.
+
+The emptiness verdict is deliberately not part of that agreement, because the
+two providers do not name the same kind of thing with this parameter. The
+LeRobot side DECLARES the model's visual features, and absence derives them from
+the embodiment, so an empty list there keeps its "not supplied" meaning. The
+VERA side SELECTS a subset of the observation it was handed, so an empty
+selection asks for no view and cannot be a spelling of "every view" - it is
+refused, which is the verdict the shared domain reserves for the caller.
+:class:`TestTheEmptinessVerdictIsPerSurface` states that divergence rather than
+leaving it to be read out of a parity table.
 """
 
 from __future__ import annotations
@@ -64,9 +74,15 @@ GOOD_SHAPES: list[tuple[str, Any]] = [
     ("a tuple", ("observation.images.image",)),
 ]
 
-# Falsy values mean "not supplied" in both providers, which derive the list
-# instead. The guards are gated on a truthy value so that meaning is preserved.
-ABSENT_VALUES: list[tuple[str, Any]] = [("None", None), ("an empty list", [])]
+# ``None`` means "not supplied" on every surface, which derives the list instead.
+ABSENT_VALUES: list[tuple[str, Any]] = [("None", None)]
+
+# An empty list is a usable SHAPE whose meaning is the receiving surface's to
+# decide, so it is tabled separately from ``None``: it is "not supplied" to the
+# LeRobot declaration and an empty SELECTION - refused - to VERA. It used to sit
+# in ``ABSENT_VALUES``, which is what let the VERA cell below assert that a
+# selection naming no camera view falls back to every one of them.
+EMPTY_SELECTION: list[tuple[str, Any]] = [("an empty list", [])]
 
 
 class _FakeVeraClient:
@@ -154,8 +170,15 @@ class TestLerobotFeatureKeys:
         keys = ["observation.images.image", "observation.images.wrist_image"]
         assert molmoact2.derive_image_keys(keys, None) == keys
 
-    @pytest.mark.parametrize(("label", "value"), ABSENT_VALUES, ids=[c[0] for c in ABSENT_VALUES])
+    @pytest.mark.parametrize(
+        ("label", "value"),
+        ABSENT_VALUES + EMPTY_SELECTION,
+        ids=[c[0] for c in ABSENT_VALUES + EMPTY_SELECTION],
+    )
     def test_an_absent_value_still_derives_the_default_list(self, label: str, value: Any) -> None:
+        """Both spellings are "not supplied" here: this parameter declares the
+        model's features rather than selecting a subset of a collection the call
+        owns, so absence derives them and an empty list is that same absence."""
         assert molmoact2.derive_image_keys(value, None) == list(molmoact2.DEFAULT_IMAGE_KEYS)
 
     def test_the_refusal_precedes_the_weight_load(self) -> None:
@@ -233,6 +256,20 @@ class TestVeraViewKeys:
         assert policy.image_keys is None
         assert policy._resolve_view_keys(_observation(), {"view_keys": ["front"]}) == ["front"]
 
+    @pytest.mark.parametrize(("label", "value"), EMPTY_SELECTION, ids=[c[0] for c in EMPTY_SELECTION])
+    def test_an_empty_selection_is_refused_rather_than_falling_back(self, label: str, value: Any) -> None:
+        """This row used to be one of the ``ABSENT_VALUES`` above.
+
+        It is retargeted rather than dropped, because the assertion it made was
+        the defect: ``image_keys`` selects a subset of the observation's cameras,
+        so an empty selection asks for no view, and falling back served every one
+        of them - the opposite answer, under a success result. The full domain,
+        with the frame it produces, is pinned by
+        ``tests/policies/vera/test_vera_image_keys_selection_domain.py``.
+        """
+        with pytest.raises(ValueError, match="selects no camera view"):
+            _vera(value)
+
 
 # --------------------------------------------------------------------------- #
 # The surfaces must not diverge
@@ -252,6 +289,9 @@ class TestCrossProviderParity:
     feature keys against observation camera keys - but a value either is a list
     of distinct names or is not, so a shape refused by one surface cannot be
     accepted by another.
+
+    The empty list is not a shape question and is therefore not in this table;
+    :class:`TestTheEmptinessVerdictIsPerSurface` covers it.
     """
 
     @pytest.mark.parametrize(
@@ -273,3 +313,28 @@ class TestCrossProviderParity:
                 "VeraPolicy": _verdict(lambda: _vera(fresh())),
             }
         assert len(set(verdicts.values())) == 1, f"surfaces disagree for {label}: {verdicts}"
+
+
+# --------------------------------------------------------------------------- #
+# The one value whose verdict is the surface's own
+# --------------------------------------------------------------------------- #
+class TestTheEmptinessVerdictIsPerSurface:
+    """An empty list is a usable shape, so the shared domain returns nothing.
+
+    ``name_list_error([])`` is ``None`` on purpose - "a surface where an absent
+    value IS an error keeps that verdict its own" - and the two surfaces reach
+    opposite verdicts because they name different contracts with the one option
+    name. Asserted here so the divergence is deliberate and stays visible: a
+    later sweep that made either side match the other would have to delete this.
+    """
+
+    def test_the_shared_domain_returns_no_verdict(self) -> None:
+        assert name_list_error([], "image_keys", "Surface") is None
+
+    def test_the_declaration_reads_it_as_not_supplied(self) -> None:
+        assert molmoact2.derive_image_keys([], None) == list(molmoact2.DEFAULT_IMAGE_KEYS)
+        LerobotLocalPolicy.preflight({"front"}, image_keys=[])
+
+    def test_the_selection_refuses_it(self) -> None:
+        with pytest.raises(ValueError, match="selects no camera view"):
+            _vera([])

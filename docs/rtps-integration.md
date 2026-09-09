@@ -60,6 +60,36 @@ becomes `rt/turtle1/cmd_vel`, and a type `geometry_msgs/msg/Twist` becomes
 `geometry_msgs::msg::dds_::Twist_` - the conventions that make a bare DDS
 participant interoperable with real ROS 2 nodes.
 
+### What counts as a topic name
+
+A name only this package accepts still maps to a DDS topic, and nothing reports
+the divergence: DDS matches by topic name, so the participant advertises a name
+`rclpy` refuses at `create_publisher` and simply never finds a peer. So the rule
+is the ROS 2 mapping's own, in full, and it is enforced once - in
+`strands_robots.rtps.mangling` as `ROS_TOPIC_RE` plus `MAX_DDS_TOPIC_LENGTH` -
+with every seam that gates a caller name reading it rather than restating it.
+
+| Refused | Because |
+| --- | --- |
+| `cmd_vel` | not absolute; a DDS write has no namespace to resolve against |
+| `/a/` | a name must not end with `/` |
+| `//bar`, `/a//b` | a name token must not be empty |
+| `/1cam`, `/a/2b` | a token must not start with a digit |
+| `/a__b` | a name must not contain repeated underscores |
+| `/café`, `/bad name` | only ASCII `[A-Za-z0-9_]` and `/` |
+| a name whose `rt`-prefixed form exceeds 256 characters | the mapping bounds the **DDS** name, prefix included |
+
+A digit *inside* a token (`/turtle1/cmd_vel`) is legal, and so is a single
+leading underscore (`/_hidden/x`, which ROS 2 treats as a hidden topic) - the
+rule narrows to the mapping's set, not to something tighter. A refusal names the
+one clause the name broke rather than reporting a generic "invalid topic name".
+
+The `joint_states` / `image_raw` topics the hardware bridges publish on are held
+to the same rule: `RosTelemetryBase` sanitises a robot or camera name into a
+token that `ROS_TOPIC_RE` accepts, so a camera keyed by its device index
+(`0`) publishes on `/<robot>/camera_0/image_raw` rather than on a
+`/<robot>/0/image_raw` no ROS 2 node can subscribe to.
+
 Message interfaces only. ROS 2 has no single DDS type for a service or an
 action: `rosidl` generates one type per constituent message, so
 `example_interfaces/srv/AddTwoInts` becomes
@@ -233,8 +263,9 @@ arm = Robot(
 
 ## Safety
 
-Agent-supplied topic and type names are validated against an allowlist before
-mangling (absolute `/`-rooted alnum/`_` names; `pkg/msg/Name` types). The tool
+Agent-supplied topic and type names are validated before mangling, against the
+same rule the mangling applies (see [What counts as a topic
+name](#what-counts-as-a-topic-name)); types must be `pkg/msg/Name`. The tool
 never constructs a shell command or generates source, so there is no
 command-injection or `eval` surface. Backend, type-resolution, and field errors
 are returned as structured `{"status": "error"}` results rather than raised.

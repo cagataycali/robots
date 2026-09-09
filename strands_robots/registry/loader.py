@@ -36,6 +36,30 @@ _cache: dict[str, dict] = {}
 _sources: dict[str, tuple] = {}
 
 
+def normalize_robot_name(name: str) -> str:
+    """Fold a robot name or alias to the key every registry lookup uses.
+
+    One rule, spelled once: lowercase, trim surrounding whitespace, and read a
+    dash as an underscore. It is the rule
+    :func:`~strands_robots.registry.robots.resolve_name` applies to a caller's
+    query, so it is also the rule the things a query is matched against have to
+    be keyed by - a canonical robot name (normalized by
+    :func:`~strands_robots.registry.user_registry.register_robot`), an alias
+    (keyed by :func:`~strands_robots.registry.robots._build_alias_map`), and the
+    uniqueness constraints :func:`_validate_robots` enforces over both. A
+    consumer that folds while a producer or a validator does not is how
+    ``"Franka-Panda"`` becomes a lookup nobody can satisfy, or worse, one that
+    lands on a different robot.
+
+    Args:
+        name: A robot name or alias, in any spelling.
+
+    Returns:
+        The lookup key for ``name``.
+    """
+    return name.lower().strip().replace("-", "_")
+
+
 def _user_registry_source() -> bytes | None:
     """Contents of the user-local robot overlay, or None if absent.
 
@@ -154,7 +178,11 @@ def _validate_robots(data: dict) -> None:
     # typo as "no preference" and quietly builds the default driver.
     from strands_robots.drivers.base import DRIVER_CHOICES
 
-    seen_aliases: dict[str, str] = {}
+    # Keyed by the lookup key, not the declared spelling: two aliases that
+    # differ only in case or separator are ONE key to every reader, so raw
+    # comparison passes a pair that the alias map then silently collapses to
+    # whichever entry is merged last (the user overlay).
+    seen_aliases: dict[str, tuple[str, str]] = {}
     for robot_name, info in data.get("robots", {}).items():
         declared_driver = info.get("hardware", {}).get("driver")
         if declared_driver is not None and declared_driver not in DRIVER_CHOICES:
@@ -163,13 +191,25 @@ def _validate_robots(data: dict) -> None:
                 f"which is not a driver. Valid drivers: {', '.join(DRIVER_CHOICES)}."
             )
         for alias in info.get("aliases", []):
-            if alias in seen_aliases:
+            key = normalize_robot_name(alias)
+            if key in seen_aliases:
+                prior_alias, prior_robot = seen_aliases[key]
+                shared = "" if prior_alias == alias else f" ({prior_alias!r} and {alias!r} are one lookup key, '{key}')"
                 raise ValueError(
-                    f"Duplicate robot alias '{alias}': claimed by both '{seen_aliases[alias]}' and '{robot_name}'"
+                    f"Duplicate robot alias '{alias}': claimed by both '{prior_robot}' and '{robot_name}'{shared}"
                 )
-            if alias in data.get("robots", {}):
-                raise ValueError(f"Robot alias '{alias}' in '{robot_name}' collides with a canonical robot name")
-            seen_aliases[alias] = robot_name
+            # An alias that folds to its OWNER's canonical name is a second
+            # spelling of that name, which the fold already accepts - the same
+            # carve-out :func:`_validate_policies` makes with ``alias !=
+            # provider_name``. Only a fold onto a DIFFERENT robot is a collision,
+            # and it is refused because the canonical name wins the lookup, so
+            # the alias would resolve to the other robot.
+            if key != robot_name and key in data.get("robots", {}):
+                spelled = "" if key == alias else f" (as '{key}')"
+                raise ValueError(
+                    f"Robot alias '{alias}' in '{robot_name}' collides with a canonical robot name{spelled}"
+                )
+            seen_aliases[key] = (alias, robot_name)
 
 
 def _validate_policies(data: dict) -> None:

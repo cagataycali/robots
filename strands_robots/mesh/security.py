@@ -905,6 +905,45 @@ def is_safe_server_address(addr: str) -> bool:
             return False
 
 
+# --- Wire envelope timestamps ---------------------------------------------
+
+
+def as_wire_timestamp(value: Any) -> int | float | None:
+    """Return *value* if it is a wall-clock timestamp a freshness test can read.
+
+    Four wire handlers gate on the age of a peer-supplied timestamp -
+    presence (``timestamp``), the teleop input stream, remote E-stop and
+    remote resume (``t``) - and each computes ``now - t`` and compares the
+    result against a freshness window and a forward-skew allowance. For a
+    ``nan`` both of those comparisons are False, so the pair of bounds that
+    defines "fresh enough to act on" stops bounding anything and an envelope
+    of any age is accepted. ``json.loads`` accepts the bare ``NaN`` /
+    ``Infinity`` / ``-Infinity`` tokens by default, which is what makes the
+    value reachable from the wire rather than only from a Python caller - the
+    same reason :func:`_coerce_float` states for refusing them in a command.
+
+    This is the rule ``mesh.core._parse_positive_float_env`` already applies
+    to the *other* operand of those same comparisons, the window itself,
+    where a non-finite value "does not widen the bound but removes it". The
+    operand that arrives from the wire needs it for the same reason and had
+    it at neither end.
+
+    ``bool`` is excluded because ``True`` is an ``int``: it reads as one
+    second past the epoch, which a freshness window refuses only by accident
+    of the year, and reports as stale rather than as malformed.
+
+    An accepted value is returned as it arrived rather than coerced to
+    ``float``. ``_on_safety_resume`` verifies an HMAC whose input binds ``t``
+    through ``json.dumps``, which writes ``1`` and ``1.0`` differently, so a
+    widening here would refuse a signed envelope that spelled its stamp as an
+    integer. Returning ``None`` for the refused case is what lets a caller
+    narrow the value it goes on to subtract.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if math.isfinite(value) else None
+
+
 # --- Command schema and bounds -------------------------------------------
 
 
@@ -1758,6 +1797,7 @@ def merge_slew_baseline(
 
 __all__ = [
     "ALLOWED_ACTIONS",
+    "as_wire_timestamp",
     "MAX_DURATION_S",
     "MAX_INSTRUCTION_LEN",
     "MAX_MODEL_PATH_LEN",

@@ -42,12 +42,13 @@ Usage::
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import get_base_dir, resolve_asset_path
+from strands_robots.utils import get_base_dir, resolve_asset_path, safe_join
 
-from .loader import invalidate_cache
+from .loader import invalidate_cache, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,71 @@ def _load_user_registry() -> dict[str, Any]:
 
 
 def _save_user_registry(data: dict[str, Any]) -> None:
-    """Save the user-local robot registry file."""
+    """Save the user-local robot registry file, in full or not at all.
+
+    Both halves of that guarantee matter because every write here is a
+    read-modify-write of the WHOLE overlay: :func:`register_robot` and
+    :func:`unregister_robot` load the document, change one entry and store it
+    back. A write that lands partially therefore does not lose the entry being
+    changed, it loses every robot the overlay held - and
+    :func:`parse_user_robots` reports an unparseable overlay as *no user
+    robots* (a warning, then the package registry alone), so the loss surfaces
+    as robots that were registered simply not being there.
+
+    So the document is serialized in full *before* the destination is opened,
+    and the serialized text is committed through a temp file in the same
+    directory plus :func:`os.replace`:
+
+    * Serializing first is what keeps a rejected write harmless. ``json.dump``
+      encodes straight into the stream it is given, so a value it cannot encode
+      - a ``Path`` or a numpy scalar in the caller-supplied ``hardware`` dict,
+      say - raises only after a prefix of the new document has already replaced
+      the old one on disk. The refusal then destroyed the overlay it refused to
+      be added to, which is the opposite of what the
+      :func:`_assert_registry_still_loads` gate one line above its caller is
+      there to guarantee.
+    * ``os.replace`` is atomic within a directory, so a crash or an I/O error
+      during the commit leaves the previous document intact rather than
+      truncated, and a concurrent reader observes one whole document or the
+      other, never a prefix.
+
+    This is the sequence
+    :meth:`strands_robots.tools.harness_memory.HarnessMemory.save_trace` uses
+    for its own JSON store, for the same reasons. The temp file is written with
+    :meth:`pathlib.Path.write_text` rather than :func:`tempfile.mkstemp` so the
+    overlay keeps the ordinary umask-derived mode a plain ``open(path, "w")``
+    gave it: this file is user metadata that a shared ``STRANDS_BASE_DIR``
+    deployment may serve to more than one reader, and replacing its contents is
+    not the moment to decide who may read it.
+
+    Args:
+        data: The whole overlay document to store, as ``{"robots": {...}}``.
+
+    Raises:
+        ValueError: If *data* holds a value JSON cannot represent. Raised
+            before the overlay is touched, so the stored document is still the
+            last one that loaded; the originating ``TypeError`` (or
+            ``ValueError``) stays on ``__cause__``, naming the offending type.
+        OSError: If the temp file cannot be written or renamed. The overlay is
+            likewise unchanged, and no temp file is left behind.
+    """
     path = _get_user_registry_path()
+    try:
+        payload = json.dumps(data, indent=4) + "\n"
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"user registry entry is not JSON-serializable, so it cannot be stored in {path}: {exc}. "
+            "The registry on disk is unchanged. Pass only JSON types (str, int, float, bool, None, "
+            "list, dict) - a filesystem path or a numpy scalar must be converted first."
+        ) from exc
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
-        f.write("\n")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
     logger.info("Saved user registry: %s (%d robots)", path, len(data.get("robots", {})))
 
 
@@ -123,6 +183,37 @@ def get_user_robots() -> dict[str, Any]:
         Dict mapping robot names to their definitions.
     """
     return parse_user_robots(user_registry_source())
+
+
+def _asset_relative(resolved_dir: Path, param: str, value: str) -> Path:
+    """Join a registry-stored asset path onto its directory, refusing escapes.
+
+    ``model_xml`` and ``scene_xml`` are stored relative to the robot's asset
+    directory, and every reader joins them back through
+    :func:`~strands_robots.utils.safe_join` - both branches of
+    :func:`~strands_robots.assets.manager.resolve_model_path` and of
+    :func:`~strands_robots.assets.manager.is_robot_asset_present`. Registration
+    makes the same join, so a value the readers refuse is refused here.
+
+    Args:
+        resolved_dir: The robot's asset directory.
+        param: Name of the registration parameter being joined, quoted in the
+            refusal so the caller knows which of the two values to correct.
+        value: The path the caller supplied.
+
+    Returns:
+        The joined path, inside *resolved_dir*.
+
+    Raises:
+        ValueError: *value* escapes *resolved_dir* - it is absolute (a raw join
+            would discard *resolved_dir* entirely) or it traverses out of it.
+    """
+    try:
+        return safe_join(resolved_dir, value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{param}={value!r} must name a file inside the asset directory {resolved_dir}: {exc}"
+        ) from exc
 
 
 def register_robot(
@@ -165,7 +256,12 @@ def register_robot(
               (``STRANDS_ASSETS_DIR`` or ``~/.strands_robots/assets/``).
             - None: defaults to ``<assets_dir>/<name>/``.
         scene_xml: Scene XML (with ground/lights). Defaults to ``model_xml``.
-        aliases: Alternative names for this robot.
+        aliases: Alternative names for this robot. Folded to a lookup key the
+            same way ``name`` is (see
+            :func:`~strands_robots.registry.loader.normalize_robot_name`), so
+            ``"My-Arm"`` and ``"my_arm"`` are one alias, and an alias that folds
+            onto another robot's canonical name or alias is refused rather than
+            resolving to that robot.
         robot_descriptions_module: Optional ``robot_descriptions`` module name.
         hardware: Optional hardware config dict (``lerobot_type``, etc.).
         overwrite: If False (default), raises ValueError if robot already exists.
@@ -178,6 +274,14 @@ def register_robot(
             ``aliases`` entry collides with an existing canonical robot name or
             another robot's alias (the same constraint the loader enforces at
             read time, checked here so the registration cannot brick lookups).
+            Also raised when ``model_xml`` or ``scene_xml`` escapes the asset
+            directory they are declared relative to (see
+            :func:`_asset_relative`), since the readers refuse such a path and
+            the registration would persist a robot that cannot be loaded, and
+            when a value in *hardware* (or any other field) is not
+            JSON-serializable, since the overlay is a JSON document - see
+            :func:`_save_user_registry`, which refuses such an entry before the
+            stored overlay is touched.
         FileNotFoundError: If ``model_xml`` doesn't exist at the resolved path.
 
     Example::
@@ -193,7 +297,7 @@ def register_robot(
         )
     """
     # Normalize name
-    name = name.lower().strip().replace("-", "_")
+    name = normalize_robot_name(name)
 
     # Load existing
     data = _load_user_registry()
@@ -226,7 +330,20 @@ def register_robot(
     # dirs that didn't exist yet and surfaced a confusing error only at
     # ``add_robot()`` time.  Now we fail-closed on both conditions so the
     # user gets an immediate, actionable error at registration time.
-    model_path = resolved_dir / model_xml
+    #
+    # The join is the reader's join (:func:`_asset_relative`), so a value that
+    # leaves the asset directory is refused here rather than validated against
+    # a file outside it. Joined raw, an absolute ``model_xml`` discards
+    # ``resolved_dir`` entirely and any existing host file satisfies the check,
+    # and the deferred ``add_robot()`` failure above comes back - now with the
+    # entry already persisted, and with ``_user_asset_path`` naming a directory
+    # the stored path does not live in.
+    model_path = _asset_relative(resolved_dir, "model_xml", model_xml)
+    if scene_xml is not None:
+        # Not existence-checked (a scene is optional and may be authored later),
+        # but contained: it is stored and read back the same way ``model_xml``
+        # is, by ``resolve_model_path(prefer_scene=True)``.
+        _asset_relative(resolved_dir, "scene_xml", scene_xml)
     if not resolved_dir.exists():
         raise FileNotFoundError(
             f"Asset directory does not exist: {resolved_dir}\n"
@@ -291,7 +408,7 @@ def unregister_robot(name: str) -> bool:
     Returns:
         True if the robot was removed, False if it wasn't in the user registry.
     """
-    name = name.lower().strip().replace("-", "_")
+    name = normalize_robot_name(name)
     data = _load_user_registry()
 
     if name not in data.get("robots", {}):

@@ -41,14 +41,17 @@ from typing import Any, cast
 from strands.types.tools import ToolContext
 
 from strands_robots.mesh._mobile_base import MobileBaseRobot
+from strands_robots.rtps.mangling import ROS_TOPIC_RE
 from strands_robots.tools.use_rtps import use_rtps
 from strands_robots.utils import partial_construction_repr
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
 # ``use_rtps`` writes to a DDS topic directly, so a topic must be absolute -
 # a stricter grammar than the ROS 2 bridge's, which also accepts relative and
-# private (``~``) names for rclpy to resolve.
-_RTPS_TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]\Z")
+# private (``~``) names for rclpy to resolve. Read from the mangling that maps
+# the name rather than restated, so this seam cannot admit a name the DDS write
+# then refuses (or, worse, maps to a topic no ROS 2 node can create).
+_RTPS_TOPIC_RE = ROS_TOPIC_RE
 _RTPS_NAME_RE = re.compile(r"^[A-Za-z0-9_/~]+\Z")
 
 
@@ -131,7 +134,8 @@ class RtpsRobot(MobileBaseRobot):
     # topic is written to DDS directly and must be absolute.
     _TOPIC_HINT = (
         " (expected an absolute topic like /turtle1/cmd_vel - use_rtps writes to DDS "
-        "directly, so a relative or ~ name has no resolver)"
+        "directly, so a relative or ~ name has no resolver, an empty or digit-leading "
+        "token is not a ROS 2 name, and repeated underscores are not either)"
     )
 
     def __init__(

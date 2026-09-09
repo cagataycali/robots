@@ -1582,7 +1582,12 @@ def test_get_lerobot_dataset_class_raises_clean_importerror_when_unavailable(mon
 
     When lerobot's dataset module does not resolve and no test has injected a
     mock class, the resolver must raise an ImportError that names the install
-    remedy rather than leaking the raw import failure to the caller.
+    remedy rather than leaking the raw import failure to the caller. The remedy
+    is the one ``lerobot_dataset_import_error`` reports for that same failure -
+    a module that does not resolve is fixed by the extra that pins the supported
+    range - rather than a second hint composed here; which cause maps to which
+    instruction is pinned in
+    ``tests/test_dataset_recorder_creation_names_the_install_that_fixes_it.py``.
     """
     import sys
 
@@ -1592,7 +1597,7 @@ def test_get_lerobot_dataset_class_raises_clean_importerror_when_unavailable(mon
     monkeypatch.setattr(dr, "LeRobotDataset", None, raising=False)
     monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", None)
 
-    with pytest.raises(ImportError, match="pip install lerobot"):
+    with pytest.raises(ImportError, match=r"pip install 'strands-robots\[lerobot\]'"):
         dr._get_lerobot_dataset_class()
 
 

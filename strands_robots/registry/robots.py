@@ -8,7 +8,7 @@ or modify robots.
 import logging
 from typing import Any
 
-from .loader import _load
+from .loader import _load, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,31 @@ def _build_alias_map() -> dict[str, str]:
 
     Each robot entry may have an "aliases" list.  This function
     inverts those into a flat lookup dict.
+
+    Keyed by :func:`~strands_robots.registry.loader.normalize_robot_name`, the
+    same fold :func:`resolve_name` applies to the query it looks up here: an
+    alias keyed as declared is unreachable in EVERY spelling once its declared
+    one is not already folded, because the query is folded before it arrives.
     """
     reg = _load("robots")
     alias_map: dict[str, str] = {}
     for name, info in reg.get("robots", {}).items():
+        canonical_key = normalize_robot_name(name)
         for alias in info.get("aliases", []):
-            alias_map[alias] = name
+            key = normalize_robot_name(alias)
+            # An alias that folds onto its OWNER's canonical name is a second
+            # spelling of that name, not a separate lookup: ``resolve_name``
+            # answers it from ``canonical_names`` whether or not it is here.
+            # Emitting it anyway would make this an identity entry, and
+            # ``list_aliases`` is the public read of this map - a caller asking
+            # "what does this alias mean" would be told it means itself. The
+            # shipped registry has exactly one (``reachy_mini`` aliases
+            # ``reachy-mini``), which only became an identity entry once alias
+            # keys were folded. Skipping it costs no resolution; it is the same
+            # carve-out ``_validate_robots`` makes when it allows the alias.
+            if key == canonical_key:
+                continue
+            alias_map[key] = name
     return alias_map
 
 
@@ -48,7 +67,7 @@ def resolve_name(name: str) -> str:
         resolve_name("SO100_follower") # → "so100"
         resolve_name("g1")            # → "unitree_g1"
     """
-    normalized = name.lower().strip().replace("-", "_")
+    normalized = normalize_robot_name(name)
     alias_map = _build_alias_map()
     # Canonical names come straight from the registry keys. Using
     # ``alias_map.values()`` here was wrong: it only contains robots that

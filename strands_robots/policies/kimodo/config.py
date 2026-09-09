@@ -8,14 +8,22 @@ at construction time with a clear message rather than deep inside the sampler.
 
 Numeric domains follow the shared helpers in :mod:`strands_robots.utils`:
 
-* ``diffusion_steps`` - positive integer (Kimodo default 100, 25-200 useful range)
-* ``guidance_scale`` - positive finite number (Kimodo default 7.5)
+* ``diffusion_steps`` - positive integer (Kimodo default 100, 25-200 useful
+  range) bounded by :data:`_KIMODO_MAX_DIFFUSION_STEPS`, via
+  :func:`diffusion_steps_error`, which is also the domain
+  :meth:`KimodoPolicy.get_actions` applies to a per-call override
+* ``guidance_scale`` - positive finite number (Kimodo default 7.5), the shared
+  :func:`~strands_robots.utils.positive_finite_number_error` domain, which
+  :meth:`KimodoPolicy.get_actions` applies to a per-call override too
 * ``fps`` - positive integer (Kimodo emits at 30Hz native, upsampled to 50Hz
   for the G1 tracker via SLERP downstream)
 * ``num_frames`` - positive integer bounded by the model's max sequence length
   (196 for RP-v1)
 * ``transition_frames`` - positive integer, at least 1, matching the domain the
   Kimodo sampler applies to its own ``num_transition_frames``
+* ``seed`` - whole number or ``None``, via :func:`sampling_seed_error`, which is
+  also the domain :meth:`KimodoPolicy.reset` applies to a per-episode reseed and
+  :meth:`KimodoPolicy.get_actions` to a per-call override
 
 The default ``model_id`` targets the RP-v1 checkpoint. Alternate model ids are
 accepted verbatim; the loader defers validation to ``from_pretrained``. Note
@@ -26,6 +34,7 @@ pipeline, so a real-model run supplies its sampler through ``motion_agent=``.
 from __future__ import annotations
 
 import json
+import numbers
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +43,11 @@ from strands_robots.utils import positive_finite_number_error, positive_whole_nu
 
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
+# Kimodo's own sampler is useful at 25-200 denoising steps; the ceiling here
+# is deliberately well above that so an experiment is not blocked by it, and
+# exists because the step count is a per-sample compute multiplier - an
+# unbounded one makes a single get_actions call an unbounded diffusion run.
+_KIMODO_MAX_DIFFUSION_STEPS = 500
 _KIMODO_NATIVE_FPS = 30
 _KIMODO_TRACKER_FPS = 50
 # Kimodo's own sampler blends a multi-prompt sequence over its last
@@ -92,6 +106,130 @@ def _positive_float(name: str, value: float) -> float:
     return float(value)
 
 
+def diffusion_steps_error(value: Any, context: str) -> str | None:
+    """Return why a value cannot be a Kimodo denoising-step count.
+
+    The single owner of this domain, because the domain is a composite one and
+    a composite restated at two surfaces is a domain that can diverge: the sign,
+    integrality, ``bool`` and float-range rules come from
+    :func:`~strands_robots.utils.positive_whole_number_error`, and the ceiling
+    :data:`_KIMODO_MAX_DIFFUSION_STEPS` is this provider's own.
+
+    Two surfaces set the step count. :class:`KimodoConfig` validates the field
+    (directly, through :meth:`KimodoConfig.from_dict` /
+    :meth:`KimodoConfig.from_json`, or through a
+    ``KimodoPolicy(diffusion_steps=...)`` override, all of which re-enter
+    :meth:`__post_init__`); and :meth:`KimodoPolicy.get_actions`, whose
+    documented per-call ``diffusion_steps=`` override is read straight from
+    ``kwargs`` and reaches both the sampler and the buffered-motion key without
+    passing through the config at all. Both consult this function, so one value
+    gets one verdict whichever way it is spelled.
+
+    The step count is spent twice, and both uses are why the domain is not
+    merely advisory. It is handed to the sampler, where it is the number of
+    denoising iterations - ``0`` asks for a sample that was never denoised and
+    ``True`` asks for one iteration, neither of which is a motion a tracker
+    should be asked to follow. And it is part of the key
+    :class:`KimodoPolicy` identifies the buffered motion by, so a value that
+    differs from the one that produced the motion in hand discards that motion
+    and re-enters the sampler mid-rollout.
+
+    Args:
+        value: The caller-supplied step count.
+        context: Message prefix identifying the surface that received it - the
+            class name for a constructor field, the method name otherwise.
+
+    Returns:
+        ``None`` when the step count is usable, otherwise the reason as a string.
+    """
+    if error := positive_whole_number_error(value, "diffusion_steps", context):
+        return error
+    if value > _KIMODO_MAX_DIFFUSION_STEPS:
+        return (
+            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {value} - "
+            "the step count multiplies the cost of every sample, so a run this long is a stall "
+            "rather than a better motion."
+        )
+    return None
+
+
+def sampling_seed_error(value: Any, context: str) -> str | None:
+    """Return why a value cannot seed a Kimodo sampler run.
+
+    The single owner of this domain. Three surfaces set the sampling seed -
+    :class:`KimodoConfig` (directly, through :meth:`KimodoConfig.from_dict` /
+    :meth:`KimodoConfig.from_json`, or through a ``KimodoPolicy(seed=...)``
+    override); :meth:`KimodoPolicy.reset`, which stores a per-episode reseed
+    on the frozen config with ``object.__setattr__`` and so does not re-enter
+    :meth:`__post_init__`; and :meth:`KimodoPolicy.get_actions`, whose
+    documented per-call ``seed=`` override is read straight from ``kwargs`` and
+    reaches both the sampler and the buffered-motion key without passing
+    through the config at all. All three consult this function, so one value
+    gets one verdict whichever way it is spelled.
+
+    A seed has to survive being used twice, and that is what the domain here
+    protects. It is handed to the sampler, and it is part of the key
+    ``KimodoPolicy`` identifies the buffered motion by - a key built by
+    coercing the seed with ``int()``. A seed that is not already whole
+    therefore names a different sample than the one it produces: ``2.5`` and
+    ``2.9`` reach the sampler as themselves and key as ``2``, so a reseeded
+    episode reads as a cache hit and silently replays the previous episode's
+    motion rather than sampling its own. ``nan`` and ``inf`` do not survive
+    the coercion at all and raised out of the key builder - past the
+    construction-time reporting this module exists to give, and on a rollout
+    that had already reported the reseed as applied. ``inf`` is reachable from
+    a JSON config file: ``1e400`` is well-formed JSON and parses to it.
+
+    ``bool`` is rejected explicitly. It is an ``int`` subclass, so ``True``
+    would pass an integrality test and then key as ``1``, silently sharing a
+    motion with ``seed=1``.
+
+    Sign is not part of this domain. Kimodo's seed is applied with
+    ``torch.manual_seed`` (or a ``Generator``'s), which honors a negative seed,
+    and the key holds it unchanged - so a negative seed round-trips, and
+    refusing it would reject a value that works. The rollout facades'
+    :func:`~strands_robots.simulation.base.randomization_seed_error` is
+    narrower for the reason it states itself: it also reseeds ``numpy.random``,
+    which refuses a negative seed and a value above ``2**32 - 1``. Their
+    appliers are not equally wide, so their domains are not either.
+
+    Magnitude is not part of it either, and the distinction is where the
+    failure surfaces. Both torch appliers accept ``[-2**63, 2**64-1]`` and
+    refuse a wider seed with a ``ValueError`` naming the overflow, at the call
+    that applies it - so an outsized seed is already reported, by the applier
+    that owns the bound, and the sampler is a pluggable ``motion_agent=`` whose
+    bound is not this module's to state. What this function refuses is the
+    complementary set: seeds that fail somewhere nobody is looking - inside a
+    private key builder, with no mention of a seed - or that do not fail at
+    all and simply name the wrong sample.
+
+    Args:
+        value: The candidate seed (``None`` selects fresh entropy per call).
+        context: Surface that received it, used to prefix the message - the
+            class name for a constructor parameter, the method name otherwise.
+
+    Returns:
+        ``None`` when the seed is usable, otherwise the reason as a string.
+    """
+    if value is None:
+        return None
+    prefix = f"{context}: seed must be a whole number or None, got {value!r}"
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return f"{prefix} (None draws fresh entropy for every sample)."
+    try:
+        whole = int(value)
+    except (OverflowError, TypeError, ValueError):
+        # nan and inf reach here. They cannot key a sample at all, so they
+        # would raise out of the key builder mid-rollout instead of here.
+        return f"{prefix}: it cannot be coerced to the whole number the buffered-motion key is built from."
+    if whole != value:
+        return (
+            f"{prefix}: the buffered-motion key rounds a seed to a whole number, so "
+            f"{value!r} would name the sample keyed by {whole!r} and replay it instead of sampling its own."
+        )
+    return None
+
+
 @dataclass(frozen=True)
 class KimodoConfig:
     """Frozen configuration for :class:`KimodoPolicy`.
@@ -131,7 +269,11 @@ class KimodoConfig:
             published in diffusers pipeline layout reaches the flag at all -
             NVIDIA's own Kimodo checkpoints are not, and are refused at load
             time in favour of a ``motion_agent=`` sampler.
-        seed: RNG seed for reproducible sampling. ``None`` = fresh each call.
+        seed: RNG seed for reproducible sampling. A whole number, of either
+            sign and any width, or ``None`` for fresh entropy on every sample.
+            :func:`sampling_seed_error` owns the domain and
+            :meth:`KimodoPolicy.reset` applies the same one to a per-episode
+            reseed.
     """
 
     model_id: str = _KIMODO_DEFAULT_MODEL_ID
@@ -149,7 +291,8 @@ class KimodoConfig:
 
     def __post_init__(self) -> None:
         # Validate at construction so bad values fail loud.
-        _positive_int("diffusion_steps", self.diffusion_steps, upper=500)
+        if error := diffusion_steps_error(self.diffusion_steps, "KimodoConfig"):
+            raise ValueError(error)
         _positive_float("guidance_scale", self.guidance_scale)
         _positive_int("num_frames", self.num_frames, upper=_KIMODO_MAX_FRAMES)
         _positive_int("transition_frames", self.transition_frames, upper=_KIMODO_MAX_FRAMES)
@@ -159,6 +302,8 @@ class KimodoConfig:
             raise ValueError(f"dtype must be one of 'fp16'/'bf16'/'fp32', got {self.dtype!r}")
         if not isinstance(self.model_id, str) or not self.model_id.strip():
             raise ValueError("model_id must be a non-empty string")
+        if error := sampling_seed_error(self.seed, "KimodoConfig"):
+            raise ValueError(error)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> KimodoConfig:

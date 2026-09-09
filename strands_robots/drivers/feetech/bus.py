@@ -45,7 +45,7 @@ from strands_robots.drivers.feetech.protocol import (
     read_packet,
     sync_write_packet,
 )
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_count_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +170,16 @@ class FeetechBus:
     Args:
         port: Serial device path. ``None`` is accepted so a driver can be
             constructed before its port is known; :meth:`connect` refuses.
-        baud_rate: Bus speed. 1 Mbaud is the STS3215 default.
+        baud_rate: Bus speed, a positive integer. 1 Mbaud is the STS3215
+            default. Refused here rather than at :meth:`connect` because
+            pyserial coerces the speed through its own ``int()`` and refuses
+            only a negative, so an unusable value opens the port at a speed no
+            servo answers instead of reporting itself.
         motors: The servos on this bus, defaulting to :data:`SO_ARM_MOTORS`.
         timeout: Serial read timeout in seconds.
+
+    Raises:
+        ValueError: ``baud_rate`` is not a positive integer.
     """
 
     def __init__(
@@ -182,6 +189,8 @@ class FeetechBus:
         motors: dict[str, MotorSpec] | None = None,
         timeout: float = 1.0,
     ) -> None:
+        if (reason := positive_count_error(baud_rate, "baud_rate", type(self).__name__)) is not None:
+            raise ValueError(reason)
         self.port = port
         self.baud_rate = baud_rate
         self.motors = dict(SO_ARM_MOTORS if motors is None else motors)

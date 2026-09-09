@@ -199,6 +199,63 @@ def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) 
     }
 
 
+def encoder_absent_flush_refusal(reason: object, name: str, buffered: Mapping[str, int]) -> dict[str, Any]:
+    """The refusal a raw-camera flush owes buffers whose encoder is not installed.
+
+    A ``stop_cameras_recording`` flush is best-effort and never-raises, so every
+    other way an encode can fail is folded into its success envelope and the
+    recording is deregistered. The absent encoder is the one exception, and it is
+    the reason this refusal exists rather than being one more artifact line:
+    :func:`~strands_robots.rendering.require_clip_encoder` raises before any
+    writer is opened, so NO camera was written and NO buffer was touched. The
+    frames are all still in memory, and the remedy - install the encoder, call
+    the verb again - is only followable while the recording is still registered.
+
+    Deregistering there discarded exactly the frames the message promised were
+    recoverable. So the envelope and the retention are one decision, and this is
+    the one place that words it: both raw-camera recorders (MuJoCo's daemon-
+    thread capture and Isaac's ``on_frame`` capture) return it, which is what
+    keeps the two from drifting into different answers about the same absence.
+
+    Args:
+        reason: The encoder's own refusal - an ``ImportError`` raised through
+            :func:`~strands_robots.utils.require_optional`. It is quoted rather
+            than re-diagnosed: ``imageio`` and the MP4 plugin it leaves optional
+            are two different absences, so a fixed line names the wrong module
+            half the time and prescribes an install that changes nothing.
+        name: The registered recording's tag, echoed so a caller holding several
+            knows which one is still resident.
+        buffered: Frames held per camera, which is what the caller loses by not
+            following the remedy.
+
+    Returns:
+        A tool-style error envelope whose ``json`` carries ``stopped=False``,
+        ``recording`` and ``buffered_frames`` - the state a caller needs to
+        decide, without parsing the message.
+    """
+    held = dict(buffered)
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{reason}\n"
+                    f"Nothing was encoded and nothing was dropped: camera recording "
+                    f"{name!r} is left registered holding {held}. Install "
+                    f"the encoder and call stop_cameras_recording() again to flush it."
+                )
+            },
+            {
+                "json": {
+                    "stopped": False,
+                    "recording": name,
+                    "buffered_frames": held,
+                }
+            },
+        ],
+    }
+
+
 def recorder_dataset_fps(recorder: Any) -> int | None:
     """Read the frame rate of a live recorder's dataset, or None if unavailable.
 
@@ -1333,6 +1390,50 @@ class DatasetRecordingMixin:
             ],
         }
 
+    def _flush_open_episode_before_reset(self) -> dict[str, Any] | None:
+        """Close the open dataset episode before a reset re-initializes the world.
+
+        A reset is the start of a new rollout, so the frames buffered since the
+        last episode boundary belong to the rollout that just ended. Flushing
+        them here is what makes :meth:`save_episode`'s "``reset()`` is itself an
+        episode boundary while recording" true, and ``docs/recording.md`` states
+        the same rule without naming a backend. Without it a
+        ``run_policy`` + ``reset`` collection loop appends every rollout to the
+        same buffer, and ``stop_recording`` flushes the lot as a single
+        ``episode_index=0`` whose frames span every teleport in between -
+        ``total_episodes`` stuck at 1 for a dataset downstream training and eval
+        slice by episode. Nothing reports it: the episode count the recorder and
+        the parquet agree on is 1, so ``stop_recording``'s own
+        author-versus-parquet gate passes, and ``verify_dataset_episodes``
+        counts episodes rather than comparing them to the rollouts that were
+        run.
+
+        Owned here rather than per backend because all three concrete engines
+        reset the same recording session through the same
+        :meth:`_recording_state` accessor: a copy per backend is what left two
+        of them without the boundary while the shared docstring promised it.
+
+        Returns:
+            ``None`` when there is nothing to flush - no recording is open, or
+            no frame has been captured since the last boundary - so a reset that
+            is not preceded by recorded frames is unaffected. Otherwise the
+            :meth:`save_episode` result: a success envelope whose text names the
+            episode just written, for the caller to quote, or an error envelope
+            the caller must return instead of resetting, because a failed flush
+            leaves the recorder closed and its buffer in an undefined state.
+        """
+        state = self._recording_state()
+        if state is None or not state.get("recording", False):
+            return None
+        recorder = state.get("dataset_recorder", None)
+        # ``save_episode`` reports an empty buffer as a success ("no frames to
+        # flush"), which would add a note to every reset in a session. Ask the
+        # recorder first so a reset with nothing buffered reads exactly as it
+        # did before there was a boundary to cut.
+        if getattr(recorder, "episode_frame_count", 0) <= 0:
+            return None
+        return self.save_episode()
+
     def stream_dataset(self, repo_id: str, **kwargs: Any) -> "StreamingDatasetReader":
         """Open a streaming reader for a LeRobotDataset - read frames straight
         from the Hub (or a local root) with no full materialization.
@@ -1349,11 +1450,16 @@ class DatasetRecordingMixin:
 
         Args:
             repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
-                a local repo_id paired with ``root=``.
+                a ``repo_id`` that is itself a path, which streams the directory
+                it recorded to with no ``root`` restated
+                (:func:`~strands_robots.dataset_recorder.local_dataset_dir`).
             **kwargs: Forwarded to
                 :meth:`StreamingDatasetReader.open` - e.g. ``root``,
-                ``delta_timestamps``, ``episodes``, ``shuffle``, ``buffer_size``,
-                ``max_num_shards``, ``drop_videos`` (proprio-only,
+                ``delta_timestamps``, ``episodes``, ``shuffle`` (which decides
+                cross-epoch reproducibility, NOT read order - see that method's
+                "Ordering" note), ``buffer_size`` and ``max_num_shards`` (both
+                ``1`` to read in capture order),
+                ``drop_videos`` (proprio-only,
                 torchcodec-free; requires ``delta_timestamps`` with at least one
                 non-video key, else ValueError), ``repo_type`` (``"dataset"`` or
                 ``"bucket"``; ``"bucket"`` requires lerobot>=0.6.1, else
@@ -1367,7 +1473,7 @@ class DatasetRecordingMixin:
                 "local/agent_demo", root="/tmp/strands_agent_dataset",
                 delta_timestamps={"observation.state": [-0.0667, 0.0],
                                   "action": [0.0, 0.0667]},
-                shuffle=False,
+                buffer_size=1, max_num_shards=1,  # capture order for replay
             )
             for frame in reader:
                 ...

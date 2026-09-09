@@ -60,7 +60,14 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
-from strands_robots.utils import lerobot_version, validation_split_error, validation_split_fraction
+from strands_robots.utils import (
+    declared_count,
+    lerobot_version,
+    stale_output_dir_is_clearable,
+    torch_device_error,
+    validation_split_error,
+    validation_split_fraction,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from lerobot.configs.train import TrainPipelineConfig
@@ -332,12 +339,19 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
     the file is absent or unreadable (unknown - e.g. a Hub dataset with no
     materialized local cache), so a definite miss can be flagged without false
     positives on the unknown case.
+
+    Unreadable is ``ValueError`` and not the narrower ``json.JSONDecodeError``:
+    a partially-synced file carries bytes the declared encoding does not
+    describe (``UnicodeDecodeError``) and a number longer than
+    ``sys.get_int_max_str_digits`` raises a plain ``ValueError``, neither of
+    which is a JSON decode error. Both aborted the whole :meth:`LerobotTrainer.validate`
+    preflight instead of leaving this one probe unknown.
     """
     stats_path = os.path.join(dataset_root, "meta", "stats.json")
     try:
         with open(stats_path, encoding="utf-8") as fh:
             stats = json.load(fh)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
     return _stats_have_quantiles(stats)
 
@@ -378,13 +392,14 @@ def _dataset_codebase_version(dataset_root: str) -> str | None:
     count). Returns ``None`` when the file is absent, unreadable, or carries no
     string ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
     materialized local cache - so a DEFINITE mismatch can be reported without
-    false positives on the unknown one.
+    false positives on the unknown one. Unreadable is graded by ``ValueError``
+    for the reason :func:`_dataset_quantile_stats_present` carries.
     """
     info_path = os.path.join(dataset_root, "meta", "info.json")
     try:
         with open(info_path, encoding="utf-8") as fh:
             declared = json.load(fh).get("codebase_version")
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
     return declared if isinstance(declared, str) else None
 
@@ -546,11 +561,19 @@ class LerobotTrainer(Trainer):
         return f"policy:{self._resolve_policy_type(spec)}"
 
     def _dataset_total_episodes(self, dataset_root: str) -> int | None:
+        """Episode count declared by a local dataset's ``meta/info.json``, or None.
+
+        The count is graded by :func:`~strands_robots.utils.declared_count`, the
+        one owner every reader of this header shares, so the validation split
+        cannot be computed from a denominator another surface refuses. ``None``
+        is the unknown case - an absent, unreadable or unusable header - and
+        every caller here already treats it as "no split can be derived".
+        """
         info = os.path.join(dataset_root, "meta", "info.json")
         try:
             with open(info, encoding="utf-8") as f:
-                return int(json.load(f).get("total_episodes"))
-        except (OSError, ValueError, TypeError):
+                return declared_count(json.load(f).get("total_episodes"))
+        except (OSError, ValueError, AttributeError):
             return None
 
     def _resume_config_path(self, output_dir: str) -> str | None:
@@ -728,19 +751,30 @@ class LerobotTrainer(Trainer):
             "keep the stream."
         )
 
-    def _dataset_total_tasks(self, dataset_root: str) -> int:
-        """``total_tasks`` from ``meta/info.json``, or 0 when not recorded."""
+    def _dataset_total_tasks(self, dataset_root: str) -> Any:
+        """What ``meta/info.json`` declares for ``total_tasks``, verbatim.
+
+        ``None`` when there is no header to read - absent, unreadable, or no such
+        key - which :func:`~strands_robots.utils.validation_split_error` treats as
+        single-task, as lerobot's own field defaults to 0.
+
+        The declaration is not converted here: that guard owns this header's
+        domain and is the only surface that can tell a usable count from a
+        declaration that is not one. Coercing an unusable declaration to 0
+        reported it as the absent case, which the guard honors as single-task -
+        so a three-task dataset whose header spelled the count ``3.0`` reached
+        lerobot's per-task ceiling instead of being refused.
+        """
         from pathlib import Path
 
         info_path = Path(dataset_root) / "meta" / "info.json"
         if not info_path.exists():
-            return 0
+            return None
         try:
-            with open(info_path) as f:
-                total = json.load(f).get("total_tasks")
-        except (OSError, ValueError):
-            return 0
-        return total if isinstance(total, int) and not isinstance(total, bool) else 0
+            with open(info_path, encoding="utf-8") as f:
+                return json.load(f).get("total_tasks")
+        except (OSError, ValueError, AttributeError):
+            return None
 
     def _relative_actions(self, spec: TrainSpec) -> bool:
         """Whether to train with relative (delta) actions (``extra['relative_actions']``).
@@ -811,40 +845,17 @@ class LerobotTrainer(Trainer):
         ``dataset_repo_id`` against ``_HUB_REPO_ID_RE``. ``device`` was the one
         knob beside them with none.
 
-        The admitted domain is torch's own, read by handing the value to
-        ``torch.device`` rather than by comparing against a copied list of
-        device types, so a torch build that gains a backend is admitted here
-        with no change and torch's own exception enumerates the types it
-        accepts. Only the spelling is graded, never availability:
-        ``torch.device("cuda")`` constructs on a CPU-only box, and a spec
-        legitimately names a device the machine writing it does not have - a
-        queued or containerised run is dispatched from one host and executed on
-        another. A non-``str`` is refused before torch is consulted for that
-        same reason, because ``torch.device(0)`` reads the accelerator inventory
-        and would make one spec validate on a GPU box and fail on a CPU box.
+        What stays here is the reason the check happens on *this* surface. The
+        domain is :func:`~strands_robots.utils.torch_device_error`, the one owner
+        the ``lerobot_train`` tool and the from-scratch RL preflight also consult,
+        so a device this trainer refuses cannot be accepted by the tool that
+        builds an argv for the same pipeline or by the RL backend beside it.
 
-        When torch is not importable the domain is unknown and the value passes
-        through unguarded, which is the same posture the reward-model field set
-        takes when its registry cannot be read.
+        The falsy case never reaches the domain: ``__init__`` resolves it through
+        :func:`_auto_device` first, which is what the constructor documents, so
+        ``self.device`` is always a stated device by the time it is graded here.
         """
-        device = self.device
-        if not isinstance(device, str):
-            return [
-                f"device must be a torch device string, got {type(device).__name__}; "
-                "pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
-            ]
-        try:
-            import torch
-        except Exception:  # noqa: BLE001 - torch missing -> domain unknown, pass through
-            return []
-        try:
-            torch.device(device)
-        except (RuntimeError, ValueError) as e:
-            return [
-                f"device={device!r} is not a torch device string ({e}); "
-                "pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
-            ]
-        return []
+        return [p for p in (torch_device_error(self.device, "device", self.provider_name),) if p is not None]
 
     # ---- ABC ---------------------------------------------------------------
 
@@ -1709,10 +1720,13 @@ class LerobotTrainer(Trainer):
         parent = os.path.dirname(os.path.abspath(spec.output_dir)) or "."
         os.makedirs(parent, exist_ok=True)
 
-        # Fresh-start hygiene: clear a stale output_dir with no resumable ckpt.
-        if not spec.resume and os.path.isdir(spec.output_dir):
-            if self.latest_checkpoint(spec.output_dir) is None:
-                shutil.rmtree(spec.output_dir, ignore_errors=True)
+        # Fresh-start hygiene: clear a stale EMPTY output_dir so lerobot's
+        # "already exists" guard does not refuse the run. Asked through the one
+        # owner of that bound, which the lerobot_train tool asks too: a directory
+        # holding anything is left for lerobot to refuse by name, because the
+        # removal is recursive and reports neither what it took nor a failure.
+        if not spec.resume and stale_output_dir_is_clearable(spec.output_dir):
+            shutil.rmtree(spec.output_dir, ignore_errors=True)
 
         job_id = f"lerobot-{int(time.time())}"
         log_path = os.path.join(parent, f"{os.path.basename(spec.output_dir)}.{job_id}.log")

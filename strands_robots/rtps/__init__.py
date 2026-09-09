@@ -22,13 +22,19 @@ arbitrary custom messages are out of scope until dynamic types mature.
 """
 
 from strands_robots.rtps.mangling import (
+    MAX_DDS_TOPIC_LENGTH,
+    ROS_TOPIC_RE,
     dds_topic_name,
     dds_type_name,
+    ros_topic_error,
     ros_topic_name,
 )
 
 __all__ = [
+    "MAX_DDS_TOPIC_LENGTH",
+    "ROS_TOPIC_RE",
     "dds_topic_name",
     "dds_type_name",
+    "ros_topic_error",
     "ros_topic_name",
 ]

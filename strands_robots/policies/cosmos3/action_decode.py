@@ -33,8 +33,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+
+from strands_robots.utils import finite_vector_error
 
 # Bundled per-embodiment action normalization stats (q01/q99), copied verbatim
 # from cosmos_framework/data/vfm/action/datasets/stats/. Tiny JSON files; keyed
@@ -69,31 +72,68 @@ def load_action_stats(domain_name: str) -> dict[str, np.ndarray]:
             "domain's stats are not a substitute even when the action width "
             "matches."
         )
-    with path.open("r") as f:
+    with path.open("r", encoding="utf-8") as f:
         raw = json.load(f)
     return {k: np.asarray(v, dtype=np.float32) for k, v in raw.items() if k in ("q01", "q99")}
 
 
-def denormalize_quantile(action: np.ndarray, q01: np.ndarray, q99: np.ndarray) -> np.ndarray:
+def denormalize_quantile(action: np.ndarray, q01: Any, q99: Any) -> np.ndarray:
     """Invert Cosmos 3 quantile normalization: ``[-1, 1]`` -> physical units.
 
     Mirrors ``cosmos_framework`` ``denormalize_action(method="quantile")``::
 
         denorm = 0.5 * (action + 1.0) * (q99 - q01) + q01
 
+    Both quantile vectors are held to the same domain as the action they
+    rescale. They are the only reference data in the decode, and either one
+    reaches every output column: a component that is not a finite real number
+    is not a physical range, and the arithmetic above spreads it across the
+    whole chunk, which :func:`decode_pose_trajectory` then composes into every
+    pose of the trajectory. A single ``nan`` quantile therefore yields a
+    full-length all-``nan`` SE3 trajectory that is returned as a result, and
+    the first thing to refuse it is
+    :meth:`~strands_robots.simulation.ik.MinkIKBridge.solve`, which names the
+    ``target_pose`` the decode built rather than the stat that poisoned it.
+
+    The check is :func:`~strands_robots.utils.finite_vector_error`, the shared
+    numeric-vector domain the sim setters and the other policy providers use,
+    so a refusal names the parameter and the component rather than restating
+    the rule here. Grading before converting is what lets the vectors be
+    written in *any* finite numeric sequence: the bundled stats files store
+    ``q01``/``q99`` as JSON arrays, so a caller supplying an unbundled domain's
+    own quantiles (:func:`load_action_stats` raises pointing at exactly that,
+    for the three registered embodiments with no bundled stats) holds plain
+    lists, which is the same content ``load_action_stats`` converts on the
+    bundled path. Only ``action`` was coerced before, so the file's own layout
+    raised ``AttributeError: 'list' object has no attribute 'shape'`` from the
+    width comparison below - naming neither parameter, and pre-empting the
+    width mismatch that comparison exists to report.
+
     Args:
         action: Normalized action of shape ``[..., D]`` (values nominally in
             ``[-1, 1]``).
-        q01: Per-column 1st-percentile stat of shape ``[D]``.
-        q99: Per-column 99th-percentile stat of shape ``[D]``.
+        q01: Per-column 1st-percentile stat, any sequence of ``D`` finite real
+            numbers (the shape :func:`load_action_stats` returns and the
+            bundled JSON files store).
+        q99: Per-column 99th-percentile stat, in the same form as ``q01``.
 
     Returns:
         De-normalized action with the same shape as ``action`` (``float32``).
 
     Raises:
-        ValueError: If the action's last dim does not match the stats width.
+        ValueError: If either quantile vector holds a component that is not a
+            finite real number, or if the action's last dim does not match the
+            stats width.
     """
     action = np.asarray(action, dtype=np.float32)
+    for _name, _vec in (("q01", q01), ("q99", q99)):
+        if error := finite_vector_error("denormalize_quantile", _name, _vec):
+            raise ValueError(error)
+    # Safe to convert now: the domain admits only a readable sequence of finite
+    # real numbers, so this normalizes the declared type without deciding
+    # anything, and the width comparison below is reachable for every spelling.
+    q01 = np.asarray(q01, dtype=np.float32)
+    q99 = np.asarray(q99, dtype=np.float32)
     if action.shape[-1] != q01.shape[-1] or action.shape[-1] != q99.shape[-1]:
         raise ValueError(
             f"action width {action.shape[-1]} does not match stats width "

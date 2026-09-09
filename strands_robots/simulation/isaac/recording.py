@@ -4,7 +4,7 @@ The engine-independent recording lifecycle (``stop_recording`` /
 ``save_episode`` / ``get_recording_status`` / ``stream_dataset`` and the
 ``_is_recording`` / ``_active_recorder`` / ``_active_dataset_root`` overrides)
 lives in :class:`~strands_robots.simulation.recording.DatasetRecordingMixin`,
-which is backend-agnostic. This subclass adds the two Isaac-specific halves:
+which is backend-agnostic. This subclass adds the Isaac-specific parts:
 
 * :meth:`start_recording` declares the dataset schema from the live Isaac
   scene - joint names from every robot (namespaced for multi-robot scenes) and
@@ -20,6 +20,10 @@ which is backend-agnostic. This subclass adds the two Isaac-specific halves:
   so multi-cam recordings never capture a stale secondary product), and
   ``IsaacSimulation.get_observation`` forces images on while a recording is
   active even when the driving policy sets ``requires_images = False``.
+* :meth:`_release_run_policy_hook` lowers the ``policy_running`` flag the hook
+  builder raised, when the rollout that hook served ends. The claim and its
+  release are one contract, and only the shared facade knows where the rollout
+  ends, so it calls this in a ``finally`` around every rollout it drives.
 
 **State seam**: Isaac's ``self._world`` is the Isaac Sim ``World`` handle, not
 the :class:`~strands_robots.simulation.models.SimWorld` the shared mixin's
@@ -51,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.models import registered
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     camera_schema_key_collision_error,
@@ -214,7 +218,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 behaves identically across engines. Names may be given in
                 either the raw camera name or the schema-safe form (``/``
                 collapsed to ``__``); an unknown name fails loudly, listing
-                the available cameras. Two scene cameras whose
+                the available cameras, and is refused before any dataset is
+                created, resumed or wiped, so a typo costs nothing even under
+                ``overwrite=True``. Two scene cameras whose
                 names collapse onto one dataset column (``arm0/wrist`` and
                 ``arm0__wrist``) are refused before any dataset is created,
                 because the column would be named after whichever of them lost
@@ -338,11 +344,6 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             state["last_dataset_root"] = str(dataset_dir)
 
             try:
-                # Create-vs-resume semantics shared with MuJoCo/Newton: resume
-                # an existing dataset, clear a pre-existing EMPTY root, wipe on
-                # overwrite. See DatasetRecordingMixin._prepare_dataset_target.
-                resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
-
                 (
                     joint_names,
                     action_names,
@@ -393,6 +394,23 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                     recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
 
                 state["recording_cameras"] = recording_cameras
+
+                # Create-vs-resume, and the wipe it can perform, are deferred to here
+                # rather than opened with. ``overwrite=True`` deletes the dataset being
+                # replaced, so every refusal this method can still make is made above it:
+                # the camera scoping just above used to sit behind this line, and a single
+                # unknown name in ``cameras=`` refused the call after the existing dataset
+                # had already been removed - the refusal's own remedy ("Add them with
+                # add_camera(...) ... or omit cameras=") asks for a retry against the data
+                # that same call destroyed. Nothing between the target resolution above and
+                # this line reads or writes the dataset directory (the schema is read from
+                # the scene), so the success path is unchanged. Resume an existing dataset,
+                # clear a pre-existing EMPTY root (e.g. tempfile.mkdtemp()) so create() does
+                # not dead-end on FileExistsError, and wipe on overwrite - the four outcomes
+                # of DatasetRecordingMixin._prepare_dataset_target. This is the ordering
+                # camera_schema_key_collision_error already establishes for the scene-level
+                # collision, applied to the last refusal that still followed the wipe.
+                resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
                 if resume_existing:
                     logger.info("Resuming existing dataset for append: %s", dataset_dir)
@@ -645,3 +663,32 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 )
 
         return _hook
+
+    def _release_run_policy_hook(self, robot_name: str) -> None:
+        """Lower the ``policy_running`` flag :meth:`_make_run_policy_hook` raised.
+
+        The hook builder marks the robot as driven so a motion primitive and
+        the rollout cannot race on the same articulation's PD targets, and
+        :meth:`~strands_robots.simulation.isaac.motion_primitives.IsaacMotionPrimitivesMixin._primitive_resolve_robot`
+        refuses on exactly that flag. Nothing lowered it, so a recorded rollout
+        left the robot marked driven for the rest of the session: every
+        primitive answered ``Cannot 'set_gripper' on 'so100' while its policy
+        is running ... wait for the rollout to finish``, and
+        :meth:`~strands_robots.simulation.isaac.simulation.IsaacSimulation.run_multi_policy`
+        answered ``policy already running ... Stop it first`` - two remedies
+        for a rollout that had already ended, and neither reachable (Isaac
+        exposes no ``stop_policy``).
+
+        ``run_multi_policy`` lowers the flag in its own ``finally`` for the
+        loop it owns; this is the same release for the rollout the shared
+        facade owns, so the flag means "a loop is driving this robot" on both
+        paths. ``policy_instruction`` / ``policy_steps`` stay as the last
+        rollout's record, as they do on the MuJoCo backend.
+
+        Args:
+            robot_name: The robot whose rollout has ended. A robot removed
+                mid-rollout has nothing to release.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is not None:
+            robot.policy_running = False

@@ -159,13 +159,21 @@ class TestTheHandshakeCarriesTheDeclaration:
 
     @pytest.mark.parametrize(
         "advertised",
-        ["torso_link", 7, {"torso_link": 1}, ["", "  ", 3, None]],
-        ids=["bare_str", "int", "mapping", "unusable_entries"],
+        ["torso_link", 7, {"torso_link": 1}, ["", "  ", 3, None], [ANCHOR, 3]],
+        ids=["bare_str", "int", "mapping", "unusable_entries", "one_unusable_entry"],
     )
-    def test_a_peer_advertising_something_unusable_is_ignored(self, advertised):
-        """A value the runtime could not validate never becomes this half's declaration."""
+    def test_a_peer_advertising_something_unusable_is_refused(self, advertised):
+        """A value the runtime could not validate never becomes this half's declaration.
+
+        The last row is why refusing beats filtering: the entries that happened
+        to be well-formed used to be kept, so this half declared a subset of what
+        the peer sent and the rollout supplied poses for it and reported success.
+        ``test_advertised_metadata_is_held_to_the_local_domain`` owns the full
+        table and grades it against ``collect_required_bodies``.
+        """
         client = RemotePolicy(host="127.0.0.1", port=1)
-        client._apply_metadata({"required_bodies": advertised})
+        with pytest.raises(ConnectionError, match="required_bodies"):
+            client._apply_metadata({"required_bodies": advertised})
         assert client._required_bodies == ()
 
 

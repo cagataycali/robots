@@ -29,13 +29,8 @@ pytest.importorskip("mujoco")
 
 import mujoco as mj  # noqa: E402
 
-from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-
-requires_gl = pytest.mark.skipif(
-    not _can_render(),
-    reason="No OpenGL context available (EGL/OSMesa required for offscreen rendering)",
-)
+from tests.simulation.mujoco._gl_probe import requires_gl
 
 ARM_XML = """
 <mujoco model="arm">

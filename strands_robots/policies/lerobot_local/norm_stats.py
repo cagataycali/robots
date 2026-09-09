@@ -70,6 +70,24 @@ class UnknownNormTagError(ValueError):
     """
 
 
+class NormStatsFilenameError(ValueError):
+    """A ``norm_stats_filename`` that does not name a file inside the checkpoint.
+
+    The checkpoint's own ``config.json`` chooses which file the normalization
+    statistics are read from, and those numbers are what unnormalizes a
+    predicted action into robot units. A value that leaves the checkpoint - an
+    absolute path, or one with a ``..`` segment - therefore selects the scale of
+    every motor command from a file the checkpoint does not contain, while its
+    own stats file sits unread beside it. That is not an absence, so it does not
+    share the ``None`` verdict used for "this checkpoint ships no stats"; it is a
+    malformed declaration, reported with the value and the file that declared it.
+
+    Subclasses :class:`ValueError` for the same reason
+    :class:`UnknownNormTagError` does: a caller narrowing on the loader's
+    existing exception contract keeps catching it.
+    """
+
+
 def _to_array(value: Any) -> np.ndarray | None:
     """Coerce a stats value to a float32 ndarray (mirrors the reference helper).
 
@@ -277,6 +295,39 @@ class FeatureNormalizer:
         return result
 
 
+def _stats_filename_error(value: Any, param: str, context: str) -> str | None:
+    """Refusal text for a norm-stats filename that is not contained by the checkpoint.
+
+    The filename is joined onto the checkpoint - a local directory, or a Hub repo
+    path handed to ``hf_hub_download`` - so it must be a relative path that stays
+    inside it. Checked on the value rather than on either join, because the two
+    branches join it in different places (and only one of them has a local base
+    directory for :func:`strands_robots.utils.safe_join` to verify against), and
+    the rule is the same one either way.
+
+    Args:
+        value: Candidate filename, as declared or as passed.
+        param: Option name to quote in the refusal.
+        context: Where the value came from (a ``config.json`` path, or the API).
+
+    Returns:
+        Refusal text, or ``None`` when *value* names a file inside the checkpoint.
+    """
+    if not isinstance(value, str) or isinstance(value, bool):
+        return f"{param} in {context} must be a filename string, got {type(value).__name__} {value!r}"
+    if not value:
+        return f"{param} in {context} must not be empty"
+    candidate = Path(value)
+    if candidate.is_absolute() or "\x00" in value:
+        return f"{param}={value!r} in {context} must be relative to the checkpoint, not an absolute path"
+    if ".." in candidate.parts:
+        return (
+            f"{param}={value!r} in {context} must not contain a '..' segment: it "
+            "would read normalization statistics from outside the checkpoint"
+        )
+    return None
+
+
 def load_norm_stats(
     pretrained_name_or_path: str,
     *,
@@ -286,7 +337,10 @@ def load_norm_stats(
     """Load a ``norm_stats.json`` payload from a local dir or the HF Hub.
 
     Honors a ``norm_stats_filename`` override in the checkpoint's ``config.json``
-    (matching the reference loader). Returns the parsed payload, or ``None`` if
+    (matching the reference loader). The override selects a file *inside* the
+    checkpoint: a value that leaves it is refused rather than followed, because
+    the statistics it names are what scales every motor command (see
+    :class:`NormStatsFilenameError`). Returns the parsed payload, or ``None`` if
     no norm-stats file can be found (network/repo errors are non-fatal here).
 
     Args:
@@ -297,47 +351,68 @@ def load_norm_stats(
 
     Returns:
         Parsed JSON payload dict, or ``None`` when unavailable.
+
+    Raises:
+        NormStatsFilenameError: If *filename*, or the ``norm_stats_filename``
+            the checkpoint's ``config.json`` declares, does not name a file
+            inside the checkpoint.
     """
     if not pretrained_name_or_path:
         return None
 
     local = Path(pretrained_name_or_path)
+    if err := _stats_filename_error(filename, "filename", "load_norm_stats"):
+        raise NormStatsFilenameError(err)
 
     def _read_json(path: Path) -> dict[str, Any] | None:
         try:
-            with open(path) as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
             return data if isinstance(data, dict) else None
         except (OSError, ValueError) as exc:
             logger.debug("norm_stats: could not read %s: %s", path, exc)
             return None
 
+    def _declared(cfg: dict[str, Any] | None, source: Path | str) -> str:
+        """The stats filename *cfg* declares, validated, else the default."""
+        if not cfg or "norm_stats_filename" not in cfg:
+            return filename
+        declared = cfg["norm_stats_filename"]
+        if declared is None:  # an explicit JSON null declares nothing
+            return filename
+        if err := _stats_filename_error(declared, "norm_stats_filename", str(source)):
+            raise NormStatsFilenameError(err)
+        return str(declared)
+
     # Resolve a config.json override for the stats filename first.
-    resolved_filename = filename
     if local.is_dir():
-        cfg = _read_json(local / "config.json")
-        if cfg and cfg.get("norm_stats_filename"):
-            resolved_filename = str(cfg["norm_stats_filename"])
-        stats_path = local / resolved_filename
+        config_path = local / "config.json"
+        stats_path = local / _declared(_read_json(config_path), config_path)
         return _read_json(stats_path) if stats_path.exists() else None
 
-    # Hub path: try the (possibly overridden) filename.
+    # Hub path: fetch config.json (optional) to resolve the filename, then the
+    # stats file itself. The two fetches are guarded separately so a refusal of
+    # what config.json declared is not absorbed as a network error.
     try:
         from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        logger.debug("norm_stats: huggingface_hub unavailable: %s", exc)
+        return None
 
-        try:
-            cfg_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
-            cfg = _read_json(Path(cfg_path))
-            if cfg and cfg.get("norm_stats_filename"):
-                resolved_filename = str(cfg["norm_stats_filename"])
-        except Exception as exc:  # noqa: BLE001 - config.json is optional
-            logger.debug("norm_stats: no config.json on hub: %s", exc)
+    cfg: dict[str, Any] | None = None
+    try:
+        cfg_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
+        cfg = _read_json(Path(cfg_path))
+    except Exception as exc:  # noqa: BLE001 - config.json is optional
+        logger.debug("norm_stats: no config.json on hub: %s", exc)
 
+    resolved_filename = _declared(cfg, f"{pretrained_name_or_path}/config.json")
+    try:
         downloaded = hf_hub_download(pretrained_name_or_path, resolved_filename, revision=revision)
-        return _read_json(Path(downloaded))
     except Exception as exc:  # noqa: BLE001 - network/repo errors are non-fatal
         logger.debug("norm_stats: could not fetch %s from hub: %s", resolved_filename, exc)
         return None
+    return _read_json(Path(downloaded))
 
 
 def is_norm_stats_payload(payload: dict[str, Any] | None) -> bool:
@@ -522,6 +597,7 @@ def build_norm_stats_processors(
 
 __all__ = [
     "MOLMOACT2_NORM_STATS_FORMAT",
+    "NormStatsFilenameError",
     "UnknownNormTagError",
     "DEFAULT_SO_NORM_TAG",
     "FeatureNormalizer",

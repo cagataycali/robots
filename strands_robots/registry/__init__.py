@@ -39,7 +39,7 @@ from .discovery import (
     is_discoverable,
     list_discoverable,
 )
-from .loader import invalidate_cache, reload
+from .loader import invalidate_cache, normalize_robot_name, reload
 from .policies import (
     build_policy_kwargs,
     get_policy_provider,
@@ -101,6 +101,7 @@ __all__ = [
     "user_registry_source",
     "parse_user_robots",
     # Utilities
+    "normalize_robot_name",
     "reload",
     "invalidate_cache",
 ]

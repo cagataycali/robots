@@ -117,6 +117,88 @@ def test_grant_does_not_leak_to_a_different_call():
     assert consume_grant("fleet", TASK_INPUT) is True
 
 
+# --- a yes names the motion it approved --------------------------------------
+#
+# The grant above is spendable by exactly one call, so its key has to name that
+# call. ``pose_tool`` and ``serial_tool`` declare no ``target`` (their peer is the
+# ``port``) and carry the motion in fields rather than in an ``instruction``, so a
+# key read from action/target/instruction alone was constant across every call of
+# one action. These tools raise no interrupt of their own -- this layer is their
+# only human gate -- so a leak here spends a human's yes on a different joint, at
+# a different angle, on a different arm.
+#
+# One row per gated action, carrying the payload that action actually moves.
+
+GATED_CALLS: list[tuple[str, dict]] = [
+    ("fleet", {"action": "task", "target": "arm-1", "instruction": "wave", "duration": 5}),
+    ("fleet", {"action": "task", "target": "arm-1", "instruction": "wave", "duration": 600}),
+    ("fleet", {"action": "task", "target": "arm-2", "instruction": "wave", "duration": 5}),
+    ("pose_tool", {"action": "load_pose", "port": "/dev/ttyACM0", "pose_name": "tucked"}),
+    ("pose_tool", {"action": "load_pose", "port": "/dev/ttyACM0", "pose_name": "extended"}),
+    ("pose_tool", {"action": "move_motor", "port": "/dev/ttyACM0", "motor_name": "shoulder_pan", "position": 2048}),
+    ("pose_tool", {"action": "move_motor", "port": "/dev/ttyACM1", "motor_name": "elbow_flex", "position": 4095}),
+    ("pose_tool", {"action": "move_multiple", "port": "/dev/ttyACM0", "positions": {"shoulder_pan": 100}}),
+    ("pose_tool", {"action": "move_multiple", "port": "/dev/ttyACM0", "positions": {"shoulder_pan": 4000}}),
+    ("pose_tool", {"action": "incremental_move", "port": "/dev/ttyACM0", "motor_name": "wrist_roll", "delta": -30}),
+    ("pose_tool", {"action": "incremental_move", "port": "/dev/ttyACM0", "motor_name": "wrist_roll", "delta": 300}),
+    ("pose_tool", {"action": "reset_to_home", "port": "/dev/ttyACM0"}),
+    ("pose_tool", {"action": "reset_to_home", "port": "/dev/ttyACM1"}),
+    ("serial_tool", {"action": "send", "port": "/dev/ttyACM0", "data": "PING"}),
+    ("serial_tool", {"action": "send", "port": "/dev/ttyACM0", "hex_data": "FF FF 01 05 03 2A 00 08"}),
+    ("serial_tool", {"action": "send_read", "port": "/dev/ttyACM0", "hex_data": "FF FF 01 04 02 38 02"}),
+    ("serial_tool", {"action": "feetech_position", "port": "/dev/ttyACM0", "motor_id": 1, "position": 2000}),
+    ("serial_tool", {"action": "feetech_position", "port": "/dev/ttyACM0", "motor_id": 6, "position": 4000}),
+    ("serial_tool", {"action": "feetech_velocity", "port": "/dev/ttyACM0", "motor_id": 1, "velocity": 500}),
+    ("serial_tool", {"action": "feetech_velocity", "port": "/dev/ttyACM0", "motor_id": 6, "velocity": 3000}),
+]
+
+
+def test_every_gated_action_has_a_pinned_call():
+    """The table above must cover the gate's own roster, or a new action goes unpinned."""
+    pinned = {(tool, call["action"]) for tool, call in GATED_CALLS}
+    declared = {(tool, action) for tool, actions in MOTION_ACTIONS.items() for action in actions}
+    assert pinned == declared
+
+
+@pytest.mark.parametrize(("tool", "call"), GATED_CALLS, ids=lambda v: v["action"] if isinstance(v, dict) else v)
+def test_a_grant_is_not_spendable_by_a_call_that_moves_something_else(tool, call):
+    """A yes for one call authorises that call and nothing else on the table."""
+    deposit_grant(tool, call)
+    for other_tool, other in GATED_CALLS:
+        if (other_tool, other) == (tool, call):
+            continue
+        assert consume_grant(other_tool, other) is False, f"a yes for {tool} {call} was spent by {other_tool} {other}"
+    assert consume_grant(tool, call) is True, "the grant was not spendable by its own call"
+
+
+@pytest.mark.parametrize(("tool", "call"), GATED_CALLS, ids=lambda v: v["action"] if isinstance(v, dict) else v)
+def test_the_operator_is_shown_every_field_that_carries_the_motion(tool, call):
+    """The interrupt names what a yes moves; a payload field is never silently dropped.
+
+    ``fleet`` says it in the instruction it was given. A direct-serial call says
+    it in its fields -- and ``reset_to_home`` genuinely has none, so its motion is
+    the action name and the arm is the resolved port, both already on the reason.
+    """
+    reason = motion_intent(tool, dict(call), {"arm-1": REAL_PEER, "arm-2": REAL_PEER}, {})
+    assert reason is not None
+    payload = {k: v for k, v in call.items() if k not in ("action", "target", "port", "instruction", "duration")}
+    shown = reason["instruction"]
+    for key, value in payload.items():
+        assert key in shown, f"{tool} {call['action']}: the operator was not shown {key} ({shown!r})"
+        assert str(value) in shown, f"{tool} {call['action']}: the operator was not shown {key}={value} ({shown!r})"
+    if not payload:
+        assert reason["target"] == call.get("target") or reason["target"] == call.get("port")
+
+
+def test_a_pipe_inside_a_value_cannot_make_two_calls_agree():
+    """The parts are model-authored, so a separator in one must not shift a boundary."""
+    left = {"action": "task", "target": "arm-1", "instruction": "hold|then wave"}
+    right = {"action": "task", "target": "arm-1|hold", "instruction": "then wave"}
+    deposit_grant("fleet", left)
+    assert consume_grant("fleet", right) is False
+    assert consume_grant("fleet", left) is True
+
+
 # --- the hook against the real SDK event --------------------------------------
 
 

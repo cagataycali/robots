@@ -270,6 +270,38 @@ microduck = [
 crazyflie = [
     "cflib>=0.1.25,<0.2.0",
 ]
+# Universal Robots RTDE client for the UR native driver
+# (strands_robots/drivers/ur.py). ur_rtde is the single distribution that supplies
+# both importables the driver resolves -- rtde_control (servoJ, speedJ, the
+# freedrive and dashboard verbs) and rtde_receive (joint positions and velocities,
+# the TCP pose, the safety and robot mode words) -- so one requirement is the
+# remedy for either name.
+#
+# Deliberately NOT a member of [all]: ur_rtde is a compiled Boost/pybind11
+# binding whose published wheels cover manylinux x86_64/i686 and win_amd64 only,
+# up to cp312. On a Python 3.13 interpreter or an aarch64 host -- the edge
+# machines this project runs on -- pip falls back to the sdist and needs a C++
+# toolchain plus Boost to build it, so folding it into [all] would put a compiler
+# in front of `pip install strands-robots[all]`. The driver degrades cleanly
+# without the SDK (_resolve_rtde returns a reason naming this extra), so [all]
+# still imports, registers and tests it. See docs/robots/arms.md.
+ur = [
+    "ur-rtde>=1.6.0,<2.0.0",
+]
+# HTTP transport for the EarthRover Mini Plus native driver
+# (strands_robots/drivers/earthrover.py). The driver talks to the vendor's
+# earth-rovers-sdk over HTTP -- GET /data for telemetry, POST /control to drive --
+# so `requests` is what makes a rover move, not a developer convenience. It is
+# gated (the module imports and registers without it, and connect_eagerly()
+# returns a reason naming this extra), which is why it is an extra rather than a
+# core dependency; but nothing else declares it, so before this extra existed the
+# only bound the project stated lived in [tool.hatch.envs.default], an
+# environment no install reaches. A member of [all]: pure Python, no build step,
+# and the driver's URL-property tests import requests to drive a real
+# http.server, so they run only where an install declares it.
+earthrover = [
+    "requests>=2.28.0,<3.0.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -298,6 +330,33 @@ lerobot = [
     # the same version for the runtime guard that protects an environment with
     # a pre-existing older lerobot.
     "lerobot[feetech,dataset]>=0.6.1,<0.7.0",
+    # Process-lifecycle dependency of the two session tools this extra exists to
+    # serve. `lerobot_train` and `lerobot_teleoperate` each launch a DETACHED
+    # background process and then answer `status` / `stop` / `list` about it, and
+    # both import `psutil` at module scope -- directly, and again through
+    # `strands_robots/tools/_process_stop.py`, which owns the two questions a
+    # session verb cannot answer without it: did the signalled process actually
+    # exit, and is this pid still the process the session record was written for.
+    #
+    # Nothing declared it. `pip install 'strands-robots[lerobot]'` -- the command
+    # `lerobot_teleoperate` itself prints as the remedy for its own absent
+    # dependency -- resolves to 129 packages with no psutil among them, so
+    # importing either tool raised `ModuleNotFoundError: No module named
+    # 'psutil'` before it could reach that message. It arrived in CI only as a
+    # transitive of `accelerate` under the GPU extras ([molmoact2], [smolvla],
+    # [kimodo], [cosmos3-diffusers]), which is why a suite installed from `[all]`
+    # was green over it while the extra a user is told to install was not.
+    #
+    # The floor is a CAPABILITY floor: 6.0.0 is the first release publishing a
+    # manylinux aarch64 wheel (every 5.9.x is Linux x86_64 only), so below it an
+    # arm64 robot host has to build the C extension from source. The API surface
+    # `_process_stop` calls -- `pid_exists`, `boot_time`, `Process` with
+    # `create_time` / `is_running` / `wait`, and the `NoSuchProcess` /
+    # `AccessDenied` / `TimeoutExpired` exceptions -- is present on both sides of
+    # that line, so wheel availability is what sets the number rather than an API
+    # name. Owned and measured by
+    # tests/test_session_process_dependency_is_declared.py.
+    "psutil>=6.0.0,<8.0.0",
 ]
 # Remote/offloaded inference via lerobot's native async-inference gRPC
 # transport (the `lerobot_async` policy provider, LerobotAsyncPolicy). Layers
@@ -652,6 +711,7 @@ all = [
     "strands-robots[inference]",
     "strands-robots[rosbridge]",
     "strands-robots[sagemaker]",
+    "strands-robots[earthrover]",
     "strands-robots[dashboard]",
 ]
 dev = [
@@ -681,16 +741,20 @@ packages = ["strands_robots"]
 [tool.hatch.envs.default]
 installer = "uv"
 features = ["all"]
+# Development tooling only. `features = ["all"]` above installs the project and
+# every extra the bundle folds in, so a runtime distribution named here would be
+# a second copy of a bound that can drift from the one an install resolves --
+# with this environment (which is what `hatch run test` runs) staying green over
+# the drift. Pillow, msgpack, pyzmq and requests were such copies; they are
+# declared in [project.dependencies] and the [groot-service], [moveit2] and
+# [earthrover] extras respectively. Graded by
+# tests/test_earthrover_http_extra_is_declared.py.
 dependencies = [
     "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
     "ruff>=0.15.12,<0.16.0",
     "mypy>=1.0.0,<2.0.0",
-    "Pillow>=8.0.0,<13.0.0",
-    "requests>=2.28.0,<3.0.0",
-    "msgpack>=1.0.0,<2.0.0",
-    "pyzmq>=27.0.0,<28.0.0",
 ]
 
 # ---------------------------------------------------------------------------

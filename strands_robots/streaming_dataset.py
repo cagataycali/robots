@@ -23,7 +23,9 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.dataset_recorder import local_dataset_dir
 from strands_robots.utils import (
+    boolean_flag_error,
     finite_number_error,
     lerobot_version,
     non_negative_count_error,
@@ -157,15 +159,58 @@ _NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
 }
 
 
+# Every boolean flag of ``StreamingDatasetReader.open``, tabled for the same
+# reason ``_NUMERIC_DOMAINS`` is: the pairing with the signature is what stops a
+# flag being added and forwarded raw. The domain is
+# :func:`~strands_robots.utils.boolean_flag_error` - the one
+# :func:`~strands_robots.simulation.recording.dataset_recording_posture_error`
+# already applies to the recording postures on the write side of this same
+# dataset. Read by truthiness instead, each of these selects the branch the
+# caller was opting *out* of, because every non-empty string is truthy and every
+# falsy non-boolean takes the other branch without being a declared spelling of
+# it. What each one did, measured against lerobot 0.6.2:
+_BOOLEAN_FLAGS: tuple[str, ...] = (
+    # ``streaming=0`` reaches StreamingLeRobotDataset, which builds a
+    # materialized ``Dataset`` instead and then fails on ``num_shards`` - an
+    # AttributeError naming a lerobot internal, out of a call the caller had no
+    # reason to think was still opening.
+    "streaming",
+    # ``shuffle="false"`` is forwarded verbatim and lerobot reads it by
+    # truthiness too (``rng = default_rng(seed) if not self.shuffle else
+    # self.rng``), so the spelling that asks for the reseeded generator gets the
+    # advancing one - the read-order trap documented in ``open``'s Ordering
+    # note, entered by the opt-out itself.
+    "shuffle",
+    # ``return_uint8=None`` is forwarded and read as false, streaming frames as
+    # float32 (~4x the bandwidth of uint8), while the warning below that exists
+    # to report exactly that cost is gated on truthiness and stays silent.
+    "return_uint8",
+    # ``validate_deltas=0`` skips the grid check ``open`` runs for parity with
+    # the materialized path, so an off-grid ``delta_timestamps`` that
+    # ``validate_deltas=True`` refuses opens and streams with nothing said.
+    "validate_deltas",
+    # ``drop_videos="false"`` strips the camera keys out of
+    # ``delta_timestamps`` - the opposite of the opt-out it spells. With no
+    # non-video key left it reaches the refusal below, which names
+    # ``drop_videos=True``: a value the caller never passed, whose stated remedy
+    # leads to the silent proprio-only stream rather than away from it.
+    "drop_videos",
+)
+
+
 class StreamingDatasetReader:
     """Version-tolerant wrapper over lerobot's StreamingLeRobotDataset.
+
+    ``shuffle`` is not the read-order knob - see :meth:`open`'s "Ordering"
+    note. Capture order is ``buffer_size=1`` plus ``max_num_shards=1``.
 
     Example (in-process eval / replay):
         reader = StreamingDatasetReader.open(
             "strands-robots/pick-place",
             delta_timestamps={"observation.images.front": [-0.2, -0.1, 0.0],
                               "action": [0.0, 0.1, 0.2]},
-            shuffle=False,            # chronological for replay/eval
+            buffer_size=1,            # capture order: a reservoir of one
+            max_num_shards=1,         # capture order: one shard to interleave
         )
         for frame in reader:
             ...  # raw tensors; normalize via reader.meta.stats if needed
@@ -197,18 +242,59 @@ class StreamingDatasetReader:
     ) -> StreamingDatasetReader:
         """Open a version-tolerant streaming reader.
 
+        Local datasets:
+            An absent ``root`` is resolved from ``repo_id`` by the rule
+            recording writes through
+            (:func:`~strands_robots.dataset_recorder.local_dataset_dir`), so a
+            ``repo_id`` that is itself a path streams the directory it recorded
+            to with no ``root`` restated. Only that rule is resolved here: an
+            ``owner/name`` id keeps its absent root, which is how
+            ``StreamingLeRobotDataset`` selects LeRobot's revision-safe Hub
+            metadata cache - already the directory a local recording under that
+            id wrote to.
+
         Validation:
             The numeric knobs are checked against
-            :data:`_NUMERIC_DOMAINS` before the lerobot import, because
-            ``StreamingLeRobotDataset`` validates only ``repo_type`` and stores
-            the rest verbatim. So an unusable one is a caller mistake reported
-            the same way with or without the extra installed, rather than a
-            NumPy error part-way through iteration, a shard count of zero that
-            streams no frames, or a tolerance that switches the grid check off.
+            :data:`_NUMERIC_DOMAINS`, and the flags in :data:`_BOOLEAN_FLAGS`
+            against the shared boolean domain, before the lerobot import -
+            because ``StreamingLeRobotDataset`` validates only ``repo_type`` and
+            stores the rest verbatim. So an unusable one is a caller mistake
+            reported the same way with or without the extra installed, rather
+            than a NumPy error part-way through iteration, a shard count of zero
+            that streams no frames, or a tolerance that switches the grid check
+            off.
+
+            The flags are checked rather than parsed for the reason
+            :func:`~strands_robots.utils.boolean_flag_error` gives: each selects
+            a posture, and read by truthiness every one of them lands on the
+            branch the caller was opting *out* of. ``drop_videos="false"``
+            stripped the camera keys it spells the keeping of;
+            ``validate_deltas=0`` switched off the grid check below;
+            ``shuffle="false"`` reached the advancing generator; ``streaming=0``
+            failed inside lerobot on ``num_shards``; and ``return_uint8=None``
+            streamed float32 with the warning about that cost suppressed by the
+            same truthiness. :data:`_BOOLEAN_FLAGS` records each one.
+
+        Ordering:
+            ``shuffle`` does not decide read order, and passing
+            ``shuffle=False`` alone reads shuffled frames. It selects only
+            which generator drives the reordering -
+            ``np.random.default_rng(seed)``, reseeded identically on every
+            exhaustion, versus the dataset's own advancing one - so it decides
+            reproducibility ACROSS epochs, matching lerobot's own "whether to
+            shuffle the dataset across exhaustions". ``StreamingLeRobotDataset``
+            reorders either way, at two levels: it samples a shard at random per
+            frame, and it yields from a reservoir buffer of ``buffer_size``.
+            Capture order therefore needs ``buffer_size=1`` (a reservoir of one
+            has nothing to reorder) together with ``max_num_shards=1`` (a single
+            shard has nothing to interleave). Nothing reports a shuffled read,
+            so an eval or replay loop that asked for order with ``shuffle``
+            alone silently consumes frames out of order.
 
         Raises:
             ValueError: A numeric knob (``tolerance_s``, ``buffer_size``,
-                ``max_num_shards`` or ``seed``) is outside its domain. The
+                ``max_num_shards`` or ``seed``) is outside its domain, or a flag
+                in :data:`_BOOLEAN_FLAGS` was not supplied as a boolean. The
                 message names the parameter, the value and why it cannot be
                 honored.
             RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
@@ -228,6 +314,21 @@ class StreamingDatasetReader:
                 call would silently do the opposite of what was asked.
             ImportError: ``StreamingLeRobotDataset`` is not importable.
         """
+        # The flags are decided first because two of them steer the code below:
+        # ``drop_videos`` rewrites ``delta_timestamps`` and ``validate_deltas``
+        # decides whether the grid check runs, so a value that cannot be
+        # honoured is refused before anything reads it.
+        supplied_flags = {
+            "streaming": streaming,
+            "shuffle": shuffle,
+            "return_uint8": return_uint8,
+            "validate_deltas": validate_deltas,
+            "drop_videos": drop_videos,
+        }
+        for flag in _BOOLEAN_FLAGS:
+            if error := boolean_flag_error(supplied_flags[flag], flag, "open"):
+                raise ValueError(error)
+
         # Before the lerobot import: a value outside these domains is a caller
         # mistake rather than a capability question, so it must be reported the
         # same way whether or not the extra is installed - and refusing it here
@@ -242,6 +343,20 @@ class StreamingDatasetReader:
         for param, domain in _NUMERIC_DOMAINS.items():
             if error := domain(supplied[param]):
                 raise ValueError(error)
+
+        # A repo_id that is itself a path names a local directory here and does
+        # not to LeRobot, which derives any absent root as
+        # $HF_LEROBOT_HOME/{repo_id} whatever the id looks like. Recording
+        # resolves that rule and writes to the directory the id names, so this
+        # read has to resolve it too or it streams from somewhere the recording
+        # has never been - and StreamingLeRobotDataset only reads a local
+        # dataset at all when it is given a root (streaming_from_local), so the
+        # miss falls through to a Hub lookup for a name that only ever meant a
+        # directory. An owner/name id is left to LeRobot: an absent root is how
+        # it selects the revision-safe Hub metadata cache, which is already
+        # where a local recording under that id wrote to.
+        if root is None and (local := local_dataset_dir(repo_id)) is not None:
+            root = str(local)
 
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
@@ -405,7 +520,8 @@ def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
 
     Args:
         repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or a
-            local repo_id paired with ``root=``.
+            ``repo_id`` that is itself a path, which streams the directory it
+            recorded to with no ``root`` restated.
         **kwargs: Forwarded to :meth:`StreamingDatasetReader.open` - e.g.
             ``root``, ``delta_timestamps``, ``episodes``, ``shuffle``,
             ``buffer_size``, ``max_num_shards``, ``drop_videos``
@@ -418,7 +534,8 @@ def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
         import strands_robots
 
         reader = strands_robots.stream_dataset(
-            "lerobot/svla_so100_pickplace", shuffle=False
+            "lerobot/svla_so100_pickplace",
+            buffer_size=1, max_num_shards=1,  # capture order, not shuffle=False
         )
         for frame in reader:
             ...

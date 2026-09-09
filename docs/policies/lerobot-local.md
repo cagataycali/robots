@@ -294,6 +294,22 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
 
+A checkpoint may point the fallback at a different file by setting
+`norm_stats_filename` in its own `config.json`. That name must be a relative
+path naming a file **inside** the checkpoint: those statistics are what
+unnormalizes every predicted action, so a name that leaves the checkpoint (an
+absolute path, or one with a `..` segment) would scale the robot's motor
+commands from a file the checkpoint does not contain. Such a name is refused
+with `NormStatsFilenameError`, and the reason is reported in the load warning in
+place of the generic missing-postprocessor message.
+
+```json
+{ "norm_stats_filename": "custom_stats.json" }      // honored
+{ "norm_stats_filename": "stats/custom.json" }      // honored (subdirectory)
+{ "norm_stats_filename": "../other/stats.json" }    // refused
+{ "norm_stats_filename": "/tmp/stats.json" }        // refused
+```
+
 A `norm_tag` the stats file does not declare is refused rather than absorbed. The
 tag is a free-form string, so a misspelling would otherwise skip normalization
 entirely - state reaching the policy un-normalized and actions reaching the robot

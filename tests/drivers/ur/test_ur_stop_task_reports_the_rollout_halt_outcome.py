@@ -15,6 +15,15 @@ were true of it:
   policy returned, so the setpoint that policy call was computing went out
   *after* the ``servoStop`` - measured landing 0.5 ms later.  An arm an operator
   was told had stopped resumed moving.
+* that re-read is not the last thing before the write: the loop hands the action
+  to :meth:`~strands_robots.drivers.ur.URDriver.send_action`, which reads both
+  mode registers and the measured pose - three RTDE round trips to the same
+  controller - before it calls ``servoJ``.  A halt issued while those were in
+  flight was answered by one more setpoint on every one of the three halt verbs,
+  and on ``cleanup``'s path that setpoint reached the interface *after* it had
+  been disconnected.  ``send_action`` now re-reads the driver's halt counter
+  immediately before the write, which is the position the two drivers below
+  already hold.
 
 :class:`~strands_robots.drivers.g1.G1Driver` and
 :class:`~strands_robots.drivers.go2.Go2Driver` are the fleet's other two drivers
@@ -87,6 +96,54 @@ def blocked_rollout(fake_rtde: FakeRTDE, monkeypatch: pytest.MonkeyPatch) -> Ite
         yield driver, release
     finally:
         release.set()
+        driver.cleanup()
+
+
+@pytest.fixture
+def stalled_write(fake_rtde: FakeRTDE, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[URDriver, threading.Event]]:
+    """A connected arm whose rollout is parked *inside* ``send_action``.
+
+    The policy has already returned and the loop has already re-read its stop
+    event; the thread is in the mode gate's RTDE round trip, past the interface
+    read this setpoint started from and before its ``servoJ``.  ``blocked_rollout``
+    cannot pose that position - a thread stalled in the policy call is turned back
+    by the loop's own re-read and never enters ``send_action``.
+
+    The stall is armed from inside the policy, which runs on the rollout thread one
+    statement before ``send_action``: ``run_policy`` and ``get_observation`` read no
+    mode register, so nothing else can consume it first.
+    """
+    driver = URDriver(tool_name="ur5e", port=HOST, control_frequency=200.0)
+    assert driver.connect_eagerly() is None
+    _fast_join(monkeypatch)
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def stall() -> None:
+        entered.set()
+        release.wait(10.0)
+
+    def policy(observation: dict[str, Any]) -> dict[str, float]:
+        fake_rtde.receive.on_next_mode_read = stall
+        return _reachable_setpoint()
+
+    assert driver.run_policy(policy, instruction="hold", duration=30.0)["status"] == "success"
+    assert entered.wait(5.0), "the rollout never reached send_action's mode gate"
+    try:
+        yield driver, release
+    finally:
+        release.set()
+        driver.cleanup()
+
+
+def _halt(driver: URDriver, verb: str) -> None:
+    """Issue one of the three halt verbs by name, discarding any verdict."""
+    if verb == "stop":
+        asyncio.run(driver.stop())
+    elif verb == "stop_task":
+        driver.stop_task()
+    else:
         driver.cleanup()
 
 
@@ -171,6 +228,114 @@ class TestNoSetpointOutlivesTheHalt:
         assert json_of(driver.get_task_status())["exit_reason"] == "stopped"
 
 
+class TestAHaltAlsoReachesASetpointPastTheLoopsOwnCheck:
+    """The halt wins over a setpoint already inside ``send_action``.
+
+    Every gate in that method costs an RTDE round trip to the same controller the
+    halt is talking to, so the loop's re-read cannot be the last word: it happens
+    three reads before the write.
+    """
+
+    @pytest.mark.parametrize("verb", ["stop", "stop_task", "cleanup"])
+    def test_the_halt_is_the_last_thing_the_controller_hears(
+        self, stalled_write: tuple[URDriver, threading.Event], verb: str
+    ) -> None:
+        driver, release = stalled_write
+        control = driver._control  # ``cleanup`` clears it, so read it while it is there
+        assert control is not None
+        written = len(control.servoj_calls)
+        _halt(driver, verb)
+        assert control.servo_stops == 1
+        _drain(driver, release)
+        assert len(control.servoj_calls) == written, (
+            f"a setpoint reached the arm after {verb}(): the controller was told to decelerate "
+            "and then handed a fresh position command"
+        )
+
+    def test_cleanup_does_not_release_an_interface_a_setpoint_then_reaches(
+        self, stalled_write: tuple[URDriver, threading.Event]
+    ) -> None:
+        # The claim in ``cleanup``'s own docstring. Clearing the handles under the
+        # lock covers a thread that has not read them; this one is holding them.
+        driver, release = stalled_write
+        control = driver._control
+        assert control is not None
+        written = len(control.servoj_calls)
+        driver.cleanup()
+        assert control.disconnected is True
+        _drain(driver, release)
+        assert len(control.servoj_calls) == written, "a setpoint reached an interface already disconnected"
+
+    def test_the_halt_is_marked_before_the_arm_is_told_to_decelerate(
+        self, stalled_write: tuple[URDriver, threading.Event]
+    ) -> None:
+        """The mark has to precede ``servoStop``, not merely exist somewhere.
+
+        Sequenced rather than timed: the controller double releases the parked
+        rollout from inside ``servoStop`` and does not return until that thread has
+        left the loop, so its write attempt falls strictly inside the deceleration
+        command.  A mark applied *after* ``servoStop`` - by ``_drop_anchor``, which
+        every halt verb already calls - leaves exactly this window open, and every
+        other cell here would still pass.
+        """
+        driver, release = stalled_write
+        control = driver._control
+        assert control is not None
+        rollout = driver._rollout
+        assert rollout is not None
+        written = len(control.servoj_calls)
+
+        def release_the_parked_write() -> None:
+            release.set()
+            deadline = time.monotonic() + 5.0
+            while rollout.is_running and time.monotonic() < deadline:
+                time.sleep(0.005)
+
+        control.on_servo_stop = release_the_parked_write
+        driver.stop_task()
+        assert not rollout.is_running, "the parked write never resumed inside servoStop"
+        assert len(control.servoj_calls) == written, (
+            "a setpoint reached the arm while the deceleration command was still executing"
+        )
+
+    def test_the_dropped_setpoint_is_reported_rather_than_discarded(
+        self, stalled_write: tuple[URDriver, threading.Event]
+    ) -> None:
+        driver, release = stalled_write
+        driver.stop_task()
+        _drain(driver, release)
+        snapshot = json_of(driver.get_task_status())
+        assert snapshot["exit_reason"] == "refused"
+        assert "halted while this setpoint was being prepared" in str(snapshot["refusal"])
+
+
+class TestAHaltDoesNotWedgeTheStream:
+    """Only the setpoint a halt interrupted is refused - never a later one."""
+
+    def test_a_setpoint_issued_after_a_halt_is_still_written(self, fake_rtde: FakeRTDE) -> None:
+        driver = URDriver(tool_name="ur5e", port=HOST, control_frequency=200.0)
+        assert driver.connect_eagerly() is None
+        asyncio.run(driver.stop())
+        written = len(fake_rtde.control.servoj_calls)
+        envelope = driver.send_action(_reachable_setpoint())
+        assert envelope["status"] == "success", text_of(envelope)
+        assert len(fake_rtde.control.servoj_calls) == written + 1
+
+    def test_a_second_rollout_after_a_halt_still_streams(self, fake_rtde: FakeRTDE) -> None:
+        driver = URDriver(tool_name="ur5e", port=HOST, control_frequency=200.0)
+        assert driver.connect_eagerly() is None
+        driver.stop_task()
+        assert (
+            driver.run_policy(lambda observation: _reachable_setpoint(), instruction="hold", n_steps=2)["status"]
+            == "success"
+        )
+        rollout = driver._rollout
+        assert rollout is not None
+        _await_exit(rollout)
+        assert json_of(driver.get_task_status())["exit_reason"] == "n_steps"
+        assert len(fake_rtde.control.servoj_calls) == 2
+
+
 class TestTheJoinReportsWhatItObserved:
     """``_Rollout.join`` is the single source of the halt verdict."""
 
@@ -228,7 +393,14 @@ class TestWhatTheHappyPathStillReports:
 
 
 class TestTeardownDoesNotDisconnectUnderALiveWrite:
-    """``cleanup`` carries no verdict, so the property holds by construction."""
+    """``cleanup`` carries no verdict, so the property holds by construction.
+
+    This cell poses the thread stalled in the *policy call*, which the loop's own
+    re-read turns back before ``send_action`` is entered at all - hence the
+    ``exit_reason`` of ``"stopped"`` rather than a refusal.  The position where
+    the write is already past that re-read is
+    :class:`TestAHaltAlsoReachesASetpointPastTheLoopsOwnCheck`.
+    """
 
     def test_a_late_write_finds_no_interface_rather_than_a_disconnected_one(
         self, blocked_rollout: tuple[URDriver, threading.Event]

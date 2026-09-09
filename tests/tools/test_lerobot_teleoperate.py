@@ -26,8 +26,10 @@ from tests.tool_result_contract import tool_json
 
 # Bind the public names off the single module handle rather than a second
 # ``from ... import`` of the same module (CodeQL: import + import-from of one
-# module). ``tele_mod`` is still needed directly so monkeypatch can rebind
-# module globals (``subprocess``/``psutil``/``os``/``time``/``SESSION_DIR``).
+# module). ``tele_mod`` is still needed directly so monkeypatch can rebind module
+# globals (``subprocess``/``os``/``time``/``SESSION_DIR``) and reach ``psutil`` by
+# setting an attribute on the module object it names -- rebinding the name itself
+# would be invisible to the prune, whose verdict is answered in another module.
 SessionManager = tele_mod.SessionManager
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -1016,39 +1018,10 @@ def test_dagger_dispatch_starts_session(monkeypatch: pytest.MonkeyPatch) -> None
 # Degrade + error contracts: the dispatcher must return a structured
 # ``{"status": "error"}`` (never raise past dispatch) for missing arguments,
 # command-build failures, and unexpected internal faults, and the SessionManager
-# must survive an unreadable/unwritable store and a vanished process.
+# must survive an unreadable/unwritable store. What the prune makes of a process
+# that has gone away is graded where that verdict is answered, in
+# ``tests.tools.test_teleop_session_store_keeps_a_live_pid``.
 # ---------------------------------------------------------------------------
-class _RaisingProcessPsutil:
-    """psutil stand-in whose ``Process`` lookup raises ``NoSuchProcess``.
-
-    Models the race where ``pid_exists`` is briefly true but the process is
-    reaped before ``Process()`` inspects it - the prune loop must drop the
-    session rather than propagate the exception.
-    """
-
-    NoSuchProcess = Exception  # replaced below with the real class handles
-    AccessDenied = Exception
-
-    @staticmethod
-    def pid_exists(pid: int) -> bool:
-        return True
-
-    @staticmethod
-    def Process(pid: int):  # noqa: N802 - mirror psutil.Process
-        raise _RaisingProcessPsutil.NoSuchProcess(pid)
-
-
-def test_load_sessions_drops_process_that_vanished_mid_prune(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A session whose process disappears between ``pid_exists`` and
-    ``Process()`` is pruned, not surfaced, and does not raise."""
-    mgr = SessionManager()
-    mgr.sessions_file.write_text(json.dumps({"racy": {"pid": 4242}}))
-    _RaisingProcessPsutil.NoSuchProcess = tele_mod.psutil.NoSuchProcess
-    _RaisingProcessPsutil.AccessDenied = tele_mod.psutil.AccessDenied
-    monkeypatch.setattr(tele_mod, "psutil", _RaisingProcessPsutil)
-    assert mgr.list_sessions() == {}
-
-
 def test_save_sessions_swallows_oserror(tmp_path, caplog: pytest.LogCaptureFixture) -> None:
     """``_save_sessions`` logs and returns when the store path is unwritable
     (parent directory missing) instead of raising."""

@@ -42,9 +42,9 @@ pytest.importorskip("mujoco")
 from strands_robots.dataset_recorder import DatasetRecorder
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.benchmark import BenchmarkProtocol, StepInfo
-from strands_robots.simulation.mujoco.backend import _can_render
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner
+from tests.simulation.mujoco._gl_probe import requires_gl
 
 _FEATURES: dict[str, Any] = {
     "observation.state": {"dtype": "float32", "names": ["1", "2", "3", "4", "5", "6"]},
@@ -118,9 +118,6 @@ def _recording_sim(recorder: Any) -> Simulation:
     sim._world._backend_state["trajectory"] = []
     sim._world._backend_state["dataset_recorder"] = recorder
     return sim
-
-
-requires_gl = pytest.mark.skipif(not _can_render(), reason="No OpenGL context (EGL/OSMesa) for offscreen rendering")
 
 
 def _policy(sim: Simulation) -> MockPolicy:

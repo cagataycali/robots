@@ -710,6 +710,15 @@ class TeleopMixin:
         refuses for the same reason, and the thread handle is kept when the join
         fails so a later call re-joins that loop instead of reporting an idle
         session.
+
+        Reached *on* the loop's own thread there is nothing to join, and this
+        stops the publishers and disconnects the devices as any clean stop does.
+        ``Robot.__del__`` arrives that way -- the thread's target is a closure
+        over the robot, so the finalizer runs on the teleop thread once the body
+        returns and releases it -- and ``join()`` there raises
+        ``RuntimeError: cannot join current thread``, which would abandon the
+        rest of the teardown and leave the teleoperator's port held. The loop
+        never calls this verb itself, so that arrival is always post-return.
         """
         self._ensure_teleop_state()
 
@@ -723,12 +732,34 @@ class TeleopMixin:
         thread = self._teleop_thread
         joined = True
         if thread is not None:
-            thread.join(timeout=_TELEOP_JOIN_TIMEOUT_S)
-            joined = not thread.is_alive()
-            if joined:
-                # Cleared only on a real join: the handle is the only route by
-                # which a later call, or a status read, can still see the loop.
+            if thread is threading.current_thread():
+                # This call is running *on* the loop's own thread, which
+                # ``Robot.__del__`` reaches: the thread's target is a closure
+                # over the robot, so once the caller drops its handle that
+                # closure holds the last reference, and ``Thread.run`` releasing
+                # it when the body returns runs the finalizer -- and the
+                # ``cleanup()`` behind it -- here. ``join()`` would raise
+                # ``RuntimeError: cannot join current thread`` from the middle of
+                # this method, taking ``_stop_publishers()`` and the device
+                # disconnect below with it and leaving the teleoperator's port
+                # held for the life of the process under a "cleanup completed"
+                # report.
+                #
+                # Nothing is left to wait for, which is why this carries on
+                # rather than reporting a live loop: ``_teleop_loop`` never calls
+                # this verb, so the only way control reaches it on that thread is
+                # after the body has returned. Nor can the failed-join branch's
+                # reason apply -- there is no *other* thread that could still be
+                # writing, so the devices are not being torn down under a live
+                # writer. Clear the handle, as a real join does.
                 self._teleop_thread = None
+            else:
+                thread.join(timeout=_TELEOP_JOIN_TIMEOUT_S)
+                joined = not thread.is_alive()
+                if joined:
+                    # Cleared only on a real join: the handle is the only route by
+                    # which a later call, or a status read, can still see the loop.
+                    self._teleop_thread = None
 
         self._stop_publishers()
 

@@ -914,13 +914,15 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     """Error text when ``value`` is not a usable non-negative whole number.
 
     Shared domain for two families of discrete quantity whose ``0`` is a real
-    setting rather than a degenerate one: the number of physics steps a caller
-    asks a simulation to advance - the ``n_steps`` of every backend's
-    :meth:`~strands_robots.simulation.base.SimEngine.step` - and the two
-    whole-number teleop knobs :mod:`~strands_robots.tools.lerobot_teleoperate`
-    puts on the lerobot CLI, where ``dataset_reset_time_s=0`` is "no operator
-    pause between recorded episodes" and ``replay_episode=0`` is the first
-    episode.
+    setting rather than a degenerate one:
+
+    * The number of physics steps a caller asks a simulation to advance - the
+      ``n_steps`` of every backend's
+      :meth:`~strands_robots.simulation.base.SimEngine.step`.
+    * The two whole-number teleop knobs
+      :mod:`~strands_robots.tools.lerobot_teleoperate` puts on the lerobot CLI,
+      where ``dataset_reset_time_s=0`` is "no operator pause between recorded
+      episodes" and ``replay_episode=0`` is the first episode.
 
     Not the only physics-step count in the tree, and the difference is the
     floor rather than the scalar policy: the ``n_substeps`` of
@@ -1058,7 +1060,7 @@ def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
-    Shared domain for three families of discrete quantity:
+    Shared domain for five families of discrete quantity:
 
     * The knobs that count iterations of a control or rollout loop - the
       simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
@@ -1076,6 +1078,24 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
       ``truncation=True``. The tokenizer takes it as a slice bound over the
       encoded instruction, so a count below one silently produces an EMPTY
       prompt rather than an error.
+    * A count of things to be built and run in parallel - the ``num_envs`` of
+      ``RLTrainSpec`` and of every RL backend that acts on it (the from-scratch
+      PPO / FastTD3 / FastSAC trainers, :class:`~strands_robots.training.rl.vec_env.VecSimEnv`,
+      the Isaac backend's ``replicate``), and the ``max_workers`` sizing the one
+      thread pool a vectorized env steps its sub-envs through. Each is spent
+      building live resources - a physics engine per environment, an OS thread
+      per worker - so a count the caller did not mean is not a bad number but
+      the wrong number of engines.
+    * The speed a serial bus is opened at - the ``baudrate`` of
+      :mod:`~strands_robots.tools.serial_tool` and the ``baud_rate`` of every
+      surface that opens one: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`,
+      :class:`~strands_robots.drivers.dynamixel.driver.DynamixelDriver`,
+      :class:`~strands_robots.drivers.feetech.bus.FeetechBus` and
+      ``pose_tool``'s motor controller. They all reach one ``serial.Serial``,
+      which takes the speed through its own ``int()`` and refuses only a
+      negative - so a speed that is not a count is applied rather than
+      reported: ``2.7`` opens the port at 2 baud and ``0`` opens it
+      successfully at a speed no servo answers.
 
     It lives here rather than beside one of its callers because those callers
     sit in different layers (:mod:`strands_robots.hardware_robot` must not
@@ -1162,10 +1182,140 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+# Characters that end the host inside ``<scheme>://<host>:<port>``. Each one
+# starts a later URI component, so a host carrying one does not name a bad host -
+# it names a different URI. ``:`` is in the set because the port follows it, and a
+# bracketed IPv6 literal (``[::1]``) is the one place it belongs to the host.
+_URI_COMPONENT_DELIMITERS = frozenset("/?#@:[]\\")
+
+
+def _read_uri_host(value: str) -> tuple[tuple[str, str, list[str]] | None, str | None]:
+    """The host as a plain string, its body and its delimiters - or why it did not read.
+
+    :func:`dial_host_error`'s verdict is computed from the caller's own string
+    operations - ``startswith``, a slice, and a character scan - and a ``str``
+    subclass owes none of them an answer. That makes this the :func:`_read_name_list`
+    case rather than the :func:`_read_to_quote` one: the read *is* the verdict, so a
+    read that fails becomes one, and the guard refuses a host it could not inspect
+    instead of raising out of the path whose whole purpose is to answer an unusable
+    value with text.
+
+    A bracketed IPv6 literal is unwrapped here because the brackets decide whether
+    ``:`` belongs to the host, which is part of reading it rather than of judging it.
+
+    Args:
+        value: The caller-supplied host, already known to be a ``str``.
+
+    Returns:
+        ``((spelling, body, delimiters), None)`` when the read finished - ``spelling``
+        a plain ``str`` copy the refusal can interpolate, ``body`` unbracketed and
+        ``delimiters`` sorted - or ``(None, description)`` when it did not. Exactly
+        one side is ever populated.
+    """
+    try:
+        spelling = str(value)
+        bracketed = value.startswith("[") and value.endswith("]")
+        body = str(value[1:-1] if bracketed else value)
+        own = frozenset(":") if bracketed else frozenset()
+        bad = sorted(
+            {c for c in body if (c in _URI_COMPONENT_DELIMITERS and c not in own) or not c.isprintable() or c.isspace()}
+        )
+        return (spelling, body, bad), None
+    except Exception as exc:
+        return None, _describe_failed_read(exc)
+
+
+def dial_host_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the host half of a websocket URI.
+
+    The other half of :func:`tcp_port_error`. Every caller-supplied port this
+    package dials is held to that shared domain, for the reason its consumers
+    record: an unusable port is not refused by the transport, it is *applied*,
+    and surfaces much later as an unreachable server that implicates the service
+    the caller was trying to reach. The host beside it is interpolated into the
+    same expression - ``ws://{host}:{port}`` - and was held to nothing, so the
+    URI parse resolved a value that is not a host instead of refusing it:
+
+    * A URI delimiter re-cuts the URI, and the validated port is the component
+      it takes. ``host="127.0.0.1/foo"`` parses as host ``127.0.0.1``, path
+      ``/foo:<port>`` and port **80**, so the client dials a port nobody
+      configured - the port domain cannot see this, because it is the host half
+      that discards the port. ``host="ws://127.0.0.1"``, the shape a caller who
+      pastes a URI supplies, parses as host ``ws`` on port 80.
+    * ``""`` builds no URI at all: the parse reports "hostname isn't provided"
+      and raises ``InvalidURI``, which is not an ``OSError`` and so escapes the
+      channel these clients convert into their actionable "could not reach the
+      server" hint.
+    * A non-string is carried by the f-string verbatim. ``None`` reaches the
+      resolver as the DNS name ``"none"`` and an ``int`` as its digits, so the
+      client dials a name the caller never wrote.
+    * A resolver silently repairs some values rather than reporting them: a tab
+      inside a host is dropped, and a trailing NUL truncates the lookup.
+
+    Only the shape a URI and a resolver can be *given* is decided here. Whether
+    the host resolves, and whether anything is listening on it, are facts about
+    the network a constructor cannot know and that the connect path already
+    reports.
+
+    ``"0.0.0.0"`` stays accepted: it is the documented way to reach a server
+    bound on every interface, it interpolates and dials cleanly, and readiness
+    probes special-case it. ``""`` means the same thing to a ``bind`` call and
+    nothing to a URI, so the refusal for it names ``"0.0.0.0"`` as the spelling
+    that works.
+
+    A ZMQ endpoint is deliberately not held to this domain. ``tcp://`` is not a
+    URI, and ``zmq``'s own address parse refuses every delimiter spelling above
+    at ``connect`` with the whole address in the message, so the transport there
+    reports what this function would.
+
+    Args:
+        value: The caller-supplied host.
+        param: The field or parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value can address a host.
+    """
+    shown = _refusal_repr(value)
+    if not isinstance(value, str):
+        return (
+            f"{context}: {param} must be a string hostname or IP literal, got {shown} "
+            f"({type(value).__name__}). It is interpolated into the websocket URI the client "
+            "dials (ws://<host>:<port>), which carries it verbatim, so the client dials a name "
+            "nobody wrote rather than reporting the value."
+        )
+    read, unreadable = _read_uri_host(value)
+    if read is None:
+        return (
+            f"{context}: {param} could not be read as a host ({unreadable}), got {shown}; "
+            "a value whose own string operations do not answer cannot be checked against the "
+            "host half of the websocket URI it would be interpolated into (ws://<host>:<port>). "
+            "Pass a plain hostname or IP literal, e.g. '127.0.0.1'."
+        )
+    spelling, body, bad = read
+    would_be = _refusal_repr(f"ws://{spelling}:<port>")
+    if not body:
+        return (
+            f"{context}: {param} must name a host to dial, got {shown}; "
+            f'{would_be} is not a URI (the parse reports "hostname isn\'t provided"). '
+            "Use '0.0.0.0' to reach a server bound on every interface, or '127.0.0.1' for a local one."
+        )
+    if bad:
+        hint = " Pass a bracketed literal for IPv6 (e.g. '[::1]')." if ":" in bad else ""
+        return (
+            f"{context}: {param} must be a bare hostname or IP literal, got {shown}; "
+            f"{_refusal_container_repr(bad)} cannot appear in the host half of the websocket URI it "
+            f"is interpolated into (ws://<host>:<port>), so {would_be} names a different URI rather "
+            "than a host - a '/' puts the validated port in the path and the client dials :80 "
+            f"instead.{hint}"
+        )
+    return None
+
+
 def non_negative_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative integer count.
 
-    Shared domain for two families of discrete quantity whose ``0`` is a
+    Shared domain for three families of discrete quantity whose ``0`` is a
     first-class value rather than a degenerate one:
 
     * The number of control steps a loop executes while an inference request is
@@ -1173,12 +1323,14 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
       (:attr:`~strands_robots.policies.base.Policy.rtc_observed_delay_steps`).
       That count is exactly ``0`` in the dominant case: a synchronous eval loop
       pauses the world during inference, so no step elapses.
-    * A reproducibility seed
-      (:attr:`~strands_robots.training.base.TrainSpec.seed`), where ``0`` is
-      simply a seed. Its appliers disagree about everything outside this domain:
-      ``torch.manual_seed`` reduces a negative seed modulo ``2**64`` (so ``-1``
-      silently becomes ``2**64 - 1`` and collides with a seed a caller could
-      have named), while NumPy's legacy seeder refuses a negative or a float.
+    * A reproducibility seed -
+      :attr:`~strands_robots.training.base.TrainSpec.seed` and the ``seed`` of
+      :meth:`~strands_robots.streaming_dataset.StreamingDatasetReader.open` -
+      where ``0`` is simply a seed. Its appliers disagree about everything
+      outside this domain: ``torch.manual_seed`` reduces a negative seed modulo
+      ``2**64`` (so ``-1`` silently becomes ``2**64 - 1`` and collides with a
+      seed a caller could have named), while NumPy's legacy seeder refuses a
+      negative or a float.
     * The episode counts of the dataset-integrity gate
       (:func:`strands_robots.verify_dataset.verify_dataset`'s ``expected`` and
       ``min_frames``, and the sim facade's
@@ -1189,8 +1341,8 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
       only for a threshold above zero, so a negative or non-finite one disables
       the check instead of failing it.
 
-    Refusing ``0`` would reject the common configuration for both, which is why
-    this is a separate domain rather than a caller of
+    Refusing ``0`` would reject the common configuration for all three, which is
+    why this is a separate domain rather than a caller of
     :func:`positive_count_error`.
 
     In every other respect it mirrors :func:`positive_count_error`: only a true
@@ -1212,6 +1364,57 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return f"{context}: {param} must be a non-negative integer, got {_refusal_repr(value)}."
     return None
+
+
+def declared_count(value: object) -> int | None:
+    """The count a dataset's ``meta/info.json`` declares, or ``None`` for none.
+
+    Read-side counterpart of :func:`non_negative_count_error`, and the same type
+    and floor rule: that domain grades a count a CALLER passed and reports why it
+    was refused, while this one grades a count a FILE declares, where the only
+    answers a reader can act on are the count itself and the absence of one.
+    Every reader of a LeRobot header count asks that question of the same file -
+    the parquet cross-check in
+    :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`, the
+    metadata-drift check in
+    :func:`~strands_robots.verify_dataset.verify_dataset`, the validation-split
+    denominator in ``strands_robots.training.lerobot``, the episode count the
+    ``lerobot_train`` tool splits, and the task count
+    :func:`validation_split_error` decides that split against - so the answer
+    lives here: one file, one value, one verdict.
+
+    A declaration outside the domain is ``None`` (the header declares no count),
+    never a nearby number, because every alternative is silently destructive at
+    surfaces that certify datasets:
+
+    * ``int(2.5)`` truncates to ``2``, which is exactly the count a two-episode
+      parquet holds - so a header no writer could have produced reads as
+      agreement between the two independent metadata sources.
+    * ``int(1e400)`` raises ``OverflowError``. ``1e400`` is a well-formed JSON
+      number (RFC 8259 bounds no range) that ``json.load`` parses to ``inf``, so
+      a perfectly readable file raises out of readers whose documented answer for
+      an unusable header is "unknown", and past a tool envelope.
+    * ``bool`` is an ``int`` subclass, so a bare type test reads ``true`` as a
+      one-episode dataset - and, at the sibling ``total_tasks`` header this same
+      domain grades, as a single-task one.
+    * A ``str`` digit and an integral ``float`` are refused rather than coerced,
+      because coercing is what let the readers disagree: one accepted ``"2"`` as
+      two episodes while another refused it as unusable.
+
+    A reader that must report an unusable declaration rather than pass it over
+    compares against the raw value it read: ``None`` here with the key present
+    means the file declares something that is not a count.
+
+    Args:
+        value: The value the metadata file carried under the count's key, or
+            ``None`` when the key is absent.
+
+    Returns:
+        The declared count, or ``None`` when the file declares no usable one.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def step_cadence_error(value: Any, param: str, context: str) -> str | None:
@@ -1265,6 +1468,82 @@ def step_cadence_error(value: Any, param: str, context: str) -> str | None:
             "A fractional, non-finite, boolean or non-numeric cadence cannot be honored - it is "
             "used as the modulus of a step % cadence test; pass a whole number of steps, or a "
             "non-positive one to disable periodic saving."
+        )
+    return None
+
+
+def torch_device_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a device string torch can parse.
+
+    Shared domain for every caller-supplied torch device this package spends. It
+    reaches torch from three surfaces that cannot be reconciled after the fact:
+    the ``lerobot_train`` tool interpolates it into ``--policy.device=`` in the
+    argv of a DETACHED process; :class:`~strands_robots.training.lerobot.LerobotTrainer`
+    assigns it onto ``policy_cfg.device`` for the same pipeline in-process; and
+    the from-scratch RL backends hand
+    :attr:`~strands_robots.training.rl.base_algo.RLTrainSpec.device` straight to
+    ``torch.device`` in :meth:`setup`. The domain lives here for the reason
+    :func:`step_cadence_error` gives for the cadence beside it in that same argv:
+    those callers sit in different layers, and the same device must not be
+    refused by one and accepted by another that wraps the identical pipeline.
+
+    The admitted set is torch's own, read by handing the value to
+    ``torch.device`` rather than by comparing against a copied list of device
+    types. A torch build that gains a backend is admitted here with no edit, and
+    torch's own exception enumerates the types it accepts, so a refusal names the
+    admitted set without restating it.
+
+    Only the *spelling* is graded, never availability. ``torch.device("cuda")``
+    constructs on a CPU-only box and must stay accepted, because a queued or
+    containerised run legitimately names a device the dispatching machine does
+    not have. That is also why a non-``str`` is refused before torch is
+    consulted at all: ``torch.device(0)`` reads the accelerator inventory, so
+    asking torch about it would make one spec validate on a GPU box and fail on a
+    CPU box - and an ordinal that does resolve is worse than one that does not,
+    because ``torch.device(1)`` constructs on any host and then fails at the
+    first ``.to()`` with ``CUDA error: invalid device ordinal``, from a
+    ``torch/nn/modules/module.py`` frame that names neither the parameter nor the
+    run that supplied it.
+
+    Whether an *unstated* device is refused belongs to the caller, not here: a
+    surface that documents a falsy value as "resolve the default" replaces it
+    before asking, and one that writes the value into an argv verbatim asks about
+    it as given. This function grades the value it is handed.
+
+    When torch is not importable the domain is unknown and the value passes
+    through unguarded, which is the posture every live-sourced domain in this
+    module takes when its source cannot be read.
+
+    The refused value is rendered through :func:`_refusal_repr`, as every scalar
+    guard here is: ``repr`` can itself raise - on an ``int`` wider than
+    :func:`sys.get_int_max_str_digits`, or from any third-party ``__repr__`` - and
+    a guard that raises while building a refusal fails on exactly the path that
+    exists so it does not.
+
+    Args:
+        value: The caller-supplied device.
+        param: Field name, quoted in the message so the refusal names the knob.
+        context: Public surface or provider name, prefixed to the message.
+
+    Returns:
+        An error message naming *context* and *param*, or ``None`` when torch can
+        parse the value.
+    """
+    if not isinstance(value, str):
+        return (
+            f"{context}: {param} must be a torch device string, got {type(value).__name__}. "
+            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
+        )
+    try:
+        import torch
+    except Exception:  # noqa: BLE001 - torch missing -> domain unknown, pass through
+        return None
+    try:
+        torch.device(value)
+    except (RuntimeError, ValueError) as e:
+        return (
+            f"{context}: {param}={_refusal_repr(value)} is not a torch device string ({e}). "
+            "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
         )
     return None
 
@@ -1556,11 +1835,17 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     through :func:`_read_name_list`, and a read that cannot finish is answered
     with a message rather than raising out of the guard.
 
-    Callers gate this check on a truthy value, because in both consumers a falsy
-    ``image_keys`` (``None``, or an empty list) already means "not supplied" and
-    the list is derived instead. So an empty sequence is not rejected here, and
-    ``None`` is the caller's to skip rather than this function's to accept - a
-    surface where an absent value IS an error keeps that verdict its own.
+    An empty sequence is not rejected here, and ``None`` is the caller's to skip
+    rather than this function's to accept - a surface where an absent value IS an
+    error keeps that verdict its own. Which verdict that is depends on what the
+    parameter names, and the two ``image_keys`` differ on exactly this. The
+    LeRobot one DECLARES the model's visual features, and absence derives them
+    from the embodiment instead, so a falsy value there genuinely means "not
+    supplied" and that caller gates this check on truthiness. The VERA one
+    SELECTS a subset of the observation it was handed, so an empty selection asks
+    for no view and is the opposite of the documented "every view" default;
+    ``VeraPolicy`` reads it ``is not None`` and supplies the refusal beside this
+    check.
 
     Args:
         value: The caller-supplied value.
@@ -2624,6 +2909,42 @@ def published_string_error(value: Any, param: str, context: str) -> str | None:
     )
 
 
+def stale_output_dir_is_clearable(output_dir: str) -> bool:
+    """True when ``output_dir`` exists and holds nothing, so clearing it is free.
+
+    Both LeRobot training entry points clear a stale ``output_dir`` on a fresh
+    (non-resuming) start, because lerobot's own ``TrainPipelineConfig.validate``
+    refuses a pre-existing one unless ``resume=True``. This is the single owner
+    of the bound on that hygiene, so the two cannot disagree about what a fresh
+    start is allowed to remove.
+
+    Emptiness is the bound because the removal is a recursive
+    ``shutil.rmtree(..., ignore_errors=True)``: it reports neither what it took
+    nor a partial failure, and nothing it takes is recoverable. A directory with
+    nothing in it is the only one where that is free.
+
+    Emptiness also SUBSUMES the "no resumable checkpoint" test, so this needs no
+    checkpoint probe: a directory holding a checkpoint is not empty, whatever
+    layout the checkpoint is in. That matters because a checkpoint is not always
+    visible to a resume probe - lerobot's ``save_checkpoint`` writes
+    ``model.safetensors`` before ``train_config.json``, so a run interrupted
+    between the two leaves the trained weights on disk under a checkpoint no
+    resume probe reports, and a checkpoint-keyed bound clears exactly that.
+
+    Args:
+        output_dir: Path a run is about to write checkpoints into.
+
+    Returns:
+        ``True`` only when the path is an existing directory with no entries.
+        ``False`` for a path that does not exist (there is nothing to clear), is
+        not a directory, or holds anything at all.
+    """
+    path = Path(output_dir)
+    if not path.is_dir():
+        return False
+    return not any(path.iterdir())
+
+
 def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
     """``dataset.eval_split`` that holds out exactly ``val_episodes`` episodes.
 
@@ -2660,12 +2981,21 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
     number of episodes than asked, callers refuse and point at the fraction,
     which addresses the per-task behaviour directly.
 
-    A ``total_tasks`` of 0 or ``None`` means the dataset does not record a task
-    count (lerobot's own field defaults to 0), which is treated as single-task.
+    A ``total_tasks`` of 0, or no header at all, means the dataset does not
+    record a task count (lerobot's own field defaults to 0), which is treated as
+    single-task. A header that declares something which is NOT a count is a
+    THIRD outcome and refused on its own terms: the count is what decides
+    whether the request is expressible, so an unusable declaration is neither
+    single-task nor multi-task, and honoring it as the former is exactly how a
+    multi-task dataset reached lerobot's per-task ceiling. The declaration is
+    graded by :func:`declared_count`, the one owner every reader of a LeRobot
+    header count shares, so callers hand this the value their ``meta/info.json``
+    carried rather than a number of their own.
 
     Args:
         val_episodes: The requested held-out episode count, for the message.
-        total_tasks: ``total_tasks`` from the dataset's ``meta/info.json``.
+        total_tasks: The value the dataset's ``meta/info.json`` carried under
+            ``total_tasks``, verbatim, or ``None`` when there is no header.
         context: Caller label the message is prefixed with.
         passthrough_param: Name of the caller's own raw-flag passthrough
             parameter, interpolated into the remedy. Required rather than
@@ -2678,11 +3008,25 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
     Returns:
         The error text, or None when the count can be honored exactly.
     """
-    if not isinstance(total_tasks, int) or isinstance(total_tasks, bool) or total_tasks <= 1:
+    if total_tasks is None:
+        return None
+    declared = declared_count(total_tasks)
+    if declared is None:
+        return (
+            f"{context}: val_episodes={val_episodes} cannot be checked against a dataset whose "
+            f"meta/info.json declares total_tasks={_refusal_repr(total_tasks)}, which is not a "
+            "task count. Whether one global count is expressible depends on how many tasks the "
+            "dataset holds - lerobot holds out ceil(episodes_in_task * eval_split) from every "
+            "task - so a header declaring no usable count is neither single-task nor multi-task, "
+            "and reading it as single-task is what let a three-task dataset spelling its count "
+            "3.0 past this guard. Repair meta/info.json, or pass the fraction directly, e.g. "
+            f"{passthrough_param}={{'dataset.eval_split': 0.1, 'eval_steps': 1000}}."
+        )
+    if declared <= 1:
         return None
     return (
         f"{context}: val_episodes={val_episodes} cannot be reserved exactly on a "
-        f"dataset with {_refusal_str(total_tasks)} tasks. A validation split is a per-task "
+        f"dataset with {_refusal_str(declared)} tasks. A validation split is a per-task "
         "fraction in lerobot (it holds out ceil(episodes_in_task * eval_split) "
         "from every task), so a single global count is not expressible: the "
         "ceiling would be applied once per task. Pass the fraction directly, "

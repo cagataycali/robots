@@ -129,4 +129,7 @@ def test_unrecognised_fallback_mode_warns_and_stays_client(
         assert "STRANDS_MESH_FALLBACK_MODE" in caplog.text
     else:
         # An empty value is "unset", not a typo, so it warrants no warning.
-        assert caplog.text == ""
+        # Scoped to the module's own logger: ``caplog`` captures every record in the
+        # process, at every level, for the whole test, so a background thread's record
+        # would otherwise read as this module reporting.
+        assert [r.getMessage() for r in caplog.records if r.name == mod.logger.name] == []

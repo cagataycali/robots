@@ -10,22 +10,46 @@ the training process holds the GPU with no supported way left to stop it.
 
 Leaving a record out is also not needed to avoid over-reporting it: presence in
 the store is not the running claim. ``list`` and ``status`` each derive that from
-``psutil.pid_exists`` at the moment they are asked, so a retained record reads as
-running only while its pid really exists. That is pinned below as a control.
+:func:`~strands_robots.tools._process_stop.session_is_running` at the moment they
+are asked, so a retained record reads as running only while its pid *still holds
+the process the record was written for* - the claim production makes in
+``SessionManager._load_sessions``. Both halves of it are pinned below as
+controls: a pid that is gone, and a pid that another process now holds.
 
-Two probes classify a record. ``psutil.pid_exists`` answers existence;
-``Process(pid).is_running()`` refines it. Neither disagreement between them is
-grounds for deleting the record:
+The load path takes two probes of its own, and neither is that verdict.
+``psutil.pid_exists`` answers existence with a signal; ``Process(pid).is_running()``
+reads the process, and ``_report_uninspectable`` calls it for what it raises
+rather than for what it returns. No outcome of either is grounds for deleting the
+record:
 
-* ``pid_exists`` False, or ``is_running()`` False - the run finished, or the pid
-  was reused. Kept, so ``status`` can still report the final log tail.
-* ``NoSuchProcess`` - reaped between the two probes. That is the same finished
-  run as the row above, and which of the two paths a finished run takes is a
-  race, so they must not be classified differently.
+* ``pid_exists`` False - the run finished. Kept, so ``status`` can still report
+  the final log tail.
+* an identity the pid no longer reports - the run finished and the number was
+  handed out again. The same finished run as the row above, reached through the
+  identity comparison rather than through existence.
+* ``NoSuchProcess`` - reaped between the two probes. Also the same finished run,
+  and which of these paths a finished run takes is a race, so they must not be
+  classified differently.
 * ``AccessDenied`` - the process exists and this user may not inspect it; a
   session started under ``sudo`` and later listed as the invoking user reads this
   way. That is not death, and it is the one case where dropping the record loses
   a pid that still names a *live* process.
+
+No case below poses ``is_running()`` answering ``False``, because that call
+cannot: a freshly constructed :class:`psutil.Process` captures the identity it is
+about to be asked about, so on the locked psutil it answers ``True`` or raises
+:class:`~psutil.NoSuchProcess`, and the load path constructs one per read. Only an
+object built before the exit and read after it returns ``False``. The stand-ins
+below therefore refuse the probe rather than answering it.
+
+One asymmetry is worth writing down, because it is what makes those stand-ins
+legitimate here where the teleoperation sibling's had to move onto
+``_started_since_boot``: a record carries no identity unless a case seeds one, so
+``session_is_running`` short-circuits to existence and never consults the
+``psutil.Process`` double. That double is read only by ``_report_uninspectable``,
+whose warning is what the ``AccessDenied`` cases grade. The one case that needs
+the identity compared seeds it, and doubles the procfs read the verdict really
+takes.
 
 The teleoperation store is held to the same rule for the same reason, in
 ``tests.tools.test_teleop_session_store_keeps_a_live_pid``. The two policies are
@@ -44,6 +68,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _process_stop
 
 SessionManager = train_mod.SessionManager
 lerobot_train = train_mod.lerobot_train
@@ -211,37 +236,48 @@ def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplo
     )
 
 
-class _NotRunning:
-    """A process object that answers the probe with "not running"."""
+#: Start offset a seeded record claims for its process. Any value does: what the
+#: verdict reads is whether the process now holding the pid reports this one.
+_RECORDED_START_S = 1.0
 
-    def __init__(self, pid: int) -> None:
-        self._pid = pid
 
-    def is_running(self) -> bool:
-        return False
+def _pose_a_reused_pid(mgr: Any, pid: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the live recorded pid report an identity the record does not claim.
+
+    This is what a finished run looks like once the kernel hands its number out
+    again, and it is the only spelling of "finished" that reaches
+    ``session_is_running``'s identity comparison: the record has to *carry* an
+    identity, or the verdict short-circuits to existence and the pid is live.
+
+    The double sits on ``_started_since_boot`` because that is the seam the
+    verdict reads - on Linux it reads ``/proc/<pid>/stat`` directly and would
+    bypass a ``psutil.Process`` stand-in, and letting the real read answer would
+    mismatch for a different reason than the one being posed.
+    """
+    mgr.add_session(
+        "training",
+        {"pid": pid, "action": "train", "start_time": 0.0, train_mod.PID_STARTED_SINCE_BOOT: _RECORDED_START_S},
+    )
+    monkeypatch.setattr(_process_stop, "_started_since_boot", lambda p: _RECORDED_START_S + 3600.0)
 
 
 # ---------------------------------------------------------------------------
-# A finished run is retained too, however the probes report it.
+# A finished run is retained too, however the load path reports it.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("arrange", "id_"),
     [
         pytest.param(
-            lambda mp: mp.setattr(train_mod.psutil, "pid_exists", lambda pid: False),
+            lambda mgr, pid, mp: mp.setattr(train_mod.psutil, "pid_exists", lambda pid: False),
             "the pid is gone",
             id="pid-absent",
         ),
         pytest.param(
-            lambda mp: _raise_on_probe(mp, train_mod.psutil.NoSuchProcess),
+            lambda mgr, pid, mp: _raise_on_probe(mp, train_mod.psutil.NoSuchProcess),
             "reaped between the two probes",
             id="no-such-process",
         ),
-        pytest.param(
-            lambda mp: mp.setattr(train_mod.psutil, "Process", _NotRunning),
-            "is_running() says no",
-            id="not-running",
-        ),
+        pytest.param(_pose_a_reused_pid, "the pid was handed out again", id="pid-reused"),
     ],
 )
 def test_a_finished_run_keeps_its_record(monkeypatch: pytest.MonkeyPatch, arrange: Any, id_: str) -> None:
@@ -249,11 +285,12 @@ def test_a_finished_run_keeps_its_record(monkeypatch: pytest.MonkeyPatch, arrang
 
     This store retains a finished session on purpose, so ``status`` can still
     report the final log tail. Which spelling a given finish produces is a race
-    between two probes, so classifying them differently would make retention
-    depend on timing rather than on the run.
+    between two probes, or the accident of whether the number has been reissued
+    yet, so classifying them differently would make retention depend on timing
+    rather than on the run.
     """
-    mgr, _ = _seed()
-    arrange(monkeypatch)
+    mgr, pid = _seed()
+    arrange(mgr, pid, monkeypatch)
 
     assert "training" in mgr.list_sessions(), f"a finished run must keep its record ({id_})"
     assert "training" in _stored(mgr), f"and must keep it on disk ({id_})"
@@ -262,19 +299,33 @@ def test_a_finished_run_keeps_its_record(monkeypatch: pytest.MonkeyPatch, arrang
 # ---------------------------------------------------------------------------
 # Controls: retention is not a running claim.
 # ---------------------------------------------------------------------------
-def test_a_retained_record_is_not_reported_running(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("arrange", "id_"),
+    [
+        pytest.param(
+            lambda mgr, pid, mp: mp.setattr(train_mod.psutil, "pid_exists", lambda pid: False),
+            "whose pid is gone",
+            id="pid-absent",
+        ),
+        pytest.param(_pose_a_reused_pid, "whose pid another process now holds", id="pid-reused"),
+    ],
+)
+def test_a_retained_record_is_not_reported_running(monkeypatch: pytest.MonkeyPatch, arrange: Any, id_: str) -> None:
     """Keeping the record cannot be what makes a session read as running.
 
-    This is the reason retention is safe: ``status`` derives the live/finished
-    line from the pid's existence when asked, not from the record's presence.
+    This is the reason retention is safe, and it takes both rows to say so: the
+    verdict is not the record's presence, and it is not the pid's existence
+    either. A reused pid exists, is inspectable and is not the session, so only
+    the second row separates the claim production makes - the pid still holds the
+    process the record was written for - from the weaker one that it exists.
     """
-    _seed()
-    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: False)
+    mgr, pid = _seed()
+    arrange(mgr, pid, monkeypatch)
 
     result = lerobot_train(dataset_root=UNUSED_DATASET, action="status", session_name="training")
 
     text = next(block["text"] for block in result["content"] if "text" in block)
-    assert "Status: Stopped" in text, f"a retained record whose pid is gone must read as stopped: {text}"
+    assert "Status: Stopped" in text, f"a retained record {id_} must read as stopped: {text}"
 
 
 def test_a_corrupt_store_still_degrades_to_empty() -> None:

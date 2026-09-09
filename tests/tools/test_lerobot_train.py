@@ -450,6 +450,10 @@ def test_session_lifecycle_round_trips(tmp_path: Path, monkeypatch: pytest.Monke
         def __init__(self, pid: int) -> None:
             self.pid = pid
 
+        def create_time(self) -> float:
+            """The identity the record is written with, so the PID is still its own."""
+            return train_mod.psutil.boot_time() + 1.0
+
         def is_running(self) -> bool:
             return True
 

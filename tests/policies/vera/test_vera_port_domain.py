@@ -18,6 +18,14 @@ asymmetry (``vis_port=0`` disables the viewer, so zero is a mode selector there
 and not a port), and the property the divergence was: every accepted port is
 named identically by all three consumers.
 
+They also pin that a port means the same thing however it was spelled. A field
+can be set as a keyword or through ``VERA_*_PORT``, and the two must reach the
+one check: ``VeraConfig(server_port=0)`` was refused while
+``VERA_SERVER_PORT=0`` reported success on the per-embodiment default, because
+the override was read for its truth (``or``) rather than for its presence, and
+``0`` is falsy. A deploy that asked for a port it cannot have was told it had
+got it, on a different port.
+
 Everything here is offline - no server, no socket, no ``vera`` package.
 """
 
@@ -53,6 +61,18 @@ UNUSABLE_PORTS: list[Any] = [
 # Ports every consumer can honor.
 USABLE_PORTS: list[int] = [1, 8800, 8820, 65535]
 
+# Env spellings of a ``server_port`` no consumer can honor. Every entry is one
+# ``_env_int`` really parses, so each reaches the shared domain rather than
+# stopping at the parser - a spelling the parser cannot read is swallowed by
+# design, pinned in
+# ``test_vera_unit.py::test_malformed_numeric_env_degrades_to_defaults``.
+# ``"0"`` and ``"-0"`` are the rows that need the override read for its
+# presence: they parse to a falsy int, which an ``or`` discards.
+REFUSED_ENV_SERVER_PORTS: list[str] = ["0", "-0", "-1", "65536", "70000"]
+
+# The same, for ``vis_port``, minus the documented zero exemption.
+REFUSED_ENV_VIEWER_PORTS: list[str] = ["-9", "-1", "65536", "70000"]
+
 
 def _config(**kwargs: Any) -> VeraConfig:
     """Build a config through the funnel, splatted so off-type values reach it.
@@ -67,6 +87,19 @@ def _argv_port(cfg: VeraConfig, flag: str) -> str | None:
     """The value the server launch argv carries for ``flag``, or None if absent."""
     cmd = VeraServerRunner(cfg)._build_command()
     return cmd[cmd.index(flag) + 1] if flag in cmd else None
+
+
+def _server_port_outcome(**kwargs: Any) -> tuple[str, int | None]:
+    """What the funnel did with a ``server_port``, comparable across spellings.
+
+    Either ``("refused", None)`` or ``("resolved", port)``, so one value set as a
+    keyword and the same value set through ``VERA_SERVER_PORT`` can be compared
+    for the same verdict rather than for the same exception text.
+    """
+    try:
+        return ("resolved", _config(embodiment="pusht", **kwargs).server_port)
+    except ValueError:
+        return ("refused", None)
 
 
 # --------------------------------------------------------------------------- #
@@ -182,16 +215,53 @@ class TestViewerPortDomain:
 # The environment override goes through the same guard
 # --------------------------------------------------------------------------- #
 class TestEnvironmentOverride:
-    def test_an_unusable_env_server_port_is_refused(self, monkeypatch):
-        """``VERA_SERVER_PORT`` writes the same field, so it is checked too."""
-        monkeypatch.setenv("VERA_SERVER_PORT", "70000")
+    @pytest.mark.parametrize("raw", REFUSED_ENV_SERVER_PORTS)
+    def test_an_unusable_env_server_port_is_refused(self, monkeypatch, raw):
+        """``VERA_SERVER_PORT`` writes the same field, so it is checked too.
+
+        Only the truthy rows were reachable while the override was read with
+        ``or``: ``"0"`` parsed to a falsy int, so the override was dropped and
+        the per-embodiment default (8820 on pusht) applied under a success.
+        """
+        monkeypatch.setenv("VERA_SERVER_PORT", raw)
         with pytest.raises(ValueError, match="server_port"):
             _config(embodiment="pusht")
 
-    def test_an_unusable_env_viewer_port_is_refused(self, monkeypatch):
-        monkeypatch.setenv("VERA_VIS_PORT", "-9")
+    @pytest.mark.parametrize("raw", REFUSED_ENV_VIEWER_PORTS)
+    def test_an_unusable_env_viewer_port_is_refused(self, monkeypatch, raw):
+        monkeypatch.setenv("VERA_VIS_PORT", raw)
         with pytest.raises(ValueError, match="vis_port"):
             _config(embodiment="pusht")
+
+    def test_a_zero_env_viewer_port_disables_the_viewer_as_the_keyword_does(self, monkeypatch):
+        """The zero exemption is a property of the value, not of the spelling.
+
+        ``0`` selects "no viewer" through the environment too, and the runner
+        omits the flag exactly as it does for ``vis_port=0`` - which is what
+        reading the override for its presence preserves. Read for its truth,
+        ``VERA_VIS_PORT=0`` would resolve to the default port 8821 and the
+        viewer the caller switched off would be served.
+        """
+        monkeypatch.setenv("VERA_VIS_PORT", "0")
+        cfg = _config(embodiment="pusht")
+        assert cfg.vis_port == 0
+        assert _argv_port(cfg, "--vis-port") is None
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "65536", "70000", "8899"])
+    def test_one_port_gets_one_verdict_whichever_spelling_named_it(self, monkeypatch, raw):
+        """A value the keyword refuses cannot be accepted from the environment.
+
+        The two spellings write one field through one check, so the outcome is a
+        property of the value: refused for the same reason, or resolved to the
+        same port. ``"0"`` is the row that separated them - the keyword was
+        refused by name while the environment reported success on 8820.
+        """
+        value = int(raw)
+        monkeypatch.delenv("VERA_SERVER_PORT", raising=False)
+        keyword = _server_port_outcome(server_port=value)
+        monkeypatch.setenv("VERA_SERVER_PORT", raw)
+        environment = _server_port_outcome()
+        assert keyword == environment
 
     def test_a_usable_env_override_still_applies(self, monkeypatch):
         monkeypatch.setenv("VERA_SERVER_PORT", "9999")

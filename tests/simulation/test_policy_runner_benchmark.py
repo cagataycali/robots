@@ -29,7 +29,7 @@ from strands_robots.simulation.benchmark import (
     StepInfo,
     register_benchmark,
 )
-from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner
+from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner, set_eval_seed
 
 # Fixtures
 
@@ -837,39 +837,17 @@ class TestEvalSeeding:
     ``Isaac-GR00T/scripts/deployment/standalone_inference_script.py:81``,
     minus the global ``CUBLAS_WORKSPACE_CONFIG`` env var and
     ``torch.use_deterministic_algorithms(...)`` flag that would persist
-    after the eval. Tests target the seeding helper directly + verify
-    the per-episode RNG path still works via ``episode_rng``.
+    after the eval.
+
+    What is pinned here is the eval loop's use of the helper: that it applies a
+    seed per episode, and that the per-episode ``episode_rng`` it derives is
+    reproducible. That ``set_eval_seed`` itself makes the global Python and NumPy
+    streams reproducible is a property of the helper, pinned without a rollout in
+    ``tests/simulation/test_set_eval_seed_requires_a_seed.py``
+    (``TestUsableSeedsAreStillApplied``) over a wider set of seeds - a cell whose
+    subject is a global reseed has to read the global object, so it is pinned in
+    one place, with the shortest possible window, rather than in two.
     """
-
-    def test_set_eval_seed_seeds_python_random(self):
-        """Round 38 (#168): ``set_eval_seed`` seeds the Python ``random``
-        module so two calls with the same seed produce the same draw.
-
-        Pin the basic contract in case future refactors move the seeding
-        out of the helper."""
-        import random as _stdlib_random
-
-        from strands_robots.simulation.policy_runner import set_eval_seed
-
-        set_eval_seed(42)
-        first = [_stdlib_random.random() for _ in range(5)]
-        set_eval_seed(42)
-        second = [_stdlib_random.random() for _ in range(5)]
-        assert first == second
-
-    def test_set_eval_seed_seeds_numpy(self):
-        """Round 38 (#168): ``set_eval_seed`` seeds NumPy's legacy
-        global RNG (``np.random.seed``). Pin so policies that use
-        ``np.random.rand`` etc. are reproducible across re-runs."""
-        import numpy as np
-
-        from strands_robots.simulation.policy_runner import set_eval_seed
-
-        set_eval_seed(42)
-        first = np.random.rand(5).tolist()
-        set_eval_seed(42)
-        second = np.random.rand(5).tolist()
-        assert first == second
 
     def test_set_eval_seed_tolerates_missing_torch(self, monkeypatch):
         """Round 38 (#168): ``set_eval_seed`` no-ops the torch branch
@@ -1013,21 +991,27 @@ class TestEvalSeeding:
         depends on the cumulative number of draws across all preceding
         episodes.
 
-        Mechanism: capture every ``random.random()`` call inside the
-        spec's ``on_episode_start`` (which fires AFTER the per-episode
-        ``set_eval_seed`` call). On re-run with the same master seed,
-        episode N's draws must match episode N's draws from the first
-        run; AND consecutive episodes must NOT be identical (proves we
-        seed with episode_seed, not master seed).
+        Mechanism: draw from the ``episode_rng`` the loop hands
+        ``on_episode_start`` - the generator it seeds from that episode's
+        derived seed. On re-run with the same master seed, episode N's
+        draws must match episode N's draws from the first run; AND
+        consecutive episodes must NOT be identical (proves we seed with
+        episode_seed, not master seed).
+
+        The draws used to come from the process-global ``random`` module,
+        which every other reader in the interpreter shares: one stray draw
+        between two episodes shifted the sequence and this cell reported it
+        as a lost per-episode reseed. ``episode_rng`` carries the same
+        derivation and nothing else can reach it. That the loop also applies
+        each episode seed globally is a call, counted as one by
+        ``test_set_eval_seed_is_applied_once_per_episode``.
         """
         # Closure-captured list that the spec writes to.
         run_a_draws: list[list[float]] = []
 
         class _RunACapture(_CountingBenchmark):
             def on_episode_start(self, sim, episode_rng):  # noqa: ARG002
-                import random as _r
-
-                run_a_draws.append([_r.random() for _ in range(5)])
+                run_a_draws.append([episode_rng.random() for _ in range(5)])
 
         sim_a = FakeSim()
         spec_a = _RunACapture()
@@ -1046,9 +1030,7 @@ class TestEvalSeeding:
 
         class _RunBCapture(_CountingBenchmark):
             def on_episode_start(self, sim, episode_rng):  # noqa: ARG002
-                import random as _r
-
-                run_b_draws.append([_r.random() for _ in range(5)])
+                run_b_draws.append([episode_rng.random() for _ in range(5)])
 
         sim_b = FakeSim()
         spec_b = _RunBCapture()
@@ -1078,6 +1060,56 @@ class TestEvalSeeding:
             "per-episode seeding may have used a constant instead of "
             "the per-episode-derived seed"
         )
+
+    def test_set_eval_seed_is_applied_once_per_episode(self, monkeypatch):
+        """The loop applies a seed per episode - counted as the call it is.
+
+        The cell above reads ``episode_rng`` rather than the global stream, so it
+        no longer observes that the loop reseeds the process-global RNGs at all.
+        That reseed is a call, and it is pinned as one here: once before the loop
+        with the master seed, then once per episode with that episode's derived
+        seed - the same values the loop forwards to ``policy.reset(seed=...)``,
+        which is what an in-process policy's own sampling is reproducible from.
+
+        The seam is the namespace ``evaluate`` resolves the name in, not the
+        module object a fresh ``import`` returns. That statement resolves through
+        the *package attribute*, and a sibling that re-imports the runner to
+        measure its import (``test_policy_runner.py``'s mujoco-leak cell) rebinds
+        that attribute to a fresh module; ``monkeypatch`` restores the
+        ``sys.modules`` entry it deleted, not the attribute the re-import wrote.
+        Patching the fresh object records nothing once that sibling has run, and
+        it sorts first. The ``PolicyRunner`` bound at collection is the class
+        under test here, so its ``evaluate`` globals are the dict the call reads
+        whatever the attribute holds.
+        """
+        seam = PolicyRunner.evaluate.__globals__
+        assert seam["set_eval_seed"] is set_eval_seed, "the seam must be the one this file imported"
+        applied: list[int] = []
+
+        def spy(seed: int) -> None:
+            applied.append(seed)
+            set_eval_seed(seed)
+
+        monkeypatch.setitem(seam, "set_eval_seed", spy)
+
+        reset_seeds: list[int | None] = []
+        policy = MockPolicy()
+        policy.set_robot_state_keys(FakeSim().robot_joint_names("fake_robot"))
+
+        def _record_reset(seed: int | None = None) -> None:
+            reset_seeds.append(seed)
+
+        policy.reset = _record_reset  # type: ignore[assignment]
+
+        spec = _CountingBenchmark()
+        PolicyRunner(FakeSim()).evaluate("fake_robot", policy, spec=spec, n_episodes=3, seed=42)
+
+        assert applied[0] == 42, f"the master seed was not applied before the episode loop: {applied}"
+        assert applied[1:] == reset_seeds, (
+            "each episode's seed must be applied globally and forwarded to the policy: "
+            f"applied {applied[1:]}, forwarded {reset_seeds}"
+        )
+        assert len(set(applied[1:])) == 3, f"episode seeds must be distinct, got {applied[1:]}"
 
 
 class TestPolicyResetIntegration:

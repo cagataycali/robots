@@ -584,7 +584,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str, revision: str | 
     # Try local path first
     local_path = Path(pretrained_name_or_path)
     if local_path.is_dir() and (local_path / "config.json").exists():
-        with open(local_path / "config.json") as config_file:
+        with open(local_path / "config.json", encoding="utf-8") as config_file:
             config = json.load(config_file)
         return _policy_type_from_config(config)
 
@@ -593,7 +593,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str, revision: str | 
         from huggingface_hub import hf_hub_download
 
         config_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
-        with open(config_path) as config_file:
+        with open(config_path, encoding="utf-8") as config_file:
             config = json.load(config_file)
         return _policy_type_from_config(config)
     except (ImportError, OSError, ValueError, KeyError) as exc:

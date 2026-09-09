@@ -13,7 +13,10 @@ on a headless host.
 sites, so each is pinned with its own suite plus a cross-call-site parity
 suite: a refactor that drops one of them (letting a 8000x8000 depth request
 reach the offscreen framebuffer, or building a pinhole ``K`` for a 0-pixel
-image) would slip past the RGB tests alone.
+image) would slip past the RGB tests alone. The guard takes its caller's name,
+so the parity those suites assert is of the domain and the reason - each entry
+point names itself as the subject; see
+``tests/simulation/test_render_dimension_refusal_names_the_caller.py``.
 
 ``get_camera_params`` reports failure by exception rather than by an
 agent-tool dict, and its dimensions are not merely a buffer size: ``fx``,
@@ -94,14 +97,27 @@ class TestRenderDepthDimensionCaps:
         assert "offscreen framebuffer cap" in res["content"][0]["text"]
 
     def test_depth_and_rgb_agree_on_bad_dimensions(self, sim_with_world):
-        """The two render paths reject identical bad dimensions identically -
-        the parity contract that keeps the shared guard from drifting."""
+        """The two render paths reject identical bad dimensions for the same
+        reason, each naming itself - the parity contract that keeps the shared
+        guard from drifting.
+
+        Byte-identity of the two texts is what this asserted before, and it is
+        a stronger claim than the drift it exists to catch: it also required
+        ``render_depth`` to report ``render``, so the caller of one method was
+        pointed at the other. Comparing the reason with each subject stripped
+        keeps the anti-drift guarantee and makes the misattribution a failure
+        rather than the pinned behaviour.
+        """
         for width, height in (("640", 480), (8000, 480), (0, 480), (640, -1)):
             rgb = sim_with_world.render(camera_name="default", width=width, height=height)
             depth = sim_with_world.render_depth(camera_name="default", width=width, height=height)
             assert rgb["status"] == "error"
             assert depth["status"] == "error"
-            assert rgb["content"][0]["text"] == depth["content"][0]["text"]
+            rgb_text = rgb["content"][0]["text"]
+            depth_text = depth["content"][0]["text"]
+            assert rgb_text.startswith("render: "), rgb_text
+            assert depth_text.startswith("render_depth: "), depth_text
+            assert rgb_text.removeprefix("render: ") == depth_text.removeprefix("render_depth: ")
 
 
 class TestRenderMaxBytesCap:
@@ -178,7 +194,9 @@ class TestRenderDimensionGuardParity:
     The three render-dimension call sites (``render``, ``get_frame`` /
     ``render_depth``, ``get_camera_params``) describe the same image. An
     accepted domain that diverges between them lets a caller hold intrinsics
-    for a frame no call can render.
+    for a frame no call can render. What must match is the verdict and the
+    reason - each entry point names itself as the subject, so a caller is
+    pointed at the call it made.
     """
 
     @pytest.mark.parametrize(
@@ -186,11 +204,21 @@ class TestRenderDimensionGuardParity:
         [(0, 240), (320, 0), (-64, 240), (320, -48), (2.7, 240), ("640", 240), (True, 240), (8000, 480)],
     )
     def test_render_and_camera_params_reject_identically(self, sim_with_world, width, height):
-        """Same rejection, same message text, through both call sites."""
+        """Same rejection, same reason, each naming the call it came through.
+
+        Byte-identity of the two texts is what this compared before, which also
+        required ``get_camera_params`` to report ``render`` - so the divergence
+        it guards against was pinned together with a subject naming the wrong
+        method. The reason is what has to agree; the subject is what has to
+        differ.
+        """
         rendered = sim_with_world.render(camera_name="default", width=width, height=height)
         assert rendered["status"] == "error"
-        expected = rendered["content"][0]["text"]
+        rendered_text = rendered["content"][0]["text"]
+        assert rendered_text.startswith("render: "), rendered_text
 
         with pytest.raises(ValueError) as excinfo:
             sim_with_world.get_camera_params(camera_name="default", width=width, height=height)
-        assert str(excinfo.value) == expected
+        params_text = str(excinfo.value)
+        assert params_text.startswith("get_camera_params: "), params_text
+        assert params_text.removeprefix("get_camera_params: ") == rendered_text.removeprefix("render: ")

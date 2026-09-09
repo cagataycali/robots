@@ -45,6 +45,11 @@ from strands_robots.tools import _process_stop
 # can reach a real process.
 FAKE_PID = 424242
 
+#: Start offset the seeded record claims for its process, in the domain
+#: ``session_is_running`` compares. The stand-in below reports the same one, so a
+#: seeded session's PID is still its own process and the stop verb proceeds.
+RECORDED_START_S = 1.0
+
 # Both stop verbs are the same shape over their own session store, so each
 # behaviour is pinned on both. ``kwargs`` carries the argument the tool needs
 # beyond the action.
@@ -87,8 +92,8 @@ def _install(
             ``AccessDenied`` for a process this user may not inspect).
         missing_after: Number of successful ``Process()`` constructions before
             the next one raises ``NoSuchProcess``. ``1`` models the real race:
-            alive when the session store probes it, gone by the time the stop
-            verb captures it.
+            alive when the stop verb checks that the PID is still its session's
+            process, gone by the time it captures that process to signal it.
 
     Returns:
         The event log: ``"wait"`` per confirmation and ``"kill:<SIGNAME>"`` per
@@ -106,6 +111,10 @@ def _install(
             self.pid = pid
             self._waits = 0
 
+        def create_time(self) -> float:
+            """The identity the seeded record names, so this stands in for it."""
+            return real_psutil.boot_time() + RECORDED_START_S
+
         def is_running(self) -> bool:
             # The session store's own liveness probe; keeps the record visible.
             return True
@@ -121,6 +130,21 @@ def _install(
 
     monkeypatch.setattr(real_psutil, "Process", _Proc)
     monkeypatch.setattr(real_psutil, "pid_exists", lambda pid: True)
+    # The identity the verdict compares is read by ``_started_since_boot``, and on
+    # Linux that reads ``/proc/<pid>/stat`` field 22 rather than probing psutil -
+    # so stubbing ``Process`` alone leaves the verdict reading procfs for a PID
+    # that does not exist, which is a mismatch, which reads as a reused pid and
+    # drops the record. The stand-in therefore sits at that seam, spelled as the
+    # subtraction the double above was built to answer. Routing it through
+    # ``_Proc`` rather than returning the constant keeps every cell's semantics
+    # intact: ``missing_after`` still raises ``NoSuchProcess`` here, and the
+    # construction count stays what it was when the verdict itself built the
+    # ``Process``.
+    monkeypatch.setattr(
+        _process_stop,
+        "_started_since_boot",
+        lambda pid: real_psutil.Process(pid).create_time() - real_psutil.boot_time(),
+    )
     monkeypatch.setattr(module.os, "kill", lambda pid, sig: events.append(f"kill:{_SIGNAMES[sig]}"))
     # The pre-fix implementation paced itself with a bare sleep; keep the suite
     # fast if it is ever reintroduced.
@@ -142,7 +166,15 @@ def _json(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _add(module: Any, name: str) -> None:
-    module.SessionManager().add_session(name, {"pid": FAKE_PID, "start_time": 0.0, "action": "train"})
+    module.SessionManager().add_session(
+        name,
+        {
+            "pid": FAKE_PID,
+            "start_time": 0.0,
+            "action": "train",
+            module.PID_STARTED_SINCE_BOOT: RECORDED_START_S,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

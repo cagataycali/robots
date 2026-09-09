@@ -19,9 +19,9 @@ so a single provider name owns BOTH the inference class
 (``create_trainer("lerobot_local")``).
 
 A provider can also be declared at runtime with :func:`register_trainer`, which
-is how the ``training.rl`` backends (``ppo``, ``fast_sac``) and the ``sagemaker``
-transport are wired without a paired inference provider to hang a JSON block
-off. Both routes resolve through :func:`import_trainer_class`, so
+is how the ``training.rl`` backends (``ppo``, ``fast_sac``, ``fast_td3``) and the
+``sagemaker`` transport are wired without a paired inference provider to hang a
+JSON block off. Both routes resolve through :func:`import_trainer_class`, so
 :func:`list_trainers`, :func:`import_trainer_class` and :func:`create_trainer`
 answer for the same set of names.
 """

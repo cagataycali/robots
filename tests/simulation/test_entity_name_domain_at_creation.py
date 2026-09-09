@@ -490,14 +490,21 @@ class TestIsaacRefusesTheSameNames:
         assert list(stub._robots) == ["arm"]
         assert stub._prim_registry == ["/World/Robots/arm"]
 
-    def test_removing_one_robot_keeps_every_other_robots_prim(self):
+    def test_a_refused_empty_name_never_reaches_the_prune(self):
         """Regression for the corruption an empty name used to cause.
 
         ``/World/Robots/`` prefixes every robot's prim path, and
         ``remove_robot`` prunes the cleanup registry by prefix - so removing the
         empty-named robot used to drop EVERY robot's prim while leaving the
         robots themselves registered. With the name refused at creation the
-        empty name never enters the registry, so the prune stays scoped.
+        empty name never enters the registry, so the prune is never asked about
+        it.
+
+        That is all this cell grades. The two survivors are ``arm`` and
+        ``helper``, neither of which is a prefix of the other, so the prune's own
+        boundary is invisible here - it is graded in
+        ``tests/simulation/isaac/test_removing_a_robot_prunes_at_the_prim_path_boundary.py``,
+        where a name that DOES extend another exercises the same rule.
         """
         stub = _isaac_stub()
         for label in ("arm", "helper"):

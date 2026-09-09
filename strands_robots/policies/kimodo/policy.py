@@ -67,8 +67,9 @@ from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
+from strands_robots.utils import positive_finite_number_error
 
-from .config import KimodoConfig
+from .config import KimodoConfig, diffusion_steps_error, sampling_seed_error
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +456,9 @@ class KimodoPolicy(Policy):
                 input to the sampler, so supplying one that differs from the
                 value that produced the buffered motion re-samples; supplying
                 the same values drains the existing buffer rather than paying
-                for a run that would return identical frames.
+                for a run that would return identical frames. Each numeric one
+                is held to the same domain its config field is, because an
+                override reaches the sampler without passing through the config.
 
         Returns:
             A single-element list containing a dict mapping each of
@@ -463,6 +466,18 @@ class KimodoPolicy(Policy):
             The single-element list matches the base ``Policy.get_actions``
             contract (chunked policies return more than one). At the end of the
             sampled buffer the last frame is held (tracker keeps servoing).
+
+        Raises:
+            ValueError: If neither ``instruction`` nor ``text_prompt`` supplies
+                a non-empty prompt, or if a per-call ``diffusion_steps``,
+                ``guidance_scale`` or ``seed`` override is outside the domain
+                its config field is held to -
+                :func:`~strands_robots.policies.kimodo.config.diffusion_steps_error`,
+                :func:`~strands_robots.utils.positive_finite_number_error` and
+                :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
+                respectively. All three are checked before the buffered-motion
+                key is built, so a refused override leaves the held motion and
+                the frame cursor exactly as they were.
         """
         prompt = kwargs.get("text_prompt") or instruction
         if not prompt or not prompt.strip():
@@ -473,9 +488,31 @@ class KimodoPolicy(Policy):
 
         # (Re)sample on the first call, or whenever any input that determines
         # the motion differs from the one that produced the buffer we hold.
-        diffusion_steps = int(kwargs.get("diffusion_steps", self.config.diffusion_steps))
-        guidance_scale = float(kwargs.get("guidance_scale", self.config.guidance_scale))
+        #
+        # Every one of those inputs is graded here, against the same domain the
+        # matching config field applies, and before the key below is built: an
+        # override is read straight from kwargs and reaches the sampler and the
+        # key without passing through the frozen config, so this is the only
+        # place it can be refused. Grading precedes the conversions further down
+        # for the same reason the seed is graded before ``_sample_key`` coerces
+        # it - int(2.7) is 2 and float(True) is 1.0, so a coerced value is
+        # indistinguishable from one the caller meant, and it discards the held
+        # motion to re-enter the sampler with a number nobody asked for.
+        steps_value = kwargs.get("diffusion_steps", self.config.diffusion_steps)
+        if error := diffusion_steps_error(steps_value, "KimodoPolicy.get_actions"):
+            raise ValueError(error)
+        guidance_value = kwargs.get("guidance_scale", self.config.guidance_scale)
+        if error := positive_finite_number_error(guidance_value, "guidance_scale", "KimodoPolicy.get_actions"):
+            raise ValueError(error)
         seed = kwargs.get("seed", self.config.seed)
+        if error := sampling_seed_error(seed, "KimodoPolicy.get_actions"):
+            raise ValueError(error)
+        # Both domains admit an integral float (a 100.0 read from a config array
+        # passes, and the config field holds it as given), while the sampler and
+        # the key want the int and the float they are declared as. After the
+        # guards above these conversions can only restate the value.
+        diffusion_steps = int(steps_value)
+        guidance_scale = float(guidance_value)
         key = self._sample_key(prompt, diffusion_steps, guidance_scale, seed)
         if self._motion_buffer is None or key != self._buffer_key:
             self._synthesise(
@@ -514,11 +551,24 @@ class KimodoPolicy(Policy):
         rather than being eased onto where the previous episode finished.
 
         Args:
-            seed: Sampling seed for the next episode. ``None`` rewinds only,
-                replaying the motion already held. A seed equal to the one that
-                produced the current buffer also replays it rather than
-                re-running the sampler for identical frames.
+            seed: Sampling seed for the next episode, in the domain
+                :func:`~strands_robots.policies.kimodo.config.sampling_seed_error`
+                states. ``None`` rewinds only, replaying the motion already
+                held. A seed equal to the one that produced the current buffer
+                also replays it rather than re-running the sampler for
+                identical frames.
+
+        Raises:
+            ValueError: If ``seed`` is outside that domain. Checked before any
+                state is touched, so a refused reseed leaves the policy exactly
+                as it was rather than half-rewound.
         """
+        # The seed is stored on the frozen config below with
+        # ``object.__setattr__``, which does not re-enter ``__post_init__``, so
+        # the domain is applied here instead. Construction and a per-episode
+        # reseed are two spellings of the same setting and give one verdict.
+        if error := sampling_seed_error(seed, "KimodoPolicy.reset"):
+            raise ValueError(error)
         self._frame_cursor = 0
         # A new episode starts the robot afresh, so there is no previously
         # commanded pose to stay continuous with. Forgetting the pose is not
@@ -555,11 +605,20 @@ class KimodoPolicy(Policy):
         (:meth:`get_actions`) build the key here, so the two cannot disagree
         about which inputs identify a motion.
 
+        The seed is coerced with ``int()`` so an integral ``2.0`` and a plain
+        ``2`` name one sample, as they must: they seed the sampler identically.
+        That coercion is safe, and the identity holds, only because
+        :func:`~strands_robots.policies.kimodo.config.sampling_seed_error` has
+        already established that the seed is whole - a fractional seed would key
+        as a DIFFERENT value than the one the sampler received, so the key would
+        name a sample the sampler never produced.
+
         Args:
             prompt: Text prompt the motion was sampled for.
             diffusion_steps: Denoising steps used.
             guidance_scale: Classifier-free-guidance weight used.
-            seed: Sampling seed, or ``None`` for an unseeded sample.
+            seed: Sampling seed, or ``None`` for an unseeded sample. Whole, per
+                the domain above.
 
         Returns:
             A hashable tuple identifying the run.

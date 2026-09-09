@@ -138,17 +138,17 @@ rejected eagerly. The commonly used fields:
 
 | Kwarg | Type | Default | Description |
 |-------|------|---------|-------------|
-| `num_envs` | `int` | `1` | Parallel environments. Set to `1024`+ for fleet RL. |
+| `num_envs` | `int` | `1` | Parallel environments. Set to `1024`+ for fleet RL. A positive integer - the same domain `replicate(num_envs=...)` takes. |
 | `device` | `str` | `"cuda:0"` | CUDA device (`cuda:N`). Must be a CUDA device. |
 | `headless` | `bool` | `True` | Run without a GUI (required for cloud/CI). |
-| `physics_dt` | `float` | `1/120` | Physics timestep (seconds). |
+| `physics_dt` | `float` | `1/120` | Physics timestep (seconds). Positive and finite - the domain `create_world()` applies to the effective dt, and the one the legacy `IsaacSimulation(default_timestep=...)` shortcut that writes this field takes as well. |
 | `rendering_dt` | `float` | `1/30` | Rendering timestep (seconds). |
 | `render_mode` | `str` | `"headless"` | `"headless"`, `"rtx_realtime"` (raster), or `"rtx_pathtracing"` (photoreal). |
-| `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). |
+| `gravity` | `tuple` | `(0, 0, -9.81)` | Gravity vector (Z-up). Three finite components, Z-aligned - the same domain `create_world(gravity=...)` takes. |
 | `ground_plane` | `bool` | `True` | Add a ground plane on `create_world()`. |
-| `stage_path` | `str` | `"/World"` | USD stage path prefix. |
+| `stage_path` | `str` | `"/World"` | USD prim-path prefix every created prim is addressed under. Must be absolute, with at least one component, every component a prim name (`[A-Za-z_][A-Za-z0-9_]*`). |
 | `nucleus_url` | `str \| None` | `None` | Override Omniverse Nucleus URL (env-resolvable). |
-| `camera_width` / `camera_height` | `int` | `640` / `480` | Default camera resolution. |
+| `camera_width` / `camera_height` | `int` | `640` / `480` | Default camera resolution, for every `add_camera` / render call that states none of its own. Positive integers - the same pixel floor those `width` / `height` arguments take. |
 | `enable_rtx_sensors` | `bool` | `True` | Enable RTX-accelerated camera / LiDAR sensors. |
 | `verbose` | `bool` | `False` | Verbose Isaac Sim / Kit logging. |
 
@@ -227,7 +227,15 @@ open a window.
   parser can read: a URDF joint that omits the optional `<axis>` acts about
   **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
   axes, so a joint read under the other format's default would be reported
-  acting in the perpendicular plane with the load still reporting success. Both
+  acting in the perpendicular plane with the load still reporting success. A
+  default applies only where the format declares one, which is why the two
+  formats answer an omitted `type` differently: MJCF documents `hinge` as the
+  default for a `<joint>`, so an MJCF joint with no `type` is read as a hinge,
+  while URDF requires `type` on every `<joint>`, so a URDF joint that omits it
+  is refused by name - by both readers, `load_urdf` and `urdf_joint_names`.
+  Reading it as `fixed` welded a joint the file never described and returned a
+  robot with fewer actuated DOFs than the file declares, indistinguishable from
+  a deliberate `type="fixed"`. Both
   of MJCF's spellings of a free joint are read - the dedicated `<freejoint>`
   element and `<joint type="free">`, which MuJoCo compiles to the same joint -
   so a floating base is reported rather than absent. `<freejoint>` is how every
@@ -275,6 +283,19 @@ prunes its cleanup registry by that prefix. Unlike the MuJoCo backend there is
 no "derive a label from the model" short form: `name` is also the procedural
 lookup key, so `None` / `""` are refused rather than replaced with a generated
 label.
+
+`stage_path` is the other half of that same path and carries the same floor, so
+a path this backend records is one it can address whichever component the caller
+got wrong. It must be an absolute USD prim path with at least one component,
+every component a prim name (`[A-Za-z_][A-Za-z0-9_]*`). A non-`str` was
+previously interpolated as its rendered text (`stage_path=None` recorded
+`None/Robots/arm`); a relative prefix (`"World"`) recorded a path that
+`get_body_state` cannot take, because it distinguishes an absolute prim path
+from a `<robot>/<link>` pair by the leading `/`; a trailing or doubled separator
+(`"/World/"`) left an empty component; and a component outside USD's identifier
+alphabet (`"/My World"`) is transcoded by USD, so the prim does not land at the
+path recorded for it. The identifier rule applies to the prefix only - `name` is
+shared with backends whose entity names are not USD identifiers.
 
 The one deliberate difference in that list is `mass=0`. The Newton backend
 documents it as an alternative spelling of `is_static=True` and honours it, so it

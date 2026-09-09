@@ -25,7 +25,10 @@ Contract:
       the policy computes them from ``observation_dict``.
 
 * Output is a per-frame dict ``{joint_name: target_radians, ...}`` in the
-  action-value convention (``float`` per DOF, never ``np.ndarray``).
+  action-value convention (``float`` per DOF, never ``np.ndarray``), smoothed by
+  the config's
+  :attr:`~strands_robots.policies.protomotions.config.ProtoMotionsConfig.\
+action_ema_alpha` (``1.0`` = passthrough).
 
 Injection seam: pass ``session=`` implementing :class:`ProtoMotionsSession`
 to unit-test the observation -> future-window -> action-dict mapping without
@@ -171,6 +174,13 @@ class ProtoMotionsPolicy(Policy):
         # caller passes a new motion (which resets it).
         self._frame_cursor: int = 0
 
+        # EMA filter state for the emitted joint targets - the previous tick's
+        # smoothed target, or None before the first tick of an episode. Held
+        # separately from ``_action_history``: that buffer carries the RAW
+        # network output because it feeds the ONNX graph's
+        # ``historical_processed_actions`` input, which is defined over it.
+        self._ema_targets: NDArray[np.float32] | None = None
+
         self._motion_player: MotionPlayer | None = None
         if motion is not None:
             self.load_motion(motion)
@@ -264,9 +274,10 @@ class ProtoMotionsPolicy(Policy):
         else:
             raise TypeError(f"motion must be a MotionPlayer, cache dict, or path, got {type(motion).__name__}.")
 
-        # New clip -> reset playhead and history.
+        # New clip -> reset playhead, history and the target filter.
         self._frame_cursor = 0
         self._action_history[:] = 0.0
+        self._ema_targets = None
         logger.info(
             "ProtoMotionsPolicy loaded motion: %d frames @ %.0f Hz",
             self._motion_player.total_frames,
@@ -282,6 +293,13 @@ class ProtoMotionsPolicy(Policy):
         playhead would silently carry over and every episode after the first
         would replay from wherever the previous one stopped.
 
+        The :attr:`~strands_robots.policies.protomotions.config.\
+ProtoMotionsConfig.action_ema_alpha` filter state is cleared here for the same
+        reason: it holds the previous tick's smoothed target, so carrying it
+        across the boundary would blend the last pose of one episode into the
+        first tick of the next, and the second episode of an ``eval_policy``
+        run would start from wherever the first one stopped.
+
         Args:
             seed: Accepted for interface parity and ignored - the tracker is
                 deterministic given its reference motion and observation, so it
@@ -290,6 +308,7 @@ class ProtoMotionsPolicy(Policy):
         del seed  # deterministic tracker: no RNG state to reseed
         self._frame_cursor = 0
         self._action_history[:] = 0.0
+        self._ema_targets = None
 
     # ------------------------------------------------------------------
     # get_actions
@@ -406,11 +425,50 @@ class ProtoMotionsPolicy(Policy):
         self._action_history[-1] = actions_out.astype(np.float32)
         self._frame_cursor += 1
 
-        # 5. Wrap as the per-joint action-dict expected by the runtime.
+        # 5. Smooth the targets the PD loop receives, per the config's
+        #    action_ema_alpha. The history buffer above deliberately keeps the
+        #    RAW output: it feeds the network's own historical-actions input.
+        joint_pos_targets = self._smooth_targets(joint_pos_targets)
+
+        # 6. Wrap as the per-joint action-dict expected by the runtime.
         action_dict: dict[str, float] = {
             name: float(joint_pos_targets[i]) for i, name in enumerate(self._config.joint_names)
         }
         return [action_dict]
+
+    def _smooth_targets(self, targets: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Blend ``targets`` with the previous tick's, per ``action_ema_alpha``.
+
+        ``y[t] = alpha * x[t] + (1 - alpha) * y[t-1]``, the standard first-order
+        exponential moving average. ``alpha`` is the weight of the CURRENT
+        network output, so ``1.0`` - the shipped checkpoint's own value - is
+        passthrough and returns ``targets`` unchanged and bit-exact rather than
+        multiplying it by one.
+
+        The first tick of an episode seeds the filter with the network's own
+        output instead of with zeros. A zero-seeded filter would command a pose
+        between the origin and the first target - on a 29-DOF humanoid holding a
+        stance that is a lurch toward the zero pose, not a smoothed start - and
+        the smaller the alpha the further that first command would sit from the
+        motion being tracked.
+
+        Args:
+            targets: This tick's raw ``joint_pos_targets`` from the tracker.
+
+        Returns:
+            The smoothed targets, which for ``alpha == 1.0`` is ``targets``
+            itself.
+        """
+        alpha = self._config.action_ema_alpha
+        if alpha == 1.0:
+            return targets
+        if self._ema_targets is None:
+            self._ema_targets = np.asarray(targets, dtype=np.float32)
+        else:
+            self._ema_targets = (
+                alpha * np.asarray(targets, dtype=np.float32) + (1.0 - alpha) * self._ema_targets
+            ).astype(np.float32)
+        return self._ema_targets
 
     # ------------------------------------------------------------------
     # ONNX session lifecycle

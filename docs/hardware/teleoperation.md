@@ -87,7 +87,7 @@ Every hardware `Robot` and `Simulation` host exposes:
 | `attach_teleop(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs)` | Register an input stream (lazy - no hardware touched). `device_or_spec` is a built teleop instance **or** a type string built via `Teleoperator(**kwargs)`. |
 | `teleoperate(*, names=None, robot_name=None, hz=50.0, publish=False, block=False, duration=None)` | Run the control loop. |
 | `detach_teleop(name=None)` | Remove one (or all) attached streams. Stops the loop before touching a device when the detach would leave it with nothing to drive, and refuses with `detached: []` if that loop does not stop. |
-| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. |
+| `stop_teleoperate()` | Stop the loop, any mesh publishers, and disconnect devices. Reports `status="error"` with `stopped: false` when the loop outlasts its 3 s join budget - the devices are left connected rather than torn down mid-write, and a second call re-joins the same loop. Reached on the loop's own thread - which `Robot.__del__` does, since the thread's target is a closure over the robot - there is nothing to join, and it stops the publishers and disconnects as any clean stop does. |
 
 ### `attach_teleop`
 

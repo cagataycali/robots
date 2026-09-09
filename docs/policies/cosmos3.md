@@ -28,8 +28,8 @@ python -m cosmos_framework.scripts.action_policy_server_robolab \
 ```python
 Cosmos3Policy(
     embodiment="droid",          # droid | umi | av | bridge | openarm
-    host="localhost",
-    port=8000,
+    host="localhost",         # bare hostname or IP literal; IPv6 bracketed "[::1]"
+    port=8000,                   # int in [1, 65535]
     action_space=None,
     observation_mapping=None,
     action_mapping=None,
@@ -43,6 +43,29 @@ Cosmos3Policy(
     model=None,                 # HF repo id / path for the diffusers backend
 )
 ```
+
+`host` and `port` are the two halves of the one address this client dials
+(`ws://<host>:<port>`), and both are refused before the endpoint is built rather
+than surfacing later as an unreachable server. `host` must be a bare hostname or
+IP literal - no `/`, `:`, scheme or credentials, IPv6 bracketed as `"[::1]"` -
+because the URI parse gives a delimiter to a later component and takes the port
+with it: `host="localhost/foo"` reads as port **80**, so the configured `8000`
+lands in the path. Both are read only when this constructor builds the client; an
+injected `client=` owns its own address. `host="0.0.0.0"` reaches a server bound
+on every interface.
+
+The client's own `read_timeout` - `Cosmos3WebsocketClient(host, port, read_timeout=1800)`,
+injected as `client=` - bounds every read off the live connection - the metadata handshake
+and each action chunk - as a positive finite number of seconds (default 600).
+`websockets`' `recv()` has no deadline of its own, so without it a server that
+accepted the connection and then went quiet, with a checkpoint still loading onto
+the GPU or a wedged forward pass, held the calling thread indefinitely: the
+`ConnectionError` that tells an operator how to start the server is raised from
+`except OSError`, and a listening server never produces one. A read that expires
+reports `accepted the connection but sent no ... within read_timeout=Ns` - kept
+distinct from the "start it first" hint, which is the wrong advice for a server
+that is already running - and discards the connection, so the reply it missed
+cannot be read as the answer to the next observation.
 
 ## Embodiments
 
@@ -68,6 +91,15 @@ one names its own columns:
 keys must be columns of the active space. Mapping the gripper is therefore
 `{"grasp": ...}` under `midtrain` and `{"gripper": ...}` under `joint_pos`; a key
 that names no column is refused, listing the ones that are valid.
+
+It has to be a rename, so two columns may not arrive at one actuator name. A
+step dict holds one entry per column, so a merge would collapse two columns into
+one entry and drop a command - the actuator that lost would hold position while
+the model asked it to move. Both spellings are refused at construction, naming
+the columns and the target they collide on: two entries sharing a target, and a
+single entry aimed at another column's own name (`{"joint_0": "joint_1"}` on
+`joint_pos` names only real columns and still costs a joint). Renaming *every*
+column is a bijection and is accepted.
 
 `joint_pos` needs seven joint values plus a gripper, and it reads them in the
 order you declare with `set_robot_state_keys()`. Declaring that order is what
@@ -283,6 +315,14 @@ out = decode_cosmos_chunk_to_targets(
     stats_domain="umi",               # required: which domain they describe
 )
 ```
+
+`stats` takes the quantiles in whatever form you have them — a list straight
+out of a JSON file (the layout the bundled `stats/*_stats.json` files use), a
+tuple, or a NumPy array. Every component must be a finite real number: the
+de-normalization is `0.5 * (a + 1) * (q99 - q01) + q01`, so one `nan` or `inf`
+quantile spreads across the whole chunk and every pose the trajectory composes
+from it, and `denormalize_quantile` refuses it naming the quantile and the
+component rather than returning an all-`nan` trajectory.
 
 `stats_domain` is required whenever `stats` is passed, and must match the
 embodiment's domain. It is not bookkeeping: `umi`, `droid_lerobot`,

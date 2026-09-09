@@ -458,7 +458,7 @@ class SensorLoopsMixin:
             pass
 
         try:
-            with open("/proc/meminfo") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 lines = f.readlines()
             mem_total = mem_avail = 0
             for line in lines:
@@ -473,7 +473,7 @@ class SensorLoopsMixin:
             pass
 
         try:
-            with open("/proc/uptime") as f:
+            with open("/proc/uptime", encoding="utf-8") as f:
                 health["uptime_s"] = round(float(f.read().split()[0]), 0)
                 has_data = True
         except (OSError, ValueError):

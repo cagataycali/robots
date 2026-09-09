@@ -74,6 +74,7 @@ import threading
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.registry import resolve_name
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 
@@ -547,8 +548,10 @@ class FrankaDriver:
                 }
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

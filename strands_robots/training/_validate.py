@@ -120,6 +120,41 @@ because the two bounds have one domain for one reason - a clip bound is a
 positive width, and positive infinity is each field's only spelling of "do not
 clip". It is scoped like :func:`gae_lambda_problems`: ``spec.clip_param`` is read
 in ``rl/ppo.py`` and nowhere else.
+
+:func:`policy_delay_problems` is the fifteenth, on the *optimization* axis:
+``policy_delay``, the number of critic updates FastTD3 runs per delayed actor /
+target update. It is consumed as the modulus of an ``update_count %
+policy_delay`` test, so a value that never satisfies the test silently trains
+the critics for the whole run while the deployable actor never takes a
+gradient step - under a successful result. It is scoped like
+:func:`gae_lambda_problems`: only the TD3 backend delays its policy, so a
+backend that does not read the field must not report on it.
+
+:func:`td3_noise_problems` is the sixteenth, on the *exploration/target* axis:
+``exploration_noise_std``, ``target_noise_std`` and ``target_noise_clip``, the
+three scalars that shape FastTD3's two noise mechanisms - exploration noise on
+collection and target policy smoothing in the critic's TD target. Gaussian
+noise is symmetric, so a negative scale is silently the identical
+distribution, zero silently removes the mechanism the field configures, and a
+non-finite value poisons the actions or the TD target. It is scoped like
+:func:`policy_delay_problems`: only the TD3 backend reads the three fields.
+
+:func:`network_width_problems` is the seventeenth, on the *architecture* axis:
+``hidden_dims``, the hidden layer widths every from-scratch RL backend builds
+its actor and its critics from. It is scoped like
+:func:`learning_rate_problems` rather than like :func:`gae_lambda_problems` -
+all three RL backends read the field, for every network they construct - and it
+is the only one of these gates whose field is a *sequence*, so the domain is
+asked of each element in turn and the message names the offending index.
+
+:func:`rl_checkpoint_interval_problems` is the eighteenth, and the second gate on
+the *cadence* axis :func:`checkpoint_cadence_problems` opened: ``log_interval``,
+the field the RL loop paces ``save_checkpoint`` by. It shares that gate's
+:func:`~strands_robots.utils.step_cadence_error` domain because the two fields
+are consumed identically - as the modulus of a periodic-checkpoint test - and
+differ only in which spec names them, so a cadence refused for a supervised run
+cannot be accepted for an RL one. It is scoped like
+:func:`network_width_problems`: all three RL backends run that loop.
 """
 
 from __future__ import annotations
@@ -127,6 +162,7 @@ from __future__ import annotations
 import math
 import numbers
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.tools._path_validation import validate_save_path
@@ -136,6 +172,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     step_cadence_error,
+    torch_device_error,
 )
 
 if TYPE_CHECKING:
@@ -319,16 +356,74 @@ def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
-def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
-    """Return replay-loop problems for a FastSAC :class:`RLTrainSpec`.
+def torch_device_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return device problems for a from-scratch RL :class:`RLTrainSpec`.
 
-    The three caller-supplied counts of an off-policy SAC run's replay loop:
+    All three RL backends resolve the device the same way in :meth:`setup`::
+
+        self.device = torch.device(spec.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+    so ``device`` is spent by ``torch.device`` itself, which judges nothing on
+    this spec's behalf, and every network, buffer and rollout tensor the run
+    allocates is placed on the result. ``device`` was the one caller-supplied
+    knob on this spec with no domain - the sentence the sibling supervised
+    preflight already uses about its own surface - while the counts, the
+    interval coefficients, the loss weights, the learning rate, the seed, the
+    launch topology and the network width beside it are all held to one.
+
+    Measured on a 6-DoF SO-101 MuJoCo env with PPO, ``validate()`` returning
+    ``[]`` - which :meth:`~strands_robots.training.base.Trainer.validate`
+    documents as meaning the spec IS launchable - for each of these:
+
+    * ``"gpu"`` (the ordinary mistake: the word the rest of the world uses)
+      and ``"cuda:abc"`` raise ``RuntimeError`` out of ``setup`` from the
+      ``torch.device`` line itself, after the preflight passed.
+    * ``1`` is worse, and is why a non-``str`` is refused before torch is
+      consulted: ``torch.device(1)`` constructs on ANY host, so the run reaches
+      the first ``.to()`` and dies with ``CUDA error: invalid device ordinal``
+      raised from a ``torch/nn/modules/module.py`` frame that names neither the
+      field nor the run - and the same spec would train on a host with more
+      GPUs. One spec, two answers, decided by the machine's inventory.
+
+    The domain is :func:`~strands_robots.utils.torch_device_error`, the one owner
+    the ``lerobot_train`` tool and :class:`~strands_robots.training.lerobot.LerobotTrainer`
+    also consult, so a device the supervised trainer refuses is not accepted by
+    the RL backend beside it.
+
+    A falsy ``device`` is NOT refused: the ``spec.device or ...`` above documents
+    it as "resolve the default", exactly as the supervised trainer's constructor
+    does, so it never reaches ``torch.device`` as written and is not this gate's
+    to judge. Availability is not graded either - ``"cuda"`` on a CPU-only box is
+    a valid spec, because a queued run is written on one host and executed on
+    another.
+
+    Args:
+        spec: The spec to preflight.
+        context: Provider name, prefixed to the message.
+
+    Returns:
+        A single-element list when ``device`` cannot be honored; empty when it
+        can, when it is unstated, or when torch is not importable.
+    """
+    device = getattr(spec, "device", None)
+    if not device:
+        return []
+    problem = torch_device_error(device, "device", context)
+    return [] if problem is None else [problem]
+
+
+def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return replay-loop problems for an off-policy :class:`RLTrainSpec`.
+
+    The three caller-supplied counts of an off-policy (SAC / TD3) run's replay
+    loop:
 
     * ``buffer_size`` - the replay buffer's capacity, a tensor dimension built
       in :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`.
     * ``batch_size`` - the transitions sampled per gradient step, passed to
       ``ReplayBuffer.sample``.
-    * ``gradient_steps`` - the SAC updates run per iteration, a ``range()`` bound.
+    * ``gradient_steps`` - the off-policy updates run per iteration, a
+      ``range()`` bound.
 
     Each is consumed directly as a count - a capacity, a sample size, a
     ``range()`` bound - so the same strict-``int``
@@ -367,15 +462,17 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     a :meth:`~strands_robots.training.base.Trainer.validate` documented to
     *return* its problems.
 
-    Only FastSAC reads these three fields; PPO sizes its minibatches from
-    ``num_mini_batches`` and never reads them, so a backend that ignores them
-    must not report on them - which is why this is a gate scoped to the field
-    rather than part of :func:`validate_train_inputs`.
+    Only the off-policy backends (FastSAC and FastTD3) read these three fields;
+    PPO sizes its minibatches from ``num_mini_batches`` and never reads them, so
+    a backend that ignores them must not report on them - which is why this is a
+    gate scoped to the field rather than part of :func:`validate_train_inputs`.
 
-    ``learning_starts`` and ``tau`` stay in the backend's own ``validate``: the
-    first is one side of a relation (``>= batch_size``) rather than a bare count,
-    the second a coefficient in ``(0, 1]`` rather than a count, so neither shares
-    this domain.
+    ``learning_starts`` stays in the backend's own ``validate``: it is one side
+    of a relation (``>= batch_size``) rather than a bare count, so it does not
+    share this domain. ``tau`` does not either - it is a coefficient in
+    ``(0, 1]`` rather than a count - but it no longer stays local for that
+    reason: it has its own gate on its own interval, in
+    :func:`polyak_coefficient_problems`.
 
     Args:
         spec: The spec to check.
@@ -798,10 +895,14 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     reward only. So the domain is the *closed* interval [0, 1], checked through
     :func:`_closed_unit_interval_error`.
 
-    The sibling FastSAC preflight already bounds its own interval coefficient
-    this way (``tau`` must be in ``(0, 1]``), which is the shape this gate
-    generalizes: an interval coefficient is checked against its interval rather
-    than left to the arithmetic that consumes it.
+    The off-policy backends bound their own interval coefficient this way
+    (``tau`` must be in ``(0, 1]``), which is the shape this gate generalizes: an
+    interval coefficient is checked against its interval rather than left to the
+    arithmetic that consumes it. That precedent is now a shared gate too rather
+    than a bare comparison inside each backend - see
+    :func:`polyak_coefficient_problems`, which is half-open where this one is
+    closed because zero freezes a target network instead of reading as a
+    myopic agent.
 
     ``lam``, the other factor of the trace-decay product, has its own gate for
     that same scoping reason - see :func:`gae_lambda_problems`,
@@ -1010,7 +1111,7 @@ def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list
     would be a false rejection. A plain :class:`TrainSpec` has no
     ``autotune_alpha`` at all and is likewise silent.
 
-    Only the off-policy backend tunes a temperature, so this is scoped like
+    Only the SAC backend tunes a temperature, so this is scoped like
     :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`: a
     backend that does not read the field MUST NOT call this.
 
@@ -1080,7 +1181,7 @@ def initial_temperature_problems(spec: TrainSpec, *, context: str) -> list[str]:
     with a concrete ``1.0`` default, so ``None`` is a value ``torch.log`` cannot
     take rather than a request for a default.
 
-    Only the off-policy backend holds an entropy temperature, so this is scoped
+    Only the SAC backend holds an entropy temperature, so this is scoped
     like :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`:
     a backend that does not read the field MUST NOT call this. A plain
     :class:`TrainSpec` has no ``init_alpha`` at all and is likewise silent.
@@ -1096,6 +1197,120 @@ def initial_temperature_problems(spec: TrainSpec, *, context: str) -> list[str]:
         when it is usable.
     """
     error = positive_finite_number_error(getattr(spec, "init_alpha", 1.0), "init_alpha", context)
+    return [error] if error is not None else []
+
+
+def target_entropy_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return target-entropy problems for a :class:`TrainSpec`.
+
+    ``target_entropy`` is the third caller-supplied field of FastSAC's
+    temperature block, and the only one nothing judged. It is the constant the
+    temperature is optimized *against* - the one term of the temperature loss a
+    caller supplies::
+
+        alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
+
+    and it reaches that expression through an unconditional coercion in
+    :meth:`~strands_robots.training.rl.fast_sac.FastSacTrainer.setup`::
+
+        self.target_entropy = (
+            float(spec.target_entropy) if spec.target_entropy is not None else -float(self.env.num_actions)
+        )
+
+    Its two neighbours in the same block - the temperature's starting value in
+    :func:`initial_temperature_problems` and the rate that moves it in
+    :func:`temperature_learning_rate_problems` - are both held to a *positive*
+    finite domain, and this field was explicitly left out of both: it is signed
+    by construction, defaulting to ``-num_actions``, so it needs a domain neither
+    of them can express. That domain is
+    :func:`~strands_robots.utils.finite_number_error`, the signed counterpart the
+    two loss weights of :func:`loss_weight_problems` already read - the same
+    "finite real, either sign" shape, for the same reason: every reading of this
+    field is a signed entropy in nats, so no endpoint is decidable, but a value
+    that is not a finite real has no reading at all.
+
+    Each row below was measured on a 40-timestep FastSAC run, with ``validate()``
+    returning ``[]`` for every one of them:
+
+    ============================  ===========================================
+    ``target_entropy``            Outcome
+    ============================  ===========================================
+    ``None`` (the default)        trains; ``log_alpha == -0.001801646314``
+    ``-6.0`` (``-num_actions``)   trains; identical to the default
+    ``True``                      **trains against a target entropy of +1.0**
+    ``'-6'``                      trains; ``float()`` coerces it, so the run
+                                  is identical to ``-6.0``
+    ``nan`` / ``inf`` / ``-inf``  raises mid-update, from inside ``torch``
+    ``[-6.0]`` / ``{}``           raises in ``setup``, from ``float()``
+    ============================  ===========================================
+
+    Both failing shapes are what make this a gate rather than a lint:
+
+    * **A boolean is a silent sign flip.** ``bool`` is an ``int`` subclass, so
+      ``target_entropy=True`` is a target entropy of ``+1.0`` where every
+      documented reading of the field is negative - the field's own default is
+      ``-num_actions``, which is ``-6.0`` for this env. The run reported
+      ``success`` and checkpointed ``log_alpha == -0.0018031001091003418``
+      against the honored run's ``-0.001801646314561367``, so it demonstrably
+      drove the temperature somewhere else rather than harmlessly.
+    * **A non-finite value poisons the temperature; a non-real one raises in
+      ``setup``.** ``nan`` makes ``alpha_loss`` ``nan``, the temperature
+      optimizer writes ``nan`` into ``log_alpha``, and ``alpha`` scales the
+      entropy term of *both* the critic's TD target and the actor loss - so the
+      next rollout samples the action distribution from ``nan`` policy means:
+      ``ValueError: Expected parameter loc ... of distribution Normal ... to
+      satisfy the constraint Real()``, a torch message that names that
+      distribution's parameter rather than the field, raised after the env, both
+      networks and a full rollout have been built. A list or a dict raises
+      ``TypeError: float() argument must be a string or a real number`` out of
+      the coercion instead. That is exactly the "deep stack trace" a read-only
+      preflight exists to replace.
+
+    **A numeric string is refused even though ``float()`` coerces it.** That is the
+    one accepting-to-refusing change this gate makes, and it is a consistency one:
+    the field is annotated ``float | None``, so a ``str`` reaches the coercion only
+    by accident of ``float()`` accepting one, and both neighbouring fields of the
+    same temperature block already refuse it - a spec whose ``alpha_lr`` is
+    ``"3e-4"`` is rejected by name while ``target_entropy="-6"`` was not. Accepting
+    it here alone would leave the three fields of one block disagreeing about which
+    spellings a config may use.
+
+    ``None`` is the one value in scope that is not a value: unlike ``init_alpha``
+    and ``alpha_lr``, which are annotated ``float`` with concrete defaults, this
+    field is annotated ``float | None`` and its ``None`` is the documented
+    request for the ``-num_actions`` heuristic, which the coercion above honors.
+    So the sentinel is exempt rather than refused - the only difference in domain
+    between this gate and its two neighbours.
+
+    Like :func:`initial_temperature_problems`, and unlike
+    :func:`temperature_learning_rate_problems`, this is **not** scoped to
+    ``autotune_alpha``: the coercion is unconditional, so a non-real value raises
+    in ``setup`` on either branch - measured with tuning off, ``[-6.0]`` raised
+    the same ``TypeError`` while ``nan`` reached a successful run that simply
+    never spent it. A check conditioned on the tuning branch would therefore let
+    the raising shape through for the untuned one.
+
+    Only the SAC backend optimizes a temperature against a target entropy -
+    ``spec.target_entropy`` appears in ``rl/fast_sac.py`` and nowhere else - so
+    this is scoped like :func:`gae_lambda_problems` rather than
+    :func:`learning_rate_problems`: a backend that does not read the field MUST
+    NOT call this, because per :class:`TrainSpec` a backend ignores the fields it
+    does not support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``target_entropy`` is neither the ``None``
+        sentinel nor a finite real; empty when it can be honored.
+    """
+    value = getattr(spec, "target_entropy", None)
+    if value is None:
+        return []
+    error = finite_number_error(value, "target_entropy", context)
     return [error] if error is not None else []
 
 
@@ -1387,4 +1602,411 @@ def clip_range_problems(spec: TrainSpec, *, context: str) -> list[str]:
         otherwise.
     """
     error = _clip_bound_error(getattr(spec, "clip_param", 0.2), "clip_param", context)
+    return [error] if error is not None else []
+
+
+def policy_delay_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return policy-delay problems for an off-policy TD3 :class:`RLTrainSpec`.
+
+    ``policy_delay`` is the number of critic updates FastTD3 runs per delayed
+    actor / target update - the "delayed" of Twin Delayed DDPG. It is consumed
+    as the modulus of the one test that decides whether the actor and the
+    target networks move at all::
+
+        if self._update_count % spec.policy_delay == 0:  # actor + Polyak step
+
+    Nothing downstream judges it, and the modulus mis-handles every unusable
+    spelling differently - measured on a CPU FastTD3 run of 6 gradient updates
+    (an otherwise-valid spec, one field mutated):
+
+    ======================  ==========  ===============  ======================
+    ``policy_delay``        verdict     actor updates    what happened
+    ======================  ==========  ===============  ======================
+    ``2`` (the default)     honored     3                the asked-for delay
+    ``float("nan")``        success     **0**            ``n % nan`` is ``nan``,
+                                                         never ``== 0``
+    ``2.5``                 success     **1** (not 3)    only multiples of 2.5
+    ``True``                success     6                a silent delay of one
+    ``0``                   raises      --               ``ZeroDivisionError``
+                                                         mid-update
+    ``"2"`` / ``None``      raises      --               ``TypeError`` from ``%``
+    ======================  ==========  ===============  ======================
+
+    The ``nan`` row is the reason this is a gate rather than a lint: the
+    critics train for the whole run, the losses are real numbers, the run
+    reports success and writes a checkpoint - but the actor inside it never
+    took a gradient step, so the deployable half of the policy is its untrained
+    initialisation with nothing anywhere reporting that. ``True`` and a
+    fraction are silently a *different* delay from the one the caller named,
+    and a non-positive or non-numeric value raises from inside the update loop
+    after the env, the networks, the optimizers and the replay buffer are
+    built - the cost a read-only preflight exists to precede.
+
+    The domain is a positive integer, checked by
+    :func:`~strands_robots.utils.positive_count_error` - the same rule this
+    package applies to every count consumed as a modulus or ``range()`` bound -
+    with ``1`` first-class: a delay of one is TD3 with the delay disabled,
+    which is a configuration, not a defect.
+
+    Only the TD3 backend delays its policy - PPO has no target networks and
+    SAC updates its actor every gradient step - so this is scoped like
+    :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`: a
+    backend that does not read the field MUST NOT call this, because per
+    :class:`TrainSpec` a backend ignores the fields it does not support and
+    reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``policy_delay`` cannot be honored; empty
+        otherwise.
+    """
+    error = positive_count_error(getattr(spec, "policy_delay", 1), "policy_delay", context)
+    return [error] if error is not None else []
+
+
+def td3_noise_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return noise-scale problems for an off-policy TD3 :class:`RLTrainSpec`.
+
+    ``exploration_noise_std``, ``target_noise_std`` and ``target_noise_clip``
+    are the three scalars that shape FastTD3's two noise mechanisms, read in
+    exactly two expressions::
+
+        action = (action + torch.randn_like(action) * spec.exploration_noise_std).clamp(-1.0, 1.0)
+        noise = (torch.randn_like(a) * spec.target_noise_std).clamp(-spec.target_noise_clip, spec.target_noise_clip)
+
+    The first is the only exploration a deterministic policy has once the
+    random warmup ends; the second is target policy smoothing, the mechanism
+    that keeps the critic from exploiting its own sharp errors. Neither
+    expression judges its scalars, and each unusable value produces a finite,
+    successful run that is not the configured one:
+
+    * **Zero silently removes the mechanism.** ``randn * 0`` is exactly ``0``,
+      so ``exploration_noise_std=0`` collects with the deterministic action
+      alone - the policy revisits the identical trajectory instead of
+      exploring around it - and ``target_noise_std=0`` (or a clip of ``0``,
+      which clamps every sample to ``[0, 0]``) trains plain clipped double-Q
+      while reporting the smoothing knobs it was asked for. Neither run can be
+      told apart from an honored one by its result object.
+    * **A negative scale is silently the identical run.** Gaussian noise is
+      symmetric, so ``randn * (-s)`` draws from the same distribution as
+      ``randn * s`` - a value that reads as different and changes nothing. A
+      negative *clip* is worse than identical: ``clamp`` with inverted bounds
+      returns the constant upper bound, so every smoothing sample becomes the
+      same negative offset and the target is biased rather than smoothed.
+    * **A non-finite value poisons what the expression feeds.** A ``nan`` std
+      makes every collected action (or every TD target, and from there every
+      critic parameter) ``nan`` under a run that keeps stepping; an ``inf``
+      exploration std saturates the clamp so every action is a coin-flip
+      between the bounds ``-1`` and ``1`` - bang-bang control, not a large
+      noise. ``True`` is a silent scale of ``1.0``, ten times the shipped
+      exploration default, from a value that reads as a flag.
+
+    Only a positive finite number can be honored, so all three are checked
+    against the shared
+    :func:`~strands_robots.utils.positive_finite_number_error` domain - the
+    family that already owns the dimensionless-multiplier scalars - which also
+    refuses the ``bool`` a bare comparison would accept. There is no "disable"
+    spelling to carve out, unlike :func:`_clip_bound_error`'s infinity: a run
+    that wants no smoothing is a different algorithm, not a boundary value of
+    this one.
+
+    Only the TD3 backend reads the three fields - SAC explores through its
+    stochastic actor and smooths nothing - so this is scoped like
+    :func:`policy_delay_problems`: a backend that does not read them MUST NOT
+    call this, because per :class:`TrainSpec` a backend ignores the fields it
+    does not support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable noise scalar; empty when all three are usable.
+    """
+    problems: list[str] = []
+    for param, default in (
+        ("exploration_noise_std", 0.1),
+        ("target_noise_std", 0.2),
+        ("target_noise_clip", 0.5),
+    ):
+        error = positive_finite_number_error(getattr(spec, param, default), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems
+
+
+def network_width_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return hidden-layer-width problems for a from-scratch RL :class:`TrainSpec`.
+
+    ``hidden_dims`` is the only spec field that decides the *shape* of the
+    networks a run trains. Every RL backend expands it the same way, once per
+    network it builds - the on-policy actor and critic, and off-policy the actor,
+    its Polyak target and all four Q heads::
+
+        for h in spec.hidden_dims:
+            layers += [nn.Linear(last, h), nn.ReLU()]
+            last = h
+        layers.append(nn.Linear(last, out_dim))
+
+    Nothing judged the widths, and ``nn.Linear`` does not either: a width of
+    zero is a legal layer. It builds a ``(n, 0)`` weight - ``torch`` only warns
+    "Initializing zero-element tensors is a no-op" - and every forward pass
+    through it produces a ``(batch, 0)`` activation, so the next layer sees no
+    input and emits its bias alone. **The output stops being a function of the
+    observation.** Measured on the fake one-joint env, over a full ``train()``
+    on each backend, comparing the trained actor's action for an all-zero
+    observation against an all-``50`` one:
+
+    ======================  ==============  ==================================
+    ``hidden_dims``         Verdict         Outcome
+    ======================  ==============  ==================================
+    ``(16,)`` (a control)   accepted        actions differ: ``0.109`` / ``-0.869``
+    ``()``                  accepted        a linear policy; actions differ
+    ``(0,)``               **accepted**    every action bit-identical
+    ``(16, 0)``            **accepted**    every action bit-identical
+    ``(-1,)``               accepted        raises inside ``setup``
+    ``(16.0,)`` / ``(True,)`` accepted      raises inside ``setup``
+    ``np.int64(16)``        accepted        trains, then the checkpoint raises
+    ``16`` / ``None``       accepted        raises inside ``setup``
+    a generator             accepted        a different shape per network
+    ======================  ==============  ==================================
+
+    The two bold rows are why this is a gate rather than a lint. A zero width
+    anywhere in the sequence severs the policy from the robot: the run collects
+    its rollouts, the critics train against a constant, ``train()`` returns
+    ``status="success"`` with a real ``actor_loss`` and a real ``actor_updates``
+    count, and it exports ``policy.pt`` + ``policy_meta.json`` - a *deployable*
+    checkpoint whose actor emits one fixed action for every state the robot can
+    ever be in. On hardware that is an arm driving to a single pose and staying
+    there, reported as a trained policy. This is the same shape as
+    :func:`gradient_clip_problems` (a run that reports success having learned
+    nothing), reached through the one field that can make learning *impossible*
+    rather than merely ineffective.
+
+    The empty sequence is **not** in that class and stays accepted: it is the
+    honest spelling of a linear policy (input straight to output, no hidden
+    layer), and its action still varies with the observation. So the domain is
+    per element, not on the length.
+
+    Each width is asked of the shared :func:`~strands_robots.utils.positive_count_error`
+    domain, the same one the loop-bound counts use, because a width is consumed
+    directly as a tensor dimension: an integral float raises ``TypeError``
+    inside ``torch`` rather than being coerced, and ``bool`` would otherwise
+    pass a bare ``< 1`` test as a silent width of one. That domain also refuses
+    ``np.int64``, which is not an over-refusal here even though ``nn.Linear``
+    accepts it - ``save_checkpoint`` writes ``list(spec.hidden_dims)`` to
+    ``policy_meta.json`` and ``json.dump`` raises ``TypeError: Object of type
+    int64 is not JSON serializable``, so a run configured that way trains to
+    completion and then loses the whole run at the save.
+
+    The container is checked before its elements, since a field that is not a
+    sequence of widths has no elements to name: a bare ``int`` or ``None`` is
+    not iterable, a ``str`` iterates into characters, and a one-shot iterator is
+    worse than either - a generator is consumed by the first network built, so
+    the actor gets the requested architecture and every later critic silently
+    gets none (measured: 452 parameters for the first, 28 for the second).
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable width (named by index), or a single problem
+        when ``hidden_dims`` is not a sequence of widths at all; empty when
+        every width can be honored.
+    """
+    widths = getattr(spec, "hidden_dims", ())
+    if isinstance(widths, str) or not isinstance(widths, Sequence):
+        return [f"{context}: hidden_dims must be a sequence of positive int layer widths, got {widths!r}"]
+    return [
+        error
+        for index, width in enumerate(widths)
+        if (error := positive_count_error(width, f"hidden_dims[{index}]", context)) is not None
+    ]
+
+
+def rl_checkpoint_interval_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return checkpoint-cadence problems for an RL :class:`RLTrainSpec`.
+
+    ``log_interval`` is how often an RL run writes a checkpoint. Its name and
+    its :class:`RLTrainSpec` entry both said "iterations between progress logs",
+    but no RL module emits a log line at all - the field is read in exactly one
+    expression, the one that decides whether an intermediate checkpoint is
+    written, and all three backends share it::
+
+        if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
+            ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
+
+    So it is the same *kind* of value as
+    :attr:`~strands_robots.training.base.TrainSpec.save_freq` - a periodic
+    checkpoint cadence consumed as a modulus - and it reached that modulus with
+    no domain at all, while the supervised field beside it on the same spec has
+    one. Measured on the inherited loop over a 20-iteration run, against the
+    ``[1, 6, 11, 16, 20]`` an ``int`` cadence of 5 writes:
+
+    ====================  ==============  ====================================
+    ``log_interval``      Verdict         Outcome
+    ====================  ==============  ====================================
+    ``5`` (a control)     accepted        5 checkpoints, at 1, 6, 11, 16, 20
+    ``True``             **accepted**     20 checkpoints - one every iteration
+    ``2.5``              **accepted**     5, at 1, 6, 11, 16, 20 - the schedule
+                                          of ``5``, not of ``2.5``
+    ``0.3``              **accepted**     2, at 1 and 20
+    ``nan``              **accepted**     1, at 20 - the *disabled* mode
+    ``inf``              **accepted**     2, at 1 and 20
+    ``"5"``              **accepted**     ``TypeError`` out of ``train()``
+    ``0``                 accepted        1, at 20 - the documented disable
+    ``-5``                accepted        5, at 1, 6, 11, 16, 20
+    ====================  ==============  ====================================
+
+    The bold rows are why this is a gate. ``nan`` is the worst of them: it
+    satisfies the truthiness guard, never satisfies the modulus, and so silently
+    becomes the disabled mode - a long run that asked to checkpoint every 5
+    iterations keeps only the final one, under ``status="success"``. For RL the
+    intermediate checkpoints are not a convenience: return is non-monotonic in
+    training, so the deployable policy is often an earlier one, and a run that
+    kept only its last iteration cannot be recovered without training again.
+    ``True`` is the opposite failure at the same seam (a modulus of one, a full
+    checkpoint every iteration), ``2.5`` is indistinguishable from the ``5`` a
+    caller who wanted twice as many checkpoints did not write, and ``"5"``
+    raises out of the training loop *after* ``setup`` has built the env, the
+    networks and the optimizers - from a lifecycle whose whole contract is to
+    report a failure as :class:`~strands_robots.training.base.TrainResult`, and
+    past a :meth:`~strands_robots.training.base.Trainer.validate` documented to
+    return every problem a run has.
+
+    Only the *type* is graded, exactly as for :func:`checkpoint_cadence_problems`,
+    and the two disabling spellings are first-class: ``0`` disables periodic
+    saving and leaves the end-of-run fallback in
+    :meth:`~strands_robots.training.rl.base_algo.BaseRLAlgo.train` to write the
+    single final checkpoint, a configuration that loop's own contract tests
+    already pin. A negative is accepted for the same
+    no-floor reason and is *not* the disabled mode here - unlike lerobot's
+    ``save_freq > 0`` test, this loop's guard is bare truthiness, so ``-5`` is
+    the cadence of its magnitude (measured above). Which spelling disables is
+    therefore the loop's own business; the domain's business is that the value
+    is a whole number of iterations.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``log_interval`` is not a whole number of
+        iterations; empty otherwise.
+    """
+    error = step_cadence_error(getattr(spec, "log_interval", 0), "log_interval", context)
+    return [] if error is None else [error]
+
+
+def _half_open_unit_interval_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when *value* is not a real number in the half-open range (0, 1].
+
+    Sibling of :func:`_closed_unit_interval_error`, and the two differ in exactly
+    one decision: whether zero is inside the interval. Numeric-ness, ``bool``
+    rejection, finiteness and the float64 range are delegated to the shared
+    :func:`~strands_robots.utils.finite_number_error` domain by both, so those
+    refusals read identically to every other numeric field's.
+
+    Zero is **outside** this interval because it is a degenerate spelling rather
+    than a reading: the one consumer is a Polyak update, ``tp.mul_(1 -
+    x).add_(x * p)``, which at zero leaves the target parameters at their
+    initialization for the whole run. The upper endpoint is inside, because at
+    one the same expression is the hard update ``tp = p`` that TD3-family
+    algorithms take deliberately.
+
+    Args:
+        value: The caller-supplied value.
+        param: Field name for the message.
+        context: Caller label the message is prefixed with.
+
+    Returns:
+        The error text, or None when *value* is a real number in (0, 1].
+    """
+    error = finite_number_error(value, param, context)
+    if error is not None:
+        return error
+    if not 0.0 < float(value) <= 1.0:
+        return f"{context}: {param} must be in (0, 1], got {value!r}."
+    return None
+
+
+def polyak_coefficient_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return Polyak-coefficient problems for an off-policy RL :class:`TrainSpec`.
+
+    ``tau`` is the rate at which a target network tracks its online network. The
+    two off-policy backends spend it in one expression each, per mirrored critic
+    pair::
+
+        tp.mul_(1.0 - spec.tau).add_(spec.tau * p)
+
+    so the field does not merely tune the update - it decides whether a separate
+    target network exists at all, and a target network is the mechanism that
+    makes an off-policy critic's bootstrap target stationary enough to regress
+    onto.
+
+    This interval was the *precedent* the two on-policy interval gates were
+    written against - :func:`discount_factor_problems` and
+    :func:`gae_lambda_problems` both cite "the sibling FastSAC preflight already
+    bounds its own interval coefficient this way (``tau`` must be in ``(0, 1]``)"
+    as the shape they generalize - while the check they cited was a bare local
+    comparison, ``if not 0.0 < spec.tau <= 1.0``, duplicated verbatim in both
+    backends. A bare comparison against the interval bounds cannot carry the
+    domain, and it left two holes the generalization had already closed:
+
+    * ``True`` is a silent ``tau`` of **one**, because ``bool`` is an ``int``
+      subclass. That is the maximum of the interval, so the Polyak average
+      degenerates to ``tp.mul_(0.0).add_(p)`` - the target network becomes a
+      copy of the online network on every update, which is the same thing as
+      having no target network. Measured on a 60-timestep FastSAC run,
+      ``validate()`` returning ``[]`` and the run reporting success: the largest
+      online-to-target parameter gap in the exported checkpoint was ``0.0``
+      exactly against the default ``tau``'s ``9.9e-04``, and the checkpoint was
+      byte-identical to a run that asked for ``tau=1.0``. So a flag landed as a
+      request to switch off target networks, and nothing in the run said so.
+    * A numeric **string**, ``None`` or a list raises ``TypeError: '<' not
+      supported between instances of 'float' and 'str'`` out of the comparison
+      itself - from a
+      :meth:`~strands_robots.training.base.Trainer.validate` documented to
+      *return* its problems, which is the contract every other field on this
+      spec is now checked against.
+
+    ``nan`` and the two infinities were already refused, by an accident of
+    Python's chained comparison rather than by a finiteness test: every
+    comparison against ``nan`` is False and ``inf`` is above the upper bound, so
+    the bare test happened to answer them. They stay refused here, on the
+    shared domain, with the reason naming finiteness rather than the interval.
+
+    Both endpoints keep the reading the bare test gave them, so no value that
+    worked becomes an error: ``1.0`` is accepted as the deliberate hard update,
+    and ``0.0`` is refused because it freezes the target network at its
+    initialization for the whole run - see
+    :func:`_half_open_unit_interval_error`, which owns that one decision and is
+    what makes this interval half-open where the on-policy pair's is closed.
+
+    Only a backend that maintains a target network may call this: like
+    :func:`gae_lambda_problems`, and unlike :func:`learning_rate_problems`, a
+    backend that does not read the field MUST NOT report on it - PPO has no
+    target network and never reads ``tau``.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`.
+
+    Returns:
+        A single-element list when ``tau`` cannot be honored; empty otherwise.
+    """
+    error = _half_open_unit_interval_error(getattr(spec, "tau", 0.005), "tau", context)
     return [error] if error is not None else []

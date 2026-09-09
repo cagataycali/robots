@@ -159,7 +159,7 @@ def _read_config_json(pretrained_name_or_path: str) -> dict[str, Any] | None:
     local = Path(pretrained_name_or_path)
     if local.is_dir() and (local / "config.json").exists():
         try:
-            with open(local / "config.json") as fh:
+            with open(local / "config.json", encoding="utf-8") as fh:
                 return json.load(fh)
         except (OSError, ValueError) as exc:
             logger.debug("molmoact2: could not read local config.json: %s", exc)
@@ -169,7 +169,7 @@ def _read_config_json(pretrained_name_or_path: str) -> dict[str, Any] | None:
         from huggingface_hub import hf_hub_download
 
         path = hf_hub_download(pretrained_name_or_path, "config.json")
-        with open(path) as fh:
+        with open(path, encoding="utf-8") as fh:
             return json.load(fh)
     except Exception as exc:  # noqa: BLE001 - network/repo errors are non-fatal here
         logger.debug("molmoact2: could not fetch config.json from hub: %s", exc)
@@ -205,7 +205,7 @@ def auto_norm_tag(pretrained_name_or_path: str, requested: str | None) -> str | 
             from huggingface_hub import hf_hub_download
 
             norm_path = hf_hub_download(pretrained_name_or_path, "norm_stats.json")
-        with open(norm_path) as fh:
+        with open(norm_path, encoding="utf-8") as fh:
             data = json.load(fh)
         tags = list((data.get("metadata_by_tag") or {}).keys())
         if len(tags) == 1:

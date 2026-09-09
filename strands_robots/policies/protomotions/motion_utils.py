@@ -23,7 +23,7 @@ Cache format (dict-of-numpy):
 * ``body_pos``      - ``[num_frames, num_bodies, 3]``  float32 (world)
 * ``body_vel``      - ``[num_frames, num_bodies, 3]``  float32 (world frame)
 * ``body_ang_vel``  - ``[num_frames, num_bodies, 3]``  float32 (world frame)
-* ``control_dt``    - python float, seconds per control tick
+* ``control_dt``    - python float, seconds per control tick (positive, finite)
 * ``num_frames``    - python int
 
 Every channel's leading axis is the frame axis, so the six of them and
@@ -32,6 +32,13 @@ a cache whose declared count its channels cannot serve is refused rather than
 played, because the frame index is clamped to that count and the tracker's
 future window reads *ahead* of the playhead. ``num_frames`` may be omitted, in
 which case the channels' own row count is used.
+
+``control_dt`` is the cache's other scalar and is settled on load the same way:
+it is seconds per control tick, so a value that is not positive and finite is
+not a period any reader can honor - ``1 / control_dt`` is the rate this module
+reports the clip at, and the value is the divisor the raw-motion resampler sizes
+a clip with. It may be omitted, in which case the ``control_dt=`` argument
+stands.
 
 The two velocity channels are WORLD-frame, the same convention as a raw
 ProtoMotions motion library's ``rigid_body_ang_vel``. A hand-built cache must
@@ -51,7 +58,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_finite_number_error, require_optional
 
 __all__ = ["MotionPlayer", "slerp", "lerp"]
 
@@ -209,6 +216,56 @@ def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
     return stated
 
 
+def _control_period(value: Any, source: str) -> float:
+    """Resolve the seconds-per-control-tick a clip is played at.
+
+    Both ways a caller names this period reach the same three readers, so it is
+    settled here once rather than at each of them. It is the divisor
+    :meth:`MotionPlayer._resample_raw` sizes a clip with
+    (``round(motion_length / control_dt) + 1`` frames), it is the rate this
+    module and :class:`~strands_robots.policies.protomotions.policy.\
+ProtoMotionsPolicy` report a loaded clip at (``1 / control_dt`` Hz), and the
+    playhead advances exactly one resampled frame per control tick - so the
+    frame count it produces IS how long the reference motion lasts.
+
+    Only a positive finite period can be honored, and the shared domain's own
+    subject is a rate. The values it turns away are not near-misses: ``1.0``
+    (which a yaml ``control_dt: true`` used to resolve to) resamples a 3-second
+    clip to 4 frames, so the tracker's default lookahead offsets ``(1, 2, 4, 8)``
+    read past the end from the first tick; a negative period and ``inf`` each
+    size the clip at a SINGLE frame, which the index clamp in
+    :meth:`MotionPlayer.get_state_at_frame` then serves for every tick of the
+    episode; ``0`` makes the reported rate undefined; and ``nan`` used to reach
+    ``int(round(...))`` inside the resampler and raise "cannot convert float NaN
+    to integer" there, naming neither the period nor where it came from.
+
+    A zero-dimensional array is unwrapped before the domain sees it. That is a
+    dtype step and not a value one - ``np.asarray(nan).item()`` is still ``nan``,
+    and a ``bool`` array still yields a ``bool`` - and this module produces such
+    wrappers itself: every key of an ``.npz`` comes back from ``np.load`` that
+    way, and :meth:`MotionPlayer._load_file` wraps a cache-shaped ``.pt``'s
+    scalars with ``np.asarray`` alongside its channels.
+
+    Args:
+        value: The caller-supplied period, in seconds.
+        source: What named it, used as the message prefix - the class for the
+            ``control_dt=`` argument, ``"MotionPlayer cache"`` for a cache dict's
+            own key.
+
+    Returns:
+        The period as a plain float, so a NumPy scalar read out of an ``.npz``
+        does not set the dtype of the frame arithmetic it feeds.
+
+    Raises:
+        ValueError: The value is not a positive finite number of seconds.
+    """
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        value = value.item()
+    if error := positive_finite_number_error(value, "control_dt", source):
+        raise ValueError(error)
+    return float(value)
+
+
 # ---------------------------------------------------------------------------
 # MotionPlayer
 # ---------------------------------------------------------------------------
@@ -222,8 +279,9 @@ class MotionPlayer:
             ProtoMotions ``.pt`` file. String paths are loaded lazily - no
             torch import when only a dict is passed.
         control_dt: Target control period in seconds (default ``0.02s`` =
-            50Hz). Only used when ``source`` is a raw ``.pt`` that needs
-            resampling; a cache dict carries its own ``control_dt``.
+            50Hz), a positive finite number. Only used when ``source`` is a raw
+            ``.pt`` that needs resampling; a cache dict carrying its own
+            ``control_dt`` outranks it, and that one is held to the same domain.
         motion_index: For a packaged multi-motion ``.pt`` library, which entry
             to play.
     """
@@ -234,7 +292,7 @@ class MotionPlayer:
         control_dt: float = 0.02,
         motion_index: int = 0,
     ) -> None:
-        self._control_dt = float(control_dt)
+        self._control_dt = _control_period(control_dt, "MotionPlayer")
         if isinstance(source, dict):
             self._load_cache(source)
         elif isinstance(source, str):
@@ -339,7 +397,11 @@ class MotionPlayer:
         self._body_pos = arrays["body_pos"]
         self._body_vel = arrays["body_vel"]
         self._body_ang_vel = arrays["body_ang_vel"]
-        self._control_dt = float(data.get("control_dt", self._control_dt))
+        if "control_dt" in data:
+            # Settled for the reason num_frames above it is: the cache states the
+            # period, and it outranks the argument, so an unusable one here is
+            # not corrected by a caller who passed a good ``control_dt=``.
+            self._control_dt = _control_period(data["control_dt"], "MotionPlayer cache")
         self._num_frames = num_frames
         logger.info(
             "MotionPlayer loaded cache: %d frames @ %.0f Hz",

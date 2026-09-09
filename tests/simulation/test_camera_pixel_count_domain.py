@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests: every backend's camera pixel dimensions share one floor.
 
-``width`` / ``height`` reach two surfaces on every simulation backend - the
-``add_camera`` that fixes a camera's resolution, and the render family
-(``render`` / ``get_frame`` / ``get_camera_params``) that can override it per
-call - and a third on Newton alone, ``open_viewer``, which sizes the ``"gl"``
-window. MuJoCo validated the first two through ``_validate_render_dims``;
-Newton and Isaac validated neither, and coerced with a bare ``int(...)`` that
-refuses nothing useful. Coercion is validation only when the coercion rejects.
+``width`` / ``height`` reach three surfaces on every simulation backend - the
+constructor's ``default_width`` / ``default_height``, which every camera that
+declares no size of its own is registered at; the ``add_camera`` that fixes one
+camera's resolution; and the render family (``render`` / ``get_frame`` /
+``get_camera_params``) that can override it per call - plus a fourth on Newton
+alone, ``open_viewer``, which sizes the ``"gl"`` window. MuJoCo validated the
+middle two through ``_validate_render_dims``; Newton and Isaac validated
+neither, and coerced with a bare ``int(...)`` that refuses nothing useful.
+Coercion is validation only when the coercion rejects. The constructor was
+graded by no backend at all, which is the surface
+``TestTheEngineDefaultResolution`` closes.
 
 Measured on both backends before the fix:
 
@@ -49,7 +53,7 @@ Measured on both backends before the fix:
   built nothing. The caller was left with the window they did not ask for and
   no way to replace it.
 
-The fix routes all five surfaces through
+The fix routes every one of those surfaces through
 :func:`~strands_robots.utils.positive_count_error`, the domain MuJoCo's floor
 already implements: a true ``int`` (``bool`` refused - it is an ``int`` subclass
 whose ``True`` would act as a silent 1) that is ``>= 1``. A pixel dimension is
@@ -72,7 +76,7 @@ from __future__ import annotations
 import ast
 import inspect
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +88,7 @@ from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import positive_count_error
 
 from .isaac.test_add_camera_numeric_validation import _engine as _isaac_engine
+from .mujoco._gl_probe import requires_gl
 from .newton.test_add_camera_numeric_validation import _engine_stub
 from .newton.test_viewer_port_domain import _viewer_stub
 
@@ -143,8 +148,20 @@ def _newton_add_camera(stub: types.SimpleNamespace, **kwargs: Any) -> dict[str, 
 
 
 def _newton_resolve(stub: types.SimpleNamespace, camera_name: str | None, **kwargs: Any) -> tuple:
-    """``_resolve_camera_view``, the funnel Newton's three render surfaces share."""
-    return NewtonSimEngine._resolve_camera_view(stub, camera_name, kwargs.get("width"), kwargs.get("height"))  # type: ignore[arg-type]
+    """``_resolve_camera_view``, the funnel Newton's three render surfaces share.
+
+    ``context`` defaults to ``"render"`` here because these cells grade the
+    shared domain rather than which caller a refusal names; the attribution
+    itself is graded in
+    ``tests/simulation/test_render_dimension_refusal_names_the_caller.py``.
+    """
+    return NewtonSimEngine._resolve_camera_view(
+        stub,  # type: ignore[arg-type]
+        camera_name,
+        kwargs.get("width"),
+        kwargs.get("height"),
+        kwargs.get("context", "render"),
+    )
 
 
 def _verdict(call: Callable[[], Any]) -> str:
@@ -248,16 +265,18 @@ class TestNewtonAddCamera:
 
 class TestNewtonRenderFamily:
     """``_resolve_camera_view`` is the funnel ``render`` / ``get_frame`` /
-    ``get_camera_params`` share, so one guard covers all three."""
+    ``get_camera_params`` share, so one guard covers all three - and each one
+    reports it under its own name, which is what ``context`` carries."""
 
     @pytest.mark.parametrize("bad", _BAD_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     @pytest.mark.parametrize("camera", ["default", "cam"])
-    def test_unusable_override_is_refused(self, camera, param, bad):
+    @pytest.mark.parametrize("context", ["render", "get_frame", "get_camera_params"])
+    def test_unusable_override_is_refused(self, context, camera, param, bad):
         stub = _newton_stub()
         assert _newton_add_camera(stub, name="cam", width=320, height=240)["status"] == "success"
-        with pytest.raises(ValueError, match=f"render: {param} must be a positive integer"):
-            _newton_resolve(stub, camera, **{param: bad})
+        with pytest.raises(ValueError, match=f"{context}: {param} must be a positive integer"):
+            _newton_resolve(stub, camera, context=context, **{param: bad})
 
     def test_zero_is_refused_rather_than_read_as_omitted(self):
         """Membership, not truthiness.
@@ -490,9 +509,17 @@ class TestNoNewtonDimensionSurfaceDrifts:
 
     _FUNNEL = "_resolve_camera_view"
     _GUARD = "positive_count_error"
-    #: The public surfaces taking a pixel dimension today. Pinned exactly so a
+    #: The surfaces taking a pixel dimension today. Pinned exactly so a
     #: mis-rooted scan reporting a clean sweep over nothing fails instead.
-    _EXPECTED = frozenset({"add_camera", "render", "get_frame", "get_camera_params", "open_viewer"})
+    #: ``__init__`` is on the list because the scan that pre-dated it looked at
+    #: public methods named ``width`` / ``height`` only, and so was blind to the
+    #: one surface that *stores* a resolution for every later render - which is
+    #: exactly how that surface stayed ungraded while its four neighbours were
+    #: swept every run.
+    _EXPECTED = frozenset({"__init__", "add_camera", "render", "get_frame", "get_camera_params", "open_viewer"})
+    #: Parameter spellings that carry a pixel dimension. The constructor's pair
+    #: is a different spelling of the same quantity, not a different quantity.
+    _DIMENSION_PARAMS = frozenset({"width", "height", "default_width", "default_height"})
 
     @staticmethod
     def _classify(src: str) -> dict[str, str]:
@@ -502,11 +529,13 @@ class TestNoNewtonDimensionSurfaceDrifts:
             if not isinstance(cls, ast.ClassDef):
                 continue
             for fn in ast.iter_child_nodes(cls):
-                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) or fn.name.startswith("_"):
+                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                if fn.name.startswith("_") and fn.name != "__init__":
                     continue
                 args = fn.args
                 names = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
-                if not {"width", "height"} & names:
+                if not TestNoNewtonDimensionSurfaceDrifts._DIMENSION_PARAMS & names:
                     continue
                 calls = {
                     n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
@@ -685,6 +714,207 @@ class TestSameVerdictAcrossBackends:
         assert _verdict(lambda: mj_sim.add_camera(name=f"ok_{good}", width=good, height=good)) == "accepted"
         assert _verdict(lambda: _newton_add_camera(_newton_stub(), name="ok", width=good, height=good)) == "accepted"
         assert _verdict(lambda: _isaac_engine().add_camera(name="ok", width=good, height=good)) == "accepted"
+
+
+# --------------------------------------------------------------------------- #
+# The constructor: the owner that stores a resolution for every later render   #
+# --------------------------------------------------------------------------- #
+
+
+def _construction_verdict(param: str, call: Callable[[], Any]) -> str:
+    """``"refused"`` / ``"accepted"`` for a constructor, whose channel is a raise.
+
+    The sibling ``_verdict`` reads an agent-tool envelope, so it cannot grade
+    these surfaces: a constructor has no envelope to return and refuses by
+    raising ``ValueError``, exactly as each ``Raises:`` section states. The
+    refusal must *name* the parameter, and that is not a style rule here - it is
+    what separates a refusal from the pre-fix behaviour. Isaac's ``int(...)``
+    also raised ``ValueError`` for ``'big'`` and ``nan``, from inside a coercion
+    that mentioned neither the class nor the argument
+    (``invalid literal for int() with base 10: 'big'``), and folding that into
+    "refused" would let this pin pass against the code it was written to catch.
+    """
+    try:
+        call()
+    except ValueError as exc:
+        return "refused" if param in str(exc) else f"raised a ValueError naming no parameter: {exc}"
+    except Exception as exc:  # noqa: BLE001 - an exception the API leaked is the finding
+        return f"raised {type(exc).__name__}"
+    return "accepted"
+
+
+def _mujoco_engine(**kwargs: Any) -> Any:
+    """Construct the MuJoCo engine with the harnessless defaults tests use."""
+    from strands_robots.simulation.mujoco.simulation import Simulation
+
+    return Simulation(tool_name="test_engine_default_resolution", mesh=False, **kwargs)
+
+
+def _isaac_construct(**kwargs: Any) -> Any:
+    """Construct the Isaac facade. Reaches the legacy kwarg block, not the stage."""
+    from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+    return IsaacSimulation(**kwargs)
+
+
+def _stored_width(engine: Any) -> Any:
+    """The default width as the engine *stored* it, on the free camera's entry."""
+    return engine._world.cameras["default"].width
+
+
+def _constructible_defaults() -> Iterator[tuple[Any, Any]]:
+    """Yield ``(engine, candidate)`` for every default dimension that constructs.
+
+    One owner for the candidate roster, the world build and the teardown, shared
+    by the two halves of "nothing that builds is unusable later" - the value the
+    constructor stored, which needs no GL context, and spending it on a render,
+    which does. Each half pins the same non-vacuity floor over what this yields,
+    so neither can go quietly vacuous if the roster changes.
+
+    ``5000`` is excluded from the roster rather than skipped inside it: it is
+    above MuJoCo's *offscreen framebuffer* cap, which is a property of the
+    compiled model and stays a render-time check - the shared rule is a floor,
+    as ``test_the_shared_rule_is_a_floor_and_not_a_ceiling`` pins.
+    """
+    for candidate in (*_BAD_DIMS, 1, 16, 640):
+        try:
+            sim = _mujoco_engine(default_width=candidate, default_height=480)
+        except ValueError:
+            continue
+        try:
+            sim.create_world(gravity=[0, 0, -9.81])
+            yield sim, candidate
+        finally:
+            sim.cleanup()
+
+
+#: The three constructors that own the same pair of numbers, keyed by the class
+#: named in the refusal. Newton is reachable here without ``newton`` / ``warp``
+#: because the guard precedes ``ensure_newton()`` - deliberately, so a caller
+#: who passed a bad resolution is told that rather than told to install a
+#: dependency.
+_ENGINE_CONSTRUCTORS: tuple[tuple[str, Callable[..., Any]], ...] = (
+    ("MuJoCoSimEngine", _mujoco_engine),
+    ("NewtonSimEngine", NewtonSimEngine),
+    ("IsaacSimulation", _isaac_construct),
+)
+
+
+class TestTheEngineDefaultResolution:
+    """``default_width`` / ``default_height`` are pixel counts at every backend.
+
+    This is the surface the sibling classes above do not reach. It is not an
+    inert default: MuJoCo copies it into the ``SimCamera`` entry ``create_world``
+    registers for the free camera and into one entry per model camera on every
+    ``add_robot``, and Newton reads it for the built-in three-quarter view - so
+    the constructor writes into the very field ``add_camera`` guards, and every
+    value ``add_camera`` refuses had a second, ungraded way in.
+
+    Deferring to the render entry points was not a late refusal but three
+    different wrong answers, measured on a so101 MuJoCo scene before the fix:
+
+    * ``default_width=0`` published ``observation["default"]`` as a
+      ``(480, 0, 3)`` zero-pixel frame under ``status="success"``.
+    * ``-1`` and ``inf`` dropped the image key altogether - ``_render_cameras``
+      logs a per-camera failure at debug level and keeps going - so a policy
+      declaring ``requires_images`` was handed proprioception alone, with
+      nothing in the result saying an image was missing.
+    * ``True``, ``2.7``, ``640.0``, ``'640'`` and ``nan`` raised ``TypeError``
+      out of ``get_observation``, which
+      :class:`~strands_robots.simulation.base.SimEngine` documents as returning
+      an observation dict.
+
+    Every ``render()`` was meanwhile refused - a call that passes no dimensions
+    at all, answered ``"render: width and height must be > 0, got 0x480"``,
+    quoting a value its caller never named. On Isaac the legacy spelling went
+    through ``int(...)`` into the graded ``camera_width`` field, so the coercion
+    *defeated* that domain: ``True`` stored a 1-pixel camera, ``2.7`` stored 2,
+    ``640.0`` and ``'640'`` stored 640, and ``inf`` / ``[640]`` / ``nan`` raised
+    ``OverflowError`` / ``TypeError`` / ``ValueError`` from inside ``int()``,
+    naming neither the parameter nor the class.
+    """
+
+    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("param", ["default_width", "default_height"])
+    def test_every_backend_refuses_an_unusable_default(self, param, bad):
+        verdicts = {
+            owner: _construction_verdict(param, lambda ctor=ctor: ctor(**{param: bad}))
+            for owner, ctor in _ENGINE_CONSTRUCTORS
+        }
+        assert set(verdicts.values()) == {"refused"}, f"{param}={bad!r}: {verdicts}"
+
+    @pytest.mark.parametrize("param", ["default_width", "default_height"])
+    def test_the_refusal_names_the_class_the_parameter_and_the_value(self, param):
+        for owner, ctor in _ENGINE_CONSTRUCTORS:
+            with pytest.raises(ValueError) as excinfo:
+                ctor(**{param: 0})
+            text = str(excinfo.value)
+            assert owner in text and param in text and "0" in text, text
+
+    @pytest.mark.parametrize("good", (1, 16, 320, 640))
+    def test_a_usable_default_is_still_accepted(self, good):
+        """The guard is a floor, not a tightening: ordinary sizes still build."""
+        pytest.importorskip("mujoco")
+        sim = _mujoco_engine(default_width=good, default_height=good)
+        try:
+            assert (sim.default_width, sim.default_height) == (good, good)
+        finally:
+            sim.cleanup()
+        isaac = _isaac_construct(default_width=good, default_height=good)
+        assert (isaac._config.camera_width, isaac._config.camera_height) == (good, good)
+
+    def test_the_isaac_legacy_spelling_agrees_with_the_canonical_field(self):
+        """``default_width`` is another name for ``camera_width``, not a looser one."""
+        from strands_robots.simulation.isaac.config import IsaacConfig
+
+        for bad in _BAD_DIMS:
+            canonical = _construction_verdict("camera_width", lambda bad=bad: IsaacConfig(camera_width=bad))
+            legacy = _construction_verdict("default_width", lambda bad=bad: _isaac_construct(default_width=bad))
+            assert canonical == legacy == "refused", f"{bad!r}: canonical={canonical}, legacy={legacy}"
+
+    def test_every_default_that_constructs_reaches_the_camera_registry(self):
+        """Half one of "nothing that builds is unusable later": the value stored.
+
+        This is the second way into the field ``add_camera`` guards, and the one
+        this change is about: ``create_world`` copies the constructor's default
+        onto the free camera's ``SimCamera`` entry. It needs no GL context - the
+        entry reads back the same on a host with none - so it is its own case
+        rather than part of the gated one below, and goes on being checked
+        wherever the suite runs. Read back from the registry and not from the
+        attribute the caller passed: a value that round-tripped through the
+        attribute without reaching the camera entry would satisfy an attribute
+        check and leave that second way open.
+        """
+        pytest.importorskip("mujoco")
+        exercised = [candidate for sim, candidate in _constructible_defaults() if _stored_width(sim) == candidate]
+        assert exercised == [1, 16, 640], exercised
+
+    @requires_gl
+    def test_every_default_that_constructs_can_be_rendered_and_observed(self):
+        """Half two: the stored value is spendable, which is what refusing buys.
+
+        Runs the real MuJoCo engine, because the pre-fix failures were all
+        downstream of construction.
+
+        Gated on the shared GL probe: ``render`` and ``get_observation`` both
+        need an offscreen context, and on a headless host without EGL/OSMesa
+        they report an error that names neither GL nor this contract. Measured
+        under MuJoCo's documented ``MUJOCO_GL=disable``: ``render`` reports
+        ``{"status": "error"}`` carrying "Rendering unavailable (no OpenGL
+        context)", and ``get_observation`` omits the image key altogether, so
+        reading it raises ``KeyError: 'default'`` - naming this contract even
+        less than the bare ``'error' != 'success'`` the probe exists to prevent.
+        """
+        pytest.importorskip("mujoco")
+        exercised = []
+        for sim, candidate in _constructible_defaults():
+            assert sim.render()["status"] == "success"
+            sim.add_robot(name="so101")
+            image = sim.get_observation(robot_name="so101")["default"]
+            assert isinstance(image, np.ndarray)
+            assert image.shape == (480, candidate, 3)
+            exercised.append(candidate)
+        assert exercised == [1, 16, 640], exercised
 
 
 class TestTheVerdictClassifier:

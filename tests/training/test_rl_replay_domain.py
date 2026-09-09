@@ -29,7 +29,8 @@ must every supervised backend; :class:`TestABackendThatDoesNotReadThemStaysQuiet
 pins that. ``learning_starts`` and ``tau`` are outside this gate's field set, and
 :class:`TestTauAndLearningStartsAreNotInThisDomain` pins that scope line rather
 than leaving it to prose. ``tau`` is a coefficient in ``(0, 1]`` and so shares no
-part of this domain. ``learning_starts`` is one side of a relation
+part of this domain; it has its own gate on its own interval, graded in
+``tests/training/test_polyak_coefficient_domain.py``. ``learning_starts`` is one side of a relation
 (``>= batch_size``) and *does* share the domain: FastSAC asks it of the same
 strict-``int`` rule as the relation's other operand, in its own ``validate``
 rather than through this gate, because PPO reads neither field. That is graded in
@@ -59,12 +60,12 @@ from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
 from tests.training._spec_field_reads import reads_spec_field
 
-# The one backend that builds a replay loop from these three fields.
-SAC_BACKENDS = ("fast_sac",)
+# The backends that build a replay loop from these three fields.
+SAC_BACKENDS = ("fast_sac", "fast_td3")
 
 # Backends that never read them: PPO sizes minibatches from num_mini_batches, and
 # the supervised backends have no replay loop at all. Each must stay quiet, or an
-# SAC-only value would be a false rejection of a field it does not use.
+# off-policy-only value would be a false rejection of a field it does not use.
 QUIET_BACKENDS = ("ppo", "mock")
 
 # The three replay counts.
@@ -344,7 +345,7 @@ class TestOneOwnerForTheReplayCountDomain:
         gated = {
             p.name for p in _training_modules() if _defines_validate(p.read_text()) and _reads_the_replay(p.read_text())
         }
-        assert gated == {"fast_sac.py"}, gated
+        assert gated == {"fast_sac.py", "fast_td3.py"}, gated
 
     def test_ppo_reads_none_of_the_replay_fields(self) -> None:
         """The scope is SAC-only because PPO does not read these counts at all."""

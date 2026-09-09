@@ -310,7 +310,7 @@ internal `rclpy` node that publishes, per robot, after every `step()`:
 | Topic | Type | Content |
 |-------|------|---------|
 | `/<robot>/joint_states` | `sensor_msgs/msg/JointState` | joint names + positions |
-| `/<robot>/<camera>/image_raw` | `sensor_msgs/msg/Image` (`rgb8`) | one frame per attached camera |
+| `/<robot>/<camera>/image_raw` | `sensor_msgs/msg/Image` (`rgb8`) | one frame per attached camera. `<robot>`/`<camera>` are sanitised into ROS 2 name tokens, so a camera named `0` publishes on `/<robot>/camera_0/image_raw` - ROS 2 forbids a token starting with a digit |
 
 ```python
 from strands_robots.simulation import Simulation

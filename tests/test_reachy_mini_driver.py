@@ -302,6 +302,30 @@ def test_disable_motors_defaults_to_all(rmd):
     assert drv._hw.send_cmd.await_args.args[0] == {"torque": False, "ids": None}
 
 
+@pytest.mark.parametrize(("verb", "torque"), [("enableMotors", True), ("disableMotors", False)])
+def test_an_explicit_empty_selector_still_selects_every_motor(rmd, verb, torque):
+    """Control for the refusal below: ``""`` is the declared default and the one
+    documented spelling of "all", so it must keep resolving to ``ids: None``."""
+    drv = _bare(rmd, _hw=AsyncMock())
+    res = _run(getattr(drv, verb)(""))
+    assert res["status"] == "success"
+    assert drv._hw.send_cmd.await_args.args[0] == {"torque": torque, "ids": None}
+
+
+@pytest.mark.parametrize("verb", ["enableMotors", "disableMotors"])
+@pytest.mark.parametrize("selector", [",", " ", ",,", " , "])
+def test_a_selector_naming_no_motor_is_refused_not_widened_to_every_motor(rmd, verb, selector):
+    """``","`` is not ``""``. Read by truthiness, a non-empty selector that names
+    no motor parsed to ``[]``, was coalesced to ``None`` and torqued every motor,
+    while the reply echoed the caller's own selector (``"enabled": ","``) as the
+    set acted on. The refusal names the value and nothing reaches the link."""
+    drv = _bare(rmd, _hw=AsyncMock())
+    res = _run(getattr(drv, verb)(selector))
+    assert res["status"] == "error"
+    assert repr(selector) in res["reason"], res
+    drv._hw.send_cmd.assert_not_awaited()
+
+
 # -- REST move / lifecycle RPCs --------------------------------------------
 
 

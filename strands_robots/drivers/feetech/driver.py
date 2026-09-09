@@ -10,7 +10,8 @@ What works and what does not:
 
 * ``send_action`` - writes the commanded joints in one SYNC_WRITE frame.
   Targets are **degrees** (``gripper`` is percent open); a key may be spelled
-  ``shoulder_pan`` or ``shoulder_pan.pos``, matching lerobot's suffix.
+  ``shoulder_pan`` or ``shoulder_pan.pos``, matching lerobot's suffix - but only
+  one of the two per motor, because both name the same servo.
 * ``bus`` / ``is_connected`` - the pair
   :func:`strands_robots.bus_access.joint_read_source` resolves, so an SO-arm
   publishes ``joints`` on the mesh state topic without a wrapper. This is the
@@ -46,8 +47,9 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 from strands_robots.bus_access import bus_lock
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.drivers.feetech.bus import SO_ARM_MOTORS, FeetechBus
-from strands_robots.utils import boolean_flag_error
+from strands_robots.utils import boolean_flag_error, positive_count_error
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +106,13 @@ class FeetechDriver:
 
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for the SCS
       bus. Optional at construction; the bus opens it on connect.
-    * ``baud_rate`` - integer, defaults to ``1_000_000``. The Feetech default
-      for STS3215 arms; SCS-series can also run at 500_000 or below and a
-      caller who knows better passes it here.
+    * ``baud_rate`` - a positive integer, defaults to ``1_000_000``. The Feetech
+      default for STS3215 arms; SCS-series can also run at 500_000 or below and
+      a caller who knows better passes it here. Held to
+      :func:`~strands_robots.utils.positive_count_error` - the domain
+      :mod:`~strands_robots.tools.serial_tool` holds its own ``baudrate`` to -
+      because pyserial coerces the speed rather than checking it, so a value
+      that is not a count is applied instead of refused.
     * ``motor_ids`` - the servo IDs on the bus, in wire order. Optional at
       construction; the bus discovers them on connect.
     """
@@ -137,7 +143,17 @@ class FeetechDriver:
                 f"multi-bus rigs are not part of {SUPPORTED_ROBOTS}",
             )
         self._port: str | None = port
-        self._baud_rate: int = int(kwargs.pop("baud_rate", 1_000_000))
+        # Graded, not coerced. pyserial takes the speed through its own
+        # ``int()`` and refuses only a negative, so a value this constructor
+        # converted was applied rather than reported: ``2.7`` opened the port at
+        # 2 baud and ``0`` opened it successfully at a speed no servo answers,
+        # while ``get_status`` reported the converted number as the configured
+        # one. The same domain :mod:`~strands_robots.tools.serial_tool` holds
+        # its ``baudrate`` to, because the two reach the same ``serial.Serial``.
+        baud_rate = kwargs.pop("baud_rate", 1_000_000)
+        if (reason := positive_count_error(baud_rate, "baud_rate", f"FeetechDriver({tool_name!r})")) is not None:
+            raise ValueError(reason)
+        self._baud_rate: int = baud_rate
         self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
         # ``motor_ids`` narrows the arm to a subset of SO_ARM_MOTORS. Honoured
         # rather than recorded: a keyword that changes nothing is worse than one
@@ -212,19 +228,6 @@ class FeetechDriver:
             },
         }
 
-    @property
-    def declared_verbs(self) -> list[str]:
-        """The action verbs this driver's schema declares, in schema order.
-
-        Read back out of :attr:`tool_spec` rather than restated, so the verb
-        list an agent is handed when it fires an unknown action is the one the
-        schema really carries. A hand-copied list drifts the moment a verb is
-        added or narrowed, and the agent then corrects itself towards a verb
-        that does not exist.
-        """
-        action_schema = self.tool_spec["inputSchema"]["json"]["properties"]["action"]
-        return [str(verb) for verb in action_schema["enum"]]
-
     async def stream(
         self,
         tool_use: ToolUse,
@@ -275,9 +278,7 @@ class FeetechDriver:
         elif action == "stop":
             envelope = self._set_torque_envelope(False)
         else:
-            envelope = _refuse(
-                f"FeetechDriver: unknown action {action!r}; declared verbs are {self.declared_verbs}",
-            )
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
@@ -290,7 +291,10 @@ class FeetechDriver:
         Args:
             action: Joint name -> target. Degrees for every joint, percent open
                 for ``gripper``. A ``.pos`` suffix is accepted and stripped, so
-                a lerobot-shaped action dict works unchanged.
+                a lerobot-shaped action dict works unchanged. Each motor must be
+                spelled once: ``{"gripper": 0.0, "gripper.pos": 100.0}`` names one
+                motor twice with two different targets and is refused rather
+                than letting insertion order pick the winner.
             robot_name: Unused; this driver fronts exactly one arm.
 
         Returns:
@@ -301,7 +305,9 @@ class FeetechDriver:
         del robot_name
         if not isinstance(action, dict) or not action:
             return _refuse("send_action: pass a non-empty mapping of joint targets")
-        targets = {str(key).removesuffix(".pos"): value for key, value in action.items()}
+        targets, doubled = _motor_targets(action)
+        if doubled is not None:
+            return _refuse(doubled)
         try:
             with bus_lock(self):
                 self._connect_if_needed()
@@ -495,3 +501,38 @@ class FeetechDriver:
 def _refuse(message: str) -> dict[str, Any]:
     """Return an error envelope with ``message``, matching the "not wired" contract."""
     return {"status": "error", "content": [{"text": message}]}
+
+
+def _motor_targets(action: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Reduce every action key to the motor it names, once.
+
+    ``"<motor>"`` and ``"<motor>.pos"`` are two spellings of one motor, and
+    :func:`strands_robots.bus_access.read_joints` returns the suffixed one for
+    this driver while the tool schema and the success envelope both speak the
+    bare one - so a dict built from a read and then overridden by name carries
+    both. Reducing them silently would make one of the two targets win by
+    insertion order, write a single-motor frame, and report success naming only
+    the survivor: the caller's other command would be gone with nothing saying
+    so. One motor takes one target, so a doubled motor is refused instead.
+
+    Args:
+        action: The caller's mapping of joint name -> target, either spelling.
+
+    Returns:
+        ``(targets, None)`` keyed by motor name, or ``({}, message)`` naming
+        every motor that was spelled more than once and the keys that spell it.
+    """
+    targets: dict[str, Any] = {}
+    spellings: dict[str, list[str]] = {}
+    for key, value in action.items():
+        motor = str(key).removesuffix(".pos")
+        spellings.setdefault(motor, []).append(str(key))
+        targets[motor] = value
+    doubled = {motor: keys for motor, keys in spellings.items() if len(keys) > 1}
+    if doubled:
+        named = "; ".join(f"{sorted(keys)} all name {motor!r}" for motor, keys in sorted(doubled.items()))
+        return {}, (
+            f"send_action: one motor takes one target, but {named}. "
+            "A '.pos' suffix names the same motor as the bare joint, so spell each motor once."
+        )
+    return targets, None

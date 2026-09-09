@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 
 #: query parameters whose VALUE is a credential
 _SECRET_QUERY_KEYS = ("token", "access_code", "api_key", "apikey", "password", "secret")
@@ -49,6 +50,10 @@ _KEYED_RE = re.compile(
 # as : literals when they are loaded.
 _known: set[str] = set()
 
+#: every rail that names its credential in a ``val`` group, so the values a message carries can be
+#: read off with the same patterns that redact them - see :func:`_credential_values`.
+_VALUE_RAILS = (_QUERY_RE, _LONG_QUERY_RE, _KEYED_RE, _BEARER_RE)
+
 
 def register_secret(value: str | None) -> None:
     """Redact ``value`` from every future log line, whatever shape it appears in."""
@@ -65,6 +70,23 @@ def fingerprint(secret: str) -> str:
     """A stable, non-usable label for a credential: its length and last 4 characters."""
     tail = secret[-4:] if len(secret) >= 8 else ""
     return f"<redacted:{len(secret)}{':' + tail if tail else ''}>"
+
+
+def _credential_values(message: str) -> tuple[str, ...]:
+    """Every credential-shaped value :func:`redact_secrets` replaces in ``message``.
+
+    Answers "is this text still carrying a credential" for
+    :meth:`RedactingFilter.filter`, which cannot ask by re-running the redaction: a
+    fingerprint's own text matches the value pattern, so a second pass reports a
+    difference for text that is already clean - the corruption the literals-last rail
+    order exists to prevent, read as a verdict instead of written into the line.
+    """
+    found: list[str] = []
+    for rail in _VALUE_RAILS:
+        found.extend(m.group("val") for m in rail.finditer(message))
+    found.extend(m.group(0) for m in _JWT_RE.finditer(message))
+    found.extend(secret for secret in _known if secret in message)
+    return tuple(found)
 
 
 def redact_secrets(message: str) -> str:
@@ -114,6 +136,18 @@ class RedactingFilter(logging.Filter):
     the request line above it was redacted. ``exc_info`` is rendered here instead of
     later because the formatter reuses an ``exc_text`` that is already set.
 
+    A formatter may also render ``args`` DIRECTLY rather than through ``getMessage()``,
+    and uvicorn's own ``AccessFormatter`` does: it unpacks five values out of
+    ``record.args`` and builds the request line from them, never reading the message this
+    filter had cleaned. Baking the redacted text into ``msg`` and clearing ``args`` - the
+    stock way to freeze a redacted message - therefore left that formatter nothing to
+    unpack, and it raised ``ValueError`` inside ``Handler.emit`` for exactly the records
+    carrying a credential: the access log kept every ordinary request and dropped every
+    authenticated socket handshake, which is the audit trail this module exists to keep
+    readable. So the args are redacted in place and their arity preserved, and the message
+    is baked only when the credential is not visible in any single arg - the case where no
+    per-arg redaction could reach it, and where failing closed is the right answer.
+
     Redacting is idempotent per record because :func:`install_redaction` attaches this
     filter at BOTH the logger and its handlers (a handler-level filter is what catches
     records logged straight to a handler). Without the marker the handler pass redacted
@@ -137,8 +171,29 @@ class RedactingFilter(logging.Filter):
         if original is not None:
             cleaned = redact_secrets(original)
             if cleaned != original:
-                record.msg = cleaned
-                record.args = ()
+                # ``args`` is a rendered part too: a formatter may read the credential straight
+                # out of it rather than out of the message. Redact the parts and keep the arity,
+                # so a formatter that unpacks them still has values to unpack.
+                carried = _credential_values(original)
+                original_args = record.args
+                record.args = _redacted_args(original_args)
+                try:
+                    rerendered: str | None = record.getMessage()
+                except Exception:  # noqa: BLE001 - a broken record must not break logging
+                    rerendered = None
+                if (
+                    rerendered is None
+                    or any(secret in rerendered for secret in carried)
+                    or not all(_wholly_inside_one_str_arg(secret, original_args) for secret in carried)
+                ):
+                    # The credential is not wholly inside a single str arg - either it
+                    # straddles two args, or it is only credential-shaped once format
+                    # string and args are joined, or re-rendering failed.  Bake the
+                    # redacted text and drop the args: a formatter reading them
+                    # positionally then fails under ``Handler.emit``'s guard, which is
+                    # the fail-closed answer.
+                    record.msg = cleaned
+                    record.args = ()
         # Each appended rail carries the message rail's guard, and carries it SEPARATELY: a
         # part that cannot be rendered must not exempt the part that can. Only the 3-tuple
         # that logging documents is rendered here, but a shape check is not a guard: `Logger._log`
@@ -157,6 +212,38 @@ class RedactingFilter(logging.Filter):
             record.stack_info = _redact_appended(record.stack_info)
         setattr(record, _DONE, True)
         return True
+
+
+_Args = tuple[object, ...] | Mapping[str, object] | None
+
+
+def _wholly_inside_one_str_arg(secret: str, args: _Args) -> bool:
+    """True when ``secret`` is a contiguous substring of a single ``str`` arg.
+
+    If a credential straddles two args (``"%s%s" % (url[:40], url[-40:])``), per-arg
+    redaction replaces only the half it sees in each arg, and the other half survives in
+    plaintext once the format string joins them.  The caller uses this to decide whether
+    per-arg redaction is sufficient or the whole message must be baked and the args
+    dropped (fail-closed).
+    """
+    if isinstance(args, Mapping):
+        return any(isinstance(v, str) and secret in v for v in args.values())
+    if isinstance(args, tuple):
+        return any(isinstance(v, str) and secret in v for v in args)
+    return False
+
+
+def _redacted_args(args: _Args) -> _Args:
+    """Redact the credential out of a record's ``args`` without changing what they are.
+
+    Only ``str`` values are rewritten: an ``int`` under a ``%d`` is not a credential and
+    replacing it with a fingerprint would leave a format string its own args cannot render.
+    """
+    if isinstance(args, Mapping):
+        return {key: redact_secrets(val) if isinstance(val, str) else val for key, val in args.items()}
+    if isinstance(args, tuple):
+        return tuple(redact_secrets(val) if isinstance(val, str) else val for val in args)
+    return args
 
 
 def _redact_appended(part: object) -> str:

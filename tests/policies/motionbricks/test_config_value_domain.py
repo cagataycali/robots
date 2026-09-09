@@ -45,18 +45,34 @@ reaches (the constructor, ``from_dict``, ``from_file``), pin the consequence the
 domain exists to prevent, and pin the values that stay first-class so the guard
 cannot creep into refusing a generator a caller may legitimately ask for.
 
-``result_dir`` is the second axis, and it is a different question rather than a
-smaller one: the values it must refuse are not out of range, they are not paths.
-Its check was ``if not self.result_dir``, which asserts truthiness - so ``123``
-and ``["out"]`` were accepted for being truthy and ``0`` refused for being falsy,
-by a message about an empty *path*, about a number. The values sorted by a
-property the field does not have. Its domain is now "a value a path can be read
-from" (``str`` or :class:`os.PathLike`), normalised to the ``str`` the field
-declares, and ``TestResultDirPathDomain`` pins that alongside the two
-consequences the truthiness test carried beyond the eventual ``Path(...)``:
-a ``Path`` was stored unnormalised, so a config built from one compared unequal
-to the identical config built from a ``str``, and a list left this frozen -
-therefore hashable - dataclass unhashable.
+The paths are the second axis, and they are a different question rather than a
+smaller one: the values they must refuse are not out of range, they are not
+paths. ``result_dir``'s check was ``if not self.result_dir``, which asserts
+truthiness - so ``123`` and ``["out"]`` were accepted for being truthy and ``0``
+refused for being falsy, by a message about an empty *path*, about a number. The
+values sorted by a property the field does not have. Its domain is now "a value a
+path can be read from" (``str`` or :class:`os.PathLike`), normalised to the
+``str`` the field declares, and ``TestResultDirPathDomain`` pins that alongside
+the two consequences the truthiness test carried beyond the eventual
+``Path(...)``: a ``Path`` was stored unnormalised, so a config built from one
+compared unequal to the identical config built from a ``str``, and a list left
+this frozen - therefore hashable - dataclass unhashable.
+
+``skeleton_xml`` and ``scene_xml`` name locations too, and they were the two
+fields that axis skipped: of the eleven declared fields they were the only ones
+``__post_init__`` did not mention at all, while the roster of what is
+deliberately out of scope (``TestNeighbouringConfigFieldsStayOutOfScope``) lists
+the three enumerations and not them. Every row of the ``result_dir`` table above
+reproduced on them unchanged, and a falsy value fared *worse* rather than
+better: ``result_dir=0`` was at least refused, whereas ``skeleton_xml=0`` and
+``skeleton_xml=""`` were accepted and then discarded by ``config.skeleton_xml or
+<derived default>`` in ``_MotionBricksAgentAdapter.build``, so the generator was
+built against the derived skeleton and the run reported success. That is the one
+value ``None`` already means, and it is the reason the empty string is refused
+here rather than admitted as a second spelling of it.
+``TestOptionalPathFieldsShareThatDomain`` pins the axis on both fields;
+``test_the_skeleton_the_caller_named_is_the_skeleton_the_generator_is_built_with``
+in ``test_agent_adapter_build.py`` pins the consequence at the generator.
 """
 
 from __future__ import annotations
@@ -479,3 +495,128 @@ class TestNeighbouringConfigFieldsStayOutOfScope:
         # field and lists the modes.
         with pytest.raises(ValueError, match=r"style must be a mode index or name, not a bool"):
             resolve_mode(_config(style=True).style, ["idle", "walk"])
+
+
+class TestOptionalPathFieldsShareThatDomain:
+    """``skeleton_xml`` and ``scene_xml`` name locations, so path-ness is their domain too.
+
+    Measured on ``4485c5e``, one ``MotionBricksConfig(skeleton_xml=<value>)`` per
+    row, no ``motionbricks`` install, reading what reached
+    ``full_navigation_agent(skeleton_xml=...)`` through the stub seam:
+
+    ===================== ============================ ==========================
+    value                 pre-fix verdict              reached the generator as
+    ===================== ============================ ==========================
+    ``None``              accepted                     the derived default -
+                                                       correct, and documented
+    ``"custom/g1.xml"``   accepted                     itself - correct
+    ``Path("c/g1.xml")``  accepted, stored as a        a ``PosixPath``; unequal to
+                          ``PosixPath``                the identical config built
+                                                       from a ``str``
+    ``""``                accepted                     the DERIVED DEFAULT - the
+                                                       caller's field discarded
+                                                       by ``or``, under success
+    ``0``                 accepted                     as above
+    ``123``               accepted, stored ``123``     ``123`` - fails inside
+                                                       upstream, not here
+    ``True``              accepted                     ``True`` - as above
+    ``["custom/g1.xml"]`` accepted                     the list; AND
+                                                       ``hash(config)`` raised
+                                                       ``unhashable type: 'list'``
+    ``b"g1.xml"``         accepted                     the bytes; pathlib refuses
+                                                       bytes too
+    ===================== ============================ ==========================
+
+    The first row is the behaviour that must not change - ``None`` is how a
+    caller asks the builder to derive the path - and it is why the two falsy rows
+    are refusals rather than a widening of it: a build that answers "I used the
+    default" to a caller who named a skeleton cannot be told from one that was
+    asked to derive it.
+    """
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    @pytest.mark.parametrize("value", [123, 0, 3.5, True, False, b"g1.xml", ["g1.xml"], ("g1.xml",), {"p": "g1.xml"}])
+    def test_a_value_no_path_can_be_read_from_is_refused(self, field: str, value: Any) -> None:
+        with pytest.raises(ValueError, match=rf"{field} must be a str or os\.PathLike"):
+            _config(**{field: value})
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_the_refusal_names_the_field_the_value_its_type_and_where_it_would_have_failed(self, field: str) -> None:
+        # The same four parts ``result_dir``'s refusal carries, so a caller who
+        # has read one message can read all three.
+        with pytest.raises(ValueError) as excinfo:
+            _config(**{field: 123})
+        message = str(excinfo.value)
+        assert f"MotionBricksConfig.{field} must be a str or os.PathLike path to the G1 " in message
+        assert "got 123 (int);" in message
+        assert message.endswith("rather than here.")
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_omitting_the_field_stays_first_class(self, field: str) -> None:
+        # The row the guard must not touch: ``None`` is the documented way to ask
+        # the builder to derive this path, and it is unchanged by the fix.
+        assert getattr(_config(**{field: None}), field) is None
+        assert getattr(_config(), field) is None
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_an_empty_path_is_refused_and_the_message_names_the_way_to_derive_one(self, field: str) -> None:
+        # Pre-fix this was accepted and then discarded for being falsy. It cannot
+        # simply be read as ``None``: the two are different requests, and only one
+        # of them says "I have no path".
+        with pytest.raises(ValueError, match=rf"{field} must be a non-empty path to the G1 .* or None to derive it"):
+            _config(**{field: ""})
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_a_usable_path_string_still_builds_unchanged(self, field: str) -> None:
+        assert getattr(_config(**{field: "custom/g1.xml"}), field) == "custom/g1.xml"
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_a_path_is_accepted_and_normalised_to_the_str_the_field_declares(self, field: str) -> None:
+        config = _config(**{field: Path("custom/g1.xml")})
+        assert getattr(config, field) == "custom/g1.xml"
+        assert type(getattr(config, field)) is str
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_two_configs_naming_the_same_file_are_equal_and_hash_equal(self, field: str) -> None:
+        # The consequence that is not about the eventual file read: a caller
+        # holding a ``Path`` built a config that compared unequal to the identical
+        # config built from a ``str``.
+        assert _config(**{field: Path("custom/g1.xml")}) == _config(**{field: "custom/g1.xml"})
+        assert hash(_config(**{field: Path("custom/g1.xml")})) == hash(_config(**{field: "custom/g1.xml"}))
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_a_list_no_longer_leaves_this_frozen_dataclass_unhashable(self, field: str) -> None:
+        # ``hash()`` on the pre-fix config raised ``unhashable type: 'list'`` -
+        # a frozen dataclass that is not hashable.
+        with pytest.raises(ValueError, match=rf"{field} must be a str or os\.PathLike"):
+            hash(_config(**{field: ["g1.xml"]}))
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_any_pathlike_is_accepted_not_only_pathlib(self, field: str) -> None:
+        class _SkeletonFile:
+            def __fspath__(self) -> str:
+                return "custom/g1.xml"
+
+        assert getattr(_config(**{field: _SkeletonFile()}), field) == "custom/g1.xml"
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_a_pathlike_whose_fspath_is_not_a_path_is_refused_not_raised_from_fspath(self, field: str) -> None:
+        # ``os.fspath`` raises TypeError on this; the refusal is still reported on
+        # this field's own channel rather than escaping as that TypeError.
+        class _Broken:
+            def __fspath__(self) -> int:  # type: ignore[override]
+                return 5
+
+        with pytest.raises(ValueError, match=rf"{field} must be a str or os\.PathLike"):
+            _config(**{field: _Broken()})
+
+    @pytest.mark.parametrize("field", ["skeleton_xml", "scene_xml"])
+    def test_the_domain_is_reached_through_from_dict_and_from_file(self, field: str, tmp_path: Path) -> None:
+        # All three public surfaces funnel to ``__post_init__``, so one rule
+        # covers the constructor, a dict and a JSON file alike.
+        with pytest.raises(ValueError, match=rf"{field} must be a str or os\.PathLike"):
+            MotionBricksConfig.from_dict({"result_dir": "out", field: 123})
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({"result_dir": "out", field: 123}))
+        with pytest.raises(ValueError, match=rf"{field} must be a str or os\.PathLike"):
+            MotionBricksConfig.from_file(config_file)

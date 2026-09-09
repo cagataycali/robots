@@ -66,7 +66,7 @@ import numpy as np
 
 from strands_robots.policies._state_keys import drop_velocity_siblings
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, tcp_port_error
+from strands_robots.utils import dial_host_error, name_list_error, tcp_port_error
 
 from .client import Cosmos3WebsocketClient
 from .embodiments import (
@@ -111,7 +111,15 @@ class Cosmos3Policy(Policy):
             a checkpoint post-trained on OpenArm episodes (see
             :mod:`strands_robots.policies.cosmos3.embodiments`), not a released
             zero-shot model.
-        host: Policy-server hostname.
+        host: Policy-server hostname or IP literal, and the host half of the
+            ``ws://<host>:<port>`` this client dials. Must be a bare host a URI
+            can carry - no ``/``, ``:``, scheme or credentials, and IPv6
+            bracketed (``"[::1]"``) - because the parse gives a delimiter to a
+            later component and takes the validated ``port`` with it. Read on
+            the same terms as ``port``: only when this constructor builds the
+            client. ``"0.0.0.0"`` reaches a server bound on every interface;
+            whether the host resolves is left to the connect path, which already
+            reports it.
         port: Policy-server WebSocket port, an ``int`` in ``[1, 65535]``.
             Read only when this constructor builds the client; an injected
             ``client`` owns its own address. A value outside the range is
@@ -133,8 +141,12 @@ class Cosmos3Policy(Policy):
             request reaches the server.
         action_mapping: ``{action_column_name: robot_actuator_name}``. Renames
             the embodiment's action-layout columns to robot actuator names.
-            Keys are validated against the active layout at construction.
-            When ``None``, columns keep their layout names.
+            Validated against the active layout at construction, before any
+            request reaches the server: keys must name real columns, and the
+            rename must be injective. Two columns arriving at one actuator name
+            are refused rather than collapsed, since a per-step action dict
+            holds one entry per column and the losing column's command would be
+            dropped. When ``None``, columns keep their layout names.
         robot: Convenience - name of a known robot (``"panda"``/``"franka"``)
             whose built-in DROID-layout action mapping is applied when
             ``action_mapping`` is not given. Explicit ``action_mapping`` wins.
@@ -272,12 +284,38 @@ class Cosmos3Policy(Policy):
         # RoboLab server's post-processed ``action_space`` layout (joint_pos /
         # midtrain); ``diffusers`` returns the model's raw unified action named
         # by ``raw_action_layout``. Validate against whichever is active.
-        layout_cols = set(self._active_action_layout())
+        layout = self._active_action_layout()
+        layout_cols = set(layout)
         bad = [k for k in self._action_mapping if k not in layout_cols]
         if bad:
             raise ValueError(
                 f"action_mapping keys {bad} are not in the {self.embodiment.name!r} "
                 f"{backend!r}-backend action layout. Valid columns: {sorted(layout_cols)}"
+            )
+        # The rename must also be injective, which is the other half of the same
+        # caller mistake. ``_unpack_actions`` emits one dict entry per action
+        # column, so two columns arriving at one actuator name collapse into a
+        # single entry: the column written last wins and every other column's
+        # command is DROPPED. Nothing downstream can notice - the chunk still
+        # unpacks, the step dict is still well-formed, and the actuator whose
+        # column was swallowed simply holds position while the model asked it to
+        # move. Two shapes get past the key check above, and neither is a typo
+        # that check can see: two entries sharing one target, and a single entry
+        # whose target is another column's own unmapped name (on the DROID
+        # ``[joint_0..joint_6, gripper]`` layout, ``{"joint_0": "joint_1"}`` names
+        # only real columns and still costs a joint).
+        arrivals: dict[str, list[str]] = {}
+        for column in layout:
+            arrivals.setdefault(self._action_mapping.get(column, column), []).append(column)
+        collisions = {name: cols for name, cols in arrivals.items() if len(cols) > 1}
+        if collisions:
+            detail = "; ".join(f"{cols} -> {name!r}" for name, cols in sorted(collisions.items()))
+            raise ValueError(
+                f"action_mapping is not a rename: {detail}. Every column of the "
+                f"{self.embodiment.name!r} {backend!r}-backend action layout needs its own "
+                "actuator name, because a per-step action dict holds one entry per column - "
+                "columns arriving at one name collapse into a single entry and only the "
+                f"last column's value survives. Active layout: {layout}"
             )
         # ``mode`` (policy / forward_dynamics / inverse_dynamics) is a diffusers-
         # only physics surface (CosmosActionCondition.mode). The service RoboLab
@@ -314,13 +352,18 @@ class Cosmos3Policy(Policy):
                 mode,
             )
         else:
-            # ``port`` addresses the RoboLab policy server this client dials, so
-            # a value that cannot name one is refused before it reaches
-            # ``ws://<host>:<port>``. An injected ``client`` owns its own
-            # address, so the port is validated only when this constructor is
-            # the one that builds the endpoint.
-            if not client and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
-                raise ValueError(port_error)
+            # ``host`` and ``port`` are the two halves of the one address this
+            # client dials, so a value that cannot name one is refused before it
+            # reaches ``ws://<host>:<port>``. The host is graded first: a
+            # delimiter in it re-cuts the URI and the port is the component it
+            # takes, so a bad host makes the port's own verdict unreadable. An
+            # injected ``client`` owns its own address, so both are validated
+            # only when this constructor is the one that builds the endpoint.
+            if not client:
+                if (host_error := dial_host_error(host, "host", type(self).__name__)) is not None:
+                    raise ValueError(host_error)
+                if (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+                    raise ValueError(port_error)
             self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key, transport=transport)
             logger.info(
                 "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d backend=service ws://%s:%d]",

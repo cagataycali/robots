@@ -113,9 +113,15 @@ class TestCountThatCannotBeHonoredIsRefused:
         with pytest.raises(ValueError, match="cannot be reserved exactly"):
             build_train_command(dataset_root=str(root), policy_type="act", val_episodes=2)
 
-    @pytest.mark.parametrize("tasks", [0, 1, None, True, "2"])
+    @pytest.mark.parametrize("tasks", [0, 1, None])
     def test_absent_or_single_task_count_is_honored(self, tasks: object) -> None:
-        """0 / None mean 'no task count recorded', which lerobot treats as one task."""
+        """0 / None mean 'no task count recorded', which lerobot treats as one task.
+
+        ``True`` and ``"2"`` are NOT in this list: a header declaring something
+        which is not a task count is a third outcome, refused on its own terms
+        rather than read as an absent one, and pinned in
+        ``tests/test_declared_task_count_has_one_owner.py``.
+        """
         assert validation_split_error(2, tasks, "ctx", passthrough_param="extra_flags") is None
 
     def test_refusal_names_the_task_count_and_the_direct_knobs(self) -> None:

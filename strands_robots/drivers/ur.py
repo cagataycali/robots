@@ -70,6 +70,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry import resolve_name
 from strands_robots.utils import (
@@ -209,6 +210,34 @@ def _refuse(reason: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": reason}]}
 
 
+def _axis_count_refusal(values: list[float], quantity: str) -> str | None:
+    """Refuse a controller vector that does not hold one value per joint.
+
+    Every quantity this driver reads off the RTDE registers is positional: it
+    is named by zipping it against :data:`JOINT_NAMES`. So a vector of a
+    different width is not a partial answer to be reported as far as it goes -
+    it is an answer this driver cannot name. A shorter one drops the joints it
+    has no values for, and a longer one has its extra element truncated away,
+    which is the case that cannot be told apart from a genuine six-axis read
+    afterwards.
+
+    Args:
+        values: The vector the controller answered with.
+        quantity: What it holds, named as the refusal should read it -
+            ``"joint positions"``, ``"joint velocities"``.
+
+    Returns:
+        ``None`` when the width is right, otherwise the reason, which the
+        caller prefixes with its own verb name.
+    """
+    if len(values) == len(JOINT_NAMES):
+        return None
+    return (
+        f"the controller reported {len(values)} {quantity}, expected {len(JOINT_NAMES)}. "
+        "This driver serves six-axis e-Series arms only."
+    )
+
+
 def _resolve_rtde() -> tuple[Any, Any] | str:
     """Import ``ur_rtde``'s two interfaces, or report why they are unavailable.
 
@@ -220,9 +249,9 @@ def _resolve_rtde() -> tuple[Any, Any] | str:
 
     Returns:
         ``(rtde_control, rtde_receive)`` on success, or a reason naming the
-        module that failed and the package that supplies it. Both modules come
-        from the single ``ur_rtde`` distribution, so one pip line is the remedy
-        for either name.
+        module that failed and the extra that supplies it. Both modules come
+        from the single ``ur_rtde`` distribution, which ``[ur]`` declares, so one
+        install line is the remedy for either name.
     """
     import importlib
 
@@ -232,7 +261,7 @@ def _resolve_rtde() -> tuple[Any, Any] | str:
     except ImportError as exc:
         return (
             f"the ur_rtde SDK is not importable ({exc}). It supplies both rtde_control and "
-            "rtde_receive; install it with 'pip install ur_rtde'."
+            "rtde_receive; install it with: pip install 'strands-robots[ur]'"
         )
     return control, receive
 
@@ -434,6 +463,13 @@ class URDriver:
         # anchored here rather than on the measured pose.
         self._commanded: list[float] | None = None
 
+        # Bumped by every halt verb, and re-read by ``send_action`` immediately
+        # before its ``servoJ``. Each of that method's gates costs an RTDE round
+        # trip, so a halt issued while a setpoint is being prepared has to be
+        # noticed after those reads rather than only before them. See
+        # :meth:`_begin_halt`.
+        self._halt_epoch = 0
+
         self._rollout: _Rollout | None = None
         self._task_admission = threading.Lock()
 
@@ -539,12 +575,14 @@ class URDriver:
             envelope = self.state()
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             # ``stop`` is the protocol's shutdown hook and returns ``None``, so
             # an envelope built beside it could only restate the intent.
             # ``stop_task`` performs the same halt and already decides the
             # verdict, so the verb reports that.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
@@ -705,11 +743,14 @@ class URDriver:
         """Stop motion, leaving both interfaces connected.
 
         Annotated ``-> None`` by the driver protocol, so it carries no verdict:
-        the rollout is signalled and not waited for, and the loop's own step
-        re-reads that signal before its next setpoint, which is what keeps a
-        servoJ from landing after this servoStop. A caller that needs the halt
+        the rollout is signalled and not waited for. Two re-reads keep a servoJ
+        from landing after this servoStop - the loop re-reads the stop signal
+        before its next setpoint, and :meth:`send_action` re-reads the halt
+        counter this sets immediately before the write, which is what covers a
+        setpoint already past the loop's own check. A caller that needs the halt
         outcome reads :meth:`stop_task`, which decides one.
         """
+        self._begin_halt()
         rollout = self._rollout
         if rollout is not None:
             rollout.request_stop()
@@ -727,11 +768,15 @@ class URDriver:
         """Stop the arm and release both interfaces. Idempotent.
 
         The join outcome is not reported - the protocol annotates this ``-> None``
-        - and it does not need to be: the interface handles are cleared under the
-        lock before either is disconnected, so a rollout thread that outlasted
-        the join finds ``None`` and refuses its own write rather than reaching a
-        disconnected interface.
+        - and it does not need to be, because a write that outlives the join is
+        refused rather than reported on. Clearing the interface handles under the
+        lock covers a thread that had not read them yet; a thread already inside
+        :meth:`send_action` holds them, and is turned away by the halt counter
+        :meth:`_begin_halt` bumps here. Both are needed: without the counter, a
+        setpoint prepared before this call reached the interface after it had been
+        disconnected.
         """
+        self._begin_halt()
         rollout = self._rollout
         if rollout is not None:
             rollout.request_stop()
@@ -762,9 +807,11 @@ class URDriver:
         Gates, in order: this driver fronts this robot; both interfaces are
         live; the controller is in a mode that moves; the action names only UR
         joints, every value is finite and within travel, and no joint is asked
-        to move further than its speed ceiling allows in one control period.
-        Only then is the setpoint written - and the controller's own return
-        value decides the verdict, so a rejected write is reported as one.
+        to move further than its speed ceiling allows in one control period; and
+        no halt was issued while those gates were in flight, each of which costs
+        an RTDE round trip (:meth:`_begin_halt`). Only then is the setpoint
+        written - and the controller's own return value decides the verdict, so a
+        rejected write is reported as one.
 
         Args:
             action: Joint targets in radians, keyed by :data:`JOINT_NAMES`
@@ -780,7 +827,7 @@ class URDriver:
         if robot_name is not None and robot_name != self._tool_name:
             return _refuse(f"send_action: this driver fronts {self._tool_name!r} only, not {robot_name!r}")
         with self._lock:
-            control, receive = self._control, self._receive
+            control, receive, halted_at = self._control, self._receive, self._halt_epoch
         if control is None or receive is None:
             return _refuse("send_action: not connected - call connect_eagerly() first")
         if (reason := self._mode_refusal(receive)) is not None:
@@ -802,6 +849,17 @@ class URDriver:
         if reason is not None:
             return _refuse(f"send_action: {reason}")
 
+        # The last gate, and deliberately the last statement before the write:
+        # every gate above costs an RTDE round trip, so a halt issued while they
+        # were in flight is read here rather than only at the interface read this
+        # setpoint started from. See :meth:`_begin_halt`.
+        with self._lock:
+            superseded = self._halt_epoch != halted_at
+        if superseded:
+            return _refuse(
+                "send_action: the stream was halted while this setpoint was being prepared, so the "
+                "setpoint was not written - the arm is under that halt, not under this setpoint"
+            )
         try:
             accepted = control.servoJ(
                 targets,
@@ -851,14 +909,19 @@ class URDriver:
             ``joint_velocities``, ``tcp_pose`` (x, y, z in metres then an
             axis-angle rotation vector), ``tcp_speed``, ``wrench`` (three forces
             in newtons then three torques in newton-metres) and the two
-            controller modes; or a refusal when the arm is not connected.
+            controller modes; or a refusal when the arm is not connected, or
+            when the controller answers a vector that is not one value per
+            joint - the same axis-count rule :meth:`send_action` is held to,
+            since ``joints`` and ``joint_velocities`` are named by position.
         """
         with self._lock:
             receive = self._receive
         if receive is None:
             return _refuse("state: not connected - call connect_eagerly() first")
+        joints, reason = self._read_joints(receive)
+        if reason is not None:
+            return _refuse(f"state: {reason}")
         try:
-            joints = [float(value) for value in receive.getActualQ()]
             velocities = [float(value) for value in receive.getActualQd()]
             tcp_pose = [float(value) for value in receive.getActualTCPPose()]
             tcp_speed = [float(value) for value in receive.getActualTCPSpeed()]
@@ -867,8 +930,10 @@ class URDriver:
             safety_mode = int(receive.getSafetyMode())
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return _refuse(f"state: the controller's RTDE read failed: {exc}")
+        if (reason := _axis_count_refusal(velocities, "joint velocities")) is not None:
+            return _refuse(f"state: {reason}")
 
-        named = dict(zip(JOINT_NAMES, joints, strict=False))
+        named = dict(zip(JOINT_NAMES, joints, strict=True))
         with self._lock:
             self._joints = dict(named)
             self._pose = {"tcp_pose": tcp_pose, "frame": "base"}
@@ -880,7 +945,7 @@ class URDriver:
                         "robot": self._tool_name,
                         "model": self._model,
                         "joints": named,
-                        "joint_velocities": dict(zip(JOINT_NAMES, velocities, strict=False)),
+                        "joint_velocities": dict(zip(JOINT_NAMES, velocities, strict=True)),
                         "tcp_pose": tcp_pose,
                         "tcp_speed": tcp_speed,
                         "wrench": wrench,
@@ -912,6 +977,34 @@ class URDriver:
         """
         with self._lock:
             self._commanded = None
+
+    def _begin_halt(self) -> None:
+        """Mark the stream halted, so a setpoint already in flight is not written.
+
+        Every halt verb - :meth:`stop`, :meth:`stop_task`, :meth:`cleanup` - calls
+        this before it issues ``servoStop``, and :meth:`send_action` re-reads the
+        counter immediately before its own write.
+
+        The rollout loop already re-reads its stop event after the policy returns,
+        which is what keeps the *next* step's setpoint in. That re-read is followed
+        by :meth:`send_action`'s three RTDE round trips - both mode registers, then
+        the measured pose - and a halt issued during those was answered by one more
+        ``servoJ``: on a controller that had just been told to decelerate, and on
+        :meth:`cleanup`'s path after the interface it was written to had been
+        disconnected. :class:`~strands_robots.drivers.g1.G1Driver` and
+        :class:`~strands_robots.drivers.go2.Go2Driver` have no equivalent gap because
+        their loops build and publish the frame inline, with only computation between
+        the re-read and the wire; this driver's loop writes through the public
+        :meth:`send_action`, so the gate belongs where the write is.
+
+        A counter rather than a flag, so a halt followed by a fresh setpoint stays an
+        ordinary sequence: only a write whose gates began before the halt is refused,
+        never one a caller issues after it. The counter alone is enough to cover the
+        released interface too: :meth:`connect_eagerly` is idempotent, so the handle
+        is only ever replaced after a :meth:`cleanup` that bumped this.
+        """
+        with self._lock:
+            self._halt_epoch += 1
 
     def _reference_pose(self, receive: Any) -> tuple[list[float], str | None]:
         """Return the pose the next setpoint's step is measured from.
@@ -968,11 +1061,8 @@ class URDriver:
             joints = [float(value) for value in receive.getActualQ()]
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return [], f"the controller's joint read failed: {exc}"
-        if len(joints) != len(JOINT_NAMES):
-            return [], (
-                f"the controller reported {len(joints)} joint positions, expected {len(JOINT_NAMES)}. "
-                "This driver serves six-axis e-Series arms only."
-            )
+        if (reason := _axis_count_refusal(joints, "joint positions")) is not None:
+            return [], reason
         return joints, None
 
     def _absorb_state(self) -> None:
@@ -1130,6 +1220,7 @@ class URDriver:
             way; what the third case refuses to do is claim a halt while
             :meth:`get_task_status` would report ``running=True``.
         """
+        self._begin_halt()
         rollout = self._rollout
         unjoined: _Rollout | None = None
         if rollout is not None and rollout.is_running:
@@ -1148,8 +1239,10 @@ class URDriver:
         self._drop_anchor()
         if unjoined is not None:
             # The thread is still in the loop. It will not write another
-            # setpoint - the step re-reads the stop event before sending - but it
-            # holds the rollout, so reporting success here would hand a caller
+            # setpoint - the step re-reads the stop event before sending, and a
+            # setpoint already past that check is refused by the halt counter
+            # ``_begin_halt`` bumped above - but it holds the rollout, so
+            # reporting success here would hand a caller
             # that reads only ``status`` a halt the payload's own ``running``
             # contradicts.
             snapshot = unjoined.snapshot()
@@ -1327,7 +1420,11 @@ class _Rollout:
                     # a stop signalled during one would otherwise be answered by
                     # one more servoJ - landing after the servoStop the halt
                     # verb just issued, and moving an arm an operator was told
-                    # had stopped.
+                    # had stopped. This check cannot be the only one: the
+                    # ``send_action`` below reads three RTDE registers before it
+                    # writes, and a halt issued during those is caught by the
+                    # halt counter that method re-reads. See
+                    # :meth:`URDriver._begin_halt`.
                     self._finish("stopped")
                     return
 

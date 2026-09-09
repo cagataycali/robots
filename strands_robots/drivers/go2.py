@@ -73,6 +73,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
@@ -607,12 +608,14 @@ class Go2Driver:
             envelope: dict[str, Any] = {"status": "success", "content": [{"json": self.state}]}
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        else:  # "stop"
+        elif action == "stop":
             # ``stop_task`` already decides the verdict, including the join
             # timeout, so the verb returns that envelope rather than
             # re-deriving one that could read "success" over a loop still
             # holding the wire.
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #

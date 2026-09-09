@@ -158,6 +158,12 @@ class FakeCrazyflie:
     * ``"silent"`` - nothing ever fires. A dongle that answered the USB probe and
       then went quiet; only a bounded wait reports it.
 
+    ``commander_raises`` / ``high_level_raises`` choose what a *write* does once
+    the link is up, which ``outcome`` cannot express: a link that opened and then
+    stopped answering still has a live handle, and the CRTP write is where that
+    shows up. Same shape as ``arming``, which already chooses what the
+    ``platform`` request raises.
+
     ``settle_delay`` holds the outcome back for that many seconds, so a test can
     grade *ordering* against the link coming up rather than against a thread
     race: with a delay, a driver that does not wait provably reaches the wire
@@ -169,13 +175,15 @@ class FakeCrazyflie:
         recorder: _Recorder,
         *,
         arming: BaseException | None = None,
+        commander_raises: BaseException | None = None,
+        high_level_raises: BaseException | None = None,
         outcome: str = "connected",
         failure: str = "Cannot find a Crazyradio Dongle",
         settle_delay: float = 0.0,
     ) -> None:
         self.recorder = recorder
-        self.commander = _Stub(recorder, "commander")
-        self.high_level_commander = _Stub(recorder, "high_level")
+        self.commander = _Stub(recorder, "commander", raises=commander_raises)
+        self.high_level_commander = _Stub(recorder, "high_level", raises=high_level_raises)
         self.platform = _Stub(recorder, "platform", raises=arming)
         self.log = _FakeLink(recorder)
         self.uri: str | None = None
@@ -244,20 +252,30 @@ def connected(monkeypatch: pytest.MonkeyPatch, recorder: _Recorder):  # type: ig
     """Build a connected, armed driver over the fake link.
 
     Returns a factory so a test can choose the constructor keywords (a faster
-    ``setpoint_hz``, a failing arming request) and the link ``outcome``, and
-    still get the same fake.
+    ``setpoint_hz``, a failing arming request), the link ``outcome``, and what a
+    CRTP write does once the link is up, and still get the same fake.
     """
     from strands_robots.drivers import crazyflie as module
 
     def build(  # type: ignore[no-untyped-def]
         *,
         arming: BaseException | None = None,
+        commander_raises: BaseException | None = None,
+        high_level_raises: BaseException | None = None,
         outcome: str = "connected",
         failure: str = "Cannot find a Crazyradio Dongle",
         settle_delay: float = 0.0,
         **kwargs: Any,
     ):
-        fake = FakeCrazyflie(recorder, arming=arming, outcome=outcome, failure=failure, settle_delay=settle_delay)
+        fake = FakeCrazyflie(
+            recorder,
+            arming=arming,
+            commander_raises=commander_raises,
+            high_level_raises=high_level_raises,
+            outcome=outcome,
+            failure=failure,
+            settle_delay=settle_delay,
+        )
         pieces = type(
             "_Pieces",
             (),

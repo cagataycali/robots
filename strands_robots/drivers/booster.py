@@ -53,7 +53,7 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail
+from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
@@ -508,8 +508,10 @@ class BoosterDriver:
             envelope = {"status": "success", "content": [{"json": self.read_state()}]}
         elif action == "status":
             envelope = await self.get_status()
-        else:  # "stop"
+        elif action == "stop":
             envelope = self.stop_task()
+        else:
+            envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
 
     # ------------------------------------------------------------------ #
