@@ -1090,7 +1090,7 @@ def test_the_partition_is_derived_and_finds_both_sides() -> None:
     (above), and the local ones when *present*.
     """
     assert _SWEEP_READS == {"github_repo", "base_ref", "token"}, _SWEEP_READS
-    assert set(_SWEEP_IGNORES) == {"head", "repo"}, _SWEEP_IGNORES
+    assert set(_SWEEP_IGNORES) == {"head", "repo", "paths"}, _SWEEP_IGNORES
 
 
 def test_the_flag_both_modes_read_is_not_refused_by_the_sweep(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1142,6 +1142,155 @@ def test_the_sweep_refuses_to_run_without_its_own_inputs(monkeypatch: pytest.Mon
     with pytest.raises(SystemExit) as raised:
         check.main(argv)
     assert raised.value.code == 2
+
+
+# --- the intake relation -----------------------------------------------------------
+#
+# #3368 and #3370 both fixed the posture-flag truthiness read in
+# `strands_robots/simulation/base.py` (#3356). #3368 opened 16:46Z and was approved
+# 16:57Z; #3370's first commit is 17:18Z, and it drew a second approval at 17:25Z
+# before the pair was caught. Every duplicate key read clean: `Closes` against
+# `Refs`, fragments led by the issue number against the PR number, no shared
+# edited pre-existing test. The one thing two fixes of one defect cannot avoid
+# sharing is the file the defect lives in, and that path is known before any
+# commit exists. `--paths` reads the open set against it at that moment. Issue #3169.
+
+_INTAKE_PATH = "strands_robots/simulation/base.py"
+
+
+def _intake(monkeypatch: pytest.MonkeyPatch, get: Callable[[str, str], object], tmp_path: Path, *paths: str) -> int:
+    """Run the intake read from a directory that is not a repository at all.
+
+    Same property the sweep pins, and more so: the caller has no branch yet, so
+    there is nothing local the mode could read even if it wanted to.
+    """
+    monkeypatch.setattr(check, "_get", get)
+    monkeypatch.chdir(tmp_path)
+    return int(check.main(["--paths", *paths, "--github-repo", "owner/name", "--token", "t"]))
+
+
+def test_the_3368_3370_pair_is_named_at_intake(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The first implementation is open; the read against the defect's path names it."""
+    get = _api(
+        [_pull(3368, "a" * 40)],
+        {"main...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": _compare([_INTAKE_PATH, "tests/simulation/test_x.py"])},
+    )
+    code = _intake(monkeypatch, get, tmp_path, _INTAKE_PATH)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "#3368" in out
+    assert f"`{_INTAKE_PATH}`" in out
+    assert "before writing a line" in out
+
+
+def test_a_disjoint_open_set_is_clean_and_names_the_read_that_follows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No hit, exit 0 - and the report says which mode sees a pair that opens later."""
+    get = _api(
+        [_pull(1, "b" * 40)], {"main...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": _compare(["docs/other.md", "x.py"])}
+    )
+    code = _intake(monkeypatch, get, tmp_path, _INTAKE_PATH)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "1 open non-draft pull request(s)" in out
+    assert "--all-open" in out
+
+
+def test_a_prose_only_intake_hit_is_listed_but_does_not_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AGENTS.md is edited by most open pull requests; a shared prose path is not a duplicate."""
+    get = _api(
+        [_pull(7, "c" * 40)], {"main...cccccccccccccccccccccccccccccccccccccccc": _compare(["AGENTS.md", "y.py"])}
+    )
+    code = _intake(monkeypatch, get, tmp_path, "AGENTS.md", _INTAKE_PATH)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "#7" in out and "`AGENTS.md`" in out
+    assert "not blocking" in out
+
+
+def test_a_draft_is_excluded_from_the_intake_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same rule as the sweep: a draft cannot merge, so a hit on one means something else."""
+    get = _api(
+        [_pull(9, "d" * 40, draft=True)],
+        {"main...dddddddddddddddddddddddddddddddddddddddd": _compare([_INTAKE_PATH])},
+    )
+    code = _intake(monkeypatch, get, tmp_path, _INTAKE_PATH)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "#9" not in out
+    assert "0 open non-draft" in out
+
+
+def test_an_unreadable_path_set_is_named_rather_than_read_as_clear(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One pull request's file list fails; it is listed as not evaluated and the rest are read."""
+    get = _api(
+        [_pull(3, "e" * 40), _pull(4, "f" * 40)],
+        {"main...ffffffffffffffffffffffffffffffffffffffff": _compare([_INTAKE_PATH])},
+    )
+    code = _intake(monkeypatch, get, tmp_path, _INTAKE_PATH)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "#4" in out
+    assert "### Not evaluated" in out and "#3" in out
+    assert "not known to be clear" in out
+
+
+def test_the_intake_read_lists_the_open_set_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The population is reported from the one listing the relation already made."""
+    inner = _api([_pull(1, "b" * 40)], {"main...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": _compare(["x.py"])})
+    listings: list[str] = []
+
+    def get(url: str, token: str) -> object:
+        if "/pulls?" in url:
+            listings.append(url)
+        return inner(url, token)
+
+    assert _intake(monkeypatch, get, tmp_path, _INTAKE_PATH) == 0
+    assert len(listings) == 1, listings
+
+
+@pytest.mark.parametrize(
+    ("argv", "named"),
+    [
+        (["--paths", "x.py", "--head", "HEAD"], "--head"),
+        (["--paths", "x.py", "--repo", "."], "--repo"),
+        (["--all-open", "--paths", "x.py"], "--paths"),
+    ],
+)
+def test_the_intake_read_refuses_a_flag_it_is_handed_none_of(
+    argv: list[str], named: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A change with no commit has no head and no checkout; the sweep is a different question."""
+    message = _refusal([*argv, "--github-repo", "owner/name", "--token", "t"], capsys)
+    assert named in message, message
+
+
+@pytest.mark.parametrize("missing", ["--github-repo", "--token"])
+def test_the_intake_read_refuses_to_run_without_its_own_inputs(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    argv = ["--paths", "x.py", "--github-repo", "owner/name", "--token", "t"]
+    argv.remove(missing)
+    argv.remove("owner/name" if missing == "--github-repo" else "t")
+    with pytest.raises(SystemExit) as raised:
+        check.main(argv)
+    assert raised.value.code == 2
+
+
+def test_the_intake_and_the_sweep_share_one_prose_rule(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Emptying PROSE_SUFFIXES makes a shared AGENTS.md block at intake, as it does in the sweep."""
+    monkeypatch.setattr(check, "PROSE_SUFFIXES", frozenset())
+    get = _api([_pull(7, "c" * 40)], {"main...cccccccccccccccccccccccccccccccccccccccc": _compare(["AGENTS.md"])})
+    assert _intake(monkeypatch, get, tmp_path, "AGENTS.md") == 1
 
 
 # --- the named-module relation ---------------------------------------------------

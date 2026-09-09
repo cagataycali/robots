@@ -285,11 +285,26 @@ hatch run format            # ruff check --fix, ruff format
    as a separate `headRepositoryId`. Step 5 already says "from your fork"; step 1
    is where that stops being a preference.
 
-   Before you start, check that no open pull request already claims the issue:
+   Before you start, check that no open pull request already claims the issue,
+   and that none already edits the file the defect lives in:
 
    ```
    python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>
+   python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <the paths you are about to edit>
    ```
+
+   The second read is the one with recall on this repository's duplicate pairs.
+   Five of them are recorded on #3169, and on every one the claim key was silent
+   (`Closes` against `Refs`), the fragment key was silent (two slugs, or the issue
+   number against the PR number) and the shared-edited-test key was silent (two
+   new test files). The one thing two fixes of one defect cannot avoid sharing is
+   the file the defect lives in, and that path is known before any commit exists.
+   #3368 was open and approved for 31 minutes before #3370's first commit against
+   the same three files; this read would have named it, and instead the pair spent
+   a second external approval - the scarcest resource here - on a diff `main`
+   already had. A hit is a pull request to read before writing a line, not a
+   refusal to work: if it is a different change to the same file it is a
+   merge-order question, which `--all-open` answers once yours is open.
 
    Name the repository rather than leaving it to be inferred. `$GITHUB_REPOSITORY`
    is where the command is *running*, which for a scheduled agent need not be a
@@ -358,12 +373,15 @@ hatch run format            # ruff check --fix, ruff format
    complementary rather than nested: no issue-keyed pair shares an added path, and
    no claim-free pair claims an issue.
 
-   This one cannot be asked before you start, and not for want of trying: a path
-   set is a property of a pushed branch, so there is nothing to read at intake. It
-   caps the review cost of a collision rather than preventing the work, which is
-   why it belongs here and `--issue` belongs above. It still arrives early enough
-   to matter - both claim-free pairs opened inside the same ~35-minute window every
-   other observed collision shares, 14m 41s and 29m 26s apart.
+   The pairwise form cannot be asked before you start: a path set is a property of
+   a pushed branch, so with no branch there is no pair. But one side of the pair is
+   known at intake - the file you are about to edit - and `--paths` (step 1 above)
+   reads the open set against it, which is the same relation with a path list
+   standing in for the branch that does not exist yet. So the sweep here caps the
+   review cost of a collision the intake read missed, rather than being the first
+   chance to see one. It still arrives early enough to matter - both claim-free
+   pairs opened inside the same ~35-minute window every other observed collision
+   shares, 14m 41s and 29m 26s apart.
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`.
    If you narrow the test run to the area you changed (`pytest tests/drivers/ -k g1`),
    run `hatch run whole-tree-check` alongside it. Ninety-odd graders take

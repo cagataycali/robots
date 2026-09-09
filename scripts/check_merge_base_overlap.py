@@ -54,6 +54,21 @@ includes renames: git reports one as its delete plus its add under
 ``filename`` to reach the same set, because a branch that renames a file and a
 branch that edits its old name compose without a conflict marker.
 
+``--paths`` is the same pairwise relation asked one step earlier, with a path
+list standing in for the branch that does not exist yet. Every duplicate pair
+the sweep has caught opened inside one ~35-minute window, and a pair that
+opened together was written together: by the time both branches exist, so do
+both implementations. What is known before either exists is where the defect
+lives, and two fixes of one defect cannot avoid editing that file -- unlike the
+closing reference, the fragment slug and the shared edited test, each a spelling
+two authors need not share (#3169). #3368 was open and approved for 31 minutes
+before #3370 made its first commit against the same three files; reading the
+open set against ``strands_robots/simulation/base.py`` at that moment would have
+named it. So the intake mode reads the open set's path sets and nothing else --
+no compare, because the caller has no head to compare -- and blocks on a
+behaviour-bearing hit, because the remedy is to read that pull request before
+authoring, not after.
+
 The two sides come from different endpoints, and so have different ceilings. The
 head side -- the input to the pairwise mode -- is read from the paginated
 pull-request files endpoint, which carries ten times what the compare endpoint's
@@ -1233,6 +1248,124 @@ def _run_sweep(repo: str, base_ref: str, token: str) -> int:
     return 1 if blocking else 0
 
 
+def intake_overlaps(
+    repo: str, paths: Iterable[str], token: str
+) -> tuple[list[tuple[int, tuple[str, ...], tuple[str, ...]]], list[tuple[int, str]], int]:
+    """Return ``(found, unevaluated, open_count)`` for the open pull requests editing one of ``paths``.
+
+    ``found`` rows are ``(number, blocking, prose)``; ``open_count`` is the size
+    of the open set read, returned alongside so the report can state the
+    population without a second listing request.
+
+    The intake half of the pairwise relation. ``--all-open`` compares two pushed
+    branches, so it cannot run before the second one exists -- and the duplicate
+    pairs it has caught all opened inside one ~35-minute window, so by the time
+    it can run the second implementation is already written. But one side of
+    that intersection is known before any commit is: the path a defect lives in.
+    #3368 and #3370 both fixed the posture-flag read in
+    ``strands_robots/simulation/base.py``; the first was open and approved for
+    31 minutes before the second's first commit, and this read of the open set
+    against that one path would have returned it (#3169).
+
+    One request per open pull request plus the listing, and no compare: the
+    caller has no branch to compare. Drafts are excluded and unreadable path sets
+    are named, for the reasons ``collect_open_pull_requests`` gives.
+    """
+    wanted = frozenset(paths)
+    found: list[tuple[int, tuple[str, ...], tuple[str, ...]]] = []
+    unevaluated: list[tuple[int, str]] = []
+    lookup_failures = (ApiError, urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError)
+    open_set = resolve_open_pull_requests(repo, token)
+    for number, _head_sha in open_set:
+        try:
+            edits = pull_request_paths(repo, number, token)
+        except lookup_failures as error:
+            unevaluated.append((number, f"path set unreadable: {error}"))
+            continue
+        blocking, prose = partition_overlap(overlapping_paths(wanted, edits))
+        if blocking or prose:
+            found.append((number, blocking, prose))
+    return found, unevaluated, len(open_set)
+
+
+def render_intake(
+    *,
+    repo: str,
+    paths: Sequence[str],
+    found: Sequence[tuple[int, tuple[str, ...], tuple[str, ...]]],
+    unevaluated: Sequence[tuple[int, str]],
+    open_count: int,
+) -> str:
+    """Render the intake report: which open pull requests already edit the named paths."""
+    lines = ["## Merge-base overlap check - intake", ""]
+    header = (
+        f"`{repo}`: {open_count} open non-draft pull request(s) read against {len(paths)} path(s) "
+        + "you are about to edit."
+    )
+    lines.append(header)
+    lines.append("")
+
+    blocking_rows = [row for row in found if row[1]]
+    prose_rows = [row for row in found if not row[1]]
+
+    if not blocking_rows:
+        clean = (
+            "No open pull request edits a behaviour-bearing path in this set. If one opens "
+            + "before yours does, `--all-open` is the read that sees the pair."
+        )
+        lines.append(clean)
+        lines.append("")
+    else:
+        lines.append("### Already edited by an open pull request")
+        lines.append("")
+        for number, blocking, prose in blocking_rows:
+            lines.append(f"- #{number}: " + ", ".join(f"`{path}`" for path in blocking + prose))
+        lines.append("")
+        remedy = (
+            "Read each one before writing a line. Two fixes of one defect cannot avoid "
+            + "sharing the file the defect lives in, and every other duplicate key -- the "
+            + "closing reference, the fragment slug, the shared edited test -- is a spelling "
+            + "two authors need not share. If it is the same fix, there is nothing to author. "
+            + "If it is a different change to the same file, it is a merge-order question, "
+            + "which `--all-open` reports once yours is open."
+        )
+        lines.append(remedy)
+        lines.append("")
+
+    if prose_rows:
+        lines.append("### Prose paths shared with an open pull request (not blocking)")
+        lines.append("")
+        for number, _blocking, prose in prose_rows:
+            lines.append(f"- #{number}: " + ", ".join(f"`{path}`" for path in prose))
+        lines.append("")
+
+    if unevaluated:
+        lines.append("### Not evaluated")
+        lines.append("")
+        for number, reason in unevaluated:
+            lines.append(f"- #{number}: {reason}")
+        lines.append("")
+        caveat = (
+            "A pull request whose path set could not be read is absent from the rows "
+            + "above, not known to be clear of them."
+        )
+        lines.append(caveat)
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def _run_intake(repo: str, paths: Sequence[str], token: str) -> int:
+    """Read the open set against the paths a change will edit. Exit 1 on a behaviour-bearing hit."""
+    try:
+        found, unevaluated, open_count = intake_overlaps(repo, paths, token)
+    except (ApiError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
+        print(f"::error::merge-base overlap intake could not list open pull requests: {error}", file=sys.stderr)
+        return 1
+    _emit(render_intake(repo=repo, paths=paths, found=found, unevaluated=unevaluated, open_count=open_count))
+    return 1 if any(row[1] for row in found) else 0
+
+
 def render_report(
     *,
     base_ref: str,
@@ -1378,6 +1511,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="sweep the open set from the API instead of checking one branch",
     )
     parser.add_argument(
+        "--paths",
+        nargs="+",
+        default=None,
+        metavar="PATH",
+        help="intake: report which open pull requests already edit these paths (before any commit exists)",
+    )
+    parser.add_argument(
         "--github-repo",
         default=os.environ.get("GITHUB_REPOSITORY"),
         help="owner/name for --all-open (default: $GITHUB_REPOSITORY)",
@@ -1397,6 +1537,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     # reading $GITHUB_REPOSITORY and reporting on a repository nobody asked about
     # (issue #2569). Every value-bearing flag the sweep does read is passed to
     # _run_sweep below, which is what pins this partition rather than a list.
+    if args.all_open and args.paths is not None:
+        parser.error("--all-open compares the open set with itself; --paths compares it with a change not yet pushed")
+    if args.paths is not None and args.head is not None:
+        parser.error("--paths names a change that has no commit yet; --head names one that does")
+    if args.paths is not None and args.repo is not None:
+        parser.error(
+            "--paths reads the open set from the API and reads no local checkout; --repo names one. "
+            "To name the repository the intake reads, pass --github-repo owner/name."
+        )
     if args.all_open and args.head is not None:
         parser.error("--all-open sweeps the open set and reads no local commit; --head names one branch")
     if args.all_open and args.repo is not None:
@@ -1410,6 +1559,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.token:
             parser.error("--all-open needs --token (or $GITHUB_TOKEN)")
         return _run_sweep(args.github_repo, args.base_ref, args.token)
+    if args.paths is not None:
+        if not args.github_repo:
+            parser.error("--paths needs --github-repo owner/name (or $GITHUB_REPOSITORY)")
+        if not args.token:
+            parser.error("--paths needs --token (or $GITHUB_TOKEN)")
+        return _run_intake(args.github_repo, args.paths, args.token)
 
     head = args.head if args.head is not None else "HEAD"
     repo = Path(args.repo) if args.repo is not None else None
