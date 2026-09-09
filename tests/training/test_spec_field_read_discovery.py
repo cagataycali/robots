@@ -24,10 +24,18 @@ lists the backend modules two ways - ``_trainer_modules`` and
 ``_training_modules`` - so a rule keyed on either spelling grades the guards
 that use it and reports a clean sweep over the rest.
 :func:`is_field_scoped_guard` keys on the two properties that make a guard
-gradeable instead (it has one reader helper, and its scope is rooted at the
-backend tree), and is the one rule both the sweep over the real tree and the
-constructed exemplars in :class:`TestTheDiscoveryDoesNotDependOnAHelperName`
+gradeable instead (it consults the one shared read rule, and its scope is rooted
+at the backend tree), and is the one rule both the sweep over the real tree and
+the constructed exemplars in :class:`TestTheDiscoveryDoesNotDependOnAHelperName`
 consult.
+
+"Consults the shared rule" is itself the second thing that was once a name. A
+guard may wrap :func:`~tests.training._spec_field_reads.reads_spec_field` in a
+local ``_reads...`` helper, or call it directly - the latter has no wrapper to
+drift out of step and is the better shape - and a discovery that required the
+wrapper dropped the guard that chose the second form. That is the same hole one
+identifier wide as the one above, so both forms qualify, and
+:func:`_reader_helper` resolves the shared rule itself when there is no wrapper.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ import ast
 import importlib
 import inspect
 import pathlib
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -53,6 +62,11 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     "_seed_problems": ("seed",),
     "_validation_episodes_problems": ("val_episodes",),
     "_lora_hyperparameter_problems": ("lora_r", "lora_alpha"),
+    # The two posture gates: the only field-scoped domains that are not numeric.
+    # The forwarding provider passes both fields on, so they are graded on the
+    # reader scan AND on the forwarded set below.
+    "_resume_problems": ("resume",),
+    "_streaming_problems": ("streaming",),
     "_launch_topology_problems": ("num_gpus", "num_nodes"),
     # The RL run-size gate. Its two fields live on ``RLTrainSpec`` and no
     # provider forwards them, so it is graded on the reader scan only.
@@ -114,23 +128,50 @@ def _scans_the_backend_tree(tree: ast.AST) -> bool:
     )
 
 
+def _consults_the_shared_read_rule(tree: ast.Module) -> bool:
+    """Does the module derive its scope from the one shared notion of a read?
+
+    Two forms, and the point is that neither is a name this rule depends on:
+
+    * a single local ``_reads...`` wrapper around
+      :func:`~tests.training._spec_field_reads.reads_spec_field`, which is what
+      most guards spell; or
+    * a direct call to that function, with no wrapper to drift out of step.
+
+    Two wrappers do not qualify: :func:`_reader_helper` resolves exactly one, so
+    a guard with two has no single scan for this meta-guard to grade.
+    """
+    wrappers = [node.name for node in tree.body if isinstance(node, ast.FunctionDef) and node.name.startswith("_reads")]
+    if len(wrappers) > 1:
+        return False
+    if len(wrappers) == 1:
+        return True
+    return any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "reads_spec_field"
+        for node in ast.walk(tree)
+    )
+
+
 def is_field_scoped_guard(source: str) -> bool:
     """Does *source* look like a field-scoped domain guard this must grade?
 
     Two properties, both structural:
 
-    * it derives its scope from a reader scan - exactly one ``_reads...``
-      helper, which is the scan this meta-guard grades and the one
-      :func:`_reader_helper` resolves; and
+    * it derives its scope from a reader scan that consults the one shared read
+      rule - through a single ``_reads...`` wrapper or by calling
+      :func:`~tests.training._spec_field_reads.reads_spec_field` directly
+      (:func:`_consults_the_shared_read_rule`), which is the scan this meta-guard
+      grades and the one :func:`_reader_helper` resolves; and
     * that scope is rooted at the backend tree
       (:func:`_scans_the_backend_tree`), which is what makes it derived rather
       than listed.
 
-    Neither property is the *name* of the helper that carries it. That
-    distinction is the point: a guard lists the backend modules through a helper
-    it spells either ``_trainer_modules`` or ``_training_modules``, so a rule
-    keyed on one spelling drops every guard using the other while reporting a
-    clean sweep of the rest.
+    Neither property is the *name* of a helper that carries it. That distinction
+    is the point, twice over: a guard lists the backend modules through a helper
+    it spells either ``_trainer_modules`` or ``_training_modules``, and it reads
+    a field either through a ``_reads...`` wrapper or through the shared rule
+    directly. A discovery keyed on one spelling of either drops every guard using
+    the other while reporting a clean sweep of the rest.
 
     The guards that pin a domain no backend may skip (learning rate, run size)
     have no reader helper at all - they scan ``Trainer`` subclasses rather than
@@ -138,9 +179,7 @@ def is_field_scoped_guard(source: str) -> bool:
     of "reads the field" for this meta-guard to grade in them.
     """
     tree = ast.parse(source)
-    names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    readers = [n for n in names if n.startswith("_reads")]
-    return len(readers) == 1 and _scans_the_backend_tree(tree)
+    return _consults_the_shared_read_rule(tree) and _scans_the_backend_tree(tree)
 
 
 def _guard_modules() -> dict[str, Any]:
@@ -174,13 +213,33 @@ FORWARDED_GATES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _reader_helper(module: Any) -> Any:
-    """The single ``_reads...`` helper a field-scoped guard derives its scope from."""
+def _reader_helper(module: Any, fields: tuple[str, ...]) -> Callable[[str], bool]:
+    """The reader scan a field-scoped guard derives its scope from, over *fields*.
+
+    Both forms :func:`_consults_the_shared_read_rule` accepts are returned as one
+    callable of source, which is what the cells below grade: a local
+    ``_reads...`` wrapper already closes over the fields its guard owns, while a
+    guard that calls the shared rule directly is bound to the same fields here.
+    """
     helpers = [
         getattr(module, name) for name in dir(module) if name.startswith("_reads") and callable(getattr(module, name))
     ]
+    if not helpers:
+        return lambda source: reads_spec_field(source, fields)
     assert len(helpers) == 1, f"{module.__name__} has {len(helpers)} reader helpers"
-    return helpers[0]
+    reads: Callable[[str], bool] = helpers[0]
+    return reads
+
+
+def _gates_of(module: Any) -> list[str]:
+    """Every registered gate *module* names, not merely the first one found.
+
+    A guard can own more than one gate - the two posture gates live in a single
+    guard - so a lookup that stopped at the first match graded one of them and
+    left the other's fields unchecked by the cells below.
+    """
+    lines = inspect.getsource(module).splitlines()
+    return [gate for gate in FIELD_SCOPED_GATES if any(gate in line for line in lines)]
 
 
 def _table_driven_reader(field: str) -> str:
@@ -206,6 +265,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_network_width_domain.py",
             "test_optimization_epochs_domain.py",
             "test_policy_delay_domain.py",
+            "test_posture_flag_domain.py",
             "test_polyak_coefficient_domain.py",
             "test_rl_run_size_domain.py",
             "test_rl_checkpoint_interval_domain.py",
@@ -220,22 +280,22 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
     @pytest.mark.parametrize("guard_name", sorted(_guard_modules()))
     def test_it_sees_a_table_driven_read(self, guard_name: str) -> None:
         module = _guard_modules()[guard_name]
-        reads = _reader_helper(module)
-        gate = next(g for g in FIELD_SCOPED_GATES if any(g in line for line in inspect.getsource(module).splitlines()))
-        for field in FIELD_SCOPED_GATES[gate]:
-            assert reads(_table_driven_reader(field)), (
-                f"{guard_name} does not see a table-driven read of spec.{field}, "
-                "so a backend that forwards the field by name is outside its derived scope"
-            )
+        for gate in _gates_of(module):
+            reads = _reader_helper(module, FIELD_SCOPED_GATES[gate])
+            for field in FIELD_SCOPED_GATES[gate]:
+                assert reads(_table_driven_reader(field)), (
+                    f"{guard_name} does not see a table-driven read of spec.{field}, "
+                    "so a backend that forwards the field by name is outside its derived scope"
+                )
 
     @pytest.mark.parametrize("guard_name", sorted(_guard_modules()))
     def test_it_still_sees_a_read_by_name(self, guard_name: str) -> None:
         """The form it already recognized must keep being recognized."""
         module = _guard_modules()[guard_name]
-        reads = _reader_helper(module)
-        gate = next(g for g in FIELD_SCOPED_GATES if any(g in line for line in inspect.getsource(module).splitlines()))
-        for field in FIELD_SCOPED_GATES[gate]:
-            assert reads(f"def validate(self, spec):\n    return [spec.{field}]\n")
+        for gate in _gates_of(module):
+            reads = _reader_helper(module, FIELD_SCOPED_GATES[gate])
+            for field in FIELD_SCOPED_GATES[gate]:
+                assert reads(f"def validate(self, spec):\n    return [spec.{field}]\n")
 
 
 class TestTheForwardingProviderIsInScopeForEveryGateItReads:
@@ -252,7 +312,9 @@ class TestTheForwardingProviderIsInScopeForEveryGateItReads:
             "_checkpoint_cadence_problems",
             "_launch_topology_problems",
             "_lora_hyperparameter_problems",
+            "_resume_problems",
             "_seed_problems",
+            "_streaming_problems",
             "_validation_episodes_problems",
         }
 
@@ -324,6 +386,21 @@ class TestTheDiscoveryDoesNotDependOnAHelperName:
     def test_a_guard_qualifies_whichever_way_it_names_its_scope_helper(self, helper: str) -> None:
         assert is_field_scoped_guard(_A_READER + _A_ROOTED_SCOPE.format(helper=helper))
 
+    def test_a_guard_that_calls_the_shared_rule_directly_qualifies(self) -> None:
+        """The shape the posture guard landed in: no wrapper to drift, so no name.
+
+        The hole this closed: requiring the wrapper left that guard outside the
+        sweep, silently, which is the failure this module exists to prevent one
+        identifier over.
+        """
+        direct = "def _the_readers():\n    return reads_spec_field('x', ('resume',))\n"
+        assert is_field_scoped_guard(direct + _A_ROOTED_SCOPE.format(helper="_trainer_modules"))
+
+    def test_a_guard_with_neither_form_does_not_qualify(self) -> None:
+        """Non-vacuity for the rule above: the fallback is not "anything passes"."""
+        listing = "def _the_readers():\n    return ['lerobot.py']\n"
+        assert not is_field_scoped_guard(listing + _A_ROOTED_SCOPE.format(helper="_trainer_modules"))
+
     def test_a_listed_scope_does_not_qualify(self) -> None:
         """Not derived from the tree, so this meta-guard's premise does not hold."""
         assert not is_field_scoped_guard(_A_READER + _A_LISTED_SCOPE)
@@ -343,8 +420,12 @@ class TestTheDiscoveryDoesNotDependOnAHelperName:
         )
         assert not is_field_scoped_guard(_A_READER + elsewhere)
 
-    def test_a_guard_with_no_reader_helper_does_not_qualify(self) -> None:
-        """The learning-rate and run-size shape: no notion of "reads the field"."""
+    def test_a_guard_with_no_reader_scan_does_not_qualify(self) -> None:
+        """The learning-rate and run-size shape: no notion of "reads the field".
+
+        Neither a ``_reads...`` wrapper nor a call to the shared rule, so there is
+        nothing here for this meta-guard to grade.
+        """
         assert not is_field_scoped_guard(_A_ROOTED_SCOPE.format(helper="_trainer_modules"))
 
     def test_two_reader_helpers_do_not_qualify(self) -> None:
@@ -358,15 +439,22 @@ class TestTheDiscoveryDoesNotDependOnAHelperName:
         qualifying = _A_READER + _A_ROOTED_SCOPE.format(helper="_training_modules")
         assert {is_field_scoped_guard(qualifying), is_field_scoped_guard(_A_READER + _A_LISTED_SCOPE)} == {True, False}
 
+    def test_a_guard_that_owns_two_gates_registers_both(self) -> None:
+        """One guard can own more than one gate, and both must be graded.
+
+        The posture guard owns the two non-numeric domains. A lookup that stopped
+        at the first match graded ``resume`` and left ``streaming``'s fields
+        unchecked by the cells above, which is the same silent partial sweep this
+        module exists to prevent.
+        """
+        module = _guard_modules()["test_posture_flag_domain.py"]
+        assert _gates_of(module) == ["_resume_problems", "_streaming_problems"]
+
     def test_every_discovered_guard_registers_its_gate(self) -> None:
         """A discovered guard whose gate is unregistered fails opaquely.
 
         The gate lookup in the tests above raises ``StopIteration`` rather than
         naming the omission, so the mapping is checked here where it can.
         """
-        unregistered = sorted(
-            name
-            for name, module in _guard_modules().items()
-            if not any(g in line for g in FIELD_SCOPED_GATES for line in inspect.getsource(module).splitlines())
-        )
+        unregistered = sorted(name for name, module in _guard_modules().items() if not _gates_of(module))
         assert unregistered == [], f"guards whose gate is absent from FIELD_SCOPED_GATES: {unregistered}"
