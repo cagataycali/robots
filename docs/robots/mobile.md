@@ -173,6 +173,18 @@ soft-stop frame on the way out rather than cutting the motors dead. Poll
 `get_task_status()`; `stop_task()` reports honestly whether the loop actually
 joined.
 
+`get_task_status()` keeps answering after the rollout's thread is gone, and its
+`exit_reason` names whichever of these ended it — so a caller who polls late
+still learns why the robot stopped moving:
+
+| `exit_reason` | What happened |
+|---------------|---------------|
+| `n_steps` / `duration` | the rollout ran its budget out |
+| `gate` | sport mode was taken back, or the battery fell under the floor (`exit_detail` says which) |
+| `policy` | the policy raised, returned `None`, or named a joint this robot does not have |
+| `publish` | the frame did not reach `rt/lowcmd` |
+| `stop_task` / `stop` / `cleanup` | a caller halted it — `stop_task()`, the mesh's `stop` verb, or teardown |
+
 ## Real hardware: the EarthRover native driver
 
 `earthrover` declares `hardware.lerobot_type`, so `mode="real"` builds the lerobot robot

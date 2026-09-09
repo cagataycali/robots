@@ -151,9 +151,8 @@ class _RecordingMotionSwitcher:
         self.release_calls += 1
 
 
-@pytest.fixture
-def stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+def install_unitree_sdk_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register a ``unitree_sdk2py`` stub on :mod:`sys.modules`.
 
     The Go2 driver imports ``unitree_sdk2py.idl.default``,
     ``unitree_sdk2py.utils.crc`` and ``unitree_sdk2py.idl.unitree_go.msg.dds_``
@@ -161,6 +160,12 @@ def stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     production lane hardware drives, on a box with no SDK.
     ``monkeypatch.setitem`` restores the previous entries - normally absent - on
     teardown.
+
+    A plain function rather than only a fixture, so a sibling suite grading the
+    same driver installs the same stub instead of keeping a second copy of it.
+
+    Args:
+        monkeypatch: The requesting test's patcher, which owns the teardown.
     """
     names = {
         "unitree_sdk2py": types.ModuleType("unitree_sdk2py"),
@@ -177,6 +182,12 @@ def stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     names["unitree_sdk2py.utils.crc"].CRC = _StubCRC  # type: ignore[attr-defined]
     for name, module in names.items():
         monkeypatch.setitem(sys.modules, name, module)
+
+
+@pytest.fixture
+def stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The SDK stub, installed for the duration of one test."""
+    install_unitree_sdk_stub(monkeypatch)
 
 
 def _released_driver() -> tuple[Go2Driver, _RecordingPublisher]:

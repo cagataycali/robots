@@ -1434,10 +1434,20 @@ class _ControlLoop:
         The signal wins over policy work: the loop re-reads the event at the top
         of every step and again after the policy returns, before publishing.
 
+        ``reason`` is recorded *before* the signal. The loop's ``finally`` stashes
+        its terminal snapshot on the driver while this call is still inside
+        ``join()``, so a reason written after the join reaches ``_exit_reason``
+        but never the stashed copy :meth:`Go2Driver.get_task_status` reads once
+        the loop has cleared itself - which reported a finished rollout with no
+        exit reason at all, and collapsed this driver's three caller words
+        (``stop_task``, the agent ``stop`` verb, ``cleanup``) into one absence.
+        Recording first costs nothing: :meth:`_ControlLoop._set_exit` is first-writer-wins, so
+        a loop that already ended on its own budget keeps that reason.
+
         Args:
             reason: Recorded as the exit reason unless the loop already set one -
-                a budget expiring concurrently with a caller's stop keeps its own,
-                more specific reason.
+                a budget that expired before this call keeps its own, more
+                specific reason.
             timeout: Seconds to wait for the join.
 
         Returns:
@@ -1445,15 +1455,13 @@ class _ControlLoop:
             is still running, which a caller must report honestly rather than
             claiming a stop that has not happened.
         """
+        self._set_exit(reason)
         self._stop_event.set()
         thread = self._thread
         joined = True
         if thread is not None:
             thread.join(timeout=timeout)
             joined = not thread.is_alive()
-        with self._lock:
-            if self._exit_reason is None:
-                self._exit_reason = reason
         return joined
 
     def snapshot(self) -> dict[str, Any]:
