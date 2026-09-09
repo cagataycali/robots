@@ -46,7 +46,7 @@ from strands_robots.utils import boolean_flag_error
 # One value per rejection reason of the shared posture domain: the two spellings
 # of *off* that read as *on*, the integers that pass as a silent posture, and the
 # two values that take a branch without being a declared spelling of it.
-BAD_POSTURES = ("false", "no", 0, 1, None, [])
+BAD_POSTURES: tuple[Any, ...] = ("false", "no", 0, 1, None, [])
 
 # The flag each action is actually handed, which is what may be refused.
 ACTION_FLAGS = tuple((action, flag) for action, flags in cam_mod._ACTION_POSTURE_FLAGS.items() for flag in flags)
