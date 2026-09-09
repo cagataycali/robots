@@ -334,6 +334,17 @@ joint) is raised, never silently resolved. The merged chunk length is the
 shorter of the two, so a per-tick controller (WBC, `execution_horizon == 1`) is
 never starved by a slower chunk-emitting manipulation policy.
 
+`lower_obs_keys` / `upper_obs_keys` narrow what each child is *queried* with,
+and are optional - left unset, both children receive the whole observation and
+read it by name. The key names belong to whatever produced the observation (a
+simulated world names them after the robot's own joints and cameras, a LeRobot
+dataset spells the joint reading `observation.state`), so a subset that shares
+no key with the observation is refused rather than forwarded as an empty dict:
+a child queried with nothing commands its joints from no reading at all, which
+on a humanoid is the balance controller running open-loop. A subset that
+matches only *some* of its keys is still forwarded - the child got what it
+asked for and reads by name.
+
 Run the composite the same way as a bare policy - the goal payload goes in
 `policy_kwargs`, and the torque shim
 ([In simulation](#in-simulation)) is auto-installed for the

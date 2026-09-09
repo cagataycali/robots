@@ -76,6 +76,8 @@ class CompositePolicy(Policy):
     Routing that discards a child's ENTIRE action dict raises: the composite
     would otherwise silently be the surviving child alone. Two children that
     drive the same joint set cannot be composed, only cascaded (module docstring).
+    An observation subset that selects NOTHING raises for the mirror reason: a
+    child queried with an empty dict acts on no reading at all.
 
     The merged chunk length is the shorter of the two children's chunks, so the
     more frequently re-querying child sets the re-query cadence
@@ -95,9 +97,14 @@ class CompositePolicy(Policy):
             policy emits on a given tick. ``None`` (default) accepts every upper
             name not already owned by the lower policy.
         lower_obs_keys: Observation keys to forward to the lower policy. ``None``
-            (default) forwards the full observation (children read by name).
+            (default) forwards the full observation (children read by name). A
+            subset that shares no key with the observation is refused rather
+            than forwarded as an empty dict - the names belong to whatever
+            produces the observation, so a subset written in the wrong namespace
+            would otherwise starve the child on every tick.
         upper_obs_keys: Observation keys to forward to the upper policy. ``None``
-            (default) forwards the full observation.
+            (default) forwards the full observation. Held to the same rule as
+            ``lower_obs_keys``.
 
     Raises:
         ValueError: If ``lower`` or ``upper`` is ``None``, or if ``lower_joints``
@@ -215,13 +222,15 @@ class CompositePolicy(Policy):
             child that owns that name.
 
         Raises:
-            ValueError: If either child returns an empty chunk, if routing
-                discards a child's entire action dict (the composite would be
-                the other child alone), or if the lower policy commands a joint
-                ``upper_joints`` assigns to the upper policy.
+            ValueError: If a configured observation subset shares no key with
+                the observation (the child would be queried blind), if either
+                child returns an empty chunk, if routing discards a child's
+                entire action dict (the composite would be the other child
+                alone), or if the lower policy commands a joint ``upper_joints``
+                assigns to the upper policy.
         """
-        lower_obs = self._filter_obs(observation_dict, self._lower_obs_keys)
-        upper_obs = self._filter_obs(observation_dict, self._upper_obs_keys)
+        lower_obs = self._filter_obs(observation_dict, self._lower_obs_keys, "lower", self._lower)
+        upper_obs = self._filter_obs(observation_dict, self._upper_obs_keys, "upper", self._upper)
         lower_chunk, upper_chunk = await asyncio.gather(
             self._lower.get_actions(lower_obs, instruction, **kwargs),
             self._upper.get_actions(upper_obs, instruction, **kwargs),
@@ -366,12 +375,55 @@ class CompositePolicy(Policy):
             return {k: v for k, v in action.items() if k not in exclude}
         return dict(action)
 
-    @staticmethod
-    def _filter_obs(observation_dict: dict[str, Any], keys: set[str] | None) -> dict[str, Any]:
-        """Forward the full observation, or only ``keys`` when a subset is configured."""
+    def _filter_obs(
+        self, observation_dict: dict[str, Any], keys: set[str] | None, role: str, child: Policy
+    ) -> dict[str, Any]:
+        """The observation ``child`` is queried with: all of it, or only ``keys``.
+
+        Refuses a subset that selects nothing from an observation that has keys.
+        A child queried with an empty dict reads none of the state it acts on and
+        commands its joints from no information at all -- the observation-side
+        twin of the discarded action dict :meth:`_reject_discarded_child` already
+        refuses, and it is the mistake a key subset makes most easily, because
+        the names belong to whatever produced the observation: a MuJoCo world
+        names them after the robot's own joints (``"1"``, ``"1.vel"``), while a
+        LeRobot dataset spells the same reading ``"observation.state"``. One
+        subset written in the wrong namespace shares no key at all, so the child
+        is starved on every tick of every episode while the rollout reports
+        success.
+
+        Refused on the total miss rather than on any missing key, for the reason
+        :meth:`_reject_discarded_child` leaves a child that commanded nothing
+        alone: a partly satisfied subset still hands the child keys it asked for,
+        and whether it can act on those is its own contract (children read by
+        name). An observation with no keys at all is likewise left alone -- there
+        is nothing for the subset to have missed.
+
+        Args:
+            observation_dict: The observation the consumer produced this tick.
+            keys: ``child``'s configured key subset, or ``None`` for all of it.
+            role: The seat ``child`` occupies - ``"lower"`` or ``"upper"``.
+            child: The child policy about to be queried.
+
+        Returns:
+            The observation to pass to ``child``.
+
+        Raises:
+            ValueError: If ``keys`` shares no key with a non-empty observation.
+        """
         if keys is None:
             return observation_dict
-        return {k: v for k, v in observation_dict.items() if k in keys}
+        selected = {k: v for k, v in observation_dict.items() if k in keys}
+        if selected or not observation_dict:
+            return selected
+        raise ValueError(
+            f"CompositePolicy: the {role} policy '{child.provider_name}' would be queried with an "
+            f"empty observation - the {role}_obs_keys group {sorted(keys)} shares no key with the "
+            f"observation {sorted(observation_dict)}, so it would command its joints from no "
+            f"reading at all. Set {role}_obs_keys to keys the observation carries (they are named "
+            "by whatever produces it - a simulated world names them after the robot's own joints "
+            f"and cameras), or leave {role}_obs_keys unset to forward the whole observation."
+        )
 
 
 __all__ = ["CompositePolicy"]
