@@ -2064,6 +2064,16 @@ which side the enum is on.
   limits, recoverable only by re-calibrating the hardware - while the tool reported
   ``Overwrite mode: `false` `` beside a restored count of 1. Pinned by
   `tests/tools/test_calibration_restore_overwrite_flag_domain.py`.
+  The asset cache is the third one, and the only one whose deletion takes a file the
+  package never authored: `download_robots(force=)` and the `download_assets` facade both
+  read it, and a re-fetch removes the cached directory for a robot whose assets are
+  already present - the directory `_copy_external_tree` filters on read rather than
+  cleaning afterwards, precisely so a README or notes kept beside the assets survive a
+  download. `force="false"` was indistinguishable from `force=True`: measured with one
+  present robot, the directory was replaced, a file kept beside its assets was gone, and
+  the call reported `downloaded: 1`. `_needs_download` had returned the flag verbatim as
+  its own `bool` verdict, so an unchecked value became a partition decision rather than an
+  argument error. Pinned by `tests/test_asset_download_force_flag_domain.py`.
 - **A flag whose misread only shows up in a rendered frame is checked at construction.**
   Where the branch a flag selects is applied later - a fitted transform, a compositing
   decision - the misread has no error to surface at, so it reads as a scene that looks

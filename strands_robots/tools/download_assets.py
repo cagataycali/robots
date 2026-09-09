@@ -16,6 +16,7 @@ from strands.tools.decorator import tool
 from strands_robots.assets.download import download_robots, get_user_assets_dir
 from strands_robots.assets.manager import list_available_robots
 from strands_robots.registry import format_robot_table
+from strands_robots.utils import boolean_flag_error
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,10 @@ def download_assets(
             non-empty value that names no robot (``","``) is refused rather
             than read as "all".
         category: Filter: arm, bimanual, hand, humanoid, mobile, mobile_manip
-        force: Re-download even if present
+        force: Re-fetch a robot whose assets are already present, replacing
+            the cached directory. A posture, so a non-boolean is refused
+            rather than read by truthiness - ``force="false"`` would
+            otherwise select the re-fetch it spells the skipping of.
     """
     try:
         if action == "list":
@@ -96,6 +100,17 @@ def download_assets(
                             }
                         ],
                     }
+            # The facade checks the flag it forwards. ``download_robots`` refuses a
+            # non-boolean too, but reached through this surface that ValueError is
+            # caught by the handler below and rendered as "Error: ..." with the
+            # library function's name in it - a refusal an agent reads as a crash in
+            # a function it did not call. Checked here, the caller gets the parameter
+            # it passed and the domain it must satisfy. Scoped to this action: the
+            # ``list`` and ``status`` actions consume no flag, and an option no
+            # handler reads must not be refused.
+            if text := boolean_flag_error(force, "force", "download_assets"):
+                return {"status": "error", "content": [{"text": text}]}
+
             result = download_robots(names=robot_names, category=category, force=force)
             parts = [
                 f"Downloaded: {result['downloaded']}, Skipped: {result['skipped']}, Failed: {result['failed']}",

@@ -30,7 +30,7 @@ from typing import Any
 from ..registry import get_robot
 from ..registry import list_robots as registry_list_robots
 from ..registry import resolve_name as resolve_robot_name
-from ..utils import get_assets_dir, get_search_paths, safe_join
+from ..utils import boolean_flag_error, get_assets_dir, get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,9 @@ def _needs_download(name: str, info: dict[str, Any] | None, force: bool = False)
 
     ``force`` re-fetches a model whose meshes are all present. A model with
     nothing missing is the only case ``force`` decides: a missing reference is
-    fetched either way.
+    fetched either way - which is why that case returns the flag itself, and why
+    :func:`download_robots` checks it against the boolean domain before calling
+    here rather than letting a non-boolean become this function's verdict.
     """
     if info is None:
         return False
@@ -590,14 +592,17 @@ def download_robots(
             is refused rather than widened to all (see :exc:`ValueError` below).
         category: Filter by category (arm, humanoid, mobile, ...). Applied only
             when ``names`` is ``None``.
-        force: Re-download even if present.
+        force: Re-fetch a robot whose assets are already present, replacing the
+            cached directory. A posture, so it must be a boolean (see
+            :exc:`ValueError` below).
 
     Returns:
         Dict with downloaded/skipped/failed counts, names, and details.
 
     Raises:
         ValueError: If ``names`` is an empty selection, which asks for no robot
-            and cannot be honored as a request for every robot.
+            and cannot be honored as a request for every robot; or if ``force``
+            is not a boolean, which cannot be read as either posture.
     """
     # ``names`` selects a SUBSET of the sim robots the registry already lists, so it
     # is read by membership - the rule ``names`` is read by on the teleoperate path
@@ -628,6 +633,32 @@ def download_robots(
             "download_robots(names=[]) selects no robot, so there is nothing to download. "
             "Pass names=None to download every sim robot, or name the subset to download."
         )
+
+    # ``force`` selects a POSTURE - re-fetch a model whose assets are already present,
+    # or leave it alone - so it is held to the shared boolean domain rather than read by
+    # truthiness. It is the third flag in this package to sit in front of a
+    # ``shutil.rmtree``, and the first two are why the rule exists: ``start_recording``'s
+    # ``overwrite`` deleted the caller's dataset and ``restore_calibrations``' overwrote a
+    # measurement of the hardware. Here the re-fetch removes the cached directory for a
+    # robot whose assets are present, and that directory is where a user's own files sit -
+    # ``_copy_external_tree`` filters on read rather than deleting afterwards precisely so
+    # a README or notes kept beside the assets are never touched, and this is the one path
+    # that does touch them.
+    #
+    # Measured on the shipped code, ``force="false"`` (also ``"no"``, ``"off"``, ``"0"``,
+    # ``1`` and ``math.nan``) was indistinguishable from ``force=True``: the present
+    # robot's cache directory was removed and re-fetched, a file kept beside its assets
+    # was gone, and the call reported ``downloaded: 1`` to a caller who had spelled the
+    # not-re-downloading of it. The falsy non-booleans - ``None``, ``0``, ``[]`` - took the
+    # skip branch without ever being a declared spelling of it.
+    #
+    # Refused here, alongside the selection above and ahead of ``get_user_assets_dir()``,
+    # so a refusal cannot arrive after the directory it was refusing to replace is gone.
+    # It is also what keeps :func:`_needs_download` honest: that function returns this
+    # flag as its own ``bool`` verdict for a model with nothing missing, so an unchecked
+    # value was returned from a surface declaring it returns a boolean.
+    if text := boolean_flag_error(force, "force", "download_robots"):
+        raise ValueError(text)
 
     dest_dir = get_user_assets_dir()
     # Filter None values - get_robot() can return None for unknown names
