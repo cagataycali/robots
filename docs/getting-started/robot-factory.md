@@ -174,6 +174,21 @@ which driver asked. Each returns `None` for anything that is not a reading, incl
 vector of the wrong length). The vector readers are all-or-nothing and return a fresh list, so a
 caller mutating the envelope does not race the callback thread's next write.
 
+Routing through those functions also decides what *one* unreadable field costs, because they do not
+raise. A decoder usually caches several independent things from one message -- the Unitree
+`_on_lowstate` caches an IMU the mesh publishes and, after it, the `mode_machine` layout id every
+motion write echoes -- and a hand-rolled coercion inside the shared `try` makes them dependent: the
+first field the driver cannot read discards every field decoded after it. That is worse than losing
+the field, because the later cache is what a gate reads. A `mode_machine` never written refuses
+every motion write with "lowstate has not delivered yet", on a robot whose lowstate is arriving and
+whose only problem is one IMU field this driver could not parse. Note that `getattr` cannot help
+here: a field the IDL *declares and leaves unset* returns `None` rather than the default, because
+the attribute exists.
+
+Vector arity is deliberately not part of the rule. A quaternion of two elements is returned as two
+elements, on both drivers, because a decoder that grades arity where its sibling does not is how the
+two came to disagree in the first place.
+
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python

@@ -1357,20 +1357,51 @@ class G1Driver:
         motion-switcher API and arrives on a different topic.  Writing this
         field to :attr:`_mode_machine` (rather than :attr:`_fsm_id`) keeps the
         two ranges separate: ``[0, 255]`` for the echo, arbitrary for the gate.
+
+        This message carries two independent things, so every field is read
+        through :func:`~strands_robots.drivers.base.telemetry_float_list` /
+        :func:`~strands_robots.drivers.base.telemetry_int` - the same owner
+        :meth:`_on_bms` and the Go2's ``_on_lowstate`` read through.  Two
+        properties follow, and neither holds for a hand-rolled coercion:
+
+        * A field the message does not carry lands ``None`` rather than a
+          typed default.  On an attitude that distinction is the whole
+          contract: ``rpy`` defaulted to ``[0.0, 0.0, 0.0]`` and
+          ``quaternion`` defaulted to ``[1.0, 0.0, 0.0, 0.0]`` are not
+          missing values, they are *level and upright* - a well-formed
+          reading, published on the mesh IMU topic for as long as the robot
+          runs, for a humanoid that may be lying down.  An accelerometer
+          defaulted to ``[0.0, 0.0, 0.0]`` is free fall, which no resting
+          IMU reports.
+        * The coercion cannot raise, so one unusable field costs that field
+          and not the fields decoded after it.  :attr:`_mode_machine` is
+          decoded here and gates every motion write, and its refusal reads
+          "lowstate has not delivered yet" - which a lowstate that *did*
+          deliver, carrying one field this driver could not read, would make
+          untrue for the life of the process.
+
+        A refused ``mode_machine`` leaves the attribute at its previous value,
+        matching :meth:`_refresh_fsm_id`: the layout id the firmware wants
+        echoed does not change while the robot is powered, so the last reading
+        that parsed is a better answer than none.
+
+        Vector arity is deliberately not checked here.  Neither the shared
+        owner nor the Go2 decoder grades it, and grading it on one of the two
+        Unitree drivers is how the two came to disagree in the first place.
         """
         try:
             imu = getattr(msg, "imu_state", None)
             if imu is not None:
                 self._imu = {
-                    "rpy": [float(x) for x in getattr(imu, "rpy", [0.0, 0.0, 0.0])[:3]],
-                    "gyroscope": [float(x) for x in getattr(imu, "gyroscope", [0.0, 0.0, 0.0])[:3]],
-                    "accelerometer": [float(x) for x in getattr(imu, "accelerometer", [0.0, 0.0, 0.0])[:3]],
-                    "quaternion": [float(x) for x in getattr(imu, "quaternion", [1.0, 0.0, 0.0, 0.0])[:4]],
+                    "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
+                    "gyroscope": telemetry_float_list(getattr(imu, "gyroscope", None)),
+                    "accelerometer": telemetry_float_list(getattr(imu, "accelerometer", None)),
+                    "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
                     "t": time.time(),
                 }
-            mode_machine = getattr(msg, "mode_machine", None)
+            mode_machine = telemetry_int(getattr(msg, "mode_machine", None))
             if mode_machine is not None:
-                self._mode_machine = int(mode_machine)
+                self._mode_machine = mode_machine
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
             logger.debug("%s: lowstate decode failed: %s", self._tool_name, exc)
 
