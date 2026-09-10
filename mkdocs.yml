@@ -73,6 +73,9 @@ nav:
 - Tool Result Contract: contracts.md
 - Contributing: contributing.md
 - Troubleshooting: troubleshooting.md
+hooks:
+  - docs/hooks/numbers.py
+
 theme:
   name: material
   logo: assets/strands-logo.svg
