@@ -54,7 +54,12 @@ dependencies = [
     # enters ``strands.hooks.__all__`` at 1.10.0, but ``interrupt`` only enters
     # its MRO at 1.13.0. On 1.10.0-1.12.x the gate therefore imports cleanly and
     # raises ``AttributeError`` at the moment it should pause a real robot, which
-    # is a worse outcome than refusing the install. See
+    # is a worse outcome than refusing the install. The same release ships the
+    # rest of the interrupt machinery the real-hardware ``Robot`` tool's
+    # operator gate uses at module import time,
+    # ``strands.interrupt.InterruptException`` and
+    # ``strands.types._events.ToolInterruptEvent`` (both absent from the 1.12.0
+    # wheel), so they sit on the floor rather than raise it. See
     # tests/test_strands_agents_floor_ships_the_imported_api.py, which owns that
     # measurement, grades the members the gate calls, and fails the moment a
     # newer strands symbol is imported without raising this floor.
@@ -801,10 +806,38 @@ select = [
     # went unenforced by any merge-blocking check. Ruff is that check here.
     "B015",  # useless comparison - `x == 1` as a statement, the real bug class
     "B018",  # useless expression - a value computed and discarded
+    # The pydocstyle PRESENCE rules, and only those. A public surface with no
+    # docstring at all is the one docstring defect a caller cannot work around:
+    # there is nothing to read but the source. This was previously asserted by
+    # fourteen copies of one AST walk under tests/, one per package, and the
+    # copies covered fourteen of the package's forty-one directories - all
+    # twenty-two undocumented surfaces they were meant to catch sat in a
+    # directory none of them walked (dashboard/, rtps/idl/, tools/g1/). Selected
+    # here instead, so the rule is enforced over the whole package by the
+    # merge-blocking lint gate. The FORMAT rules (D205 summary layout, D401
+    # imperative mood, D413 section spacing, ...) are deliberately NOT selected:
+    # 2,051 findings, none of them a missing docstring.
+    "D100",  # undocumented public module
+    "D101",  # undocumented public class
+    "D102",  # undocumented public method
+    "D103",  # undocumented public function
+    "D106",  # undocumented public nested class
 ]
 ignore = [
     "E501",  # line too long - handled by formatter
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# The presence rules govern the PACKAGE's public surface - what a caller reads
+# to drive the API. A test, an example script and a repo helper are read as
+# whole files by whoever edits them, their names are already sentences (graded
+# by tests/test_test_case_names_describe_behaviour.py), and the fourteen guards
+# these rules replace scanned strands_robots/ alone, so the scope is unchanged.
+"tests/**" = ["D100", "D101", "D102", "D103", "D106"]
+"tests_integ/**" = ["D100", "D101", "D102", "D103", "D106"]
+"examples/**" = ["D100", "D101", "D102", "D103", "D106"]
+"scripts/**" = ["D100", "D101", "D102", "D103", "D106"]
+".github/scripts/**" = ["D100", "D101", "D102", "D103", "D106"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["strands_robots"]

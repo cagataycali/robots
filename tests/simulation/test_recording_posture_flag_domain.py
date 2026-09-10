@@ -32,6 +32,7 @@ import ast
 import inspect
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ from strands_robots.utils import boolean_flag_error
 
 pytest.importorskip("mujoco")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 

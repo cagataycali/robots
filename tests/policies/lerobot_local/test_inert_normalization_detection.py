@@ -168,3 +168,71 @@ def test_import_drift_degrades_to_empty(monkeypatch):
     # Force the in-method import to raise ImportError.
     monkeypatch.setitem(sys.modules, "lerobot.configs.types", None)
     assert bridge.inert_normalization_features() == []
+
+
+# --- stats present at the WRONG WIDTH: the opposite failure to an absent stat ---
+#
+# Absent stats make LeRobot return the tensor unchanged (silent). Stats present
+# at the wrong width make it reach the arithmetic and raise from the broadcast,
+# naming neither feature nor width, on the FIRST inference - after a rollout has
+# started. Both widths are known at load, so a mismatch is reported there.
+
+_MS7 = {"mean": [0.0] * 7, "std": [1.0] * 7}
+
+
+def test_mismatched_stat_width_is_flagged_naming_both_widths():
+    bridge = _bridge(
+        {"observation.state": dict(_MS7), "action": dict(_MS7)},
+        {"action": dict(_MS7)},
+    )
+    flagged = bridge.mismatched_normalization_widths()
+    assert flagged, "7-wide stats on a 6-wide checkpoint were not reported"
+    joined = " | ".join(flagged)
+    assert "observation.state" in joined and "action" in joined
+    assert "6" in joined and "7" in joined, f"neither width named: {joined}"
+
+
+def test_matching_stat_width_is_not_flagged():
+    bridge = _bridge({"observation.state": dict(_MS), "action": dict(_MS)}, {"action": dict(_MS)})
+    assert bridge.mismatched_normalization_widths() == []
+
+
+def test_absent_stats_are_the_inert_case_not_a_width_mismatch():
+    """The two detectors report disjoint failures, so neither masks the other."""
+    bridge = _bridge({"so100.buffer.action": dict(_MS)}, {"so100.buffer.action": dict(_MS)})
+    assert bridge.inert_normalization_features(), "premise: absent stats are the inert case"
+    assert bridge.mismatched_normalization_widths() == []
+
+
+def test_visual_channel_stats_are_not_a_width_mismatch():
+    """LeRobot reshapes a flat ``(C,)`` visual stat to ``(C, 1, 1)`` on purpose."""
+    feats = {"observation.image": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 256, 256))}
+    norm = NormalizerProcessorStep(
+        features=feats,
+        norm_map={FeatureType.VISUAL: NormalizationMode.MEAN_STD},
+        stats={"observation.image": {"mean": [0.0] * 3, "std": [1.0] * 3}},
+    )
+    bridge = ProcessorBridge(preprocessor=DataProcessorPipeline(steps=[norm]), postprocessor=None, device="cpu")
+    assert bridge.mismatched_normalization_widths() == []
+
+
+def test_a_datasets_count_scalar_is_not_a_width_mismatch():
+    """``LeRobotDataset.meta.stats`` carries ``count`` as shape ``(1,)`` per
+    feature; the normalizer never reads it, so a 6-wide checkpoint fed its own
+    dataset's stats must load (the recorded->trained->loaded round trip)."""
+    with_count = {**dict(_MS), "count": [1]}
+    bridge = _bridge({"observation.state": with_count}, {"action": with_count})
+    assert bridge.mismatched_normalization_widths() == []
+
+
+def test_both_detectors_read_one_scoping_rule():
+    """A preprocessor's ``action`` entry is never exercised, so neither flags it."""
+    bridge = _bridge({"action": dict(_MS7)}, {"action": dict(_MS)})
+    assert bridge.mismatched_normalization_widths() == []
+    assert bridge.inert_normalization_features() == ["observation.state (STATE/MEAN_STD)"]
+
+
+def test_width_check_degrades_to_empty_on_import_drift(monkeypatch):
+    bridge = _bridge({"observation.state": dict(_MS7)}, {"action": dict(_MS7)})
+    monkeypatch.setitem(sys.modules, "lerobot.utils.constants", None)
+    assert bridge.mismatched_normalization_widths() == []

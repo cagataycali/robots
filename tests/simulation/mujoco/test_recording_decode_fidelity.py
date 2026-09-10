@@ -20,6 +20,7 @@ one OpenCV commonly cannot decode but torchcodec must).
 """
 
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -27,7 +28,7 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 # A minimal arm (one actuated hinge, so ``run_policy`` has something to drive)
 # in front of a large red panel that fills a close, straight-on camera. A red

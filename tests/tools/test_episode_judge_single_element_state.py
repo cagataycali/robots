@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,7 @@ import strands_robots.tools.episode_judge as M
 pq = pytest.importorskip("pyarrow.parquet", reason="the hand-written dataset fixture writes parquet")
 import pyarrow as pa  # noqa: E402
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 # The tools are wrapped by the Strands @tool decorator; call the raw functions.
 _load_episode = getattr(M.load_episode, "__wrapped__", None) or M.load_episode

@@ -15,9 +15,15 @@ r.run()  # starts listening for commands. Ctrl+C to stop.
 
 `Robot()` creates the robot. `.run()` starts Device Connect with D2D defaults (Zenoh multicast scouting, no broker) and blocks - the robot becomes discoverable on the LAN and listens for commands. Without `.run()`, the script exits and the robot is removed from the network.
 
-> **Secure by default:** Device Connect no longer enables unencrypted/unauthenticated transport implicitly. For a local, trusted-network D2D trial without a broker, explicitly opt in to insecure transport:
+> **Secure by default:** with nothing configured the snippet above does not come
+> online - `.run()` refuses the bring-up and prints `<peer-id> is NOT online`,
+> because a plaintext D2D transport authenticates nobody and any peer on the LAN
+> could then call `execute` / `stop`. Either point the device at credentials
+> (`MESSAGING_CREDENTIALS_FILE`, the TLS file variables, or a `tls/` endpoint),
+> or opt in for a local, trusted-network trial:
 > ```bash
 > export DEVICE_CONNECT_ALLOW_INSECURE=true   # ONLY on a trusted, isolated LAN
+> export DEVICE_CONNECT_RPC_ALLOW=my-agent    # who may call execute / stop
 > ```
 > A prominent warning is logged whenever insecure mode is active. For anything beyond a local trial, run the brokered/registry setup with mTLS (see *Full Infrastructure* below).
 
@@ -282,11 +288,21 @@ Set environment variables (all terminals):
 
 ```bash
 export MESSAGING_BACKEND=zenoh
-export ZENOH_CONNECT=tcp/localhost:7447
-# NOTE: do NOT set DEVICE_CONNECT_ALLOW_INSECURE here. The whole point of the
-# brokered setup is authenticated, encrypted transport (mTLS). Enabling
-# insecure mode would disable that and contradict the security model below.
-# Insecure mode is only for the local, broker-less D2D trial.
+
+# A router reached over mTLS - the deployment this section is for. A `tls/`
+# endpoint and the TLS material are what make the transport authenticated, and
+# a device configured this way needs no insecure opt-in.
+export ZENOH_CONNECT=tls/router.example:7447
+export MESSAGING_TLS_CA_FILE=/etc/device-connect/ca.pem
+export MESSAGING_TLS_CERT_FILE=/etc/device-connect/device.pem
+export MESSAGING_TLS_KEY_FILE=/etc/device-connect/device.key
+
+# A local trial against the dev router on a plaintext endpoint is still a
+# plaintext transport, whatever the router supports, so it needs the same opt-in
+# the broker-less D2D trial does - and the allowlist is advisory there, because
+# the caller id is self-asserted until mTLS binds it to a certificate.
+# export ZENOH_CONNECT=tcp/localhost:7447
+# export DEVICE_CONNECT_ALLOW_INSECURE=true
 ```
 
 All the options above (A–B) work identically with full infrastructure - the only difference is that devices register in etcd and discovery goes through the registry service instead of multicast scouting.
@@ -313,7 +329,11 @@ All the options above (A–B) work identically with full infrastructure - the on
 > Devices can restrict which callers may invoke state-mutating RPCs (`execute` /
 > `stop` / `step` / `reset`) and `emergencyStop`, matched against the RPC's
 > authenticated `source_device` (trailing-`*` globs allowed, e.g. `safety-*`).
-> Two things to know:
+> Three things to know:
+> - **Unset means nobody.** A device with no `DEVICE_CONNECT_RPC_ALLOW` refuses
+>   every `execute` / `stop` / `step` / `reset` and logs once which variable to
+>   set. Type `*` for the development "allow every named caller" posture (it
+>   warns). `emergencyStop` with no allowlist still honours a *named* caller.
 > - **Caller identity must be supplied.** A device-to-device caller carries its
 >   id automatically; an **agent** driving the robot via `robot_mesh` /
 >   `device-connect-agent-tools` is anonymous by default. Set

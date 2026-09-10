@@ -2,7 +2,9 @@
 
 These tests exercise the wrapper logic that does NOT require a real LeRobot
 dataset by injecting a fake dataset object, so they run on a minimal env
-(``lerobot`` not installed). They cover the partial-episode discard behaviour
+(``lerobot`` not installed) - except the camera cells of
+:class:`TestBuildFeaturesSchema`, which read the camera schema lerobot itself
+declares. They cover the partial-episode discard behaviour
 and the add_frame() control-loop transform (schema-ordered flattening, camera
 normalization, drop accounting), plus episode/finalize/push lifecycle.
 """
@@ -196,16 +198,21 @@ def test_add_frame_orders_state_and_action_by_schema():
     assert frame["task"] == "pick"
 
 
-def test_add_frame_fills_missing_keys_with_zero():
-    """A joint absent from the observation contributes 0.0 at its schema slot."""
+def test_add_frame_refuses_a_missing_state_key():
+    """A joint absent from the observation is refused, not recorded as 0.0.
+
+    0.0 is a position. Written into the column it says the joint sat at zero
+    for the episode; ``verify-dataset`` passes a constant column and a policy
+    trains on it. LeRobot's ``build_dataset_frame`` raises ``KeyError`` for the
+    same input, and so does this recorder.
+    """
     ds = _CapturingDataset(_state_action_features(["j1", "j2", "j3"], ["j1"]))
     rec = DatasetRecorder(dataset=ds)
 
-    rec.add_frame(observation={"j1": 1.0, "j3": 3.0}, action={"j1": 0.5}, task="t")
+    with pytest.raises(ValueError, match=r"state column\(s\) \['j2'\]"):
+        rec.add_frame(observation={"j1": 1.0, "j3": 3.0}, action={"j1": 0.5}, task="t")
 
-    frame = ds.frames[0]
-    assert np.allclose(frame["observation.state"], [1.0, 0.0, 3.0])
-    assert np.allclose(frame["action"], [0.5])
+    assert ds.frames == []
 
 
 def test_add_frame_flattens_vector_valued_entries():
@@ -658,9 +665,10 @@ class TestBuildFeaturesSchema:
     keys appear, their ``dtype``/``shape``/``names``, and how the state and
     action dimensions are derived from the several mutually-exclusive input
     sources (explicit feature dicts, a flat ``joint_names`` list, or the
-    action-mirrors-state fallback). These are pure-logic assertions -- no
-    LeRobot install is required because ``_build_features`` is a classmethod
-    that only manipulates plain dicts.
+    action-mirrors-state fallback). These are pure-logic assertions on plain
+    dicts; the cells that declare a camera need lerobot installed, because the
+    camera block delegates the layout to lerobot's own
+    ``hw_to_dataset_features`` rather than restating it.
     """
 
     def test_camera_keys_emit_video_features_with_default_dims(self):
@@ -672,12 +680,15 @@ class TestBuildFeaturesSchema:
             video_width=640,
         )
 
+        # lerobot's own declaration (hw_to_dataset_features): HWC, like every
+        # published v3 dataset and lerobot's record path.
         assert features["observation.images.top"] == {
             "dtype": "video",
-            "shape": (3, 480, 640),
-            "names": ["channels", "height", "width"],
+            "shape": (480, 640, 3),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": False},
         }
-        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+        assert features["observation.images.wrist"]["shape"] == (480, 640, 3)
 
     def test_camera_dims_override_per_camera_resolution(self):
         """A per-camera entry in ``camera_dims`` overrides the global size for
@@ -689,8 +700,8 @@ class TestBuildFeaturesSchema:
             video_width=640,
         )
 
-        assert features["observation.images.top"]["shape"] == (3, 240, 320)
-        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+        assert features["observation.images.top"]["shape"] == (240, 320, 3)
+        assert features["observation.images.wrist"]["shape"] == (480, 640, 3)
 
     def test_use_videos_false_emits_image_dtype(self):
         """``use_videos=False`` records still frames (``image`` dtype) rather
@@ -1296,7 +1307,7 @@ def test_create_builds_features_from_joints_and_cameras(monkeypatch, tmp_path):
 
     features = _FakeDatasetVcodecCreate.last_create_kwargs["features"]
     assert features["observation.state"]["names"] == ["shoulder", "elbow"]
-    assert features["observation.images.top"]["shape"] == (3, 240, 320)
+    assert features["observation.images.top"]["shape"] == (240, 320, 3)
 
 
 # camera_key_map remap + camera-key-mismatch diagnostic
@@ -1531,24 +1542,21 @@ class TestCodecRouting:
         assert any("RGBEncoderConfig" in rec.message for rec in caplog.records)
 
 
-def test_add_frame_fills_missing_action_key_with_zero():
-    """An action key absent from the action dict contributes 0.0 at its slot.
+def test_add_frame_refuses_a_missing_action_key_by_default():
+    """An action key absent from the action dict is refused, not written as 0.0.
 
-    ``add_frame`` flattens the action into feature-schema order. A control step
-    that does not populate every declared action key (e.g. a gripper channel the
-    policy left unset) must still emit a full-width action vector with the
-    missing slots zeroed - a short vector would silently misalign the recorded
-    ``action`` column against its declared names.
+    With no ``required_action_keys`` (the direct-API default) every declared
+    action column is this frame's to supply: a recorder fed by hand has no
+    other robot to leave columns for. 0.0 is a "travel to zero" command for an
+    absolute-position actuator, so it is never a stand-in for "unset".
     """
     ds = _CapturingDataset(_state_action_features(["j1"], ["a", "b", "c"]))
     rec = DatasetRecorder(dataset=ds)
 
-    # "b" is absent from the action dict entirely; the schema still has 3 slots.
-    rec.add_frame(observation={"j1": 1.0}, action={"a": 0.5, "c": 0.7}, task="t")
+    with pytest.raises(ValueError, match=r"action column\(s\) \['b'\]"):
+        rec.add_frame(observation={"j1": 1.0}, action={"a": 0.1, "c": 0.3}, task="t")
 
-    frame = ds.frames[0]
-    assert np.allclose(frame["action"], [0.5, 0.0, 0.7])
-    assert frame["action"].dtype == np.float32
+    assert ds.frames == []
 
 
 def test_finalize_swallows_dataset_error_and_still_closes(caplog):

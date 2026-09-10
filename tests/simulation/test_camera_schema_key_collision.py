@@ -31,6 +31,7 @@ import ast
 import inspect
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,7 @@ from strands_robots.utils import camera_schema_key
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 
 def _source_file(obj: Any) -> Path:
@@ -374,7 +375,8 @@ class TestADistinctSceneStillRecords:
         assert set(shapes) == {"arm__wrist", "overview"}, shapes
         # Each column kept the size of the camera it names, so neither took the
         # other's - the failure the collapse produced when it named them alike.
-        assert shapes["overview"][-2:] == (64, 64), shapes
+        # Cameras are declared HWC (height, width, channels), like lerobot's.
+        assert shapes["overview"][:2] == (64, 64), shapes
         assert shapes["arm__wrist"] != shapes["overview"], shapes
 
     def test_an_unnamed_camera_is_not_a_collision(self):

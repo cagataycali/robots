@@ -358,6 +358,26 @@ Naming only one leaves the other inert, and the diagnostic keeps reporting
 whichever half is still unnormalized. Fine-tuning the checkpoint writes stats
 under the canonical keys and needs no override at all.
 
+Supplied stats have to be as WIDE as the features the checkpoint declares. Width
+is what differs between embodiments -- a 6-DOF SO-101, a 7-DOF arm and a 14-DOF
+bimanual all have `observation.state` and `action` -- so reaching for the wrong
+dataset's stats is easy. A mismatch is refused when the policy loads, naming the
+feature and both widths:
+
+```
+ValueError: lerobot_local: lerobot/smolvla_base was given normalization stats
+that do not match the widths the checkpoint declares: ["observation.state
+(STATE/MEAN_STD): feature declares width 6, stats 'observation.state.mean'
+supply 7", ...]
+```
+
+LeRobot itself would reach the arithmetic and raise from the tensor broadcast
+(`The size of tensor a (6) must match the size of tensor b (7)`) on the FIRST
+inference instead -- naming neither the feature nor either width, and only after
+a rollout has started and the robot has been commanded. Visual stats are exempt:
+LeRobot reshapes a flat `(C,)` channel stat to `(C, 1, 1)`, so a 3-wide stat is
+correct for a `(3, H, W)` image feature.
+
 ## State routing
 
 `observation.state` is composed from `robot_state_keys` (set explicitly with

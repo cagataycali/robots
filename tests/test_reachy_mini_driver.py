@@ -27,6 +27,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
+
 
 def _force_real_device_connect_edge():
     """Restore the genuine device_connect_edge modules and re-import the driver.

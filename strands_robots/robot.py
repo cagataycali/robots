@@ -40,6 +40,7 @@ optional dependency or the ``strands-robots-sim`` plugin to be installed)::
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import os
 import threading
@@ -59,6 +60,7 @@ from strands_robots.registry import (
     has_hardware,
     has_sim,
     is_discoverable,
+    list_robots,
     resolve_name,
 )
 
@@ -173,10 +175,19 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
                 f".attach_teleop({canonical!r}, port=...)``. Passing a leader to ``Robot()`` would "
                 "drive the arm a human is holding as a position servo."
             )
+        # Say what was typed, and only add the resolved spelling when the
+        # resolver changed it - "'so1000' (resolved to 'so1000')" tells the
+        # caller nothing. Then offer the nearest registered names, the way
+        # add_robot(data_config=...) already does: a caller who typed 'so1000'
+        # wants 'so100' or 'so101', not a catalog of 74 to read through.
+        resolved = f" (resolved to {canonical!r})" if canonical != original else ""
+        names = [r["name"] for r in list_robots()]
+        close = difflib.get_close_matches(canonical.lower(), names, n=3, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
         raise ValueError(
-            f"Unknown robot {original!r} (resolved to {canonical!r}). "
-            "Pass a registered name (see ``list_robots()``), one of the "
-            "``robot_descriptions`` robots (see ``list_discoverable()``), "
+            f"Unknown robot {original!r}{resolved}.{hint} "
+            "Pass a registered name (see ``strands_robots.list_robots()``), one of the "
+            "``robot_descriptions`` robots (see ``strands_robots.list_discoverable()``), "
             "or supply ``urdf_path=``."
         )
 
@@ -820,7 +831,9 @@ def _run_device_connect_foreground(instance: Any) -> None:
 
     A bring-up that fails keeps the process alive - the operator asked for a
     server and a transient broker outage is not worth losing the process over -
-    but the status line reports what actually came up. Claiming the device is
+    but the status line reports what actually came up. The one failure that is
+    never transient is the ``[device-connect]`` extra being absent: that path
+    prints the remedy, releases the instance and exits 1 instead of parking. Claiming the device is
     online is only true of the path where the runtime started; on the other one
     the mesh has already been stopped for a replacement that never arrived, so
     the process serves no transport at all and the operator has to be told
@@ -846,6 +859,7 @@ def _run_device_connect_foreground(instance: Any) -> None:
             mesh.stop()
         instance.mesh = None
 
+    extra_missing = False
     try:
         from strands_robots.device_connect import init_device_connect_sync
 
@@ -858,7 +872,8 @@ def _run_device_connect_foreground(instance: Any) -> None:
         # An absent extra is the common cause and the only one with a one-line
         # remedy, so name it here: on its own the ImportError names the
         # distribution's internal module, not the extra that installs it.
-        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if isinstance(e, ImportError) else ""
+        extra_missing = isinstance(e, ImportError)
+        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if extra_missing else ""
         logger.warning("Device Connect init failed: %s.%s", e, remedy)
 
     if getattr(instance, "_device_connect_runtime", None) is None:
@@ -867,6 +882,20 @@ def _run_device_connect_foreground(instance: Any) -> None:
             if mesh_was_stopped
             else "This process serves no transport."
         )
+        if extra_missing:
+            # Nothing this process can do brings the transport up: the install
+            # happens in a shell, and the next run is a new process. Parking
+            # here would only turn the README's first command into a hung
+            # terminal and hide the failure from the shell's exit code.
+            print(
+                f"{peer_id} is NOT online: the Device Connect extra is not installed "
+                f"(see the warning above). {lost_transport} Exiting.",
+                flush=True,
+            )
+            unreleased = _release_resources_on_interrupt(instance, peer_id)
+            if unreleased is not None:
+                print(f"{peer_id} is exiting WITHOUT a completed shutdown: {unreleased}", flush=True)
+            os._exit(1)
         print(
             f"{peer_id} is NOT online: the Device Connect runtime did not start "
             f"(see the warning above). {lost_transport} Ctrl+C to stop."

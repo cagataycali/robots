@@ -58,7 +58,13 @@ def test_lockout_rejects_actuating_command_with_generic_wire_error(monkeypatch: 
     puts, _ = _capture(m, monkeypatch)
     m._estop_lockout.set()
 
-    m._exec_cmd({"sender_id": "op1", "turn_id": "t1", "command": {"action": "stop"}})
+    m._exec_cmd(
+        {
+            "sender_id": "op1",
+            "turn_id": "t1",
+            "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
+        }
+    )
 
     responses = [payload for key, payload in puts if key == "strands/op1/response/robot-a/t1"]
     assert responses, puts
@@ -77,10 +83,16 @@ def test_lockout_rejection_is_audited_with_sender_and_action(monkeypatch: pytest
     _, events = _capture(m, monkeypatch)
     m._estop_lockout.set()
 
-    m._exec_cmd({"sender_id": "intruder", "turn_id": "t9", "command": {"action": "stop"}})
+    m._exec_cmd(
+        {
+            "sender_id": "intruder",
+            "turn_id": "t9",
+            "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
+        }
+    )
 
     lockout_events = [detail for event_type, detail in events if event_type == "command_rejected_lockout"]
-    assert lockout_events == [{"sender": "intruder", "action": "stop"}], events
+    assert lockout_events == [{"sender": "intruder", "action": "execute"}], events
 
 
 def test_lockout_permits_status_poll_without_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +129,13 @@ def test_lockout_wire_error_survives_audit_sink_failure(monkeypatch: pytest.Monk
     m._estop_lockout.set()
 
     # Must not raise despite the audit sink failing.
-    m._exec_cmd({"sender_id": "op1", "turn_id": "t1", "command": {"action": "stop"}})
+    m._exec_cmd(
+        {
+            "sender_id": "op1",
+            "turn_id": "t1",
+            "command": {"action": "execute", "instruction": "pick", "policy_provider": "mock"},
+        }
+    )
 
     errors = [payload for key, payload in puts if payload.get("type") == "error"]
     assert errors, puts

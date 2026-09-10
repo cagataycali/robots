@@ -15,9 +15,12 @@ These use the REAL device_connect_edge package (editable install) so the
 
 import asyncio
 import importlib
+import logging
 import sys
 
 import pytest
+
+pytest.importorskip("device_connect_edge", reason="needs the [device-connect] extra")
 
 
 def _force_real_device_connect_edge():
@@ -145,13 +148,15 @@ def _clean_env(monkeypatch):
 
     az._warned_permissive.clear()
     az._warned_insecure_acl.clear()
+    az._warned_unconfigured.clear()
     yield
 
 
 # ── policy_provider allowlist (anti-SSRF) ─────────────────────
 
 
-def test_robot_execute_rejects_ssrf_policy_provider():
+def test_robot_execute_rejects_ssrf_policy_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     d = RobotDeviceDriver(_FakeRobot())
@@ -160,7 +165,8 @@ def test_robot_execute_rejects_ssrf_policy_provider():
     assert "policy_provider" in res["reason"]
 
 
-def test_robot_execute_allows_vetted_provider():
+def test_robot_execute_allows_vetted_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     robot = _FakeRobot()
@@ -170,7 +176,8 @@ def test_robot_execute_allows_vetted_provider():
     assert robot.started["policy_provider"] == "mock"
 
 
-def test_sim_execute_rejects_ssrf_policy_provider():
+def test_sim_execute_rejects_ssrf_policy_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 
     d = SimulationDeviceDriver(_FakeSim())
@@ -276,14 +283,60 @@ def test_secure_acl_no_insecure_advisory(monkeypatch, caplog):
     assert not [r for r in caplog.records if "SELF-ASSERTED" in r.getMessage()]
 
 
-def test_permissive_when_no_allowlist(monkeypatch):
-    # Out-of-the-box: no allowlist => allowed (with a logged warning).
+def test_no_allowlist_refuses_every_state_mutating_rpc(monkeypatch, caplog):
+    """Out-of-the-box: no allowlist => nobody may move the robot (F-003, CWE-862).
+
+    An allowlist nobody configured used to authorize everyone, with a warning
+    as the only sign. Now the call is refused before the driver is reached, and
+    the log names the variable that opens the door.
+    """
+    import strands_robots.device_connect._authz as az
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     robot = _FakeRobot()
     d = RobotDeviceDriver(robot)
-    res = _run(d.execute("go", policy_provider="mock", source_device="anyone"))
-    assert res["status"] == "success"
+    with caplog.at_level(logging.WARNING, logger=az.__name__):
+        res = _run(d.execute("go", policy_provider="mock", source_device="anyone"))
+        _run(d.execute("go", policy_provider="mock", source_device="anyone-else"))
+    assert res["status"] == "error"
+    assert robot.started is None, "the robot was started with no allowlist configured"
+    refusals = [
+        r for r in caplog.records if "DEVICE_CONNECT_RPC_ALLOW" in r.getMessage() and "Refused" in r.getMessage()
+    ]
+    assert len(refusals) == 1, "the unconfigured-allowlist refusal is logged once, not per call"
+
+
+def test_a_star_allowlist_allows_named_callers_and_warns_once(monkeypatch, caplog):
+    """'*' is the development spelling of "allow all": every named caller passes, loudly."""
+    import strands_robots.device_connect._authz as az
+
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "*")
+    with caplog.at_level(logging.WARNING, logger=az.__name__):
+        assert az.is_authorized_caller("anyone", scope="rpc") is True
+        assert az.is_authorized_caller("someone-else", scope="rpc") is True
+    permissive = [r for r in caplog.records if "permissive" in r.getMessage()]
+    assert len(permissive) == 1
+
+
+def test_a_star_allowlist_still_refuses_an_anonymous_caller(monkeypatch):
+    """An allowlist is configured, so a caller with no id has nothing to be matched against."""
+    import strands_robots.device_connect._authz as az
+
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "*")
+    assert az.is_authorized_caller(None, scope="rpc") is False
+
+
+def test_no_allowlist_still_lets_a_named_caller_stop_the_robot(monkeypatch):
+    """Stopping must never get harder than moving: estop from a named peer is honoured."""
+    import strands_robots.device_connect._authz as az
+
+    assert az.is_authorized_caller("safety-1", scope="estop") is True
+
+
+def test_no_allowlist_refuses_an_anonymous_stop(monkeypatch):
+    import strands_robots.device_connect._authz as az
+
+    assert az.is_authorized_caller(None, scope="estop") is False
 
 
 def test_emergencystop_ignores_unauthorized_source(monkeypatch):
@@ -389,12 +442,11 @@ def test_a_populated_estop_allowlist_still_overrides_the_rpc_allowlist(monkeypat
     assert az.is_authorized_caller("rpc-only", scope="estop") is False
 
 
-def test_both_allowlists_empty_stays_permissive(monkeypatch):
-    """Out-of-the-box usability is unchanged: no allowlist anywhere allows all.
+def test_both_allowlists_empty_reads_as_unset_for_estop(monkeypatch):
+    """Nothing to inherit means nothing is configured, and estop then behaves as unset.
 
-    Nothing to inherit means nothing is configured, which stays permissive (and
-    logs the warning that makes the posture visible) rather than becoming
-    fail-closed for every deployment that never set an allowlist.
+    A named caller may still stop the robot (with the warning that makes the
+    posture visible); an anonymous one may not.
     """
     import strands_robots.device_connect._authz as az
 
@@ -402,22 +454,22 @@ def test_both_allowlists_empty_stays_permissive(monkeypatch):
     monkeypatch.setenv("DEVICE_CONNECT_ESTOP_ALLOW", " ")
 
     assert az.is_authorized_caller("anyone", scope="estop") is True
-    assert az.is_authorized_caller(None, scope="estop") is True
+    assert az.is_authorized_caller(None, scope="estop") is False
 
 
 @pytest.mark.parametrize("spelling", _EMPTY_ALLOWLIST_SPELLINGS)
 def test_the_rpc_scope_reads_an_empty_allowlist_as_unset(monkeypatch, spelling):
-    """The RPC scope's own handling of an empty allowlist is unchanged.
+    """An empty spelling is unset, and unset authorizes nobody on the RPC scope.
 
-    It has one variable and no fallback, so every empty spelling already meant
-    "unset" there. This pins that the estop fix did not disturb it.
+    It has one variable and no fallback, so every empty spelling means "unset"
+    there - which since F-003 is a refusal, not a pass.
     """
     import strands_robots.device_connect._authz as az
 
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", spelling)
 
-    assert az.is_authorized_caller("anyone", scope="rpc") is True
-    assert az.is_authorized_caller(None, scope="rpc") is True
+    assert az.is_authorized_caller("anyone", scope="rpc") is False
+    assert az.is_authorized_caller(None, scope="rpc") is False
 
 
 # ── playMove path traversal ───────────────────────────────────
@@ -457,7 +509,12 @@ def test_playmove_rejects_query_injection():
     assert res["status"] == "error"
 
 
-def test_playmove_allows_clean_name():
+def test_playmove_allows_clean_name(monkeypatch):
+    # authz is graded elsewhere: name the caller the contextvar would carry over D2D
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")
+    import strands_robots.device_connect.reachy_mini_driver as rmd_mod
+
+    monkeypatch.setattr(rmd_mod, "get_rpc_source_device", lambda: "op-1")
     drv, rmd = _make_reachy()
     captured = {}
 
@@ -663,10 +720,15 @@ def test_allow_insecure_resolution_precedence():
     assert resolve_allow_insecure(None, "") is False
 
 
-def test_init_device_connect_uses_secure_default():
+def test_init_device_connect_uses_secure_default(monkeypatch):
     """The production entrypoint constructs the runtime secure-by-default when
-    neither the arg nor the env var opt into insecure transport."""
+    TLS is configured and neither the arg nor the env var opt into insecure
+    transport. Without TLS it refuses to start instead, which is what
+    ``test_a_fresh_install_does_not_come_online_in_plaintext`` below pins."""
     from unittest.mock import patch
+
+    monkeypatch.setenv("MESSAGING_CREDENTIALS_FILE", "/etc/dc/test.creds.json")
+    monkeypatch.delenv("DEVICE_CONNECT_ALLOW_INSECURE", raising=False)
 
     from strands_robots.device_connect import init_device_connect
 
@@ -688,6 +750,103 @@ def test_init_device_connect_uses_secure_default():
 
     _run(_go())
     assert captured["allow_insecure"] is False
+
+
+# ── A transport nobody authenticates is refused (D-074) ─────────────────────────
+#
+# Measured at 0fa5ded90 with device-connect-edge 0.2.5, two processes on one host:
+# ``Robot("so100", mode="sim", peer_id="victim-so100").run()`` with no
+# MESSAGING_CREDENTIALS_FILE, no DEVICE_CONNECT_ALLOW_INSECURE and no
+# DEVICE_CONNECT_RPC_ALLOW printed "victim-so100 is online" over plaintext Zenoh
+# multicast; an anonymous ``DeviceConnection()`` in a second process listed it in
+# 3 s, then getStatus / execute(instruction="wave") / stop all returned
+# ``status: success`` and the simulator ran the policy. The INSECURE warning never
+# fired because allow_insecure had resolved to False, and the edge package
+# validates transport security only for NATS. docs/device-connect.md promised
+# "Secure by default" for exactly this path.
+
+_D074_VARS = ("MESSAGING_CREDENTIALS_FILE", "DEVICE_CONNECT_ALLOW_INSECURE", "DEVICE_CONNECT_RPC_ALLOW")
+
+
+def _d074_init(monkeypatch, env: dict, **kwargs):
+    """Run init_device_connect against a recording runtime with exactly ``env`` set."""
+    from unittest.mock import patch
+
+    import strands_robots.device_connect._impl as impl
+    from strands_robots.device_connect import init_device_connect
+
+    for name in (*impl._TLS_ENV, *impl._ENDPOINT_ENV, *_D074_VARS, "MESSAGING_BACKEND"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    built = []
+
+    class _FakeRuntime:
+        def __init__(self, **kw):
+            built.append(kw)
+
+        def set_heartbeat_provider(self, *_a, **_k):
+            pass
+
+        async def run(self):
+            return None
+
+    async def _go():
+        with patch("strands_robots.device_connect.DeviceRuntime", _FakeRuntime):
+            await init_device_connect(_FakeRobot(), peer_id="victim", peer_type="sim", **kwargs)
+
+    _run(_go())
+    return built
+
+
+def test_a_fresh_install_does_not_come_online_in_plaintext(monkeypatch):
+    with pytest.raises(RuntimeError) as err:
+        _d074_init(monkeypatch, {})
+    for name in _D074_VARS:
+        assert name in str(err.value), f"the refusal must name {name}"
+    assert "victim" in str(err.value)
+
+
+def test_the_refusal_happens_before_any_runtime_is_built(monkeypatch):
+    built = []
+    try:
+        built = _d074_init(monkeypatch, {"ZENOH_CONNECT": "tcp/router.local:7447"})
+    except RuntimeError:
+        pass
+    assert built == []
+
+
+def test_the_documented_insecure_opt_in_still_works(monkeypatch):
+    built = _d074_init(monkeypatch, {"DEVICE_CONNECT_ALLOW_INSECURE": "true"})
+    assert built[0]["allow_insecure"] is True
+
+
+def test_a_tls_endpoint_is_accepted_without_the_opt_in(monkeypatch):
+    built = _d074_init(monkeypatch, {}, messaging_url="tls/router.local:7447")
+    assert built[0]["allow_insecure"] is False
+    assert built[0]["messaging_urls"] == ["tls/router.local:7447"]
+
+
+@pytest.mark.parametrize(
+    ("backend", "urls", "env", "authenticated"),
+    [
+        ("zenoh", None, {}, False),
+        ("zenoh", None, {"ZENOH_CONNECT": "tcp/router.local:7447"}, False),
+        ("zenoh", None, {"MESSAGING_CREDENTIALS_FILE": "/etc/dc/robot.creds.json"}, True),
+        ("zenoh", None, {"MESSAGING_TLS_CA_FILE": "/etc/dc/ca.pem"}, True),
+        ("zenoh", None, {"ZENOH_CONNECT": "tls/router.local:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tls/0.0.0.0:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tcp/0.0.0.0:7447"}, False),
+        ("zenoh", ["zenoh+tls://router.local:7447"], {}, True),
+        ("zenoh", ["quic/router.local:7447"], {}, True),
+        ("mqtt", ["mqtt://broker.local:1883"], {}, False),
+        ("nats", None, {}, True),
+    ],
+)
+def test_what_counts_as_an_authenticated_transport(backend, urls, env, authenticated):
+    import strands_robots.device_connect._impl as impl
+
+    assert impl.transport_is_authenticated(backend, urls, env=env) is authenticated
 
 
 def test_init_device_connect_insecure_emits_prominent_warning(caplog):

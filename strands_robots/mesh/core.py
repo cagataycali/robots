@@ -360,14 +360,17 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
 
 
 def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
-    """Whether a stop result AFFIRMATIVELY reports that nothing was stopped.
+    """Whether a result AFFIRMATIVELY reports that it did not do the thing.
 
-    The single owner of that rule. Two callers read it and they must not drift:
-    :func:`_peers_that_did_not_stop` grades the envelopes an
-    :meth:`Mesh.emergency_stop` broadcast collected, and the fleet-wide sim
-    branch of :meth:`Mesh._dispatch` grades each per-robot ``stop_policy``
-    answer before deciding its own ``ok``. A second copy of the rule is how the
-    branch came to report ``ok=True`` over a refusal it had in hand.
+    The single owner of that rule. Three callers read it and they must not
+    drift: :func:`_peers_that_did_not_stop` grades the envelopes an
+    :meth:`Mesh.emergency_stop` broadcast collected, the fleet-wide sim branch
+    of :meth:`Mesh._dispatch` grades each per-robot ``stop_policy`` answer
+    before deciding its own ``ok``, and :meth:`Mesh._exec_cmd` grades the
+    handler's own return before naming the audit event. A second copy of the
+    rule is how the branch came to report ``ok=True`` over a refusal it had in
+    hand. Named for the stop verbs it was written for, but the rule is the
+    failure REPORT itself, which is why a refused command reads it too.
 
     Two spellings mean the same thing here, because the stop verbs disagree
     about their envelope: ``stop_task`` and the dispatch's own branches answer
@@ -375,11 +378,11 @@ def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
     ``{"status": "success"|"error"}``.
 
     Args:
-        result: A stop result, either a ``_dispatch`` return value or the
-            ``result`` member of a response envelope.
+        result: A ``_dispatch`` return value, the ``result`` member of a
+            response envelope, or a command handler's own return.
 
     Returns:
-        ``True`` only when the result explicitly says a stop did not happen.
+        ``True`` only when the result explicitly says it did not happen.
         A shape carrying neither key is not a failure report -- see
         :func:`_peers_that_did_not_stop` on why that stays conservative.
     """
@@ -2076,12 +2079,30 @@ class Mesh(SensorLoopsMixin):
             # readonly set matches the H-3 dedup exemption. Best-effort: an
             # audit failure must never break the dispatch path (same narrow
             # except tuple as every other audit call site).
+            # A handler that REFUSED (``{"error": ...}``, ``ok=False`` or
+            # ``status == "error"`` -- the one rule :func:`_reports_failure_to_stop`
+            # owns; e.g. a resume with a bad override code) returned
+            # without raising, so it used to be recorded as
+            # ``command_executed`` -- the audit trail then showed
+            # ``resume_denied`` and ``command_executed action=resume`` for the
+            # same turn while the lockout stayed engaged. Name it for what it
+            # was: ``command_refused``, carrying the handler's error text.
             if _action not in _READONLY:
+                refused = isinstance(result, dict) and ("error" in result or _reports_failure_to_stop(result))
+                payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
+                if refused:
+                    # A tool-envelope refusal (``{"status": "error", "content":
+                    # [...]}``) carries no ``error`` key: name the shape that
+                    # made it a refusal rather than auditing the bare word
+                    # "error". Reads the value, never a second copy of the rule.
+                    status = result.get("status")
+                    reason = result.get("error") or (f"status={status}" if status else "ok=False")
+                    payload["error"] = str(reason)
                 try:
                     log_safety_event(
-                        "command_executed",
+                        "command_refused" if refused else "command_executed",
                         self.peer_id,
-                        {"sender": sender, "turn_id": turn, "action": _action},
+                        payload,
                     )
                 except (TypeError, ValueError, OSError) as audit_exc:
                     logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
@@ -2187,7 +2208,10 @@ class Mesh(SensorLoopsMixin):
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        if self._estop_lockout.is_set() and action not in ("status", "resume"):
+        # ``stop`` is admitted too: it only ever de-energizes, and a second
+        # e-stop arriving while the lockout is already engaged must still halt
+        # a rollout the first one missed rather than be "rejected".
+        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop"):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
@@ -3582,7 +3606,11 @@ class Mesh(SensorLoopsMixin):
         ``BROADCAST_RESPONDER``).
         """
         if not self._running:
-            return []
+            action = cmd.get("action") if isinstance(cmd, dict) else cmd
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot broadcast {action}; "
+                "start() the mesh first (or fix the refusal it logged)"
+            )
         # client-side validate before publishing. broadcast()'s
         # return type is list[dict] (responses), so a validation failure
         # has no structured slot -- log the rejection and return [] so
@@ -3783,17 +3811,28 @@ class Mesh(SensorLoopsMixin):
 
     # Safety - emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
-        """Broadcast a stop command to every peer and engage the local lockout.
+        """Stop the local robot, broadcast a stop, and engage the local lockout.
 
-        After this call the local mesh refuses every non-status, non-resume
-        action until :meth:`_resume_lockout` is invoked with the operator
-        override code (``STRANDS_MESH_OVERRIDE_CODE``). The event is also
-        published on ``strands/safety/estop`` and recorded in the audit log
-        (see :func:`strands_robots.mesh.audit.log_safety_event`).
+        The robot registered in this process is stopped first, through the same
+        :meth:`_dispatch` path a remote peer runs. ``broadcast`` never comes
+        back to the sender -- ``_on_cmd`` drops envelopes carrying our own
+        ``sender_id`` -- so the one robot an operator is standing next to is the
+        one robot the fanout cannot reach.
 
-        Returns the list of responses received from peers within the broadcast
-        timeout -- useful for telemetry (which peers acknowledged before the
-        stop fanned out).
+        After this call the local mesh refuses every action but ``status``,
+        ``resume`` and ``stop`` until :meth:`_resume_lockout` is invoked with
+        the operator override code (``STRANDS_MESH_OVERRIDE_CODE``). ``stop``
+        stays admitted because it only ever de-energizes: a second e-stop
+        reaching an already locked-out peer must halt a rollout the first one
+        missed rather than be rejected. The event is also published on
+        ``strands/safety/estop`` and recorded in the audit log (see
+        :func:`strands_robots.mesh.audit.log_safety_event`).
+
+        Returns the responses collected within the broadcast timeout, the local
+        robot's own answer first (shaped like a peer's, with this peer's id) --
+        useful for telemetry, and counted in ``peers_not_stopped`` exactly as a
+        remote answer is. A peer with no robot registered contributes no local
+        answer: it has nothing to halt.
 
         A response is only an acknowledgement that the peer STOPPED if it says
         so. A peer whose registered robot exposes no ``stop_task`` answers
@@ -3801,11 +3840,33 @@ class Mesh(SensorLoopsMixin):
         CRITICAL, and reported in the safety envelope as ``peers_not_stopped``.
         Counting them as acknowledgements would tell an operator the fleet had
         halted while a robot was still moving.
+
+        Raises ``RuntimeError`` when the mesh is not running: an e-stop that
+        reached no peer must not look like "asked, nobody answered" (``[]``).
         """
+        if not self._running:
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot emergency_stop -- no peer was told to stop; "
+                "use the robot's local stop and fix the mesh start refusal it logged"
+            )
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
-        responses = self.broadcast({"action": "stop"}, timeout=3.0)
+        # The issuer's own robot first. ``broadcast`` never reaches this
+        # process (``_on_cmd`` drops envelopes whose sender_id is ours), so
+        # before this line an e-stop halted every robot on the mesh EXCEPT the
+        # one next to the operator who pressed it, and waited the full
+        # broadcast timeout before returning. Same dispatch path the remote
+        # peers run, so the answer is shaped like theirs and counts in
+        # ``peers_not_stopped``.
+        responses: list[dict[str, Any]] = []
+        if self.robot is not None:
+            try:
+                local_result = self._dispatch({"action": "stop"})
+            except Exception as exc:  # noqa: BLE001 - a stop must answer, not raise
+                local_result = {"ok": False, "error": f"local stop failed: {exc}"}
+            responses.append({"type": "response", "responder_id": self.peer_id, "result": local_result})
+        responses += self.broadcast({"action": "stop"}, timeout=3.0)
         not_stopped = _peers_that_did_not_stop(responses)
         if not_stopped:
             logger.critical(

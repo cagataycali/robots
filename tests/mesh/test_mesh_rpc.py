@@ -354,9 +354,10 @@ def test_broadcast_collects_multiple_responses(started_mesh: Mesh, captured_puts
     assert any(k == "strands/broadcast" for k, _ in captured_puts)
 
 
-def test_broadcast_when_not_running_returns_empty() -> None:
+def test_broadcast_when_not_running_raises() -> None:
     m = Mesh(_FakeRobot(), peer_id="x")
-    assert m.broadcast({"action": "status"}) == []
+    with pytest.raises(RuntimeError, match="mesh not running"):
+        m.broadcast({"action": "status"})
 
 
 def test_tell_wraps_send(started_mesh: Mesh) -> None:
@@ -518,7 +519,9 @@ def test_emergency_stop_broadcasts_stop_action(started_mesh: Mesh) -> None:
         patch.object(mesh_mod, "log_safety_event"),
     ):
         out = started_mesh.emergency_stop()
-    assert out == [{"ok": 1}]
+    # The issuer's own robot is stopped first and its response leads the list.
+    assert out[0]["responder_id"] == "peer-a"
+    assert out[1:] == [{"ok": 1}]
     args = mock_bc.call_args
     assert args.args[0] == {"action": "stop"}
     assert args.kwargs.get("timeout") == 3.0
@@ -539,7 +542,7 @@ def test_emergency_stop_writes_audit_log(started_mesh: Mesh, tmp_path) -> None:
     record = json.loads(lines[0])
     assert record["event"] == "emergency_stop"
     assert record["peer_id"] == "peer-a"
-    assert record["payload"]["responses_received"] == 2
+    assert record["payload"]["responses_received"] == 3  # 2 remote + the issuer itself
 
 
 def test_emergency_stop_audit_log_failure_does_not_raise(started_mesh: Mesh) -> None:
@@ -549,7 +552,7 @@ def test_emergency_stop_audit_log_failure_does_not_raise(started_mesh: Mesh) -> 
     ):
         # Must not raise - audit log failure is non-fatal.
         out = started_mesh.emergency_stop()
-    assert out == []
+    assert [r["responder_id"] for r in out] == ["peer-a"]  # only the issuer's own stop
 
 
 # ---------------------------------------------------------------------------

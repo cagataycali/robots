@@ -22,8 +22,7 @@ documented triple was neither injective nor total:
 
 The fix measures ``seed`` against
 :func:`~strands_robots.utils.non_negative_whole_number_error`, the shared domain
-:func:`strands_robots.transforms.base.derive_variant_seed` already applies to
-the other seed in the package that is spread into a stream key. Deliberately
+for a seed that is spread into a stream key. Deliberately
 scoped two ways, and both boundaries are pinned below: the domain is applied
 only on the ``"rough"`` branch, because the seed-independent kinds use no rng
 and must not be refused for a value they never read; and no upper bound is

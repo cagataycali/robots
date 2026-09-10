@@ -1106,6 +1106,29 @@ def _close_started_lifecycle_on_escape[**P, R](func: Callable[P, R]) -> Callable
     return wrapped
 
 
+# Telemetry keys of the chunk-prefetch pipeline. The ``rtc_*`` spellings are
+# kept for one release: the pipeline overlaps inference with execution for ANY
+# chunk-emitting policy, RTC or not, so an ACT rollout reporting
+# ``rtc_async_enabled=true`` read as "RTC ran" when nothing blended a seam.
+_PREFETCH_KEY_RENAMES: dict[str, str] = {
+    "rtc_async_enabled": "chunk_prefetch_enabled",
+    "rtc_chunks_acquired": "chunk_prefetch_chunks_acquired",
+    "rtc_prefetch_hits": "chunk_prefetch_hits",
+    "rtc_prefetch_blocks": "chunk_prefetch_blocks",
+    "rtc_avg_inference_ms": "avg_inference_ms",
+    "rtc_max_inference_ms": "max_inference_ms",
+}
+
+
+def _with_prefetch_keys(block: dict[str, Any], policy: Any) -> dict[str, Any]:
+    """Add the ``chunk_prefetch_*`` names next to the legacy ``rtc_*`` ones and
+    ``policy_rtc_enabled`` (the policy's own ``supports_rtc``), which is the only
+    key that says whether real-time chunking blended the seams."""
+    block.update({new: block[old] for old, new in _PREFETCH_KEY_RENAMES.items() if old in block})
+    block["policy_rtc_enabled"] = bool(getattr(policy, "supports_rtc", False))
+    return block
+
+
 class PolicyRunner:
     """Backend-agnostic policy execution against a ``SimEngine``.
 
@@ -1839,14 +1862,17 @@ class PolicyRunner:
             # BOTH paths, so ``rtc_chunks_acquired`` counts on both; only the
             # prefetch hit/block counters are async-exclusive.
             _n = len(inference_ms)
-            return {
-                "rtc_async_enabled": bool(async_rtc),
-                "rtc_chunks_acquired": _pipeline.chunks_acquired if _pipeline is not None else 0,
-                "rtc_prefetch_hits": _pipeline.prefetch_hits if _pipeline is not None else 0,
-                "rtc_prefetch_blocks": _pipeline.prefetch_blocks if _pipeline is not None else 0,
-                "rtc_avg_inference_ms": round(sum(inference_ms) / _n, 3) if _n else 0.0,
-                "rtc_max_inference_ms": round(max(inference_ms), 3) if _n else 0.0,
-            }
+            return _with_prefetch_keys(
+                {
+                    "rtc_async_enabled": bool(async_rtc),
+                    "rtc_chunks_acquired": _pipeline.chunks_acquired if _pipeline is not None else 0,
+                    "rtc_prefetch_hits": _pipeline.prefetch_hits if _pipeline is not None else 0,
+                    "rtc_prefetch_blocks": _pipeline.prefetch_blocks if _pipeline is not None else 0,
+                    "rtc_avg_inference_ms": round(sum(inference_ms) / _n, 3) if _n else 0.0,
+                    "rtc_max_inference_ms": round(max(inference_ms), 3) if _n else 0.0,
+                },
+                policy,
+            )
 
         # Video recording lifecycle (path validation + camera probe + writer)
         # lives in _RolloutVideoWriter so run() and evaluate() record identically.
@@ -3609,14 +3635,17 @@ class PolicyRunner:
         success_rate = n_success / max(n_completed, 1)
         avg_steps = sum(r["steps"] for r in results) / max(n_completed, 1)
         _n_infer = len(inference_ms)
-        rtc_telemetry = {
-            "rtc_async_enabled": bool(async_rtc),
-            "rtc_chunks_acquired": rtc_chunks_acquired,
-            "rtc_prefetch_hits": rtc_prefetch_hits,
-            "rtc_prefetch_blocks": rtc_prefetch_blocks,
-            "rtc_avg_inference_ms": round(sum(inference_ms) / _n_infer, 3) if _n_infer else 0.0,
-            "rtc_max_inference_ms": round(max(inference_ms), 3) if _n_infer else 0.0,
-        }
+        rtc_telemetry = _with_prefetch_keys(
+            {
+                "rtc_async_enabled": bool(async_rtc),
+                "rtc_chunks_acquired": rtc_chunks_acquired,
+                "rtc_prefetch_hits": rtc_prefetch_hits,
+                "rtc_prefetch_blocks": rtc_prefetch_blocks,
+                "rtc_avg_inference_ms": round(sum(inference_ms) / _n_infer, 3) if _n_infer else 0.0,
+                "rtc_max_inference_ms": round(max(inference_ms), 3) if _n_infer else 0.0,
+            },
+            policy,
+        )
 
         return {
             "status": "error" if recording_save_error is not None else "success",
