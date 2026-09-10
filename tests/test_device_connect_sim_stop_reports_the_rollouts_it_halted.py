@@ -77,6 +77,10 @@ from tests.test_device_connect_hardening import (  # noqa: E402 - after the extr
     _force_real_device_connect_edge,
 )
 
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
+
 
 @pytest.fixture(autouse=True)
 def _real_device_connect(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -9,6 +9,25 @@ This tool provides comprehensive pose management for robotic arms, including:
 - Integration with LeRobot and serial communication
 - Pose interpolation and smooth transitions
 - Framed decoding of servo status replies
+
+Operator approval: the five actions that move the arm - ``move_motor``,
+``move_multiple``, ``incremental_move``, ``load_pose`` and ``reset_to_home`` -
+stop for a human BEFORE the :class:`MotorController` is built, through the same
+decision path the ROS transports, ``use_unitree`` and ``serial_tool`` use
+(:func:`~strands_robots.tools._command_gate.gate_motion`).
+``STRANDS_POSE_COMMAND_ALLOW`` (comma-separated action names, or ``*``)
+pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
+otherwise the operator is prompted through the tool context and, with none
+reachable, the call is refused and no packet is written. The dashboard's
+:class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook` lists the same
+five actions; when that hook has already asked and deposited a grant for this
+exact call the in-tool gate spends the grant instead of asking twice. Before
+this gate the hook was the only human check, and it is a hook an ``Agent`` has
+to be built with - every canonical ``Agent(tools=robot.tools)`` build had none,
+so the default wiring moved the arm unasked (F-010, CWE-862). ``connect``,
+``read_position``, ``read_all``, the pose library actions (``store_pose``,
+``list_poses``, ``show_pose``, ``delete_pose``) and ``emergency_stop`` are never
+gated: stopping is never gated.
 """
 
 import json
@@ -22,8 +41,10 @@ from typing import Any, TypedDict
 import serial
 import serial.tools.list_ports
 from strands import tool
+from strands.types.tools import ToolContext
 
 from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION, decode_word, encode_word
+from strands_robots.tools._command_gate import gate_motion
 from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
 from strands_robots.utils import (
     boolean_flag_error,
@@ -999,7 +1020,68 @@ class MotorController:
         return self.move_motor(motor_name, new_pos)
 
 
-@tool
+# The actions that move the arm. Everything else reads the bus, releases torque
+# (``emergency_stop``) or edits the pose library on disk.
+MOTION_ACTIONS = frozenset({"move_motor", "move_multiple", "incremental_move", "load_pose", "reset_to_home"})
+
+# Pre-approve motion actions by name (comma-separated, ``*`` for all) for
+# headless runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
+COMMAND_ALLOW_ENV = "STRANDS_POSE_COMMAND_ALLOW"
+
+
+def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
+    """Spend a grant the dashboard's motion hook deposited for this exact call.
+
+    The dashboard registers :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`
+    on its agent, which asks the operator before the tool runs and records a
+    one-shot grant keyed on what they were shown. Asking again here would be
+    the same question twice, so a grant is consumed and the call proceeds. The
+    dashboard extra may be absent, and a missing module must read as "no
+    grant", never as a crash: the gate below then asks the operator itself.
+
+    Args:
+        tool_input: The call as the hook saw it - the same field names, with
+            the unset ones omitted.
+
+    Returns:
+        True when a grant for this exact call existed and was spent.
+    """
+    try:
+        from strands_robots.dashboard import agent_hitl
+    except ImportError:
+        return False
+    return bool(agent_hitl.consume_grant("pose_tool", tool_input))
+
+
+def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
+    """Operator approval for one arm motion, before the controller is built.
+
+    Args:
+        action: One of :data:`MOTION_ACTIONS`.
+        tool_input: The call's own fields (port, motor_name, position, delta,
+            positions, pose_name), unset ones omitted; shown to the operator
+            and used to match a dashboard grant.
+        tool_context: The agent tool context supplying ``interrupt()``.
+
+    Returns:
+        A refusal message, or None to let the motion proceed.
+    """
+    if _dashboard_grant(tool_input):
+        return None
+    port = str(tool_input.get("port") or "")
+    detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))
+    return gate_motion(
+        "pose_tool",
+        action,
+        port,
+        f"{action!r} moves the arm on {port!r} ({detail}); it needs operator approval before any goal position is sent.",
+        tool_context,
+        allow_env=COMMAND_ALLOW_ENV,
+        allow_match=lambda allowed: "*" in allowed or action in allowed,
+    )
+
+
+@tool(context=True)
 def pose_tool(
     action: str,
     robot_id: str = "so101_follower",
@@ -1013,6 +1095,7 @@ def pose_tool(
     smooth: bool = True,
     steps: int = 20,
     step_delay: float = 0.05,
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """
     Advanced robot pose management tool with fine motor control.
@@ -1083,6 +1166,18 @@ def pose_tool(
             so ``0`` is refused; use ``smooth=False`` to go straight to the
             target. Together with ``steps`` it sets the trajectory duration
             (the default 20 x 0.05s = ~1s).
+        tool_context: Supplied by the agent runtime; carries the operator
+            interrupt the motion actions are approved through. Without it a
+            motion is refused unless pre-approved via
+            STRANDS_POSE_COMMAND_ALLOW or BYPASS_TOOL_CONSENT=true
+
+    Operator approval:
+        "move_motor", "move_multiple", "incremental_move", "load_pose" and
+        "reset_to_home" move the arm, so each stops for a human before the
+        motor controller is built; a declined or headless call sends no goal
+        position. Pre-approve with STRANDS_POSE_COMMAND_ALLOW=move_motor,load_pose
+        (or "*"). "connect", the reads, the pose library actions and
+        "emergency_stop" are never gated.
 
     Both interpolation options are read only by ``load_pose`` and
     ``move_multiple`` (when ``smooth`` is left true) and by ``reset_to_home``,
@@ -1222,6 +1317,30 @@ def pose_tool(
         # Actions that need motor controller
         if not port:
             return {"status": "error", "content": [{"text": "port required for motor operations"}]}
+
+        if action in MOTION_ACTIONS:
+            tool_input = {
+                key: value
+                for key, value in (
+                    ("action", action),
+                    ("port", port),
+                    ("pose_name", pose_name),
+                    ("motor_name", motor_name),
+                    ("position", position),
+                    ("delta", delta),
+                    ("positions", positions),
+                    # The dashboard hook keys its grant on the fields the model
+                    # supplied; ``steps`` has a default here, so it is carried
+                    # only when it differs from it. A model that spelled out the
+                    # default is asked twice, which errs on the side of asking.
+                    ("steps", steps if steps != 20 else None),
+                )
+                if value is not None and value != ""
+            }
+            if refusal := _gate_motion(action, tool_input, tool_context):
+                # The controller does not exist yet: a refused motion is exactly
+                # as inert as a call that never happened.
+                return {"status": "error", "content": [{"text": f"pose_tool: {refusal}"}]}
 
         controller = MotorController(port)
 

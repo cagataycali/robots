@@ -226,7 +226,11 @@ class TestNoDocsPageCallsAShippedSymbolFuture:
         assert len(pages) > 50, f"only {len(pages)} docs pages were read"
         assert DOCS_DIR / "policies" / "wbc.md" in pages
         assert len(_defined_symbols()) > 100, "the package symbol index is suspiciously small"
-        assert _not_yet_claims(pages), "premise: no docs sentence was graded at all"
+        # The sweep is exercised on a known bad-shaped sentence rather than on
+        # the live tree: a docs tree with no not-yet claim at all is the goal
+        # state, not a sign that nothing was read.
+        fixture = {DOCS_DIR / "fixture.md": "# Fixture\n\nThat is the job of a future `CompositePolicy`.\n"}
+        assert _not_yet_claims(fixture), "premise: the sweep did not recognise a not-yet sentence"
 
     def test_a_planted_claim_about_a_shipped_symbol_is_reported(self, tmp_path: Path) -> None:
         """The grader reports the shape it exists to catch."""

@@ -624,8 +624,8 @@ def download_robots(
     # Only the emptiness verdict is taken here; the shape is deliberately NOT routed
     # through the shared ``name_list_error`` domain. This surface resolves each name
     # by membership into ``robots`` below, so a repeat resolves to its first
-    # occurrence and costs nothing - the same carve-out that keeps the WBC and
-    # MotionBricks providers out of that domain - and a mapping and a one-shot
+    # occurrence and costs nothing - the same carve-out that keeps the WBC
+    # provider out of that domain - and a mapping and a one-shot
     # iterator are each read exactly once here. Refusing them would reject calls
     # that are honored as written today.
     if names is not None and not names:

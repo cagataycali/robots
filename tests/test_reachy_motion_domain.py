@@ -61,6 +61,11 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import finite_number_error
 from tests.test_reachy_mini_driver import _force_real_device_connect_edge
 
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
+
+
 # Values that cannot be carried to the robot as a signed physical quantity.
 # ``True``/``False`` are included because ``bool`` is an ``int`` subclass: a bare
 # ``float()`` coercion reads ``True`` as a silent one-degree command.

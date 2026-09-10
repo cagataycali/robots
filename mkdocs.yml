@@ -41,7 +41,6 @@ nav:
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md
   - WBC Gait-Clock Variant: policies/wbc_gait.md
-  - MotionBricks (G1 generative motion): policies/motionbricks.md
   - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
   - ProtoMotions (G1 motion tracker): policies/protomotions.md
   - Microduck (Pollen 14-DOF biped): policies/microduck.md
@@ -64,7 +63,6 @@ nav:
 - Datasets:
   - Recording: recording.md
   - Steerable Annotation: data/annotation.md
-  - Augmentation Transforms: data/transforms.md
   - Episode Labels (VLM judge): data/episode-labels.md
 - Remote Inference: inference/remote.md
 - Examples:

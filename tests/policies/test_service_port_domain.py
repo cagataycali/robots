@@ -170,8 +170,14 @@ class TestOnlyTheDialedPortIsValidated:
 
     def test_groot_local_mode_ignores_the_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``model_path`` selects local inference, which dials nothing."""
+        import strands_robots.policies.groot.policy as groot_policy
         from strands_robots.policies.groot.policy import Gr00tPolicy
 
+        # Local mode refuses before the loader when no Isaac-GR00T release is
+        # importable, so stubbing the loader alone no longer reaches the branch
+        # under test. Detection is stubbed too, which is what the port scoping
+        # is being measured against - not the availability of gr00t.
+        monkeypatch.setattr(groot_policy, "_detect_groot_version", lambda **kw: "n1.7")
         monkeypatch.setattr(Gr00tPolicy, "_load_local_policy", lambda self, *a, **k: None)
         monkeypatch.setattr(Gr00tPolicy, "_init_mappings", lambda self: None)
         policy = Gr00tPolicy(model_path="/tmp/checkpoint", port=99999)

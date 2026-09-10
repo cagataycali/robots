@@ -90,6 +90,8 @@ _REFUSALS: tuple[tuple[str, tuple[Any, ...], type[BaseException]], ...] = (
     ("decode_sign_magnitude", ("0x8064", 15), TypeError),
     ("decode_sign_magnitude", (0x10000, 15), ValueError),
     ("decode_sign_magnitude", (0x8064, 16), ValueError),
+    ("load_calibration", (__file__,), ValueError),
+    ("lerobot_calibration_path", ("../../etc", "arm"), ValueError),
 )
 
 
