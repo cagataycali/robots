@@ -39,7 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+from strands_robots.utils import (
+    positive_finite_number_error,
+    positive_whole_number_error,
+    refusal_repr,
+    refusal_str,
+)
 
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
@@ -146,7 +151,7 @@ def diffusion_steps_error(value: Any, context: str) -> str | None:
         return error
     if value > _KIMODO_MAX_DIFFUSION_STEPS:
         return (
-            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {value} - "
+            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {refusal_str(value)} - "
             "the step count multiplies the cost of every sample, so a run this long is a stall "
             "rather than a better motion."
         )
@@ -213,7 +218,7 @@ def sampling_seed_error(value: Any, context: str) -> str | None:
     """
     if value is None:
         return None
-    prefix = f"{context}: seed must be a whole number or None, got {value!r}"
+    prefix = f"{context}: seed must be a whole number or None, got {refusal_repr(value)}"
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return f"{prefix} (None draws fresh entropy for every sample)."
     try:
@@ -225,7 +230,7 @@ def sampling_seed_error(value: Any, context: str) -> str | None:
     if whole != value:
         return (
             f"{prefix}: the buffered-motion key rounds a seed to a whole number, so "
-            f"{value!r} would name the sample keyed by {whole!r} and replay it instead of sampling its own."
+            f"{refusal_repr(value)} would name the sample keyed by {whole!r} and replay it instead of sampling its own."
         )
     return None
 
