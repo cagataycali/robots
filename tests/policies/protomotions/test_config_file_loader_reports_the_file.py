@@ -27,8 +27,8 @@ constructor, which forwards a caller's ``yaml_path`` straight into it:
   message naming a method of the parsed value rather than the file that could
   not supply fields. The loader documents ``ValueError`` for a bad payload.
 
-None of this is a new rule. ``KimodoConfig.from_json``,
-``MotionBricksConfig.from_file`` and ``WBCConfig.from_file`` each expand ``~``,
+None of this is a new rule. ``KimodoConfig.from_json`` and
+``WBCConfig.from_file`` each expand ``~``,
 each check ``is_file()``, each wrap their decode into a ``ValueError`` naming
 the path, and each refuse a non-mapping payload by type name - and
 ``from_json``'s docstring already calls that "the reporting the sibling
@@ -226,7 +226,6 @@ class TestEveryPolicyConfigFileLoaderCarriesTheSameGuards:
     def test_the_survey_finds_every_shipped_loader(self) -> None:
         assert _labels() == [
             "kimodo.from_json",
-            "motionbricks.from_file",
             "protomotions.load_config_from_yaml",
             "wbc.from_file",
         ]

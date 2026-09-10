@@ -27,9 +27,12 @@ their dispatch in :mod:`~strands_robots.tools._numeric_options`.
 
 The decision is not ROS-shaped, though. :func:`gate_motion` is the same
 allowlist -> bypass -> operator-interrupt -> audit-row path with the blocklist
-factored out, for tools whose command surface is not a graph name: a Unitree
-SDK RPC (``loco.SetVelocity``) or a serial write to a motor bus. They name their
-own allowlist variable and their own way of matching it; the interrupt, the
+factored out, for tools whose command surface is not a graph name at all: a
+serial write to a motor bus, where the target is a port and the verb is a wire
+instruction, or a rollout the real-hardware ``Robot`` agent tool dispatches,
+where the target is the robot and the verb is ``execute`` or ``start``. Such a
+caller names its own allowlist variable and its own way of matching it; the
+interrupt, the
 fail-closed rule and the audit row are the one copy here, so an operator's "no"
 means the same thing whichever tool asked. :func:`gate_command` is now a thin
 blocklist front on that path.
@@ -215,16 +218,17 @@ def gate_motion(
     the caller's allowlist variable, then ``BYPASS_TOOL_CONSENT``, then the
     operator, failing closed when no interrupt is reachable. It is the one
     copy of that path, shared by the ROS transports (through
-    :func:`gate_command`), ``use_unitree`` and the serial tools, so the
+    :func:`gate_command`), :mod:`~strands_robots.tools.serial_tool` and the
+    real-hardware :class:`~strands_robots.hardware_robot.Robot` tool, so the
     interrupt id, the refusal wording and the audit row cannot differ between
     two tools reaching the same robot.
 
     Args:
-        tool: The calling tool's name, e.g. ``"use_unitree"``. Keys the
+        tool: The calling tool's name, e.g. ``"serial_tool"``. Keys the
             interrupt id ``<tool>-command-approval`` and the audit source
             ``<tool>_tool``, so an incident audit says which tool asked.
         action: The verb carrying the command, e.g. ``"publish"`` or
-            ``"SetVelocity"``. Recorded on the audit row.
+            ``"feetech_position"``. Recorded on the audit row.
         target: What the command is aimed at - a topic, a ``service.operation``
             pair, a serial port. Recorded on the audit row and matched against
             the allowlist.

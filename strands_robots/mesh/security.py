@@ -338,8 +338,9 @@ MAX_TARGET_JOINTS: int = 256
 #: ``start`` payload's ``target_velocity`` list (issue #300 well-known
 #: kwarg). The wire cannot own the arity verdict: WBC and ``wbc_gait``
 #: require at least ``[vx, vy, omega]`` and read the first three, while
-#: MotionBricks reads ``[vx, vy]`` or ``[vx, vy, vz]`` - so a fixed
-#: length here would refuse a shape one of them accepts, and each names
+#: ``microduck`` accepts ``[vx, vy, omega]`` or ``[vx, vy]`` and refuses
+#: any other width - so a fixed length here would refuse a shape one of
+#: them accepts, and each names
 #: its own requirement when a caller gets it wrong. This cap is purely
 #: DoS defence, the same role :data:`MAX_TARGET_JOINTS` plays: 16 is well
 #: above any shipped receiver's read and keeps a malicious payload from
@@ -424,9 +425,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
-        # MotionBricksPolicy
-        "motionbricks",
-        "motion_bricks",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",
@@ -442,6 +440,8 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "microduck_stand",
         # RemotePolicy
         "remote",
+        # RLCheckpointPolicy
+        "rl",
     }
 )
 
@@ -1335,7 +1335,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # ``policy_kwargs`` by the dispatcher, which is what reaches
         # ``get_actions(obs, instruction, **policy_kwargs)``. Planner-style
         # providers (cuRobo, MoveIt2) read a Cartesian or joint-space goal;
-        # locomotion providers (WBC, wbc_gait, MotionBricks) read
+        # locomotion providers (WBC, wbc_gait, microduck) read
         # ``target_velocity``. VLA providers ignore all of them.
         #
         # Every key ``SimEngine.run_policy`` documents as a #300 goal key is

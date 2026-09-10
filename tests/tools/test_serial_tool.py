@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 import serial
 
+import strands_robots.tools.serial_tool as serial_tool_module
 from strands_robots.tools.serial_tool import serial_tool
 from tests.tool_result_contract import tool_json
 
@@ -50,6 +51,16 @@ class FakeSerial:
 
     def close(self) -> None:
         self.closed = True
+
+
+@pytest.fixture(autouse=True)
+def _writes_pre_approved(monkeypatch):
+    """The four write actions stop for operator approval before the port is opened (F-009).
+
+    This file grades what the tool does with the port, so it pre-approves the
+    surface; the gate has its own file, test_serial_tool_gates_bus_writes.py.
+    """
+    monkeypatch.setenv(serial_tool_module.COMMAND_ALLOW_ENV, "*")
 
 
 @pytest.fixture
