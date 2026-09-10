@@ -2657,12 +2657,23 @@ class Mesh(SensorLoopsMixin):
     def _audit(self, event_type: str, severity: str = "warning", payload: dict[str, Any] | None = None) -> None:
         """Publish a safety event to the mesh and the audit log, never raising.
 
-        The one wrapper every safety-path audit record goes through. A refused
-        or unwritable record (an unencodable payload, a closed session, a full
-        disk) is reported at DEBUG and swallowed: the decision the record
-        describes has already been taken, and letting a failed write of it
-        unwind a command handler would turn the audit trail into a new
-        denial-of-service surface on the safety path.
+        One wrapper for the records a safety subscriber emits *about* an
+        inbound envelope - a refusal, a redundant re-issue, a corroboration -
+        so "a failed record must not unwind the decision it describes" is
+        written once instead of once per record: the decision is already taken
+        by the time the record is written, and letting the write unwind a wire
+        handler would make the audit trail a denial-of-service surface on the
+        safety path. The four lockout transitions themselves
+        (``remote_estop_engaged``, ``remote_resume_applied`` and the local
+        ``emergency_stop`` / ``resume_ok`` pair) publish directly.
+
+        This clause is a backstop, not the announcement path.
+        :meth:`~strands_robots.mesh.sensors.SensorLoopsMixin.publish_safety_event`
+        is already fire-and-forget in both halves and owns how a lost record is
+        reported: an unencodable payload and a failed audit write at ERROR -
+        permanently lost, so no later tick recovers them - and a wire failure
+        at DEBUG, which the next tick retries. It stays narrow so a programmer
+        bug still surfaces.
         """
         try:
             self.publish_safety_event(event_type=event_type, severity=severity, payload=payload)
