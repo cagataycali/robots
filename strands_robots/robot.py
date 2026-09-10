@@ -820,7 +820,9 @@ def _run_device_connect_foreground(instance: Any) -> None:
 
     A bring-up that fails keeps the process alive - the operator asked for a
     server and a transient broker outage is not worth losing the process over -
-    but the status line reports what actually came up. Claiming the device is
+    but the status line reports what actually came up. The one failure that is
+    never transient is the ``[device-connect]`` extra being absent: that path
+    prints the remedy, releases the instance and exits 1 instead of parking. Claiming the device is
     online is only true of the path where the runtime started; on the other one
     the mesh has already been stopped for a replacement that never arrived, so
     the process serves no transport at all and the operator has to be told
@@ -846,6 +848,7 @@ def _run_device_connect_foreground(instance: Any) -> None:
             mesh.stop()
         instance.mesh = None
 
+    extra_missing = False
     try:
         from strands_robots.device_connect import init_device_connect_sync
 
@@ -858,7 +861,8 @@ def _run_device_connect_foreground(instance: Any) -> None:
         # An absent extra is the common cause and the only one with a one-line
         # remedy, so name it here: on its own the ImportError names the
         # distribution's internal module, not the extra that installs it.
-        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if isinstance(e, ImportError) else ""
+        extra_missing = isinstance(e, ImportError)
+        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if extra_missing else ""
         logger.warning("Device Connect init failed: %s.%s", e, remedy)
 
     if getattr(instance, "_device_connect_runtime", None) is None:
@@ -867,6 +871,20 @@ def _run_device_connect_foreground(instance: Any) -> None:
             if mesh_was_stopped
             else "This process serves no transport."
         )
+        if extra_missing:
+            # Nothing this process can do brings the transport up: the install
+            # happens in a shell, and the next run is a new process. Parking
+            # here would only turn the README's first command into a hung
+            # terminal and hide the failure from the shell's exit code.
+            print(
+                f"{peer_id} is NOT online: the Device Connect extra is not installed "
+                f"(see the warning above). {lost_transport} Exiting.",
+                flush=True,
+            )
+            unreleased = _release_resources_on_interrupt(instance, peer_id)
+            if unreleased is not None:
+                print(f"{peer_id} is exiting WITHOUT a completed shutdown: {unreleased}", flush=True)
+            os._exit(1)
         print(
             f"{peer_id} is NOT online: the Device Connect runtime did not start "
             f"(see the warning above). {lost_transport} Ctrl+C to stop."

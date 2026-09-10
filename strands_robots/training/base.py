@@ -57,8 +57,13 @@ class TrainSpec:
             map-style datasets and drops the stream.
         base_model: HF model id or local checkpoint path to post-tune from.
         output_dir: Directory for checkpoints, logs and the final artifact.
-        embodiment: Embodiment tag / robot id. Required by GR00T; LeRobot
-            infers it from dataset features.
+        embodiment: Embodiment tag / robot id - which state/action projector
+            head the run trains. Required by GR00T. On LeRobot it is read by
+            the policies whose config declares ``embodiment_tag`` (GR00T's
+            native port); every other LeRobot policy takes its state/action
+            shape from the dataset features and has no such field, so a
+            backend MUST refuse the request rather than train the default head
+            while reporting success.
         steps: Total optimizer steps. A positive ``int``.
         global_batch_size: Batch summed across GPUs before grad accumulation.
             A positive ``int``.
@@ -85,7 +90,12 @@ class TrainSpec:
         lora_target_modules: Target modules, or ``None`` for the policy's
             built-in defaults.
         tune: Component toggles for backends that expose them (GR00T:
-            ``{"llm", "visual", "projector", "diffusion"} -> bool``).
+            ``{"llm", "visual", "projector", "diffusion"} -> bool``, both
+            through Isaac-GR00T's ``--tune_*`` flags and through LeRobot's
+            native ``GrootConfig.tune_*`` fields). A key naming no component,
+            or a component the policy cannot freeze, MUST be refused: an
+            unforwarded toggle trains the config default, which is
+            indistinguishable from never having asked.
         val_episodes: Hold out the last N episodes as a validation set, or
             ``None`` to train on every episode. A positive ``int`` below the
             dataset's episode count, which comes from a local

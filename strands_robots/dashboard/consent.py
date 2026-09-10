@@ -129,6 +129,11 @@ class ConsentRequest:
         return bool(env_patch(self, {}))
 
     def as_dict(self) -> dict:
+        """The request as the ``needs_consent`` payload the dashboard renders.
+
+        Every field the browser needs to draw the approval button and to send the
+        request back to the approval endpoint, plus the computed ``grantable``.
+        """
         return {
             "kind": self.kind,
             "scope": self.scope,
