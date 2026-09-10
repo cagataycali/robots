@@ -582,12 +582,21 @@ class LerobotLocalPolicy(Policy):
             if error:
                 raise ValueError(error)
         self._rtc_max_guidance_weight = rtc_max_guidance_weight
+        # The previous chunk as it was handed to the consumer - LeRobot's
+        # ``ActionQueue.original_queue``. The prefix the denoiser receives is a
+        # SLICE of this taken at the next inference, once the number of steps the
+        # consumer still has pending is known; see _rtc_unexecuted_prefix.
         self._rtc_prev_chunk: torch.Tensor | None = None
-        # Absolute-coordinate copy of the leftover tail, populated ONLY for
+        # Absolute-coordinate copy of that chunk, populated ONLY for
         # relative-action flow policies so the next chunk can re-express it
         # against the current robot state (see _predict_with_rtc). Stays None
         # for absolute-action policies, whose frame does not move.
         self._rtc_prev_chunk_abs: torch.Tensor | None = None
+        # Actions the consumer was expected to execute from that chunk before
+        # re-querying (its execution horizon). With the overlap reported at the
+        # next inference this is LeRobot's ``ActionQueue.last_index``: the
+        # consumption index the prefix is sliced from.
+        self._rtc_prev_chunk_horizon: int = 0
         # Lazily-resolved (once) preprocessor steps + helper used to re-anchor a
         # relative-action RTC prefix to LeRobot parity. All stay None unless an
         # enabled RelativeActionsProcessorStep is present in the pipeline.
@@ -740,6 +749,7 @@ class LerobotLocalPolicy(Policy):
         # Clear RTC state
         self._rtc_prev_chunk = None
         self._rtc_prev_chunk_abs = None
+        self._rtc_prev_chunk_horizon = 0
         self._rtc_action_queue.clear()
         self._rtc_latency_history.clear()
         self._rtc_last_inference_time = 0.0
@@ -1965,6 +1975,65 @@ class LerobotLocalPolicy(Policy):
         )
         self._rtc_reanchor_degraded_warned = True
 
+    def _rtc_unexecuted_prefix(self, inference_delay: int) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """The previous chunk from the observation tick on - the RTC prefix.
+
+        LeRobot fixes what ``prev_chunk_left_over`` means in
+        ``ActionQueue.get_left_over()``, which its inference loop snapshots
+        immediately before denoising::
+
+            idx_before = queue.get_action_index()
+            prev_actions = queue.get_left_over()    # original_queue[last_index:]
+
+        ``original_queue`` is the previous chunk with its own inference delay
+        already dropped - exactly what :meth:`_predict_with_rtc` hands its
+        consumer and stores in ``_rtc_prev_chunk`` - and ``last_index`` is how
+        much of it the robot has executed. Row 0 of the result is therefore the
+        action applied on the tick right after the observation, and row *i* the
+        action applied on the tick the new chunk's row *i* lands on. That index
+        alignment is the mechanism: ``RTCProcessor.denoise_step`` builds
+        ``get_prefix_weights(inference_delay, execution_horizon, T)``, pinning
+        weight 1.0 across ``[0, inference_delay)`` - the steps that elapse
+        *during* this inference - and blending ``[inference_delay,
+        execution_horizon)`` toward the prefix.
+
+        ``inference_delay`` supplies the consumption index, because the two are
+        the same number seen from either end: the runtime reports the steps of
+        the current chunk still pending (``set_rtc_observed_delay``), so the
+        consumer has executed ``horizon - delay`` of the ``horizon`` actions it
+        was handed. Cutting there is what keeps the frozen region pinned to the
+        actions the robot really executes while this inference runs; a prefix cut
+        past the horizon named rows the robot would not reach for another
+        ``delay`` ticks, so the denoiser froze the new chunk onto actions that
+        were never applied - and on the async path that is every seam.
+
+        Args:
+            inference_delay: Control steps that elapse during this inference -
+                equivalently, actions of the previous chunk still pending when
+                its observation was captured.
+
+        Returns:
+            ``(prefix, absolute_prefix)`` cut at the same index, either element
+            ``None`` when it is unavailable: no previous chunk yet (first
+            inference of an episode), a chunk the consumer has fully drained, or
+            an absolute copy that was never populated (absolute-action policies,
+            which need no re-anchoring).
+        """
+        chunk = self._rtc_prev_chunk
+        if chunk is None or chunk.shape[0] == 0:
+            return None, None
+        # A delay past the horizon is only reachable on the wall-clock fallback
+        # (the counted path never exceeds the chunk it handed out): the estimate
+        # claims more steps elapse than the consumer had actions for, so it has
+        # stalled on the chunk's last action. The prefix cannot describe ticks
+        # from before the chunk began, so anchor at its first row rather than
+        # indexing off its front.
+        start = max(0, self._rtc_prev_chunk_horizon - max(0, inference_delay))
+        if start >= chunk.shape[0]:
+            return None, None
+        absolute = self._rtc_prev_chunk_abs
+        return chunk[start:], None if absolute is None else absolute[start:]
+
     def _predict_with_rtc(self, batch: dict[str, Any]) -> torch.Tensor:
         """Run inference using predict_action_chunk with RTC kwargs.
 
@@ -2038,23 +2107,26 @@ class LerobotLocalPolicy(Policy):
         # On the first chunk prev_chunk_left_over is None and lerobot returns
         # early, so the value is harmless there.
         rtc_kwargs: dict[str, Any] = {"inference_delay": inference_delay}
-        # Relative-action policies: re-express the leftover tail against the
-        # CURRENT robot state instead of carrying a stale-frame prefix. The
-        # leftover is kept in absolute coordinates (_rtc_prev_chunk_abs);
-        # LeRobot's reanchor helper subtracts the live cached state and
-        # re-normalizes so the model receives a correctly anchored prefix.
-        # Absolute-action policies fall through to the verbatim leftover.
-        prev_chunk = self._rtc_prev_chunk
+        # Cut the previous chunk at the action the consumer has reached, so the
+        # prefix describes the ticks this inference overlaps (see
+        # _rtc_unexecuted_prefix).
+        prev_chunk, prev_chunk_abs = self._rtc_unexecuted_prefix(inference_delay)
+        # Relative-action policies: re-express that prefix against the CURRENT
+        # robot state instead of carrying a stale-frame one. The prefix's
+        # absolute coordinates come from the same slice; LeRobot's reanchor
+        # helper subtracts the live cached state and re-normalizes so the model
+        # receives a correctly anchored prefix. Absolute-action policies fall
+        # through to the verbatim prefix.
         if (
             self._rtc_relative_step is not None
             and self._rtc_reanchor_fn is not None
-            and self._rtc_prev_chunk_abs is not None
-            and self._rtc_prev_chunk_abs.numel() > 0
+            and prev_chunk_abs is not None
+            and prev_chunk_abs.numel() > 0
         ):
             current_state = self._rtc_relative_step.get_cached_state()
             if current_state is not None:
                 prev_chunk = self._rtc_reanchor_fn(
-                    prev_actions_absolute=self._rtc_prev_chunk_abs,
+                    prev_actions_absolute=prev_chunk_abs,
                     current_state=current_state,
                     relative_step=self._rtc_relative_step,
                     normalizer_step=self._rtc_normalizer_step,
@@ -2092,41 +2164,38 @@ class LerobotLocalPolicy(Policy):
         if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
             action_chunk = action_chunk.squeeze(0)
 
-        # Store leftover for next RTC call (unconsumed portion of this chunk).
-        # The consumer executes ``execution_horizon`` actions before re-querying
-        # (see Policy.execution_horizon / resolve_chunk_length), so the tail past
-        # that point - shifted by the steps already burned during inference - is
-        # what carries into the next chunk as ``prev_chunk_left_over``. Keying
-        # this on the full trained chunk (actions_per_step) emptied the tail
-        # whenever the chunk was consumed whole, so cross-chunk blending never
-        # engaged.
-        exec_horizon = self._rtc_execution_horizon or self.actions_per_step
-        steps_to_consume = min(inference_delay + max(1, int(exec_horizon)), action_chunk.shape[0])
-        if steps_to_consume < action_chunk.shape[0]:
-            leftover_model = action_chunk[steps_to_consume:].detach()
-            self._rtc_prev_chunk = leftover_model
-            # For relative-action policies, also stash the leftover in absolute
-            # robot coordinates so the NEXT call can re-anchor it against the new
-            # state. None for absolute-action policies (no frame shift to undo).
-            self._rtc_prev_chunk_abs = self._absolute_rtc_leftover(leftover_model)
-        else:
-            self._rtc_prev_chunk = None
-            self._rtc_prev_chunk_abs = None
-
         # Skip delay steps - they correspond to time spent during inference
         usable_start = min(inference_delay, action_chunk.shape[0] - 1)
         usable_actions = action_chunk[usable_start:]
+
+        # Keep the chunk exactly as the consumer receives it, which is LeRobot's
+        # ``ActionQueue.original_queue`` (``original_actions[delay:]``, set by
+        # ``_replace_actions_queue``). Which part of it becomes the next prefix
+        # is NOT knowable here: it depends on how far the consumer has drained
+        # this chunk when the next observation is captured, and that count only
+        # arrives with that inference (set_rtc_observed_delay). Pre-slicing it
+        # here to the tail past the execution horizon was that guess, and it was
+        # wrong by the overlap on every async seam - see
+        # _rtc_unexecuted_prefix.
+        self._rtc_prev_chunk = usable_actions.detach()
+        # For relative-action policies, also stash the chunk in absolute robot
+        # coordinates so the NEXT call can re-anchor the prefix it cuts from it
+        # against the new state. None for absolute-action policies (no frame
+        # shift to undo). The conversion is element-wise per action, so slicing
+        # it later matches slicing the model-space copy.
+        self._rtc_prev_chunk_abs = self._absolute_rtc_leftover(self._rtc_prev_chunk)
+        self._rtc_prev_chunk_horizon = max(1, int(self._rtc_execution_horizon or self.actions_per_step))
 
         # Log RTC details at debug level - throttled to once every 2s regardless of Hz
         _now = time.monotonic()
         if _now - self._rtc_last_log_time >= 2.0:
             self._rtc_last_log_time = _now
             logger.debug(
-                "RTC: chunk=%s, delay=%d, usable_start=%d, leftover=%s, avg_latency=%.3fs",
+                "RTC: chunk=%s, delay=%d, usable_start=%d, prefix=%s, avg_latency=%.3fs",
                 action_chunk.shape,
                 inference_delay,
                 usable_start,
-                self._rtc_prev_chunk.shape if self._rtc_prev_chunk is not None else None,
+                None if prev_chunk is None else tuple(prev_chunk.shape),
                 sum(self._rtc_latency_history) / len(self._rtc_latency_history),
             )
 

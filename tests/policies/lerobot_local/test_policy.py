@@ -1685,15 +1685,16 @@ class TestRTCInference:
         assert policy._rtc_prev_chunk is not None
         assert policy._rtc_prev_chunk.dim() == 2
 
-    def test_predict_with_rtc_leftover_keyed_on_execution_horizon(self):
-        """Leftover is the chunk tail past execution_horizon, not actions_per_step.
+    def test_predict_with_rtc_prefix_keyed_on_execution_horizon(self):
+        """The prefix is keyed on execution_horizon, not actions_per_step.
 
         Regression: when the consumer drained the FULL trained chunk
-        (actions_per_step == chunk length) the old bookkeeping set steps_to_consume
-        to the whole chunk, so ``_rtc_prev_chunk`` was always ``None`` and the
-        cross-chunk blend never received a previous-chunk tail. With the
-        execution-horizon contract the consumer re-queries every
-        execution_horizon steps, so the tail past that point must carry over.
+        (actions_per_step == chunk length) the old bookkeeping consumed the whole
+        chunk, so no prefix was ever carried and the cross-chunk blend never
+        received one. With the execution-horizon contract the consumer re-queries
+        every execution_horizon steps, so the chunk past that point must carry
+        over. ``prev_chunk_left_over`` is what the model actually receives, so
+        assert it there rather than on the policy's bookkeeping.
         """
         policy = _make_policy()
         policy._rtc_enabled = True
@@ -1705,11 +1706,15 @@ class TestRTCInference:
         mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
         policy._policy = mock_policy
 
+        # Two zero-overlap queries: the consumer drained its execution horizon
+        # and re-queried with nothing pending.
+        policy.set_rtc_observed_delay(0)
+        policy._predict_with_rtc({})
+        policy.set_rtc_observed_delay(0)
         policy._predict_with_rtc({})
 
-        # delay ~= 0 on the first call -> leftover starts at execution_horizon.
-        assert policy._rtc_prev_chunk is not None
-        assert policy._rtc_prev_chunk.shape == (10, 6)
+        prefix = mock_policy.predict_action_chunk.call_args.kwargs["prev_chunk_left_over"]
+        assert prefix.shape == (10, 6)
 
     def test_execution_horizon_prefers_rtc_over_actions_per_step(self):
         """execution_horizon is the RTC horizon while RTC is active."""

@@ -652,6 +652,26 @@ RTC policies (it cannot stretch the interval and break blending). For non-RTC
 policies `execution_horizon == actions_per_step` and the consumer still takes
 `max(action_horizon, actions_per_step)` so the trained chunk is never truncated.
 
+### What the prefix contains: `prev_chunk_left_over`
+
+The prefix is the previous chunk **from the observation tick to its end** - the
+same span LeRobot's `ActionQueue.get_left_over()` returns
+(`original_queue[last_index:]`). Row 0 is the action applied on the tick right
+after the observation, and row *i* the action applied on the tick the new chunk's
+row *i* lands on. LeRobot's denoiser depends on that index alignment: it builds
+`get_prefix_weights(inference_delay, execution_horizon, T)`, pinning weight 1.0
+across `[0, inference_delay)` - the steps that elapse *during* inference - and
+blending `[inference_delay, execution_horizon)` toward the prefix.
+
+The provider therefore keeps each chunk as the consumer received it and cuts the
+prefix at the next query, from the overlap the runtime reports
+(`set_rtc_observed_delay`). Under `async_rtc=True` the runner fires the prefetch
+mid-chunk, so the prefix opens on the action still pending at that moment; under
+`async_rtc=False` the chunk has drained and it opens past the execution horizon.
+Cutting the prefix when the chunk is produced cannot express the async case: how
+far the consumer has drained the chunk is not known until its next observation is
+captured.
+
 ### Relative-action policies: prefix re-anchoring
 
 Some flow-matching checkpoints (pi0 / pi0.5 / pi0-FAST trained with a
