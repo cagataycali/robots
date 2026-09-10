@@ -58,6 +58,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from strands_robots import refusal_codes
+from strands_robots.locomotion_envelope import target_velocity_component_error
 
 logger = logging.getLogger(__name__)
 
@@ -1389,15 +1390,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     f"target_velocity has {len(value)} components > "
                     f"MAX_TARGET_VELOCITY_COMPONENTS ({MAX_TARGET_VELOCITY_COMPONENTS})."
                 )
-            # Per-component domain shared with ``target_pose``: finite, in
-            # range, and a bool is refused by name rather than read as 1.
+            # Per-component domain: finite and a bool refused by name (as for
+            # ``target_pose``), then the locomotion envelope from
+            # :mod:`strands_robots.locomotion_envelope` - the same bound the
+            # WBC policy re-applies at the sink, so wire and sink agree (F-005).
+            # The ``+/-1e6`` pose domain is a coordinate range, not a speed one;
+            # a ``[1e6, 0, 0]`` velocity is refused here, never clamped.
             # The component COUNT is not checked against any receiver's
             # arity here - see :data:`MAX_TARGET_VELOCITY_COMPONENTS`.
             coerced_velocity: list[float] = []
             for i, component in enumerate(value):
-                coerced_velocity.append(
-                    _coerce_float(f"target_velocity[{i}]", component, lo=-1e6, hi=1e6, default=None)
-                )
+                coerced = _coerce_float(f"target_velocity[{i}]", component, lo=-1e6, hi=1e6, default=None)
+                envelope_error = target_velocity_component_error(i, coerced, "validate_command")
+                if envelope_error is not None:
+                    raise ValidationError(envelope_error)
+                coerced_velocity.append(coerced)
             out["target_velocity"] = coerced_velocity
 
         if "world_update" in cmd:

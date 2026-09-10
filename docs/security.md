@@ -111,6 +111,10 @@ An operator ACL supplied via `STRANDS_MESH_ACL_FILE` can be written in one of tw
 
 Reference: `strands_robots.mesh._acl_config._load_acl_file`, `strands_robots.mesh._acl_config._parse_acl_bytes`, `strands_robots.mesh._acl_config.PermissiveACLError`, `strands_robots.mesh.core.Mesh._refuse_under_permissive_default_acl`, `strands_robots.mesh.session._build_config`.
 
+### Locomotion velocity envelope (target_velocity)
+
+`validate_command` holds every component of a mesh `execute` / `start` payload's `target_velocity` to one locomotion envelope: ±2.0 m/s for the linear components (`vx`, `vy`, and any component past the third) and ±2.0 rad/s for `omega`. The WBC policy applies the same bound again before the value is scaled into its observation, from the same definition (`strands_robots.locomotion_envelope`), so a caller that reaches the policy without the mesh meets the same refusal. Out of envelope is refused with a reason naming the component, value, bound and unit - never clamped, because a clamped `[1e6, 0, 0]` is still a sprint the caller did not command. Operators with a faster platform raise the bounds with `STRANDS_MAX_TARGET_LINEAR_VELOCITY_MPS` / `STRANDS_MAX_TARGET_ANGULAR_VELOCITY_RPS` (positive finite floats; anything else leaves the default in force; re-read on every call, no restart).
+
 ### Policy vocabulary allowlist (policy_type / policy_provider)
 
 `validate_command` gates every mesh `execute` / `start` payload's `policy_type` and `policy_provider` fields against a built-in allowlist. The two vocabularies share one allowlist by design: `policy_type` names a LeRobot policy *family* (`act`, `diffusion`, `pi0`, `smolvla`, ...) that some payloads carry, and `policy_provider` names a spelling this package's `create_policy` resolves (`groot`, `wbc`, `moveit`, `microduck`, ...). A provider or family that is not in the built-in list is refused on the mesh path -- the operator does not get the availability bug silently, they get a refusal naming the offending value.
