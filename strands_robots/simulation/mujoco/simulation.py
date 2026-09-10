@@ -5232,9 +5232,11 @@ class MuJoCoSimEngine(
                 "is running - stop it first. Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
-                "Same Policy ABC as real robot control - sim and real with zero code changes. "
+                "Simulation only: no action here reaches hardware. A policy that runs here uses the "
+                "same Policy ABC as real robot control. "
                 "Actions (77 total): "
-                "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
+                "[World] create_world, load_scene, reset, get_state, destroy (irreversible: the world, its robots and any "
+                "unsaved recording are gone), export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
                 "[Cameras] add_camera, remove_camera, list_cameras; "
@@ -5252,7 +5254,8 @@ class MuJoCoSimEngine(
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize, set_obs_noise (additive Gaussian sensor noise on observations and rendered frames); "
                 "[Benchmark] list_benchmarks, register_benchmark_from_file, register_builtin_benchmarks, evaluate_benchmark; "
-                "[Registry] list_urdfs, register_urdf, get_features. "
+                "[Registry] list_urdfs, register_urdf (overrides that robot name for this process only; nothing is "
+                "written to disk), get_features. "
                 "Call destroy() at session end to release resources."
             ),
             "inputSchema": {"json": _TOOL_SPEC_SCHEMA},
