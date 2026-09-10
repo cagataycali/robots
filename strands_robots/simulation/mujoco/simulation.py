@@ -673,6 +673,16 @@ class MuJoCoSimEngine(
         # are live: this table is swept to it by ``_prune_done_futures``, so it
         # can never report a rate for a rollout that is not running.
         self._policy_rates: dict[str, float] = {}
+        # Thread identity of the rollout driving each robot, written by
+        # ``_drive_rollout`` on the thread that actually steps the physics.
+        # ``_require_no_running_policy`` reads it to exempt that thread: a
+        # rollout mutates the scene itself between episodes
+        # (``PolicyRunner`` calls ``sim.reset()`` per episode), and refusing
+        # the driver its own reset would break the episode boundary while
+        # doing nothing for the cross-thread race the gate exists to stop.
+        # Keyed by robot name and popped in ``_drive_rollout``'s ``finally``,
+        # so it never outlives the rollout it describes.
+        self._rollout_driver_threads: dict[str, int] = {}
         self._shutdown_event = threading.Event()
         # ``self._lock`` (RLock) serializes ALL access to MuJoCo
         # ``model``/``data`` arrays - both reads and writes. MuJoCo arrays
@@ -5158,6 +5168,25 @@ class MuJoCoSimEngine(
         self._prune_done_futures()
         return dict(self._policy_rates)
 
+    def _rollouts_driven_by_other_threads(self) -> list[str]:
+        """Rollouts in flight that this thread is not the driver of.
+
+        The population :meth:`_require_no_running_policy` gates on: the union
+        :meth:`_active_policy_robots` owns, minus any rollout whose driving
+        thread is the caller. See that gate for why the driver is exempt and
+        why the union - rather than the ``_policy_threads`` table alone - is
+        the right population.
+
+        Returns:
+            Robot names, in :meth:`_active_policy_robots` order.
+        """
+        this_thread = threading.get_ident()
+        return [
+            name
+            for name in self._active_policy_robots()
+            if registry_entry(self._rollout_driver_threads, name) != this_thread
+        ]
+
     def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
         """Return an error dict if a disallowed policy is running, else None.
 
@@ -5178,11 +5207,33 @@ class MuJoCoSimEngine(
           different robots can execute concurrently because MuJoCo physics
           is serialized by ``self._lock`` and each robot writes to a
           disjoint slice of ``data.ctrl[]``.
+
+        The population is the one :meth:`_active_policy_robots` owns, for the
+        reason :meth:`_rollouts_in_flight` delegates there rather than walking
+        the registry a second time. This gate used to read ``_policy_threads``
+        directly, and the Future table records only the rollouts
+        :meth:`start_policy` submits - a blocking :meth:`run_policy` registers
+        nothing. So every mutation listed above was refused during a
+        Future-backed rollout and *accepted* during a blocking one, on a scene
+        the blocking rollout was stepping, while
+        :meth:`list_policies_running` reported that rollout in flight for both.
+        That is the same two-sources drift #2833 closed for the reporting
+        surfaces, reached through the gate instead of the report - and the
+        consequence here is the segfault this docstring already warns about
+        rather than a wrong status line.
+
+        The rollout's own driving thread is exempt, on the reasoning that makes
+        ``self._lock`` an ``RLock`` (see "Scene mutation and ``self._lock``" in
+        the module docstring): a rollout mutates the scene itself between
+        episodes - :class:`~strands_robots.simulation.policy_runner.PolicyRunner`
+        calls ``sim.reset()`` at the top of each one - and the driver racing
+        itself is not the hazard the gate is written against. The claim is
+        recorded by :meth:`_drive_rollout`, the body both entry points share, so
+        it names the thread that actually steps the physics in either shape.
         """
         self._prune_done_futures()
         if robot_name is not None:
-            fut = registry_entry(self._policy_threads, robot_name)
-            if fut is not None and not fut.done():
+            if robot_name in self._rollouts_driven_by_other_threads():
                 return {
                     "status": "error",
                     "content": [
@@ -5196,7 +5247,7 @@ class MuJoCoSimEngine(
                 }
             return None
 
-        active = [name for name, f in self._policy_threads.items() if not f.done()]
+        active = self._rollouts_driven_by_other_threads()
         if active:
             names = ", ".join(f"'{n}'" for n in active)
             return {
@@ -5321,9 +5372,18 @@ class MuJoCoSimEngine(
         rollout that ends for any reason - completion, a cooperative stop, or a
         raise - leaves the robot idle.
         """
+        # Only a str name can key the claim, for the reason ``registry_entry``
+        # is total: a subscript raises ``TypeError`` for an unhashable name, and
+        # this runs before ``run_policy`` has judged the name, so raising here
+        # would turn a reportable bad name into a traceback. An unrecorded claim
+        # is the safe direction anyway - the gate then refuses that rollout's own
+        # mutations rather than exempting a name no robot answers to.
+        if isinstance(robot_name, str):
+            self._rollout_driver_threads[robot_name] = threading.get_ident()
         try:
             return super().run_policy(robot_name, **kwargs)
         finally:
+            self._rollout_driver_threads.pop(robot_name, None)
             if self._world is not None and registered(self._world.robots, robot_name):
                 robot = self._world.robots[robot_name]
                 robot.policy_running = False
