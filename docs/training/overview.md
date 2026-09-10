@@ -24,20 +24,13 @@ result = trainer.train(spec)                 # -> launches lerobot_train
 
 ## Why an abstraction (not just `lerobot train`)
 
-Each backend ships its own post-training pipeline; one `--policy.type` flag
-cannot express them.
-
-| Provider | Upstream entry point | HW floor |
-|----------|---------------------|----------|
-| `lerobot_local` | `lerobot.scripts.lerobot_train` (draccus flags) | CPU for a toy run; one consumer GPU |
-| `groot` | Isaac-GR00T `launch_finetune.py` | one modern GPU |
-| `cosmos3` | `cosmos_framework.scripts.train` (TOML + DCP convert/export) | 8x H100 |
-| `sagemaker` | none - submits the same `TrainSpec` to a managed job | none locally |
-
-Every trainer runs `validate() -> prepare() -> train() -> export()`, plus
-`status()` for an in-flight job. A local `train()` blocks and returns a
-terminal result; a submitted run can come back `running` with a `job_id` to
-poll. Branch on all three `TrainResult.status` values, not on "not `error`".
+Each provider ships its own post-training pipeline - `lerobot_train` with
+draccus flags, Isaac-GR00T's `launch_finetune.py`, cosmos-framework's TOML
+recipes, SageMaker's managed job - and one `--policy.type` flag cannot express
+them. Every `Trainer` runs the same `validate() -> prepare() -> train() ->
+export()` lifecycle plus `status()` for an in-flight job. A local `train()`
+blocks and returns a terminal result; a submitted run can return `running` with
+a `job_id`, so branch on all three `TrainResult.status` values.
 
 ## The data loop, end to end
 
@@ -91,26 +84,27 @@ sim↔hardware.
 
 ## TrainSpec - one spec, many backends
 
-Each trainer reads the fields it supports and **ignores the rest**;
-backend-specific knobs go in `extra`. `validate()` refuses a non-positive
-`steps` / `global_batch_size` / `num_gpus` / `num_nodes` / `val_episodes`, a
-negative `seed`, and `streaming` together with `val_episodes`.
+Each trainer reads the fields it supports and ignores the rest; provider knobs
+go in `extra`. `validate()` returns every problem below as text instead of
+launching.
 
-| Field | Meaning |
-|-------|---------|
-| `dataset_root` / `dataset_repo_id` | LeRobotDataset root with `meta/info.json`, or a Hub id `org/name` |
-| `streaming` | stream shards instead of materializing the dataset (lerobot) |
-| `resume` | continue from the last checkpoint under `output_dir` |
-| `base_model` | HF id / local checkpoint to tune from (required for GR00T, Cosmos) |
-| `steps` / `global_batch_size` | optimizer steps x batch |
-| `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` (`lora`+`expert_only` exclusive) |
-| `tune` | `{llm,visual,projector,diffusion}` - GR00T, via `groot` or `lerobot_local` with `policy_type="groot"` |
-| `embodiment` | which state/action projector head trains - GR00T only; refused for policies that take their shape from the dataset |
-| `val_episodes` | hold out the LAST N episodes |
-| `num_gpus` / `num_nodes` | selects the launcher |
-| `seed` | reproducibility |
-| `extra["policy_type"]` | lerobot `--policy.type`: act / diffusion / smolvla / pi0 / pi05 / ... |
-| `extra["groot_root"]`, `extra["cosmos_root"]` / `extra["sft_toml"]` | checkout paths and recipe |
+| Field | Type | Default | `validate()` refuses |
+|-------|------|---------|----------------------|
+| `dataset_root` / `dataset_repo_id` | `str` | `""` / `None` | path traversal; a Hub id plus `val_episodes` without a local `meta/info.json` |
+| `base_model` | `str` | `""` | leading `-`; empty for GR00T / Cosmos3 |
+| `output_dir` | `str` | `""` | path traversal, protected directories |
+| `steps` / `global_batch_size` | `int` | `10000` / `32` | zero, negative, fractional, `bool` |
+| `learning_rate` | `float \| None` | `None` | non-positive or non-finite |
+| `save_freq` | `int` | `1000` | not a positive step count |
+| `num_gpus` / `num_nodes` | `int` | `1` | zero, negative, fractional, `bool` |
+| `resume` / `streaming` | `bool` | `False` | a non-`bool`; `streaming` together with `val_episodes` |
+| `seed` | `int \| None` | `None` | negative |
+| `method` | `str` | `"full"` | anything but `full` / `lora` / `expert_only` / `frozen_backbone` |
+| `lora_r` / `lora_alpha` | `int \| None` | `None` | non-positive |
+| `tune` | `dict[str, bool]` | `{}` | keys outside `llm` / `visual` / `projector` / `diffusion`; a non-`bool` value; a policy whose config has no such switches (GR00T via `groot` or `lerobot_local` `policy_type="groot"`) |
+| `embodiment` | `str \| None` | `None` | a policy whose config has no embodiment tag (only GR00T declares one; others take their shape from the dataset) |
+| `val_episodes` | `int \| None` | `None` | non-positive; multi-task or streamed dataset |
+| `extra` | `dict[str, Any]` | `{}` | key not lowercase, or with `-` / `=` / whitespace |
 
 `validate()` refuses a field before anything loads rather than reading it loosely: posture flags (`streaming`, `resume`, each `tune` switch) must be real booleans, counts (`steps`, `global_batch_size`, `val_episodes`, `num_gpus`, `num_nodes`) positive integers, `seed` a non-negative integer, and `val_episodes` needs a single-task dataset whose episode count is readable locally.
 
@@ -182,78 +176,43 @@ selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
 `load_reward_model` and `reward_progress` in `strands_robots.training` turn a
 trained SARM into the `sample_weighting.progress_path` parquet RA-BC reads.
 
-### GR00T (`groot`)
+### GR00T (`groot`) and Cosmos3 (`cosmos3`)
 
-```python
-TrainSpec(..., embodiment="GR1",
-          tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
-          extra={"groot_root": "/path/to/Isaac-GR00T"})
-# -> launch_finetune.py --embodiment_tag=GR1 --tune_projector=true ...
-```
-
-lerobot ships its own GR00T port, so the same `embodiment` and `tune` fields
-also drive `lerobot_local` - one install, and the resume / LoRA / validation
-path every other lerobot policy takes:
-
-```python
-TrainSpec(..., embodiment="GR1",
-          tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
-          extra={"policy_type": "groot"})
-# -> cfg.policy = GrootConfig(embodiment_tag="GR1", tune_projector=True, ...)
-```
-
-`groot` is the only lerobot policy type whose config declares those fields, and
-the trainer discovers that off the config class rather than from a list, so a
-policy lerobot adds with an embodiment tag or component toggles is accepted on
-arrival and every other policy keeps refusing the request instead of silently
-training its defaults.
-
-### Cosmos3 (`cosmos3`)
-
-```python
-TrainSpec(..., num_gpus=8,
-          extra={"cosmos_root": "/path/to/cosmos-framework",
-                 "sft_toml": "examples/toml/sft_config/action_policy_droid_repro.toml"})
-# prepare(): convert_model_to_dcp ; train(): torchrun ... --sft-toml=... ;
-# export(): DCP -> safetensors
-```
+`embodiment` + `tune` + `extra["groot_root"]` drive `launch_finetune.py`; with
+`extra={"policy_type": "groot"}` the same two fields reach lerobot's own
+`GrootConfig(embodiment_tag=..., tune_projector=...)` instead, discovered off the
+config class - see [Isaac-GR00T](../policies/groot.md). `num_gpus` + `extra["cosmos_root"]` +
+`extra["sft_toml"]` drive `prepare()` (DCP convert), `train()` (`torchrun`) and
+`export()` (DCP -> safetensors) - see [Cosmos3](../policies/cosmos3.md).
 
 ## Dependencies & extras (per provider)
 
 **Every `lerobot_local` row below also needs `lerobot[training]`, on CPU as well
-as GPU.** LeRobot's `train()` calls
-`require_package("accelerate", extra="training")` *before* it branches on
-device, and the `[lerobot]` extra is exactly `lerobot[feetech,dataset]`, so
-nothing on this path pulls `accelerate` in.
+as GPU**: LeRobot's `train()` calls
+`require_package("accelerate", extra="training")` before it branches on
+device, and the `[lerobot]` extra is exactly `lerobot[feetech,dataset]`.
+`validate()` reports an absent `accelerate` (or `peft` for `method="lora"`) as
+a preflight problem and `train()` fails closed, leaving `output_dir` untouched;
+the cause is in `TrainResult.message`, not a raise.
 
 ```bash
 pip install "lerobot[training]"
 ```
 
-`validate()` reports an absent `accelerate` (and an absent `peft` for
-`method="lora"`) as a preflight problem; `train()` then fails closed and leaves
-`output_dir` untouched. The cause arrives in `TrainResult.message`, not as a
-raise - check `result.status`.
-
 | Provider / policy | Install | Notes |
 |---|---|---|
 | `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | `[lerobot]` supplies torch, torchcodec, datasets |
-| `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | layers lerobot's `[smolvla]` extra (`transformers>=5.4.0,<5.6.0` + num2words) |
+| `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | lerobot's `[smolvla]` extra: `transformers>=5.4.0,<5.6.0` + num2words |
 | `lerobot_local` + `pi0` / `pi05` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[pi]'` | same transformers range + scipy |
-| `groot` | Isaac-GR00T checkout, `pip install -e` into the **same** environment | `extra["groot_root"]` / `GR00T_ROOT` = the checkout |
-| `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), same environment | `extra["cosmos_root"]` / `COSMOS_ROOT` = the checkout |
+| `groot` | Isaac-GR00T checkout, `pip install -e` into the **same** environment | `GR00T_ROOT` / `extra["groot_root"]` = the checkout |
+| `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), same environment | `COSMOS_ROOT` / `extra["cosmos_root"]` = the checkout |
 
-> **torchcodec / torch ABI:** the training dataloader decodes video via
-> `torchcodec`, whose compiled `.so` must match the exact installed torch build;
-> a torch nightly load-fails a stable torchcodec with `undefined symbol:
-> ...MessageLogger` and lerobot swallows the per-shard error. Pin them together
-> (verified: `torch==2.10.0+cu128` + `torchcodec==0.10.0`).
-
-> **One interpreter:** every local trainer imports its backend into the
-> interpreter that imports `strands_robots`; there is no `python_executable=`.
-> Install the provider's deps into the environment your agent runs in, or
-> `train()` reports `<package> is not importable from this interpreter`.
-> `GR00T_ROOT` / `COSMOS_ROOT` resolve the checkout, not an interpreter.
+Pin `torch` and `torchcodec` together (verified: `torch==2.10.0+cu128` +
+`torchcodec==0.10.0`): a mismatched build load-fails with `undefined symbol:
+...MessageLogger` and lerobot swallows the per-shard error. Every local trainer
+imports its backend into the interpreter that imports `strands_robots` - there
+is no `python_executable=`; a missing package reports
+`<package> is not importable from this interpreter`.
 
 ## See also
 
