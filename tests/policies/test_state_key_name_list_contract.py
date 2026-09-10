@@ -140,6 +140,7 @@ _MUST_VALIDATE = {
     "policies/mock.py::MockPolicy",
     "policies/microduck/policy.py::MicroduckPolicy",
     "policies/moveit2/policy.py::MoveIt2Policy",
+    "policies/rl.py::RLCheckpointPolicy",
 }
 
 # Already total without the shared domain: every joint they drive is resolved by
@@ -599,6 +600,45 @@ def _protomotions_keys() -> list[str]:
     return ["floating_base_joint", *GTP_G1_JOINT_NAMES]
 
 
+def _rl() -> Any:
+    """An RL checkpoint policy needs a checkpoint, so write the smallest real one.
+
+    The provider loads ``policy.pt`` + ``policy_meta.json`` in its constructor,
+    so unlike the service-backed providers it cannot be built from arguments
+    alone. The pair is written through the PPO backend's own
+    ``build_actor_critic``, which is what the provider rebuilds it with.
+    """
+    import json
+    import tempfile
+
+    import torch
+
+    from strands_robots.policies.rl import RLCheckpointPolicy
+    from strands_robots.training.rl.ppo import build_actor_critic
+
+    directory = tempfile.mkdtemp(prefix="rl-state-keys-")
+    module = build_actor_critic(2, 2, 2, hidden_dims=(4,))
+    torch.save(
+        {"actor_critic": module.state_dict(), "iteration": 1, "provider": "ppo"}, pathlib.Path(directory) / "policy.pt"
+    )
+    (pathlib.Path(directory) / "policy_meta.json").write_text(
+        json.dumps(
+            {
+                "provider": "ppo",
+                "num_actor_obs": 2,
+                "num_critic_obs": 2,
+                "num_actions": 2,
+                "actor_obs_keys": ["a", "b"],
+                "action_keys": [],
+                "hidden_dims": [4],
+                "iteration": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return RLCheckpointPolicy(checkpoint_dir=directory)
+
+
 # (surface id as classified above, factory, the attribute the setter binds into,
 # a key list that surface accepts). Held against ``_TOTAL_BY_MEMBERSHIP`` by
 # ``test_the_membership_table_covers_every_already_total_surface``, so a provider
@@ -837,6 +877,7 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
+    ("policies/rl.py::RLCheckpointPolicy", _rl, "robot_state_keys", "torch"),
 ]
 _OWNING_IDS = [surface.split("::")[1] for surface, *_ in _OWNING_SURFACES]
 

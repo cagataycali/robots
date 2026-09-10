@@ -16,10 +16,12 @@ which makes the outcome deterministic rather than a race.
 
 This module also closes the ``stop`` half of a two-cell refusal matrix: ``stop``
 and ``status`` refuse an unknown session with byte-identical text, and only
-``status``'s was driven. The ``stop`` case is the common one in practice - a
-session whose process has exited is pruned from the store on the next read - and
-the same pruning is what makes the tool's "No PID found" branch unreachable, a
-property pinned here rather than assumed.
+``status``'s was driven. Below that sits the tool's refusal for a record that
+names no process, which the store's pruning used to make unreachable: it dropped
+any record without a live pid, so ``stop`` could never look one up. The store the
+tool shares with the training tool keeps such a record now - it is the only place
+a detached run's pid was written down - so the refusal is live code, and it is
+driven here.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _process_stop
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -43,10 +46,9 @@ _LOGGER_NAME = "strands_robots.tools.lerobot_teleoperate"
 #: ``"calibration"``, which made the "names the session" assertion vacuous.
 _SESSION = "wrist-rig-7"
 
-# The store prunes any record whose pid is not a live process on every read, so
-# a fake pid would make the session vanish before a test could read it back.
 # This process's own pid is live for the duration of the test, which is what a
-# real session's pid is too.
+# real session's pid is too - so the refusals below are reached for the reason
+# each names, and not because the record read as a finished run.
 _LIVE_PID = os.getpid()
 
 
@@ -60,7 +62,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the module-level session dir so tests never touch the real store."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -264,17 +266,23 @@ def test_stop_and_status_refuse_an_absent_session_identically() -> None:
     assert _texts(stop) == _texts(status)
 
 
-def test_a_pidless_session_record_is_pruned_so_the_no_pid_refusal_is_unreachable() -> None:
-    """The store drops any record without a live pid, on every read.
+def test_stop_refuses_a_record_that_names_no_process_without_signalling() -> None:
+    """The refusal the store's pruning used to make unreachable, driven.
 
-    ``stop`` carries a "No PID found" refusal below the lookup. It cannot be
-    reached through any input, because a record that reaches a caller has
-    already been filtered on ``pid and psutil.pid_exists(pid)``. Pinning the
-    pruning keeps that accounting honest: the day the store stops filtering,
-    this fails and the refusal becomes live code that needs its own test.
+    A record carrying no ``pid`` is kept now, because a record is the only place
+    a detached run's pid was ever written down and a read that dropped this one
+    dropped it for the other tool sharing the document. So ``stop`` does reach
+    its own refusal, and the point of the refusal is that nothing is signalled:
+    there is no process this verb could be about, and the number ``int()`` would
+    have produced from a non-pid field names a stranger.
     """
     manager = SessionManager()
     manager.add_session("nopid", {"start_time": 0.0, "action": "record"})
 
-    assert manager.get_session("nopid") is None, "a pidless record survived the store's pruning"
-    assert "nopid" not in manager.list_sessions()
+    assert manager.get_session("nopid") is not None, "the record is the only handle on the run"
+
+    result = lerobot_teleoperate(action="stop", session_name="nopid")
+
+    assert result["status"] == "error"
+    assert "nopid" in _texts(result), f"the refusal must name the session: {_texts(result)}"
+    assert "nopid" in SessionManager().list_sessions(), "a refusal must not delete the record it refused on"

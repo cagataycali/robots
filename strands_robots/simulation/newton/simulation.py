@@ -39,6 +39,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import (
+    LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
     own_keyword_names,
     reject_misspelled_kwargs,
@@ -2447,6 +2448,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "backend answers from the durable per-robot claim, so the json block reports "
                     "was_running. robot_name is required, never defaulted to the sole robot)"
                 ),
+                "list_policies_running": LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, speed=1.0, "
                     "action_key_map=None) -> dict  (replay a recorded LeRobotDataset episode "

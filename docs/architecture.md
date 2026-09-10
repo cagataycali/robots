@@ -17,7 +17,7 @@ graph TB
 
     subgraph factory_layer[Robot factory  -  strands_robots/robot.py]
         ROBOT["Robot()"]
-        REGISTRY["registry/robots.json<br/>73 robots, 8 categories"]
+        REGISTRY["registry/robots.json<br/>74 robots, 8 categories"]
         ROBOT --> REGISTRY
     end
 
@@ -77,17 +77,17 @@ graph TB
 | Module | What it owns | Key types |
 |--------|--------------|-----------|
 | `strands_robots/robot.py` | Factory `Robot(name, mode, backend, **kwargs)`. Name resolution, sim/real dispatch, mesh attach. | `Robot()` function |
-| `strands_robots/registry/` | 73 robots, 121 aliases, 8 categories. `robots.json` is source of truth. | `list_robots()`, `resolve_name()`, `get_robot()` |
+| `strands_robots/registry/` | 74 robots, 122 aliases, 8 categories. `robots.json` is source of truth. | `list_robots()`, `resolve_name()`, `get_robot()` |
 | `strands_robots/simulation/` | MuJoCo `AgentTool` - 77 actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend ABC for future Isaac/Newton backends. | `SimEngine` |
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
-| `strands_robots/policies/` | ABC + 14 providers + factory + JSON registry. | `Policy`, `create_policy()` |
+| `strands_robots/policies/` | ABC + 15 providers + factory + JSON registry. | `Policy`, `create_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 writer. | `DatasetRecorder` |
 | `strands_robots/tools/` | 25 `@tool`-decorated helpers. | `lerobot_camera`, `serial_tool`, etc. |
 
 ## ABCs
 
-**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 16 implementations ship; [Policies](policies/overview.md) is the provider table.
+**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 17 implementations ship; [Policies](policies/overview.md) is the provider table.
 
 **`SimEngine`** - `create_world()`, `step()`, 30+ abstract actions. Today: MuJoCo CPU. Roadmap: Isaac Sim, Newton.
 

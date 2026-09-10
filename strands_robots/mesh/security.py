@@ -442,6 +442,8 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "microduck_stand",
         # RemotePolicy
         "remote",
+        # RLCheckpointPolicy
+        "rl",
     }
 )
 
