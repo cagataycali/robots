@@ -12,7 +12,6 @@ already use, picks ``cgl`` on macOS and ``egl`` elsewhere; an operator's own
 
 from __future__ import annotations
 
-import ast
 import platform
 from pathlib import Path
 
@@ -24,16 +23,6 @@ from tests.test_examples_mujoco_gl import _is_guarded_expr, _module_scope_gl_def
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _FLEET_DIR = _REPO_ROOT / "examples" / "fleet"
 _FLEET_EXAMPLES = sorted(_FLEET_DIR.glob("0*_*.py"))
-
-
-def _module_scope_default_values(source: str) -> list[str]:
-    """Every string a module-scope MUJOCO_GL default could resolve to."""
-    values: list[str] = []
-    for _lineno, expr_src in _module_scope_gl_defaults(source):
-        values.extend(
-            node.value for node in ast.walk(ast.parse(expr_src, mode="eval")) if isinstance(node, ast.Constant)
-        )
-    return [v for v in values if isinstance(v, str)]
 
 
 def test_fleet_examples_exist() -> None:

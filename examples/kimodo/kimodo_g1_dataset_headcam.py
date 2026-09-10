@@ -16,11 +16,11 @@ directly.
 
 Run (stub motion — no CUDA/weights needed, useful for CI/dev):
 
-    MUJOCO_GL=egl python examples/kimodo/kimodo_g1_dataset_headcam.py --stub
+    python examples/kimodo/kimodo_g1_dataset_headcam.py --stub
 
 Run with real Kimodo (needs the ``[kimodo]`` extra + CUDA):
 
-    MUJOCO_GL=egl STRANDS_TRUST_REMOTE_CODE=1 \\
+    STRANDS_TRUST_REMOTE_CODE=1 \\
         python examples/kimodo/kimodo_g1_dataset_headcam.py \\
         --prompt "a person walking forward with confident strides"
 
@@ -132,7 +132,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
     # Trust gate fires on provider name even in --stub mode (stub loads no code).
     # Ack unconditionally — real code path is protected by the stub agent path.
     os.environ.setdefault("STRANDS_TRUST_REMOTE_CODE", "1")

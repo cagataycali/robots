@@ -292,17 +292,6 @@ def test_scan_reaches_the_module_scope_defaults():
 #: at import on macOS, so neither is a working unconditional default either.
 _OFFSCREEN_BACKENDS = ("egl", "osmesa")
 
-#: Examples whose entire directory is removed by cagataycali/robots-harness#446
-#: (motionbricks / kimodo policies dropped). They keep their bare ``egl`` until
-#: they go; fixing them would be edits to files with days to live.
-_EXAMPLES_LEAVING_WITH_446 = frozenset(
-    {
-        "examples/kimodo/kimodo_g1_dataset_headcam.py",
-        "examples/kimodo/kimodo_g1_walking.py",
-        "examples/wbc/motionbricks_g1_mujoco.py",
-    }
-)
-
 
 def _all_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
     """``(line, value-expression)`` for every ``MUJOCO_GL`` default in any scope."""
@@ -338,26 +327,17 @@ def test_no_unguarded_offscreen_gl_default_in_examples():
     ``egl`` is a RuntimeError at ``import mujoco`` whether the line sits at
     module scope or at the top of ``main()``.
     """
-    offenders: dict[str, list[str]] = {}
-    for path in _example_py():
-        rel = str(path.relative_to(_REPO_ROOT))
-        if rel in _EXAMPLES_LEAVING_WITH_446:
-            continue
-        bad = _unguarded_offscreen_defaults(path.read_text(encoding="utf-8"))
-        if bad:
-            offenders[rel] = bad
+    offenders = {
+        str(path.relative_to(_REPO_ROOT)): bad
+        for path in _example_py()
+        if (bad := _unguarded_offscreen_defaults(path.read_text(encoding="utf-8")))
+    }
     assert not offenders, (
         "an example defaults MUJOCO_GL to a Linux-only GL backend "
         f"({', '.join(_OFFSCREEN_BACKENDS)}), which MuJoCo rejects at import on macOS. "
         'Use \'os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\'. '
         f"Offending sites: {offenders}"
     )
-
-
-def test_the_446_allowlist_names_only_files_that_still_exist():
-    """When #446 lands the allowlist shrinks with it, not after."""
-    stale = sorted(rel for rel in _EXAMPLES_LEAVING_WITH_446 if not (_REPO_ROOT / rel).is_file())
-    assert not stale, f"remove from _EXAMPLES_LEAVING_WITH_446, the files are gone: {stale}"
 
 
 class TestTheOffscreenRuleGradesEveryScope:
