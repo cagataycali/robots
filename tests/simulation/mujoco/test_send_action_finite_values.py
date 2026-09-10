@@ -236,10 +236,15 @@ class TestFiniteValuesStillAccepted:
         result = sim.send_action({"a_shoulder": "0.5"}, robot_name="alice", n_substeps=2)
         assert result["status"] == "success", result
 
-    def test_a_finite_magnitude_outside_ctrlrange_is_still_accepted(self, sim):
-        """Out-of-range-but-finite stays the clamp warning's business."""
+    def test_a_finite_magnitude_outside_ctrlrange_is_refused_as_out_of_range(self, sim):
+        """Out-of-range-but-finite is the ctrlrange refusal's business, not this one's."""
         result = sim.send_action({"a_shoulder": 1e300}, robot_name="alice", n_substeps=2)
-        assert result["status"] == "success", result
+        assert result["status"] == "error", result
+        payload = next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+        assert [r["key"] for r in payload["out_of_range"]] == ["a_shoulder"]
+        assert "finite" not in result["content"][0]["text"]
+        clamped = sim.send_action({"a_shoulder": 1e300}, robot_name="alice", n_substeps=2, clamp=True)
+        assert clamped["status"] == "success", clamped
 
     def test_a_finite_action_vector_is_still_accepted(self, sim):
         result = sim.send_action([0.3, 0.2], robot_name="alice", n_substeps=2)
@@ -270,7 +275,9 @@ class TestParityWithSiblingStateWriters:
             pytest.param(float("inf"), id="inf"),
             pytest.param(float("-inf"), id="-inf"),
             pytest.param(0.3, id="finite"),
-            pytest.param(1e300, id="large-finite"),
+            # 1e300 is not probed here: send_action refuses it as out of the
+            # actuator ctrlrange, a domain set_joint_positions (joint range)
+            # grades separately.
         ],
     )
     def test_the_two_writers_agree_on_the_value(self, sim, value):

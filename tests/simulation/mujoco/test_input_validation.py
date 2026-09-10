@@ -963,7 +963,9 @@ class TestSendActionVectorValidation:
 
     def test_numeric_vector_still_applies(self, sim_with_robot):
         keys = sim_with_robot.robot_action_keys("panda")
-        res = sim_with_robot.send_action([0.0] * len(keys))
+        # panda actuator4 has ctrlrange [-3.07, -0.07], so a zero vector is
+        # refused; clamp on purpose - the vector shape is what is under test.
+        res = sim_with_robot.send_action([0.0] * len(keys), clamp=True)
         assert res["status"] == "success", res["content"][0]["text"]
 
 

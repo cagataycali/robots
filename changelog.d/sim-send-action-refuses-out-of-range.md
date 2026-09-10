@@ -1,0 +1,3 @@
+### Fixed:
+
+`SimEngine.send_action` no longer reports success for a command MuJoCo would clamp. A value outside a ctrl-limited actuator's `ctrlrange` is now refused: nothing is written, no physics step runs, and the error names each key, its value and the range (json `out_of_range`). Pass `clamp=True` to clamp on purpose; the result then carries the applied values (json `clamped`). Policy rollouts, dataset replay and the RL environment opt in, so a policy in the wrong units is reported per actuator rather than refused mid-episode, while the bare surface an agent tool or teleop frame reaches refuses. Isaac and Newton accept the keyword and apply the action verbatim.

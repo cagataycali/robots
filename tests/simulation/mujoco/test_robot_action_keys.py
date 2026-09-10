@@ -35,6 +35,20 @@ def sim():
     s.cleanup()
 
 
+def _mid_range_action(sim: Simulation, robot: str) -> dict[str, float]:
+    """Every action key at the middle of its actuator ctrlrange (0.0 where unlimited)."""
+    import mujoco
+
+    model = sim._world._model
+    ns = sim._world.robots[robot].namespace or ""
+    out: dict[str, float] = {}
+    for key in sim.robot_action_keys(robot):
+        i = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{ns}/{key}" if ns else key)
+        lo, hi = model.actuator_ctrlrange[i]
+        out[key] = float((lo + hi) / 2.0) if model.actuator_ctrllimited[i] else 0.0
+    return out
+
+
 class TestRobotActionKeys:
     def test_actuators_diverge_from_joints_on_tendon_gripper(self, sim):
         """xarm7: 13 joints (6 passive finger joints) but 8 actuators (tendon gripper)."""
@@ -57,15 +71,19 @@ class TestRobotActionKeys:
         # no matching joint name; the finger joints have no actuator.
         assert "left/gripper" in keys
         assert "right/gripper" in keys
-        result = sim.send_action({k: 0.0 for k in keys}, robot_name="aloha")
+        # aloha's gripper ctrlrange is [0.002, 0.037]: a 0.0 is out of range
+        # and refused, so command every actuator at the middle of its range.
+        result = sim.send_action(_mid_range_action(sim, "aloha"), robot_name="aloha")
         assert result["status"] == "success", result
 
     def test_joint_keys_leave_actuators_unresolved(self, sim):
         """Keying by joints (the old behaviour) leaves actuators unresolved."""
         sim.add_robot("aloha")
         joints = sim.robot_joint_names("aloha")
-        result = sim.send_action({j: 0.0 for j in joints}, robot_name="aloha")
+        result = sim.send_action(dict.fromkeys(joints, 0.0), robot_name="aloha")
         # The passive finger joints cannot resolve to any actuator -> error.
+        # (0.0 is also outside the gripper ctrlrange; that refusal reports the
+        # unresolved keys alongside, so this test reads them either way.)
         assert result["status"] == "error", result
         unresolved = next(
             c["json"]["unresolved_keys"] for c in result["content"] if isinstance(c, dict) and "json" in c

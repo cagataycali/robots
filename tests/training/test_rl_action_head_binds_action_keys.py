@@ -320,7 +320,9 @@ class TestATendonGripperArmIsDriven:
 
     def test_send_action_accepts_the_default_width(self, panda) -> None:  # type: ignore[no-untyped-def]
         env = SimEnv(panda, actor_obs_keys=["joint1"], reward_terms=[lambda _e: 1.0], robot_name="panda")
-        result = panda.send_action([0.0] * env.num_actions, robot_name="panda", n_substeps=1)
+        # The width is what is under test; a zero vector is outside panda's
+        # actuator4 ctrlrange and would be refused unclamped.
+        result = panda.send_action([0.0] * env.num_actions, robot_name="panda", n_substeps=1, clamp=True)
         assert result["status"] == "success"
 
 

@@ -80,8 +80,9 @@ class TestActionKeyResolution:
         assert "Jaw" in text
 
     def test_send_action_valid_keys_returns_success(self, sim):
-        """send_action with correct actuator names returns success."""
-        action = {"Rotation": 0.5, "Pitch": 0.3}
+        """send_action with correct actuator names and in-range values returns success."""
+        # so100 Pitch ctrlrange is [-3.32, 0.174]; 0.3 used to be clamped silently.
+        action = {"Rotation": 0.5, "Pitch": -0.3}
         result = sim.send_action(action)
         assert result["status"] == "success"
 

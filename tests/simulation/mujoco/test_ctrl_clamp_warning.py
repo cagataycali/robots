@@ -1,4 +1,4 @@
-"""Regression: warn when an action value is clamped by a ctrl-limited actuator.
+"""Regression: an action value outside a ctrl-limited actuator's range is refused, or clamped on request.
 
 The direct-actuator branch of ``_apply_action_by_name`` writes the action
 value verbatim to ``data.ctrl``. When the actuator is ``ctrllimited`` and the
@@ -12,8 +12,9 @@ pinning the gripper open and destroying the grasp channel.
 
 These tests build a tiny synthetic model (no asset download) with a wide-range
 arm actuator, a small-range ("gripper") ctrl-limited actuator, and an
-unlimited actuator, and pin that ``_apply_action_by_name`` warns exactly when a
-value is meaningfully outside a ctrl-limited actuator's range.
+unlimited actuator, and pin that ``_apply_action_by_name`` records a refusal
+exactly when a value is meaningfully outside a ctrl-limited actuator's range -
+and, when the caller opted into clamping, clamps it and warns once instead.
 """
 
 from __future__ import annotations
@@ -60,11 +61,27 @@ def model():
     return mujoco.MjModel.from_xml_string(_XML)
 
 
-def _apply(model, action, mixin=None):
+def _apply(model, action, mixin=None, clamp=True):
     data = mujoco.MjData(model)
     mixin = mixin or RenderingMixin()
+    mixin._clamp_ctrl = clamp
     mixin._apply_action_by_name(model, data, action, "", mujoco)
     return mixin, data
+
+
+def test_out_of_range_value_is_refused_by_default(model, caplog):
+    """Without ``clamp`` the value is not written and no warning stands in for the refusal."""
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        mixin, data = _apply(model, {"grip_act": 1.0}, clamp=False)
+    assert data.ctrl[1] == 0.0
+    assert mixin._out_of_range_ctrl == [{"key": "grip_act", "commanded": 1.0, "ctrlrange": [0.002, 0.037]}]
+    assert not [r for r in caplog.records if "ctrlrange" in r.getMessage()]
+
+
+def test_clamp_writes_the_bound_and_records_it(model):
+    mixin, data = _apply(model, {"grip_act": 1.0}, clamp=True)
+    assert data.ctrl[1] == pytest.approx(0.037)
+    assert mixin._clamped_ctrl == [{"key": "grip_act", "commanded": 1.0, "ctrlrange": [0.002, 0.037], "applied": 0.037}]
 
 
 def test_warns_when_gripper_value_outside_ctrlrange(model, caplog):

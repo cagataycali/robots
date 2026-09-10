@@ -781,6 +781,7 @@ class MuJoCoSimEngine(
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         """Apply action to simulation (Robot ABC compatible).
 
@@ -812,6 +813,18 @@ class MuJoCoSimEngine(
                 refused rather than honored as "write but do not advance" -
                 :meth:`step` is the surface that advances a count of its own,
                 and it accepts ``0`` as a documented no-op.
+            clamp: ``False`` (default) refuses an action whose value lies
+                outside a ctrl-limited actuator's ``ctrlrange``: nothing is
+                written, no physics step runs, and the result is an error
+                naming each offending key, its value and the range. MuJoCo
+                would otherwise clamp the value inside ``mj_step`` and the
+                caller would be told the command was applied - the trajectory
+                a rollout then records is one no actuator followed. ``True``
+                clamps such values into range on purpose (a dataset replayed
+                onto a robot with different actuator units, an
+                out-of-distribution policy) and reports the applied values in
+                a ``clamped`` json block so a recorder can store what was
+                actually commanded.
 
         Returns:
             Dict with ``status`` ("success" or "error") and ``content``.
@@ -849,8 +862,34 @@ class MuJoCoSimEngine(
         assert action_map is not None  # narrow for mypy: no error implies a mapping
         with self._lock:
             self._unresolved_action_keys: list[str] = []
-            self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
+            self._clamp_ctrl = bool(clamp)
+            try:
+                self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
+            finally:
+                self._clamp_ctrl = False
             unresolved = self._unresolved_action_keys
+            out_of_range = list(getattr(self, "_out_of_range_ctrl", ()))
+            clamped = list(getattr(self, "_clamped_ctrl", ()))
+        if out_of_range:
+            described = ", ".join(
+                f"{r['key']}={r['commanded']:.4g} (ctrlrange [{r['ctrlrange'][0]:.4g}, {r['ctrlrange'][1]:.4g}])"
+                for r in out_of_range
+            )
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Action refused for '{robot_name}': {len(out_of_range)} value(s) outside the "
+                            f"actuator ctrlrange: {described}. Nothing was applied and no physics step ran. "
+                            "MuJoCo would clamp these inside mj_step, so the commanded trajectory would not be "
+                            "the one reproduced. Rescale the action to the actuator's units, or pass "
+                            "clamp=True to clamp on purpose (the applied values are then reported)."
+                        )
+                    },
+                    {"json": {"out_of_range": out_of_range, "unresolved_keys": unresolved}},
+                ],
+            }
         applied = [k for k in action_map if k not in unresolved]
         if unresolved:
             # Surface the actual valid actuator names so the user can
@@ -871,7 +910,11 @@ class MuJoCoSimEngine(
                     {"json": {"unresolved_keys": unresolved, "applied": applied}},
                 ],
             }
-        return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
+        content: list[dict[str, Any]] = [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]
+        if clamped:
+            content[0]["text"] += f" {len(clamped)} value(s) clamped into ctrlrange."
+            content.append({"json": {"clamped": clamped}})
+        return {"status": "success", "content": content}
 
     def physics_timestep(self) -> float | None:
         """Physics integration timestep (seconds) of the active world.

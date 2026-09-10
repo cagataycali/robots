@@ -1179,8 +1179,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         """Apply position targets and advance physics by ``n_substeps``.
+
+        ``clamp`` is accepted for the :class:`~strands_robots.simulation.base.SimEngine`
+        contract; this backend declares no actuator command ranges, so the
+        action is applied verbatim either way.
 
         ``action`` may be a ``{joint name: target}`` mapping or an ordered
         numeric vector (``list`` / ``tuple`` / 1-D ``numpy`` array) bound

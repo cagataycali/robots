@@ -64,7 +64,9 @@ class TestSendActionVectorBindsToActuators:
     def test_actuator_length_vector_applies(self, aloha_sim):
         """A vector of length == actuator count applies to every actuator."""
         n = len(aloha_sim.robot_action_keys("aloha"))  # 14
-        result = aloha_sim.send_action([0.0] * n, robot_name="aloha", n_substeps=1)
+        # A zero vector is outside the gripper ctrlrange [0.002, 0.037] and is
+        # refused; clamp on purpose so the binding, not the values, is under test.
+        result = aloha_sim.send_action([0.0] * n, robot_name="aloha", n_substeps=1, clamp=True)
         assert result["status"] == "success", result
         # No key was left unresolved (no silent drops).
         assert not any(isinstance(b, dict) and b.get("json", {}).get("unresolved_keys") for b in result["content"])
@@ -106,10 +108,10 @@ class TestReplayRoundTrip:
         emitted: list[list[str]] = []
         original = aloha_sim.send_action
 
-        def spy(action, robot_name=None, n_substeps=1):
+        def spy(action, robot_name=None, n_substeps=1, clamp=False):
             if isinstance(action, dict):
                 emitted.append(list(action.keys()))
-            return original(action, robot_name=robot_name, n_substeps=n_substeps)
+            return original(action, robot_name=robot_name, n_substeps=n_substeps, clamp=clamp)
 
         aloha_sim.send_action = spy  # type: ignore[method-assign]
         try:

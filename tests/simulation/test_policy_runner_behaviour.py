@@ -515,9 +515,9 @@ class TestControlSubsteps:
         seen: list[int] = []
         orig = sim_with_robot.send_action
 
-        def spy(action, robot_name=None, n_substeps=1):
+        def spy(action, robot_name=None, n_substeps=1, clamp=False):
             seen.append(n_substeps)
-            return orig(action, robot_name=robot_name, n_substeps=n_substeps)
+            return orig(action, robot_name=robot_name, n_substeps=n_substeps, clamp=clamp)
 
         monkeypatch.setattr(sim_with_robot, "send_action", spy)
         policy = _ConstantTargetPolicy()

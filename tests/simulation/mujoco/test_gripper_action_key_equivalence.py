@@ -162,10 +162,18 @@ def test_actuator_name_symmetric_tendon_command_passes_verbatim():
     assert data.ctrl[sym] == pytest.approx(-0.5)
 
 
-def test_direct_actuator_name_out_of_range_still_warns(model, caplog):
-    """The no-silent-clamp warning still fires for direct actuators."""
+def test_direct_actuator_name_out_of_range_is_refused_or_clamped(model, caplog):
+    """The no-silent-clamp contract still holds for direct actuators."""
+    arm = _aid(model, "arm_act")
+    data = mujoco.MjData(model)
+    mixin = RenderingMixin()
+    mixin._apply_action_by_name(model, data, {"arm_act": 99.0}, "", mujoco)
+    assert data.ctrl[arm] == 0.0
+    assert mixin._out_of_range_ctrl[0]["key"] == "arm_act"
+    mixin._clamp_ctrl = True
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.rendering"):
-        _ctrl_after(model, {"arm_act": 99.0})
+        mixin._apply_action_by_name(model, data, {"arm_act": 99.0}, "", mujoco)
+    assert data.ctrl[arm] == pytest.approx(3.0)
     assert any("outside" in r.message and "ctrlrange" in r.message for r in caplog.records)
 
 

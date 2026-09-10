@@ -2130,7 +2130,13 @@ class PolicyRunner:
                     nonlocal _total_failure_steps, _coarse_failure_steps, _last_unresolved
                     nonlocal _last_coarse_error, _applied_actions, _known_resolution_steps
 
-                    _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                    # A rollout clamps on purpose: a policy in the wrong units is
+                    # reported (D-060 counts every clamp into the result) rather
+                    # than refused mid-episode. The bare send_action surface an
+                    # agent tool or teleop frame reaches keeps the default refusal.
+                    _send_result = self.sim.send_action(
+                        action_dict, robot_name=robot_name, n_substeps=n_substeps, clamp=True
+                    )
                     # ``send_action`` has returned. Count the call here rather than
                     # beside ``step_count`` below so the tally survives a legacy hook
                     # that aborts this step; the resolution records whether physical
@@ -3051,7 +3057,13 @@ class PolicyRunner:
                 # trajectory never reached the robot. Abort on the first
                 # unapplied frame instead of finishing a replay that is not
                 # happening.
-                send_result = self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                # A recorded dataset may carry other actuator units than this
+                # robot's ctrlrange; replay clamps on purpose and the backend
+                # reports the applied values, so the sim refusal is reserved
+                # for a live policy whose command the robot cannot follow.
+                send_result = self.sim.send_action(
+                    action_dict, robot_name=resolved_robot, n_substeps=n_substeps, clamp=True
+                )
                 if isinstance(send_result, dict) and send_result.get("status") == "error":
                     detail = next(
                         (
@@ -3552,7 +3564,7 @@ class PolicyRunner:
                         for _observation, action_dict in chunks:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps, clamp=True)
                             _fire_on_frame(_observation, action_dict, steps)
                             steps += 1
                             # Check success against the LIVE post-action observation
@@ -3588,7 +3600,7 @@ class PolicyRunner:
                         for action_dict in chunk:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps, clamp=True)
                             _fire_on_frame(observation, action_dict, steps)
                             steps += 1
                             # Check success against the LIVE post-action observation,
@@ -3965,7 +3977,9 @@ class PolicyRunner:
                             if steps >= max_steps:
                                 break
                             action_applied = dict(action_in_chunk)
-                            self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
+                            self.sim.send_action(
+                                action_applied, robot_name=robot_name, n_substeps=n_substeps, clamp=True
+                            )
                             # #191 - synchronous on_frame hook fires on the
                             # eval thread, after send_action + before
                             # on_step's reward bookkeeping. Use this for

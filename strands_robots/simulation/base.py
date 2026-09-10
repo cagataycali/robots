@@ -1603,6 +1603,7 @@ class SimEngine(ABC):
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         """Apply action and advance physics by n_substeps.
 
@@ -1637,6 +1638,15 @@ class SimEngine(ABC):
             be resolved, the ``content`` list includes a ``json`` block with
             ``unresolved_keys`` so callers can self-correct. ``status`` is
             ``"error"`` when ``n_substeps`` is outside its domain.
+
+        ``clamp`` is the out-of-range policy for actuators with a declared
+        command range: ``False`` (default) refuses an action whose value lies
+        outside it - nothing written, no step, an error naming the key, value
+        and range - because a backend that clamps silently reports a trajectory
+        no actuator followed. ``True`` clamps on purpose (replaying a dataset
+        recorded in other units) and reports the applied values in a
+        ``clamped`` json block. A backend without command ranges accepts the
+        flag and applies the action verbatim.
         """
         ...
 

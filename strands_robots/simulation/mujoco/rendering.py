@@ -753,6 +753,12 @@ class RenderingMixin:
         # writes (joint torques). When set, the controller takes
         # full responsibility for the data.ctrl update; the
         # actuator/joint-name lookup loop is skipped.
+        # Reset the per-call range verdicts (read back by ``send_action``) and
+        # snapshot ctrl so a refused action leaves the world exactly as it was.
+        self._out_of_range_ctrl: list[dict[str, Any]] = []
+        self._clamped_ctrl: list[dict[str, Any]] = []
+        ctrl_before = data.ctrl.copy()
+
         controller = self._get_action_controller()
         controller_handled_stepping = False
         if controller is not None:
@@ -778,6 +784,12 @@ class RenderingMixin:
                 self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
         else:
             self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
+
+        if self._out_of_range_ctrl:
+            # Nothing applied, nothing stepped: the partially written ctrl is
+            # rolled back so the refusal ``send_action`` reports is the truth.
+            data.ctrl[:] = ctrl_before
+            return
 
         if not controller_handled_stepping:
             for _ in range(max(1, n_substeps)):
@@ -926,8 +938,53 @@ class RenderingMixin:
         """
         ctrl_value = self._scale_ctrl_for_actuator(model, act_id, float(value), mj)
         if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
-            self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
+            bounds = self._ctrl_range_violation(model, act_id, ctrl_value)
+            if bounds is not None:
+                lo, hi = bounds
+                record = {"key": key, "commanded": float(ctrl_value), "ctrlrange": [lo, hi]}
+                if not getattr(self, "_clamp_ctrl", False):
+                    # Refused, not clamped: MuJoCo would clamp it inside mj_step
+                    # and the caller would be told the command was applied.
+                    # ``_apply_sim_action`` restores ctrl and skips the step.
+                    self._range_verdicts("_out_of_range_ctrl").append(record)
+                    return
+                clamped = min(max(ctrl_value, lo), hi)
+                record["applied"] = float(clamped)
+                self._range_verdicts("_clamped_ctrl").append(record)
+                self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
+                ctrl_value = clamped
         data.ctrl[act_id] = ctrl_value
+
+    def _range_verdicts(self, name: str) -> list[dict[str, Any]]:
+        """The per-call list ``_apply_sim_action`` resets; created on demand for direct callers."""
+        verdicts = getattr(self, name, None)
+        if verdicts is None:
+            verdicts = []
+            setattr(self, name, verdicts)
+        return verdicts
+
+    def _ctrl_range_violation(self, model: Any, act_id: int, value: float) -> tuple[float, float] | None:
+        """Return ``(lo, hi)`` when ``value`` is meaningfully outside the actuator's ctrlrange.
+
+        ``None`` for an unlimited actuator, a degenerate ``[0, 0]`` range, a
+        stale actuator id, or a value inside the range (a 1% tolerance absorbs
+        boundary rounding). The single range rule behind both the refusal in
+        :meth:`_write_ctrl` and the clamp warning.
+        """
+        try:
+            if not bool(model.actuator_ctrllimited[act_id]):
+                return None
+            lo = float(model.actuator_ctrlrange[act_id][0])
+            hi = float(model.actuator_ctrlrange[act_id][1])
+        except (IndexError, TypeError, ValueError):
+            return None
+        if hi <= lo:
+            # [0, 0] sentinel or degenerate range: not a meaningful limit.
+            return None
+        tol = (hi - lo) * 0.01
+        if lo - tol <= value <= hi + tol:
+            return None
+        return lo, hi
 
     def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
@@ -977,19 +1034,10 @@ class RenderingMixin:
         boundary rounding, and unlimited actuators (which never clamp) are
         skipped.
         """
-        try:
-            if not bool(model.actuator_ctrllimited[act_id]):
-                return
-            lo = float(model.actuator_ctrlrange[act_id][0])
-            hi = float(model.actuator_ctrlrange[act_id][1])
-        except (IndexError, TypeError, ValueError):
+        bounds = self._ctrl_range_violation(model, act_id, value)
+        if bounds is None:
             return
-        if hi <= lo:
-            # [0, 0] sentinel or degenerate range: not a meaningful limit.
-            return
-        tol = (hi - lo) * 0.01
-        if lo - tol <= value <= hi + tol:
-            return
+        lo, hi = bounds
         warned = getattr(self, "_warned_ctrl_clamp_keys", None)
         if warned is None:
             warned = set()
@@ -1000,7 +1048,7 @@ class RenderingMixin:
         warned.add(dedup)
         logger.warning(
             "[sim] action value %.4g for ctrl-limited actuator %r (prefix=%r) is outside "
-            "its ctrlrange [%.4g, %.4g]; MuJoCo will clamp it, so the commanded value is "
+            "its ctrlrange [%.4g, %.4g]; clamped to the range (clamp=True), so the commanded value is "
             "NOT reproduced for this actuator. This usually means the action units do not "
             "match the actuator - e.g. a normalized gripper action replayed onto a "
             "joint-position gripper, or an out-of-distribution policy command. Rescale the "

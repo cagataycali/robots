@@ -250,7 +250,10 @@ class SimEnv:
             should be value-bootstrapped, not treated as a terminal state).
         """
         act = action.detach().reshape(-1).to("cpu").numpy().astype(np.float64) * self.action_scale
-        self.engine.send_action(act.tolist(), robot_name=self.robot_name, n_substeps=self.n_substeps)
+        # Exploration leaves the ctrlrange by design; clamp (the RL convention)
+        # instead of taking the sim's refusal, which would leave the world
+        # un-stepped for this transition.
+        self.engine.send_action(act.tolist(), robot_name=self.robot_name, n_substeps=self.n_substeps, clamp=True)
         self._step_count += 1
 
         reward = sum(term(self.engine) for term in self.reward_terms)

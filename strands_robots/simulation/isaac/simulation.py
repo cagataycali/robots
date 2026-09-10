@@ -3829,8 +3829,13 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         """Apply action and advance physics.
+
+        ``clamp`` is accepted for the :class:`~strands_robots.simulation.base.SimEngine`
+        contract; this backend declares no actuator command ranges, so the
+        action is applied verbatim either way.
 
         Parameters
         ----------
