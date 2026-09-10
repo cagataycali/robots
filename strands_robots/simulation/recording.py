@@ -1477,9 +1477,12 @@ class DatasetRecordingMixin:
                 ``1`` to read in capture order),
                 ``drop_videos`` (proprio-only,
                 torchcodec-free; requires ``delta_timestamps`` with at least one
-                non-video key, else ValueError), ``repo_type`` (``"dataset"`` or
-                ``"bucket"``; ``"bucket"`` requires lerobot>=0.6.1, else
-                RuntimeError).
+                non-video key, else ValueError), ``repo_type`` (``"dataset"``
+                or ``"bucket"``, forwarded unconditionally: every
+                lerobot-bearing extra floors lerobot at
+                ``BUCKET_STREAMING_MIN_LEROBOT``, whose constructor accepts the
+                keyword, so a below-floor install surfaces lerobot's own
+                ``TypeError`` naming it rather than a refusal from here).
 
         Returns:
             A :class:`~strands_robots.streaming_dataset.StreamingDatasetReader`.

@@ -103,8 +103,8 @@ def test_the_inert_normalization_warning_states_the_unit_half(caplog):
 def test_the_docs_remedy_shows_the_unit_half_beside_the_stats_half():
     """The page that hands out processor_overrides also hands out the unit knob."""
     text = _DOC.read_text(encoding="utf-8")
-    start = text.index("### Overriding a processor step")
-    section = text[start : text.index("\n## ", start)]
+    start = text.index("## Processor bridge and normalization")
+    section = text[start : text.index("\n## ", start + 1)]
 
     assert "processor_overrides" in section
     assert "state_units" in section, "the stats remedy is documented without its unit half"

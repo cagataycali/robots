@@ -3,13 +3,11 @@
 `ProtoMotionsPolicy` wraps a ProtoMotions **Generalist Tracking Policy** (GTP)
 ONNX export. Given a reference motion clip it emits balanced PD joint targets
 for the Unitree G1's 29 actuators, tracking that clip while keeping the robot
-upright.
-
-It is the tracking half of a two-stage pipeline. A *kinematic* generator such as
-[`KimodoPolicy`](./kimodo.md) (text-to-motion diffusion) produces a `qpos`
-sequence with no notion of balance; the tracker turns that sequence into physics. Compare
+upright. It is the tracking half of a two-stage pipeline: a *kinematic*
+generator such as [`KimodoPolicy`](./kimodo.md) produces a `qpos` sequence with
+no notion of balance, and the tracker turns it into physics. Compare
 [`WBC`](./wbc.md), which takes a velocity/height *command* rather than a
-reference clip and so cannot follow a whole-body pose trajectory.
+reference clip.
 
 ## Install
 
@@ -52,32 +50,24 @@ sim.run_policy(
 
 ## The observation contract
 
-The tracker consumes four inputs per tick. Three are ordinary proprioception —
-joint positions, joint velocities, and the floating base's angular velocity —
-and the runtime already publishes all three (`<joint>`, `<joint>.vel` and
-`base_ang_vel`, which is the base freejoint's `qvel[3:6]` and so is already in
-the body frame the network wants).
-
-The fourth is the **world orientation of the anchor link**, `torso_link` on the
-G1. This one is not derivable from the observation's floating-base signals:
-`base_quat` is the *pelvis*, and the torso differs from it by the three waist
-joints. On a G1 sweeping its waist through 0.6 rad the two frames diverge by up
-to 42 degrees, so substituting the base would feed the network a wrong frame
-rather than an approximation of the right one.
-
-The policy therefore declares the link it needs:
+The tracker consumes four inputs per tick. Three are ordinary proprioception the
+runtime already publishes: joint positions (`<joint>`), joint velocities
+(`<joint>.vel`) and the base angular velocity (`base_ang_vel`, the freejoint's
+`qvel[3:6]`, already in the body frame). The fourth is the **world orientation
+of the anchor link**, `torso_link` on the G1 - not derivable from `base_quat`,
+which is the *pelvis*: with the waist swept through 0.6 rad the two frames
+diverge by up to 42 degrees. So the policy declares the link it needs, and the
+runtime resolves it once per rollout and merges `body.torso_link.quat` into every
+observation (the same "policy declares, runtime supplies" contract as
+[`requires_images`](./overview.md)):
 
 ```python
 policy.required_bodies        # ('torso_link',)
 ```
 
-and the runtime resolves that name once per rollout and merges
-`body.torso_link.quat` into every observation it hands to `get_actions`. Nothing
-is required of the caller — this is the same "policy declares, runtime supplies"
-contract as [`requires_images`](./overview.md).
-
-A caller assembling observations by hand (a hardware loop reading an IMU, for
-instance) can pass the signals directly instead:
+A caller assembling observations by hand (a hardware loop reading an IMU) passes
+the two signals directly, or puts them on the observation dict under either
+spelling:
 
 ```python
 await policy.get_actions(
@@ -88,36 +78,18 @@ await policy.get_actions(
 )
 ```
 
-Either signal can instead sit on the observation dict itself, under its bare
-name or its `observation.`-prefixed spelling - the shape a runtime that
-namespaces its observation keys produces:
-
 | signal | accepted observation keys |
 | --- | --- |
 | anchor rotation, `xyzw` | `anchor_rot_xyzw`, `observation.anchor_rot_xyzw` |
 | root angular velocity, local frame | `root_ang_vel_local`, `observation.root_ang_vel_local` |
 
-The prefixed spelling is the bare name with `observation.` in front in both
-rows, so one dict can carry both signals written the same way. (`anchor_rot`
-without the `_xyzw` suffix is also still accepted for the anchor rotation, but
-it does not say which component order it carries, so prefer the suffixed name.)
+Missing signals are refused, not substituted: no anchor pose raises naming the
+key it wanted (`base_quat` stands in only when the config's anchor body *is* the
+floating base), and an absent `<joint>.vel` is refused rather than read as zero.
 
-If neither the declared body pose nor an explicit override is present the policy
-raises, naming the key it wanted. It will not fall back to `base_quat` unless
-the config's anchor body *is* the floating base, in which case the two are the
-same frame by definition.
-
-Joint velocities are treated the same way: an absent `<joint>.vel` is refused
-rather than substituted with zero. Velocity is tracker feedback, and zeros are a
-plausible-looking value that quietly degrades tracking.
-
-### Orientations need not be exactly unit
-
-Every rotation the tracker derives — body-framing the root angular velocity,
-and extracting a yaw for heading alignment — is computed from a formula that
-mixes a quadratic term in the quaternion components with a constant, so the
-quaternion's scale does not cancel. Both helpers therefore normalise their
-input, and a quaternion scaled by any positive factor gives the same answer:
+Orientations need not be exactly unit: both rotation helpers normalise their
+input, so a drifted IMU reading or a lerped sample (up to 8% short, which read
+as-is is a heading 6.2 degrees off) gives the unit quaternion's answer:
 
 ```python
 from strands_robots.policies.protomotions import extract_yaw_quat
@@ -126,42 +98,27 @@ extract_yaw_quat(q)          # same heading as
 extract_yaw_quat(q * 0.92)   # this
 ```
 
-That is worth knowing when assembling observations by hand. An IMU reading
-drifts off unit, and an orientation obtained by *linearly* interpolating two
-samples is short by up to about 8% — for two samples 90 degrees apart the
-midpoint has `|q| = 0.924`, which read as-is would be a heading 6.2 degrees off
-and an angular velocity 29% short of its true magnitude. (Linear interpolation
-is why the clip loader slerps and renormalises rather than lerping.)
-
-An orientation that cannot define a rotation at all — all zeros, which is how a
-never-written or dropped orientation reads, or a non-finite component — is
-refused with a `ValueError` naming the helper and the value. Scaling cannot
-recover a direction from it, and standing in an arbitrary rotation would feed
-the network a plausible-looking wrong frame.
+An orientation that cannot define a rotation - all zeros, or a non-finite
+component - is refused with a `ValueError` naming the helper and the value.
 
 ## Bridging a qpos clip
 
 `qpos_to_motion_data` turns a `[T, 7 + 29]` MuJoCo `qpos` sequence into the
-cache the tracker plays. It runs forward kinematics through the ProtoMotions
-MJCF to recover per-body world poses, finite-differences velocities at the
-source rate, and resamples onto the tracker's `control_dt` (0.02 s):
+cache the tracker plays: forward kinematics through the ProtoMotions MJCF for
+per-body world poses, finite-differenced velocities at the source rate,
+resampled onto the tracker's `control_dt` (0.02 s):
 
 ```python
 cache = qpos_to_motion_data(qpos, fps=30, proto_mjcf_path=mjcf)
 cache["num_frames"], cache["control_dt"]
 ```
 
-`MotionPlayer` accepts that dict, an `.npz` written by
-`MotionPlayer.save_cache_npz`, or a raw ProtoMotions `.pt`.
+`MotionPlayer` accepts that dict, an `.npz` from `MotionPlayer.save_cache_npz`,
+or a raw ProtoMotions `.pt`. Four things to know about the cache:
 
-Each channel is `[num_frames, ...]`, so a cache states its frame count several
-times over and `MotionPlayer` checks those statements agree before playing it.
-That matters when you edit a cache by hand - trimming or concatenating the
-channels and leaving `num_frames` behind is refused with both counts named,
-rather than overrunning the arrays part-way through the clip (the frame index is
-clamped to `num_frames`, and the tracker's future window reads ahead of the
-playhead) or silently hiding the tail. Drop `num_frames` and the channels' own
-row count is used:
+- **Frame counts must agree.** Every channel is `[num_frames, ...]`; trimming
+  the channels and leaving `num_frames` behind is refused with both counts
+  named. Drop `num_frames` (or set it) after editing:
 
 ```python
 cache["dof_pos"] = cache["dof_pos"][:100]   # ... and the other five channels
@@ -169,70 +126,26 @@ del cache["num_frames"]                     # or set it to 100
 player = MotionPlayer(cache)
 ```
 
-### The MJCF has to be the tracker's own embodiment
-
-`proto_mjcf_path` is not just any G1. The tracker reads a body out of the cache
-by **row index**, never by name: `anchor_body_index` and `root_body_index` are
-offsets into `GTP_G1_BODY_NAMES`, the 33-name list pinned from the checkpoint's
-sidecar. `qpos_to_motion_data` fills those rows by name from the model you hand
-it, so the model has to carry all 33 - plus a free root and the 29
-`GTP_G1_JOINT_NAMES` joints, for a `qpos` width of 36.
-
-The G1 family does not agree on that body set. The widely-shipped fingerless
-models omit `head` and both `rubber_hand` placeholders and expose 30 bodies;
-`g1_29dof_with_hand` and `g1_with_hands` expose 44 and a `qpos` width of 50.
-Passing one of those is refused, with a message that names what is missing:
-
-```text
-ValueError: ProtoMotions G1 MJCF .../g1_29dof.xml is missing 3 of the 33 bodies
-the tracker reads by row index: ['head', 'left_rubber_hand', 'right_rubber_hand'].
-```
-
-The refusal is the point. Read positionally, a 30-body model shifts every row
-after the gap by one, so the tracker asks for `torso_link` at row 16 and is
-handed `left_shoulder_pitch_link` - on a walking clip, an anchor orientation
-some 20 degrees out, with nothing in the cache to say so. A model whose `qpos`
-layout differs is refused separately and says so, so a model-side mismatch is
-not read as a bad `qpos` argument.
-
-### An MJCF that declares its own ground is used as-is
-
-Forward kinematics needs a floor, and the ProtoMotions G1 MJCF names one from
-`<contact><pair geom2="floor">`, so the bridge appends a plane geom called
-`floor` when - and only when - the model does not already declare a ground.
-
-Whether it does is decided from the geom list MuJoCo itself parses out of the
-file, so every way of declaring a ground counts: a plane in any of the
-`<worldbody>` sections MuJoCo merges, one nested inside a body, and one spliced
-in through `<include>`. Pass any G1 MJCF that already ships a floor - the
-`unitree_ros` G1 descriptions declare theirs in a second `<worldbody>`, and
-menagerie-style `scene.xml` wrappers `<include>` the robot and add their own -
-and it is used unchanged.
-
-### Cache velocities are world-frame
-
-`body_pos` and `body_rot` are world poses, and `body_vel` and `body_ang_vel`
-are **world-frame** velocities derived from them - the same convention a raw
-ProtoMotions motion library uses for `rigid_body_ang_vel`. That matters when
-you hand-build a cache instead of bridging one: the tracker's root input is a
-*local*-frame angular velocity, and `compute_root_local_ang_vel` produces it by
-rotating a world-frame row into the root's frame. Storing local-frame rows here
-gets them rotated a second time. The frames are not interchangeable - on a
-walking G1 clip they differ by whole rad/s, the same class of silent wrong-frame
-error as substituting the base for the anchor link above.
-
-### Motion files are read with a restricted unpickler
-
-An `.npz` cache is read by NumPy and needs no torch. A raw `.pt` is read with
-`torch.load(..., weights_only=True)`, which accepts tensors and plain scalars -
-the documented payload above - and refuses anything else.
-
-That restriction matters because a motion file travels: clips get downloaded,
-shared between machines and committed to dataset repos. The unrestricted
-unpickler runs whatever `__reduce__` a file names *while reading it*, so
-accepting one would make playing a third-party motion enough to execute code on
-the machine that plays it. If a `.pt` is refused, re-save it as a dict of
-tensors, or convert it once with `save_cache_npz` and load the `.npz`.
+- **The MJCF has to be the tracker's own embodiment.** The tracker reads bodies
+  by **row index** into `GTP_G1_BODY_NAMES` (33 names from the checkpoint's
+  sidecar), so `proto_mjcf_path` must carry all 33 bodies plus a free root and
+  the 29 `GTP_G1_JOINT_NAMES` joints (`qpos` width 36). The common fingerless
+  G1 models expose 30 bodies (no `head`, no `rubber_hand`s) and the hand
+  variants 44; both are refused naming what is missing, since a positional
+  read of a 30-body model hands the tracker the wrong link for `torso_link`.
+- **A floor is added only when the model has none.** The bridge appends a
+  plane geom named `floor` unless MuJoCo's parsed geom list already has a
+  ground (a `unitree_ros` second `<worldbody>`, a menagerie `scene.xml`
+  `<include>`), in which case the file is used unchanged.
+- **Cache velocities are world-frame.** `body_vel` / `body_ang_vel` follow the
+  ProtoMotions motion-library convention; `compute_root_local_ang_vel` rotates
+  them into the root frame, so a hand-built cache holding local-frame rows is
+  rotated twice - whole rad/s off on a walking clip.
+- **Motion files are read with a restricted unpickler.** `.npz` needs no torch;
+  a `.pt` is read with `torch.load(..., weights_only=True)`, which accepts
+  tensors and scalars only, because clips travel and an unrestricted unpickler
+  executes what the file names. A refused `.pt`: re-save it as a dict of
+  tensors, or convert once with `save_cache_npz`.
 
 ## Per-episode reset
 
@@ -250,102 +163,29 @@ names, the anchor and root body indices, per-joint PD gains, timing, and the
 lookahead offsets for the future-reference window. Pass `yaml_path=` to load a
 sidecar; omit it to use the defaults, which match the shipped export.
 
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `joint_names` | 29 G1 joints | ONNX action order |
-| `anchor_body_index` | `16` (`torso_link`) | Link whose world rotation the network reads |
-| `root_body_index` | `0` (`pelvis`) | Floating base |
-| `control_dt` | `0.02` | Seconds per control tick (50 Hz); the period the reference motion is resampled onto |
-| `future_step_indices` | `(1, 2, 4, 8)` | Lookahead offsets, in control steps |
-| `action_ema_alpha` | `1.0` | Smoothing weight on the emitted joint targets; `1.0` is passthrough |
+| Field | Default | Meaning | Accepted |
+| --- | --- | --- | --- |
+| `joint_names` | 29 G1 joints | ONNX action order | |
+| `anchor_body_index` | `16` (`torso_link`) | Link whose world rotation the network reads | a whole number in `0..len(body_names)-1`; negative indices and booleans are refused, an integral float is kept as its row |
+| `root_body_index` | `0` (`pelvis`) | Floating base | same |
+| `control_dt` | `0.02` | Seconds per control tick (50 Hz); the period the reference motion is resampled onto | finite, `> 0`; a cache dict's own `control_dt` outranks the argument and is held to the same domain by `MotionPlayer` |
+| `future_step_indices` | `(1, 2, 4, 8)` | Lookahead offsets, in control steps | |
+| `action_ema_alpha` | `1.0` | Smoothing weight on the emitted joint targets; `1.0` is passthrough | finite, in `(0, 1]` |
 
-### A body index has to address a body
-
-The two body indices are offsets into `body_names`, so an index that misses is
-the config-side mirror of the model-side row shift above - and it is refused the
-same way, when the config is built rather than when something reads it:
-
-```text
-ValueError: ProtoMotionsConfig.anchor_body_index must be a row of body_names
-(0..32), got 99 for 33 bodies. The index is an offset into body_names, so one
-that misses cannot resolve the body it names.
-```
-
-Both directions are checked, because they fail differently. A negative index is
-a valid tuple lookup: `body_names[-1]` is `right_rubber_hand`, so an
-`anchor_body_index: -1` sidecar resolves a real link and the tracker anchors on
-it consistently - `required_bodies` declares that link, the runtime supplies its
-quaternion, and the future-reference window slices the same row. Nothing
-disagrees, and on the tracker's own embodiment that link's world orientation is
-20 degrees from `torso_link` with the waist turned and an arm raised. An index
-past the end used to surface only as `IndexError: tuple index out of range` from
-whichever property read the name first.
-
-The index also goes through the shared whole-number domain, so a yaml
-`anchor_body_index: true` is refused instead of being read as row 1 (`head`),
-and a hand-built `ProtoMotionsConfig(...)` reports the same value the same way a
-sidecar does. An integral float such as `16.0` addresses a row and is kept,
-normalised to the row number both consumers index with.
-
-### A control period has to be a period
-
-`control_dt` is the field of the timing block the control path spends. It is the
-period the reference motion is *resampled* onto, so it fixes how many frames one
-clip becomes, and the playhead advances exactly one of those frames per control
-tick. It goes through the same positive-finite domain, at construction:
-
-```text
-ValueError: ProtoMotionsConfig: control_dt must be > 0, got True.
-```
-
-The values it turns away are not near-misses. Measured by resampling a 3-second,
-30 fps reference clip that sweeps every joint once, then commanding the tracker one
-frame per tick and asking the default lookahead offsets `(1, 2, 4, 8)` for frames
-ahead of the playhead:
-
-| sidecar `timing.control_dt` | resolved | frames in the clip | widest joint travel | lookahead offsets already past the end |
-| --- | --- | --- | --- | --- |
-| `0.02` (shipped) | `0.02` | 151 | 1.050 rad | 0 of 4 |
-| `0.04` | `0.04` | 76 | 1.050 rad | 0 of 4 |
-| `true` | `1.0` | 4 | 0.940 rad | 2 of 4 |
-| `-0.02` | `-0.02` | 1 | 0.0 rad | 4 of 4 |
-| `inf` | `inf` | 1 | 0.0 rad | 4 of 4 |
-
-A negative period and `inf` collapse the clip to a single frame, because the
-conversion is `max(1, round(motion_length / control_dt) + 1)` and both make that
-term non-positive; the index clamp in `get_state_at_frame` then serves that one
-frame for every tick of the episode. Traced over 200 ticks, the commanded target
-never leaves `0.0` rad for either, while the shipped period arches to `1.0` rad at
-tick 75 and back by tick 150; `true` is over in three ticks (`0.0` -> `0.866` ->
-`0.866` -> `0.0`) and holds there for the remaining 196 - a tracker that reports a
-motion and plays almost none of it. `0` left the reported rate undefined, and
-`nan` used to reach
-`int(round(...))` inside the resampler and raise `cannot convert float NaN to
-integer` there, naming neither the field nor the sidecar it came from.
-
-A cache dict's own `control_dt` outranks the `control_dt=` argument, so it is
-held to the same domain by `MotionPlayer` rather than only at the config.
-
-`physics_dt` and `decimation` are deliberately left alone: no reader in this
-package consumes either, so refusing a value would change which sidecars load
-with no behaviour to protect. Their documented relation to `control_dt` is
-unchecked for the same reason.
+Every domain is checked when the config is built, from a sidecar or by hand, not
+when a field is read. The values turned away are not near-misses: a negative or
+infinite `control_dt` collapses a 3-second clip to one frame for the whole
+episode, `true` (read as `1.0`) plays it in three ticks, `action_ema_alpha=0`
+freezes the first target and `nan` poisons every later tick. `physics_dt` and
+`decimation` are unchecked: nothing in this package reads them.
 
 ### Target smoothing
 
-`action_ema_alpha` is the weight the CURRENT network output carries in the target
-the PD loop receives:
-
-```text
-y[t] = alpha * x[t] + (1 - alpha) * y[t-1]
-```
-
-`1.0` - the shipped checkpoint's own value - is passthrough, and returns the
-network output unchanged and bit-exact rather than multiplying it by one. A
-smaller value weights the previous target more heavily, trading tracking lag for
-less per-tick jitter in the commanded pose. Measured on a tracker output carrying
-an alternating +/-0.11 rad per-tick component, the mean per-tick change in the
-emitted `left_hip_pitch_joint` target:
+`action_ema_alpha` is the weight the current network output carries in the
+target the PD loop receives, `y[t] = alpha * x[t] + (1 - alpha) * y[t-1]`.
+`1.0` returns the output unchanged and bit-exact; a smaller value trades
+tracking lag for less per-tick jitter. Measured on an output with an alternating
++/-0.11 rad component, the mean per-tick change in `left_hip_pitch_joint`:
 
 | `action_ema_alpha` | mean per-tick change |
 | --- | --- |
@@ -354,30 +194,10 @@ emitted `left_hip_pitch_joint` target:
 | `0.2` | 0.029 rad |
 | `0.05` | 0.010 rad |
 
-Two things the filter deliberately does not do. The first tick of an episode
-seeds from the network's own output rather than from zeros - a zero-seeded filter
-would command a pose between the origin and the first target, which on a 29-DOF
-humanoid holding a stance is a lurch toward the zero pose, and the smaller the
-alpha the further that first command would sit from the motion. And the
-historical-actions buffer keeps carrying the RAW output: it feeds the graph's own
-`historical_processed_actions` input, which is defined over it, so smoothing what
-the network reads back would change its input distribution.
-
-The factor must be a finite number in `(0, 1]`, refused when the config is built
-rather than when the filter reads it, and by the sidecar and a hand-built
-`ProtoMotionsConfig(...)` alike:
-
-```text
-ValueError: ProtoMotionsConfig: action_ema_alpha must be > 0, got 0.0.
-```
-
-`0` weights the current output at zero, freezing the commanded pose at the first
-tick's target for the whole clip - a tracker that reports every frame and moves
-through none of them. A negative weight drives each joint the opposite way from
-the motion, a value above `1` gives the previous target a negative weight and
-extrapolates past the motion instead of smoothing toward it, and `nan` enters the
-filter state and never leaves it, so every joint of every later tick is `nan`
-however good the network output is.
+The first tick seeds the filter from the network's own output, not zeros (a
+zero seed would lurch a standing humanoid toward the zero pose), and the
+historical-actions buffer keeps the RAW output, since the graph's
+`historical_processed_actions` input is defined over it.
 
 ## Testing without weights
 
