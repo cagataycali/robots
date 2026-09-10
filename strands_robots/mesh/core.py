@@ -2809,117 +2809,42 @@ class Mesh(SensorLoopsMixin):
         return True
 
     def _on_safety_estop(self, sample: Any) -> None:
-        """Engage the local emergency-stop lockout in response to a fleet-
-        wide ``strands/safety/estop`` broadcast.
+        """Engage the local lockout on a fleet ``strands/safety/estop`` broadcast.
 
-        Wire authentication (mTLS + ACL) admits this handler. **When the
-        operator supplies an ``STRANDS_MESH_ACL_FILE`` with role
-        separation (template at ``examples/mesh/mesh_acl_example.json5``),
-        only peers in the ``operator_peer`` subject can publish on
-        ``safety/**``.** The default ACL shipped by ``default_acl()`` is
-        permissive (CHANGELOG.md Section 8 -- "any CA-signed peer may
-        publish/subscribe on any key"), so any cert-holding peer can
-        originate an estop on out-of-the-box deployments.
-
-        Defense-in-depth -- captured-envelope replay protection. Even with an unrestricted ACL, a
-        replay of a captured ``safety/estop`` envelope cannot keep the
-        fleet locked indefinitely.  Mirrors :meth:`_on_safety_resume`:
-
-        1. Freshness window (``_resume_freshness_window_s()``) -- envelopes
-           older than the window are rejected.
-        2. Forward-skew bound (``_resume_forward_skew_s()``) -- envelopes
-           timestamped beyond the tolerance in the future are rejected
-           (defeats clock-rollback attacks against the freshness check).
-        3. Per-receiver replay cache keyed on ``float(envelope_t)`` -- bounded LRU at ``_resume_replay_cache_max()`` entries.
-           Keyed on ``t`` alone (NOT ``(issuer_id, t)``) so an attacker
-           who captures one envelope cannot replay it by varying the
-           payload ``peer_id`` field, which is untrusted (comes from the
-           JSON body, not the TLS cert CN).
-
-        E-stop without an envelope ``t`` OR without a valid string
-        ``peer_id`` is rejected as malformed (the canonical
-        :meth:`emergency_stop` issuer always sets both).
+        mTLS + ACL admit the publisher (the shipped default ACL lets any
+        CA-signed peer publish on ``safety/**``; role separation is the
+        operator's ``STRANDS_MESH_ACL_FILE``). Everything below is replay
+        defence for a captured envelope: the shared decode/zid binding and
+        ``t``/``peer_id`` gates, then a per-receiver replay cache keyed on
+        ``float(t)`` alone - the body ``peer_id`` is untrusted, so keying on it
+        would let one captured envelope be replayed under permuted ids. A
+        cache hit is a replay unless it arrived from a different TLS session
+        within 0.2 s of the lockout engaging (two operators hitting the button
+        together), which is audited as ``estop_corroborated``. Refusing a cache
+        slot never refuses the stop: an issuer over the per-issuer cap still
+        engages the lockout.
         """
         bound = self._decode_bound_safety_envelope(sample, "estop")
         if bound is None:
             return
         data, wire_zid = bound
-
-        # Freshness + replay defences. An estop envelope without ``t`` is
-        # not from a canonical issuer -- reject (also closes the trivial
-        # replay surface where an attacker strips ``t`` to bypass the
-        # freshness check).
         timed = self._check_safety_envelope_timing(data, "estop")
         if timed is None:
             return
         envelope_t, issuer_id, forward_skew_s, freshness_window_s = timed
-
-        # cache key is keyed on ``float(envelope_t)`` ALONE -- not
-        # ``(issuer_id, t)``. The previous (issuer, t) key let an
-        # attacker who captured one valid envelope replay it
-        # indefinitely by varying the payload ``peer_id`` (which is
-        # untrusted -- it comes from the JSON body, not the TLS cert
-        # CN). Keying on the wall-clock ``t`` alone closes that
-        # peer_id-permutation surface; the only way to mint a new key
-        # is to advance the timestamp, which is bounded by the
-        # freshness window above. A per-issuer slot cap
-        # below to bound the denial-of-estop surface where one
-        # attacker pre-publishes ``t = now + skew - eps`` to occupy
-        # cache slots that legitimate same-float-tick estops would
-
-        # (post-replay-cache: see the per-issuer denial-of-estop discussion).
+        # Replay cache: ``float(t)`` alone (see the docstring); the per-issuer cap
+        # and the tunables are read before taking the lock.
         cache_key = float(envelope_t)
-        # Per-issuer fairness bound: one issuer may occupy at
-        # most ``per_issuer_cap`` slots so a single attacker cannot
-        # fill the global cache. Default cap is _resume_replay_cache_max()
-        # / 4 -- four legitimate operators always have working slots.
-        # Resolved here, outside the lock below, for the same reason the two
-        # float tunables are resolved at handler entry: the eviction call in
-        # the critical section reuses this local instead of re-parsing the env
-        # while holding _estop_replay_lock.
         replay_cache_max = _resume_replay_cache_max()
         per_issuer_cap = max(1, replay_cache_max // 4)
-        # cache TTL bookkeeping uses time.monotonic() so an NTP step
-        # backward cannot leave entries un-evictable and a step forward
-        # cannot age fresh entries out early. Envelope freshness still
-        # uses time.time() above (it must compare against the issuer's
-        # wall-clock).
+        # Cache TTL bookkeeping is monotonic so an NTP step cannot pin or
+        # prematurely age entries; envelope freshness compared wall clocks above.
         now_mono = time.monotonic()
         with self._estop_replay_lock:
             if cache_key in self._estop_replay_cache:
-                # Corroboration vs replay disambiguation gated on the
-                # TLS-bound wire ``source_zid``. The previous heuristic
-                # ("lockout active + within 0.2s -> corroboration") was
-                # forgeable: a same-session attacker who captured a
-                # legitimate envelope could republish it within 200 ms
-                # with a mutated body ``peer_id`` and earn an
-                # ``estop_corroborated`` audit (severity ``info``,
-                # operator-dashboard-invisible) instead of
-                # ``estop_replay_rejected`` (severity ``warning``).
-                #
-                # The cache value tuple now carries the wire_zid in
-                # effect when the slot was first populated. A second
-                # envelope is treated as legitimate cross-session
-                # corroboration ONLY IF:
-                #   * the cached wire_zid is non-None (slot was
-                #     established by a TLS-bound publisher),
-                #   * the new wire_zid is non-None,
-                #   * the two zids differ (two distinct mTLS
-                #     sessions -> two distinct operators).
-                # Same-zid replay -- including the
-                # mutated-peer_id case -- audits as
-                # ``estop_replay_rejected`` per the original threat
-                # model. Bridge / IoT transports that legitimately have
-                # no SourceInfo (wire_zid is ``None`` on either side)
-                # also fall into the rejection branch: corroboration
-                # over an attribution-less transport cannot be proven.
+                # Corroboration is decided on the TLS-bound wire zid, not the body,
+                # and on the monotonic clock that recorded the lockout.
                 cached_entry = self._estop_replay_cache[cache_key]
-                # Cache values are always ``(issuer_id, mono_ts, wire_zid)``
-                # 3-tuples. The type annotation at __init__ enforces this
-                # shape and the only writer (line ~1601) emits it. No
-                # defensive isinstance -- half-defensive code disagrees
-                # with ts_view (line ~1545) and per-issuer iteration
-                # (line ~1570) which both assume the 3-tuple shape.
                 cached_wire_zid = cached_entry[2]
                 wire_zids_distinct = (
                     cached_wire_zid is not None and wire_zid is not None and cached_wire_zid != wire_zid
@@ -2940,8 +2865,6 @@ class Mesh(SensorLoopsMixin):
                         },
                     )
                     return
-                # Original replay rejection (now also covers same-wire-zid
-                # mutated-peer_id replays and attribution-less transports).
                 logger.warning(
                     "[safety] %s: REJECTED remote estop -- replay of (issuer=%s, t=%s) already accepted",
                     self.peer_id,
@@ -2954,34 +2877,16 @@ class Mesh(SensorLoopsMixin):
                     payload={"issuer": issuer_id, "issuer_t": envelope_t},
                 )
                 return
-            # evict using the tuple-valued cache. We extract a
-            # mono_ts view, run the standard eviction, then re-key
-            # the surviving entries from the original cache.
+            # Evict through a timestamp view; the cache values are 3-tuples.
             ts_view: dict[float, float] = {k: v[1] for k, v in self._estop_replay_cache.items()}
             _evict_replay_cache(
                 ts_view,
                 max_size=replay_cache_max,
-                # include forward_skew so a forward-skewed envelope
-                # at t=now+skew stays cached for the full freshness window
-                # rather than the lesser ``freshness`` only.
                 ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
-            # Apply the eviction back to the real cache.
             for evicted in set(self._estop_replay_cache.keys()) - set(ts_view.keys()):
                 self._estop_replay_cache.pop(evicted, None)
-
-            # Per-issuer fairness check derived from cache contents.
-            # No separate dict that drifts -- count entries owned by
-            # ``issuer_id`` directly. After eviction this is naturally
-            # correct: an attacker who flooded their cap and waited for
-            # eviction now has fewer entries (eviction dropped them) and
-            # can reclaim slots, which is the intended dynamic-attacker
-            # rate-limit. A sustained attacker who paces floods to land
-            # just after each eviction is bounded by ``per_issuer_cap``
-            # at every instant -- they never hold more than that fraction
-            # of the global cache, so legitimate operators always have
-            # ``_resume_replay_cache_max() - per_issuer_cap`` slots available.
             issuer_slots = sum(1 for issuer, _mono, _zid in self._estop_replay_cache.values() if issuer == issuer_id)
             if self._per_issuer_cap_exceeded(
                 "estop",
@@ -2990,28 +2895,17 @@ class Mesh(SensorLoopsMixin):
                 per_issuer_cap,
                 {"issuer": issuer_id, "issuer_t": envelope_t},
             ):
-                # The slot is not taken, but the lockout below still engages: a
-                # legitimate stop is preserved even when the cache cannot hold it.
                 pass
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
-
-            # Lockout state mutation must be inside _estop_replay_lock
-            # to close the concurrent-estops race (issue #273): two
-            # invocations from distinct issuers could both pass the
-            # is_set() check before either calls set() and both would
-            # publish remote_estop_engaged instead of one + one
-            # remote_estop_redundant. Mutating + reading
-            # _last_estop_ts/_last_estop_mono inside the lock also
-            # prevents the inconsistent timestamp pair the
-            # corroboration window check at line ~1492 depends on.
+            # Lockout engagement happens under the same lock as the cache write so
+            # a concurrent resume cannot interleave (see test_estop_lockout_race).
             lockout_was_engaged = self._estop_lockout.is_set()
             if not lockout_was_engaged:
                 self._estop_lockout.set()
                 self._last_estop_ts = time.time()
                 self._last_estop_mono = time.monotonic()
             lockout_engaged_since = self._last_estop_ts
-
         sender = issuer_id
         if not lockout_was_engaged:
             logger.critical(
@@ -3029,12 +2923,6 @@ class Mesh(SensorLoopsMixin):
                 },
             )
         else:
-            # a second legitimate estop (different issuer, fresh ``t``)
-            # arriving while the lockout is already engaged would otherwise
-            # be silently dropped from the audit trail -- forensics lose
-            # the signal that another operator also tried to engage.
-            # Mirror the corroboration audit shape so every issuer of an
-            # estop is preserved on the forensic record.
             self._audit(
                 event_type="remote_estop_redundant",
                 severity="info",
@@ -3046,28 +2934,23 @@ class Mesh(SensorLoopsMixin):
             )
 
     def _on_safety_resume(self, sample: Any) -> None:
-        """Clear the local lockout in response to ``strands/safety/resume``.
+        """Clear the local lockout on a fleet ``strands/safety/resume`` broadcast.
 
-        Wire authentication (mTLS + ACL) admits this handler. **When the
-        operator supplies an ``STRANDS_MESH_ACL_FILE`` with role
-        separation only ``operator_peer`` peers can publish here**; the
-        default permissive ACL admits any cert-holding peer. Resume is
-        further gated by the operator override code: the issuer signed
-        ``HMAC(STRANDS_MESH_OVERRIDE_CODE, proof_nonce)`` and we
-        recompute it locally; a mismatch means the issuer's override
-        code differs from ours and we refuse. This is what stops one
-        operator from clearing another operator's e-stop without
-        explicit shared authorisation.
-
-        Receivers without ``STRANDS_MESH_OVERRIDE_CODE`` configured
-        FAIL CLOSED -- operators must distribute the code to every peer
-        for fleet-wide remote resume to work.
+        A resume is second-factor gated: the envelope carries an HMAC-SHA256
+        ``override_proof`` keyed with the operator code
+        (``STRANDS_MESH_OVERRIDE_CODE``, which must also be configured here) over
+        ``peer_id``, ``t``, ``lockout_elapsed_s``, ``proof_nonce`` and, when the
+        wire carried one, ``source_zid`` - so a captured proof cannot be
+        mutated or moved to another session. After the shared decode/zid
+        binding and ``t``/``peer_id`` gates and the proof compare, a
+        per-receiver replay cache keyed on ``(issuer, proof_nonce)`` refuses the
+        same proof twice. Every refusal leaves the lockout engaged; unlike
+        estop, an issuer over the per-issuer cap is refused outright.
         """
         bound = self._decode_bound_safety_envelope(sample, "resume")
         if bound is None:
             return
         data, wire_zid = bound
-
         local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         if not local_code:
             logger.warning(
@@ -3076,7 +2959,6 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-
         proof_nonce = data.get("proof_nonce")
         provided_proof = data.get("override_proof")
         if not isinstance(proof_nonce, str) or not isinstance(provided_proof, str):
@@ -3085,35 +2967,10 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-
-        # the HMAC compare moved BELOW the
-        # envelope_t + issuer_id + lockout_elapsed_s shape validation
-        # because the MAC input now binds those fields. The
-        # ``override_proof`` is only meaningful once we've confirmed
-        # the wire envelope shape that was signed.
-
-        # freshness + replay cache.
-        # The HMAC by itself authenticates the override code but says
-        # nothing about when the envelope was minted -- a replay of a
-        # captured envelope would still verify. Two cheap defences:
-        #
-        # 1. Freshness: reject envelopes whose ``t`` field is older
-        #  than freshness_window_s or more than the forward
-        #  skew in the future. This matches the operator NTP
-        #  requirement documented in CHANGELOG.
-        # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
-        #  tuple we have already accepted within the freshness
-        #  window. Bounded at _resume_replay_cache_max() entries.
         timed = self._check_safety_envelope_timing(data, "resume")
         if timed is None:
             return
         envelope_t, issuer_id, forward_skew_s, freshness_window_s = timed
-
-        # the envelope ``lockout_elapsed_s``
-        # must be an int/float to participate in the bound MAC input.
-        # A missing/invalid value indicates a malformed envelope and
-        # is rejected outright -- the canonical issuer at line 1986
-        # always sets a real elapsed seconds value.
         envelope_elapsed = data.get("lockout_elapsed_s")
         if not isinstance(envelope_elapsed, (int, float)):
             logger.warning(
@@ -3121,19 +2978,8 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-
-        # The HMAC binds every body-routing field (peer_id, t,
-        # lockout_elapsed_s, proof_nonce) so a captured envelope mutated
-        # by the attacker on ANY of those fields fails the compare. When
-        # the wire carries a TLS-bound ``source_zid`` we additionally
-        # bind it into the MAC input so an attacker on a different mTLS
-        # session who happens to also hold the override code cannot
-        # mint a fresh resume claiming to be the legitimate session:
-        # the receiver re-derives the MAC using the wire-level
-        # ``sample.source_info.source_id.zid`` (bounded by mTLS trust
-        # roots; ``ZenohId`` has no public Python ctor) so a mutation
-        # of the body ``source_zid`` is provably caught and a same-body
-        # resume from a different session is provably caught.
+        # The MAC input is the canonical JSON of the bound fields; wire zid only
+        # when the transport supplied one, so pre-binding issuers still verify.
         mac_fields: dict[str, Any] = {
             "peer_id": issuer_id,
             "t": envelope_t,
@@ -3161,21 +3007,10 @@ class Mesh(SensorLoopsMixin):
                 "+source_zid" if wire_zid is not None else "",
             )
             return
-        # Replay-cache key incorporates the TLS-bound wire zid when
-        # available so two sessions that legitimately share the same
-        # ``proof_nonce`` (e.g. two operators racing the same resume)
-        # do not collide -- and so an attacker on a different session
-        # cannot reuse a captured ``(issuer_peer_id, proof_nonce)`` to
-        # evict legitimate cache slots.
-        # Domain-tagged key prevents namespace collision between Zenoh
-        # wire_zid (hex, TLS-bound) and body issuer_id (app metadata).
-        # A bridge peer with peer_id="ab12cd" and a Zenoh peer with
-        # wire_zid="ab12cd" no longer conflate into the same slot.
+        # Replay cache keyed per TLS session when known, else per body peer_id;
+        # the tagged tuple keeps the two namespaces from colliding.
         issuer_key = ("wire", wire_zid) if wire_zid is not None else ("body", issuer_id)
         cache_key = (issuer_key, proof_nonce)
-        # Resolved before the lock, matching the estop site: both the eviction
-        # bound and the per-issuer cap below read this local rather than
-        # re-parsing the env inside _resume_replay_lock.
         replay_cache_max = _resume_replay_cache_max()
         with self._resume_replay_lock:
             if cache_key in self._resume_replay_cache:
@@ -3185,9 +3020,6 @@ class Mesh(SensorLoopsMixin):
                     issuer_id,
                     proof_nonce[:16] + "...",
                 )
-                # Audit the replay attempt -- this is exactly the
-                # forensic signal an operator wants on a compromised
-                # peer trying captured-and-replayed envelopes.
                 self._audit(
                     event_type="resume_replay_rejected",
                     severity="warning",
@@ -3197,27 +3029,13 @@ class Mesh(SensorLoopsMixin):
                     },
                 )
                 return
-            # TTL math uses time.monotonic() (see this PR B5) --
-            # envelope freshness above stays on time.time() because it
-            # compares against the issuer wall clock; cache eviction is
-            # local-only bookkeeping.
             now_mono = time.monotonic()
             _evict_replay_cache(
                 self._resume_replay_cache,
                 max_size=replay_cache_max,
-                # see _evict_replay_cache docstring.
                 ttl_s=freshness_window_s + forward_skew_s,
                 now_mono=now_mono,
             )
-            # Per-issuer fairness bound -- mirror of the estop path
-            # (_on_safety_estop, search "per_issuer_cap"). Without this
-            # a single wire_zid (or body issuer_id on an attribution-less
-            # transport) holding the override code can fill all
-            # _resume_replay_cache_max() slots and then churn legitimate
-            # other-issuer entries out via the eviction 20%-oldest-drop
-            # branch, suppressing real replay-rejection signals. The cap
-            # is computed from the SAME expression as the estop site so
-            # the two replay-cache defenses stay symmetric.
             per_issuer_cap = max(1, replay_cache_max // 4)
             issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
             if self._per_issuer_cap_exceeded(
@@ -3227,19 +3045,12 @@ class Mesh(SensorLoopsMixin):
                 per_issuer_cap,
                 {"issuer": issuer_id, "proof_nonce_prefix": proof_nonce[:16]},
             ):
-                # Unlike estop, an over-cap resume is refused outright: a refused
-                # resume must never clear the lockout, so returning is the safe direction.
                 return
             self._resume_replay_cache[cache_key] = now_mono
-
         sender = issuer_id
         if self._estop_lockout.is_set():
             self._estop_lockout.clear()
             logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
-            # audit the receiver-side resume transition. Mirrors
-            # _on_safety_estop above so verify_audit_integrity walkers
-            # see the close of the lockout window for every peer that
-            # entered one.
             self.publish_safety_event(
                 event_type="remote_resume_applied",
                 severity="info",
@@ -3250,13 +3061,6 @@ class Mesh(SensorLoopsMixin):
                 },
             )
         else:
-            # Mirror the estop _redundant pattern: a successfully-validated
-            # resume that arrives on an already-cleared lockout still
-            # consumed a replay-cache slot, so forensics need the signal
-            # too (issue #271). Without this audit, a fleet audit-walker
-            # reconciling estop_engaged/resume_applied pairs has gaps for
-            # the case where multiple operators legitimately hit resume
-            # in close succession.
             self._audit(
                 event_type="remote_resume_redundant",
                 severity="info",
@@ -3715,101 +3519,33 @@ class Mesh(SensorLoopsMixin):
     def _resume_lockout(self, override_code: str) -> dict[str, Any]:
         """Clear the emergency-stop lockout if *override_code* matches.
 
-        Compared in constant time against ``STRANDS_MESH_OVERRIDE_CODE``.
-
-        the wire response is a single generic shape (``{"status":
-        "ok"}`` on success, ``{"status": "error", "error": "resume
-        rejected"}`` on every failure including "lockout not engaged" and
-        "override code unconfigured") so a remote prober cannot use
-        differential responses as oracles for:
-
-        * whether the lockout is engaged at all (``noop`` vs ``error``),
-        * whether ``STRANDS_MESH_OVERRIDE_CODE`` is configured (``not
-          configured`` vs ``invalid code``),
-        * how long the lockout was held (``lockout_elapsed_s``).
-
-        Structured detail is preserved in the local
-        ``publish_safety_event`` audit record where forensics can use it.
-        ``lockout_elapsed_s`` is measured in the monotonic domain (from
-        ``_last_estop_mono``, stamped with ``_last_estop_ts`` at engage time),
-        so a wall-clock adjustment while the fleet was held cannot distort the
-        one field that answers how long it was held.
-        Local callers (e.g. operator tooling that wants to show "already
-        unlocked" UI) can still distinguish via the local audit log.
-            {"status": "error", "error": "<reason>"}  # rejected
-
-        Every attempt -- successful or not -- is recorded in the audit log
-        through :meth:`publish_safety_event`.
+        The code is compared in constant time against
+        ``STRANDS_MESH_OVERRIDE_CODE`` (both sides hashed to a fixed length
+        first, so the compare cannot leak the code's length), and repeated
+        failures throttle further attempts. The wire response is one generic
+        shape - ``{"status": "ok"}`` or ``{"status": "error", "error":
+        "resume rejected"}`` for every refusal, including "lockout not
+        engaged" and "code unconfigured" - so a prober gets no oracle on the
+        lockout state, the configuration or how long the fleet was held; the
+        structured reason goes to the local audit log only. On success the
+        fleet-wide ``strands/safety/resume`` envelope carries an HMAC proof over
+        its bound fields (see :meth:`_on_safety_resume`), never the code, and
+        ``lockout_elapsed_s`` is measured on the monotonic clock.
         """
-        # every non-success path returns the same generic dict so
-        # a remote caller cannot use the response shape as an oracle.
-        # Structured rejection reasons are preserved in the local audit
-        # log via publish_safety_event.
         _generic_error = {"status": "error", "error": "resume rejected"}
-
-        # close the timing oracle by ALWAYS
-        # running ``hmac.compare_digest`` on every code path, regardless
-        # of whether the lockout is engaged or the override code is
-        # configured. Without this, a remote prober can distinguish
-        # "compare ran" from "compare didn't run" by response time and
-        # learn:
-        #  - whether the lockout is engaged (lockout-not-engaged path
-        #  skipped the compare)
-        #  - whether STRANDS_MESH_OVERRIDE_CODE is configured (unset
-        #  path skipped the compare)
-        # The earlier response-shape parity (single generic error
-        # dict) closed the message-shape oracle but not the timing
-        # oracle.
-        #
-        # Strategy: capture lockout state and configured-code presence
-        # FIRST, then unconditionally run the compare. Regardless of
-        # outcome, the rejection branch fires in O(constant) time
-        # relative to whether each pre-condition was met.
         expected = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         provided = (override_code or "").strip()
         lockout_engaged = self._estop_lockout.is_set()
-        # Always perform the compare against fixed-length sha256 digests
-        # so the compare runs to completion regardless of:
-        #   * whether ``expected`` is configured,
-        #   * the byte length of either input.
-        # The previous formulation -- ``compare_digest(expected.encode()
-        # or b"\x00" * len(provided), provided.encode())`` -- closed the
-        # configured-vs-unconfigured oracle but left a residual
-        # ``len(expected) == len(provided)`` length oracle:
-        # ``hmac.compare_digest`` is documented constant-time only when
-        # both operands have equal length, and CPython returns a fast
-        # ``False`` on length mismatch. By pre-hashing both inputs to a
-        # fixed 32-byte digest before the compare, both length oracles
-        # collapse: the compare always runs over 32 bytes regardless of
-        # configuration or attacker probe length.
-        #
-        # The pre-hash uses sha256 (collision-resistant for the 32-byte
-        # output domain) so a digest collision is the only way for the
-        # compare to accept a wrong code; correctness is unchanged from
-        # the prior byte-equality check. When ``expected`` is empty the
-        # placeholder digest is the sha256 of a fixed sentinel value, so
-        # the compare always mismatches without paying a different-length
-        # cost.
+        # Fixed-length digests on both sides; an unconfigured code still runs the
+        # compare so the refusal takes the same time.
         _PROVIDED_HASH = hashlib.sha256(provided.encode()).digest()
         if expected:
             _EXPECTED_HASH = hashlib.sha256(expected.encode()).digest()
         else:
-            # Sentinel digest: sha256(b"\x00" * 32) is a constant a
-            # remote prober cannot synthesise an override-code preimage
-            # for (it would require breaking sha256). Same byte length
-            # (32) as any real digest, so the compare-call cost is
-            # identical to the configured-code path.
             _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
         compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
-
-        # M-1: brute-force throttle gate. If we are inside the cooldown window
-        # (armed by a prior run of failed attempts), refuse the resume
-        # regardless of whether the code is correct -- this bounds the
-        # attempt rate to (max_fails / backoff_s). A legitimate operator who
-        # fat-fingers the code N times waits out the (short) cooldown; an
-        # attacker is reduced from 295K/s to a handful per cooldown window.
-        # Lazily ensure brute-force state exists (defends against callers /
-        # test stubs that construct Mesh via __new__ and bypass __init__).
+        # Brute-force throttle state is created lazily for Mesh objects built
+        # without __init__ (tests).
         if not hasattr(self, "_resume_bruteforce_lock"):
             self._resume_bruteforce_lock = threading.Lock()
             self._resume_fail_count = 0
@@ -3818,18 +3554,7 @@ class Mesh(SensorLoopsMixin):
         with self._resume_bruteforce_lock:
             _throttled = _now_mono_bf < self._resume_locked_until_mono
 
-        # Issue #272: the structured ``reason`` field used to be published
-        # via ``publish_safety_event`` which fans out to
-        # ``strands/{peer_id}/safety/event`` -- any peer subscribed to
-        # ``strands/+/safety/event`` could read the rejection reason and
-        # use it as a content-channel oracle (lockout-not-engaged vs
-        # not-configured vs bad-code). Now we publish ONLY an opaque
-        # ``reason_code`` over the wire (uniform "denied" string) and
-        # write the structured reason to the LOCAL audit log via
-        # ``log_safety_event`` (file-backed; not broadcast).
-        # Issue #256: every rejection branch performs the same I/O
-        # work shape (one local audit + one wire publish) so the
-        # latency oracle collapses too.
+        # Structured reason locally, generic reason on the wire.
         def _emit_resume_denied(reason_text: str, severity: str) -> None:
             self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
             self._audit(
@@ -3841,19 +3566,13 @@ class Mesh(SensorLoopsMixin):
         if _throttled:
             _emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
             return _generic_error
-
         if not lockout_engaged:
             _emit_resume_denied("lockout not engaged", "info")
             return _generic_error
-
         if not expected:
             _emit_resume_denied("STRANDS_MESH_OVERRIDE_CODE not configured", "warning")
             return _generic_error
-
         if not compare_ok:
-            # M-1: count this consecutive failure and arm the cooldown once we
-            # cross the threshold. Done under the bruteforce lock so concurrent
-            # probe threads can't race past the limit.
             with self._resume_bruteforce_lock:
                 self._resume_fail_count += 1
                 if self._resume_fail_count >= _resume_max_fails():
@@ -3866,24 +3585,9 @@ class Mesh(SensorLoopsMixin):
                     )
             _emit_resume_denied("bad override code", "warning")
             return _generic_error
-
-        # ``lockout_elapsed_s`` is a DURATION, so it is measured in the
-        # monotonic domain every other piece of local safety bookkeeping
-        # uses -- the pair ``_last_estop_ts``/``_last_estop_mono`` is
-        # stamped together at engage time precisely so a duration never has
-        # to be reconstructed from two wall-clock reads. A wall-clock
-        # adjustment between the engage and this resume (chrony stepping an
-        # RTC-less robot at its first NTP sync, a VM resumed from suspend, an
-        # operator correcting the clock) moves ``time.time()`` without any
-        # time being held, so the wall-clock difference reports a lockout
-        # that did not happen -- inflated by a forward step, and NEGATIVE by
-        # a backward one, in the one field the audit trail keeps to answer
-        # how long the fleet was halted. ``_last_estop_ts`` stays the source
-        # of the envelope's ``t``: that is an absolute instant, and the wall
-        # clock is the only domain a remote peer can interpret.
+        # Success: clear, reset the throttle, and publish the proof-bearing envelope.
         elapsed = time.monotonic() - self._last_estop_mono
         self._estop_lockout.clear()
-        # M-1: a correct code clears the brute-force counter + any cooldown.
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
             self._resume_locked_until_mono = 0.0
@@ -3892,47 +3596,8 @@ class Mesh(SensorLoopsMixin):
             severity="info",
             payload={"sender_id": self.peer_id, "lockout_elapsed_s": elapsed},
         )
-
-        # bind a proof-of-override-code into the resume envelope so
-        # receivers can re-verify on _on_safety_resume. Without this,
-        # any operator-class peer could fan-out a resume just by virtue
-        # of being on the ACL; the override code adds a second factor
-        # that every receiver re-verifies by recomputing
-        # HMAC(local_code, proof_nonce).
-        #
-        # The proof_nonce is per-resume (uuid4.hex). We deliberately do
-        # NOT include the override code itself in the published payload
-        # or the audit log -- only the HMAC of (code, nonce).
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
-        # The HMAC input binds every envelope-routing field plus the
-        # local Zenoh session ZID. Binding ``source_zid`` closes the
-        # cross-session forgery surface where an attacker holding the
-        # override code on a different mTLS-authenticated session
-        # would otherwise be able to mint a resume claiming to come
-        # from the legitimate operator's session: the receiver
-        # re-derives the MAC using the wire-level
-        # ``sample.source_info.source_id.zid``, and ``ZenohId`` cannot
-        # be chosen by the publisher (zenoh-python exposes no public
-        # constructor; the value is established by the Zenoh bootstrap
-        # that follows the mTLS handshake and bounded by the trust
-        # roots in ``connect.tls``).
-        #
-        # Body-level fields (``peer_id``, ``t``, ``lockout_elapsed_s``,
-        # ``proof_nonce``) remain bound so the cache-key + freshness
-        # defences continue to hold for non-Zenoh transports where
-        # ``source_zid`` is absent (bridge / IoT). Bound as a
-        # deterministic JSON blob (sort_keys, no whitespace) so issuer
-        # and receiver compute the same digest byte-for-byte.
-        # Decide the publish path BEFORE computing the proof. ``_safety_wire_zid``
-        # returns the wire ``source_zid`` only when the Zenoh-native path will
-        # actually carry it; on the fallback ``put()`` path (which strips
-        # ``source_zid`` from the body) it returns ``None``. Binding the MAC to
-        # ``_local_session_zid()`` while the envelope is later published on the
-        # fallback path made every receiver recompute the proof over a byte
-        # string that lacked ``source_zid`` -- so remote lockout resume never
-        # verified and the fleet stayed e-stopped. Binding to the exact wire
-        # form the receiver will see keeps issuer and receiver in agreement.
         wire_zid = self._safety_wire_zid("strands/safety/resume")
         mac_fields: dict[str, Any] = {
             "peer_id": self.peer_id,
@@ -3963,8 +3628,6 @@ class Mesh(SensorLoopsMixin):
             envelope["source_zid"] = wire_zid
         self._publish_safety_envelope("strands/safety/resume", envelope)
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
-        # success is also generic on the wire; the local audit
-        # record (resume_ok above) carries the elapsed time for forensics.
         return {"status": "ok"}
 
     def _local_session_zid(self) -> str | None:
