@@ -2993,7 +2993,7 @@ class MuJoCoSimEngine(
         # Analytic motion primitives (GH #1645): the agent-facing staging/
         # transport/release vocabulary around a learned policy (Harness VLA).
         base["methods"]["move_to"] = (
-            "(robot_name=None, position, orientation=None, tol=0.01, "
+            "(robot_name=None, position, orientation=None, tol=0.015, "
             "max_steps=200, orientation_tol=None) -> dict  # move the "
             "end-effector to a world-frame [x, y, z] target via IK "
             "(position-only when orientation is omitted - right for <6-DOF "
