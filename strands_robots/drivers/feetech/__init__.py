@@ -19,7 +19,10 @@ from strands_robots.drivers.feetech.bus import (
     READABLE_REGISTERS,
     SO_ARM_MOTORS,
     FeetechBus,
+    MotorCalibration,
     MotorSpec,
+    lerobot_calibration_path,
+    load_calibration,
 )
 from strands_robots.drivers.feetech.driver import FeetechDriver
 from strands_robots.drivers.feetech.protocol import (
@@ -52,6 +55,7 @@ __all__ = [
     "MAX_GOAL_POSITION",
     "MAX_UNICAST_ID",
     "WORD_LENGTH",
+    "MotorCalibration",
     "MotorSpec",
     "ProtocolError",
     "READABLE_REGISTERS",
@@ -61,6 +65,8 @@ __all__ = [
     "decode_sign_magnitude",
     "decode_word",
     "encode_word",
+    "lerobot_calibration_path",
+    "load_calibration",
     "max_magnitude",
     "parse_status_packet",
     "ping_packet",
