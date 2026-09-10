@@ -59,6 +59,7 @@ what makes the pair a reader observes always a matching one. The lock is an
 real guard when the verb is called directly as a Python API.
 """
 
+import atexit
 import contextlib
 import inspect
 import json
@@ -68,6 +69,7 @@ import numbers
 import os
 import threading
 import time
+import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -505,6 +507,61 @@ def _reported_param_name(param: str, field_aliases: Mapping[str, str], received:
     )
 
 
+# Engines whose ``__init__`` completed and that no caller has released yet.
+#
+# Held weakly: an engine must stay collectable while it is registered, so this
+# registry never keeps a simulation (and its MuJoCo model, renderers and worker
+# threads) alive past the caller's last reference.
+_LIVE_ENGINES: "weakref.WeakSet[MuJoCoSimEngine]" = weakref.WeakSet()
+
+
+def _release_live_engines() -> None:
+    """Release every still-live engine as the interpreter starts to exit.
+
+    :meth:`MuJoCoSimEngine.cleanup` cannot do this from a finalizer. CPython
+    sets a module's globals to ``None`` before it destroys the objects that
+    module built, so by the time ``__del__`` runs at exit the teardown path has
+    no names left to call: ``cleanup`` reads four of its own module globals and
+    delegates into four more modules that read theirs
+    (``Mesh.stop``, ``stop_teleoperate``, ``_detach_robot_from_mesh``,
+    ``_prune_done_futures``). The first of them raises ``AttributeError`` on a
+    ``None`` module, :meth:`SimEngine.__del__` reports it as a warning, and
+    nothing is released - the ROS 2 bridge node stays up, teleoperated devices
+    stay connected, the sim stays advertised to the fleet as a live peer, and
+    policy workers are never joined before the world they are stepping is
+    freed, which is the stale-pointer window :meth:`cleanup` documents.
+
+    An ``atexit`` hook runs while the import system is still intact, so the
+    ordered teardown ``cleanup`` describes actually executes. This mirrors the
+    session singleton's own :mod:`atexit` teardown and the gateway mesh's
+    (:func:`strands_robots.tools.robot_mesh._stop_gateway_mesh`), whose
+    docstring notes that every other mesh "is closed by the ``Robot`` or
+    ``Simulation`` that built it" - which is what this restores for a caller
+    who never called :meth:`cleanup` or used the context manager.
+
+    Ordering against other ``atexit`` hooks is not guaranteed and does not need
+    to be: every step of ``cleanup`` already tolerates a transport or peer that
+    closed first.
+    """
+    for engine in list(_LIVE_ENGINES):
+        try:
+            engine.cleanup()
+        except Exception as exc:  # noqa: BLE001 - teardown continues to the next engine
+            # DEBUG: this path makes no success claim to contradict, matching
+            # the level the session and gateway exit hooks log their own
+            # failures at.
+            logger.debug("cleanup at exit failed for '%s': %s", getattr(engine, "tool_name", "?"), exc)
+        finally:
+            # Whether or not it succeeded, do not let ``__del__`` retry the
+            # teardown during module destruction: the retry runs with the
+            # globals already nulled, so it cannot do better than this attempt
+            # and only reports the interpreter's state as a cleanup failure.
+            engine._released_at_exit = True
+
+
+atexit.register(_release_live_engines)
+
+
 class MuJoCoSimEngine(
     TeleopMixin,
     PhysicsMixin,
@@ -702,7 +759,13 @@ class MuJoCoSimEngine(
         self._mj = _ensure_mujoco()
         logger.info("MuJoCo simulation tool '%s' initialized", tool_name)
 
-        # Construction complete - the finalizer may now release what we hold.
+        # Construction complete - the finalizer may now release what we hold,
+        # and so may the interpreter-exit hook (:func:`_release_live_engines`),
+        # which is the only one of the two that can still reach the teardown
+        # path once the interpreter starts nulling module globals. Registered
+        # before the flag so ``_init_complete = True`` stays the final
+        # statement (see SimEngine._init_complete).
+        _LIVE_ENGINES.add(self)
         # See SimEngine._init_complete: this must be the final statement.
         self._init_complete = True
 
@@ -6597,6 +6660,13 @@ class MuJoCoSimEngine(
     # ``_DEFAULT_POLICY_STOP_TIMEOUT`` makes for a wedged policy worker.
     _WORLD_HANDOFF_LOCK_TIMEOUT = 5.0
 
+    # Whether :func:`_release_live_engines` already tore this engine down as the
+    # interpreter began to exit. Only that hook sets it, so a caller calling
+    # ``cleanup()`` twice - or calling it, building a new world, and calling it
+    # again - is unaffected. Declared on the class so the read in ``cleanup``
+    # can never raise on an instance the hook has not reached.
+    _released_at_exit: bool = False
+
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release every resource owned by this Simulation instance.
 
@@ -6640,12 +6710,19 @@ class MuJoCoSimEngine(
                 completes; see :func:`_resolve_policy_stop_timeout`.
 
         Note:
-            Every name this method needs is bound at module scope. A
-            finalizer calls this during interpreter shutdown, where the
-            import system is already gone, so a function-local import here
-            raises before the first teardown step and the ``__del__`` safety
-            net releases nothing at all - reported only as a warning naming
-            the interpreter rather than anything the caller can act on.
+            Binding every name at module scope is not enough to make this
+            callable from a finalizer during interpreter shutdown: CPython sets
+            a module's globals to ``None`` before destroying the objects that
+            module built, so at that point *module-scope* names are exactly the
+            ones that have gone. This method reads four of its own, and
+            delegates into four more modules that read theirs, so the first one
+            reached raises ``AttributeError`` and the ``__del__`` safety net
+            releases nothing at all - reported only as a warning naming the
+            interpreter rather than anything the caller can act on. A caller
+            who never calls this method (or uses the context manager) is
+            covered by :func:`_release_live_engines` instead, which runs while
+            the import system is intact. A function-local import here is still
+            wrong, for the same reason it was.
         """
         # Detach from the mesh network first (if attached). A truthy
         # ``self.mesh`` is any object exposing ``.stop()``; falsy values
@@ -6664,6 +6741,14 @@ class MuJoCoSimEngine(
         # (TeleopMixin) before mesh teardown. Best-effort.
         # Tear down the ROS 2 telemetry bridge (if any) before other teardown
         # so external subscribers see the node leave cleanly.
+        if self._released_at_exit:
+            # Already released by :func:`_release_live_engines`, while the
+            # import system was still intact. Re-running the teardown now (this
+            # call can only be ``__del__`` during module destruction) would
+            # raise on a nulled module global and be reported as a cleanup
+            # failure of a simulation that was in fact cleaned up.
+            return
+
         with contextlib.suppress(Exception):
             self._shutdown_ros_bridge()
         if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
