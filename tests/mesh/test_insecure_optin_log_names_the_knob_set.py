@@ -11,7 +11,18 @@ import logging
 
 import pytest
 
+from strands_robots.mesh import _acl_config
 from strands_robots.mesh.session import _build_config
+
+
+@pytest.fixture(autouse=True)
+def _no_stale_thread_snapshot():
+    """``_build_config`` prefers a thread-local ``auth_mode`` stashed by an
+    earlier ``Mesh.start`` over the environment; a test that left one behind
+    would make these read ``mtls`` instead of the knobs they set."""
+    _acl_config._clear_thread_snapshot()
+    yield
+    _acl_config._clear_thread_snapshot()
 
 
 def _disabled_line(caplog: pytest.LogCaptureFixture) -> str:
