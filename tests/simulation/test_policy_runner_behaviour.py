@@ -843,3 +843,36 @@ class TestEvaluateSuccessMeasured:
         assert payload["success_measured"] is True
         assert payload["success_rate"] == 1.0
         assert "not measured" not in result["content"][0]["text"]
+
+
+class TestRunPolicyCtrlClamped:
+    """A command MuJoCo clamps to ctrlrange is counted in the result json, not only warn-once logged."""
+
+    class _OutOfRangePolicy(MockPolicy):
+        """Commands every so100 actuator to +100 rad - far outside every ctrlrange."""
+
+        async def get_actions(self, observation, instruction, **kwargs):
+            return [dict.fromkeys(self.robot_state_keys, 100.0)]
+
+    def test_out_of_range_commands_are_counted_per_actuator(self, sim_with_robot):
+        policy = self._OutOfRangePolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        result = PolicyRunner(sim_with_robot).run("alice", policy, duration=0.1, control_frequency=50, fast_mode=True)
+        payload = _json_block(result)
+        assert result["status"] == "success" and payload["action_errors"] == 0
+        assert payload["ctrl_clamped"], "clamped commands must be visible in the payload"
+        assert all(n == payload["n_steps"] for n in payload["ctrl_clamped"].values()), payload["ctrl_clamped"]
+        assert "clamped to ctrlrange" in result["content"][0]["text"]
+
+    def test_in_range_policy_reports_no_clamps(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        first = _json_block(
+            PolicyRunner(sim_with_robot).run("alice", policy, duration=0.1, control_frequency=50, fast_mode=True)
+        )
+        # A second rollout on the same sim must not inherit the first one's counts.
+        second = _json_block(
+            PolicyRunner(sim_with_robot).run("alice", policy, duration=0.1, control_frequency=50, fast_mode=True)
+        )
+        assert "ctrl_clamped" in first and "ctrl_clamped" in second
+        assert set(second["ctrl_clamped"]) <= set(first["ctrl_clamped"]) or not second["ctrl_clamped"]

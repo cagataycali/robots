@@ -2001,6 +2001,8 @@ class PolicyRunner:
         # observer event reports it, and setup inside the try (substep derivation,
         # actuator discovery) can raise before the loop assigns it.
         _action_errors = 0  # count send_action failures (unresolved keys)
+        # Clamp counts before the rollout, so the payload reports only this run's.
+        _clamps_before = dict(getattr(self.sim, "_ctrl_clamp_counts", None) or {})
         # Bound before the rollout so the ``except CooperativeStop`` handler and
         # the ``_apply`` closure never see an unbound name, the same reason
         # ``start_mono`` is bound above.
@@ -2655,6 +2657,15 @@ class PolicyRunner:
             "stopped_early": stopped_early,
             "stopped_reason": stopped_reason,
             "action_errors": _action_errors,
+            # Per-actuator count of commands MuJoCo clamped to ctrlrange this
+            # rollout (rendering.py _warn_ctrl_clamp). {} means every command
+            # was reproduced; a policy in the wrong units shows every step here
+            # while action_errors stays 0.
+            "ctrl_clamped": {
+                k: v - _clamps_before.get(k, 0)
+                for k, v in (getattr(self.sim, "_ctrl_clamp_counts", None) or {}).items()
+                if v > _clamps_before.get(k, 0)
+            },
             "video_path": None,
             "video_frames": 0,
             # The rate the MP4 plays at, which is the requested ``fps`` capped
@@ -2756,6 +2767,8 @@ class PolicyRunner:
             if observer is not None:
                 payload["observer_failures"] = _obs_failures
             return {"status": "error", "content": [{"text": text}, {"json": payload}]}
+        if payload["ctrl_clamped"]:
+            text += f"\n\nCommands clamped to ctrlrange (not reproduced): {payload['ctrl_clamped']}."
         if _action_errors > 0:
             if _coarse_failure_steps == 0:
                 text += f"\n\n{_action_errors}/{step_count} action steps had unresolved keys."

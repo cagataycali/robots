@@ -990,6 +990,13 @@ class RenderingMixin:
         tol = (hi - lo) * 0.01
         if lo - tol <= value <= hi + tol:
             return
+        # Every clamp is counted (the warning below is dedup'd): the policy
+        # runner diffs this dict around a rollout to report ``ctrl_clamped``.
+        counts = getattr(self, "_ctrl_clamp_counts", None)
+        if counts is None:
+            counts = {}
+            self._ctrl_clamp_counts = counts
+        counts[key] = counts.get(key, 0) + 1
         warned = getattr(self, "_warned_ctrl_clamp_keys", None)
         if warned is None:
             warned = set()
