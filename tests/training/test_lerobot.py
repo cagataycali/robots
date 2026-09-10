@@ -287,6 +287,13 @@ class TestBuildConfig:
         assert cfg.wandb.enable is False
         assert cfg.peft is None
 
+    def test_cpu_runs_use_no_loader_workers_unless_asked(self, spec):
+        """In-process train() on CPU must not spawn loader workers that re-import the caller."""
+        pytest.importorskip("lerobot")
+        assert LerobotTrainer(device="cpu").build_config(spec).num_workers == 0
+        spec.extra["num_workers"] = 2
+        assert LerobotTrainer(device="cpu").build_config(spec).num_workers == 2
+
     def test_lora_builds_peft(self, spec):
         pytest.importorskip("lerobot")
         spec.method = "lora"

@@ -1441,6 +1441,11 @@ class LerobotTrainer(Trainer):
             cfg.seed = spec.seed
         if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
             cfg.wandb.enable = False
+        if self.device == "cpu" and "num_workers" not in spec.extra:
+            # train() runs in the caller's process; lerobot's default of 4 loader
+            # workers under the spawn start method re-imports the caller's script
+            # per worker, and a CPU run gains nothing from them. extra num_workers wins.
+            cfg.num_workers = 0
         if self._val_eval_split(spec) is not None:
             # Validate on the caller's own checkpoint cadence so every saved
             # checkpoint has a validation loss beside it; a non-positive
