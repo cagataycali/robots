@@ -20,7 +20,7 @@ name:
   both sides, instead of being mapped onto whatever now sits at that index.
 
 The map is between the canonical G1 joint names and the driver's action keys, so
-any provider emitting those names (Kimodo, ``wbc``, ``motionbricks``) can use
+any provider emitting those names (Kimodo, ``wbc``) can use
 it. The rename is one-way (policy -> driver): the driver's ``get_observation``
 already reports ``<motor>.q`` keys, so the read path needs no inverse map.
 

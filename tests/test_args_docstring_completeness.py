@@ -17,8 +17,10 @@ These tests pin the comparison for every public method of every public class in
 docstring *already* has an ``Args:`` section: adding a parameter without
 documenting it - or documenting one the signature no longer takes - fails here.
 A docstring with no ``Args:`` section at all is out of scope: this guard checks a
-block that exists for completeness rather than demanding one, which is the
-``*_public_member_docstrings.py`` guards' job for the docstring itself.
+block that exists for completeness rather than demanding one. Demanding the
+docstring itself is the linter's job - ``ruff`` selects the pydocstyle presence
+codes over the package, pinned by
+:mod:`tests.test_public_surface_is_documented`.
 
 The root is the whole package rather than one subtree because nothing about this
 drift is subtree-specific. Rooted at :mod:`strands_robots.simulation` the scan

@@ -158,9 +158,9 @@ class TestTheJointsReachTheirConsumers:
             seen.append(obs)
             return {}
 
-        loop = _ControlLoop.__new__(_ControlLoop)
-        loop._driver = driver
-        loop._policy = recording_policy
+        # Built through the constructor, because that is where the loop
+        # resolves the policy into the step callable it invokes per tick.
+        loop = _ControlLoop(driver, recording_policy, duration=1.0, n_steps=None)
 
         loop._call_policy()
 

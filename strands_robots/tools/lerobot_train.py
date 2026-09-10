@@ -47,6 +47,8 @@ from strands_robots.tools._process_stop import (
 from strands_robots.utils import (
     boolean_flag_error,
     declared_count,
+    effective_episode_count,
+    episode_subset_budget_error,
     positive_count_error,
     stale_output_dir_is_clearable,
     step_cadence_error,
@@ -740,9 +742,26 @@ def build_train_command(
         if count_err:
             raise ValueError(count_err)
         total = _read_total_episodes(dataset_root)
-        if val_episodes >= total:
+        # Keyed the way this builder emits: a leading `--` is optional on an
+        # extra_flags key and names the same flag, so the subset read below and
+        # the already-supplied test further down share one normalization. NOT
+        # _normalize_hydra_key - that also strips `+`/`~`, which this builder
+        # emits verbatim into a flag draccus does not accept, so honoring them
+        # here would size the split against a subset lerobot never applies.
+        supplied = {key.lstrip("-"): value for key, value in (extra_flags or {}).items()}
+        # The holdout is bounded by what the run LOADS, not by what the header
+        # declares: an episode allowlist or exclusion list in extra_flags narrows
+        # the budget, and val_episodes=5 passed this check against a 30-episode
+        # header while the passthrough had selected 4.
+        effective = effective_episode_count(
+            total, supplied.get("dataset.episodes"), supplied.get("dataset.exclude_episodes")
+        )
+        if val_episodes >= effective:
             raise ValueError(
-                f"val_episodes={val_episodes} leaves no training data (dataset has {total} episodes); reserve fewer."
+                episode_subset_budget_error(
+                    val_episodes, total, effective, "lerobot_train", passthrough_param="extra_flags"
+                )
+                or f"val_episodes={val_episodes} leaves no training data (dataset has {total} episodes); reserve fewer."
             )
         split_err = validation_split_error(
             val_episodes, _read_total_tasks(dataset_root), "lerobot_train", passthrough_param="extra_flags"
@@ -753,9 +772,8 @@ def build_train_command(
         # ourselves: it holds out the tail AND computes an eval loss on it, where
         # an episode restriction only shrinks the TRAINING set and leaves the
         # reserved episodes unused by either half.
-        supplied = {key.lstrip("-") for key in (extra_flags or {})}
         if "dataset.eval_split" not in supplied:
-            cmd.append(f"--dataset.eval_split={validation_split_fraction(val_episodes, total)}")
+            cmd.append(f"--dataset.eval_split={validation_split_fraction(val_episodes, effective)}")
         if "eval_steps" not in supplied:
             # Validate on the caller's own checkpoint cadence, so every saved
             # checkpoint has a validation loss recorded beside it. A non-positive

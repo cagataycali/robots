@@ -612,6 +612,19 @@ def _drain(agen) -> list:
     return asyncio.run(_run())
 
 
+@pytest.fixture(autouse=True)
+def _pre_approved_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade the dispatch, not the operator gate in front of it.
+
+    ``execute``/``start`` now stop for a human before the rollout is dispatched
+    (F-011); the gate itself is graded in
+    ``tests/test_hardware_robot_stream_gates_real_dispatch.py``. Here every
+    motion action is pre-approved so a headless ``stream`` call reaches the
+    handler under test.
+    """
+    monkeypatch.setenv(hardware_robot_module.COMMAND_ALLOW_ENV, "*")
+
+
 class TestStreamDispatch:
     def test_execute_requires_instruction_and_port(self):
         hw = _make_robot()

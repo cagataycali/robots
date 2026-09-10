@@ -236,12 +236,11 @@ class Policy(ABC):
         bind it. Most do so through the shared domain
         :func:`~strands_robots.utils.name_list_error`, gated on a truthy value
         because an empty list already means "auto-detect" on the providers that
-        support it. :class:`~strands_robots.policies.wbc.policy.WBCPolicy` and
-        :class:`~strands_robots.policies.motionbricks.policy.MotionBricksPolicy`
-        are already total without it: they resolve every joint they drive BY
-        NAME inside the caller's list, so any malformed shape fails that
-        membership check instead - and they deliberately tolerate a repeated
-        name, which resolves to its first occurrence.
+        support it. :class:`~strands_robots.policies.wbc.policy.WBCPolicy` is
+        already total without it: it resolves every joint it drives BY NAME
+        inside the caller's list, so any malformed shape fails that membership
+        check instead - and it deliberately tolerates a repeated name, which
+        resolves to its first occurrence.
 
         Unlike :meth:`set_control_frequency` and
         :meth:`set_rtc_observed_delay`, this setter has no shared

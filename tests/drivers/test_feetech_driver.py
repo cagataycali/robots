@@ -232,7 +232,7 @@ class TestWrites:
         ("action", "fragment"),
         [
             ({}, "non-empty mapping"),
-            ({"shoulder_lift": 400.0}, "outside range"),
+            ({"shoulder_lift": 400.0}, "outside the travel"),
             ({"nope": 0.0}, "unknown motor"),
             ({"gripper": float("nan")}, "must be finite"),
         ],

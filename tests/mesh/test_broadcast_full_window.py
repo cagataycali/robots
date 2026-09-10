@@ -13,6 +13,8 @@ import threading
 import time
 import types
 
+import pytest
+
 from strands_robots.mesh import core
 
 
@@ -54,7 +56,8 @@ def test_broadcast_collects_responses_across_the_full_window(monkeypatch):
     assert elapsed >= 0.9
 
 
-def test_broadcast_returns_empty_when_not_running():
+def test_broadcast_raises_when_not_running():
     m = core.Mesh(robot=object(), peer_id="op")
     m._running = False
-    assert m.broadcast({"action": "stop"}, timeout=0.1) == []
+    with pytest.raises(RuntimeError, match="mesh not running"):
+        m.broadcast({"action": "stop"}, timeout=0.1)
