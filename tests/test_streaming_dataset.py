@@ -174,21 +174,84 @@ def test_return_uint8_no_warn_when_supported(monkeypatch, caplog):
     assert not any("return_uint8=True dropped" in rec.message for rec in caplog.records)
 
 
-def test_drop_videos_strips_camera_deltas(monkeypatch):
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    r = sd.StreamingDatasetReader.open(
-        "org/ds",
-        delta_timestamps={
-            "observation.images.front": [-0.1, 0.0],
-            "observation.state": [0.0],
-            "action": [0.0],
-        },
-        drop_videos=True,
-        validate_deltas=False,
+def _two_frame_dataset_with_a_video_feature(root):
+    """A real v3.0 dataset whose camera is DECLARED as a video feature but whose
+    MP4 does not exist. Any video decode attempt fails loudly (no file, and no
+    torchcodec needed), so iterating it proves decode was never attempted."""
+    import json
+
+    import numpy as np
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    feats = {
+        "observation.images.cam": {"dtype": "image", "shape": (8, 8, 3), "names": ["height", "width", "channels"]},
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+    }
+    ds = LeRobotDataset.create(
+        "org/two-frames",
+        fps=10,
+        root=root,
+        features=feats,
+        use_videos=False,
+        image_writer_threads=0,
+        image_writer_processes=0,
     )
-    dt = r.dataset.kw["delta_timestamps"]
-    assert "observation.images.front" not in dt
-    assert "observation.state" in dt and "action" in dt
+    for i in range(2):
+        ds.add_frame(
+            {
+                "observation.images.cam": np.zeros((8, 8, 3), np.uint8),
+                "observation.state": np.array([i, i], np.float32),
+                "action": np.array([i, i], np.float32),
+                "task": "t",
+            }
+        )
+    ds.save_episode()
+    if hasattr(ds, "finalize"):
+        ds.finalize()
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["observation.images.cam"]["dtype"] = "video"
+    info["features"]["observation.images.cam"]["info"] = {"video.fps": 10, "video.codec": "libsvtav1"}
+    info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info_path.write_text(json.dumps(info))
+
+
+def test_drop_videos_never_decodes_video_with_the_real_streaming_dataset(tmp_path):
+    """The claim under test is docs/recording.md's: drop_videos=True "skips video
+    decode entirely". lerobot's StreamingLeRobotDataset decodes every key in
+    meta.video_keys whether or not it is in delta_timestamps, so stripping the
+    camera deltas alone (the previous implementation) still decoded - and the
+    old monkeypatched test could not see it. This one runs lerobot for real."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _two_frame_dataset_with_a_video_feature(root)
+
+    reader = sd.StreamingDatasetReader.open(
+        "org/two-frames",
+        root=root,
+        buffer_size=1,
+        max_num_shards=1,
+        drop_videos=True,
+        delta_timestamps={"observation.state": [0.0], "action": [0.0]},
+    )
+    assert reader.dataset.meta.video_keys == []
+    frames = []
+    for frame in reader:
+        frames.append(frame)
+        if len(frames) == 2:
+            break
+    assert len(frames) == 2
+    assert all("observation.state" in f and "action" in f for f in frames)
+
+
+def test_drop_videos_false_keeps_the_video_keys(tmp_path):
+    """The hide is opt-in: without drop_videos the metadata is untouched."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _two_frame_dataset_with_a_video_feature(root)
+    reader = sd.StreamingDatasetReader.open("org/two-frames", root=root, buffer_size=1, max_num_shards=1)
+    assert reader.dataset.meta.video_keys == ["observation.images.cam"]
 
 
 def test_drop_videos_all_camera_keys_raises(monkeypatch):
