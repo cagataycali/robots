@@ -1,0 +1,15 @@
+{
+  "measured_on": "Thor aarch64, mujoco 3.13.0, upstream/main 75ced2be1",
+  "mujoco_accepted_table": {
+    "Linux":  ["enable","enabled","on","true","1","glfw","", "glx","egl","osmesa"],
+    "Darwin": ["enable","enabled","on","true","1","glfw","", "cgl"]
+  },
+  "module_import_probe": {
+    "n_modules": 20,
+    "main":  {"Darwin": {"accepted": 0,  "refused": 20}, "Linux": {"accepted": 20, "refused": 0}},
+    "fix":   {"Darwin": {"accepted": 20, "refused": 0},  "Linux": {"accepted": 20, "refused": 0}}
+  },
+  "device_connect_without_extra": {"main": {"errors": 71, "skipped": 0}, "fix": {"errors": 0, "skipped": 1}},
+  "rule_owner": {"main": {"failed": 1, "passed": 11, "offenders": 27}, "fix": {"failed": 0, "passed": 12, "offenders": 0}},
+  "offenders_by_area": {"tests/": 18, "tests_integ/": 2, "examples/": 7}
+}
