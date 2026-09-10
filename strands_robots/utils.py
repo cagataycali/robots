@@ -1649,7 +1649,7 @@ def groot_version_error(value: Any, param: str, context: str) -> str | None:
     if value is None or value in SUPPORTED_GROOT_VERSIONS:
         return None
     return (
-        f"{context}: invalid {param}: {_refusal_repr(value)} names no Isaac-GR00T release "
+        f"{context}: invalid {param}: {refusal_repr(value)} names no Isaac-GR00T release "
         f"this policy has a loader for (expected one of {list(SUPPORTED_GROOT_VERSIONS)}, "
         "or None to auto-detect the installed release)"
     )
