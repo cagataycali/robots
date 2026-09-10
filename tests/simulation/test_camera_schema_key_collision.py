@@ -374,7 +374,8 @@ class TestADistinctSceneStillRecords:
         assert set(shapes) == {"arm__wrist", "overview"}, shapes
         # Each column kept the size of the camera it names, so neither took the
         # other's - the failure the collapse produced when it named them alike.
-        assert shapes["overview"][-2:] == (64, 64), shapes
+        # Cameras are declared HWC (height, width, channels), like lerobot's.
+        assert shapes["overview"][:2] == (64, 64), shapes
         assert shapes["arm__wrist"] != shapes["overview"], shapes
 
     def test_an_unnamed_camera_is_not_a_collision(self):

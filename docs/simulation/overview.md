@@ -22,6 +22,18 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `destroy` | - | Tear down model, data, executor |
 | `export_xml` | `output_path` | Serialise live scene to MJCF; reloadable via `load_scene` (assets referenced by absolute path) |
 
+!!! tip "Releasing a world you did not destroy"
+    `destroy` / `cleanup` (or the context manager) release the world, the
+    renderers, the executor, the ROS 2 bridge, attached teleoperated devices and
+    the mesh peer. A script that never calls them is covered at process exit:
+    the MuJoCo backend releases every still-live simulation from an `atexit`
+    hook, which runs while the import system is intact. The `__del__` safety net
+    alone cannot - by the time a finalizer runs at exit CPython has already set
+    the teardown path's module globals to `None`, so the first step raises and
+    nothing is released. Prefer explicit release anyway: it is the only form
+    that gives you the result, and it frees the GPU/GL resources at the point
+    you stop needing them rather than at exit.
+
 ## Scene-MJCF
 
 | Action | Notes |

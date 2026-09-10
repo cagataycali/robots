@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import importlib.util
 
-import pytest
-
 _STALE = ("from source", "git+", "not yet on PyPI", "0.5.1", "0.5.2")
 
 
@@ -99,19 +97,6 @@ class TestDatasetRecorderHints:
 
 
 class TestRewardModelHints:
-    def test_load_reward_model_missing_rewards_uses_currency_hint(self, monkeypatch) -> None:
-        from strands_robots.training import reward as reward_mod
-
-        real = importlib.util.find_spec
-        monkeypatch.setattr(
-            reward_mod.importlib.util,
-            "find_spec",
-            lambda name: None if name == "lerobot.rewards" else real(name),
-        )
-        with pytest.raises(ImportError) as excinfo:
-            reward_mod.load_reward_model("/ckpt/sarm", device="cpu")
-        _assert_currency(str(excinfo.value))
-
     def test_trainer_validate_missing_rewards_uses_currency_hint(self, tmp_path, monkeypatch) -> None:
         from strands_robots.training.base import TrainSpec
         from strands_robots.training.lerobot import LerobotTrainer

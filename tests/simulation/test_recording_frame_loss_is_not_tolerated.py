@@ -43,10 +43,16 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner
 
+#: The so100 sim's own joint keys. The schema must name what the observation
+#: carries: ``add_frame`` refuses a declared column the frame has no value for
+#: rather than recording it as 0.0, so a fake schema of ``"1".."6"`` would be
+#: refused on the first frame and never reach the write path under test.
+_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 _FEATURES: dict[str, Any] = {
-    "observation.state": {"dtype": "float32", "names": ["1", "2", "3", "4", "5", "6"]},
-    "action": {"dtype": "float32", "names": ["1", "2", "3", "4", "5", "6"]},
+    "observation.state": {"dtype": "float32", "names": list(_JOINTS)},
+    "action": {"dtype": "float32", "names": list(_JOINTS)},
 }
+_FULL = dict.fromkeys(_JOINTS, 0.0)
 
 
 class _FlakyDataset:
@@ -285,7 +291,7 @@ class TestRecorderRaisesADistinguishableError:
         recorder = DatasetRecorder(dataset=ds, task="t")
 
         with pytest.raises(RecordingFrameError) as excinfo:
-            recorder.add_frame(observation={"1": 1.0}, action={"1": 0.1}, task="t")
+            recorder.add_frame(observation=dict(_FULL), action=dict(_FULL), task="t")
 
         assert "transient dataset write failure at frame 1" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, RuntimeError)

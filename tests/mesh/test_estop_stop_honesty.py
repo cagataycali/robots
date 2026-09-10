@@ -139,7 +139,8 @@ class TestEmergencyStopSurfacesUnstoppablePeers:
         _topic, envelope = published[0]
         assert envelope["peers_not_stopped"] == ["arm-2"]
         # The raw ack count is preserved so the two numbers can be compared.
-        assert envelope["responses_received"] == 2
+        # 2 remote acks + the issuer's own local stop.
+        assert envelope["responses_received"] == 3
         assert events[0]["payload"]["peers_not_stopped"] == ["arm-2"]
 
     def test_critical_log_when_a_peer_did_not_stop(self, monkeypatch, caplog):

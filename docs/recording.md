@@ -657,8 +657,13 @@ recorder = DatasetRecorder.create(
     #   action_features=robot.action_features,
     # When recording from a sim Robot (no `observation_features` attr), pass
     # `joint_names=[...]` instead - the recorder builds the schema for you.
+    # The names must be the observation's own keys: for the so100 sim these
+    # are Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw - i.e.
+    # `list(sim.get_observation()["so100"].keys())`. A declared name that a
+    # frame's observation (or action) does not carry makes `add_frame` raise;
+    # nothing is ever recorded as a stand-in 0.0.
     camera_keys=["default"],
-    joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+    joint_names=["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"],
     task="pick up the red cube",
     # root=None → $HF_LEROBOT_HOME/user/my_dataset
     # vcodec="h264", streaming_encoding=True, image_writer_threads=4
@@ -733,7 +738,9 @@ shape of the cameras it covers and the pair sets the shape of every other one.
 Note the order - `camera_dims` is `(height, width)`, the reverse of the pair.
 
 It is a **declaration, not a resize** - the recorder rescales nothing - so
-whatever is given goes straight into the LeRobot feature as `(3, height, width)`.
+whatever is given goes straight into the LeRobot feature as
+`(height, width, 3)` with names `[height, width, channels]` - the layout
+lerobot itself records and every published v3 dataset uses.
 `create()` refuses a shape it cannot honor, on the same shared domain and in the
 same place as the column names above:
 
