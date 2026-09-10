@@ -782,7 +782,7 @@ def _frame_shape_error(
       quiet one: nothing is logged, the dataset is created, and the mismatch
       surfaces later against ``add_frame``.
     * A component that is not a positive integer is written into the feature
-      as given - ``(3, 480, nan)``, ``(3, 480, '640')`` - so the schema
+      as given - ``(480, nan, 3)``, ``(480, '640', 3)`` - so the schema
       declares a shape no frame can match.
     * A value that is not a two-element sequence unpacks as a bare
       ``TypeError`` / ``ValueError``, and a non-mapping ``camera_dims`` as a
@@ -1411,7 +1411,7 @@ class DatasetRecorder:
 
         LeRobot v3 features format:
         {
-            "observation.images.camera_name": {"dtype": "video", "shape": (C, H, W), "names": [...]},
+            "observation.images.camera_name": {"dtype": "video", "shape": (H, W, C), "names": [...]},
             "observation.state": {"dtype": "float32", "shape": (N,), "names": [...]},
             "action": {"dtype": "float32", "shape": (N,), "names": [...]},
         }
@@ -1420,21 +1420,20 @@ class DatasetRecorder:
         """
         features = {}
 
-        # Observation: cameras → video/image features
+        # Observation: cameras -> video/image features. The declaration is
+        # lerobot's own (``hw_to_dataset_features``): HWC shape ``(H, W, 3)``
+        # with names ``[height, width, channels]``, the layout of lerobot's
+        # record path and of every published v3 dataset. Training transposes
+        # by names, so datasets this recorder wrote as CHW keep loading.
         if camera_keys:
+            from lerobot.utils.feature_utils import hw_to_dataset_features
+
             camera_dims = camera_dims or {}
-            for cam_name in camera_keys:
-                key = f"observation.images.{cam_name}"
-                dtype = "video" if use_videos else "image"
-                # Per-camera (height, width). Falls back to the global
-                # video_height/width when a camera has no explicit dims, so
-                # callers that don't pass camera_dims keep the old behaviour.
-                cam_h, cam_w = camera_dims.get(cam_name, (video_height, video_width))
-                features[key] = {
-                    "dtype": dtype,
-                    "shape": (3, cam_h, cam_w),
-                    "names": ["channels", "height", "width"],
-                }
+            # Per-camera (height, width). Falls back to the global
+            # video_height/width when a camera has no explicit dims, so
+            # callers that don't pass camera_dims keep the old behaviour.
+            hw = {cam: (*camera_dims.get(cam, (video_height, video_width)), 3) for cam in camera_keys}
+            features.update(hw_to_dataset_features(hw, "observation", use_video=use_videos))
 
         # Observation: state (joint positions)
         state_dim = 0

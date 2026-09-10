@@ -6,7 +6,7 @@ in two spellings. ``_build_features`` reads
 camera, so the mapping sets the shape of the cameras it covers and the pair sets
 the shape of every other one. The shape is a *declaration*, not a resize - the
 recorder rescales nothing - so whatever is given goes straight into the LeRobot
-feature as ``(3, height, width)`` and is not compared against a real frame until
+feature as ``(height, width, 3)`` and is not compared against a real frame until
 the first ``add_frame``.
 
 Three mistakes could not be honored as written, and none of them was reported
@@ -16,10 +16,10 @@ anywhere near the parameter that caused it:
   is the quiet one. Nothing is logged, the dataset is created, and the camera
   the entry was meant for silently takes the global pair instead - so a camera
   streaming 240x320, declared as ``camera_dims={"imagee": (240, 320)}`` against
-  ``camera_keys=["image"]``, was declared ``(3, 480, 640)`` from the defaults.
+  ``camera_keys=["image"]``, was declared ``(480, 640, 3)`` from the defaults.
 * **A component that is not a positive integer is written in as given**, so the
-  schema declared ``(3, 480, nan)``, ``(3, 480, '640')``, ``(3, 480, [640])``
-  or ``(3, 480, True)`` and no frame could ever match it.
+  schema declared ``(480, nan, 3)``, ``(480, '640', 3)``, ``(480, [640], 3)``
+  or ``(480, True, 3)`` and no frame could ever match it.
 * **A value that is not a two-element sequence** unpacks as a bare ``TypeError``
   / ``ValueError`` (``cannot unpack non-iterable int object``), and a
   non-mapping ``camera_dims`` as a bare ``AttributeError`` from the ``.get``
@@ -201,7 +201,7 @@ class TestAnEntryForAnUndeclaredCameraIsRefused:
             video_height=480,
         )
         features = fake_lerobot.calls[0]["features"]
-        assert features["observation.images.image"]["shape"] == (3, 240, 320)
+        assert features["observation.images.image"]["shape"] == (240, 320, 3)
 
 
 class TestUnusableFrameShapesAreRefused:
@@ -293,7 +293,7 @@ class TestUsableFrameShapesStillReachTheDataset:
             camera_dims={"image": [240, 320]},
         )
         features = fake_lerobot.calls[0]["features"]
-        assert features["observation.images.image"]["shape"] == (3, 240, 320)
+        assert features["observation.images.image"]["shape"] == (240, 320, 3)
 
 
 class TestARefusedCreateLeavesTheTargetAlone:

@@ -672,12 +672,15 @@ class TestBuildFeaturesSchema:
             video_width=640,
         )
 
+        # lerobot's own declaration (hw_to_dataset_features): HWC, like every
+        # published v3 dataset and lerobot's record path.
         assert features["observation.images.top"] == {
             "dtype": "video",
-            "shape": (3, 480, 640),
-            "names": ["channels", "height", "width"],
+            "shape": (480, 640, 3),
+            "names": ["height", "width", "channels"],
+            "info": {"is_depth_map": False},
         }
-        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+        assert features["observation.images.wrist"]["shape"] == (480, 640, 3)
 
     def test_camera_dims_override_per_camera_resolution(self):
         """A per-camera entry in ``camera_dims`` overrides the global size for
@@ -689,8 +692,8 @@ class TestBuildFeaturesSchema:
             video_width=640,
         )
 
-        assert features["observation.images.top"]["shape"] == (3, 240, 320)
-        assert features["observation.images.wrist"]["shape"] == (3, 480, 640)
+        assert features["observation.images.top"]["shape"] == (240, 320, 3)
+        assert features["observation.images.wrist"]["shape"] == (480, 640, 3)
 
     def test_use_videos_false_emits_image_dtype(self):
         """``use_videos=False`` records still frames (``image`` dtype) rather
@@ -1296,7 +1299,7 @@ def test_create_builds_features_from_joints_and_cameras(monkeypatch, tmp_path):
 
     features = _FakeDatasetVcodecCreate.last_create_kwargs["features"]
     assert features["observation.state"]["names"] == ["shoulder", "elbow"]
-    assert features["observation.images.top"]["shape"] == (3, 240, 320)
+    assert features["observation.images.top"]["shape"] == (240, 320, 3)
 
 
 # camera_key_map remap + camera-key-mismatch diagnostic

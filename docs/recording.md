@@ -733,7 +733,7 @@ shape of the cameras it covers and the pair sets the shape of every other one.
 Note the order - `camera_dims` is `(height, width)`, the reverse of the pair.
 
 It is a **declaration, not a resize** - the recorder rescales nothing - so
-whatever is given goes straight into the LeRobot feature as `(3, height, width)`.
+whatever is given goes straight into the LeRobot feature as `(height, width, 3)` with names `[height, width, channels]` - the layout lerobot itself records and every published v3 dataset uses.
 `create()` refuses a shape it cannot honor, on the same shared domain and in the
 same place as the column names above:
 
