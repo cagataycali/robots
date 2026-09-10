@@ -31,6 +31,7 @@ import ast
 import inspect
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,7 @@ from strands_robots.utils import camera_schema_key
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 
 def _source_file(obj: Any) -> Path:

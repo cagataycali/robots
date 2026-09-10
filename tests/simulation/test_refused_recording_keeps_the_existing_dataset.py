@@ -37,6 +37,7 @@ import ast
 import inspect
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,7 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 _ROBOT_XML = """
 <mujoco model="test_arm">

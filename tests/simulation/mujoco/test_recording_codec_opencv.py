@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import glob
 import os
+import sys
 
 import pytest
 
@@ -33,7 +34,7 @@ pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 cv2 = pytest.importorskip("cv2")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 _ROBOT_XML = """
 <mujoco model="test_arm">

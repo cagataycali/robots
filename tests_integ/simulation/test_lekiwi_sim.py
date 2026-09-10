@@ -9,11 +9,12 @@ rollout driving all 9 actuators -> render.
 from __future__ import annotations
 
 import os
+import sys
 
 import numpy as np
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 # 6-DOF SO-ARM arm + 3 omniwheels.
 _EXPECTED_ACTUATORS = 9
