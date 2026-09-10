@@ -35,6 +35,15 @@ no usable start into a duration - the ``0`` an absent key defaults to renders as
 the whole epoch, a little under fifty-seven years - and reports it beside a
 running flag that is correct.
 
+One store holds every robot session, because the tools that start them are
+peers: a detached teleoperation run and a detached training run are two entries
+in one file, and either tool's ``list`` shows both. :class:`SessionManager` is
+that file's one reader and writer for the same reason :func:`recorded_pid` is
+the one reader of a pid. Two readers of one document cannot hold two retention
+policies: whichever of them deletes a record deletes it for the other as well,
+so the destructive policy is the one that takes effect and the retaining one's
+guarantee is not the store's, only its own.
+
 Reading a record presupposes that the file still holds one, which is what
 :func:`store_sessions` is for. Every session store here is a whole document: a
 verb that starts or stops one session loads every record, changes that one, and
@@ -47,6 +56,7 @@ that is still being driven by a process no verb can name.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import sys
@@ -57,6 +67,8 @@ from typing import Any
 
 import psutil
 
+logger = logging.getLogger(__name__)
+
 # How long to let a process wind itself down after SIGTERM before escalating.
 # The session processes this covers flush a dataset shard or a checkpoint on
 # the way out, so the grace period is real work, not politeness.
@@ -66,6 +78,14 @@ SIGTERM_GRACE_S = 2.0
 # A process still present after this is in an uninterruptible wait; more waiting
 # does not change the verdict, and the caller needs the verdict.
 SIGKILL_CONFIRM_S = 2.0
+
+#: Where every session tool keeps its detached-session records and their logs.
+#: One directory, because the store inside it is one document (see
+#: :class:`SessionManager`): a second definition of this path is a second
+#: independently-redirectable name for one file, which is how two policies came
+#: to be applied to it.
+SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
+SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 #: Session-record key holding the identity of the process the record was written
 #: for: how long after boot that process started.
@@ -327,6 +347,21 @@ def unusable_pid_result(session_name: str, recorded: Any) -> dict[str, Any]:
     }
 
 
+def session_log_path(session_name: str) -> Path:
+    """Where a detached session's captured output lives.
+
+    Resolved on each call rather than bound at import, so :data:`SESSION_DIR`
+    has one redirect seam covering both the store and the logs beside it.
+
+    Args:
+        session_name: The session key the record is stored under.
+
+    Returns:
+        The log file path for that session, inside :data:`SESSION_DIR`.
+    """
+    return SESSION_DIR / f"{session_name}.log"
+
+
 def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
     """Replace a session store whole, or leave the stored one untouched.
 
@@ -524,3 +559,153 @@ def unstopped_result(session_name: str, pid: int, verdict: bool | None, doing: s
             {"json": {"session_name": session_name, "pid": pid, "stopped": verdict}},
         ],
     }
+
+
+class SessionManager:
+    """The one reader and writer of the detached-session store.
+
+    Records are keyed by session name and held as one JSON document under
+    :data:`SESSION_DIR`. Reading never deletes: :meth:`remove_session` is the
+    only thing that drops a record, because this store is the only place a
+    detached process's pid is written down, and every read path here is
+    load-modify-write - a record a read leaves out is erased from disk by the
+    next session started or stopped, after which the process it named goes on
+    driving an arm or holding a GPU with no supported way left to stop it.
+
+    Retention costs no accuracy, because presence here is not the running claim.
+    ``list`` and ``status`` each derive that from :func:`session_is_running` at
+    the moment they are asked, so a retained record reads as running only while
+    its pid still holds the process the record was written for.
+    """
+
+    def __init__(self) -> None:
+        self.sessions_file = SESSION_DIR / "active_sessions.json"
+
+    def _load_sessions(self) -> dict[str, Any]:
+        """Every stored record, keyed by session name; no record is dropped.
+
+        Returns:
+            The stored records. A store that cannot be read degrades to empty
+            rather than raising - including one carrying bytes this encoding
+            does not describe, which are read as U+FFFD so a record damaged
+            outside its pid still names the process it named (a pid is ASCII).
+            The decode policy cannot raise for that reason: the handler below
+            answers the two expected failures - the file is gone, or it is not
+            JSON - and ``UnicodeDecodeError`` is a ``ValueError`` that passes
+            both clauses and would abort the tool action that asked.
+        """
+        if not self.sessions_file.exists():
+            return {}
+        try:
+            with open(self.sessions_file, encoding="utf-8", errors="replace") as f:
+                sessions: dict[str, Any] = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error(f"Error loading sessions: {e}")
+            return {}
+
+        self._report_uninspectable(sessions)
+        return sessions
+
+    def _report_uninspectable(self, sessions: Mapping[str, Any]) -> None:
+        """Warn for each record this store holds but cannot inspect.
+
+        Two records read that way, and both are kept: one names a pid that
+        exists and may not be read, the other names no pid at all. Neither is
+        evidence the run ended, and the warning is the operator's only clue that
+        ``status`` will report on a process it could not identify.
+
+        ``psutil.AccessDenied`` is the first - a session started under ``sudo``
+        for device access and later listed as the invoking user reads this way.
+        ``NoSuchProcess`` needs no report: it means the run was reaped between
+        the two probes, which is the same finished run as a pid that was already
+        gone, and those are retained for their log tail.
+
+        Args:
+            sessions: The loaded records. Inspected only; never modified.
+        """
+        for name, info in sessions.items():
+            pid = recorded_pid(info)
+            if pid is None:
+                if info.get("pid") is not None:
+                    # A pid field that is not a process id. Nothing can inspect it,
+                    # and converting it would inspect a different process, so the
+                    # record is kept and the run reported as not running.
+                    logger.warning(
+                        "Session '%s' records a %s as its PID, which is not a process id; "
+                        "its record is kept, but the run can only be stopped by hand",
+                        name,
+                        type(info.get("pid")).__name__,
+                    )
+                continue
+            if not psutil.pid_exists(pid):
+                continue
+            try:
+                # Called for what it raises, not for what it returns: the
+                # running/finished line is re-derived by ``list`` and ``status``,
+                # so this probe exists only to surface a denial.
+                psutil.Process(pid).is_running()
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.AccessDenied:
+                logger.warning(
+                    "Session '%s' (PID %s) exists but cannot be inspected; "
+                    "keeping its record so the session stays stoppable",
+                    name,
+                    pid,
+                )
+
+    def _save_sessions(self, sessions: Mapping[str, Any]) -> None:
+        """Store the record map in full, or leave the stored one untouched.
+
+        :func:`store_sessions` owns the sequence, because losing this store is
+        what makes a live session unstoppable.
+        """
+        try:
+            store_sessions(self.sessions_file, sessions)
+        except OSError as e:
+            logger.error(f"Error saving sessions: {e}")
+
+    def add_session(self, name: str, info: dict[str, Any]) -> None:
+        """Persist ``info`` under ``name``, overwriting any record of that name.
+
+        Args:
+            name: Session key to store the record under.
+            info: Metadata to persist - typically ``pid``,
+                :data:`PID_STARTED_SINCE_BOOT`, ``log_file`` and ``start_time``.
+        """
+        sessions = self._load_sessions()
+        sessions[name] = info
+        self._save_sessions(sessions)
+
+    def remove_session(self, name: str) -> None:
+        """Delete the record stored under ``name``; a no-op when none is.
+
+        Args:
+            name: Session key to remove.
+        """
+        sessions = self._load_sessions()
+        if name in sessions:
+            del sessions[name]
+            self._save_sessions(sessions)
+
+    def get_session(self, name: str) -> dict[str, Any] | None:
+        """Return the record stored under ``name``, or ``None`` if none is.
+
+        Args:
+            name: Session key to look up.
+
+        Returns:
+            The record, whether its process is running or finished; the caller
+            derives which from the pid through :func:`session_is_running`.
+        """
+        return self._load_sessions().get(name)
+
+    def list_sessions(self) -> dict[str, Any]:
+        """Return every stored record, keyed by session name.
+
+        Returns:
+            Every record the store holds, including those whose process has
+            finished - retained so ``status`` can still report the final log
+            tail. Being listed is not a claim of running.
+        """
+        return self._load_sessions()

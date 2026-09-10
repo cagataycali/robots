@@ -1,33 +1,25 @@
-"""Revision + norm_tag threading through the lerobot_local processor bridge.
+"""Revision threading through the lerobot_local processor bridge.
 
 ``LerobotLocalPolicy`` accepts ``revision=`` to pin a checkpoint to a branch,
-tag, or commit SHA and ``norm_tag=`` to select which embodiment's stats a
-multi-tag ``norm_stats.json`` applies. Both must reach the processor pipeline
-loader, not just the policy weights: otherwise a revision-pinned load silently
-runs the DEFAULT-branch preprocessor/postprocessor JSONs and normalization
-buffers against pinned weights (worst case: wrong normalization stats), and a
-generic checkpoint ignores the user's ``norm_tag`` on the norm-stats fallback.
+tag, or commit SHA. It must reach the processor pipeline loader, not just the
+policy weights: otherwise a revision-pinned load silently runs the
+DEFAULT-branch preprocessor/postprocessor JSONs against pinned weights, whose
+worst case is wrong normalization stats.
 
 These tests pin:
-  * the ``_load_processor_bridge`` call site forwards ``revision`` + ``norm_tag``
-    to ``ProcessorBridge.from_pretrained``;
+  * the ``_load_processor_bridge`` call site forwards ``revision`` to
+    ``ProcessorBridge.from_pretrained``;
   * ``ProcessorBridge.from_pretrained`` threads ``revision`` into every
     ``DataProcessorPipeline.from_pretrained`` call (preprocessor + postprocessor);
   * an older lerobot pipeline loader whose ``from_pretrained`` predates the
-    ``revision`` kwarg degrades to an unpinned load instead of crashing;
-  * ``revision`` + ``norm_tag`` both reach the ``norm_stats.json`` fallback; and
-  * a user ``norm_tag`` selects that tag from a multi-tag payload.
+    ``revision`` kwarg degrades to an unpinned load instead of crashing.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from strands_robots.policies.lerobot_local import norm_stats, processor
-from strands_robots.policies.lerobot_local.norm_stats import (
-    MOLMOACT2_NORM_STATS_FORMAT,
-    select_norm_tag,
-)
+from strands_robots.policies.lerobot_local import processor
 from strands_robots.policies.lerobot_local.policy import (
     LerobotLocalPolicy,
     clear_model_cache,
@@ -51,7 +43,7 @@ def _generic_inner():
 
 
 class TestBridgeCallSiteForwarding:
-    """The policy call site must forward revision + norm_tag to the bridge."""
+    """The policy call site must forward revision to the bridge."""
 
     def setup_method(self):
         clear_model_cache()
@@ -59,7 +51,7 @@ class TestBridgeCallSiteForwarding:
     def teardown_method(self):
         clear_model_cache()
 
-    def test_load_processor_bridge_forwards_revision_and_norm_tag(self):
+    def test_load_processor_bridge_forwards_revision(self):
         captured: dict = {}
 
         def _fake_bridge(_path, **kwargs):
@@ -84,10 +76,8 @@ class TestBridgeCallSiteForwarding:
                 device="cpu",
                 cache_model=False,
                 revision="v1.2.3",
-                norm_tag="so101",
             )
         assert captured.get("revision") == "v1.2.3"
-        assert captured.get("norm_tag") == "so101"
 
 
 class _RecordingPipeline:
@@ -149,54 +139,3 @@ class TestBridgeThreadsRevisionToPipeline:
         assert POSTPROCESSOR_CONFIG in _OldPipeline.seen
         assert bridge.is_active
         assert any("does not accept revision" in r.message for r in caplog.records)
-
-
-def _multi_tag_payload():
-    stats = {
-        "min": [0.0] * 6,
-        "max": [1.0] * 6,
-    }
-    return {
-        "format": MOLMOACT2_NORM_STATS_FORMAT,
-        "norm_mode": "min_max",
-        "metadata_by_tag": {
-            "so100": {"state_stats": stats, "action_stats": stats},
-            "so101": {"state_stats": stats, "action_stats": stats},
-        },
-    }
-
-
-class TestNormStatsFallbackReceivesRevisionAndTag:
-    def test_revision_and_norm_tag_reach_norm_stats_fallback(self, monkeypatch):
-        # No processor JSONs -> both pipelines None -> norm_stats fallback runs.
-        class _NoConfigPipeline:
-            @classmethod
-            def from_pretrained(cls, *_a, **_k):
-                raise FileNotFoundError("no processor config shipped")
-
-        monkeypatch.setattr(processor, "_try_import_processor", lambda: _NoConfigPipeline)
-        monkeypatch.setattr(processor, "_register_policy_processor_steps", lambda *_a, **_k: None)
-
-        captured: dict = {}
-
-        def _fake_load(path, *, revision=None, **_kw):
-            captured["load_revision"] = revision
-            return _multi_tag_payload()
-
-        def _fake_build(payload, norm_tag=None, **_kw):
-            captured["build_norm_tag"] = norm_tag
-            return ("PRE", "POST")
-
-        monkeypatch.setattr(norm_stats, "load_norm_stats", _fake_load)
-        monkeypatch.setattr(norm_stats, "build_norm_stats_processors", _fake_build)
-
-        bridge = ProcessorBridge.from_pretrained("owner/model", revision="rev9", norm_tag="so101", policy_type=None)
-        assert captured["load_revision"] == "rev9"
-        assert captured["build_norm_tag"] == "so101"
-        assert bridge.has_preprocessor
-
-    def test_requested_norm_tag_selected_from_multi_tag_payload(self):
-        # Acceptance criterion: an explicit norm_tag wins over auto-resolution.
-        assert select_norm_tag(_multi_tag_payload(), "so101") == "so101"
-        # Unresolvable without a hint (multiple tags, no matching default).
-        assert select_norm_tag(_multi_tag_payload()) is None

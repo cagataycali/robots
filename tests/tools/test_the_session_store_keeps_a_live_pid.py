@@ -1,19 +1,28 @@
-"""The training session store must not delete the record of a live process.
+"""The session store must not delete the record of a live process.
 
-``lerobot_train`` runs training detached, and its on-disk session store is the
-only place the subprocess's pid is written down: ``list``, ``status`` and
-``stop`` all look the session up there. So what the load step chooses to leave
-out is load-bearing, and it is load-bearing twice over, because
-``add_session`` and ``remove_session`` are load-modify-write - a record the load
-omits is erased from disk by the next session started or stopped, after which
-the training process holds the GPU with no supported way left to stop it.
+One store holds every detached robot session: ``lerobot_train`` and
+``lerobot_teleoperate`` both start their runs with ``start_new_session=True`` and
+write the pid into the same JSON document, read and written by the one
+:class:`~strands_robots.tools._process_stop.SessionManager`. It is the only place
+that pid is recorded, and ``list``, ``status`` and ``stop`` all look the session
+up there. So what the load step chooses to leave out is load-bearing, and it is
+load-bearing twice over, because ``add_session`` and ``remove_session`` are
+load-modify-write - a record the load omits is erased from disk by the next
+session started or stopped, after which the process holds the GPU or goes on
+driving the arm with no supported way left to stop it.
 
-Leaving a record out is also not needed to avoid over-reporting it: presence in
+That is also why the store cannot hold two retention policies. A read that
+prunes prunes for every tool reading the same document, so the destructive policy
+is the one that takes effect: measured before this rule reached one owner, three
+records the training tool documented itself as keeping were erased from disk by
+one teleoperation ``list``, and the same process logged "its record is kept" and
+"dropping the record" about the same record.
+
+Leaving a record out is not needed to avoid over-reporting it either: presence in
 the store is not the running claim. ``list`` and ``status`` each derive that from
 :func:`~strands_robots.tools._process_stop.session_is_running` at the moment they
 are asked, so a retained record reads as running only while its pid *still holds
-the process the record was written for* - the claim production makes in
-``SessionManager._load_sessions``. Both halves of it are pinned below as
+the process the record was written for*. Both halves of that are pinned below as
 controls: a pid that is gone, and a pid that another process now holds.
 
 The load path takes two probes of its own, and neither is that verdict.
@@ -31,9 +40,9 @@ record:
   and which of these paths a finished run takes is a race, so they must not be
   classified differently.
 * ``AccessDenied`` - the process exists and this user may not inspect it; a
-  session started under ``sudo`` and later listed as the invoking user reads this
-  way. That is not death, and it is the one case where dropping the record loses
-  a pid that still names a *live* process.
+  session started under ``sudo`` for device access and later listed as the
+  invoking user reads this way. That is not death, and it is the one case where
+  dropping the record loses a pid that still names a *live* process.
 
 No case below poses ``is_running()`` answering ``False``, because that call
 cannot: a freshly constructed :class:`psutil.Process` captures the identity it is
@@ -42,31 +51,23 @@ about to be asked about, so on the locked psutil it answers ``True`` or raises
 object built before the exit and read after it returns ``False``. The stand-ins
 below therefore refuse the probe rather than answering it.
 
-One asymmetry is worth writing down, because it is what makes those stand-ins
-legitimate here where the teleoperation sibling's had to move onto
-``_started_since_boot``: a record carries no identity unless a case seeds one, so
-``session_is_running`` short-circuits to existence and never consults the
-``psutil.Process`` double. That double is read only by ``_report_uninspectable``,
-whose warning is what the ``AccessDenied`` cases grade. The one case that needs
-the identity compared seeds it, and doubles the procfs read the verdict really
-takes.
-
-The teleoperation store is held to the same rule for the same reason, in
-``tests.tools.test_teleop_session_store_keeps_a_live_pid``. The two policies are
-not identical - that store prunes a finished session and this one retains it for
-the log tail - but neither may drop a record on the strength of a probe it could
-not take.
+Deletion still happens, on request: ``remove_session`` is the one thing that
+drops a record, and a ``stop`` that reaches its process removes it. Retention is
+about classification, not about a store that can never shrink.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import signal
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
 from strands_robots.tools import _process_stop
 
@@ -84,7 +85,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the session store to a temp dir so no test touches the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -93,6 +94,19 @@ def _live_pid() -> int:
     pid = os.getpid()
     assert train_mod.psutil.pid_exists(pid), "premise: the test process must exist"
     return pid
+
+
+def _free_pid() -> int:
+    """A pid no process holds, so the host's own verdict for it is "finished".
+
+    Taken from the top of the kernel's range rather than a fixed low number: a
+    low one is exactly what a busy machine is likely to have handed out, which is
+    how a test's verdict comes to depend on the host it runs on.
+    """
+    for candidate in range(4194303, 4194303 - 256, -1):
+        if not train_mod.psutil.pid_exists(candidate):
+            return candidate
+    raise AssertionError("premise: some pid near the top of the range must be free")
 
 
 def _raise_on_probe(monkeypatch: pytest.MonkeyPatch, exc: type[Exception]) -> None:
@@ -128,7 +142,7 @@ def _seed(name: str = "training", **extra: Any) -> tuple[Any, int]:
     """A store holding one session whose pid is live, and that pid."""
     mgr = SessionManager()
     pid = _live_pid()
-    mgr.add_session(name, {"pid": pid, "action": "train", "start_time": 0.0, **extra})
+    mgr.add_session(name, {"action": "train", "pid": pid, "start_time": 0.0, **extra})
     assert name in _stored(mgr), "premise: the session must reach disk"
     return mgr, pid
 
@@ -197,23 +211,42 @@ def test_an_uninspectable_session_can_still_be_deleted_on_purpose(monkeypatch: p
     assert _stored(mgr) == {}, "and must reach disk"
 
 
-def test_stop_can_still_reach_a_session_it_could_not_inspect(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The operator-visible point: such a session stays stoppable.
+@pytest.mark.parametrize(
+    ("module", "stop", "action_word"),
+    [
+        pytest.param(
+            train_mod,
+            lambda: lerobot_train(dataset_root=UNUSED_DATASET, action="stop", session_name="training"),
+            "train",
+            id="train",
+        ),
+        pytest.param(
+            tele_mod,
+            lambda: tele_mod.lerobot_teleoperate(action="stop", session_name="training"),
+            "teleoperate",
+            id="teleoperate",
+        ),
+    ],
+)
+def test_stop_can_still_reach_a_session_it_could_not_inspect(
+    monkeypatch: pytest.MonkeyPatch, module: Any, stop: Any, action_word: str
+) -> None:
+    """The operator-visible point: such a session stays stoppable, from either tool.
 
     Reaching it is the property pinned here - the record survives the load and
     the signals go to the recorded pid. The *verdict* cannot be affirmative: the
     same ``AccessDenied`` that hid the process from the store also hides whether
     it exited, and ``stop`` reports that as unknown rather than claiming an exit
-    it could not observe. Before this rule reached the training store that report
-    was unreachable here, because the record was gone by the time ``stop``
-    looked it up.
+    it could not observe. Before this rule reached one owner that report was
+    unreachable for whichever tool's records the other one had already pruned.
     """
-    _, pid = _seed()
+    _, pid = _seed(action=action_word)
     _raise_on_probe(monkeypatch, train_mod.psutil.AccessDenied)
     signalled: list[tuple[int, int]] = []
-    monkeypatch.setattr(train_mod.os, "kill", lambda p, sig: signalled.append((p, sig)))
+    monkeypatch.setattr(module.os, "kill", lambda p, sig: signalled.append((p, sig)))
+    monkeypatch.setattr(module.time, "sleep", lambda s: None)
 
-    result = lerobot_train(dataset_root=UNUSED_DATASET, action="stop", session_name="training")
+    result = stop()
 
     # psutil.pid_exists probes with signal 0, so only a real signal counts as a stop.
     sent = [entry for entry in signalled if entry[1] != 0]
@@ -328,6 +361,27 @@ def test_a_retained_record_is_not_reported_running(monkeypatch: pytest.MonkeyPat
     assert "Status: Stopped" in text, f"a retained record {id_} must read as stopped: {text}"
 
 
+def test_a_record_whose_pid_is_not_a_pid_is_reported_as_kept(caplog: pytest.LogCaptureFixture) -> None:
+    """The one retained case where nothing can be signalled must say so.
+
+    A ``pid`` field that is not a process id names nothing this store can probe,
+    and converting it would name a different process - so the record is kept and
+    the run reads as not running. That leaves the warning as the operator's only
+    clue that a run may still be holding the GPU under a pid nothing here can
+    name, which is why it says the record is kept rather than reporting a drop.
+    """
+    mgr = SessionManager()
+    mgr.add_session("training", {"action": "train", "pid": "not-a-pid", "start_time": 0.0})
+
+    with caplog.at_level("WARNING"):
+        loaded = mgr.list_sessions()
+
+    assert list(loaded) == ["training"], "the record is the only handle on the run"
+    messages = [r.getMessage() for r in caplog.records if "training" in r.getMessage()]
+    assert messages, "a record naming no process id must be reported"
+    assert "kept" in messages[0], f"the report must not claim a drop: {messages[0]}"
+
+
 def test_a_corrupt_store_still_degrades_to_empty() -> None:
     """Retention is about classification, not about tolerating a broken file."""
     mgr = SessionManager()
@@ -393,3 +447,111 @@ def test_stop_reaches_a_session_whose_record_carries_an_undecodable_byte(
     # psutil.pid_exists probes with signal 0, so only a real signal counts as a stop.
     sent = [entry for entry in signalled if entry[1] != 0]
     assert sent and sent[0] == (pid, signal.SIGTERM), f"stop must signal the recorded pid, sent {sent}"
+
+
+# ---------------------------------------------------------------------------
+# The double has to sit where the verdict is read.
+# ---------------------------------------------------------------------------
+class TestTheVerdictIsControlledWhereItIsAnswered:
+    """A stand-in for the probes above only counts if the verdict consults it.
+
+    ``session_is_running`` resolves ``psutil`` from
+    :mod:`strands_robots.tools._process_stop`'s own globals, so rebinding
+    ``lerobot_teleoperate.psutil`` installs a stand-in the verdict never looks
+    at. It then falls through to the real host and the session's reported state
+    is decided by whether this machine happens to hold the pid the test named -
+    a pass where it is free, a failure where it is taken, and a grade of nothing
+    either way.
+
+    Rebinding a whole module in another module's globals is the right tool when
+    that module is the reader, and it usually is: of the 21 such rebindings in
+    this tree, 20 are sound, 15 of them installing a fake clock. So the census
+    below asks only about ``psutil``, whose answer a second module owns.
+    """
+
+    def test_no_test_reaches_the_verdict_by_rebinding_psutil(self) -> None:
+        """No test controls a process probe by rebinding the name ``psutil``."""
+        root = Path(__file__).resolve().parents[2]
+        offenders = []
+        accepted = 0
+        for path in sorted((root / "tests").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "setattr"
+                    and len(node.args) >= 2
+                ):
+                    continue
+                target, name = node.args[0], node.args[1]
+                if isinstance(target, ast.Attribute) and target.attr == "psutil":
+                    accepted += 1
+                elif (
+                    isinstance(target, ast.Name)
+                    and isinstance(name, ast.Constant)
+                    and name.value == "psutil"
+                    # This module carries the one occurrence there is a reason for:
+                    # the case below installs such a stand-in in order to assert
+                    # that the verdict does not consult it.
+                    and path.name != Path(__file__).name
+                ):
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+        assert accepted, "premise: some test must reach psutil for this rule to be about anything"
+        assert not offenders, (
+            "a stand-in installed as <module>.psutil is not consulted by the running verdict, which "
+            "is answered in strands_robots.tools._process_stop; set the attribute on "
+            "the psutil module object instead, and the identity read at "
+            f"_process_stop._started_since_boot, as _raise_on_probe does: {offenders}"
+        )
+
+    def test_a_rebinding_in_the_tool_module_is_not_consulted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rebinding ``tele_mod.psutil`` leaves the verdict reading the real host.
+
+        The stand-in would call the session live - it reports the pid as existing,
+        and a record carrying no identity is answered on existence alone. The
+        session reads as finished anyway, and the stand-in is never asked: both
+        halves say the verdict came from the host.
+        """
+        consulted: list[str] = []
+
+        class _WouldCallItLive:
+            NoSuchProcess = train_mod.psutil.NoSuchProcess
+            AccessDenied = train_mod.psutil.AccessDenied
+
+            @staticmethod
+            def pid_exists(pid: int) -> bool:
+                consulted.append("pid_exists")
+                return True
+
+            @staticmethod
+            def Process(pid: int):  # noqa: N802 - mirror psutil.Process
+                consulted.append("Process")
+                raise _WouldCallItLive.NoSuchProcess(pid)
+
+        mgr = SessionManager()
+        record = {"pid": _free_pid(), "action": "teleoperate", "start_time": 0.0}
+        mgr.add_session("unidentified", record)
+        monkeypatch.setattr(tele_mod, "psutil", _WouldCallItLive)
+
+        assert _process_stop.session_is_running(record) is False, "the stand-in would have called this live"
+        assert consulted == [], f"the verdict must not be reachable this way, but consulted {consulted}"
+
+    def test_the_module_object_is_the_seam_the_verdict_reads(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Setting the attribute on the shared psutil object does reach the verdict.
+
+        The control for the census above: the rule is about how a double is
+        installed, not about leaving the probes alone.
+        """
+        asked: list[int] = []
+
+        def pid_exists(pid: int) -> bool:
+            asked.append(int(pid))
+            return False
+
+        mgr, pid = _seed()
+        monkeypatch.setattr(train_mod.psutil, "pid_exists", pid_exists)
+
+        record = mgr.get_session("training")
+        assert record is not None, "premise: the record is retained"
+        assert _process_stop.session_is_running(record) is False
+        assert pid in asked, f"the verdict must read the module object, but asked {asked}"

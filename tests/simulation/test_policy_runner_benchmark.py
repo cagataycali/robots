@@ -366,6 +366,14 @@ class TestAugmentObservationHook:
                 # records the rate to honor the contract without acting on it.
                 self.control_frequency = hz
 
+            def set_rtc_observed_delay(self, steps):
+                # The spec eval path declares the chunk-seam offset before every
+                # inference, exactly like run()/evaluate(), so a policy carried
+                # over from an async rollout cannot slice its chunk against a
+                # stale count. Recorded here for the same reason as the control
+                # rate above: honor the contract without acting on it.
+                self.rtc_observed_delay_steps = steps
+
             def get_actions(self, obs, instruction):
                 captured.append(dict(obs))
                 return [{"j0": 0.0, "j1": 0.0}]
