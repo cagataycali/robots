@@ -779,6 +779,7 @@ GUARDED_READERS = frozenset(
     {
         "_describe_failed_read",
         "_describe_unrenderable",
+        "_episode_indices",
         "_read_finite_vector",
         "_read_name_list",
         "_read_pose_vector",

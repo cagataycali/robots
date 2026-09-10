@@ -202,6 +202,7 @@ spec = TrainSpec(
     base_model="",
     output_dir="/data/pick_place_ft",
     steps=2000,
+    val_episodes=3,
     extra={"policy_type": "act", "dataset.episodes": chosen},
 )
 result = trainer.train(spec)
@@ -210,6 +211,12 @@ result = trainer.train(spec)
 The subset reaches lerobot as `DatasetConfig.episodes` through the typed
 `extra` passthrough; the dataset itself is untouched. The same list feeds the
 read side: `stream_dataset(..., episodes=chosen)`.
+
+`val_episodes` is sized against the episodes the run LOADS, not against the
+dataset's `total_episodes`: the three reserved here come out of `chosen`, so a
+filter that kept 15 of 30 episodes trains on 12 and validates on 3. Asking for
+more episodes than the subset holds is refused before the run starts, naming
+both counts.
 
 ## Relation to steerable annotation
 
