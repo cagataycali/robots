@@ -687,7 +687,7 @@ def main(argv: "list[str] | None" = None) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
     # Robot selection: default Franka, or an MJCF-imported SO-101 USD with its
     # own (smaller-arm) camera presets.

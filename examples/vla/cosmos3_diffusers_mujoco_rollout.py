@@ -86,7 +86,7 @@ def main() -> int:
     if args.render:
         import os
 
-        os.environ.setdefault("MUJOCO_GL", "egl")
+        os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
         import imageio.v3 as iio
         from PIL import Image
 

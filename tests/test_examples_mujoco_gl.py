@@ -40,9 +40,20 @@ Two rules are enforced over the notebooks' code cells plus every tracked
    where a backend name is the value *under test* -- a ``monkeypatch.setenv``
    or an assertion about what the resolver did.
 
-Rule 2 does not grade ``egl``/``osmesa`` defaults: an unguarded ``"egl"``
-raises on macOS, but that is a macOS-hostile default rather than a windowed
-one, and converging the tree's offscreen spellings is a separate question.
+3. **No unguarded offscreen backend in an example, in any scope**
+   (:func:`test_no_unguarded_offscreen_gl_default_in_examples`). ``egl`` and
+   ``osmesa`` are Linux-only, so ``os.environ.setdefault("MUJOCO_GL", "egl")``
+   is ``RuntimeError: invalid value for environment variable MUJOCO_GL: egl`` at
+   the next ``import mujoco`` on macOS. Examples put that line at module scope
+   *and* at the top of ``main()`` (before the lazy simulation import), and both
+   run before mujoco is imported, so Rule 3 is not scoped to module level.
+   Measured at 6a8a8ea23 on macOS: ``examples/04_mesh_peer_discovery.py`` died
+   at import, and the six ``main()`` sites would die the same way on first run.
+
+Rule 2 does not grade ``egl``/``osmesa``: under ``tests/`` a module-scope
+``"egl"`` default is a convention of its own (some twenty files), and
+converging those spellings is a separate question from an example a reader
+runs on the machine in front of them.
 """
 
 from __future__ import annotations
@@ -275,6 +286,100 @@ def test_scan_reaches_the_module_scope_defaults():
         f"the AST scan found only {total} module-scope MUJOCO_GL defaults across {_tracked_py()[:1]}...; "
         "the tree has far more, so the scan is not reaching the sources."
     )
+
+
+#: MuJoCo's *offscreen* GL backends. Both are Linux-only: MuJoCo rejects them
+#: at import on macOS, so neither is a working unconditional default either.
+_OFFSCREEN_BACKENDS = ("egl", "osmesa")
+
+#: Examples whose entire directory is removed by cagataycali/robots-harness#446
+#: (motionbricks / kimodo policies dropped). They keep their bare ``egl`` until
+#: they go; fixing them would be edits to files with days to live.
+_EXAMPLES_LEAVING_WITH_446 = frozenset(
+    {
+        "examples/kimodo/kimodo_g1_dataset_headcam.py",
+        "examples/kimodo/kimodo_g1_walking.py",
+        "examples/wbc/motionbricks_g1_mujoco.py",
+    }
+)
+
+
+def _all_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
+    """``(line, value-expression)`` for every ``MUJOCO_GL`` default in any scope."""
+    return [
+        (getattr(node, "lineno", 0), ast.unparse(value))
+        for node in ast.walk(ast.parse(source))
+        if (value := _gl_default_value(node)) is not None
+    ]
+
+
+def _names_offscreen(expr_src: str) -> bool:
+    return any(f'"{backend}"' in expr_src or f"'{backend}'" in expr_src for backend in _OFFSCREEN_BACKENDS)
+
+
+def _unguarded_offscreen_defaults(source: str) -> list[str]:
+    """``MUJOCO_GL`` defaults naming a Linux-only backend without a platform guard, any scope."""
+    return [
+        f"line {line}: {expr}"
+        for line, expr in _all_scope_gl_defaults(source)
+        if _names_offscreen(expr) and not _is_guarded_expr(expr)
+    ]
+
+
+def _example_py() -> list[Path]:
+    root = _REPO_ROOT / "examples"
+    return sorted(root.rglob("*.py")) if root.is_dir() else []
+
+
+def test_no_unguarded_offscreen_gl_default_in_examples():
+    """An example must not default MUJOCO_GL to a Linux-only backend, in any scope.
+
+    A reader runs an example on the machine in front of them; on macOS a bare
+    ``egl`` is a RuntimeError at ``import mujoco`` whether the line sits at
+    module scope or at the top of ``main()``.
+    """
+    offenders: dict[str, list[str]] = {}
+    for path in _example_py():
+        rel = str(path.relative_to(_REPO_ROOT))
+        if rel in _EXAMPLES_LEAVING_WITH_446:
+            continue
+        bad = _unguarded_offscreen_defaults(path.read_text(encoding="utf-8"))
+        if bad:
+            offenders[rel] = bad
+    assert not offenders, (
+        "an example defaults MUJOCO_GL to a Linux-only GL backend "
+        f"({', '.join(_OFFSCREEN_BACKENDS)}), which MuJoCo rejects at import on macOS. "
+        'Use \'os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\'. '
+        f"Offending sites: {offenders}"
+    )
+
+
+def test_the_446_allowlist_names_only_files_that_still_exist():
+    """When #446 lands the allowlist shrinks with it, not after."""
+    stale = sorted(rel for rel in _EXAMPLES_LEAVING_WITH_446 if not (_REPO_ROOT / rel).is_file())
+    assert not stale, f"remove from _EXAMPLES_LEAVING_WITH_446, the files are gone: {stale}"
+
+
+class TestTheOffscreenRuleGradesEveryScope:
+    """Planted sources for Rule 3: any scope, offscreen names only, the guard clears it."""
+
+    def test_a_module_scope_egl_default_is_reported(self):
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "egl")\n'
+        assert _unguarded_offscreen_defaults(source) == ["line 2: 'egl'"]
+
+    def test_an_egl_default_inside_main_is_reported_too(self):
+        source = 'import os\n\n\ndef main():\n    os.environ.setdefault("MUJOCO_GL", "osmesa")\n'
+        assert _unguarded_offscreen_defaults(source) == ["line 5: 'osmesa'"]
+
+    def test_the_guarded_form_is_accepted(self):
+        source = (
+            'import os\nimport sys\nos.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\n'
+        )
+        assert _unguarded_offscreen_defaults(source) == []
+
+    def test_a_windowed_default_is_rule_two_business_not_rule_three(self):
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "glfw")\n'
+        assert _unguarded_offscreen_defaults(source) == []
 
 
 class TestTheRuleIsScopedToWhatSelectsTheBackend:

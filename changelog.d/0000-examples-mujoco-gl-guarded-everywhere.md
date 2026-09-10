@@ -1,0 +1,2 @@
+### Fixed
+- Seven more examples (`04_mesh_peer_discovery`, `robots/neon`, `vla/cosmos3_*`, `so101_curobo`, `mujoco_gs`, `isaac_gs`) pick `MUJOCO_GL` the way the rest of the tree does (`cgl` on macOS, `egl` elsewhere, an exported value wins) instead of hard-coding the Linux-only `egl`, which is `RuntimeError: invalid value for environment variable MUJOCO_GL: egl` at `import mujoco` on a Mac. The MUJOCO_GL linter now fails any example that defaults to `egl`/`osmesa` unguarded, in any scope.
