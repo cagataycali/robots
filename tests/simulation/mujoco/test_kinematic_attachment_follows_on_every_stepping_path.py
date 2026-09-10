@@ -37,8 +37,6 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-
 import mujoco as mj  # noqa: E402
 
 from strands_robots.policies.mock import MockPolicy  # noqa: E402

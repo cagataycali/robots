@@ -23,13 +23,11 @@ These tests pin the first-class multi-episode API:
 
 from __future__ import annotations
 
-import os
+import sys
 
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from strands_robots.simulation import create_simulation  # noqa: E402
 from strands_robots.simulation.base import SimEngine  # noqa: E402
@@ -117,7 +115,6 @@ def _patch_runner(monkeypatch, run_fn):
     the real rollout runs unpatched. Resolving the class from the live module that
     owns ``run_policy`` keeps the seam effective regardless of such reloads.
     """
-    import sys
 
     runner_module = sys.modules[SimEngine.run_policy.__module__]
     monkeypatch.setattr(runner_module.PolicyRunner, "run", run_fn)

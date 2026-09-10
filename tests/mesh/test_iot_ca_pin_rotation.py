@@ -71,20 +71,20 @@ def test_verify_ca_bytes_accepts_either_pin_during_dual_pin_overlap(
 # that exists only in a contributor file cannot pass for a published one.
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_README = _REPO_ROOT / "README.md"
+_README = _REPO_ROOT / "docs" / "reference" / "configuration.md"  # the runbook page (moved out of README)
 _AGENTS = _REPO_ROOT / "AGENTS.md"
 
 # AGENTS.md > "Operational Runbooks for Security Pins" names where the runbook
 # lives. Reading the heading from the citation rather than restating it is what
 # makes these tests grade the citation: a heading renamed on one side and not the
 # other fails here instead of quietly becoming a dead pointer.
-_CITATION_RE = re.compile(r'README\.md > "([^"]+)"')
+_CITATION_RE = re.compile(r'docs/reference/configuration\.md > "([^"]+)"')
 
 
 def _cited_runbook_heading() -> str:
     """Return the README heading AGENTS.md cites as the pin rotation runbook."""
     found = _CITATION_RE.findall(_AGENTS.read_text(encoding="utf-8"))
-    assert found, "premise: AGENTS.md no longer cites a README heading for the pin runbook"
+    assert found, "premise: AGENTS.md no longer cites a docs/reference/configuration.md heading for the pin runbook"
     return found[0]
 
 
@@ -150,8 +150,8 @@ class TestTheCitedRunbookIsPublished:
         """AGENTS.md names a README heading; README has to carry it."""
         heading = _cited_runbook_heading()
         assert _readme_section(heading), (
-            f"AGENTS.md cites README.md > {heading!r} as where the pin rotation runbook "
-            "lives, and README.md has no such heading - the rotation procedure is "
+            f"AGENTS.md cites docs/reference/configuration.md > {heading!r} as where the pin rotation runbook "
+            "lives, and configuration.md has no such heading - the rotation procedure is "
             "published nowhere an operator reads"
         )
 

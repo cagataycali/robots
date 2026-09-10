@@ -31,7 +31,6 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -45,8 +44,6 @@ from strands_robots.simulation.recording import (
 from strands_robots.utils import boolean_flag_error
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 

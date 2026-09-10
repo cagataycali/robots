@@ -36,15 +36,12 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import os
 from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 _ROBOT_XML = """
 <mujoco model="test_arm">

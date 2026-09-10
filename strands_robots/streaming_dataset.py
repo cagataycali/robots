@@ -1,23 +1,18 @@
-#!/usr/bin/env python3
 """Streaming read-back for LeRobotDataset - read frames directly from the Hub.
 
-Primary use: in-process eval / replay / notebooks / agent loops (NOT a
-precondition for streamed *training* - ``python -m lerobot.scripts.lerobot_train
---dataset.streaming=true`` already uses StreamingLeRobotDataset via
-``lerobot.datasets.factory.make_dataset``).
+Primary use: in-process eval / replay / notebooks / agent loops. Streamed
+*training* does not need this module: ``python -m lerobot.scripts.lerobot_train
+--dataset.streaming=true`` already uses ``StreamingLeRobotDataset`` via
+``lerobot.datasets.factory.make_dataset``.
 
-Design mirrors :mod:`strands_robots.dataset_recorder`:
-  * lerobot is NEVER imported at module top-level (numpy/pandas ABI safety on
-    Jetson; see the :mod:`strands_robots.dataset_recorder` header).
-  * Constructor kwargs are forwarded via ``inspect.signature`` introspection so
-    a lerobot version bump can't break us (lerobot's dataset API drifted across
-    0.5.0->0.5.2; streaming is newer and still changing - upstream has a
-    multi-thread prefetch TODO).
+lerobot is never imported at module top-level (numpy/pandas ABI safety on
+Jetson; see the :mod:`strands_robots.dataset_recorder` header). The ``[lerobot]``
+extra floors lerobot at ``BUCKET_STREAMING_MIN_LEROBOT``, whose constructor
+accepts every keyword :meth:`StreamingDatasetReader.open` forwards.
 """
 
 from __future__ import annotations
 
-import inspect
 import logging
 import sys
 from collections.abc import Callable
@@ -27,7 +22,6 @@ from strands_robots.dataset_recorder import local_dataset_dir
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,
-    lerobot_version,
     non_negative_count_error,
     positive_count_error,
     refusal_repr,
@@ -35,36 +29,18 @@ from strands_robots.utils import (
 
 logger = logging.getLogger(__name__)
 
-# The first lerobot release whose ``StreamingLeRobotDataset`` accepts a
-# ``repo_type`` parameter, i.e. the floor for bucket streaming. 0.6.0's
-# constructor has no such parameter; 0.6.1 added
-# ``repo_type: Literal["dataset", "bucket"]``. The ``[lerobot]`` extra floors
-# lerobot here so a resolver-conformant install always has the capability; this
-# constant is what the runtime guard below advertises to an environment that
-# carries a pre-existing older lerobot, so the packaging floor and the remedy
-# the error message names cannot drift apart.
+# The lerobot that first accepts ``repo_type: Literal["dataset", "bucket"]``;
+# every lerobot-bearing extra in pyproject floors at or above it.
 BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
 
-
-# Only the POSITIVE result is cached. lerobot availability is a process
-# capability that can transiently fail to resolve (a slow/locked import, or - in
-# tests - a temporarily monkeypatched ``sys.modules``); caching a ``False``
-# would permanently disable streaming for the rest of the process even after the
-# condition clears. A failed probe is therefore re-attempted on the next call.
-#
-# The cache is a single-cell list rather than a module-level bool: a non-empty
-# cell means "probed True". Mutating the cell (append/clear) records the result
-# without rebinding a module global, so the memoization needs no ``global``
-# statement.
+# Only a POSITIVE probe is cached: a transient import failure (slow import, a
+# test's monkeypatched ``sys.modules``) must not disable streaming for the rest
+# of the process.
 _HAS_STREAMING_DATASET: list[bool] = []
 
 
 def has_streaming_dataset() -> bool:
-    """Return True if lerobot's ``StreamingLeRobotDataset`` is importable.
-
-    A successful probe is cached; a failed probe is re-attempted on the next
-    call so a transient import failure does not permanently disable streaming.
-    """
+    """Return True if lerobot's ``StreamingLeRobotDataset`` is importable."""
     if _HAS_STREAMING_DATASET:
         return True
     try:
@@ -78,8 +54,7 @@ def has_streaming_dataset() -> bool:
 
 def _get_streaming_cls() -> Any:
     """Return StreamingLeRobotDataset, honoring a test-injected module override."""
-    this_module = sys.modules[__name__]
-    mock_cls = getattr(this_module, "StreamingLeRobotDataset", None)
+    mock_cls = getattr(sys.modules[__name__], "StreamingLeRobotDataset", None)
     if mock_cls is not None:
         return mock_cls
     try:
@@ -98,33 +73,7 @@ def _get_streaming_cls() -> Any:
 
 
 def _tolerance_error(value: Any) -> str | None:
-    """Return why ``tolerance_s`` cannot be used as a grid-match half-width.
-
-    ``tolerance_s`` is the half-width of the window
-    ``lerobot.datasets.feature_utils.check_delta_timestamps`` compares each
-    delta against, and :meth:`StreamingDatasetReader.open` runs that check
-    itself to restore the grid validation the streaming path skips. So the
-    value decides whether that check can answer at all, in both directions:
-    ``inf`` makes ``... <= tolerance_s`` true for every delta, silently
-    accepting an off-grid ``delta_timestamps`` and disabling the very parity
-    the call was replicating, while ``nan`` and a negative half-width make it
-    false for every delta, refusing a perfectly on-grid one with a message
-    that blames the caller's deltas.
-
-    ``0`` is first-class here rather than degenerate - it asks for an exact
-    grid match, the strictest tolerance available - so neither shared
-    continuous domain fits (:func:`~strands_robots.utils.positive_finite_number_error`
-    refuses it). This decides only the floor and defers the numeric-ness,
-    finiteness and ``bool`` decisions to
-    :func:`~strands_robots.utils.finite_number_error`, so the two cannot
-    diverge on them.
-
-    Args:
-        value: The caller-supplied tolerance, in seconds.
-
-    Returns:
-        An error message, or ``None`` when the value is usable.
-    """
+    """Return why ``tolerance_s`` cannot be used as a grid-match half-width, else None."""
     if error := finite_number_error(value, "tolerance_s", "open"):
         return error
     if float(value) < 0.0:
@@ -136,85 +85,27 @@ def _tolerance_error(value: Any) -> str | None:
     return None
 
 
-# Every numeric parameter of ``StreamingDatasetReader.open`` and the domain
-# that decides it. A table rather than an inline chain because the pairing is
-# what stops the two drifting apart: a knob added to the signature without a
-# domain is a knob forwarded raw into a constructor that validates only
-# ``repo_type``, which is how these four came to be unguarded.
+# Every numeric knob ``open`` forwards, with the domain it is checked against
+# before lerobot sees it - so a bad value fails at open, not on the first frame.
 _NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
-    # Half-width of the grid-match window; see _tolerance_error.
     "tolerance_s": _tolerance_error,
-    # Reservoir size: the exclusive upper bound of ``rng.integers(0, buffer_size)``
-    # and the length the frame buffer is compared against, so only a true
-    # positive int can be honored - 0 and a negative raise ``high <= 0`` from
-    # NumPy part-way through iteration, and a fractional one is used verbatim.
     "buffer_size": lambda value: positive_count_error(value, "buffer_size", "open"),
-    # Shard count: reaches ``min(hf_shards, max_num_shards)`` and then
-    # ``range(num_shards)``, so 0 or a negative yields zero shards and the
-    # reader streams no frames at all under a successful open.
     "max_num_shards": lambda value: positive_count_error(value, "max_num_shards", "open"),
-    # Reproducibility seed for the reservoir shuffle: ``np.random.default_rng``
-    # refuses a negative or a float, and 0 is simply a seed - the domain
-    # ``TrainSpec.seed`` already uses.
     "seed": lambda value: non_negative_count_error(value, "seed", "open"),
 }
 
+# Every boolean flag ``open`` takes. A non-boolean is refused rather than read
+# for its truthiness: ``shuffle="false"`` would otherwise shuffle.
+_BOOLEAN_FLAGS: tuple[str, ...] = ("streaming", "shuffle", "return_uint8", "validate_deltas", "drop_videos")
 
-# Every boolean flag of ``StreamingDatasetReader.open``, tabled for the same
-# reason ``_NUMERIC_DOMAINS`` is: the pairing with the signature is what stops a
-# flag being added and forwarded raw. The domain is
-# :func:`~strands_robots.utils.boolean_flag_error` - the one
-# :func:`~strands_robots.simulation.recording.dataset_recording_posture_error`
-# already applies to the recording postures on the write side of this same
-# dataset. Read by truthiness instead, each of these selects the branch the
-# caller was opting *out* of, because every non-empty string is truthy and every
-# falsy non-boolean takes the other branch without being a declared spelling of
-# it. What each one did, measured against lerobot 0.6.2:
-_BOOLEAN_FLAGS: tuple[str, ...] = (
-    # ``streaming=0`` reaches StreamingLeRobotDataset, which builds a
-    # materialized ``Dataset`` instead and then fails on ``num_shards`` - an
-    # AttributeError naming a lerobot internal, out of a call the caller had no
-    # reason to think was still opening.
-    "streaming",
-    # ``shuffle="false"`` is forwarded verbatim and lerobot reads it by
-    # truthiness too (``rng = default_rng(seed) if not self.shuffle else
-    # self.rng``), so the spelling that asks for the reseeded generator gets the
-    # advancing one - the read-order trap documented in ``open``'s Ordering
-    # note, entered by the opt-out itself.
-    "shuffle",
-    # ``return_uint8=None`` is forwarded and read as false, streaming frames as
-    # float32 (~4x the bandwidth of uint8), while the warning below that exists
-    # to report exactly that cost is gated on truthiness and stays silent.
-    "return_uint8",
-    # ``validate_deltas=0`` skips the grid check ``open`` runs for parity with
-    # the materialized path, so an off-grid ``delta_timestamps`` that
-    # ``validate_deltas=True`` refuses opens and streams with nothing said.
-    "validate_deltas",
-    # ``drop_videos="false"`` strips the camera keys out of
-    # ``delta_timestamps`` - the opposite of the opt-out it spells. With no
-    # non-video key left it reaches the refusal below, which names
-    # ``drop_videos=True``: a value the caller never passed, whose stated remedy
-    # leads to the silent proprio-only stream rather than away from it.
-    "drop_videos",
-)
+_VIDEO_KEY_PREFIX = "observation.images."
 
 
 class StreamingDatasetReader:
-    """Version-tolerant wrapper over lerobot's StreamingLeRobotDataset.
+    """Thin facade over ``StreamingLeRobotDataset``: iterate frames, or wrap in a DataLoader.
 
-    ``shuffle`` is not the read-order knob - see :meth:`open`'s "Ordering"
-    note. Capture order is ``buffer_size=1`` plus ``max_num_shards=1``.
-
-    Example (in-process eval / replay):
-        reader = StreamingDatasetReader.open(
-            "strands-robots/pick-place",
-            delta_timestamps={"observation.images.front": [-0.2, -0.1, 0.0],
-                              "action": [0.0, 0.1, 0.2]},
-            buffer_size=1,            # capture order: a reservoir of one
-            max_num_shards=1,         # capture order: one shard to interleave
-        )
-        for frame in reader:
-            ...  # raw tensors; normalize via reader.meta.stats if needed
+    Build one with :meth:`open` (or the :func:`stream_dataset` alias). The
+    underlying lerobot dataset is ``.dataset``.
     """
 
     def __init__(self, dataset: Any) -> None:
@@ -236,89 +127,60 @@ class StreamingDatasetReader:
         max_num_shards: int = 16,
         seed: int = 42,
         shuffle: bool = True,
-        return_uint8: bool = True,  # halves frame bandwidth; policies normalize
-        validate_deltas: bool = True,  # parity with the materialized dataset path
-        drop_videos: bool = False,  # proprio-only streaming (no torchcodec)
-        repo_type: str = "dataset",  # "dataset" or "bucket"; non-default REQUIRES a lerobot that accepts it
+        return_uint8: bool = True,
+        validate_deltas: bool = True,
+        drop_videos: bool = False,
+        repo_type: str = "dataset",
     ) -> StreamingDatasetReader:
-        """Open a version-tolerant streaming reader.
+        """Open ``repo_id`` for streaming.
 
-        Local datasets:
-            An absent ``root`` is resolved from ``repo_id`` by the rule
-            recording writes through
-            (:func:`~strands_robots.dataset_recorder.local_dataset_dir`), so a
-            ``repo_id`` that is itself a path streams the directory it recorded
-            to with no ``root`` restated. Only that rule is resolved here: an
-            ``owner/name`` id keeps its absent root, which is how
-            ``StreamingLeRobotDataset`` selects LeRobot's revision-safe Hub
-            metadata cache - already the directory a local recording under that
-            id wrote to.
-
-        Validation:
-            The numeric knobs are checked against
-            :data:`_NUMERIC_DOMAINS`, and the flags in :data:`_BOOLEAN_FLAGS`
-            against the shared boolean domain, before the lerobot import -
-            because ``StreamingLeRobotDataset`` validates only ``repo_type`` and
-            stores the rest verbatim. So an unusable one is a caller mistake
-            reported the same way with or without the extra installed, rather
-            than a NumPy error part-way through iteration, a shard count of zero
-            that streams no frames, or a tolerance that switches the grid check
-            off.
-
-            The flags are checked rather than parsed for the reason
-            :func:`~strands_robots.utils.boolean_flag_error` gives: each selects
-            a posture, and read by truthiness every one of them lands on the
-            branch the caller was opting *out* of. ``drop_videos="false"``
-            stripped the camera keys it spells the keeping of;
-            ``validate_deltas=0`` switched off the grid check below;
-            ``shuffle="false"`` reached the advancing generator; ``streaming=0``
-            failed inside lerobot on ``num_shards``; and ``return_uint8=None``
-            streamed float32 with the warning about that cost suppressed by the
-            same truthiness. :data:`_BOOLEAN_FLAGS` records each one.
+        Args:
+            repo_id: Hub dataset id (``org/name``). A local directory a recorder
+                registered under that id is used as ``root`` when ``root`` is
+                not given.
+            root: Local dataset directory; overrides the Hub.
+            episodes: Episode indices to stream; all when ``None``.
+            delta_timestamps: Per-key time offsets (seconds) to stack per frame.
+                Checked against the dataset's fps grid when ``validate_deltas``.
+            image_transforms: Callable applied to every image tensor.
+            tolerance_s: Half-width of the grid-match window (``>= 0``).
+            revision: Hub revision (branch, tag or commit).
+            streaming: ``False`` materializes the dataset instead.
+            buffer_size: Reservoir the reader yields from, in frames
+                (``> 0``); ``1`` is half of capture order - see Ordering.
+            max_num_shards: Parquet shards interleaved (``> 0``); ``1`` is the
+                other half of capture order - see Ordering.
+            seed: Shuffle seed (``>= 0``).
+            shuffle: Whether the reorder is reproducible ACROSS exhaustions -
+                NOT whether it happens - see Ordering.
+            return_uint8: Stream images as uint8 (a quarter of float32's
+                bandwidth); policies normalize either.
+            validate_deltas: Refuse ``delta_timestamps`` off the fps grid.
+            drop_videos: Proprio-only streaming with no video decode (no
+                torchcodec needed). Requires ``delta_timestamps`` naming at
+                least one non-video key; camera keys in it are dropped.
+            repo_type: ``"dataset"`` (the versioned Hub namespace) or
+                ``"bucket"`` (Hub storage buckets).
 
         Ordering:
-            ``shuffle`` does not decide read order, and passing
-            ``shuffle=False`` alone reads shuffled frames. It selects only
-            which generator drives the reordering -
-            ``np.random.default_rng(seed)``, reseeded identically on every
-            exhaustion, versus the dataset's own advancing one - so it decides
-            reproducibility ACROSS epochs, matching lerobot's own "whether to
-            shuffle the dataset across exhaustions". ``StreamingLeRobotDataset``
-            reorders either way, at two levels: it samples a shard at random per
-            frame, and it yields from a reservoir buffer of ``buffer_size``.
-            Capture order therefore needs ``buffer_size=1`` (a reservoir of one
-            has nothing to reorder) together with ``max_num_shards=1`` (a single
-            shard has nothing to interleave). Nothing reports a shuffled read,
-            so an eval or replay loop that asked for order with ``shuffle``
+            ``shuffle=False`` alone still reads shuffled frames.
+            ``StreamingLeRobotDataset`` reorders at two levels either way - it
+            samples a shard at random per frame, then yields from a reservoir of
+            ``buffer_size`` - and ``shuffle`` selects only which generator drives
+            that reorder (one reseeded from ``seed`` on every exhaustion, versus
+            the dataset's own advancing one), i.e. reproducibility ACROSS
+            epochs. Capture order therefore needs ``buffer_size=1`` (a reservoir
+            of one has nothing to reorder) together with ``max_num_shards=1`` (a
+            single shard has nothing to interleave). Nothing reports a shuffled
+            read, so an eval or replay loop that asked for order with ``shuffle``
             alone silently consumes frames out of order.
 
         Raises:
-            ValueError: A numeric knob (``tolerance_s``, ``buffer_size``,
-                ``max_num_shards`` or ``seed``) is outside its domain, or a flag
-                in :data:`_BOOLEAN_FLAGS` was not supplied as a boolean. The
-                message names the parameter, the value and why it cannot be
-                honored.
-            RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
-                ``StreamingLeRobotDataset`` does not accept a ``repo_type``
-                parameter. lerobot >= :data:`BUCKET_STREAMING_MIN_LEROBOT`
-                accepts it; earlier releases do not. The ``[lerobot]`` extra
-                floors lerobot at that version, so this guard only fires for an
-                environment carrying a pre-existing older lerobot - and it
-                names the upgrade as the remedy. Silently dropping the kwarg
-                would stream from the versioned *dataset* namespace instead of
-                the requested bucket - a different storage system, not a
-                cosmetic difference - so this is never tolerant-dropped.
-            ValueError: ``drop_videos=True`` but no non-video keys remain in
-                ``delta_timestamps`` (or none were passed). Without a proprio
-                ``delta_timestamps``, StreamingLeRobotDataset streams every
-                feature - including camera keys via torchcodec decode - so the
-                call would silently do the opposite of what was asked.
-            ImportError: ``StreamingLeRobotDataset`` is not importable.
+            ValueError: A flag that is not a boolean, a numeric knob outside
+                its domain, or ``drop_videos=True`` without a usable
+                ``delta_timestamps``.
+            ImportError: lerobot's streaming dataset is not importable.
         """
-        # The flags are decided first because two of them steer the code below:
-        # ``drop_videos`` rewrites ``delta_timestamps`` and ``validate_deltas``
-        # decides whether the grid check runs, so a value that cannot be
-        # honoured is refused before anything reads it.
         supplied_flags = {
             "streaming": streaming,
             "shuffle": shuffle,
@@ -329,12 +191,6 @@ class StreamingDatasetReader:
         for flag in _BOOLEAN_FLAGS:
             if error := boolean_flag_error(supplied_flags[flag], flag, "open"):
                 raise ValueError(error)
-
-        # Before the lerobot import: a value outside these domains is a caller
-        # mistake rather than a capability question, so it must be reported the
-        # same way whether or not the extra is installed - and refusing it here
-        # means an unusable value never reaches the constructor, which fetches
-        # dataset metadata and re-shards before any of it would be consumed.
         supplied = {
             "tolerance_s": tolerance_s,
             "buffer_size": buffer_size,
@@ -345,57 +201,15 @@ class StreamingDatasetReader:
             if error := domain(supplied[param]):
                 raise ValueError(error)
 
-        # A repo_id that is itself a path names a local directory here and does
-        # not to LeRobot, which derives any absent root as
-        # $HF_LEROBOT_HOME/{repo_id} whatever the id looks like. Recording
-        # resolves that rule and writes to the directory the id names, so this
-        # read has to resolve it too or it streams from somewhere the recording
-        # has never been - and StreamingLeRobotDataset only reads a local
-        # dataset at all when it is given a root (streaming_from_local), so the
-        # miss falls through to a Hub lookup for a name that only ever meant a
-        # directory. An owner/name id is left to LeRobot: an absent root is how
-        # it selects the revision-safe Hub metadata cache, which is already
-        # where a local recording under that id wrote to.
         if root is None and (local := local_dataset_dir(repo_id)) is not None:
             root = str(local)
 
-        StreamingCls = _get_streaming_cls()
-        init_sig = inspect.signature(StreamingCls).parameters
-        # If the constructor accepts **kwargs, every candidate is forwardable.
-        accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
-
-        # repo_type selects WHICH storage system is read (versioned dataset
-        # namespace vs bucket). lerobot >= BUCKET_STREAMING_MIN_LEROBOT accepts
-        # it and the [lerobot] extra floors there, so this only fires for a
-        # pre-existing older lerobot; unlike the cosmetic kwargs below, silently
-        # dropping a non-default value would open the wrong storage system
-        # without error - fail fast, naming the upgrade, instead.
-        if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
-            raise RuntimeError(
-                f"repo_type={repo_type!r} requires lerobot >= "
-                f"{BUCKET_STREAMING_MIN_LEROBOT} (installed: {lerobot_version()}): "
-                "this StreamingLeRobotDataset does not accept a repo_type "
-                "parameter, and silently falling back to the 'dataset' namespace "
-                "would stream from a different storage system. Upgrade with "
-                '`pip install -U "strands-robots[lerobot]"` (its floor is at '
-                "least that), or pass "
-                "repo_type='dataset' (the default) to stream from the versioned "
-                "dataset namespace."
-            )
-
-        # Proprio-only: strip video keys from delta_timestamps so video decode
-        # (torchcodec) is never invoked - lets constrained edge devices stream
-        # state/action without a torchcodec wheel.
         if drop_videos:
             if delta_timestamps:
                 delta_timestamps = {
-                    k: v for k, v in delta_timestamps.items() if not k.startswith("observation.images.")
+                    k: v for k, v in delta_timestamps.items() if not k.startswith(_VIDEO_KEY_PREFIX)
                 } or None
             if delta_timestamps is None:
-                # Without delta_timestamps, StreamingLeRobotDataset streams
-                # EVERY feature - camera keys included, invoking torchcodec -
-                # so drop_videos=True would be a silent no-op doing the
-                # opposite of what was asked. Refuse rather than no-op.
                 raise ValueError(
                     "drop_videos=True requires delta_timestamps with at least "
                     "one non-video key: without it, every feature (including "
@@ -404,46 +218,26 @@ class StreamingDatasetReader:
                     "delta_timestamps={'observation.state': [0.0], 'action': [0.0]}."
                 )
 
-        # return_uint8 absence does not change semantics (policies normalize
-        # either way) but a lerobot that lacks it streams frames as float32 -
-        # ~4x the bandwidth of uint8. That is a real cost, not a no-op, so warn
-        # rather than drop it silently (unlike the truly cosmetic kwargs below).
-        if return_uint8 and not (accepts_var_kw or "return_uint8" in init_sig):
-            logger.warning(
-                "return_uint8=True dropped: installed StreamingLeRobotDataset "
-                "(lerobot %s) does not accept return_uint8, so frames stream as "
-                "float32 (~4x the bandwidth of uint8). Policies still normalize "
-                "correctly; upgrade lerobot for uint8 streaming.",
-                lerobot_version(),
-            )
-
-        kwargs: dict[str, Any] = {"repo_id": repo_id}
-        candidate = dict(
+        StreamingCls = _get_streaming_cls()
+        optional = dict(
             root=root,
             episodes=episodes,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
-            tolerance_s=tolerance_s,
             revision=revision,
-            streaming=streaming,
-            buffer_size=buffer_size,
-            max_num_shards=max_num_shards,
-            seed=seed,
-            shuffle=shuffle,
-            return_uint8=return_uint8,
-            repo_type=repo_type,
         )
-        for k, v in candidate.items():
-            # Tolerant forwarding covers only kwargs whose absence does not
-            # change semantics (a lerobot without the parameter behaves the
-            # same for its default). repo_type is guarded above: a non-default
-            # value on a lerobot that lacks the parameter raises instead of
-            # being dropped here; the "dataset" default is safe to skip.
-            if not (accepts_var_kw or k in init_sig):
-                continue
-            if k in ("streaming", "shuffle", "return_uint8") or v is not None:
-                kwargs[k] = v
-
+        kwargs: dict[str, Any] = {
+            "repo_id": repo_id,
+            **{k: v for k, v in optional.items() if v is not None},
+            "tolerance_s": tolerance_s,
+            "streaming": streaming,
+            "buffer_size": buffer_size,
+            "max_num_shards": max_num_shards,
+            "seed": seed,
+            "shuffle": shuffle,
+            "return_uint8": return_uint8,
+            "repo_type": repo_type,
+        }
         logger.info(
             "Opening StreamingLeRobotDataset: %s (streaming=%s, buffer=%d, shards=%d)",
             repo_id,
@@ -452,32 +246,24 @@ class StreamingDatasetReader:
             max_num_shards,
         )
         ds = StreamingCls(**kwargs)
-
-        # Tolerance grid-check - the streaming path skips check_delta_timestamps;
-        # replicate it for parity with the materialized dataset.
+        if drop_videos:
+            _hide_video_features(ds)
         if delta_timestamps and validate_deltas:
-            try:
-                from lerobot.datasets.feature_utils import check_delta_timestamps
+            from lerobot.datasets.feature_utils import check_delta_timestamps
 
-                check_delta_timestamps(delta_timestamps, ds.fps, tolerance_s, raise_value_error=True)
-            except ImportError:
-                logger.debug("check_delta_timestamps unavailable; skipping grid check")
-
+            check_delta_timestamps(delta_timestamps, ds.fps, tolerance_s, raise_value_error=True)
         return cls(ds)
 
     def dataloader(self, batch_size: int = 64, num_workers: int = 0, **kw: Any) -> Any:
-        """torch DataLoader over the streamed (Iterable) dataset.
+        """Wrap the stream in a ``torch.utils.data.DataLoader``.
 
-        WARNING (verified upstream): StreamingLeRobotDataset is an
-        IterableDataset that shuffles INTERNALLY (reservoir buffer). Do NOT pass
-        shuffle=True here. With num_workers>0, video decode parallelizes across
-        worker processes - the documented mitigation for the single-thread
-        decode bottleneck. Never decode video in the main process while
-        num_workers>0 (a known lerobot segfault).
-
-        Note: lerobot's ``make_dataset`` (``lerobot.datasets.factory``) couples
-        max_num_shards = num_workers. If you need that coupling, pass the same N
-        to open(max_num_shards=N) and here num_workers=N.
+        ``shuffle`` is ignored: the stream shuffles internally (see
+        :meth:`open`'s Ordering note). With ``num_workers > 0`` video decode
+        parallelizes across the worker processes and must not ALSO run in the
+        main process - lerobot documents a segfault when a second
+        ``num_workers=0`` loader touches the same video reader. lerobot's own
+        ``make_dataset`` couples ``max_num_shards = num_workers``; to match it,
+        pass the same N to :meth:`open`'s ``max_num_shards`` and here.
         """
         import torch
 
@@ -487,58 +273,56 @@ class StreamingDatasetReader:
 
     @property
     def num_frames(self) -> Any:
-        """Total number of frames across all episodes in the streamed dataset."""
+        """Total frames in the dataset."""
         return self.dataset.num_frames
 
     @property
     def num_episodes(self) -> Any:
-        """Total number of episodes in the streamed dataset."""
+        """Total episodes in the dataset."""
         return self.dataset.num_episodes
 
     @property
     def fps(self) -> Any:
-        """Capture frame rate (frames per second) of the streamed dataset."""
+        """Frames per second the dataset was recorded at."""
         return self.dataset.fps
 
     @property
     def meta(self) -> Any:
-        """Dataset metadata (incl. .stats for normalization). Always local."""
+        """The dataset's ``LeRobotDatasetMetadata``."""
         return self.dataset.meta
 
     def __iter__(self) -> Any:
         return iter(self.dataset)
 
 
+def _hide_video_features(ds: Any) -> None:
+    """Make ``drop_videos=True`` actually skip video decode.
+
+    lerobot's ``make_frame`` decodes every key in ``meta.video_keys`` whether or
+    not ``delta_timestamps`` names it, so a proprio-only reader without a
+    working torchcodec opened fine and raised on its first frame. ``video_keys``
+    is derived from the metadata's feature table, so hide the video features on
+    this instance's metadata (memory only; nothing on disk changes).
+    """
+    meta = getattr(ds, "meta", None)
+    info = getattr(meta, "info", None)
+    if info is None:
+        return
+    is_mapping = isinstance(info, dict)
+    features = info.get("features") if is_mapping else getattr(info, "features", None)
+    if not isinstance(features, dict):
+        return
+    kept = {k: v for k, v in features.items() if not (isinstance(v, dict) and v.get("dtype") == "video")}
+    if is_mapping:
+        info["features"] = kept
+    else:
+        info.features = kept
+
+
 def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
     """Open a streaming reader for a LeRobotDataset without a simulator.
 
-    Thin module-level alias for :meth:`StreamingDatasetReader.open`, exported
-    at the package root (``strands_robots.stream_dataset``). Use this from
-    training/eval scripts that only need to READ a dataset - it never touches
-    MuJoCo, a GL context, or a thread pool, unlike constructing a ``Robot()``
-    simulation. ``Simulation.stream_dataset`` is sugar delegating here so the
-    "the same Robot() that records reads it back" flow still works.
-
-    Args:
-        repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or a
-            ``repo_id`` that is itself a path, which streams the directory it
-            recorded to with no ``root`` restated.
-        **kwargs: Forwarded to :meth:`StreamingDatasetReader.open` - e.g.
-            ``root``, ``delta_timestamps``, ``episodes``, ``shuffle``,
-            ``buffer_size``, ``max_num_shards``, ``drop_videos``
-            (proprio-only, torchcodec-free), ``repo_type``.
-
-    Returns:
-        A :class:`StreamingDatasetReader`.
-
-    Example:
-        import strands_robots
-
-        reader = strands_robots.stream_dataset(
-            "lerobot/svla_so100_pickplace",
-            buffer_size=1, max_num_shards=1,  # capture order, not shuffle=False
-        )
-        for frame in reader:
-            ...
+    Module-level alias for :meth:`StreamingDatasetReader.open`; every keyword
+    is forwarded unchanged.
     """
     return StreamingDatasetReader.open(repo_id, **kwargs)

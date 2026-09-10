@@ -1375,7 +1375,7 @@ def declared_count(value: object) -> int | None:
     answers a reader can act on are the count itself and the absence of one.
     Every reader of a LeRobot header count asks that question of the same file -
     the parquet cross-check in
-    :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`, the
+    :func:`~strands_robots.verify_dataset.read_dataset_episode_indices`, the
     metadata-drift check in
     :func:`~strands_robots.verify_dataset.verify_dataset`, the validation-split
     denominator in ``strands_robots.training.lerobot``, the episode count the
@@ -2684,8 +2684,9 @@ def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[fl
 #: because it is read from two sides that must agree: the render entry points
 #: that route it, and the ``add_camera`` guard that refuses it as a *name*. Those
 #: two lived as eleven separate copies of the same tuple literal across
-#: ``mujoco/rendering.py``, ``mujoco/simulation.py``, ``newton/simulation.py`` and
-#: ``base.py`` - one of them written in a different order - and the MuJoCo
+#: ``simulation.mujoco.rendering``, ``simulation.mujoco.simulation``,
+#: ``simulation.newton.simulation`` and ``simulation.base`` - one of them
+#: written in a different order - and the MuJoCo
 #: ``add_camera`` had the set in a comment but not in code, which is exactly the
 #: drift that made a reserved name accepted there while Newton refused it.
 FREE_CAMERA_TOKENS: Final[tuple[str | None, ...]] = (None, "", "default", "free")

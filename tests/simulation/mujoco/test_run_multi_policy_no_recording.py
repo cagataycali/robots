@@ -22,8 +22,6 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-
 from strands_robots.policies.base import Policy  # noqa: E402
 from strands_robots.policies.mock import MockPolicy  # noqa: E402
 from strands_robots.simulation import Simulation  # noqa: E402

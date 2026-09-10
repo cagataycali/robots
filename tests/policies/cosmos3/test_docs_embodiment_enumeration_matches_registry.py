@@ -67,7 +67,7 @@ from strands_robots.policies.cosmos3.policy import Cosmos3Policy
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PAGE = _REPO_ROOT / "docs" / "policies" / "cosmos3.md"
-_README = _REPO_ROOT / "README.md"
+_PROVIDERS = _REPO_ROOT / "docs" / "policies" / "overview.md"  # provider matrix (was the README table)
 _STATS_DIR = _REPO_ROOT / "strands_robots" / "policies" / "cosmos3" / "stats"
 
 # The bundled-stats column states a property of the shipped package, not of the
@@ -115,8 +115,8 @@ def _page_text() -> str:
 
 
 def _readme_text() -> str:
-    """Return the repository README."""
-    return _README.read_text(encoding="utf-8")
+    """Return the provider matrix page (the enumeration the README used to carry)."""
+    return _PROVIDERS.read_text(encoding="utf-8")
 
 
 def _bundled_domains() -> set[str]:
@@ -237,10 +237,10 @@ def _domain_table_facts(md: str, registered: dict[str, Cosmos3Embodiment]) -> li
 
 def _readme_gap(readme: str, registered: dict[str, Cosmos3Embodiment]) -> set[str]:
     """Return registered embodiments the README's cosmos3 provider row omits."""
-    rows = _table(readme, ["provider", "backend", "notes"])
-    assert rows is not None, f"{_README} has no '| Provider | Backend | Notes |' table"
-    row = [r for r in rows if r and r[0].strip("`") == "cosmos3"]
-    assert row, f"{_README} provider table has no 'cosmos3' row"
+    rows = _table(readme, ["provider", "class", "install extra", "when to use"])
+    assert rows is not None, f"{_PROVIDERS} has no '| Provider | Class | Install extra | When to use |' table"
+    row = [r for r in rows if r and re.sub(r"[\[\]`]|\(.*\)", "", r[0]).strip() == "cosmos3"]  # cell may be a link
+    assert row, f"{_PROVIDERS} provider table has no 'cosmos3' row"
     return set(registered) - _names(row[0][-1])
 
 
@@ -260,7 +260,7 @@ def _quickstart_paragraph(readme: str) -> str:
         if (collapsed := " ".join(block.split())).startswith(_QUICKSTART_PREFIX)
     ]
     assert len(found) == 1, (
-        f"{_README} has {len(found)} paragraphs beginning {_QUICKSTART_PREFIX!r}, expected exactly 1 - "
+        f"{_PAGE} has {len(found)} paragraphs beginning {_QUICKSTART_PREFIX!r}, expected exactly 1 - "
         "the cosmos3 quickstart's embodiment paragraph moved, was reworded or was duplicated."
     )
     return found[0]
@@ -431,14 +431,14 @@ class TestEveryRegisteredEmbodimentIsDocumented:
     def test_readme_provider_row_names_every_embodiment(self) -> None:
         missing = _readme_gap(_readme_text(), EMBODIMENTS)
         assert not missing, (
-            f"the README cosmos3 provider row omits {sorted(missing)}. The row enumerates "
+            f"the provider matrix's cosmos3 row omits {sorted(missing)}. The row enumerates "
             "the accepted embodiments, so it drifts the same way the page does."
         )
 
     def test_readme_quickstart_paragraph_names_every_embodiment(self) -> None:
-        missing = _quickstart_gap(_readme_text(), EMBODIMENTS)
+        missing = _quickstart_gap(_page_text(), EMBODIMENTS)
         assert not missing, (
-            f"the README cosmos3 quickstart's 'Embodiments: ...' paragraph omits {sorted(missing)}. It sits "
+            f"the cosmos3 page's 'Embodiments: ...' paragraph omits {sorted(missing)}. It sits "
             "directly under the runnable rollout command, so it is the enumeration a reader who never opens "
             "the provider page relies on."
         )
@@ -469,9 +469,9 @@ class TestTheDocumentedFactsMatchTheEntries:
         )
 
     def test_quickstart_parenthetical_facts_match_the_registry(self) -> None:
-        problems = _quickstart_facts(_readme_text(), EMBODIMENTS)
+        problems = _quickstart_facts(_page_text(), EMBODIMENTS)
         assert not problems, (
-            "the README cosmos3 quickstart states per-embodiment facts the registry contradicts:\n  "
+            "the cosmos3 page's 'Embodiments:' paragraph states per-embodiment facts the registry contradicts:\n  "
             + "\n  ".join(problems)
         )
 
@@ -489,10 +489,10 @@ class TestThePremisesHold:
         md, readme = _page_text(), _readme_text()
         assert _table(md, ["embodiment", "robot hardware", "strands sim asset"])
         assert _table(md, ["embodiment", "domain", "raw dim", "bundled stats"])
-        assert _table(readme, ["provider", "backend", "notes"])
+        assert _table(readme, ["provider", "class", "install extra", "when to use"])
         assert re.search(r'embodiment="[^"]*",\s*#', md)
         assert re.search(r"^description:", md, re.M)
-        assert _quickstart_paragraph(readme)
+        assert _quickstart_paragraph(md)
         assert re.search(r"Available embodiments:", " ".join((cosmos3_package.__doc__ or "").split()))
         assert re.search(r"embodiment:[^(]*\(", " ".join((Cosmos3Policy.__doc__ or "").split()))
 
@@ -544,7 +544,7 @@ class TestTheGradersAreNotVacuous:
         assert "zzz_planted_embodiment" in _readme_gap(_readme_text(), self._planted())
 
     def test_quickstart_grader_reports_it(self) -> None:
-        assert "zzz_planted_embodiment" in _quickstart_gap(_readme_text(), self._planted())
+        assert "zzz_planted_embodiment" in _quickstart_gap(_page_text(), self._planted())
 
     def test_package_docstring_grader_reports_it(self) -> None:
         assert "zzz_planted_embodiment" in _package_docstring_gap(cosmos3_package.__doc__ or "", self._planted())
@@ -567,8 +567,8 @@ class TestTheGradersAreNotVacuous:
 
     def test_quickstart_fact_grader_reports_a_wrong_stated_fact(self) -> None:
         """A stated chunk size the entry contradicts must be reported."""
-        readme = _readme_text().replace("chunk 32", "chunk 31")
-        assert readme != _readme_text(), "the quickstart's 'chunk 32' fact is no longer in the README"
+        readme = _page_text().replace("chunk 32", "chunk 31")
+        assert readme != _page_text(), "the 'Embodiments:' paragraph's 'chunk 32' fact is no longer on the page"
         problems = _quickstart_facts(readme, EMBODIMENTS)
         assert any("chunk" in p and p.startswith("droid:") for p in problems), problems
 
@@ -584,8 +584,8 @@ class TestTheGradersAreNotVacuous:
 def test_a_missing_surface_is_reported_rather_than_skipped() -> None:
     """A moved page or renamed table must raise, never grade an empty set."""
     assert _PAGE.is_file(), _PAGE
-    assert _README.is_file(), _README
-    assert _table("| a | b |\n|---|---|\n| 1 | 2 |\n", ["provider", "backend", "notes"]) is None
+    assert _PROVIDERS.is_file(), _PROVIDERS
+    assert _table("| a | b |\n|---|---|\n| 1 | 2 |\n", ["provider", "class", "install extra", "when to use"]) is None
     with pytest.raises(AssertionError):
         _readme_gap("no table here", EMBODIMENTS)
     with pytest.raises(AssertionError):

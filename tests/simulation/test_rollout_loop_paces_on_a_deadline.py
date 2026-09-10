@@ -47,8 +47,6 @@ from typing import Any
 
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
-
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.observers import RunPolicyStep
 from strands_robots.simulation.policy_runner import PolicyRunner

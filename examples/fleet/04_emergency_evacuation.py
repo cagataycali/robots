@@ -51,9 +51,10 @@ the same mesh and shows the safety events live.
 from __future__ import annotations
 
 import os
+import sys
 
 os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 import argparse
 import secrets
@@ -721,7 +722,12 @@ def _operator_approves(prompt: str) -> bool:
     if os.getenv("STRANDS_MESH_HITL_ACTIONS", "").strip().lower() == "none":
         print(f"  [HITL] {prompt} -> auto-approved (STRANDS_MESH_HITL_ACTIONS=none)")
         return True
-    reply = input(f"  [HITL] {prompt} [y/N]: ").strip().lower()
+    try:
+        reply = input(f"  [HITL] {prompt} [y/N]: ").strip().lower()
+    except EOFError:
+        # stdin closed (CI, a pipe, a detached run): nobody can approve.
+        print(f"  [HITL] {prompt} -> declined, no operator on stdin")
+        return False
     return reply in ("y", "yes", "approve")
 
 

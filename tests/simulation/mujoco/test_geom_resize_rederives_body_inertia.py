@@ -44,11 +44,14 @@ two below run the scene first.
 
 from __future__ import annotations
 
-import mujoco
-import numpy as np
 import pytest
 
-from strands_robots.simulation.mujoco import Simulation
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+import numpy as np  # noqa: E402
+
+from strands_robots.simulation.mujoco import Simulation  # noqa: E402
 
 # The helpers below take a sim un-annotated: ``Simulation`` is re-exported lazily,
 # so it is a module attribute rather than a name a type checker can resolve.

@@ -204,8 +204,8 @@ def test_merged_recording_round_trip_records_one_frame_per_timestep(sim_two_fran
     import numpy as np
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    from strands_robots.dataset_recorder import read_dataset_episode_indices
     from strands_robots.policies.mock import MockPolicy
+    from strands_robots.verify_dataset import read_dataset_episode_indices
 
     sim = sim_two_frankas
     root = str(tmp_path / "dataset")

@@ -21,11 +21,7 @@ kwarg they had just passed. It is refused naming that parameter instead, the way
 path ("File not found"), which is the boundary.
 """
 
-import os
-
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 
 @pytest.fixture

@@ -923,6 +923,26 @@ an aggregate is never reported over episodes whose frames reached no dataset.
 | `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo. `private` selects the published repo's visibility, so it must be a boolean — a truthy spelling of off such as `"false"` would otherwise select the opposite posture |
 | `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) — Xet-deduped collection target; needs the `hf` CLI. `bucket` (`name` or `org/name`) and `run_id` (single segment) are allowlist-validated (`[A-Za-z0-9._-]`, no traversal) before the sync, and `create` / `private` / `delete` must each be a boolean — `delete` mirror-deletes remote files absent locally, so a truthy `"false"` must not select it |
 
+`sync_to_bucket` needs the `hf` CLI with the `buckets`/`sync` subcommands
+(`pip install -U "huggingface_hub>=1.5"` + `hf auth login` - those subcommands
+first ship in 1.5.0; every earlier release, including 1.0-1.4.x, installs an
+`hf` entry point without them).
+
+`sync_to_bucket` is the recorder's own method, so it needs the live session.
+Any dataset directory already on disk - recorded earlier in the process, or on
+hardware via `lerobot-record` - syncs (or re-syncs daily) through the
+module-level helper instead:
+
+```python
+from strands_robots import sync_dataset_to_bucket
+
+sync_dataset_to_bucket("/tmp/demo", "your-org/robot-fave")
+# -> {"status": "success", "bucket_uri": "hf://buckets/your-org/robot-fave/demo"}
+```
+
+`run_id` defaults to the directory name; pass `run_id="nightly"` to choose the
+bucket subpath, and `delete=True` for mirror semantics.
+
 ## Read back
 
 Fully materialized (downloads everything):
@@ -1036,7 +1056,7 @@ frame and yields from a reservoir buffer. Capture order is therefore
 `buffer_size=1` (a reservoir of one cannot reorder) plus `max_num_shards=1`
 (a single shard has nothing to interleave), as above.
 
-Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
+Useful kwargs (all forwarded to `StreamingLeRobotDataset`):
 `episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
 `return_uint8=True` (default; halves frame bandwidth), and
 `drop_videos=True` (proprio-only — skips video decode entirely, so it works on
@@ -1073,28 +1093,31 @@ pointing at a remedy that lands on the silent proprio-only stream. Falsy
 non-booleans took the other branch just as silently: `validate_deltas=0` skipped
 the delta-grid check, so an off-grid `delta_timestamps` that `validate_deltas=True`
 refuses opened and streamed; `return_uint8=None` streamed float32 at ~4x the
-bandwidth with the warning about that cost suppressed by the same truthiness; and
+bandwidth of the uint8 it spells; and
 `streaming=0` failed inside LeRobot on `num_shards`. `reader.dataloader(shuffle=...)`
 needs no such check - it discards the key whatever it held.
 
-One kwarg is **not** tolerant-forwarded because its absence changes semantics:
-`repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
-floors — so a resolver-conformant install always has it. On an environment
-carrying an older lerobot, `open()` raises `RuntimeError` naming the upgrade
-instead of silently streaming from the versioned dataset namespace (a different
-storage system).
+Every kwarg is forwarded unconditionally: each lerobot-bearing extra floors
+lerobot at `0.6.1`, whose `StreamingLeRobotDataset` accepts all of them —
+`repo_type` included. `open()` therefore never drops a keyword to suit an older
+constructor, which for `repo_type` would have streamed the versioned dataset
+namespace instead of the requested bucket, a different storage system. An
+environment carrying a below-floor lerobot gets lerobot's own `TypeError`
+naming the keyword.
 
 For **training**, the upstream trainer uses the same engine:
 
 ```bash
-python -m lerobot.scripts.lerobot_train --policy.type=act \
+lerobot-train --policy.type=act \
   --dataset.repo_id=user/my_dataset --dataset.streaming=true --num_workers=4
 ```
 
+(`lerobot-train` is the entry point over `python -m lerobot.scripts.lerobot_train`;
+flags are draccus `--dotted.key=value` form.)
+
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
 > strands_robots` auto-fixes this (zero-touch); disable with
-> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`. See the README "Recording & streaming
-> datasets" section.
+> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`.
 
 ## See also
 

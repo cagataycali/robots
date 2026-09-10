@@ -10,11 +10,7 @@ sole robot's name and raises ValueError listing candidates when the choice is
 ambiguous (more than one robot) or impossible (no robots).
 """
 
-import os
-
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 
 @pytest.fixture

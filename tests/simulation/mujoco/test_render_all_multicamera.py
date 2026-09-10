@@ -23,13 +23,9 @@ genuine multi-camera render end to end.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 

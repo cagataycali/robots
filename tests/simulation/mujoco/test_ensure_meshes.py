@@ -17,12 +17,9 @@ one callers MUST propagate, so it is pinned here explicitly.
 from __future__ import annotations
 
 import inspect
-import os
 import struct
 
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 pytest.importorskip("mujoco")
 

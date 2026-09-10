@@ -24,7 +24,7 @@ import pytest
 
 from strands_robots.mesh import security
 
-README = pathlib.Path(__file__).resolve().parents[2] / "README.md"
+README = pathlib.Path(__file__).resolve().parents[2] / "docs" / "reference" / "configuration.md"  # env-var matrix
 
 #: Env var -> the module constant its documented default must agree with.
 DOCUMENTED_DEFAULTS = {

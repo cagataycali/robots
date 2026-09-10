@@ -35,14 +35,11 @@ from __future__ import annotations
 
 import ast
 import inspect
-import os
 from typing import Any
 
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from strands_robots.policies.base import Policy  # noqa: E402
 from strands_robots.simulation import create_simulation  # noqa: E402

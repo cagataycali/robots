@@ -33,12 +33,9 @@ there is one reader instead of two. These tests pin:
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 from strands_robots.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner

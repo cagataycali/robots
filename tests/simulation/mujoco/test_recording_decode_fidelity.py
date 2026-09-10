@@ -19,15 +19,11 @@ the default H.264 codec and the opt-in AV1 codec (the AV1 path is precisely the
 one OpenCV commonly cannot decode but torchcodec must).
 """
 
-import os
-
 import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 # A minimal arm (one actuated hinge, so ``run_policy`` has something to drive)
 # in front of a large red panel that fills a close, straight-on camera. A red

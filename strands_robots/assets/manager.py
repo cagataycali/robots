@@ -21,7 +21,7 @@ from strands_robots.utils import get_search_paths, safe_join
 
 logger = logging.getLogger(__name__)
 
-# Module-level conditional import - keeps manager.py importable in
+# Module-level conditional import - keeps this module importable in
 # environments where the optional ``robot_descriptions`` package (and its
 # transitive heavyweight deps like ``GitPython``) are not installed.
 # When ``download`` is not available, auto-download simply returns False.

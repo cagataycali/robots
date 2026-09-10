@@ -33,8 +33,6 @@ pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 cv2 = pytest.importorskip("cv2")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-
 _ROBOT_XML = """
 <mujoco model="test_arm">
   <compiler angle="radian" autolimits="true"/>

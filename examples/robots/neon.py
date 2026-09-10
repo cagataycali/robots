@@ -35,7 +35,7 @@ import time
 
 # The driver never touches MuJoCo but the mesh transport bootstrap does, so
 # stay consistent with the other mesh examples in this directory.
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")
 
 from strands_robots import Robot

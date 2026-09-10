@@ -24,20 +24,23 @@ import math
 import os
 import tempfile
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.benchmark import (
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.benchmark import (  # noqa: E402
     get_benchmark,
     list_benchmarks,
     unregister_benchmark,
 )
-from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
-from strands_robots.simulation.builtin_benchmarks import (
+from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark  # noqa: E402
+from strands_robots.simulation.builtin_benchmarks import (  # noqa: E402
     builtin_benchmark_specs,
     register_builtin_benchmarks,
 )
-from strands_robots.simulation.mujoco.simulation import Simulation
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 # Floating base with a NAMED free joint plus one actuated hinge (mirrors the
 # base_tipped / base_below_z regression fixtures). get_observation surfaces

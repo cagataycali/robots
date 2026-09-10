@@ -2748,7 +2748,8 @@ class MuJoCoSimEngine(
         # own robot's worker outlived the stop budget, so reaching here means
         # every worker is done. The XML round-trip below still
         # reallocates model/data, so serialize it under self._lock to exclude
-        # the render/recorder daemon (rendering.py reads mjData under the same
+        # the render/recorder daemon (``simulation.mujoco.rendering`` reads mjData
+        # under the same
         # lock). remove_robot is dispatched WITHOUT the blanket lock (see
         # _SELF_LOCKING_ACTIONS), so this acquisition is the real critical
         # section, not a reentrant no-op.
@@ -2993,7 +2994,7 @@ class MuJoCoSimEngine(
         # Analytic motion primitives (GH #1645): the agent-facing staging/
         # transport/release vocabulary around a learned policy (Harness VLA).
         base["methods"]["move_to"] = (
-            "(robot_name=None, position, orientation=None, tol=0.01, "
+            "(robot_name=None, position, orientation=None, tol=0.015, "
             "max_steps=200, orientation_tol=None) -> dict  # move the "
             "end-effector to a world-frame [x, y, z] target via IK "
             "(position-only when orientation is omitted - right for <6-DOF "

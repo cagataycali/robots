@@ -19,14 +19,10 @@ asserting the shape of the returned observation.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco as mj  # noqa: E402
 

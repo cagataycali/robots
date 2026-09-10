@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +40,6 @@ from strands_robots.utils import camera_schema_key
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
-
-os.environ.setdefault("MUJOCO_GL", "egl")
 
 
 def _source_file(obj: Any) -> Path:

@@ -25,8 +25,6 @@ import pytest
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-
 _ROBOT_XML = """
 <mujoco model="test_arm">
   <compiler angle="radian" autolimits="true"/>
