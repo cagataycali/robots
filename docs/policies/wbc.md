@@ -8,18 +8,15 @@ description: NVIDIA GR00T Whole-Body-Control (SONIC) humanoid locomotion - in-pr
 wraps NVIDIA's
 [GR00T Whole-Body-Control](https://github.com/NVlabs/GR00T-WholeBodyControl)
 (SONIC / decoupled-WBC) ONNX controllers for deploy-grade humanoid locomotion
-on the Unitree G1. Like [cuRobo](curobo.md) it runs **in the same process**
-(via ONNX Runtime - no sidecar, no network round-trip), but unlike cuRobo it
-needs no GPU: the ONNX sessions run on CPU.
+on the Unitree G1. It runs **in the same process** through ONNX Runtime on CPU:
+no sidecar, no network round-trip, no GPU.
 
-It is a non-VLA, locomotion controller: it reads its goal from the well-known
+It is a non-VLA locomotion controller: it reads its goal from the well-known
 locomotion `**kwargs` (`target_velocity`), ignores camera frames
-(`requires_images = False`), and never parses the instruction string for
-control. The controller drives the **15 leg+waist DOFs** of the G1; the arm
-joints are held at their nominal defaults. To drive the arms as well, layer an
-upper-body manipulation policy (e.g. GR00T) on top of WBC locomotion with
-[`CompositePolicy`](#composing-an-upper-body-manipulation-on-top-of-wbc): WBC
-keeps the robot balanced and walking while the upper policy owns the arm joints.
+(`requires_images = False`), and never parses the instruction string. It drives
+the **15 leg+waist DOFs** of the G1 and holds the arms at their nominal defaults;
+to drive the arms as well, layer a manipulation policy on top with
+[`CompositePolicy`](#composing-an-upper-body-manipulation-on-top-of-wbc).
 
 ## Install
 
@@ -28,11 +25,11 @@ pip install "strands-robots[wbc]"            # onnxruntime only - light, no torc
 pip install "strands-robots[wbc,sim-mujoco]" # + MuJoCo to drive the G1 in sim
 ```
 
-No model weights are bundled and there is no default download: a bare
-`create_policy("wbc")` raises an actionable error instead of fetching the wrong
-model family. The decoupled-WBC G1 policies live in the
+No weights are bundled and there is no default download: a bare
+`create_policy("wbc")` raises instead of fetching the wrong model family. The
+decoupled-WBC G1 policies live in the
 [`NVlabs/GR00T-WholeBodyControl`](https://github.com/NVlabs/GR00T-WholeBodyControl)
-git-LFS tree at `decoupled_wbc/sim2mujoco/resources/robots/g1/policy/`:
+git-LFS tree:
 
 ```bash
 git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git   # 4.6G LFS
@@ -42,9 +39,8 @@ GR00T-WholeBodyControl-{Balance,Walk}.onnx /path/to/grootwbc-g1/
 ```
 
 The canonical `GR00T-WholeBodyControl-Balance.onnx` / `-Walk.onnx` filenames are
-accepted verbatim - no rename is needed. The conventional `policy.onnx` /
-`walk_policy.onnx` names also work and take precedence when both are present, so
-either layout is valid:
+accepted verbatim; `policy.onnx` / `walk_policy.onnx` also work and take
+precedence when both are present:
 
 ```text
 /path/to/grootwbc-g1/
@@ -53,10 +49,9 @@ either layout is valid:
     config.json                           # optional
 ```
 
-Note: the HuggingFace repo
-[`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC) is the SONIC VLA
-inference stack (encoder/decoder/planner ONNX), **not** this decoupled-WBC
-Balance/Walk family; passing it as a checkpoint raises a clear error.
+The HuggingFace repo [`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC)
+is the SONIC VLA inference stack, **not** this Balance/Walk family; passing it as
+a checkpoint raises.
 
 ## Quickstart
 
@@ -78,6 +73,14 @@ actions = policy.get_actions_sync(
 # one per-tick dict of 15 leg+waist joint targets (closed-loop, not a chunk)
 ```
 
+`target_velocity` is held to a locomotion envelope of ±2.0 m/s per linear
+component and ±2.0 rad/s for `omega`, at the policy and again on the mesh
+before dispatch (one definition, `strands_robots.locomotion_envelope`). A
+component past it is refused with a reason, never clamped. A faster platform
+raises the bound with `STRANDS_MAX_TARGET_LINEAR_VELOCITY_MPS` /
+`STRANDS_MAX_TARGET_ANGULAR_VELOCITY_RPS` (positive floats, read on every
+call).
+
 ## Parameters
 
 ```python
@@ -95,11 +98,9 @@ construction - WBC never falls back to silent zero torques.
 
 ### Config value domain
 
-`WBCConfig` rejects an unusable *value* at construction, not just an impossible
-dimension - the same reason a bad dimension is refused there. Every numeric
+`WBCConfig` refuses an unusable *value* at construction, because every numeric
 field is read verbatim into the PD law that writes `data.ctrl` or into the
-observation the network sees, so an unusable one becomes a wrong torque rather
-than an error:
+observation, so an unusable one becomes a wrong torque rather than an error:
 
 | Field | Accepted | Why |
 |-------|----------|-----|
@@ -109,11 +110,8 @@ than an error:
 | `cmd_scale`, `obs_scales` (arity) | stated, or empty to mean the upstream default | An EMPTY `cmd_scale` means "not stated" and is completed with `(2.0, 2.0, 0.5)` at construction, so it cannot scale the velocity differently from omitting the argument. A wrong NON-empty length is still refused by name. |
 | `obs_scales` values, `height_cmd`, `freq_cmd` | finite | A non-finite scale poisons the observation frame the network is given. |
 
-A `nan`/`inf` anywhere reaches `data.ctrl` as a non-finite torque on all
-`num_actions` joints; a `None` or a numeric string raises from the `float()`
-inside `compute_targets`, which runs per tick inside `get_actions` - after the
-ONNX sessions have loaded and the rollout has started. Both now surface as a
-`ValueError` naming the field (and the component index) at construction.
+A `nan`/`inf` or a `None` anywhere surfaces as a `ValueError` naming the field
+and component at construction, not as a non-finite torque mid-rollout.
 
 ## Goal kwargs
 
@@ -127,81 +125,45 @@ coupling to a backend:
 | `target_orientation` | `list[float]` | numeric, >= 3 entries, every component finite | Target base `[roll, pitch, yaw]` (rad), written to command slots `[4:7]`. Defaults to the config `rpy_cmd` (`[0,0,0]`). |
 | `height` | `float` | finite | Target base height (m), written to command slot `[3]`. Defaults to the config `height_cmd` (`0.74`). |
 
-A per-call `target_velocity` overrides the constructor-time default. With no
-command at all the controller holds a standing balance (zero velocity, default
-height + level orientation). Omitting a key (or passing `None`) selects the next
-source in the precedence chain, so `None` is how a kwarg spells "not supplied".
-
-`target_velocity` is one of the issue #300 well-known goal keys, so the mesh
-path forwards it the same way it forwards a planner's goal:
+A per-call `target_velocity` overrides the constructor-time default; with no
+command the controller holds a standing balance, and `None` means "not
+supplied". `target_velocity` is one of the issue #300 well-known goal keys, so
+the mesh path forwards it the same way it forwards a planner's goal:
 `mesh.tell(peer, "walk forward", policy_provider="wbc", target_velocity=[0.5, 0.0, 0.0])`.
-It travels as a per-call kwarg, which is why it overrides the constructor
-default rather than being read as one. `target_orientation` and `height` are
-WBC's own kwargs rather than part of that shared vocabulary - set them on a
-local `run_policy(policy_kwargs=...)` call, or as constructor defaults.
-
-Each key's accepted domain is the one `WBCConfig` enforces for the field it
-overrides - `height` for `height_cmd`, `target_orientation` for `rpy_cmd` - so a
-value the config refuses is not reachable through the kwarg documented to take
-precedence over it. Both vector keys additionally require at least three
-components: the command block is zero-initialised, so accepting a shorter
-`target_orientation` would leave the axes it omits at `0.0` rather than at the
-configured `rpy_cmd` value the omitted kwarg falls back to - silently commanding
-zero for an axis the caller never mentioned. A LONGER sequence is accepted and
-truncated to the slots available, since every component the block has room for is
-honored and only the surplus is dropped. The command block is the observation's first `command_dim`
-entries, so a non-finite component is not one wrong slot: the network is dense,
-so it reaches all `num_actions` joint targets, every one is then refused by
-`send_action`, and the rollout aborts reporting *"100% unresolved keys ... the
-robot has not moved"* - a message about the embodiment, for a bad `height`.
+`target_orientation` and `height` are WBC's own kwargs. Each key keeps the
+domain `WBCConfig` enforces for the field it overrides; the vector keys need at
+least three components because the command block is zero-initialised, so a
+shorter one would silently command zero for an unmentioned axis (a longer one is
+truncated).
 
 ## Control contract
 
 WBC reproduces the upstream `GearWbcController` loop (NVlabs/GR00T-WholeBodyControl
 `decoupled_wbc/sim2mujoco`, `run_mujoco_gear_wbc.py` + `g1_gear_wbc.yaml`):
 
-- **Two ONNX sessions** - a main `policy.onnx` and an optional `walk_policy.onnx`,
-  loaded once at construction. Selection matches upstream: when the **raw**
-  velocity-command norm is `<= 0.05` the robot is "standing" and the main policy
-  runs; above that the walk policy runs (when `walk=True`).
+- **Two ONNX sessions** - `policy.onnx` and an optional `walk_policy.onnx`,
+  loaded once. When the **raw** velocity-command norm is `<= 0.05` the main
+  (standing) policy runs; above that the walk policy (when `walk=True`).
 - **Observation** - an 86-dim frame stacked over `obs_history_len` (default 6,
-  so the network input is `86 * 6 = 516`):
-  - command `[0:7]` = `[vx*2.0, vy*2.0, omega*0.5, height, roll, pitch, yaw]`
-  - base angular velocity `[7:10]` (scaled by `ang_vel_scale=0.5`)
-  - projected gravity `[10:13]`
-  - joint positions `[13:28]` (minus `default_angles`, scaled by `dof_pos_scale`)
-  - joint velocities `[28:43]` (scaled by `dof_vel_scale=0.05`)
-  - previous action `[43:58]`; indices `[58:86]` are a reserved (zero) tail.
-
-  The upstream YAML spells these three scales as flat `ang_vel_scale` /
-  `dof_pos_scale` / `dof_vel_scale` keys, and `WBCConfig` normalises them into
-  the nested `obs_scales` map. A config only has to state the scales it wants to
-  change: the rest keep the upstream defaults above, so naming one scale never
-  changes what an unnamed sibling is scaled by. `config.obs_scales` is therefore
-  always the complete map the frame is built with, whichever spelling the config
-  used.
-
-  `cmd_scale` - the velocity scale of the command block - is completed the same
-  way and for the same reason: an empty sequence means "not stated" and resolves
-  to the upstream `(2.0, 2.0, 0.5)`, so `config.cmd_scale` is always the vector
-  the block is built with. Both `_resolve_command` implementations resolve a
-  component the config does not supply from that same table rather than from a
-  bare `1.0` - a second fallback number would scale `omega` by `1.0` where the
-  table says `0.5`, commanding a yaw rate DOUBLE the one asked for (and `vx`/`vy`
-  halved) in the observation's first `command_dim` entries, which a dense network
-  carries to all `num_actions` joint targets. A `cmd_scale` a caller does state is
-  always honored, including a deliberate unit scale.
-- **Action** - the network emits a 15-dim joint-position *offset*; the policy
-  forms absolute targets `target_q = default_angles + action_scale * raw` and
-  returns them keyed by actuator name. For torque-actuated MuJoCo, convert with
-  the upstream PD law via `policy.compute_torques(target, q, dq)`.
+  network input `86 * 6 = 516`): command `[0:7]` =
+  `[vx*2.0, vy*2.0, omega*0.5, height, roll, pitch, yaw]`, base angular velocity
+  `[7:10]` (`ang_vel_scale=0.5`), projected gravity `[10:13]`, joint positions
+  `[13:28]` (minus `default_angles`, `dof_pos_scale`), joint velocities
+  `[28:43]` (`dof_vel_scale=0.05`), previous action `[43:58]`, reserved zero tail
+  `[58:86]`. The upstream YAML's flat scale keys are normalised into the nested
+  `obs_scales` map, and a config states only the scales it changes; the rest keep
+  the upstream defaults. An empty `cmd_scale` means "not stated" and resolves to
+  `(2.0, 2.0, 0.5)`, never to a bare `1.0` - which would command a yaw rate
+  double the one asked for.
+- **Action** - a 15-dim joint-position *offset*; the policy forms
+  `target_q = default_angles + action_scale * raw`, keyed by actuator name. For
+  torque-actuated MuJoCo, convert with `policy.compute_torques(target, q, dq)`.
 
 ## Actuator mapping
 
-WBC output index `i` drives `WBC_G1_LEG_WAIST_JOINTS[i]` - an explicit table
-(no positional guessing). `set_robot_state_keys` validates that the robot's
-first 15 joints match this order and raises otherwise, so a mismatched model
-can never silently actuate the wrong joints:
+WBC output index `i` drives `WBC_G1_LEG_WAIST_JOINTS[i]` - an explicit table.
+`set_robot_state_keys` validates that the robot's first 15 joints match this
+order and raises otherwise:
 
 ```
 left_hip_pitch_joint, left_hip_roll_joint, left_hip_yaw_joint,
@@ -229,68 +191,41 @@ sim.run_policy(
 )
 ```
 
-`run_policy` writes a policy's joint-position **targets** straight to the sim's
-actuators, but the stock Menagerie G1 ships *position-servo* actuators with a
-uniform `kp=500` gain that overrides SONIC's tuned per-joint PD - so driving
-those servos directly diverges and the robot falls. To make this quickstart
-just work, `run_policy` auto-detects a `WBCPolicy` on a position-servo scene and
-installs the torque shim (the `WBCTorqueController` PD->torque loop) for the
-duration of the call, then hands the world back afterwards: the controller is
-deregistered from the action-controller seam **and** the actuators are restored,
-so a second `run_policy` on the same sim installs a fresh shim and behaves
-exactly like the first. Constructing the shim directly takes
-`physics_substeps_per_control` - the `mj_step` calls one action is held for,
-which at the SONIC 0.005 s timestep makes the upstream `control_decimation=4`
-one inference per 20 ms (50 Hz). It is the same quantity as `control_substeps`
-and `send_action(n_substeps=)`, held to the same domain: a non-positive or
-non-integral count is refused rather than clamped, because the gait clock
-integrates at the declared control period, so a count other than the one asked
-for would run the gait at a rhythm nobody commanded. With the real
-`GR00T-WholeBodyControl-{Balance,Walk}.onnx` weights and `target_velocity =
-[0.5, 0, 0]` the base advances ~1.9 m over 5 s while holding pelvis height
-~0.75 m and staying upright. Pass `wbc_install_torque_control=False` to opt out
-(e.g. to drive a torque-actuated scene directly or manage the controller
-yourself):
+The stock Menagerie G1 ships *position-servo* actuators with a uniform `kp=500`
+that overrides SONIC's tuned PD, so writing targets to them directly makes the
+robot fall. `run_policy` therefore detects a `WBCPolicy` on a position-servo
+scene and installs the torque shim (`WBCTorqueController`, PD->torque) for the
+call, restoring the actuators afterwards so a second call behaves like the
+first. The shim's `physics_substeps_per_control` (upstream `control_decimation=4`
+at 0.005 s = one inference per 20 ms) must be a positive integer, because the
+gait clock integrates at the declared period. With the real weights and
+`target_velocity = [0.5, 0, 0]` the base advances ~1.9 m over 5 s at pelvis
+height ~0.75 m. Opt out to drive a torque scene directly:
 
 ```python
 sim.run_policy(..., policy_provider="wbc", wbc_install_torque_control=False)
 ```
 
-The per-call command rides through `run_policy`'s `policy_kwargs` to
-`policy.get_actions(..., target_velocity=[...])`. A *static* walk can also be
-set once at construction via `policy_config={"checkpoint": ..., "target_velocity":
-[0.5, 0.0, 0.0]}` (the value forwarded to the policy constructor), which is how a
-command reaches the policy over the mesh `tell()` path.
-
-> **Note:** `policy_kwargs` is wired on the control/deploy path
-> (`run_policy` / `start_policy` / mesh `tell()`), not the evaluation path.
-> `eval_policy` / `evaluate_benchmark` are instruction-driven (built for
-> task-success benchmarks); to evaluate WBC at a fixed velocity, set it once via
-> the constructor `target_velocity` (above). Per-episode velocity variation in
-> eval is out of scope for this provider.
+A *static* velocity can be set once via
+`policy_config={"checkpoint": ..., "target_velocity": [0.5, 0.0, 0.0]}`; that is
+also the way to evaluate WBC at a fixed velocity, since `policy_kwargs` is wired
+on the control path (`run_policy` / `start_policy` / `tell()`), not on
+`eval_policy`.
 
 ## Watching it walk (torque-control deploy)
 
-The `sim.run_policy` path above already produces a stable gait: it auto-installs
-the torque shim that converts the policy's joint-position **targets** to
-**torque** via SONIC's per-joint PD law (the stock position-servo actuators
-alone diverge - see the note in [In simulation](#in-simulation)).
-
-For a self-contained, low-level reference - building the torque-actuated G1,
-running `policy.compute_torques(...)` at `control_decimation=4`, and rendering -
 [`examples/wbc/wbc_g1_torque_deploy.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc/wbc_g1_torque_deploy.py)
-reproduces the upstream deploy loop directly - torque motors, `policy.compute_torques(...)` at
-`control_decimation=4`, whole-body observation with real joint velocities + base
-IMU - and is the right way to see the G1 actually locomote:
+reproduces the upstream deploy loop directly - torque motors,
+`policy.compute_torques(...)` at `control_decimation=4`, whole-body observation
+with real joint velocities + base IMU:
 
 ```bash
 python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /path/to/grootwbc-g1 \
     --duration 5 --vx 0.5 --mp4 /tmp/g1_walk.mp4
 ```
 
-With the real `GR00T-WholeBodyControl-{Balance,Walk}.onnx` weights this produces
-a stable forward walk (the base advances ~0.38 m/s for a 0.5 m/s command while
-holding height); a standing command (`--vx 0`) holds balance in place.
+With the real weights this produces a stable forward walk (~0.38 m/s for a
+0.5 m/s command); `--vx 0` holds balance in place.
 
 <figure markdown>
   ![Unitree G1 walking forward under WBC torque control](../assets/wbc/g1_walk.gif)
@@ -303,11 +238,9 @@ holding height); a standing command (`--vx 0`) holds balance in place.
 
 ## Composing an upper body (manipulation on top of WBC)
 
-`WBCPolicy` drives the 15 leg+waist DOFs and holds the arms at their defaults.
 To layer a manipulation policy on the arms while WBC keeps the robot balanced
-and walking, wrap both in
-[`CompositePolicy`](custom-policies.md): the lower policy owns the
-legs+waist joints, the upper policy owns the arms, and the composite queries
+and walking, wrap both in [`CompositePolicy`](custom-policies.md): the lower
+policy owns legs+waist, the upper policy owns the arms, and the composite queries
 both each tick and merges their action dicts by joint name.
 
 ```python
@@ -326,29 +259,15 @@ policy = CompositePolicy(
 )
 ```
 
-Routing is explicit: with `lower_joints` / `upper_joints` set, each child
-contributes only its own joint group (foreign keys are dropped). Left default,
-the lower policy takes precedence on any name it emits and the upper policy
-fills the rest. A genuine ownership conflict (both children claim the same
-joint) is raised, never silently resolved. The merged chunk length is the
-shorter of the two, so a per-tick controller (WBC, `execution_horizon == 1`) is
-never starved by a slower chunk-emitting manipulation policy.
-
-`lower_obs_keys` / `upper_obs_keys` narrow what each child is *queried* with,
-and are optional - left unset, both children receive the whole observation and
-read it by name. The key names belong to whatever produced the observation (a
-simulated world names them after the robot's own joints and cameras, a LeRobot
-dataset spells the joint reading `observation.state`), so a subset that shares
-no key with the observation is refused rather than forwarded as an empty dict:
-a child queried with nothing commands its joints from no reading at all, which
-on a humanoid is the balance controller running open-loop. A subset that
-matches only *some* of its keys is still forwarded - the child got what it
-asked for and reads by name.
-
-Run the composite the same way as a bare policy - the goal payload goes in
-`policy_kwargs`, and the torque shim
-([In simulation](#in-simulation)) is auto-installed for the
-`WBCPolicy` inside the composite just as it is for a bare one:
+Each child contributes only its own joint group; a genuine ownership conflict
+is raised, never silently resolved, and the merged chunk length is the shorter
+of the two so the per-tick controller is never starved. `lower_obs_keys` /
+`upper_obs_keys` optionally narrow what each child is queried with, and a subset
+sharing no key with the observation is refused - a balance controller reading
+nothing runs open-loop. Run the composite like a bare policy; the torque shim is
+installed for the `WBCPolicy` inside it (or inside a `PersistentPolicy`) and
+runs a light PD (`kp = 100`, `kd = 0.5`) on each arm joint toward the upper
+policy's target:
 
 ```python
 sim.run_policy(
@@ -360,16 +279,9 @@ sim.run_policy(
 )
 ```
 
-The shim drives the legs+waist with SONIC's PD law and runs a light position PD
-(`kp = 100`, `kd = 0.5`) on each arm joint toward whatever target the upper
-policy commands for it, holding the nominal pose for any arm joint left
-unnamed. The same applies to a `WBCPolicy` held warm by a `PersistentPolicy`:
-the shim follows the policy that drives the joints, not the type of the object
-passed to `run_policy`.
-
 [`examples/wbc/wbc_g1_composite.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc/wbc_g1_composite.py)
-runs the composite in the torque-deploy loop with a zero-dependency scripted
-arm-wave as the upper body (swap in `--upper-port` for a real GR00T server):
+runs the composite in the torque-deploy loop with a scripted arm-wave as the
+upper body (`--upper-port` for a real GR00T server):
 
 ```bash
 python examples/wbc/wbc_g1_composite.py --checkpoint /path/to/grootwbc-g1 \
@@ -396,8 +308,6 @@ implemented by `WBCGaitPolicy` (provider `wbc_gait`). See
 ## See also
 
 - [Policy overview](overview.md)
-- [cuRobo](curobo.md) - in-process CUDA collision-aware planning (non-VLA).
-- [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA).
 - [GR00T](groot.md) - ZMQ service VLA (manipulation upper body).
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.
 - [GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)

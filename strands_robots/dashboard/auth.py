@@ -407,10 +407,12 @@ def _jwt_secret() -> str:
 
 
 def has_credentials() -> bool:
+    """True once at least one passkey is enrolled."""
     return len(_load().get("credentials", [])) > 0
 
 
 def list_credentials() -> list[dict[str, Any]]:
+    """The enrolled passkeys as the login screen sees them: id, name, creation time."""
     return [
         {"id": c["id"], "name": c.get("name", "passkey"), "created": c.get("created")}
         for c in _load().get("credentials", [])
@@ -774,6 +776,45 @@ def _socket_peer(request_or_ws: Any) -> str | None:
         return None
 
 
+#: Request headers a reverse proxy or tunnel adds on the way in. A request that
+#: carries one of them arrived THROUGH something, whatever the socket peer says;
+#: their values are never read (a caller can spell them anything), only their
+#: presence is. Lower-case, matched case-insensitively.
+_PROXY_EVIDENCE_HEADERS: tuple[str, ...] = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "cf-ray",
+    "forwarded",
+)
+
+
+def _arrived_through_a_proxy(request_or_ws: Any) -> str | None:
+    """The first proxy-forwarding header the request carries, or ``None``.
+
+    Evidence of a hop, not an address. The same-host reverse-proxy or tunnel
+    the docs describe (``cloudflared`` pointed at ``http://localhost:8090``)
+    makes every remote visitor's socket peer ``127.0.0.1`` unless uvicorn was
+    started with ``--proxy-headers`` / ``--forwarded-allow-ips``, so a loopback
+    peer alone cannot prove the request came from the machine. The proxy does,
+    however, add its forwarding headers to every request it relays, and a
+    browser on the machine itself sends none of them - so their presence is the
+    fact that separates the two cases. Their VALUES stay untrusted; this reads
+    only whether a header is there (F-007, CWE-290 / CWE-348).
+    """
+    try:
+        headers = getattr(request_or_ws, "headers", None) or {}
+        present = {str(k).lower() for k in headers}
+    except Exception:
+        return None
+    for name in _PROXY_EVIDENCE_HEADERS:
+        if name in present:
+            return name
+    return None
+
+
 def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
     with _chal_lock:
         rec = _challenges.pop(cid, None)
@@ -858,6 +899,18 @@ def renewal_verdict(
 
 
 def verify_token(token: str) -> dict[str, Any]:
+    """The claims of a session token, or a refusal the caller can return as-is.
+
+    Args:
+        token: The signed session token the client presented.
+
+    Returns:
+        The decoded claims.
+
+    Raises:
+        HTTPException: 401, distinguishing an expired session from one that
+            does not verify at all.
+    """
     try:
         return jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -867,6 +920,17 @@ def verify_token(token: str) -> dict[str, Any]:
 
 
 def renew_if_due(token: str, now: float | None = None) -> str | None:
+    """A longer-lived token when this session is past its half-life, else None.
+
+    Args:
+        token: The session token the client currently holds.
+        now: Override for the current epoch seconds; the wall clock by default.
+
+    Returns:
+        A newly issued token, never expiring earlier than the one held and never
+        past the session's maximum age, or None when the session is still fresh,
+        has reached that maximum, or does not verify.
+    """
     if not token:
         return None
     try:
@@ -978,6 +1042,23 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     # peer is NOT the machine.
     damage = store_corruption()
     if first_time and not required:
+        # A loopback socket peer is necessary but not sufficient: behind a
+        # same-host proxy or tunnel started without --proxy-headers, every
+        # remote visitor's peer is 127.0.0.1. The proxy's own forwarding
+        # headers are the evidence that the request came through one, so a
+        # loopback peer that carries any of them is refused too - the values
+        # are never read (see _arrived_through_a_proxy).
+        proxied_by = _arrived_through_a_proxy(request)
+        if proxied_by is not None:
+            raise HTTPException(
+                403,
+                "the first passkey enrolled becomes the owner of this dashboard, and this request "
+                f"arrived through a proxy or tunnel (it carries {proxied_by!r}), so it cannot be taken "
+                "as the machine itself even though the connection came from loopback. Enroll from a "
+                "browser on the machine with no proxy in between, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN "
+                "and pass it. If the dashboard sits behind a same-host proxy, start uvicorn with "
+                "--proxy-headers and --forwarded-allow-ips so the peer address is the real client's.",
+            )
         if not client_is_loopback(_socket_peer(request)):
             if damage:
                 raise HTTPException(
@@ -1019,6 +1100,23 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
 
 
 def finish_registration(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
+    """Verify a passkey registration ceremony, enrol the credential, sign the caller in.
+
+    The relying-party id the ceremony verified against is recorded with the
+    credential, which is what stops a later Host header from introducing a
+    different one.
+
+    Args:
+        request: The request the ceremony was served over, read for its origin.
+        challenge_id: The id handed out by the matching begin_registration call.
+        credential: The authenticator's registration response.
+
+    Returns:
+        ``{"ok": True, "token": ..., "credential_id": ...}``.
+
+    Raises:
+        HTTPException: 409 if this credential is already enrolled.
+    """
     rec = _pop_challenge(challenge_id, "reg")
     verification = verify_registration_response(
         credential=credential,
@@ -1048,6 +1146,20 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> di
 
 
 def begin_authentication(request: Any) -> dict[str, Any]:
+    """Start a passkey authentication ceremony for this origin.
+
+    Args:
+        request: The request being served, read for the relying-party id and
+            the client address the challenge is bound to.
+
+    Returns:
+        ``{"challenge_id": ..., "options": ...}``, the options being the
+        WebAuthn request options for the browser.
+
+    Raises:
+        HTTPException: 400 when no credential is enrolled, or when this origin
+            yields no relying-party id a ceremony can use.
+    """
     store = _load()
     if not store.get("credentials"):
         raise HTTPException(400, "no credentials enrolled - setup required")
@@ -1065,6 +1177,19 @@ def begin_authentication(request: Any) -> dict[str, Any]:
 
 
 def finish_authentication(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
+    """Verify a passkey assertion and issue a session token.
+
+    Args:
+        request: The request the ceremony was served over, read for its origin.
+        challenge_id: The id handed out by the matching begin_authentication call.
+        credential: The authenticator's assertion response.
+
+    Returns:
+        ``{"ok": True, "token": ..., "credential_id": ...}``.
+
+    Raises:
+        HTTPException: 404 if the asserted credential is not enrolled.
+    """
     rec = _pop_challenge(challenge_id, "auth")
     store = _load()
     cred_id = credential.get("id") or credential.get("rawId")
@@ -1092,6 +1217,18 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
 
 
 def status(request: Any = None) -> dict[str, Any]:
+    """What the login screen may know before anyone has signed in.
+
+    Args:
+        request: The request being served, when the advisory relying-party
+            block is wanted too; omit it for the transport-independent fields
+            alone.
+
+    Returns:
+        Whether auth is enabled, whether enrolment or a bootstrap token is
+        required, the enrolled credentials, and - given a request - an advisory
+        ``rp_id`` block for the login screen's hints.
+    """
     store = _load()
     out: dict[str, Any] = {
         "enabled": auth_enabled(),

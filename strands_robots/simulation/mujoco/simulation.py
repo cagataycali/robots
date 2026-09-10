@@ -84,7 +84,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
 )
-from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
+from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, discover_ee_frame, hint_matches_name
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -126,6 +126,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
     SpecBuilder,
@@ -139,6 +140,7 @@ from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_diffi
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
+    camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
@@ -673,6 +675,16 @@ class MuJoCoSimEngine(
         # are live: this table is swept to it by ``_prune_done_futures``, so it
         # can never report a rate for a rollout that is not running.
         self._policy_rates: dict[str, float] = {}
+        # Thread identity of the rollout driving each robot, written by
+        # ``_drive_rollout`` on the thread that actually steps the physics.
+        # ``_require_no_running_policy`` reads it to exempt that thread: a
+        # rollout mutates the scene itself between episodes
+        # (``PolicyRunner`` calls ``sim.reset()`` per episode), and refusing
+        # the driver its own reset would break the episode boundary while
+        # doing nothing for the cross-thread race the gate exists to stop.
+        # Keyed by robot name and popped in ``_drive_rollout``'s ``finally``,
+        # so it never outlives the rollout it describes.
+        self._rollout_driver_threads: dict[str, int] = {}
         self._shutdown_event = threading.Event()
         # ``self._lock`` (RLock) serializes ALL access to MuJoCo
         # ``model``/``data`` arrays - both reads and writes. MuJoCo arrays
@@ -3393,6 +3405,13 @@ class MuJoCoSimEngine(
         reported as a scalar joint (its qpos is [xyz+quat], not a single angle),
         and the base ``quaternion``/``angular_velocity`` match get_observation's
         ``base_quat``/``base_ang_vel`` for the same robot.
+
+        A robot whose every actuator is a torque ``<motor>`` (a Menagerie
+        quadruped or humanoid) additionally carries ``"actuation": "torque"``,
+        with the same fact as a ``note:`` line in the text: its ``ctrl`` is a
+        force in Nm rather than a pose, so it holds no configuration and settles
+        under gravity unless a controller drives it every step. Absent for a
+        robot with even one position servo, whose pose writes do hold.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3483,6 +3502,40 @@ class MuJoCoSimEngine(
         json_payload: dict[str, Any] = {"state": state}
         if base is not None:
             json_payload["base"] = base
+
+        # Name the frame move_to drives and where it is now. Without this an
+        # agent reads the pose of whichever body looks like a hand (the jaw),
+        # sends move_to a target offset from THAT, and gets "unreachable" for a
+        # point the wrist frame never was at - two wasted turns per motion.
+        frame = discover_ee_frame(model, pfx or None)
+        if frame is not None:
+            frame_name, frame_type = frame
+            obj = mj.mjtObj.mjOBJ_SITE if frame_type == "site" else mj.mjtObj.mjOBJ_BODY
+            frame_id = mj_name_to_id(model, obj, frame_name)
+            if frame_id >= 0:
+                xpos = data.site_xpos[frame_id] if frame_type == "site" else data.xpos[frame_id]
+                ee_pos = [float(xpos[0]), float(xpos[1]), float(xpos[2])]
+                text += (
+                    f"end_effector ({frame_type} '{frame_name}', the frame move_to drives): "
+                    f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
+                )
+                json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+
+        # Name torque-only actuation, because its normal behaviour reads as a
+        # broken model. A Menagerie quadruped is driven entirely by <motor>, so
+        # ctrl is a force and a pose written there is a torque: go2 sinks from
+        # base z 0.445 to 0.20 within 2 s of the first step, holding nothing.
+        # The reading above reports that collapse without a word on its cause,
+        # which is the one thing a caller needs to know it is not a defect --
+        # the robot needs a controller every step (run_policy), not a fix.
+        # torque_only_actuation owns the three-term classification.
+        if torque_only_actuation(model, robot, mj):
+            text += (
+                f"note: all {len(robot.actuator_ids)} actuators are torque motors (ctrl in Nm) - a "
+                "position target written to them is a force, so nothing holds the pose and the robot "
+                "settles under gravity unless a controller drives it every step (run_policy).\n"
+            )
+            json_payload["actuation"] = "torque"
         return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -4173,12 +4226,15 @@ class MuJoCoSimEngine(
         so a camera created under any of them could never be rendered from even
         though it is registered, compiled into the model and listed by
         ``list_cameras``; a non-string name is additionally not addressable
-        through the agent-tool surface. This is the same set the Newton backend's
-        ``add_camera`` refuses, on the shared
-        :func:`~strands_robots.utils.reserved_camera_name_error` domain, because
-        that backend routes the same tokens. The Isaac backend does not route
-        them - its ``get_frame`` looks the name up directly - so ``"default"``
-        there is an ordinary camera name and stays accepted. ``position`` and ``target``
+        through the agent-tool surface. Both halves of the name rule come from
+        the shared :func:`~strands_robots.utils.camera_name_error`, which every
+        backend's ``add_camera`` reads, so the rule and its order are stated
+        once: the name is judged BEFORE any value, because a reserved name is
+        the one fault no change of value can clear. The Newton backend refuses
+        the same set because it routes the same tokens; the Isaac backend does
+        not route them - its ``get_frame`` looks the name up directly - so it
+        passes ``routes_free_camera_tokens=False`` and ``"default"`` there is an
+        ordinary camera name. ``position`` and ``target``
         must each be 3 finite numbers (a list, tuple or NumPy array; NumPy
         scalar elements accepted). Omit a vector to take its default - an empty
         vector is a wrong-length request and is rejected rather than silently
@@ -4195,35 +4251,18 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # Refuse a name that cannot address the camera this call creates, on the
-        # shared ``entity_name_error`` domain. An empty name is worse here than
-        # for an object: ``render``/``get_frame`` route ``camera_name in (None,
-        # "", "default", "free")`` to the FREE camera by an explicit token
-        # check, so a camera registered as "" could never be rendered from. It
-        # precedes the duplicate-name test for the same reason it does in
-        # ``add_object`` - that test is partial for an unhashable name.
-        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+        # The whole name rule, in the one order ``camera_name_error`` owns: a
+        # value that cannot be a registry key at all, then a ``str`` this
+        # backend's render entry points (``render`` / ``render_depth`` /
+        # ``get_frame``) resolve past. It precedes every value rule below, and
+        # the duplicate-name test, because a reserved name is the one fault no
+        # change of value can clear - and because that test answered for
+        # ``"default"`` misleadingly: ``create_world`` registers the built-in
+        # free view under that name, so the refusal was "already exists. Remove
+        # it first.", and following that prescription succeeded, leaving the
+        # scene with an unreachable camera where the free-view alias had been.
+        if (name_err := camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
-
-        # Refuse a name this backend's own render entry points resolve past. The
-        # three of them (``render`` / ``render_depth`` / ``get_frame``) select the
-        # free camera for every ``FREE_CAMERA_TOKENS`` member by an explicit token
-        # check, so claiming one produced a camera that is registered, compiled
-        # into the model and offered by ``list_cameras`` - and that every render
-        # of silently answers with the free view instead, under a success result.
-        # ``entity_name_error`` above covers only the two falsy tokens, which is
-        # why this is a second guard rather than a widening of that domain: the
-        # other two are perfectly addressable *names* that this backend alone
-        # cannot address as *cameras*.
-        #
-        # It precedes the duplicate-name test because that test answered for
-        # ``"default"`` and answered misleadingly: ``create_world`` registers the
-        # built-in free view under that name, so the refusal was "already exists.
-        # Remove it first." - and following that prescription succeeded, leaving
-        # the scene with an unreachable camera where the advertised free-view
-        # alias had been.
-        if (reserved_err := reserved_camera_name_error("add_camera", "name", name)) is not None:
-            return {"status": "error", "content": [{"text": reserved_err}]}
 
         # Validate position / target shape before we bake them into XML.
         # Membership, not truthiness: ``position or <default>`` raised a bare
@@ -5158,6 +5197,25 @@ class MuJoCoSimEngine(
         self._prune_done_futures()
         return dict(self._policy_rates)
 
+    def _rollouts_driven_by_other_threads(self) -> list[str]:
+        """Rollouts in flight that this thread is not the driver of.
+
+        The population :meth:`_require_no_running_policy` gates on: the union
+        :meth:`_active_policy_robots` owns, minus any rollout whose driving
+        thread is the caller. See that gate for why the driver is exempt and
+        why the union - rather than the ``_policy_threads`` table alone - is
+        the right population.
+
+        Returns:
+            Robot names, in :meth:`_active_policy_robots` order.
+        """
+        this_thread = threading.get_ident()
+        return [
+            name
+            for name in self._active_policy_robots()
+            if registry_entry(self._rollout_driver_threads, name) != this_thread
+        ]
+
     def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
         """Return an error dict if a disallowed policy is running, else None.
 
@@ -5178,11 +5236,33 @@ class MuJoCoSimEngine(
           different robots can execute concurrently because MuJoCo physics
           is serialized by ``self._lock`` and each robot writes to a
           disjoint slice of ``data.ctrl[]``.
+
+        The population is the one :meth:`_active_policy_robots` owns, for the
+        reason :meth:`_rollouts_in_flight` delegates there rather than walking
+        the registry a second time. This gate used to read ``_policy_threads``
+        directly, and the Future table records only the rollouts
+        :meth:`start_policy` submits - a blocking :meth:`run_policy` registers
+        nothing. So every mutation listed above was refused during a
+        Future-backed rollout and *accepted* during a blocking one, on a scene
+        the blocking rollout was stepping, while
+        :meth:`list_policies_running` reported that rollout in flight for both.
+        That is the same two-sources drift #2833 closed for the reporting
+        surfaces, reached through the gate instead of the report - and the
+        consequence here is the segfault this docstring already warns about
+        rather than a wrong status line.
+
+        The rollout's own driving thread is exempt, on the reasoning that makes
+        ``self._lock`` an ``RLock`` (see "Scene mutation and ``self._lock``" in
+        the module docstring): a rollout mutates the scene itself between
+        episodes - :class:`~strands_robots.simulation.policy_runner.PolicyRunner`
+        calls ``sim.reset()`` at the top of each one - and the driver racing
+        itself is not the hazard the gate is written against. The claim is
+        recorded by :meth:`_drive_rollout`, the body both entry points share, so
+        it names the thread that actually steps the physics in either shape.
         """
         self._prune_done_futures()
         if robot_name is not None:
-            fut = registry_entry(self._policy_threads, robot_name)
-            if fut is not None and not fut.done():
+            if robot_name in self._rollouts_driven_by_other_threads():
                 return {
                     "status": "error",
                     "content": [
@@ -5196,7 +5276,7 @@ class MuJoCoSimEngine(
                 }
             return None
 
-        active = [name for name, f in self._policy_threads.items() if not f.done()]
+        active = self._rollouts_driven_by_other_threads()
         if active:
             names = ", ".join(f"'{n}'" for n in active)
             return {
@@ -5245,7 +5325,7 @@ class MuJoCoSimEngine(
                 "get_total_mass, get_ground_height, get_sensor_data, get_jacobian, get_mass_matrix, inverse_dynamics, "
                 "forward_kinematics, save_state, load_state, set_body_properties, set_geom_properties; "
                 "[Manipulation] attach_bodies, detach_bodies, actuate_robot, zero_dynamics; "
-                "[Motion primitives] move_to (Cartesian EE transport via IK; not collision-aware), "
+                "[Motion primitives] move_to (Cartesian transport of the end_effector frame that get_robot_state names, via IK; not collision-aware), "
                 "set_gripper (open/close set-point), rotate_wrist (wrist-yaw set-point holding position); "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
                 "[Recording] start_recording, stop_recording, get_recording_status, "
@@ -5321,9 +5401,23 @@ class MuJoCoSimEngine(
         rollout that ends for any reason - completion, a cooperative stop, or a
         raise - leaves the robot idle.
         """
+        # Only a str name can key the claim, for the reason ``registry_entry``
+        # is total: a subscript raises ``TypeError`` for an unhashable name, and
+        # this runs before ``run_policy`` has judged the name, so raising here
+        # would turn a reportable bad name into a traceback. An unrecorded claim
+        # is the safe direction anyway - the gate then refuses that rollout's own
+        # mutations rather than exempting a name no robot answers to.
+        if isinstance(robot_name, str):
+            self._rollout_driver_threads[robot_name] = threading.get_ident()
         try:
             return super().run_policy(robot_name, **kwargs)
         finally:
+            # Mirror the guard above: ``dict.pop`` hashes its key whenever the
+            # dict is non-empty, so an unguarded pop raises for the same name
+            # the write refused, and a raise in a ``finally`` discards the
+            # error dict the rollout was returning.
+            if isinstance(robot_name, str):
+                self._rollout_driver_threads.pop(robot_name, None)
             if self._world is not None and registered(self._world.robots, robot_name):
                 robot = self._world.robots[robot_name]
                 robot.policy_running = False

@@ -572,3 +572,28 @@ def test_async_rtc_prefetch_timeout_errors_cleanly() -> None:
     # the full 16-chunk rollout it would otherwise run.
     assert elapsed < 4 * infer, elapsed
     assert _RTC_KEYS <= set(result["content"][1]["json"])
+
+
+def test_prefetch_telemetry_uses_chunk_prefetch_keys_and_names_policy_rtc() -> None:
+    """The payload says what actually ran: chunk prefetch (any chunk policy) vs
+    RTC seam blending (``policy_rtc_enabled`` = the policy's ``supports_rtc``).
+    Legacy ``rtc_*`` spellings keep their values for one release."""
+    sim = _CountingSim(exec_sleep=_EXEC_SLEEP)
+    policy = _ChunkPolicy(sim)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    result = PolicyRunner(sim).run(
+        "arm", policy, duration=16 / 50.0, control_frequency=50.0, action_horizon=_CHUNK, fast_mode=True
+    )
+    telem = result["content"][1]["json"]
+    assert telem["chunk_prefetch_enabled"] is True
+    assert telem["policy_rtc_enabled"] is False  # ACT-shaped: prefetch ran, no RTC blending
+    for old, new in {
+        "rtc_async_enabled": "chunk_prefetch_enabled",
+        "rtc_chunks_acquired": "chunk_prefetch_chunks_acquired",
+        "rtc_prefetch_hits": "chunk_prefetch_hits",
+        "rtc_prefetch_blocks": "chunk_prefetch_blocks",
+        "rtc_avg_inference_ms": "avg_inference_ms",
+        "rtc_max_inference_ms": "max_inference_ms",
+    }.items():
+        assert telem[old] == telem[new], (old, new)
+    assert telem["chunk_prefetch_chunks_acquired"] >= 1

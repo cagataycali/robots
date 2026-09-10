@@ -22,6 +22,8 @@ import numpy as np
 from strands_robots.utils import (
     finite_number_error,
     positive_whole_number_error,
+    refusal_container_repr,
+    refusal_repr,
     require_optional,
     sequence_length,
 )
@@ -145,7 +147,7 @@ def _clip_quality_error(quality: Any) -> str | None:
     if text := finite_number_error(quality, "quality", "encode_clip"):
         return text
     if not _MIN_CLIP_QUALITY <= float(quality) <= _MAX_CLIP_QUALITY:
-        return f"encode_clip: quality must be between {_MIN_CLIP_QUALITY} and {_MAX_CLIP_QUALITY}, got {quality!r}."
+        return f"encode_clip: quality must be between {_MIN_CLIP_QUALITY} and {_MAX_CLIP_QUALITY}, got {refusal_repr(quality)}."
     return None
 
 
@@ -305,7 +307,7 @@ def _stream_rate_error(fps: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the rate is usable.
     """
-    message = f"mjpeg_frames: fps must be a positive finite number, got {fps!r}."
+    message = f"mjpeg_frames: fps must be a positive finite number, got {refusal_repr(fps)}."
     if finite_number_error(fps, "fps", "mjpeg_frames"):
         return message
     if float(fps) <= 0:
@@ -335,7 +337,7 @@ def _jpeg_quality_error(quality: Any) -> str | None:
     """
     message = (
         f"mjpeg_frames: quality must be a whole number between {_MIN_JPEG_QUALITY} "
-        f"and {_MAX_JPEG_QUALITY}, got {quality!r}."
+        f"and {_MAX_JPEG_QUALITY}, got {refusal_repr(quality)}."
     )
     if finite_number_error(quality, "quality", "mjpeg_frames"):
         return message
@@ -365,7 +367,7 @@ def _frame_size_error(size: Any) -> str | None:
     """
     if size is None:
         return None
-    message = f"mjpeg_frames: size must be a (width, height) pair of positive whole numbers, got {size!r}."
+    message = f"mjpeg_frames: size must be a (width, height) pair of positive whole numbers, got {refusal_container_repr(size)}."
     if isinstance(size, str | bytes | Mapping) or not hasattr(size, "__getitem__"):
         return message
     if sequence_length(size) != 2:

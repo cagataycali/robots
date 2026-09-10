@@ -354,9 +354,10 @@ def test_broadcast_collects_multiple_responses(started_mesh: Mesh, captured_puts
     assert any(k == "strands/broadcast" for k, _ in captured_puts)
 
 
-def test_broadcast_when_not_running_returns_empty() -> None:
+def test_broadcast_when_not_running_raises() -> None:
     m = Mesh(_FakeRobot(), peer_id="x")
-    assert m.broadcast({"action": "status"}) == []
+    with pytest.raises(RuntimeError, match="mesh not running"):
+        m.broadcast({"action": "status"})
 
 
 def test_tell_wraps_send(started_mesh: Mesh) -> None:

@@ -50,7 +50,11 @@ from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 logger = logging.getLogger(__name__)
 
-# GR00T's tune flags - the model-tuning surface lerobot does NOT have.
+# GR00T's tune flags. lerobot's native GR00T port declares the same four
+# switches as ``GrootConfig.tune_llm`` / ``tune_visual`` / ``tune_projector`` /
+# ``tune_diffusion_model``, so ``LerobotTrainer(policy_type="groot")`` accepts
+# this same ``TrainSpec.tune`` dict; what is particular to this trainer is
+# Isaac-GR00T's own ``FinetuneConfig`` argv and modality-config format.
 # Sensible default mirrors FinetuneConfig defaults (projector + diffusion on).
 _DEFAULT_TUNE = {"llm": False, "visual": False, "projector": True, "diffusion": True}
 

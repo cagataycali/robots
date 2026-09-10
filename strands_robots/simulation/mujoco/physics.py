@@ -39,7 +39,14 @@ from strands_robots.simulation.mujoco.scene_ops import (
     refresh_body_inertial_from_geometry,
 )
 from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
-from strands_robots.utils import BOOLEAN_VECTOR_REASON, boolean_flag_error, coerce_rgba, is_boolean
+from strands_robots.utils import (
+    BOOLEAN_VECTOR_REASON,
+    boolean_flag_error,
+    coerce_rgba,
+    is_boolean,
+    refusal_container_repr,
+    refusal_repr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +117,9 @@ def _coerce_finite_vector(
     except TypeError:
         return None, {
             "status": "error",
-            "content": [{"text": f"{method}: '{name}' must be a sequence of numbers, got {values!r}"}],
+            "content": [
+                {"text": f"{method}: '{name}' must be a sequence of numbers, got {refusal_container_repr(values)}"}
+            ],
         }
     out: list[float] = []
     for elem in seq:
@@ -126,7 +135,7 @@ def _coerce_finite_vector(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {refusal_container_repr(values)}). {BOOLEAN_VECTOR_REASON}"
                     }
                 ],
             }
@@ -135,18 +144,28 @@ def _coerce_finite_vector(
         except (TypeError, ValueError):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' elements must be numbers, got {values!r}"}],
+                "content": [
+                    {"text": f"{method}: '{name}' elements must be numbers, got {refusal_container_repr(values)}"}
+                ],
             }
         if not math.isfinite(f):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         if min_value is not None and ((f <= min_value) if strict_min else (f < min_value)):
             rel = ">" if strict_min else ">="
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' values must be {rel} {min_value}, got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' values must be {rel} {min_value}, got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         out.append(f)
     if accepted_lengths is not None and len(out) not in accepted_lengths:
@@ -238,7 +257,7 @@ def _coerce_ray_batch(directions: Any, method: str) -> tuple[list[Any] | None, d
                 {
                     "text": (
                         f"{method}: 'directions' must be a sequence of direction vectors, "
-                        f"got {directions!r}. {_RAY_BATCH_HINT}"
+                        f"got {refusal_container_repr(directions)}. {_RAY_BATCH_HINT}"
                     )
                 }
             ],
@@ -287,7 +306,7 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
             {
                 "text": (
                     f"{method}: 'exclude_body' must be -1 (exclude nothing) or a body id "
-                    f"in [0, {nbody}), got {value!r}. Read an id from list_bodies()."
+                    f"in [0, {nbody}), got {refusal_repr(value)}. Read an id from list_bodies()."
                 )
             }
         ],
@@ -1675,6 +1694,34 @@ class PhysicsMixin:
         )
         if err:
             return err
+
+        # Refuse a pose outside a limited joint's range before any qpos write.
+        # mj_forward does not clamp qpos, so an out-of-range value used to land
+        # in the state and be reported as "Set n/n joint positions" while the
+        # next step drove the joint back through its limit at whatever velocity
+        # the constraint solver produced (99 rad on a [-1.92, 1.92] joint left
+        # it at -9.4 rad moving 23.8 rad/s after 100 steps).
+        out_of_range: list[str] = []
+        for jnt_name, value in positions.items():
+            jnt_id = joint_ids[jnt_name]
+            if not model.jnt_limited[jnt_id]:
+                continue
+            lo, hi = (float(x) for x in model.jnt_range[jnt_id])
+            if not lo <= float(value) <= hi:
+                out_of_range.append(f"{jnt_name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]")
+        if out_of_range:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "set_joint_positions: position outside the joint's range, nothing written: "
+                            + "; ".join(out_of_range)
+                            + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                        )
+                    }
+                ],
+            }
 
         with self._lock:
             servos, other_drives = joint_drive_map(model, mj)

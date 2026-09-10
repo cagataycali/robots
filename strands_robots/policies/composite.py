@@ -19,7 +19,7 @@ rule, a child whose ENTIRE action dict is discarded by routing is refused: a
 composite in which one child reaches no actuator is the other child alone.
 
 This class composes joint groups in PARALLEL; it is not a cascade. A whole-body
-kinematic generator (Kimodo / MotionBricks) and a controller that tracks its
+kinematic generator (Kimodo) and a controller that tracks its
 reference drive the SAME joints and run in SERIES - the generator's targets are
 the controller's input, not a disjoint half of one action dict. No composite
 expresses that: a reference tracker has to consume the reference through its own

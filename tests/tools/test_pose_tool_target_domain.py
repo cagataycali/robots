@@ -61,6 +61,14 @@ from strands_robots.utils import finite_number_error
 
 from .conftest import FakeSerial
 
+
+@pytest.fixture(autouse=True)
+def _pre_approve_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade what a motion does once admitted; the operator gate (F-010) is graded in
+    ``test_pose_tool_gates_bus_writes.py``, so it is pre-approved here."""
+    monkeypatch.setenv("STRANDS_POSE_COMMAND_ALLOW", "*")
+
+
 _PORT = "/dev/fake-pose-target"
 
 # A joint with a symmetric range, and the gripper, which is configured 0-100 and

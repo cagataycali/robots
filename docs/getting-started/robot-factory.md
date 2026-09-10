@@ -57,11 +57,26 @@ or alias rather than letting it resolve to that robot. Full alias map in
 robot = Robot(
     "so100",
     mode="real",
-    cameras={"wrist": {"type": "opencv", "index_or_path": "/dev/video0"}},
+    cameras={
+        "wrist": {"type": "opencv", "index_or_path": "/dev/video0"},
+        "top": {"type": "intelrealsense", "serial_number_or_name": "819312071961"},
+    },
     port="/dev/tty.usbserial-A50285BI",
     control_frequency=50.0,
 )
 ```
+
+Each `cameras` entry is a serialized lerobot `CameraConfig`, so `type` is resolved
+against lerobot's own choice registry - the same registry the robot name itself is
+resolved against. Every backend lerobot ships is therefore attachable
+(`opencv`, `intelrealsense`, `zmq`, `reachy2_camera`), as is any installed
+`lerobot_camera_*` plugin, and the remaining keys are the fields of the class the
+`type` resolves to. Note the registered name for Intel RealSense is
+`intelrealsense`, not `realsense`; an unregistered `type` raises `ValueError`
+listing the registered ones. `fps`, `width` and `height` are common to every
+backend and default to 30/640/480 when unset - a vendor SDK the backend needs
+(`pyrealsense2` for `intelrealsense`) is required when the device is opened, not
+when the config is built.
 
 `control_frequency` (Hz) sets the control loop's per-action period,
 `1 / control_frequency` - the only throttle between two servo commands. It must be a
