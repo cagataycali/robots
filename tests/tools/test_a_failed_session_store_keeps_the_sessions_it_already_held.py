@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from strands_robots.tools import _process_stop
 from strands_robots.tools._process_stop import (
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
@@ -123,8 +124,7 @@ def managers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return {"teleop": tele_mod.SessionManager(), "train": train_mod.SessionManager()}
 
 

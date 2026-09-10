@@ -135,7 +135,11 @@ def train_policy(
         base_model: HF id or local checkpoint to post-tune from. For GR00T this
             is required (``--base_model_path``); ACT-from-scratch leaves it "".
         output_dir: Where checkpoints + logs go.
-        embodiment: Embodiment tag (REQUIRED for GR00T; inferred by lerobot).
+        embodiment: Embodiment tag - which state/action projector head the run
+            trains. REQUIRED for GR00T, and read by any lerobot policy whose
+            config declares ``embodiment_tag`` (lerobot's native GR00T port);
+            refused for a lerobot policy that has no such field, since those
+            take their state/action shape from the dataset features.
         steps: Total optimizer steps.
         batch_size: Global batch size (summed across GPUs).
         learning_rate: Optimizer learning rate. ``None`` (default) uses the
@@ -168,7 +172,12 @@ def train_policy(
             attached to, read only when ``method="lora"``. Omit to keep the
             backend's default target set.
         tune: Fine-grained component toggles for GR00T
-            (``{"llm","visual","projector","diffusion"}``).
+            (``{"llm","visual","projector","diffusion"}``), honoured by the
+            ``groot`` provider and by ``lerobot_local`` with
+            ``extra={"policy_type": "groot"}``. A key naming no component
+            (``vision`` for ``visual``) or a component the policy cannot freeze
+            is refused by preflight, because an unforwarded toggle trains the
+            config default and reports success.
         val_episodes: Hold out the LAST N episodes for validation; the run
             logs an eval loss over them at the checkpoint cadence. A positive
             integer below the dataset's episode count, or None for no held-out

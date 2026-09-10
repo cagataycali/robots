@@ -3,9 +3,12 @@
 ``G1Driver.run_policy`` starts the driver's 500 Hz control loop against
 an already-built policy: it spawns a dedicated thread that re-gates
 through :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`
-with scope ``"motion"`` on every step, calls ``policy_object.step(obs)``
-(or the object itself, if it is a bare callable) for a joint-name-keyed
-action dict, and publishes one :class:`LowCmd_` frame per step on
+with scope ``"motion"`` on every step, asks the policy for a
+joint-name-keyed action dict - ``get_actions_sync(obs, instruction)`` on a
+built :class:`~strands_robots.policies.Policy`, or ``step(obs)`` / the
+object itself for the two untyped shapes
+:func:`~strands_robots.drivers.base.policy_step` also resolves - and
+publishes one :class:`LowCmd_` frame per step on
 ``rt/lowcmd`` through the same publisher :meth:`send_action` writes.  A
 gate flip mid-rollout refuses the step and the loop publishes a
 zero-torque frame before exiting rather than freezing with the last

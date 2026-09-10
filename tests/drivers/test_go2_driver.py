@@ -605,7 +605,7 @@ def test_run_policy_refuses_an_unusable_budget_before_starting_a_thread(
     ("policy", "expected_fragment"),
     [
         pytest.param(None, "policy_object is required", id="none"),
-        pytest.param(object(), "must be callable or expose a .step()", id="not-callable"),
+        pytest.param(object(), "must be callable or expose get_actions_sync() or step()", id="not-callable"),
     ],
 )
 def test_run_policy_refuses_a_policy_it_cannot_call(

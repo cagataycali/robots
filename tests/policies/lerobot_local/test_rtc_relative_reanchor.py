@@ -79,9 +79,22 @@ def _model_chunk() -> torch.Tensor:
     return torch.arange(_CHUNK_LEN * _ACTION_DIM, dtype=torch.float32).reshape(1, _CHUNK_LEN, _ACTION_DIM)
 
 
+def _emitted_chunk() -> torch.Tensor:
+    """The chunk as the consumer receives it, which is what the policy keeps.
+
+    With a zero overlap nothing is dropped off the front, so this is the whole
+    chunk - LeRobot's ``ActionQueue.original_queue``.
+    """
+    return _model_chunk().squeeze(0)
+
+
 def _model_leftover() -> torch.Tensor:
-    """The tail of the chunk consumers do NOT execute this step: chunk[exec_horizon:]."""
-    return _model_chunk().squeeze(0)[_EXEC_HORIZON:]
+    """The prefix a zero-overlap re-query blends: chunk[exec_horizon:].
+
+    The consumer executed the first ``exec_horizon`` actions and re-queried with
+    nothing pending, so the prefix opens where its execution stopped.
+    """
+    return _emitted_chunk()[_EXEC_HORIZON:]
 
 
 def _make_rtc_policy(preprocessor: DataProcessorPipeline, postprocessor: DataProcessorPipeline):
@@ -142,9 +155,9 @@ def test_relative_action_rtc_prefix_is_reanchored_to_current_state():
     # First call has no prior chunk to blend.
     assert captured[0] is None
     leftover_model = _model_leftover()
-    assert torch.allclose(policy._rtc_prev_chunk, leftover_model)
-    # Absolute leftover = unnormalize (identity here) + add the current state.
-    assert torch.allclose(policy._rtc_prev_chunk_abs, leftover_model + state1)
+    assert torch.allclose(policy._rtc_prev_chunk, _emitted_chunk())
+    # Absolute copy = unnormalize (identity here) + add the current state.
+    assert torch.allclose(policy._rtc_prev_chunk_abs, _emitted_chunk() + state1)
 
     # State moves: the leftover must be re-expressed against the new frame.
     state2 = torch.tensor([[10.0, 20.0, 30.0, 40.0]])
@@ -173,7 +186,7 @@ def test_absolute_action_policy_carries_leftover_verbatim():
         policy._predict_with_rtc({})
     assert captured[0] is None
     leftover_model = _model_leftover()
-    assert torch.allclose(policy._rtc_prev_chunk, leftover_model)
+    assert torch.allclose(policy._rtc_prev_chunk, _emitted_chunk())
     assert policy._rtc_prev_chunk_abs is None
 
     with torch.inference_mode():
@@ -267,7 +280,7 @@ def test_relative_action_falls_back_when_reanchor_helper_unavailable(make_stub, 
     assert policy._rtc_reanchor_fn is None
     assert policy._rtc_prev_chunk_abs is None
     leftover_model = _model_leftover()
-    assert torch.allclose(policy._rtc_prev_chunk, leftover_model)
+    assert torch.allclose(policy._rtc_prev_chunk, _emitted_chunk())
     assert any("reanchor_relative_rtc_prefix" in record.message for record in caplog.records)
 
     # State moves, but with no helper the leftover is fed back unchanged.

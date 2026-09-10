@@ -78,6 +78,14 @@ actions = policy.get_actions_sync(
 # one per-tick dict of 15 leg+waist joint targets (closed-loop, not a chunk)
 ```
 
+`target_velocity` is held to a locomotion envelope of ±2.0 m/s per linear
+component and ±2.0 rad/s for `omega`, at the policy and again on the mesh
+before dispatch (one definition, `strands_robots.locomotion_envelope`). A
+component past it is refused with a reason, never clamped. A faster platform
+raises the bound with `STRANDS_MAX_TARGET_LINEAR_VELOCITY_MPS` /
+`STRANDS_MAX_TARGET_ANGULAR_VELOCITY_RPS` (positive floats, read on every
+call).
+
 ## Parameters
 
 ```python

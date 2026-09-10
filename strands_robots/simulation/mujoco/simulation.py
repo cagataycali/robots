@@ -3226,14 +3226,10 @@ class MuJoCoSimEngine(
             "policy started by start_policy on robot_name; idempotent (succeeds "
             "with 'Was not running' when none is active). The inverse of start_policy"
         )
-        base["methods"]["list_policies_running"] = (
-            "() -> dict  # names of robots currently running a background policy "
-            "(inspect concurrent-policy state when driving two or more arms in one scene)"
-        )
-
         # Multi-robot rollout + per-robot action/joint introspection. describe()
-        # advertises run_policy (drive ONE robot with a created policy) and the
-        # background start/stop/list lifecycle, but omits run_multi_policy -- the
+        # advertises run_policy (drive ONE robot with a created policy), the
+        # background start/stop lifecycle and the base contract's
+        # list_policies_running, but omits run_multi_policy -- the
         # facade that drives SEVERAL robots, each with its OWN Policy, in one
         # synchronized control loop that co-observes every robot into one merged
         # frame per timestep (the correct path for bimanual / handover / multi-
