@@ -57,7 +57,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Callable, Mapping
 
     from strands.types.tools import ToolSpec, ToolUse
 
@@ -516,3 +516,63 @@ def _telemetry_list[T: (float, int)](value: Any, coerce: Callable[[Any], T | Non
             return None
         out.append(coerced)
     return out
+
+
+def decode_motor_state(motors: Any, index: Mapping[str, int]) -> dict[str, dict[str, Any]] | None:
+    """Decode a Unitree ``LowState_.motor_state`` array into per-joint readings.
+
+    Both Unitree drivers subscribe ``rt/lowstate`` and both are handed the same
+    fixed-length ``motor_state`` array, addressed by wire slot: the G1's
+    ``unitree_hg`` layout declares 35 slots of which
+    :data:`~strands_robots.drivers.g1._G1_JOINT_INDEX` names 29, and the Go2's
+    ``unitree_go`` layout is read through
+    :data:`~strands_robots.drivers.go2.GO2_JOINT_INDEX`'s 12. The array is the
+    only proprioception either robot publishes, so a driver that does not read
+    it commands PD targets it cannot check against a measured pose.
+
+    One decoder rather than one per driver, for the reason the vector readers
+    are written once: two copies of a coercion rule drift into disagreeing
+    about which values are readings, and the copy that never gets audited is
+    the one still manufacturing numbers.
+
+    Every field is read through ``getattr(motor, name, None)`` and coerced by
+    :func:`telemetry_float` / :func:`telemetry_int`, so a name a firmware
+    revision drops lands ``None`` in the record rather than a typed default. A
+    zero here is not a harmless placeholder: ``q=0.0`` is a valid reading of a
+    joint at its zero position, so a defaulted read of a renamed field
+    publishes a plausible pose - and on the G1 that pose is what a proprioceptive
+    policy is handed at 500 Hz.
+
+    A slot the array cannot answer is skipped rather than defaulted, so a
+    firmware carrying fewer slots than the index names costs those joints and
+    not the rest of the frame.
+
+    Args:
+        motors: The ``motor_state`` field, already defaulted to ``None`` by the
+            caller's ``getattr``.
+        index: Joint name to wire slot, as the driver's own index table
+            declares it.
+
+    Returns:
+        A mapping of joint name to a ``{"q", "dq", "tau_est", "temperature"}``
+        record for every slot the array answered, or ``None`` when the field is
+        absent, bytes-like (a buffer indexes to integers, which carry none of
+        these names and would read as a full-width record of ``None``), or
+        answered no slot at all. ``None`` says the array was not read, which is
+        a different fact from a robot reporting no joints.
+    """
+    if motors is None or isinstance(motors, _BYTES_LIKE):
+        return None
+    joints: dict[str, dict[str, Any]] = {}
+    for name, slot in index.items():
+        try:
+            motor = motors[slot]
+        except (IndexError, KeyError, TypeError):
+            continue
+        joints[name] = {
+            "q": telemetry_float(getattr(motor, "q", None)),
+            "dq": telemetry_float(getattr(motor, "dq", None)),
+            "tau_est": telemetry_float(getattr(motor, "tau_est", None)),
+            "temperature": telemetry_int(getattr(motor, "temperature", None)),
+        }
+    return joints or None

@@ -164,6 +164,7 @@ def _fake_driver(monkeypatch: pytest.MonkeyPatch, *, fsm_id: int = 500) -> G1Dri
     driver._mode_machine = 4
     driver._battery = {"pct": 90.0}
     driver._imu = {"quaternion": (1.0, 0.0, 0.0, 0.0)}
+    driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
     driver._loop = None
     driver._last_task_snapshot = None
     driver._task_admission = threading.Lock()
