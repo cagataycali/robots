@@ -6,7 +6,9 @@ Inf or huge value in QVEL ... The simulation is unstable`` to stderr and reset
 every joint and object to its initial state - a silent success over a wiped
 world. The write now runs mj_step's own test (finite and below ``mjMAXVAL`` on
 ``qvel`` and on the ``qacc`` it produces) under a checkpoint and refuses,
-leaving the state exactly as it was.
+leaving the state exactly as it was: measured against a sim that never made the
+call, ``time``, ``qpos``, ``qvel``, ``act`` and ``ctrl`` are byte-identical
+after the refusal and so is the trajectory 50 steps later.
 """
 
 from __future__ import annotations
@@ -52,8 +54,12 @@ def _hinge(sim):
     return st["position"], st["velocity"]
 
 
+# 1e300 and 1e10 trip on qvel itself (mjMAXVAL is 1e10); 1e9 is under that
+# ceiling and trips only through the qacc it produces on this hinge (2.7e10),
+# which is the arm of the check a qvel-only test would leave unpinned - and it
+# resets the world on unfixed code exactly as the other two do.
 @requires_mujoco
-@pytest.mark.parametrize("value", [1e300, 1e10])
+@pytest.mark.parametrize("value", [1e300, 1e10, 1e9])
 def test_a_value_mujoco_would_reset_on_is_refused_and_the_state_is_unchanged(sim, value) -> None:
     pos_before, vel_before = _hinge(sim)
     res = sim.set_joint_velocities(robot_name="arm", velocities={"hinge": value})

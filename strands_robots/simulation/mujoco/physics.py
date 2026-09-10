@@ -1784,6 +1784,21 @@ class PhysicsMixin:
         ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
         the integrator on the next step or raising past the tool-dispatch contract.
 
+        Finite is not enough. MuJoCo's own ``mj_step`` reads a huge ``qvel``, or
+        the ``qacc`` that ``qvel`` produces, as ``"Nan, Inf or huge value in
+        QVEL ... The simulation is unstable"`` and answers it by resetting every
+        joint and object to its initial state, with only a warning on stderr --
+        so a value past that ceiling used to be reported as a successful write
+        and then wipe the world on the next step. The write therefore applies
+        that same test, ``mjMAXVAL`` (1e10) on ``qvel`` and on the ``qacc`` one
+        forward pass produces from it, under a state checkpoint: a value that
+        would trip it returns ``status="error"`` naming the values and ``qvel``
+        is put back exactly as it was. The ceiling is not the ceiling on the
+        number the caller passes: on a hinge held by a position servo ``1e9``
+        already trips through ``qacc`` alone. Accepting the write costs that one
+        forward pass, which also refreshes the derived state (``qacc``,
+        velocity sensors) the new ``qvel`` implies.
+
         The write is all-or-nothing on the same terms as
         :meth:`set_joint_positions`: an unresolvable joint name (or an empty
         mapping) returns ``status="error"`` and leaves ``qvel`` untouched.
