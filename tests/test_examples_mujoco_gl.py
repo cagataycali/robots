@@ -1,4 +1,4 @@
-"""No tracked example, notebook, or test may hard-default MUJOCO_GL to a windowed backend.
+"""No tracked example, notebook, or test may hard-default MUJOCO_GL to one platform's backend.
 
 MuJoCo has two *windowed* GL backends -- ``cgl`` (macOS) and ``glfw`` (which
 needs a window server) -- and two offscreen ones, ``egl`` and ``osmesa``. On a
@@ -40,9 +40,15 @@ Two rules are enforced over the notebooks' code cells plus every tracked
    where a backend name is the value *under test* -- a ``monkeypatch.setenv``
    or an assertion about what the resolver did.
 
-Rule 2 does not grade ``egl``/``osmesa`` defaults: an unguarded ``"egl"``
-raises on macOS, but that is a macOS-hostile default rather than a windowed
-one, and converging the tree's offscreen spellings is a separate question.
+Rule 2 grades every backend *name*, not just the windowed pair, because none of
+the four works on every platform: ``glfw`` and ``cgl`` cannot render without a
+window server, and ``egl``/``osmesa`` are absent from MuJoCo's accepted set on
+macOS, where ``import mujoco`` raises ``RuntimeError: invalid value for
+environment variable MUJOCO_GL: egl``. An unguarded ``"egl"`` is therefore the
+mirror image of an unguarded ``"cgl"`` -- each is one platform's backend named
+unconditionally -- so both are reported and the guarded form fixes both. The
+platform-independent spellings MuJoCo also accepts (``disable``, ``off``,
+``1``, ...) name no backend and are left alone.
 """
 
 from __future__ import annotations
@@ -149,14 +155,19 @@ def test_scanner_sees_cgl_usage():
 
 
 #: MuJoCo's *windowed* GL backends. Neither can render on a host with no
-#: window server, so neither is a working unconditional default. The offscreen
-#: pair MuJoCo also accepts is ``egl`` / ``osmesa``.
+#: window server, so neither is a working unconditional default.
 _WINDOWED_BACKENDS = ("cgl", "glfw")
 
+#: Every GL backend MuJoCo names, each of which some platform cannot use: the
+#: windowed pair needs a window server, and ``egl``/``osmesa`` are refused
+#: outright on macOS. So none of them is a correct unconditional default, and a
+#: module-scope default naming one has to choose per platform.
+_PLATFORM_BOUND_BACKENDS = (*_WINDOWED_BACKENDS, "egl", "osmesa")
+
 # Fallback for a notebook cell that does not parse (a ``%``/``!`` magic makes the
-# cell invalid Python on its own): report any line naming a windowed backend as
-# a MUJOCO_GL value, so an unparseable cell is never silently skipped.
-_WINDOWED_VALUE_RE = re.compile(rf'MUJOCO_GL"[^\n]*?"({"|".join(_WINDOWED_BACKENDS)})"')
+# cell invalid Python on its own): report any line naming a GL backend as a
+# MUJOCO_GL value, so an unparseable cell is never silently skipped.
+_BACKEND_VALUE_RE = re.compile(rf'MUJOCO_GL"[^\n]*?"({"|".join(_PLATFORM_BOUND_BACKENDS)})"')
 
 
 def _gl_default_value(node: ast.AST) -> ast.expr | None:
@@ -211,20 +222,20 @@ def _is_guarded_expr(expr_src: str) -> bool:
     return "darwin" in expr_src or "sys.platform" in expr_src
 
 
-def _names_windowed(expr_src: str) -> bool:
-    return any(f'"{backend}"' in expr_src or f"'{backend}'" in expr_src for backend in _WINDOWED_BACKENDS)
+def _names_a_platform_bound_backend(expr_src: str) -> bool:
+    return any(f'"{backend}"' in expr_src or f"'{backend}'" in expr_src for backend in _PLATFORM_BOUND_BACKENDS)
 
 
-def _unguarded_windowed_defaults(source: str) -> list[str]:
-    """Module-scope ``MUJOCO_GL`` defaults naming a windowed backend, unguarded."""
+def _unguarded_platform_bound_defaults(source: str) -> list[str]:
+    """Module-scope ``MUJOCO_GL`` defaults naming one platform's backend, unguarded."""
     return [
         f"line {line}: {expr}"
         for line, expr in _module_scope_gl_defaults(source)
-        if _names_windowed(expr) and not _is_guarded_expr(expr)
+        if _names_a_platform_bound_backend(expr) and not _is_guarded_expr(expr)
     ]
 
 
-def _unguarded_windowed_in_notebook(path: Path) -> list[str]:
+def _unguarded_platform_bound_in_notebook(path: Path) -> list[str]:
     """Same rule over a notebook's code cells (a cell's top level is module scope)."""
     nb = json.loads(path.read_text(encoding="utf-8"))
     offending: list[str] = []
@@ -233,32 +244,33 @@ def _unguarded_windowed_in_notebook(path: Path) -> list[str]:
             continue
         source = "".join(cell.get("source", []))
         try:
-            bad = _unguarded_windowed_defaults(source)
+            bad = _unguarded_platform_bound_defaults(source)
         except SyntaxError:
-            bad = [ln.strip() for ln in _lines_of(source) if _WINDOWED_VALUE_RE.search(ln) and not _is_guarded_expr(ln)]
+            bad = [ln.strip() for ln in _lines_of(source) if _BACKEND_VALUE_RE.search(ln) and not _is_guarded_expr(ln)]
         offending.extend(f"cell {index} {entry}" for entry in bad)
     return offending
 
 
-def test_no_module_scope_windowed_gl_default():
-    """A module-scope MUJOCO_GL default must not name a windowed backend.
+def test_no_module_scope_platform_bound_gl_default():
+    """A module-scope MUJOCO_GL default must not name a single platform's backend.
 
-    It runs at import and therefore selects the backend for the whole file, so a
-    windowed name there is what a headless host is left with when the operator
-    exported nothing.
+    It runs at import and therefore selects the backend for the whole file, so
+    the name there is what the next host is left with when the operator exported
+    nothing: a windowed one cannot render headless, and ``egl``/``osmesa`` make
+    ``import mujoco`` raise on macOS.
     """
     offenders: dict[str, list[str]] = {}
     for path in _tracked_py():
-        bad = _unguarded_windowed_defaults(path.read_text(encoding="utf-8"))
+        bad = _unguarded_platform_bound_defaults(path.read_text(encoding="utf-8"))
         if bad:
             offenders[str(path.relative_to(_REPO_ROOT))] = bad
     for path in _notebooks():
-        bad = _unguarded_windowed_in_notebook(path)
+        bad = _unguarded_platform_bound_in_notebook(path)
         if bad:
             offenders[str(path.relative_to(_REPO_ROOT))] = bad
     assert not offenders, (
-        "a module-scope MUJOCO_GL default names a windowed GL backend "
-        f"({', '.join(_WINDOWED_BACKENDS)}), which cannot render on a headless host. "
+        "a module-scope MUJOCO_GL default names one platform's GL backend "
+        f"({', '.join(_PLATFORM_BOUND_BACKENDS)}); no single one of them works everywhere. "
         'Use \'os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\'. '
         f"Offending sites: {offenders}"
     )
@@ -282,26 +294,33 @@ class TestTheRuleIsScopedToWhatSelectsTheBackend:
 
     def test_a_module_scope_glfw_default_is_reported(self):
         source = 'import os\nos.environ.setdefault("MUJOCO_GL", "glfw")\n'
-        assert _unguarded_windowed_defaults(source) == ["line 2: 'glfw'"]
+        assert _unguarded_platform_bound_defaults(source) == ["line 2: 'glfw'"]
 
     def test_a_subscript_assignment_is_a_default_too(self):
         source = 'import os\nos.environ["MUJOCO_GL"] = "glfw"\n'
-        assert _unguarded_windowed_defaults(source) == ["line 2: 'glfw'"]
+        assert _unguarded_platform_bound_defaults(source) == ["line 2: 'glfw'"]
 
     def test_the_guarded_form_is_accepted(self):
         source = (
             'import os\nimport sys\nos.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\n'
         )
-        assert _unguarded_windowed_defaults(source) == []
+        assert _unguarded_platform_bound_defaults(source) == []
 
-    def test_an_offscreen_default_is_accepted(self):
+    def test_a_module_scope_egl_default_is_reported_too(self):
+        # Valid on Linux, refused at ``import mujoco`` on macOS: one platform's
+        # backend named unconditionally, exactly like an unguarded "cgl".
         source = 'import os\nos.environ.setdefault("MUJOCO_GL", "egl")\n'
-        assert _unguarded_windowed_defaults(source) == []
+        assert _unguarded_platform_bound_defaults(source) == ["line 2: 'egl'"]
+
+    def test_a_platform_independent_default_is_accepted(self):
+        # "disable" names no backend, so it is correct on every platform.
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "disable")\n'
+        assert _unguarded_platform_bound_defaults(source) == []
 
     def test_a_default_inside_a_test_function_is_out_of_scope(self):
         # Runs after the module imported mujoco, so it cannot select the backend.
         source = 'import os\n\n\ndef test_x():\n    os.environ.setdefault("MUJOCO_GL", "glfw")\n'
-        assert _unguarded_windowed_defaults(source) == []
+        assert _unguarded_platform_bound_defaults(source) == []
 
     def test_a_backend_name_under_test_is_not_a_default(self):
         # The resolver's own tests set and assert backend names; neither is a default.
@@ -311,11 +330,11 @@ class TestTheRuleIsScopedToWhatSelectsTheBackend:
             '    monkeypatch.setenv("MUJOCO_GL", "glfw")\n'
             '    assert os.environ["MUJOCO_GL"] == "glfw"\n'
         )
-        assert _unguarded_windowed_defaults(source) == []
+        assert _unguarded_platform_bound_defaults(source) == []
 
     def test_a_module_level_conditional_default_is_still_module_scope(self):
         # Nested in a module-level ``if``, so it still runs at import.
         source = (
             'import os\nimport sys\nif sys.version_info >= (3, 12):\n    os.environ.setdefault("MUJOCO_GL", "glfw")\n'
         )
-        assert _unguarded_windowed_defaults(source) == ["line 4: 'glfw'"]
+        assert _unguarded_platform_bound_defaults(source) == ["line 4: 'glfw'"]

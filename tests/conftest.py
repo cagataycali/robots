@@ -37,13 +37,13 @@ os.environ.setdefault("STRANDS_MESH", "false")
 os.environ.setdefault("STRANDS_ROBOT_MESH_DC", "off")
 
 # Choose MuJoCo's GL backend once for the whole session, before any test module
-# is imported. Some 29 modules set it at import time with setdefault, and until
-# recently 18 of them hard-coded "egl", which mujoco refuses on macOS ("invalid
+# is imported. 29 modules under tests/ set it at import time with setdefault,
+# and 18 of those hard-coded "egl", which mujoco refuses on macOS ("invalid
 # value for environment variable MUJOCO_GL: egl"). Collection imports every
-# module, so on a Mac the first of those poisoned every render in the session -
-# the "order-dependent" failure of test_collection_loop_resets_between_episodes
-# under ``pytest tests -k ...``. Set here, each module-level setdefault is a
-# no-op whatever it says, and a user's own MUJOCO_GL still wins.
+# module, so whichever of them pytest reached first decided the value for the
+# whole session. Set here, a module-level setdefault under tests/ is a no-op
+# whatever it says, and a user's own MUJOCO_GL still wins. tests_integ/ has no
+# conftest, so the defaults in its own modules stay load-bearing.
 os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from tests.mocks.torch_mock import install_torch_mock
