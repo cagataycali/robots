@@ -1209,6 +1209,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 refused rather than honored as "write but do not advance" -
                 :meth:`step` is the surface that advances a count of its own,
                 and it accepts ``0`` as a documented no-op.
+            clamp: Accepted for the shared contract and ignored here: Newton
+                declares no actuator command range, so there is nothing to
+                clamp to and nothing to refuse.
 
         Returns:
             Status dict. When some keys cannot be resolved to joints, the
