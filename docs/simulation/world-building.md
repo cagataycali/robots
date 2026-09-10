@@ -251,6 +251,19 @@ the flat-ground keyframe height (which would leave them buried below a raised
 heightfield). A flat ground plane and a fixed-base arm (no free joint) are
 unaffected.
 
+"Its base" is the robot's OWN floating base, resolved by ownership rather than
+by name. That distinction matters when a robot's MJCF ships a free-jointed task
+object of its own -- a payload, a kick ball, the grasping cube a Menagerie
+manipulation scene declares under the robot's namespace. Such an object's joint
+is a named entry in `robot_joint_names(...)` too, and on a mobile base whose own
+`<freejoint>` is unnamed it is the only free joint that appears there at all, so
+picking a base by name can land on the object. Seating never moves it: it is not
+the robot's base, its `(x, y)` is not where the robot stands, and it is left
+exactly where the scene put it. The same resolved base is what `get_observation`
+reports as `base_pos` / `base_quat` / `base_lin_vel` / `base_ang_vel` and what
+`start_recording` declares those columns from, so the seated pose, the observed
+pose and the recorded pose are the same body's.
+
 ## Procedural objects
 
 ```python

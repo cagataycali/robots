@@ -516,19 +516,40 @@ class RenderingMixin:
         ``<freejoint>`` -- seeded from a declared joint (a mobile base like
         LeKiwi) or, for a robot that declares none, from the bodies its own
         actuators act on (an aerial robot's rotor sites). A fixed-base arm has
-        neither and returns ``-1``. Mirrors the free-joint detection inlined in
-        :meth:`_get_sim_observation`.
+        neither and returns ``-1``.
+
+        Applies the same precedence as the detection inlined in
+        :meth:`_get_sim_observation` and ``get_robot_state``: the
+        ownership-checked resolver decides, and the named scan only supplies a
+        candidate for the case where ownership resolves nothing. The named scan
+        is not allowed to decide on its own, because a robot whose MJCF ships a
+        free-jointed task object under its own namespace names that joint in
+        ``joint_names`` as well - so choosing the first one there reported the
+        prop as the robot's base, which is what terrain seating then moved.
         """
         mj = _ensure_mujoco()
         pfx = robot.namespace or ""
+        # The named scan RECORDS a candidate; it does not CHOOSE. Returning the
+        # first free joint named in ``joint_names`` chose a sibling task object's
+        # joint whenever the robot's MJCF ships one - a free-jointed payload, a
+        # kick ball, a Menagerie grasping cube - because such a joint is a named
+        # entry in ``joint_names`` too, while the robot's own base may be an
+        # UNNAMED ``<freejoint>`` that is not in that list at all. Last write
+        # wins here for the same reason it does in the two loops this mirrors.
+        named = -1
         for jnt_name in robot.joint_names:
             lookup = pfx + jnt_name if pfx else jnt_name
             jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
                 jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0 and model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
-                return int(jnt_id)
-        return self._robot_base_free_joint(model, robot, pfx)
+                named = int(jnt_id)
+        # :meth:`_robot_base_free_joint` checks ownership, so its answer wins;
+        # its ``-1`` is not allowed to erase a base the scan did find. Same
+        # precedence, in the same order, as ``_get_sim_observation`` and
+        # ``get_robot_state``.
+        owned = self._robot_base_free_joint(model, robot, pfx)
+        return owned if owned >= 0 else named
 
     def _get_sim_observation(self, robot_name: str, *, skip_images: bool = False) -> dict[str, Any]:
         """Get observation from sim: joint state + cameras (unless skipped).
