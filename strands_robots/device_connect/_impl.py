@@ -111,6 +111,38 @@ def resolve_allow_insecure(
     return False
 
 
+_TLS_ENV = (
+    "MESSAGING_CREDENTIALS_FILE",
+    "NATS_CREDENTIALS_FILE",
+    "MESSAGING_TLS_CA_FILE",
+    "MESSAGING_TLS_CERT_FILE",
+    "MESSAGING_TLS_KEY_FILE",
+    "NATS_TLS_CA_FILE",
+    "NATS_TLS_CERT_FILE",
+    "NATS_TLS_KEY_FILE",
+)
+_TLS_SCHEMES = ("tls", "quic", "zenoh+tls", "mqtts", "ssl")
+
+
+def transport_is_authenticated(backend: str, urls: list[str] | None, env: Any = os.environ) -> bool:
+    """Whether the edge runtime will actually authenticate and encrypt this transport.
+
+    ``device_connect_edge`` validates only the NATS backend (its ``_validate_config``
+    returns early for every other backend), so on the default ``zenoh`` backend
+    ``allow_insecure=False`` reaches the network unchecked: measured, a device came
+    online over plaintext LAN multicast and an anonymous peer ran ``execute`` and
+    ``stop`` on it while the INSECURE warning stayed silent. TLS is configured either
+    through a credentials/TLS file variable or a TLS endpoint scheme; NATS is left to
+    the edge's own check.
+    """
+    if backend == "nats" or any(env.get(name) for name in _TLS_ENV):
+        return True
+    endpoints = list(urls or []) + [
+        u for name in ("ZENOH_CONNECT", "MESSAGING_URLS") for u in (env.get(name) or "").split(",")
+    ]
+    return any(e.strip().split("://")[0].split("/")[0].lower() in _TLS_SCHEMES for e in endpoints if e.strip())
+
+
 async def init_device_connect(
     robot,
     peer_id: str | None = None,
@@ -169,6 +201,14 @@ async def init_device_connect(
     # var - and we log a prominent warning whenever it is active so an insecure
     # deployment is never silent.
     allow_insecure = resolve_allow_insecure(allow_insecure, os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE"))
+    if not allow_insecure and not transport_is_authenticated(messaging_backend, urls):
+        raise RuntimeError(
+            f"Device Connect refused to start {device_id}: backend '{messaging_backend}' has no TLS configured, so "
+            "the device would be online on the LAN unencrypted and any peer could call execute/stop on it. Either "
+            "point it at credentials (MESSAGING_CREDENTIALS_FILE=<bundle>.creds.json, or a tls/ endpoint), or opt in "
+            "for a trusted isolated network with DEVICE_CONNECT_ALLOW_INSECURE=true and restrict callers with "
+            "DEVICE_CONNECT_RPC_ALLOW=<caller-id,...>"
+        )
 
     if allow_insecure:
         logger.warning(
