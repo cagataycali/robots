@@ -82,6 +82,10 @@ _CALIBRATION_FIELDS: Final[tuple[str, ...]] = ("id", "drive_mode", "homing_offse
 #: side. An SO arm uses both: five joints in degrees, the gripper in percent.
 NormMode = Literal["degrees", "range_0_100"]
 
+#: The two accepted norm modes, stated once so the :meth:`MotorSpec.__post_init__`
+#: guard and the ``to_value`` / ``to_counts`` dispatch agree.
+_NORM_MODES: Final[frozenset[str]] = frozenset({"degrees", "range_0_100"})
+
 
 @dataclass(frozen=True, slots=True)
 class MotorCalibration:
@@ -137,6 +141,10 @@ class MotorSpec:
     motor_id: int
     norm_mode: NormMode = "degrees"
     resolution: int = MAX_GOAL_POSITION
+
+    def __post_init__(self) -> None:
+        if self.norm_mode not in _NORM_MODES:
+            raise ValueError(f"MotorSpec: norm_mode must be one of {sorted(_NORM_MODES)}, got {self.norm_mode!r}")
 
 
 #: The six servos of an SO-100 / SO-101 follower, in wire order.
