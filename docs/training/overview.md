@@ -170,12 +170,6 @@ lerobot reads (names the converter); `val_episodes` on a streamed, multi-task,
 or count-less dataset (lerobot splits by fraction per task); `use_relative_actions`
 on any policy other than `pi0` / `pi05` / `pi0_fast`.
 
-**Reward models train through the same trainer.** `extra["reward_model"]`
-selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
-`reward_classifier`) with that type's own fields; `compute_rabc_weights`,
-`load_reward_model` and `reward_progress` in `strands_robots.training` turn a
-trained SARM into the `sample_weighting.progress_path` parquet RA-BC reads.
-
 ### GR00T (`groot`) and Cosmos3 (`cosmos3`)
 
 `embodiment` + `tune` + `extra["groot_root"]` drive `launch_finetune.py`; with

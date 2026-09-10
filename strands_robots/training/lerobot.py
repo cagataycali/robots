@@ -714,8 +714,8 @@ class LerobotTrainer(Trainer):
         lerobot's loadable artifact is the ``pretrained_model`` dir that holds
         ``model.safetensors`` + ``train_config.json``; we locate it from the
         resume config file's parent. For reward-model runs this is the directory
-        :func:`~strands_robots.training.reward.compute_rabc_weights` consumes as
-        ``reward_model_path``.
+        ``python -m lerobot.rewards.sarm.compute_rabc_weights`` consumes as its
+        reward-model path.
         """
         cfg_file = self._resume_config_path(output_dir)
         return os.path.dirname(cfg_file) if cfg_file else None

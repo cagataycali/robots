@@ -138,7 +138,6 @@ def test_the_single_pass_scan_defers_exactly_what_the_per_node_predicates_do():
     # these do for a fraction of it.
     for rel in (
         "policies/__init__.py",
-        "training/reward.py",
         "teleoperator.py",
         "robot.py",
     ):
