@@ -180,7 +180,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
 
     Resolution order:
         1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
-           grpc://, cosmos3://, vera://)
+           grpc://, cosmos3://)
         2. Shorthand names (mock, groot, lerobot_local, ...)
         3. HuggingFace model IDs (org/model)
         4. Registered provider name
@@ -253,19 +253,6 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
                     if match:
                         kwargs["host"] = match.group(1)
                         kwargs["port"] = int(match.group(2) or 8000)
-                elif pattern.startswith("^vera://"):
-                    # VERA service-mode URL: vera://host[:port] -> kwargs.
-                    # Mirrors the cosmos3 branch (#317): the pattern matches but
-                    # without this parser nothing populates host/server_port, so
-                    # create_policy("vera://gpu-box:9000") silently connects to
-                    # the default 127.0.0.1. VERA's port kwarg is server_port;
-                    # leave it unset when the URL omits a port so the
-                    # per-embodiment default still applies.
-                    match = re.match(r"vera://([^:/]+):?(\d+)?", url)
-                    if match:
-                        kwargs["host"] = match.group(1)
-                        if match.group(2):
-                            kwargs["server_port"] = int(match.group(2))
                 elif pattern.startswith("^zmq://"):
                     match = re.match(r"zmq://([^:]+):(\d+)", url)
                     if match:

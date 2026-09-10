@@ -92,18 +92,16 @@ already-total without being driven.
 
 ``None`` and an empty list keep their existing "auto-detect" meaning: like the
 other consumers of the shared domain whose absent value DERIVES the list, this
-check is gated on a truthy value. (The VERA ``image_keys`` is the one consumer
-where it is not, because it selects a subset of the observation it was handed, so
-an empty selection there is refused rather than derived.)
+check is gated on a truthy value.
 
 The AST classifier below proves that each of the nine owning surfaces CALLS
 the shared domain. It cannot prove that any of them RAISES: a body keeping the
 ``name_list_error(...)`` call and dropping the ``raise`` satisfies it unchanged.
 Only ``MockPolicy`` and ``RemotePolicy`` were driven behaviourally, so on the
-other seven the refusal was asserted structurally and had never fired - measured
+others the refusal was asserted structurally and had never fired - measured
 with coverage over the suite, the ``raise ValueError(error)`` line was unexecuted
-in ``cosmos3``, ``curobo``, ``groot``, ``lerobot_async``, ``lerobot_local``,
-``moveit2`` and ``vera``. Each is now constructed and driven directly, and the
+in ``cosmos3``, ``curobo``, ``groot``, ``lerobot_async``, ``lerobot_local``
+and ``moveit2``. Each is now constructed and driven directly, and the
 table that does so is derived from ``_MUST_VALIDATE`` so a provider added later
 cannot quietly join the structurally-only half.
 """
@@ -142,7 +140,6 @@ _MUST_VALIDATE = {
     "policies/mock.py::MockPolicy",
     "policies/microduck/policy.py::MicroduckPolicy",
     "policies/moveit2/policy.py::MoveIt2Policy",
-    "policies/vera/provider.py::VeraPolicy",
 }
 
 # Already total without the shared domain: every joint they drive is resolved by
@@ -820,14 +817,6 @@ def _moveit2() -> Any:
     return MoveIt2Policy()
 
 
-def _vera() -> Any:
-    """An injected client with no auto-launch keeps VERA out of the process."""
-    from strands_robots.policies.vera.provider import VeraPolicy
-
-    client: Any = object()  # dependency injection: nothing dials in these tests
-    return VeraPolicy(auto_launch_server=False, client=client)
-
-
 def _microduck() -> Any:
     """A Microduck policy with only a path set - the setter never builds the session."""
     from strands_robots.policies.microduck import MicroduckPolicy
@@ -848,7 +837,6 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
-    ("policies/vera/provider.py::VeraPolicy", _vera, "_robot_state_keys", None),
 ]
 _OWNING_IDS = [surface.split("::")[1] for surface, *_ in _OWNING_SURFACES]
 

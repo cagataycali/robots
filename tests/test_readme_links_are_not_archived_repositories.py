@@ -129,7 +129,7 @@ def _github_repository(url: str) -> str | None:
         return None
 
     # Trailing sentence punctuation first, so a clone URL's `.git` is still the
-    # suffix when it is stripped: `VERA.git` -> `VERA`, `robots-sim.` -> `robots-sim`.
+    # suffix when it is stripped: `mink.git` -> `mink`, `robots-sim.` -> `robots-sim`.
     repo = repo.rstrip(".,;:!?").removesuffix(".git")
     if not repo:
         return None
@@ -208,8 +208,8 @@ class TestTheRepositoryExtractor:
             # A deep path still names the repository it is inside.
             ("https://github.com/strands-labs/robots/blob/main/LICENSE", "strands-labs/robots"),
             ("https://github.com/strands-labs/robots/issues/2062", "strands-labs/robots"),
-            # A clone URL, as the README's VERA link is written.
-            ("https://github.com/sizhe-li/VERA.git", "sizhe-li/vera"),
+            # A clone URL, as a README dependency link may be written.
+            ("https://github.com/kevinzakka/mink.git", "kevinzakka/mink"),
             # GitHub account and repository names are case-insensitive.
             ("https://github.com/NVIDIA/Isaac-GR00T", "nvidia/isaac-gr00t"),
             ("https://GitHub.com/Strands-Labs/Robots-Sim", "strands-labs/robots-sim"),

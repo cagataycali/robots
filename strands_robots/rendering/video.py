@@ -42,8 +42,8 @@ _MAX_CLIP_QUALITY = 10
 
 #: The ``imageio`` plugin that writes MP4. ``imageio`` declares it as an
 #: optional ``ffmpeg`` extra of its own, so an install can supply ``imageio``
-#: and still have no MP4 backend behind it - this package's ``[vera-sim]`` extra
-#: is exactly that install, declaring ``imageio`` alone. With the plugin absent
+#: and still have no MP4 backend behind it - every extra here declares both, but
+#: nothing stops a caller installing ``imageio`` on its own. With the plugin absent
 #: ``imageio`` falls through to whatever other plugin claims the requested
 #: container, and the libx264 knobs every MP4 writer here passes reach a writer
 #: that has never heard of them, so the request fails as a ``TypeError`` naming

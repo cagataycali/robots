@@ -9,9 +9,9 @@
     imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps))
 
 That millisecond reading is imageio's from 2.28.0 on; earlier releases read the
-same number as seconds. ``[sim-mujoco]`` and ``[sim-isaac]`` declared
-``imageio>=2.28.0,<3.0.0`` for it. ``[vera-sim]`` - which ships ``mujoco``, and
-whose documented example records its rollout as a GIF - declared a bare
+same number as seconds. ``[sim-mujoco]`` and ``[sim-isaac]`` declare
+``imageio>=2.28.0,<3.0.0`` for it. A third extra - which shipped ``mujoco``, and
+whose documented example recorded its rollout as a GIF - declared a bare
 ``imageio`` with no bound at all, so the manifest described an install in which
 that encoder writes the wrong clip. Measured against the released wheels on
 Python 3.12 (the project's minimum), driving the shipped ``encode_clip`` over 12
@@ -41,9 +41,9 @@ either can be refused.
 The encoder itself is already covered: the suite pins that an ``encode_clip``
 GIF decodes to a per-frame duration matching the requested fps, which holds only
 from 2.28.0. What was missing is a floor that admits only the releases where
-that can hold. Nothing compared the two because ``[vera-sim]`` is declared in
-conflict with ``[all]`` (``[tool.uv] conflicts``) and CI installs ``.[all,dev]``,
-so the resolve this extra describes is never built.
+that can hold. Nothing compared the two because that extra was declared in
+conflict with ``[all]`` and CI installs ``.[all,dev]``, so the resolve it
+described was never built.
 
 :data:`_IMAGEIO_SYMBOL_FLOORS` and :data:`_GIF_DURATION_IN_MILLISECONDS_FROM`
 are the single owners of the measurement; the tests below derive the required

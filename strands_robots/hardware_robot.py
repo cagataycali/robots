@@ -1958,7 +1958,7 @@ class Robot(TeleopMixin, AgentTool):
         value is checked against
         :func:`~strands_robots.utils.tcp_port_error`, the shared domain whose
         docstring already names "the policy providers that dial one (``groot``,
-        ``moveit2``, ``cosmos3``, ``lerobot_async``, ``vera``)" - the very
+        ``moveit2``, ``cosmos3``, ``lerobot_async``)" - the very
         providers this path forwards to - so the same port cannot be accepted by
         the arm's task entry points and refused by the provider they hand it to.
 

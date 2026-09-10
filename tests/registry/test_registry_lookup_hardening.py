@@ -1,7 +1,6 @@
 """Registry lookups must not be brickable, silently misrouted, or name-blind.
 
-Three read/write invariants of the robot + policy registry that previously
-had gaps:
+Two read/write invariants of the robot registry that previously had gaps:
 
 1. ``register_robot`` must reject an alias that collides with an existing
    canonical name (or another robot's alias) instead of persisting it with a
@@ -9,10 +8,7 @@ had gaps:
    "successful" registration could otherwise brick every ``get_robot`` /
    ``resolve_name`` call process-wide until ``user_robots.json`` was hand-edited.
    Write-time validation must match the loader's read-time validation.
-2. A ``vera://host:port`` policy URL must parse its host/port into kwargs. The
-   ``^vera://`` pattern matched but had no parser branch, so
-   ``create_policy("vera://gpu-box:9000")`` silently fell back to 127.0.0.1.
-3. ``resolve_name`` must round-trip every canonical robot name, including the
+2. ``resolve_name`` must round-trip every canonical robot name, including the
    alias-less ones. The canonical check used ``alias_map.values()`` (only robots
    that declare an alias), so a normalized form like ``reachy-2`` -> ``reachy_2``
    never resolved to the alias-less canonical ``reachy2``.
@@ -23,7 +19,6 @@ from importlib.resources import files
 
 import pytest
 
-from strands_robots.registry.policies import resolve_policy
 from strands_robots.registry.robots import get_robot, resolve_name
 from strands_robots.registry.user_registry import register_robot
 
@@ -105,24 +100,6 @@ class TestRegisterRobotFailsClosedOnAliasCollision:
         )
         assert get_robot("myleader") is not None
         assert get_robot("so100") is not None
-
-
-class TestVeraUrlParsing:
-    """vera://host[:port] must populate connection kwargs, not fall to 127.0.0.1."""
-
-    def test_vera_url_parses_host_and_server_port(self):
-        """create_policy('vera://gpu-box:9000') targets gpu-box:9000."""
-        provider, kwargs = resolve_policy("vera://gpu-box:9000")
-        assert provider == "vera"
-        assert kwargs["host"] == "gpu-box"
-        assert kwargs["server_port"] == 9000
-
-    def test_vera_url_without_port_leaves_embodiment_default(self):
-        """Omitting the port keeps host but leaves server_port to the default."""
-        provider, kwargs = resolve_policy("vera://gpu-box")
-        assert provider == "vera"
-        assert kwargs["host"] == "gpu-box"
-        assert "server_port" not in kwargs
 
 
 class TestCanonicalNameRoundTrip:

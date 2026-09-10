@@ -3,12 +3,10 @@
 The single home for the generic differential-IK solver wrapper
 (:class:`MinkIKBridge`) and the end-effector frame auto-discovery heuristic
 (:func:`discover_ee_frame`) that were previously duplicated per policy provider
-(:mod:`strands_robots.policies.cosmos3.sim_ik` and
-:mod:`strands_robots.policies.vera.sim_ik` each carried a copy of the bridge;
-the discovery heuristic lived in :mod:`strands_robots.policies.vera.ee_frame`).
-Those modules now re-export from here, keeping their provider-specific decode
-glue (action-chunk semantics) in place - a change to one model's action
-semantics still cannot break the other, because only the model-agnostic solver
+(:mod:`strands_robots.policies.cosmos3.sim_ik` carried its own copy of the
+bridge). That module now re-exports from here, keeping its provider-specific
+decode glue (action-chunk semantics) in place - a change to one model's action
+semantics cannot reach another provider, because only the model-agnostic solver
 wrapper is shared.
 
 :class:`MinkIKBridge` wraps `mink <https://github.com/kevinzakka/mink>`_, a

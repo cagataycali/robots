@@ -2,8 +2,9 @@
 
 ``bind_policy_sim_context`` is the seam that hands the compiled ``MjModel`` and
 a robot's joint namespace to policies that opt in via a ``set_sim_context``
-method (e.g. ``VeraPolicy`` auto-discovering its end-effector frame for
-zero-config IK). The contract this method pins:
+method - an out-of-tree eef-delta policy auto-discovering its end-effector frame
+for zero-config IK. No shipped provider opts in, so the stubs below stand in for
+one. The contract this method pins:
 
 * It is a strict no-op for policies that do not expose a callable
   ``set_sim_context`` - ordinary joint-position policies are unaffected.

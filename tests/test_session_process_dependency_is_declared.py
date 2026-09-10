@@ -164,8 +164,7 @@ def _unconditional_third_party_imports() -> dict[str, list[str]]:
             if name in sys.stdlib_module_names or name in {"__future__", "strands_robots"}:
                 continue
             # A sibling module ships in the same directory: first-party by
-            # layout, not a distribution. `policies/vera/docker/launch_server.py`
-            # imports its own `wandb_offline_resolve` this way.
+            # layout, not a distribution.
             if (source.parent / f"{name}.py").exists():
                 continue
             found.setdefault(name, []).append(str(source.relative_to(_PACKAGE_ROOT)))

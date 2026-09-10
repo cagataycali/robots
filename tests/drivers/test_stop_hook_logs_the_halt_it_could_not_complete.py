@@ -40,6 +40,21 @@ rather than listed: *a ``stop`` that calls one of its own envelope-returning
 verbs must read what that verb answered.* Nine of the twelve shipped drivers
 already satisfied it - seven log the failure directly at the wire and two read a
 delegated envelope first - so this pins the shape they already have.
+
+That relation only reaches the hooks that *delegate*. Three reached the wire
+themselves and guarded it with ``except``, and one of the three - ``RobotiqDriver``
+- reported the failure with ``logger.debug`` and did not name the gripper, while
+its own ``stop_task`` decided a real verdict for the identical write. The root
+logger sits at ``WARNING`` until something lowers it, so that call emitted
+nothing at all: the "seven log the failure directly at the wire" above counted a
+report no operator receives. A 2F-85 whose halt did not land leaves the fingers
+travelling to the last commanded aperture - closing on whatever is between them,
+or opening and releasing it - and ``stop`` returns ``None``, so there was no
+surface anywhere saying the gripper had not stopped. Hence the second relation,
+derived the same way: *a ``stop`` that catches its own wire failure must report it
+at a level a default configuration emits, naming the robot.* ``RobotiqDriver.stop``
+now delegates to ``stop_task`` like the three above, which leaves that population
+the two hooks that really do hold the wire themselves.
 """
 
 from __future__ import annotations
@@ -205,6 +220,127 @@ class TestTheRelationIsNotVacuous:
         # call to it is not the shape this relation is about.
         node = ast.parse("async def stop(self) -> None:\n    self._halt_repeater()\n").body[0]
         assert _discarded_envelopes(node, {"stop_task", "land"}) == []
+
+
+# --------------------------------------------------------------------------- #
+# The same asymmetry, for the hooks that reach the wire themselves.            #
+# --------------------------------------------------------------------------- #
+
+#: Logging levels a default configuration actually emits. The root logger sits at
+#: ``WARNING`` until something lowers it, so a call below that is not a report at
+#: all: it runs, formats nothing, and the failure reaches no operator. That makes
+#: ``logger.debug`` indistinguishable from dropping the exception on the floor.
+_EMITTED_LEVELS = frozenset({"warning", "error", "exception", "critical"})
+
+
+def _logger_calls(node: ast.AST) -> list[tuple[str, ast.Call]]:
+    """Every ``logger.<level>(...)`` call in this body, paired with its level."""
+    return [
+        (call.func.attr, call)
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "logger"
+    ]
+
+
+def _unreported_wire_failures(node: ast.AST) -> list[str]:
+    """Handlers in this hook that catch a wire failure and report it to nobody.
+
+    :func:`_discarded_envelopes` grades the hooks that delegate to a verb which
+    decides a verdict. A hook that instead guards its own wire call with
+    ``except`` is invisible to it, and owes exactly the same thing: ``stop``
+    returns ``None``, so the handler is the last place the failure can be
+    recorded. Two ways to fail that are the same absence - reporting below the
+    level a default configuration emits, and not naming which robot did not stop,
+    which in a fleet teardown leaves an operator with a message they cannot act
+    on.
+    """
+    unreported = []
+    for handler in (h for h in ast.walk(node) if isinstance(h, ast.ExceptHandler)):
+        caught = ast.unparse(handler.type) if handler.type else "<bare except>"
+        calls = _logger_calls(handler)
+        emitted = [call for level, call in calls if level in _EMITTED_LEVELS]
+        if not emitted:
+            levels = sorted({level for level, _ in calls})
+            unreported.append(f"except {caught}: reports at {levels or ['nothing at all']}")
+        elif not any("_tool_name" in ast.dump(call) for call in emitted):
+            unreported.append(f"except {caught}: the report does not name the robot")
+    return unreported
+
+
+class TestEveryStopHookReportsTheWireFailureItCaught:
+    """The relation for the hooks that hold the wire themselves."""
+
+    def test_the_population_is_the_hooks_that_guard_their_own_wire_call(self) -> None:
+        guarding = sorted(
+            name
+            for name, cls in _driver_classes().items()
+            if any(isinstance(node, ast.ExceptHandler) for node in ast.walk(_method_ast(cls, "stop")))
+        )
+        # Named so the relation cannot quietly empty out into a vacuous pass.
+        assert guarding == ["MicroduckDriver", "URDriver"], guarding
+
+    def test_no_caught_wire_failure_goes_unreported(self) -> None:
+        offenders = {
+            name: unreported
+            for name, cls in sorted(_driver_classes().items())
+            if (unreported := _unreported_wire_failures(_method_ast(cls, "stop")))
+        }
+        assert offenders == {}, (
+            "these stop hooks catch a failure to halt the robot and report it nowhere an "
+            "operator will see. stop() returns None, so nothing else records that the robot "
+            f"did not stop: {offenders}"
+        )
+
+
+class TestTheWireRelationIsNotVacuous:
+    """Graded on constructed sources, so a clean tree is not the only evidence."""
+
+    _COMPLIANT = """
+        async def stop(self) -> None:
+            try:
+                self._write(0)
+            except OSError as exc:
+                logger.error("%s.stop(): it did not stop: %s", self._tool_name, exc)
+    """
+    _BELOW_THE_THRESHOLD = """
+        async def stop(self) -> None:
+            try:
+                self._write(0)
+            except OSError as exc:
+                logger.debug("could not reach it: %s", exc)
+    """
+    _UNNAMED_ROBOT = """
+        async def stop(self) -> None:
+            try:
+                self._write(0)
+            except OSError as exc:
+                logger.error("the halt did not land: %s", exc)
+    """
+    _SILENT = """
+        async def stop(self) -> None:
+            try:
+                self._write(0)
+            except OSError:
+                pass
+    """
+
+    def test_a_named_report_at_an_emitted_level_is_accepted(self) -> None:
+        node = ast.parse(textwrap.dedent(self._COMPLIANT)).body[0]
+        assert _unreported_wire_failures(node) == []
+
+    @pytest.mark.parametrize("source", ["_BELOW_THE_THRESHOLD", "_UNNAMED_ROBOT", "_SILENT"])
+    def test_a_failure_an_operator_cannot_see_is_refused(self, source: str) -> None:
+        node = ast.parse(textwrap.dedent(getattr(self, source))).body[0]
+        assert len(_unreported_wire_failures(node)) == 1
+
+    def test_debug_is_reported_as_the_non_report_it_is(self) -> None:
+        # The wording matters: "reports at ['debug']" is what tells a reader the
+        # call is there and still emits nothing under a default configuration.
+        node = ast.parse(textwrap.dedent(self._BELOW_THE_THRESHOLD)).body[0]
+        assert _unreported_wire_failures(node) == ["except OSError: reports at ['debug']"]
 
 
 # --------------------------------------------------------------------------- #

@@ -39,6 +39,10 @@ class FakeGripper:
         commanded: Every ``rPR`` the gripper was told to go to, in order, for a
             test to assert what actually reached the wire.
         writes: Every decoded output payload, for asserting the flag bits.
+        exception_code: While set, every request is answered with a Modbus
+            exception carrying this code. Writable after construction so a test
+            can make a connected controller *start* refusing, which is how the
+            wire fails in the field - a driver reaches it once and then does not.
     """
 
     def __init__(
@@ -72,7 +76,7 @@ class FakeGripper:
         self._object_status = object_status
         self._fault = fault
         self._current = current
-        self._exception_code = exception_code
+        self.exception_code = exception_code
         self._never_activates = never_activates
 
         self.activated = starts_activated
@@ -156,8 +160,8 @@ class FakeGripper:
 
     def _answer(self, transaction: int, unit: int, body: bytes) -> bytes:
         function = body[0]
-        if self._exception_code is not None:
-            return _frame(transaction, unit, struct.pack(">BB", function | 0x80, self._exception_code))
+        if self.exception_code is not None:
+            return _frame(transaction, unit, struct.pack(">BB", function | 0x80, self.exception_code))
         if function == WRITE_MULTIPLE_REGISTERS:
             address, count, _byte_count = struct.unpack(">HHB", body[1:6])
             self._apply(body[6 : 6 + count * 2])

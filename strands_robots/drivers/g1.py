@@ -50,6 +50,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import (
+    decode_motor_state,
     policy_step,
     telemetry_float,
     telemetry_float_list,
@@ -329,6 +330,7 @@ class G1Driver:
         # tiny critical section around dict swap; readers snapshot.
         self._cache_lock = threading.Lock()
         self._imu: dict[str, Any] | None = None
+        self._joints: dict[str, Any] | None = None
         self._battery: dict[str, Any] | None = None
         self._lidar_state: dict[str, Any] | None = None
         self._lidar_summary: dict[str, Any] | None = None
@@ -470,7 +472,7 @@ class G1Driver:
                             "action": {
                                 "type": "string",
                                 "description": (
-                                    "sensors: return the latest cached IMU/battery/lidar; "
+                                    "sensors: return the latest cached IMU/joints/battery/lidar; "
                                     "status: report connection and FSM; "
                                     "stop: halt any running control loop - it publishes a zero-torque "
                                     "frame on exit - and report whether it joined"
@@ -515,6 +517,7 @@ class G1Driver:
                     {
                         "json": {
                             "imu": self._snapshot("_imu"),
+                            "joints": self._snapshot("_joints"),
                             "battery": self._snapshot("_battery"),
                             "lidar_state": self._snapshot("_lidar_state"),
                             "lidar_summary": self._snapshot("_lidar_summary"),
@@ -1364,7 +1367,7 @@ class G1Driver:
         ]
 
     def _on_lowstate(self, msg: Any) -> None:
-        """Decode ``rt/lowstate`` into :attr:`_imu` and :attr:`_mode_machine`.
+        """Decode ``rt/lowstate`` into :attr:`_imu`, :attr:`_joints` and :attr:`_mode_machine`.
 
         ``LowState_.mode_machine`` is the uint8 hardware-layout id the firmware
         wants echoed on every ``LowCmd_``.  It is **not** the high-level FSM
@@ -1397,6 +1400,17 @@ class G1Driver:
         raising past the dict and abandoning a frame that carried three good
         readings.
 
+        ``motor_state`` is the array this robot's 29 PD-controlled joints
+        report through, and it is read by the same shared decoder the twin
+        driver uses -
+        :func:`~strands_robots.drivers.base.decode_motor_state` over
+        :data:`_G1_JOINT_INDEX` - so both Unitree peers publish one ``joints``
+        shape. It is the only proprioception the G1 publishes: without it
+        :meth:`send_action` writes ``motor_cmd[i].q`` under gains up to
+        :data:`_SDK_KP` against joints the driver cannot observe, and
+        :meth:`_ControlLoop._call_policy` hands a policy an observation with no
+        measured pose in it.
+
         ``mode_machine`` is read the same way, through
         :func:`~strands_robots.drivers.base.telemetry_int`.  It is a reading
         like any other and it is the one this method sends back out: the
@@ -1425,6 +1439,9 @@ class G1Driver:
                     "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
                     "t": time.time(),
                 }
+            joints = decode_motor_state(getattr(msg, "motor_state", None), _G1_JOINT_INDEX)
+            if joints is not None:
+                self._joints = joints
             mode_machine = telemetry_int(getattr(msg, "mode_machine", None))
             if mode_machine is not None:
                 self._mode_machine = mode_machine
@@ -2218,6 +2235,7 @@ class _ControlLoop:
             "fsm_id": self._driver._fsm_id,
             "battery": self._driver._battery,
             "imu": self._driver._imu,
+            "joints": self._driver._joints,
         }
         assert self._step_fn is not None, "run_policy admits only a resolvable policy"
         return self._step_fn(obs)

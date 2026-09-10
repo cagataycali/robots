@@ -421,8 +421,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCPolicy (GR00T Whole-Body-Control / SONIC locomotion)
         "wbc",
         "sonic",
-        # VeraPolicy
-        "vera",
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",

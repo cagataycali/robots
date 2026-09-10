@@ -10,7 +10,7 @@ and measures ``position_error_m`` - the value the ``reached`` flag is decided
 on - at that frame every control tick.
 
 The discovery function is pinned exhaustively, all three branches, by
-``tests/policies/vera/test_ee_frame_discovery.py``. Its consumer was not: every
+``tests/simulation/test_ee_frame_discovery.py``. Its consumer was not: every
 arm in the motion-primitive suite declares an ``ee_site``, so ``move_to`` had
 only ever run on the site branch, and the one ``frame_type`` assertion in the
 tree pins ``"site"``. The body arm of the readback - both discovery routes that

@@ -597,49 +597,6 @@ device-connect = [
 ros2 = [
     "cyclonedds>=0.10.2,<1.0.0",
 ]
-# NOTE: There is intentionally no `vera` extra. VERA is only distributed as a
-# git repository (https://github.com/sizhe-li/VERA) and PyPI rejects any package
-# whose metadata contains a direct URL/VCS reference (HTTP 400 on upload). The
-# VERA provider launches the git-installed `vera` package as a subprocess
-# (`python -m vera.server...`), so install it directly alongside strands-robots:
-#     pip install "strands-robots[vera-sim]" websockets msgpack "numpy>=1.24"
-#     pip install "vera @ git+https://github.com/sizhe-li/VERA.git"
-# See README (VERA row) and strands_robots/policies/vera/__init__.py.
-vera-sim = [
-    "gymnasium==0.29.1",
-    "gym-pusht==0.1.5",
-    "robosuite==1.4.1",
-    # robomimic v0.5.0 is NOT published to PyPI -- the highest PyPI release is
-    # 0.3.0, and v0.5.0 exists only as an ARISE-Initiative GitHub tag. Pinning
-    # `robomimic==0.5.0` here is therefore both unresolvable (uv lock fails) and
-    # a dependency-confusion risk (anyone publishing 0.5.0 to PyPI would be
-    # installed). robomimic is not imported anywhere in the source; VERA pulls
-    # it in itself. If you need robomimic v0.5.0, install it from source:
-    #     pip install "robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0"
-    # MimicGen (NVlabs) is NOT published to PyPI -- the `mimicgen` name on PyPI
-    # is an unaffiliated third-party package, so pinning it here is a
-    # dependency-confusion risk and it is not imported anywhere in the source.
-    # The `mimicgen` VERA *embodiment* is just a config string and does not need
-    # the package. If you genuinely need NVlabs MimicGen for data generation,
-    # install it from source:
-    #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
-    "mujoco>=3.5.0,<4.0.0",
-    # Clip encoder for this extra's MuJoCo rollouts (the VERA MimicGen example
-    # ships its rollout as a GIF). encode_clip (strands_robots.rendering.video)
-    # imports `imageio.v2` and passes the GIF writer a per-frame duration in
-    # MILLISECONDS, which is imageio's reading only from 2.28.0 on. Measured
-    # against the released wheels on Python 3.12: `imageio.v2` does not exist
-    # before 2.16.0, so encode_clip raises a bare ModuleNotFoundError one line
-    # after its require_optional probe has already reported imageio installed
-    # (require_optional takes no minimum version, so it cannot refuse); 2.16.0 -
-    # 2.19.0 raise out of mimsave; and 2.20.0 - 2.27.0 read that duration as
-    # seconds, silently encoding the clip 1000x too slow (fps=12 -> 83330 ms per
-    # frame instead of 83) while returning a valid GIF that encode_clip's
-    # "the encoder wrote no clip" check accepts. Same specifier as
-    # [sim-mujoco]/[sim-isaac]: one environment resolves one imageio, so a
-    # looser range here describes an install nobody gets.
-    "imageio>=2.28.0,<3.0.0",
-]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
 # device): strands.models.ollama.OllamaModel does a top-level `import ollama`.
 # Delegate to strands-agents' own [ollama] extra (bounded pin, ollama>=0.4.8,<1.0.0)
@@ -770,20 +727,6 @@ dependencies = [
 # inference runs on GPU. The sole remaining override is the diffusers security
 # floor.
 [tool.uv]
-# The legacy VERA sim stack ([vera-sim]) pins gymnasium==0.29.1, which is
-# mutually exclusive with lerobot>=0.6.0 (requires gymnasium>=1.1.1). uv
-# resolves all extras jointly by default, so without a fork declaration this
-# single pin drags the WHOLE resolution below lerobot 0.6 (previously froze the
-# lock at lerobot 0.5.1, making vla_jepa/molmoact2/eo1/lerobot.rl unreachable).
-# Declaring the conflict makes uv fork the resolution: install [vera-sim] OR the
-# lerobot-0.6 extras, never both in one environment.
-conflicts = [
-    [{ extra = "vera-sim" }, { extra = "lerobot" }],
-    [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
-    [{ extra = "vera-sim" }, { extra = "molmoact2" }],
-    [{ extra = "vera-sim" }, { extra = "smolvla" }],
-    [{ extra = "vera-sim" }, { extra = "all" }],
-]
 # SECURITY floors for transitive packages. Each of these arrives only through
 # another dependency (cbor2/ujson under autobahn, twisted under roslibpy,
 # pyopenssl under twisted), so nothing in [project] declares a version for
@@ -892,10 +835,6 @@ indent-style = "space"
 
 [tool.mypy]
 python_version = "3.12"
-# The VERA docker/ scripts run INSIDE the strands-vera-server container
-# (they import vera / torchmetrics / omegaconf, present only in that image),
-# so exclude them from the host-side mypy run.
-exclude = "strands_robots/policies/vera/docker/"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

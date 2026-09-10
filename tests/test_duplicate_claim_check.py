@@ -21,7 +21,7 @@ Two pins carry design decisions rather than behaviour:
     accusation but a silent no-op: a check that reports clean because it could not
     see the other pull requests is worse than no check, because it looks like one.
 
-See scripts/check_duplicate_claim.py, issue #2017, and the "PR Workflow" section
+See .github/scripts/check_duplicate_claim.py, issue #2017, and the "PR Workflow" section
 of AGENTS.md.
 """
 
@@ -36,7 +36,7 @@ from typing import Any
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SCRIPT = _ROOT / "scripts" / "check_duplicate_claim.py"
+_SCRIPT = _ROOT / ".github" / "scripts" / "check_duplicate_claim.py"
 _AGENTS = _ROOT / "AGENTS.md"
 
 
@@ -50,8 +50,8 @@ def _load() -> Any:
 
 
 # The script is annotated and mypy-clean on its own
-# (mypy scripts/check_duplicate_claim.py); it is reached through importlib here
-# because scripts/ is not an importable package, so its members are module
+# (mypy .github/scripts/check_duplicate_claim.py); it is reached through importlib
+# here because neither tool directory is an importable package, so its members are
 # attributes at runtime rather than names mypy can resolve to types.
 mod = _load()
 
@@ -65,14 +65,26 @@ _MEASURED_PAIRS: tuple[tuple[int, int, int, int], ...] = (
 )
 
 
+def _check_script_paths() -> list[Path]:
+    """Return every check script, from both directories that hold one.
+
+    The pull-request triage tools live in ``.github/scripts/`` beside the other
+    repository automation; the checks a workflow step runs live in ``scripts/``.
+    Reading both keeps the population derived from the tree rather than from
+    which directory a tool happens to sit in, so relocating one does not quietly
+    drop it from the requirement below.
+    """
+    return [
+        path for directory in ("scripts", ".github/scripts") for path in sorted((_ROOT / directory).glob("check_*.py"))
+    ]
+
+
 #: Check scripts that can infer their repository from the environment, derived
 #: rather than listed: a script that never reads ``$GITHUB_REPOSITORY`` (the local
 #: git ones) has nothing to infer and so nothing to be given.
 _INFERS_REPOSITORY: tuple[str, ...] = tuple(
     sorted(
-        path.name
-        for path in sorted((_ROOT / "scripts").glob("check_*.py"))
-        if "GITHUB_REPOSITORY" in path.read_text(encoding="utf-8")
+        path.name for path in sorted(_check_script_paths()) if "GITHUB_REPOSITORY" in path.read_text(encoding="utf-8")
     )
 )
 
@@ -108,7 +120,9 @@ def _documented_intake_argv(issue: int) -> list[str]:
     uniqueness would fail on the sibling command instead of on a shortened intake
     one, which is the failure it exists to produce.
     """
-    found = re.findall(r"python3 scripts/check_duplicate_claim\.py([^\n`]*)", _AGENTS.read_text(encoding="utf-8"))
+    found = re.findall(
+        r"python3 (?:\.github/)?scripts/check_duplicate_claim\.py([^\n`]*)", _AGENTS.read_text(encoding="utf-8")
+    )
     intake = [argv for argv in found if "--issue" in argv]
     assert len(intake) == 1, found
     return [part.replace("<N>", str(issue)) for part in intake[0].split()]
@@ -130,7 +144,7 @@ def _check_invocations_in(text: str) -> list[tuple[str, str]]:
     command to copy, so requiring a flag of it would be the same false rejection
     :data:`_NAMES_REPOSITORY`'s scope note exists to avoid.
     """
-    mentions = re.findall(r"scripts/(check_[a-z_]+\.py)([^\n`]*)", text)
+    mentions = re.findall(r"(?:\.github/)?scripts/(check_[a-z_]+\.py)([^\n`]*)", text)
     return [(script, rest) for script, rest in mentions if "--" in rest]
 
 

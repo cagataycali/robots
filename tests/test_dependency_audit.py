@@ -59,7 +59,7 @@ def test_audit_flags_reintroduced_mimicgen(tmp_path):
         'version = "0"\n'
         'dependencies = ["numpy>=1.24"]\n'
         "[project.optional-dependencies]\n"
-        'vera-sim = ["mimicgen==1.0.0", "mujoco>=3.5.0"]\n',
+        'sim = ["mimicgen==1.0.0", "mujoco>=3.5.0"]\n',
         encoding="utf-8",
     )
     findings = audit_deps.audit(pyproject, check_pypi=False)
@@ -75,8 +75,8 @@ def test_git_and_self_reference_deps_are_excluded(tmp_path):
         'version = "0"\n'
         'dependencies = ["numpy>=1.24"]\n'
         "[project.optional-dependencies]\n"
-        'vera = ["vera @ git+https://github.com/sizhe-li/VERA.git"]\n'
-        'all = ["x[vera]"]\n',
+        'gitdep = ["gitdep @ git+https://example.invalid/acme/gitdep.git"]\n'
+        'all = ["x[gitdep]"]\n',
         encoding="utf-8",
     )
     deps = audit_deps.collect_pypi_dependencies(pyproject)
@@ -115,11 +115,11 @@ def test_audit_flags_direct_reference_dependency(tmp_path):
         'version = "0"\n'
         'dependencies = ["numpy>=1.24"]\n'
         "[project.optional-dependencies]\n"
-        'vera = ["vera @ git+https://github.com/sizhe-li/VERA.git"]\n',
+        'gitdep = ["gitdep @ git+https://example.invalid/acme/gitdep.git"]\n',
         encoding="utf-8",
     )
     findings = audit_deps.audit(pyproject, check_pypi=False)
-    assert any("DIRECT REFERENCE" in f and "vera" in f for f in findings), findings
+    assert any("DIRECT REFERENCE" in f and "gitdep" in f for f in findings), findings
 
 
 def test_direct_reference_check_ignores_extras_specifiers_and_markers(tmp_path):
@@ -273,20 +273,16 @@ def test_ruff_bound_is_consistent_across_pyproject() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phantom `==` version-pin guard + the vera-sim / lerobot-0.6 fork invariant.
+# Phantom `==` version-pin guard.
 #
-# `robomimic==0.5.0` was pinned in the [vera-sim] extra, but robomimic's highest
-# PyPI release is 0.3.0 -- v0.5.0 exists only as an ARISE-Initiative GitHub tag.
-# The pin was thus unresolvable forever (it wedged `uv lock`, freezing uv.lock at
-# a months-old lerobot 0.5.1 resolution and hiding vla_jepa/molmoact2/lerobot.rl)
-# AND a dependency-confusion vector (whoever publishes robomimic 0.5.0 to PyPI
-# gets installed). A phantom `==` version differs from a nonexistent NAME, so the
-# name-existence audit missed it; check_pinned_versions_exist closes that gap.
-#
-# Separately, [vera-sim] pins gymnasium==0.29.1, mutually exclusive with
-# lerobot>=0.6.0 (gymnasium>=1.1.1). uv resolves all extras jointly, so absent a
-# fork declaration that pin drags the WHOLE resolution below lerobot 0.6. The
-# [tool.uv].conflicts entries fork vera-sim away from the lerobot-0.6 extras.
+# `robomimic==0.5.0` was once pinned in an evaluation extra, but robomimic's
+# highest PyPI release is 0.3.0 -- v0.5.0 exists only as an ARISE-Initiative
+# GitHub tag. The pin was thus unresolvable forever (it wedged `uv lock`,
+# freezing uv.lock at a months-old lerobot 0.5.1 resolution and hiding
+# vla_jepa/molmoact2/lerobot.rl) AND a dependency-confusion vector (whoever
+# publishes robomimic 0.5.0 to PyPI gets installed). A phantom `==` version
+# differs from a nonexistent NAME, so the name-existence audit missed it;
+# check_pinned_versions_exist closes that gap.
 
 
 def test_pinned_version_check_flags_phantom_version():
@@ -326,42 +322,6 @@ def test_pinned_version_check_ignores_ranges_and_inconclusive():
         )
         == []
     )
-
-
-def test_vera_sim_has_no_phantom_robomimic_pin():
-    """The live [vera-sim] extra must not pin robomimic (a phantom `==` version).
-
-    robomimic must be a source install (documented in the extra), never a PyPI
-    pin, so the unresolvable/confusion-prone `robomimic==0.5.0` cannot return.
-    """
-    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    vera_sim = data["project"]["optional-dependencies"]["vera-sim"]
-    offenders = [spec for spec in vera_sim if Requirement(spec).name == "robomimic"]
-    assert offenders == [], f"robomimic must not be a PyPI pin in [vera-sim]: {offenders}"
-
-
-def test_vera_sim_is_forked_away_from_lerobot06_extras():
-    """[tool.uv].conflicts must fork [vera-sim] from the lerobot-0.6 extras.
-
-    [vera-sim]'s gymnasium==0.29.1 is mutually exclusive with lerobot>=0.6.0
-    (gymnasium>=1.1.1). Without a conflict declaration uv resolves all extras
-    jointly and that single pin drags the whole lock below lerobot 0.6 (the
-    regression that froze uv.lock at lerobot 0.5.1). Each lerobot-0.6 extra must
-    be declared as conflicting with vera-sim so uv forks the resolution instead.
-    """
-    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    conflicts = data.get("tool", {}).get("uv", {}).get("conflicts", [])
-    forked = set()
-    for pair in conflicts:
-        extras = {member.get("extra") for member in pair}
-        if "vera-sim" in extras:
-            forked |= extras - {"vera-sim"}
-    for extra in ("lerobot", "lerobot-async", "molmoact2", "all"):
-        assert extra in forked, (
-            f"[tool.uv].conflicts must fork vera-sim from the '{extra}' extra so "
-            f"its gymnasium 0.29 pin cannot drag the lock below lerobot 0.6; "
-            f"forked pairs found: {sorted(forked)}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -476,14 +436,11 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
     solver, so following it is sufficient.
     """
     from strands_robots.policies.cosmos3 import sim_ik as cosmos3_sim_ik
-    from strands_robots.policies.vera import sim_ik as vera_sim_ik
     from strands_robots.simulation import ik as shared_ik
 
     hints = {
         "shared install": shared_ik._DEFAULT_INSTALL_HINT,
         "shared no-backend": shared_ik._DEFAULT_NO_BACKEND_MSG,
-        "vera install": vera_sim_ik._install_hint(),
-        "vera no-backend": vera_sim_ik._NO_BACKEND_MSG,
         "cosmos3 install": cosmos3_sim_ik._install_hint(),
         "cosmos3 no-backend": cosmos3_sim_ik._NO_BACKEND_MSG,
     }
@@ -508,11 +465,8 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
 # ---------------------------------------------------------------------------
 # Every extra a reader is told to install must be an extra that exists.
 #
-# History: docs/policies/vera.md led its install section with
-# ``pip install 'strands-robots[vera]'`` -- an extra that pyproject.toml explains
-# at length can never exist, because VERA ships only as a git repository and PyPI
-# rejects metadata carrying a VCS reference. A further site named ``[isaac]``
-# for what is really ``sim-isaac``.
+# History: a provider page led its install section with an extra that could never
+# exist, and a further site named ``[isaac]`` for what is really ``sim-isaac``.
 #
 # The failure mode is silent in the worst direction: pip does NOT fail on an
 # unknown extra, and on a current pip it no longer even warns. Measured on pip
@@ -541,8 +495,8 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
 # this project's own docs names one of this project's extras by construction, so
 # the bare spelling is unambiguous there and is swept by
 # ``test_install_extra_table_columns_name_only_declared_extras`` below. The
-# policy catalogue is exactly such a column, and it is where the ``[vera]`` row in
-# the history above survived the page fix.
+# policy catalogue is exactly such a column, and it is where a stale row in the
+# history above survived the page fix.
 _EXTRA_MENTION_RE = re.compile(r"strands[-_]robots\[([^\]\s]+)\]")
 
 # A token that can be an extra name at all. Anything else caught by the mention
@@ -757,10 +711,9 @@ def _below_floor_bounds(text: str, floors: dict[str, str]) -> list[tuple[str, st
 
     Returns:
         One entry per written bound sitting below the declared floor. A bound at
-        or above the floor is not reported: several sites state a stricter
-        requirement of their own on purpose (the VERA websocket client needs
-        ``numpy>=1.24``, the Cosmos 3 wire path ``numpy>=2``), and those are
-        correct rather than drifted.
+        or above the floor is not reported: a site may state a stricter
+        requirement of its own on purpose (the Cosmos 3 wire path needs
+        ``numpy>=2``), and that is correct rather than drifted.
     """
     stale: list[tuple[str, str, str]] = []
     for name, written in _WRITTEN_BOUND_RE.findall(text):
@@ -1025,26 +978,6 @@ def test_the_install_extra_cell_rule_can_both_accept_and_reject() -> None:
     assert outcomes == {True, False}
 
 
-def test_the_policy_catalogue_names_no_vera_extra() -> None:
-    """VERA is the provider with no extra, so its row must not name one.
-
-    ``pyproject.toml`` says at length that a ``vera`` extra can never exist - it
-    would need a direct reference to the upstream git repository, which
-    ``test_pyproject_has_no_direct_reference_dependency`` separately forbids.
-    ``vera-sim`` exists and is a different thing: the gymnasium / robosuite
-    evaluation stack, declared in conflict with the lerobot extras, so it is not
-    the provider's install either.
-    """
-    extras = _declared_extras()
-    assert "vera" not in extras
-    assert "vera-sim" in extras
-    overview = (_REPO_ROOT / "docs" / "policies" / "overview.md").read_text(encoding="utf-8")
-    row = next(line for line in overview.splitlines() if line.startswith("| [`vera`]"))
-    cells = [cell.strip() for cell in row.strip("|").split("|")]
-    assert "`vera`" not in cells[2], f"the install-extra cell names an extra: {cells[2]!r}"
-    assert "none" in cells[2].lower(), f"the cell should say there is none: {cells[2]!r}"
-
-
 def test_require_optional_call_sites_name_declared_extras() -> None:
     """``require_optional(extra=...)`` must name a declared extra.
 
@@ -1224,10 +1157,10 @@ def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
 # rather than an override for a measured reason. A constraint bounds a version
 # and fails the resolution loudly when something genuinely requires less; an
 # override *replaces* the conflicting requirement and resolves in silence.
-# Measured on this manifest with ``gymnasium>=1.1.1``, which the ``[vera-sim]``
-# extra contradicts by pinning ``gymnasium==0.29.1``:
+# Measured on a manifest with ``gymnasium>=1.1.1`` against an extra that
+# contradicted it by pinning ``gymnasium==0.29.1``:
 #
-#   as a constraint -> `uv lock` exits 1: "Because strands-robots[vera-sim]
+#   as a constraint -> `uv lock` exits 1: "Because strands-robots[<extra>]
 #                      depends on gymnasium==0.29.1 and gymnasium>=1.1.1 ...
 #                      requirements are unsatisfiable"
 #   as an override  -> `uv lock` exits 0: "Updated gymnasium v0.29.1 -> v1.3.0"
@@ -1356,9 +1289,9 @@ def test_each_security_floor_names_the_advisory_it_clears() -> None:
 def test_the_security_floors_are_constraints_and_not_overrides() -> None:
     """These must bound the version, never replace the requirement.
 
-    An override silently discards a conflicting requirement - measured on this
-    manifest, ``gymnasium>=1.1.1`` as an override resolves cleanly while the
-    ``[vera-sim]`` extra's ``gymnasium==0.29.1`` is dropped without a word. As a
+    An override silently discards a conflicting requirement - measured on a
+    manifest carrying a ``gymnasium==0.29.1`` pin, ``gymnasium>=1.1.1`` as an
+    override resolves cleanly while that pin is dropped without a word. As a
     constraint the same floor fails the resolution and names the conflict. A
     security floor that hides "a dependency asked for a vulnerable version" has
     removed the signal it exists to raise.

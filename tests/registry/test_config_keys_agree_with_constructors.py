@@ -5,7 +5,7 @@ optional ``defaults`` map, and ``build_policy_kwargs`` merges both into one dict
 that ``create_policy`` splats into the provider class.  Nothing in the tree
 compared either against a constructor signature: ``grep -rn config_keys tests/``
 finds presence checks (``"port" in config["config_keys"]``) and filtering
-behaviour, never an agreement check.  #2013 pinned the property for ``vera``
+behaviour, never an agreement check.  #2013 pinned the property for one provider
 alone, deliberately, and named the general form #2022 - this is it.
 
 The two sources are not equally guarded, which is why both are checked here.
@@ -30,17 +30,17 @@ one that passes the key.  ``test_a_defaults_key_bypasses_the_config_keys_filter`
 pins that asymmetry, so the reason these tests cover ``defaults`` cannot quietly
 stop being true.
 
-What an orphan costs splits by provider shape.  ``cosmos3`` and ``vera`` declare
-no ``**kwargs``, so an orphan is a hard ``TypeError: __init__() got an unexpected
+What an orphan costs splits by provider shape.  ``cosmos3`` declares no
+``**kwargs``, so an orphan is a hard ``TypeError: __init__() got an unexpected
 keyword argument`` on the factory path - the path the registry exists to serve -
-while a caller constructing the class directly is unaffected.  The other ten
+while a caller constructing the class directly is unaffected.  Most of the rest
 swallow it into a ``**kwargs`` nothing reads, which is the inert-public-knob
 shape #2013 was filed about rather than a safer outcome.  The guard is the
-strict form for that reason: it is what all twelve providers already satisfy,
-and the lenient form (an entry is fine if the class takes ``**kwargs``) would
-exempt ten of twelve and assert almost nothing.
+strict form for that reason: it is what every provider already satisfies, and
+the lenient form (an entry is fine if the class takes ``**kwargs``) would exempt
+most of them and assert almost nothing.
 
-**This is a drift guard, not a live defect.** All twelve providers are consistent
+**This is a drift guard, not a live defect.** Every provider is consistent
 today, in both directions, so there is no pre-fix failure to show - only the
 guard plus the planted-orphan meta-tests that keep it from passing vacuously.
 
@@ -247,10 +247,10 @@ def test_the_guard_would_catch_a_planted_orphan(planted: str) -> None:
     """Non-vacuity for the two agreement tests: an unknown key must be reported.
 
     ``n_action_steps`` is the second case because it is the real one - #2013
-    removed it from ``VeraPolicy`` and from the registry, and had the registry
-    spelling been missed, this is the shape that would have caught it.
+    removed it from a provider constructor and from the registry, and had the
+    registry spelling been missed, this is the shape that would have caught it.
     """
-    parameters = _parameters_or_skip("vera")
+    parameters = _parameters_or_skip("cosmos3")
     assert _orphans([planted], parameters) == [planted]
 
 
@@ -260,9 +260,9 @@ def test_the_guard_accepts_the_keys_the_registry_actually_declares() -> None:
     A ``_orphans`` that reported everything would satisfy the planted-orphan
     test and fail the real ones, so pin that a declared key passes.
     """
-    cfg = _providers()["vera"]
-    parameters = _parameters_or_skip("vera")
-    assert cfg["config_keys"], "vera declares no config_keys - this case is vacuous"
+    cfg = _providers()["cosmos3"]
+    parameters = _parameters_or_skip("cosmos3")
+    assert cfg["config_keys"], "cosmos3 declares no config_keys - this case is vacuous"
     assert _orphans(cfg["config_keys"], parameters) == []
 
 
@@ -280,7 +280,7 @@ def test_a_defaults_key_bypasses_the_config_keys_filter(monkeypatch: pytest.Monk
         "strands_robots.registry.policies.get_policy_provider",
         lambda _name: {"config_keys": ["host"], "defaults": {"host": "localhost", "not_a_config_key": 7}},
     )
-    kwargs = build_policy_kwargs("vera")
+    kwargs = build_policy_kwargs("cosmos3")
     assert kwargs["not_a_config_key"] == 7, "defaults are now filtered by config_keys"
 
 
@@ -290,7 +290,7 @@ def test_a_config_keys_entry_the_caller_omits_is_not_forwarded(monkeypatch: pyte
         "strands_robots.registry.policies.get_policy_provider",
         lambda _name: {"config_keys": ["host", "never_passed"], "defaults": {}},
     )
-    assert "never_passed" not in build_policy_kwargs("vera")
+    assert "never_passed" not in build_policy_kwargs("cosmos3")
 
 
 def test_a_provider_without_var_keyword_rejects_an_unknown_kwarg() -> None:

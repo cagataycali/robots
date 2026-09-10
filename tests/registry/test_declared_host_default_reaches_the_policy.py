@@ -7,10 +7,10 @@ generic parameters default to ``None``, so that test means something for them.
 indistinguishable from a caller who asked for ``localhost`` -- so ``host`` was
 injected on every call and no declared default for it was ever reachable.
 
-Four of the six providers that accept a ``host`` were affected.  ``moveit2``
-and ``vera`` declare ``127.0.0.1`` in ``policies.json``; ``lerobot_async`` and
-``remote`` declare it as their constructor default.  All four were handed
-``localhost`` -- a value none of them declares anywhere -- while this
+Every provider that accepts a ``host`` and declares a default for it was
+affected.  ``moveit2`` declares ``127.0.0.1`` in ``policies.json``;
+``lerobot_async`` and ``remote`` declare it as their constructor default.  All
+were handed ``localhost`` -- a value none of them declares anywhere -- while this
 function's own docstring promised "A default only ever fills a key the caller
 left unset", and the sibling ``resolve_policy`` already left ``host`` unset
 unless a URL supplied one.
@@ -69,7 +69,7 @@ class TestTheRegistryHostDefaultIsReachable:
 
     @pytest.mark.parametrize(("provider", "declared"), DECLARED, ids=DECLARED_IDS)
     def test_an_omitted_host_takes_the_declared_default(self, provider, declared):
-        """``moveit2``/``vera`` declare ``127.0.0.1`` and used to get ``localhost``."""
+        """``moveit2`` declares ``127.0.0.1`` and used to get ``localhost``."""
         got = build_policy_kwargs(provider).get("host")
         assert got == declared, (
             f"{provider} declares host={declared!r} in policies.json but "

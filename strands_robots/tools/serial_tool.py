@@ -55,7 +55,10 @@ from strands_robots.drivers.feetech.protocol import (
     BROADCAST_ID,
     MAX_GOAL_POSITION,
     MAX_UNICAST_ID,
+    SIGN_BIT,
+    Register,
     encode_word,
+    max_magnitude,
 )
 from strands_robots.utils import (
     finite_number_error,
@@ -67,11 +70,13 @@ from strands_robots.utils import (
 # writes. ``Goal_Position`` (0x2A) and ``Goal_Velocity`` (0x2E) are both
 # sign-magnitude, so neither ceiling below is the two-byte maximum: a magnitude
 # reaching this bit is read by the servo as a command in the opposite
-# direction, which is a different command rather than a truncated one.
-_DIRECTION_BIT = 15
+# direction, which is a different command rather than a truncated one. Read from
+# the codec's table rather than restated, so this tool and the bus that reads
+# the same registers back cannot disagree about which bit it is.
+_DIRECTION_BIT = SIGN_BIT[Register.GOAL_VELOCITY]
 
 # Largest magnitude either register carries with ``_DIRECTION_BIT`` still clear.
-_MAX_MAGNITUDE = (1 << _DIRECTION_BIT) - 1
+_MAX_MAGNITUDE = max_magnitude(_DIRECTION_BIT)
 
 # Inclusive bounds and the reason for each ceiling, keyed by the parameter that
 # carries the field. The floor and the type are delegated to the shared count
