@@ -56,7 +56,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # Headless GL default so the example runs on servers out of the box.
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
     try:
         from strands_robots import Simulation

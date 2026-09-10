@@ -5,7 +5,7 @@ description: HuggingFace LeRobot direct inference - ACT, Pi0, SmolVLA, Diffusion
 # LeRobot Local
 
 ```bash
-uv pip install "strands-robots[lerobot]"
+uv pip install "strands-robots[smolvla]"  # [lerobot] plus transformers, which SmolVLA needs at load
 export STRANDS_TRUST_REMOTE_CODE=1        # required; raises UntrustedRemoteCodeError otherwise
 ```
 
@@ -14,10 +14,16 @@ from strands_robots.policies import create_policy
 
 policy = create_policy(
     "lerobot_local",
-    pretrained_name_or_path="lerobot/pi0_so100",   # HF model_id or local path
+    pretrained_name_or_path="lerobot/smolvla_base",   # HF model_id or local path
     device="cuda",
 )
 ```
+
+`lerobot_local` loads a LeRobot checkpoint in-process and drives it through the
+same `get_actions` contract as every other provider. The policies themselves,
+their configs and their processor pipelines are LeRobot's - see the
+[LeRobot policy docs](https://huggingface.co/docs/lerobot). This page covers
+what strands adds around them.
 
 ## Parameters
 
@@ -40,119 +46,48 @@ LerobotLocalPolicy(
     image_keys=None,                     # MolmoAct2 camera key override
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
-    obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename (value None/"" DROPS that key)
+    obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename
     strict_keys=False,                   # raise instead of a degraded camera OR joint-state binding
     cache_model=True,                    # reuse a process-cached model across instances
     revision=None,                       # pin a HF Hub revision (branch/tag/commit SHA)
 )
 ```
 
-`tokenizer_max_length` is the instruction's token budget and must be a positive
-`int`. The tokenizer takes it as a slice bound over the encoded instruction, so a
-count below one truncates the instruction away and the policy acts on an empty
-prompt; an unusable value is refused when the policy is constructed (and by
-`preflight`, before the weights are fetched) rather than at the first inference.
-
-
-### Pinning a Hub revision
-
-Pass `revision=` to pin a checkpoint to a reproducible Hub version - a
-branch name, tag, or commit SHA. It is threaded to lerobot's
-`PreTrainedPolicy.from_pretrained(..., revision=...)` (and to the config
-resolution that auto-detects `policy_type`), so the exact weights are
-loaded regardless of later pushes to the repo's default branch:
-
-```python
-policy = create_policy(
-    "lerobot_local",
-    pretrained_name_or_path="lerobot/smolvla_base",
-    revision="v1.0",   # or a 40-char commit SHA
-)
-```
-
-Two revisions of the same repo are cached independently (the revision is
-part of the model-cache key), so pinning never collides with an unpinned
-load. Revision pinning is not supported for transformers-native MolmoAct2
-checkpoints, which load weights via `checkpoint_path` rather than
-`from_pretrained`; passing `revision=` with one raises `ValueError`. Pin
-those by downloading the revision locally and pointing at the directory.
+| Parameter | What strands does with it | Refused |
+|---|---|---|
+| `policy_type` | auto-detected from the checkpoint config; `list_policy_types()` enumerates what the installed lerobot resolves | a type lerobot cannot resolve |
+| `revision` | threaded to `from_pretrained(revision=...)`; part of the cache key | - |
+| `device` | remaps a checkpoint's baked `device_processor.device` (e.g. `"cuda"`) to the requested device instead of failing on a CPU-only host | an unavailable device |
+| `tokenizer_max_length` | instruction token budget | anything but a positive `int` (a count below one truncates the instruction away) |
+| `image_keys` | MolmoAct2 camera declaration | a bare string (`"wrist"` would be read as five one-letter names) |
+| `strict_keys` | turns the degraded camera / joint-state bindings below into raises | non-boolean |
+| `cache_model` | see Model caching | non-boolean |
 
 ## Model caching
 
-Loading a checkpoint reads its weights from disk and uploads them to the
-device. For a large VLA (MolmoAct2 SO-100/101 ships 1295 weight files) that is
-on the order of a minute or more per load. Eval/rollout drivers that build a
-fresh policy per call - e.g. ``create_policy("lerobot_local", ...)`` inside a
-per-episode loop - would otherwise pay that full load cost every time.
-
-By default (`cache_model=True`) the loaded underlying model is cached at
-process level, keyed by `(pretrained_name_or_path, policy_type, device)` (plus
-the MolmoAct2 normalisation/processor knobs). Re-instantiating the policy for
-the same checkpoint reuses the resident model and skips the weight load:
+Loading a large VLA (MolmoAct2 SO-100/101 ships 1,295 weight files) takes a
+minute or more. Models are cached process-wide, keyed by
+`(pretrained_name_or_path, policy_type, device, revision)`; a second
+`create_policy` with the same key reuses the weights. Every instance records
+`load_cache_hit` (`bool`) and `load_time_s` (`float`, near `0.0` on a hit),
+and `run_policy` reports them as
+`policy_load_cache_hit` / `policy_load_time_s` in its result block.
 
 ```python
-from strands_robots.policies import create_policy
-from strands_robots.policies.lerobot_local import clear_model_cache
-
-# First build loads the weights; subsequent builds for the same checkpoint
-# reuse the resident model (no reload).
-p1 = create_policy("lerobot_local", pretrained_name_or_path="allenai/MolmoAct2-SO100_101", device="cuda")
-p2 = create_policy("lerobot_local", pretrained_name_or_path="allenai/MolmoAct2-SO100_101", device="cuda")
-
+from strands_robots.policies.lerobot_local import clear_model_cache, list_cached_models
 clear_model_cache()  # evict cached models and free their GPU/CPU memory
-```
-
-The cached object is the same live module shared by every instance with the
-same key. LeRobot policies carry per-episode state (action queue, temporal
-ensemble buffers) that `Policy.reset()` clears between episodes, so sequential
-reuse - including `Simulation.eval_policy` and per-rollout drivers - is safe.
-Pass `cache_model=False` to force a private load when driving two rollouts of
-the same checkpoint+device concurrently, and call `clear_model_cache()` to
-release the held memory.
-
-For multi-episode evaluation, prefer a single `Simulation.eval_policy(..., 
-n_episodes=N)` (or `run_policy(..., policy_object=loaded)`) call, which loads
-the policy once and reuses it across episodes regardless of this cache.
-
-### Load telemetry
-
-Every `LerobotLocalPolicy` records two attributes after construction so the
-saving from the cache is observable instead of guessed:
-
-- `load_cache_hit` (`bool`): `True` when the heavy `from_pretrained` weight
-  read was skipped because the process cache already held this checkpoint.
-- `load_time_s` (`float`): seconds the load took (near `0.0` on a cache hit).
-  Measured on a monotonic clock, so a wall-clock correction landing during a
-  multi-minute weight read cannot report the load as negative or as hours.
-
-`Simulation.run_policy` and `Simulation.eval_policy` surface these in their
-`{"json": {...}}` result block as `policy_load_cache_hit` and
-`policy_load_time_s`. In a multi-episode loop, a `policy_load_cache_hit=False`
-on episode 2+ is a smell that the caller rebuilt the policy per episode instead
-of reusing one warm `policy_object=`; an agent can read that field and
-self-correct. Policies that expose no load telemetry (e.g. `MockPolicy`) report
-the honest defaults `0.0` / `False`.
-
-```python
-from strands_robots.policies.lerobot_local import list_cached_models
-
-# Inspect what is resident without touching private state.
 for entry in list_cached_models():
     print(entry["namespace"], entry["pretrained_name_or_path"], entry["device"])
 ```
 
-`list_cached_models()` returns one read-only dict per cached entry
-(`namespace`, `pretrained_name_or_path`, `device`, `policy_class`); pair it with
-`clear_model_cache()` to decide when to evict before loading a different
-checkpoint.
-
 ## Supported models
 
-`policy_type` accepts any type the installed lerobot can resolve - the strings
-below mirror lerobot's own policy registry. It is auto-detected from a
-checkpoint's config when omitted; pass `policy_type=` to override. The set
-tracks the installed lerobot, so enumerate it at runtime rather than trusting a
-static list (see [Discovering supported policy types](#discovering-supported-policy-types)).
+`policy_type` accepts any type the installed lerobot resolves:
+
+```python
+from strands_robots import list_policy_types
+list_policy_types()
+```
 
 | `policy_type` | Model |
 |---------------|-------|
@@ -171,69 +106,14 @@ static list (see [Discovering supported policy types](#discovering-supported-pol
 | `multi_task_dit` | Multi-task Diffusion Transformer |
 | `gaussian_actor` | Gaussian actor |
 
-### Discovering supported policy types
-
-Enumerate the resolvable `policy_type` strings programmatically instead of
-guessing. `list_policy_types` is the discovery peer of `list_providers` (the
-follow-up to "which provider?" is "which `policy_type` does it take?"), so it
-is re-exported at the package root and on `strands_robots.policies` alongside
-`list_providers` -- no reach into the `lerobot_local` submodule required:
-
-```python
-from strands_robots import list_policy_types  # or: from strands_robots.policies import list_policy_types
-
-list_policy_types()
-# ['act', 'diffusion', 'eo1', 'gaussian_actor', 'groot', 'molmoact2',
-#  'multi_task_dit', 'pi0', 'pi05', 'pi0_fast', 'smolvla', 'tdmpc',
-#  'vla_jepa', 'vqbet', 'wall_x', 'xvla']
-```
-
-The submodule path `from strands_robots.policies.lerobot_local import
-list_policy_types` keeps working; the top-level re-export is lazy, so reaching
-it does not make a bare `import strands_robots` pull in torch.
-
-The list reflects the *installed* lerobot (sourced from its policy registry),
-so a newer lerobot reports more entries and a slimmer one fewer; it returns
-`[]` when lerobot is not installed. Passing an unknown `policy_type` to
-inference now raises an error that names these valid choices, so a typo is a
-one-line fix instead of a dead end.
-
 ## MolmoAct2
 
-MolmoAct2 ships in lerobot **>= 0.6** - its `MolmoAct2Policy` was merged in
-lerobot PR #3604 and first released in 0.6.0 - so it resolves straight from
-PyPI with no git-from-source install. The `[molmoact2]` extra layers the
-auxiliary deps MolmoAct2's modeling and processor code needs
-(`transformers>=5.4.0,<5.6.0`, `peft`, `scipy`) on top of
-`strands-robots[lerobot]` (which pins `lerobot>=0.6.1,<0.7.0`):
+MolmoAct2 ships in lerobot >= 0.6 and resolves straight from PyPI; the
+`[molmoact2]` extra layers its transformers range on top of `[lerobot]`:
 
 ```bash
 uv pip install "strands-robots[molmoact2]"
 ```
-
-MolmoAct2 then works:
-
-```python
-policy = create_policy(
-    "lerobot_local",
-    pretrained_name_or_path="your-org/molmoact2-so101",
-    device="cuda",
-    norm_tag="so101",
-    image_keys=["wrist_camera", "front_camera"],
-    inference_action_mode="continuous",
-    # actions_per_step is auto-set from config.n_action_steps (30 for the
-    # SO-100/101 checkpoints) when left at the default 1 - so the full
-    # 30-step chunk the model was trained to replay open-loop is consumed
-    # before re-querying vision. Pass an explicit value to override.
-)
-# see examples/vla/molmoact2_so101_pickplace.py
-```
-
-MolmoAct2 SO-100/101 was trained for **30-step open-loop chunk replay**
-(`n_action_steps = 30`). Run it through the sim with an `action_horizon` that
-does not truncate the chunk - the runner clamps the effective horizon up to the
-policy's `actions_per_step`, so passing `action_horizon=8` (or the default) is
-safe, but you can also pin it explicitly:
 
 ```python
 sim.run_policy(
@@ -250,97 +130,25 @@ sim.run_policy(
 )
 ```
 
-This requirement will go away once HuggingFace publishes lerobot >= 0.5.2 to PyPI
-(which will include MolmoAct2 natively). At that point the `[molmoact2]` extra can
-pin `lerobot[feetech]>=0.5.2` directly and the git-source step drops away --
-`pip install strands-robots[molmoact2]` alone will suffice.
+Action contract, units and motion diagnostics: [MolmoAct2](molmoact2.md).
 
 ## Processor bridge and normalization
 
-`use_processor=True` (default) wraps the policy in a processor bridge that
-normalizes observations going into the model and unnormalizes actions coming
-back out, so the robot sees commands in physical joint units.
-
-The bridge loads the model's own pipeline configs in priority order:
-
-1. `policy_preprocessor.json` / `policy_postprocessor.json` - LeRobot's standard
-   saved pipelines (most lerobot-native checkpoints).
-2. **In-model normalization recovery** - a pre-processor-era checkpoint ships no
-   pipeline JSON but carries `normalize_inputs.*` / `unnormalize_outputs.*`
-   buffers in its `model.safetensors` (still the case for canonical zoo
-   checkpoints such as `lerobot/act_aloha_sim_transfer_cube_human`). Current
-   lerobot drops those buffers on load, so the bridge rebuilds both pipelines
-   from them using lerobot's own `extract_normalization_stats` +
-   `make_pre_post_processors`.
-
-Without (2), such a checkpoint would silently pass data through un-normalized:
-state reaches the policy in raw degrees and predicted actions reach the motors
-still in the model's normalized space, producing off-policy / micro-motion
-trajectories.
-
-### MolmoAct2 normalization is lerobot's
-
-MolmoAct2 checkpoints do not take either bridge path. They are
-transformers-native (`config.json` has `model_type=molmoact2` and no lerobot
-draccus `type`), so the policy routes them to lerobot's own factory --
-`make_policy_config("molmoact2", ...)` then `make_pre_post_processors(cfg)`.
-That factory reads the checkpoint's `norm_stats.json` itself, resolves
-`norm_tag` against the tags the file declares, and honors a
-`norm_stats_filename` the checkpoint names in its `config.json`.
-
-Pass `norm_tag=` to select an embodiment's statistics. A tag the file does not
-declare is refused by lerobot, which names the tag asked for and the tags the
-checkpoint actually declares:
-
-```
-ValueError: Unknown MolmoAct2 norm_tag='so101'.
-Available tags: ['so100_so101_molmoact2'].
-```
-
-Because lerobot owns this transform, strands does not reimplement it -- a second
-copy could drift from lerobot's normalizer without anything failing. See
-[MolmoAct2](#molmoact2) for the load path.
-
-### Device-pinned checkpoints
-
-A checkpoint trained on GPU bakes `device_processor.device = "cuda"` into its
-`policy_preprocessor.json` / `policy_postprocessor.json`. Loaded on a host
-without that device (CPU-only edge box, or a CUDA build on a machine whose
-driver predates the wheel's CUDA version), LeRobot asserts the device is
-available and the `device_processor` step fails to instantiate -- which surfaces
-as an error indistinguishable from "no pipeline config present".
-
-The bridge already moves every tensor onto the `device` you pass to
-`create_policy` (auto-detected when `None`), so it reconciles the pinned step
-onto that resolved device and retries the load once, rather than dropping the
-pipeline. Without this, normalization would be silently disabled: state reaches
-the policy in raw units and actions reach the motors in normalized space,
-producing off-policy / micro-motion trajectories. An explicit
-`processor_overrides={"device_processor": {"device": ...}}` is still honored
-as-is and takes precedence over the automatic reconciliation.
-
-### Overriding a processor step
-
-`processor_overrides` is keyed by step name -- a step's `registry_name`, or its
-class name when the step is not registry-backed. A checkpoint ships two
-pipelines whose step names are mostly disjoint, so each override is routed to
-the pipeline that declares it:
-
-| step | pipeline | what it controls |
-| --- | --- | --- |
-| `normalizer_processor` | preprocessor | `observation.state` normalization |
-| `unnormalizer_processor` | postprocessor | `action` un-normalization |
-| `device_processor` | both | tensor placement |
-
-A key no pipeline declares is refused, and the refusal lists both pipelines'
-step names.
-
-This is how you supply stats to a checkpoint whose declared normalization is
-inert -- a pretraining *base* checkpoint such as `lerobot/smolvla_base` ships
-stats keyed by its training dataset (`so100.buffer.action`) rather than the
-canonical `action` / `observation.state` keys, so LeRobot's normalizer finds no
-matching key and passes those tensors through untouched. Both halves live in
-different pipelines, so a remedy has to name both steps:
+`use_processor=True` (default) wraps the policy in the checkpoint's
+pre/post-processor pipelines, so observations are normalized going in and
+actions come back in physical joint units. The bridge takes them from
+`policy_preprocessor.json` / `policy_postprocessor.json` when the checkpoint
+ships them; a pre-processor-era checkpoint that instead carries
+`normalize_inputs.*` / `unnormalize_outputs.*` buffers in `model.safetensors`
+(still the case for zoo checkpoints such as
+`lerobot/act_aloha_sim_transfer_cube_human`) has both pipelines rebuilt from
+those buffers with lerobot's own `extract_normalization_stats` +
+`make_pre_post_processors`. MolmoAct2 checkpoints take neither path: lerobot's
+own factory reads their `norm_stats.json`, and a `norm_tag` the file does not
+declare is refused by lerobot naming the tags it does (see
+[MolmoAct2](#molmoact2)). `processor_overrides` is keyed by step name (a step's
+`registry_name`, or its class name when it is not registry-backed) and each
+override is routed to the pipeline that owns that step:
 
 ```python
 policy = create_policy(
@@ -358,11 +166,12 @@ Naming only one leaves the other inert, and the diagnostic keeps reporting
 whichever half is still unnormalized. Fine-tuning the checkpoint writes stats
 under the canonical keys and needs no override at all.
 
-Supplied stats have to be as WIDE as the features the checkpoint declares. Width
-is what differs between embodiments -- a 6-DOF SO-101, a 7-DOF arm and a 14-DOF
-bimanual all have `observation.state` and `action` -- so reaching for the wrong
-dataset's stats is easy. A mismatch is refused when the policy loads, naming the
-feature and both widths:
+Supplied stats must be as wide as the features the checkpoint declares - a
+6-DOF SO-101, a 7-DOF arm and a 14-DOF bimanual all have `observation.state`,
+so the wrong dataset's stats are an easy reach. A mismatch is refused at load,
+naming the feature and both widths, instead of surfacing as LeRobot's tensor
+broadcast error on the first inference after the robot has been commanded.
+Visual `(C,)` stats are exempt (LeRobot reshapes them to `(C, 1, 1)`):
 
 ```
 ValueError: lerobot_local: lerobot/smolvla_base was given normalization stats
@@ -371,140 +180,33 @@ that do not match the widths the checkpoint declares: ["observation.state
 supply 7", ...]
 ```
 
-LeRobot itself would reach the arithmetic and raise from the tensor broadcast
-(`The size of tensor a (6) must match the size of tensor b (7)`) on the FIRST
-inference instead -- naming neither the feature nor either width, and only after
-a rollout has started and the robot has been commanded. Visual stats are exempt:
-LeRobot reshapes a flat `(C,)` channel stat to `(C, 1, 1)`, so a 3-wide stat is
-correct for a `(3, H, W)` image feature.
-
 ## State routing
 
-`observation.state` is composed from `robot_state_keys` (set explicitly with
-`set_robot_state_keys([...])`, or by an `embodiment`). That ordering is used
-verbatim whenever at least one of its keys is present in the observation; a
-configured key the observation does not carry is zero-filled IN PLACE so the
-present joints keep their index.
-
-When NONE of the configured keys match - typically generic auto-generated names
-(`joint_0..joint_N`) paired with a sim that reports named joints - the policy
-warns (or raises under `strict_keys=True`), sets `generic_state_keys_used`, and
-falls back to the observation's own scalar keys so the state is populated rather
-than silently dropped.
-
-Both degradations quote a remedy chosen from the observation itself rather than a
-fixed example. `matching_embodiments(observation_keys)` returns every shipped
-embodiment whose entire `state_keys` set the observation carries, and only those
-are offered:
-
-- one match - the message names it (`embodiment='so100'`);
-- several - all are listed, because an observation cannot always tell them apart
-  (the real SO, Koch and OMX arms all report the same six `'<motor>.pos'` keys);
-- none - no embodiment is suggested at all, only `set_robot_state_keys([...])`,
-  quoted with the observed keys verbatim when the list is short enough to paste.
-
-This matters most on hardware. A real SO arm reports `'<motor>.pos'` keys, while
-the `so101` embodiment declares the MuJoCo asset's numeric joints `'1'..'6'` and
-converts degrees to radians - so recommending it there would re-declare keys the
-observation does not have, landing back on this same guard. `so_real` is the
-configuration that binds that observation, and it is what the message names.
-
-That fallback ordering is **position-only**: a `<joint>.vel` entry is dropped
-when the observation also carries its `<joint>` position companion. The MuJoCo
-backend emits a velocity sibling beside every joint position, so taking its keys
-in observation order would otherwise interleave velocities into the state vector
-and push the trailing joints past the model's declared state dim. A `.vel` key
-with no position companion is kept, because some embodiments legitimately declare
-velocity state (LeKiwi's body-frame base velocities `x.vel` / `y.vel` /
-`theta.vel`). Explicit `robot_state_keys` are never filtered - naming `elbow.vel`
-there states the model's input.
-
-### A declarative `embodiment=` reports the same two degradations
-
-A declarative `embodiment=` installs its own state step, and it reports both
-degradations with that same registry-checked remedy. A partly-bound vector names
-the absent keys, the keys the observation does carry, and the remedy; an
-all-bound-nothing configuration says so instead of handing the observation on in
-silence, since the downstream error it would otherwise produce knows nothing
-about embodiments and cannot name the one that binds this observation.
-
-The two conventions in the embodiment registry are what make an all-missing
-binding easy to reach in either direction:
-
-- **A sim embodiment driven from real hardware.** `embodiment="so101"` declares
-  the MuJoCo asset's `'1'..'6'`, and a real arm reports `'<motor>.pos'`. This
-  direction binds anyway: the step falls back to the observation's `'.pos'` keys
-  in motor order, packed raw because hardware already reports the model's
-  training units.
-- **A `*_real` embodiment driven from sim.** Several names are both a lerobot
-  driver spelling and a sim-loadable registry robot - `so100_follower`,
-  `so101_follower`, `koch_follower`, `bi_so_follower`, `lekiwi`, `openarm` - and
-  each resolves to a `*_real` configuration whose `'.pos'` keys no sim
-  observation emits. There is no fallback in this direction, so no
-  `observation.state` is packed; the report names the sim-side configuration to
-  use instead (`embodiment='so101'` for a MuJoCo so101).
-
-An unbound state is a configuration mistake rather than a degraded reading, so
-nothing is invented to stand in for it - no all-zero vector is emitted, and the
-observation is passed on unchanged for a state-less policy or the caller's own
-handling.
+`observation.state` is composed from `robot_state_keys`, set with
+`set_robot_state_keys([...])` or by an `embodiment`. When only some keys are
+present the vector is partly bound and the policy reports the absent keys, the
+keys the observation does carry and the remedy; when none are present it falls
+back to the observation's own state vector. Both degradations are logged, and
+`strict_keys=True` turns them into raises.
 
 ## Camera routing
 
-Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
-declares image inputs under its own keys (`observation.images.top`, ...). The
-policy routes each camera to a declared image slot by, in order:
+Observations use bare camera names (`top`, `wrist`); the policy declares image
+inputs as `observation.images.*`. Each camera is routed by, in order:
 
-1. an explicit `camera_key_map` (`{robot_cam: policy_image_key}`) when provided;
-2. exact name match (`top` -> `observation.images.top`);
-3. positional fallback into remaining slots, with a WARNING so a mismatched
-   wiring is loud rather than silent. Pass `strict_keys=True` to raise a
-   `ValueError` (listing the unmatched cameras vs available image keys)
-   instead of falling back positionally; it defaults to `False` and is a
-   no-op when `camera_key_map` or exact names already resolve every camera.
-
-The declared order follows the model config's `image_keys` list when present
-(e.g. MolmoAct2), otherwise the order of the model's image input features. If
-the robot supplies fewer cameras than the policy requires, a `ValueError` is
-raised instead of feeding the model a missing or wrong view.
-
-Image input slots are identified by their declared `FeatureType.VISUAL`, not
-by a substring match on the feature name. A policy may declare image keys that
-do not follow the `observation.images.*` convention (for example MolmoAct2's
-bare `base`/`wrist` keys); such cameras are still routed to their VISUAL slots
-rather than dropped, so the preprocessor never fails with a misleading
-"image_keys missing from observation".
-
-```python
-policy = create_policy(
-    "lerobot_local",
-    pretrained_name_or_path="your-org/molmoact2-so101",
-    camera_key_map={"front": "observation.images.top", "hand": "observation.images.wrist"},
-)
-```
+1. `camera_key_map={"front": "observation.images.top", ...}` when given;
+2. the embodiment's `obs_rename` map (below);
+3. a name heuristic (exact stem, then substring).
 
 ### Embodiment `obs_rename` and the pre-flight check
 
-When you pass an `embodiment` (e.g. `embodiment="so101"`), camera routing is
-configured declaratively from the embodiment's `obs_rename` map
-(`{runtime_camera_name: "observation.images.*"}`) instead of the heuristic
-above. The runtime observation MUST therefore contain the camera names the
-embodiment declares as rename sources. For `so101` those are `front` and
-`wrist`:
+`embodiment="so101"` routes cameras from the embodiment's `obs_rename`
+(`{runtime_camera_name: "observation.images.*"}`), merged under any
+`obs_rename_override`. Before the model is built the policy checks that every
+declared image feature has a source in the runtime observation and refuses
+otherwise, naming both sides:
 
-```json
-"obs_rename": {"front": "observation.images.image", "wrist": "observation.images.wrist_image"}
-```
-
-A camera-name mismatch (e.g. you added `realsense_top` / `realsense_side`
-because a model card said "top + side") used to surface only deep in the
-preprocessor AFTER the multi-minute weight download, as a confusing
-`image_keys missing from observation` failure. `run_policy` / `eval_policy` now
-run a cheap pre-flight check (`Policy.preflight`) BEFORE `create_policy`
-downloads anything, and return a `status=error` naming the expected source
-keys:
-
-```
+```text
 Embodiment 'so101' cannot route cameras to the model's image feature(s)
 ['observation.images.image', 'observation.images.wrist_image']: none of the
 expected source key(s) ['front', 'wrist'] are in the runtime observation, which
@@ -512,273 +214,67 @@ provides [...]. Either: (a) rename your sim cameras to one of ['front', 'wrist']
 ..., or (b) pass policy_config={'obs_rename_override': {...}} ...
 ```
 
-Two ways to fix it:
-
-1. Rename your cameras to the expected source keys
-   (`sim.add_camera(name="front", ...)`, `sim.add_camera(name="wrist", ...)`).
-2. Keep your custom names and pass `obs_rename_override`, which merges OVER the
-   embodiment's `obs_rename` so your names route onto the model's image
-   features without renaming cameras:
-
-   ```python
-   sim.run_policy(
-       robot_name="so101",
-       policy_provider="lerobot_local",
-       policy_config={
-           "pretrained_name_or_path": "allenai/MolmoAct2-SO100_101",
-           "embodiment": "so101",
-           "obs_rename_override": {
-               "realsense_top": "observation.images.image",
-               "realsense_side": "observation.images.wrist_image",
-           },
-       },
-   )
-   ```
-
-3. Drop a camera the embodiment declares but your checkpoint does not. The
-   built-in SO embodiments declare both `front` and `wrist`; a single-camera
-   checkpoint declares only one image feature, so the unmatched `wrist` rename
-   targets a feature the model never declares and fails validation. Map the
-   stale source key to `None` (or `""`) in `obs_rename_override` to remove it,
-   and route your real camera onto the model's feature:
-
-   ```python
-   create_policy(
-       "lerobot_local",
-       pretrained_name_or_path="your-org/so101-single-cam-act",
-       embodiment="so_real",
-       obs_rename_override={
-           "front": "observation.images.front",  # route the one camera you have
-           "wrist": None,                         # drop the camera you do not
-       },
-   )
-   ```
-
-#### `image_keys` must declare what the embodiment feeds
-
-The pre-flight check works in both directions. An explicit `image_keys=` is
-priority 1 in `derive_image_keys`, so it *replaces* the feature list that would
-otherwise be derived from the embodiment's `obs_rename` targets. If the list does
-not cover those targets, the model is built without the inputs the embodiment
-routes and its configuration is refused after the weight download, so pre-flight
-refuses it up front instead:
-
-```
-Embodiment 'so_real' feeds image feature(s) ['observation.images.image',
-'observation.images.wrist_image'], but the explicit image_keys=['base', 'wrist']
-does not declare them, so the model would be built without the inputs the
-embodiment routes and its configuration is refused after the weight download.
-Either: (a) drop image_keys= ..., or (b) pass image_keys=[...] ..., or
-(c) pass policy_config={'obs_rename_override': {...}} for EVERY key you declared ...
-```
-
-Any of the three named fixes resolves it: drop `image_keys` so the features come
-from the embodiment, declare the embodiment's own targets, or retarget every key
-you declared with `obs_rename_override` so each declared feature is a rename
-target. `image_keys` is a MolmoAct2 knob and is inert for other policy types, so
-this check applies to the MolmoAct2 load path only.
-
-#### `image_keys` is a list of names, not a name
-
-A single key still has to be a one-element list. `str` is iterable, so a bare
-string is read one name per character - `image_keys="wrist"` would declare five
-features named `w`, `r`, `i`, `s` and `t` - and nothing downstream can tell that
-apart from a deliberate five-entry list. Passing one is refused, with the reading
-it would have produced and the list to pass instead:
-
-```
-LerobotLocalPolicy: image_keys must be a list of names, not a single string, got
-'wrist'. A string is iterable per character, so this would be read as
-['w', 'r', 'i', 's', 't'] (5 name(s)). Wrap it in a list: ['wrist'].
-```
-
-A mapping is refused for the mirror-image reason (it iterates over its keys, so
-its values would be dropped), as is a non-string entry, a blank entry, and a
-repeated one - a duplicate collapses in the feature dict, declaring fewer
-features than asked for. `None` and `[]` keep their meaning of "not supplied",
-so the list is derived from the embodiment as usual. The refusal happens before
-the weight download.
-
-### Single camera with no embodiment
-
-You do not need an embodiment at all for a single-camera checkpoint. Declare the
-robot's joint names with `set_robot_state_keys([...])` and the policy synthesizes
-a state-only embodiment that routes each declared `observation.images.*` feature
-from its short name (`observation.images.front` <- `front`) and composes
-`observation.state` in your joint order. A bare camera key (`front`) is
-canonicalized to CHW float and renamed onto the model feature, and the state is
-batched alongside it, so a single-camera ACT checkpoint runs on the declarative
-path without manual key wiring:
-
-```python
-policy = create_policy("lerobot_local", pretrained_name_or_path="your-org/so101-single-cam-act")
-policy.set_robot_state_keys(
-    ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos",
-     "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"]
-)
-# obs={"front": <HWC uint8 frame>, "shoulder_pan.pos": ..., ...}
-actions = policy.get_actions_sync(obs, "pick up the cube")
-```
-
-Pass `camera_key_map={"my_cam": "observation.images.front"}` if your runtime
-camera name differs from the feature's short name.
-
-See [camera naming](camera-naming.md) for the model-card -> embodiment
-translation table.
+A single-camera checkpoint needs no embodiment: declare the joint names with
+`set_robot_state_keys([...])` and the policy synthesizes a state-only embodiment
+that routes the one declared image feature to the one camera.
 
 ## RTC
 
+Real-Time Chunking (LeRobot's `rtc_*` config) blends each new action chunk into
+the still-unexecuted tail of the previous one and lets inference overlap
+execution. Enable it per policy:
+
 ```python
-policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so100",
+policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/smolvla_base",
                         rtc_enabled=True, rtc_execution_horizon=16, rtc_max_guidance_weight=1.0)
 ```
 
-`rtc_enabled=True` is what turns RTC on. Public flow-matching checkpoints
-ship `config.rtc_config = None` - RTC is an inference-time choice, not a
-training artifact - so the provider builds an `RTCConfig` from your
-`rtc_execution_horizon` / `rtc_max_guidance_weight` (lerobot's defaults for
-whatever you leave out) and hands it to lerobot's `init_rtc_processor()`. Only
-the flow-matching config classes declare that field; ask an ACT or Diffusion
-checkpoint for RTC and the provider warns and runs `select_action()` instead.
-Leave `rtc_enabled=None` (the default) to follow the checkpoint's own setting.
+Every public flow-matching checkpoint ships `config.rtc_config = None` - RTC
+is an inference-time choice, not a training artifact - so `rtc_enabled=True`
+builds that config from your `rtc_execution_horizon` /
+`rtc_max_guidance_weight` (lerobot's defaults for the rest) and hands it to
+lerobot's `init_rtc_processor()`. Only the flow-matching config classes
+declare the field: ask ACT or Diffusion for RTC and the provider warns and
+runs `select_action()`. `rtc_enabled=None` (the default) follows whatever the
+checkpoint itself was saved with.
 
-Real-Time Chunking does two things. First, **seam blending**: each new action
-chunk is denoised conditioned on the still-unexecuted tail of the previous
-chunk (`rtc_execution_horizon`), so the trajectory has no discontinuity where
-one chunk hands off to the next. Second, on real hardware, it lets **inference
-overlap execution**: the controller fires the next inference while the current
-chunk is still being executed, so the model's latency is hidden behind motion
-rather than appearing as a stall at the seam.
-
-### Re-query interval: `execution_horizon`
-
-The SIM consumes `policy.execution_horizon` actions from each chunk before
-re-querying - the single source of truth for the re-query rate. For an RTC
-policy this is `rtc_execution_horizon` (default 10), **not** the trained chunk
-length (`actions_per_step`, auto-detected from the model, e.g. 50). Re-querying
-mid-chunk is what lets the policy receive its previous chunk's unexecuted tail
-(`prev_chunk_left_over`) and blend the seam; draining the full trained chunk
-first leaves that tail empty and silently degrades RTC to open-loop replay. The
-policy decides this interval - a caller-supplied `action_horizon` is ignored for
-RTC policies (it cannot stretch the interval and break blending). For non-RTC
-policies `execution_horizon == actions_per_step` and the consumer still takes
-`max(action_horizon, actions_per_step)` so the trained chunk is never truncated.
-
-### What the prefix contains: `prev_chunk_left_over`
-
-The prefix is the previous chunk **from the observation tick to its end** - the
-same span LeRobot's `ActionQueue.get_left_over()` returns
-(`original_queue[last_index:]`). Row 0 is the action applied on the tick right
-after the observation, and row *i* the action applied on the tick the new chunk's
-row *i* lands on. LeRobot's denoiser depends on that index alignment: it builds
-`get_prefix_weights(inference_delay, execution_horizon, T)`, pinning weight 1.0
-across `[0, inference_delay)` - the steps that elapse *during* inference - and
-blending `[inference_delay, execution_horizon)` toward the prefix.
-
-The provider therefore keeps each chunk as the consumer received it and cuts the
-prefix at the next query, from the overlap the runtime reports
-(`set_rtc_observed_delay`). Under `async_rtc=True` the runner fires the prefetch
-mid-chunk, so the prefix opens on the action still pending at that moment; under
-`async_rtc=False` the chunk has drained and it opens past the execution horizon.
-Cutting the prefix when the chunk is produced cannot express the async case: how
-far the consumer has drained the chunk is not known until its next observation is
-captured.
-
-### Relative-action policies: prefix re-anchoring
-
-Some flow-matching checkpoints (pi0 / pi0.5 / pi0-FAST trained with a
-`RelativeActionsProcessorStep`) predict actions as offsets from the current
-robot state rather than absolute joint targets. The unexecuted tail carried into
-the next chunk (`prev_chunk_left_over`) is therefore only valid in the
-coordinate frame of the observation that produced it. Because the robot state
-moves between chunks, feeding that tail back verbatim would blend a STALE-frame
-prefix into the next chunk and corrupt the seam.
-
-For these policies the provider keeps the leftover in absolute coordinates and
-re-expresses it against the live robot state every query via LeRobot's
-`reanchor_relative_rtc_prefix` (reading the cached state from the preprocessor's
-`RelativeActionsProcessorStep`), so the model always receives a correctly
-anchored prefix. This is detected automatically from the loaded preprocessor
-pipeline - no flag is needed - and only engages when an enabled relative-action
-step is present. Absolute-action policies carry the model-space leftover
-verbatim (their frame does not move). The deterministic step-count delay below
-is untouched, so re-anchoring preserves bit-reproducibility.
+The sim consumes `policy.execution_horizon` actions from each chunk before
+re-querying - `rtc_execution_horizon` (default 10) for an RTC policy, the full
+chunk otherwise. For relative-action checkpoints (pi0 / pi0.5 / pi0-FAST
+trained with `RelativeActionsProcessorStep`) the carried prefix is re-anchored
+to the state at the new query, so the seam does not double-apply the offset.
 
 ### Synchronous vs async chunk execution in sim
 
-`run_policy` / `PolicyRunner.run` accept an `async_rtc` flag controlling which
-of those two RTC benefits the sim reproduces:
+`run_policy` / `PolicyRunner.run` accept `async_rtc`:
 
 | `async_rtc` | Behaviour | Use when |
 | --- | --- | --- |
 | `None` (default) | Auto-resolve from `policy.is_chunk_emitting()`: chunk-emitting policies get the async overlap, single-step policies stay synchronous. An explicit `True`/`False` always wins. | The common case - let the policy decide. |
-| `False` | Query the policy, drain `execution_horizon` actions (the full chunk for non-RTC; `rtc_execution_horizon` for RTC), then re-query. Seam blending works because the RTC policy is re-queried mid-chunk, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
-| `True` | While the current chunk drains, fire the next `get_actions` on a single background worker once the chunk is ~50% consumed (using a fresh mid-execution observation), then atomically swap it in. A policy whose inference latency is at most the chunk's execution window pays (almost) zero visible stall at the seam. | Chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) where you want sim per-step timing to track real-hardware behaviour, or to benchmark a streaming controller. |
-
-Because MolmoAct2, pi0, pi0.5, pi0-FAST and SmolVLA all self-report as chunk-emitting, the default `async_rtc=None` enables latency masking for them automatically - no flag needed. Each `run_policy` result carries `rtc_*` telemetry (`rtc_async_enabled`, `rtc_prefetch_hits`, `rtc_prefetch_blocks`, `rtc_avg_inference_ms`, ...) so you can confirm the masking worked; see [Simulation -> Async-RTC chunk pipeline](../simulation/overview.md#async-rtc-chunk-pipeline-latency-masking). Pass `rtc_inference_timeout_s=` to abort cleanly on a stuck inference instead of stalling the whole rollout.
+| `False` | Query the policy, drain `execution_horizon` actions, then re-query. Seam blending works because the RTC policy is re-queried mid-chunk, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
+| `True` | While the current chunk drains, fire the next `get_actions` on a background worker once the chunk is ~50% consumed, then atomically swap it in. | Chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) where sim per-step timing should track real hardware. |
 
 ```python
-# Default (async_rtc=None): pi0 self-reports as chunk-emitting, so the async
-# overlap is enabled automatically - inference latency is masked.
 sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
-               policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
-               action_horizon=8)
-
-# Force the synchronous chunk-then-drain loop (inference shows up as a per-seam
-# stall in sim) - e.g. for a deterministic regression run.
-sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
-               policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
+               policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "rtc_enabled": True},
                action_horizon=8, async_rtc=False)
 ```
 
-`async_rtc` is provider-agnostic: it only schedules the inference/execution
-overlap and never touches the policy's RTC machinery, so RTC-capable policies
-still blend the seam internally. The runner invokes the policy from at most one
-thread at a time and blocks on any in-flight inference before returning, so it
-introduces no data race. Masking only helps when there is execution to hide
-behind, so the benefit is largest at real-time pacing (`fast_mode=False`) with
-multi-step chunks; with `fast_mode=True` and near-instant physics there is
-little execution window to overlap.
-
 ### Deterministic inference delay
 
-RTC has to know how many control steps the robot executed *while inference was
-running* - that offset is where it slices the next chunk so the seam lines up.
-Estimating it from wall-clock latency is non-reproducible: the measured latency
-warms up over the first few inferences of an episode and jitters run-to-run, so
-two fixed-seed episodes drift apart at the seam (the "seeds fixed but trajectory
-varies" symptom in multi-episode evals).
-
-`PolicyRunner` instead tells the policy the **exact** step count via
-`policy.set_rtc_observed_delay(steps)` immediately before each query:
-
-- Synchronous loop (`async_rtc=False`): the world is paused during inference, so
-  exactly `0` steps elapse.
-- Async pipeline (`async_rtc=True`): the prefetched chunk first applies after the
-  remaining steps of the chunk currently executing drain - a known integer,
-  independent of how long inference actually takes (a slow inference just stalls
-  the loop; the arm does not advance past the chunk end while it waits).
-
-So an eval driven by the runner is bit-reproducible across episodes regardless of
-machine load. When a policy is driven directly without a runner (e.g. on async
-real hardware where the arm genuinely keeps moving during inference), leave the
-override unset (`None`) and the policy falls back to the wall-clock p95 estimate,
-which is the right proxy there.
-
-The override is an offset into the action chunk, so it accepts `None` or a
-non-negative `int` and nothing else. A fractional count is not a smaller offset
-and `True` is not a count of one - both used to be coerced into a neighbouring
-value, which moves the seam silently. The control rate the estimator multiplies
-by (`set_control_frequency(hz)`) is a finite positive number for the same
-reason: `nan` and `inf` survive a `hz <= 0` test but not the `int()` that turns
-a latency into a step count, so they are refused where they arrive rather than
-part-way through a rollout.
+RTC slices the next chunk by how many control steps elapsed during inference.
+`PolicyRunner` passes the exact count via `policy.set_rtc_observed_delay(steps)`
+before each query (`0` in the synchronous loop; the remaining drain of the
+current chunk in the async pipeline), so a runner-driven eval is
+bit-reproducible regardless of machine load. Driven without a runner (async
+real hardware), leave it `None` and the policy uses its wall-clock p95
+estimate. The override accepts `None` or a non-negative `int` only, and
+`set_control_frequency(hz)` a finite positive number - `nan`, `inf`, fractions
+and `True` are refused where they arrive.
 
 ## See also
 
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics
 - [Policy providers](../policies/overview.md)
 - [Training](../training/overview.md)
-- [GR00T](groot.md)
-- [cuRobo](curobo.md)
-- [LeRobot project](https://github.com/huggingface/lerobot)
+- [LeRobot policy docs](https://huggingface.co/docs/lerobot) - configs, processors, RTC

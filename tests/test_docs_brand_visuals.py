@@ -9,7 +9,7 @@ cyan ``#22D3EE``):
 * ``architecture_flow.svg`` - the four-layer stack with action/observation
   signal flow, on the architecture page and the README "How it works" section.
 * ``mesh_network.svg`` - peer coordination over the Zenoh mesh, on the mesh
-  page and the README "Mesh networking" section.
+  page and beside the README's mesh row.
 
 Each is surfaced through the ``brand-figure``/``brand-svg`` CSS treatment in
 ``docs/stylesheets/extra.css``. This guard fails fast if an asset is deleted,
@@ -64,8 +64,8 @@ def test_readme_embeds_all_brand_svgs() -> None:
     """The README surfaces all three animated brand SVGs.
 
     ``hero_loop.svg`` opens the README; ``architecture_flow.svg`` illustrates
-    the "How it works" section and ``mesh_network.svg`` the "Mesh networking"
-    section - matching the docs pages that embed the same assets. Each is
+    the "How it works" section and ``mesh_network.svg`` sits beside the mesh
+    row - matching the docs pages that embed the same assets. Each is
     referenced by its ``docs/assets/`` repo-relative path so GitHub renders it.
     """
     text = README.read_text(encoding="utf-8")

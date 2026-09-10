@@ -37,13 +37,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-import psutil
 import pytest
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod
-import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
-from strands_robots.tools._process_stop import session_is_running
+pytest.importorskip("psutil")
+
+import psutil  # noqa: E402
+
+import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
+from strands_robots.tools._process_stop import session_is_running  # noqa: E402
 
 #: A pid this process certainly holds, so "exists" is settled and the only thing
 #: under test is the spelling it is written down in.

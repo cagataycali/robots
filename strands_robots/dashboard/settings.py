@@ -92,7 +92,8 @@ _lock = threading.RLock()
 # process that repoints SETTINGS_FILE is served the tree resolved from the
 # previous file, and a stale hit is indistinguishable from a fresh one. Keyed
 # this way they cannot, because the path is the dict's key, so a tree is only
-# reachable through the file it came from. `auth.py` keys its store cache on a
+# reachable through the file it came from. ``strands_robots.dashboard.auth``
+# keys its store cache on a
 # file identity for the same reason. Cleared before each insert, so it holds at
 # most one entry.
 _cache: dict[str, dict[str, dict[str, Any]]] = {}
@@ -452,7 +453,8 @@ def _write_file(data: dict[str, Any]) -> None:
 # Mesh env application
 # ----------------------------------------------------------------------
 
-#: Settings key -> env var read by ``mesh/session.py`` / the transport factory.
+#: Settings key -> env var read by ``strands_robots.mesh.session`` / the
+#: transport factory.
 MESH_ENV = {
     "connect": "ZENOH_CONNECT",
     "listen": "ZENOH_LISTEN",

@@ -24,7 +24,7 @@ guarded example already use -- is::
 so a windowed backend is only selected where one exists, an offscreen backend
 is used everywhere else, and a user-exported ``MUJOCO_GL`` always wins.
 
-Two rules are enforced over the notebooks' code cells plus every tracked
+Three rules are enforced over the notebooks' code cells plus every tracked
 ``.py`` under ``tests/``, ``tests_integ/`` and ``examples/``:
 
 1. **No unguarded** ``"cgl"`` **on any line** (:func:`test_no_unguarded_cgl_default`).
@@ -49,6 +49,18 @@ mirror image of an unguarded ``"cgl"`` -- each is one platform's backend named
 unconditionally -- so both are reported and the guarded form fixes both. The
 platform-independent spellings MuJoCo also accepts (``disable``, ``off``,
 ``1``, ...) name no backend and are left alone.
+
+3. **No unguarded offscreen backend in an example, in any scope**
+   (:func:`test_no_unguarded_offscreen_gl_default_in_examples`). Rule 2 is
+   scoped to module level because that is the only scope that selects the
+   backend for a *test* file. An example is different: it puts the default at
+   module scope *and* at the top of ``main()``, before the lazy simulation
+   import, and both run before mujoco is imported -- so on macOS a bare ``egl``
+   in ``main()`` is the same ``RuntimeError`` as one at module scope, and Rule 2
+   cannot see it. Rule 3 walks every scope of every tracked example for the
+   Linux-only pair. Measured at 6a8a8ea23 on macOS:
+   ``examples/04_mesh_peer_discovery.py`` died at import, and the six ``main()``
+   sites would die the same way on first run.
 """
 
 from __future__ import annotations
@@ -158,11 +170,15 @@ def test_scanner_sees_cgl_usage():
 #: window server, so neither is a working unconditional default.
 _WINDOWED_BACKENDS = ("cgl", "glfw")
 
+#: MuJoCo's *offscreen* GL backends. Both are Linux-only: MuJoCo rejects them
+#: at import on macOS, so neither is a working unconditional default either.
+_OFFSCREEN_BACKENDS = ("egl", "osmesa")
+
 #: Every GL backend MuJoCo names, each of which some platform cannot use: the
 #: windowed pair needs a window server, and ``egl``/``osmesa`` are refused
 #: outright on macOS. So none of them is a correct unconditional default, and a
 #: module-scope default naming one has to choose per platform.
-_PLATFORM_BOUND_BACKENDS = (*_WINDOWED_BACKENDS, "egl", "osmesa")
+_PLATFORM_BOUND_BACKENDS = (*_WINDOWED_BACKENDS, *_OFFSCREEN_BACKENDS)
 
 # Fallback for a notebook cell that does not parse (a ``%``/``!`` magic makes the
 # cell invalid Python on its own): report any line naming a GL backend as a
@@ -282,11 +298,83 @@ def test_scan_reaches_the_module_scope_defaults():
     Without this a path/glob regression, or a walker that descended into nothing,
     would make the rule above pass by reaching no source at all.
     """
+    # tests/ carries exactly one default now (tests/conftest.py, set for the whole
+    # session before any test module is imported); the rest live in examples/
+    # (11) and tests_integ/ (5), which have no shared conftest to lean on.
     total = sum(len(_module_scope_gl_defaults(p.read_text(encoding="utf-8"))) for p in _tracked_py())
-    assert total >= 20, (
+    assert total >= 10, (
         f"the AST scan found only {total} module-scope MUJOCO_GL defaults across {_tracked_py()[:1]}...; "
         "the tree has far more, so the scan is not reaching the sources."
     )
+
+
+def _all_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
+    """``(line, value-expression)`` for every ``MUJOCO_GL`` default in any scope."""
+    return [
+        (getattr(node, "lineno", 0), ast.unparse(value))
+        for node in ast.walk(ast.parse(source))
+        if (value := _gl_default_value(node)) is not None
+    ]
+
+
+def _names_offscreen(expr_src: str) -> bool:
+    return any(f'"{backend}"' in expr_src or f"'{backend}'" in expr_src for backend in _OFFSCREEN_BACKENDS)
+
+
+def _unguarded_offscreen_defaults(source: str) -> list[str]:
+    """``MUJOCO_GL`` defaults naming a Linux-only backend without a platform guard, any scope."""
+    return [
+        f"line {line}: {expr}"
+        for line, expr in _all_scope_gl_defaults(source)
+        if _names_offscreen(expr) and not _is_guarded_expr(expr)
+    ]
+
+
+def _example_py() -> list[Path]:
+    root = _REPO_ROOT / "examples"
+    return sorted(root.rglob("*.py")) if root.is_dir() else []
+
+
+def test_no_unguarded_offscreen_gl_default_in_examples():
+    """An example must not default MUJOCO_GL to a Linux-only backend, in any scope.
+
+    A reader runs an example on the machine in front of them; on macOS a bare
+    ``egl`` is a RuntimeError at ``import mujoco`` whether the line sits at
+    module scope or at the top of ``main()``.
+    """
+    offenders = {
+        str(path.relative_to(_REPO_ROOT)): bad
+        for path in _example_py()
+        if (bad := _unguarded_offscreen_defaults(path.read_text(encoding="utf-8")))
+    }
+    assert not offenders, (
+        "an example defaults MUJOCO_GL to a Linux-only GL backend "
+        f"({', '.join(_OFFSCREEN_BACKENDS)}), which MuJoCo rejects at import on macOS. "
+        'Use \'os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\'. '
+        f"Offending sites: {offenders}"
+    )
+
+
+class TestTheOffscreenRuleGradesEveryScope:
+    """Planted sources for Rule 3: any scope, offscreen names only, the guard clears it."""
+
+    def test_a_module_scope_egl_default_is_reported(self):
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "egl")\n'
+        assert _unguarded_offscreen_defaults(source) == ["line 2: 'egl'"]
+
+    def test_an_egl_default_inside_main_is_reported_too(self):
+        source = 'import os\n\n\ndef main():\n    os.environ.setdefault("MUJOCO_GL", "osmesa")\n'
+        assert _unguarded_offscreen_defaults(source) == ["line 5: 'osmesa'"]
+
+    def test_the_guarded_form_is_accepted(self):
+        source = (
+            'import os\nimport sys\nos.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")\n'
+        )
+        assert _unguarded_offscreen_defaults(source) == []
+
+    def test_a_windowed_default_is_rule_two_business_not_rule_three(self):
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "glfw")\n'
+        assert _unguarded_offscreen_defaults(source) == []
 
 
 class TestTheRuleIsScopedToWhatSelectsTheBackend:

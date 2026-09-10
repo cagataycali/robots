@@ -250,7 +250,7 @@ if _importlib_util.find_spec("mujoco") is not None:
 # ffmpeg with zero user setup - making ``sim.stream_dataset(...)`` video decode
 # work out of the box. No-op off macOS, without torchcodec, or when already set.
 # May re-exec the interpreter ONCE on a plain script run (guarded; never in
-# Jupyter/REPL/pytest). Opt out with STRANDS_ROBOTS_NO_DYLD_SHIM=1. See _dyld.py.
+# Jupyter/REPL/pytest). Opt out with STRANDS_ROBOTS_NO_DYLD_SHIM=1. See :mod:`strands_robots._dyld`.
 try:
     from strands_robots._dyld import ensure_ffmpeg_on_dyld_path
 

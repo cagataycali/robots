@@ -40,8 +40,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-from strands_robots.tools import _process_stop
-from strands_robots.tools._process_stop import (
+pytest.importorskip("psutil")
+
+from strands_robots.tools import _process_stop  # noqa: E402
+from strands_robots.tools._process_stop import (  # noqa: E402
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
 )

@@ -17,10 +17,14 @@ from __future__ import annotations
 
 import tempfile
 
-import mujoco
+import pytest
 
-from strands_robots.simulation import terrain
-from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation import terrain  # noqa: E402
+from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine  # noqa: E402
 
 _PLANE = int(mujoco.mjtGeom.mjGEOM_PLANE)
 _HFIELD = int(mujoco.mjtGeom.mjGEOM_HFIELD)

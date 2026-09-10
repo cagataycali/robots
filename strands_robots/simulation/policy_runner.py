@@ -145,7 +145,8 @@ def set_eval_seed(seed: int) -> None:
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
     """
-    # Local import: base.py imports this module at module level, so reaching the
+    # Local import: ``simulation.base`` imports this module at module level, so
+    # reaching the
     # shared domain from here has to stay deferred - the same convention this
     # module already uses for simulation.benchmark / .recording / .predicates.
     from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
@@ -1750,7 +1751,7 @@ class PolicyRunner:
         # structured envelope to read a refusal from. Same shared rule as
         # SimEngine._validate_seed, raised rather than returned because raising
         # is this layer's contract.
-        # Local import: base.py imports PolicyRunner at module level, so
+        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
         # reaching the shared domain from here has to stay deferred - the
         # same convention this module already uses for
         # simulation.benchmark / simulation.recording / simulation.predicates.
@@ -3264,7 +3265,7 @@ class PolicyRunner:
         """
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
-        # Local import: base.py imports PolicyRunner at module level, so
+        # Local import: ``simulation.base`` imports PolicyRunner at module level, so
         # reaching the shared domain from here has to stay deferred - the
         # same convention this module already uses for
         # simulation.benchmark / simulation.recording / simulation.predicates.
@@ -4228,12 +4229,14 @@ class PolicyRunner:
             # scored every episode a failure - while still working against a
             # test double that returns the bare mapping.
             #
-            # Imported inside the method, not at module level: base.py imports
-            # this module at import time and predicates.py imports base under
+            # Imported inside the method, not at module level: ``simulation.base``
+            # imports this module at import time and ``simulation.predicates``
+            # imports base under
             # TYPE_CHECKING, so a module-level edge from here to predicates
             # closes a loop that CodeQL's py/unsafe-cyclic-import walks - it
-            # does not honour the guard (see the #191 note on base.py's import
-            # of this module). No runtime cycle exists either way, and base.py
+            # does not honour the guard (see the #191 note on the import
+            # of this module in ``simulation.base``). No runtime cycle exists
+            # either way, and ``simulation.base``
             # reaches into predicates the same way from
             # ``_stop_when_unresolved_error``.
             from strands_robots.simulation.predicates import make_predicate
