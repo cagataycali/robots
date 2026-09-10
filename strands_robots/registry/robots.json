@@ -395,16 +395,12 @@
         "scene_xml": "scene.xml",
         "robot_descriptions_module": "aloha_mj_description"
       },
-      "hardware": {
-        "lerobot_type": "bi_so_follower"
-      },
       "aliases": [
         "agibot_dual_arm",
         "agibot_dual_arm_dexhand",
         "agibot_dual_arm_full",
         "agibot_dual_arm_gripper",
         "agibot_genie1",
-        "bi_so_follower",
         "galaxea_r1_pro"
       ]
     },
@@ -430,6 +426,17 @@
       "aliases": [
         "bi_rebot_b601_follower",
         "dual_rebot_b601"
+      ]
+    },
+    "bi_so_follower": {
+      "description": "Bimanual SO-ARM follower (2x SO-100/SO-101, 6-DOF each, Feetech STS3215)",
+      "category": "bimanual",
+      "hardware": {
+        "lerobot_type": "bi_so_follower"
+      },
+      "aliases": [
+        "bi_so100",
+        "bi_so101"
       ]
     },
     "trossen_wxai": {

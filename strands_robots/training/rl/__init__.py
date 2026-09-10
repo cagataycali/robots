@@ -16,6 +16,9 @@ Public surface:
     - :class:`SimEnv` - ``SimEngine`` -> RL env adapter.
     - :class:`VecSimEnv` - N independent ``SimEnv`` presented as one ``(N, D)`` env.
     - :class:`EmpiricalNormalization` - running observation normalizer.
+    - :func:`load_deployable_actor` / :class:`DeployableActor` - read a saved
+      checkpoint's deterministic actor back for deployment (the reader behind
+      the ``rl`` policy provider).
 
 Importing this package imports ``torch`` (via the env / algo modules), so it is
 not imported by ``strands_robots.training.__init__``; the ``ppo`` provider is
@@ -23,6 +26,11 @@ registered there through a lazy loader instead.
 """
 
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
+from strands_robots.training.rl.checkpoint import (
+    DeployableActor,
+    load_deployable_actor,
+    read_checkpoint_meta,
+)
 from strands_robots.training.rl.env import SimEnv
 from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.fast_td3 import FastTd3Trainer
@@ -43,4 +51,7 @@ __all__ = [
     "GymSimEnv",
     "VecSimEnv",
     "EmpiricalNormalization",
+    "DeployableActor",
+    "load_deployable_actor",
+    "read_checkpoint_meta",
 ]

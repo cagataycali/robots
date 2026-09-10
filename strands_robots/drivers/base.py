@@ -56,6 +56,8 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ..utils import refusal_repr
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
 
@@ -377,12 +379,90 @@ def undeclared_verb_error(driver: Any, action: Any) -> dict[str, Any]:
         "content": [
             {
                 "text": (
-                    f"{type(driver).__name__}: unknown action {action!r}; "
+                    f"{type(driver).__name__}: unknown action {refusal_repr(action)}; "
                     f"declared verbs are {declared_verbs(driver.tool_spec)}"
                 )
             }
         ],
     }
+
+
+def policy_step(
+    policy_object: Any,
+    instruction: str,
+) -> Callable[[dict[str, Any]], Any] | None:
+    """Return the one-step callable for ``policy_object``, or ``None``.
+
+    :meth:`HardwareDriver.run_policy` types its first argument
+    :class:`~strands_robots.policies.Policy`, and that class declares exactly
+    two ways to ask for an action: :meth:`~strands_robots.policies.Policy.get_actions`
+    and its synchronous wrapper
+    :meth:`~strands_robots.policies.Policy.get_actions_sync`. It declares no
+    ``step`` and no ``__call__``, and no subclass in this package adds either -
+    so a driver whose admission asks for ``step`` refuses every policy the
+    package builds, while accepting objects the seam does not type. Resolving
+    the shapes here, once, is what keeps the admission a driver performs and the
+    call its loop makes describing the same set.
+
+    Three shapes are legitimate and all three resolve:
+
+    * a built :class:`~strands_robots.policies.Policy`, called as
+      ``get_actions_sync(observation, instruction)`` - the typed contract;
+    * an object exposing ``step(observation)`` - the shape a control-loop
+      policy written against a native driver already uses;
+    * a bare callable ``policy(observation)``.
+
+    An action *chunk* is unwrapped to its first action.
+    :meth:`~strands_robots.policies.Policy.get_actions` returns a list whose
+    length is the chunk horizon, but a native control loop commands one frame
+    per step, so it needs the dict rather than the list - the same first-action
+    convention :mod:`strands_robots.hardware_robot` applies when it consumes a
+    chunk. Unwrapping for all three shapes rather than only the typed one keeps
+    a single return contract: the returned callable answers with an action dict,
+    or ``None`` when the policy produced no action for this step.
+
+    Args:
+        policy_object: The candidate policy.
+        instruction: Instruction bound into the ``get_actions_sync`` call, which
+            takes it as its second argument. Ignored by the other two shapes,
+            neither of which accepts one.
+
+    Returns:
+        A callable taking an observation dict and answering with the action the
+        policy commanded - or ``None`` when ``policy_object`` is none of the
+        three shapes, which is the refusal a driver's admission renders. What
+        that callable answers is *not* narrowed to a dict: each loop validates
+        the action's shape against its own wire and names its own refusal, and
+        widening here would hide the value that refusal has to quote.
+    """
+    get_actions = getattr(policy_object, "get_actions_sync", None)
+    if callable(get_actions):
+        return lambda observation: _first_action(get_actions(observation, instruction))
+    step = getattr(policy_object, "step", None)
+    if callable(step):
+        return lambda observation: _first_action(step(observation))
+    if callable(policy_object):
+        return lambda observation: _first_action(policy_object(observation))
+    return None
+
+
+def _first_action(result: Any) -> Any:
+    """Reduce whatever a policy returned to the one action a step commands.
+
+    Args:
+        result: The policy's return value - an action dict, or a chunk of them.
+
+    Returns:
+        ``result`` itself when it is already a single action, its first element
+        when it is a non-empty chunk, or ``None`` when the policy yielded
+        nothing to command. A non-dict, non-sequence value is returned
+        unchanged: the calling loop owns the refusal that names it, and quoting
+        the value the policy actually returned is what makes that refusal
+        actionable.
+    """
+    if isinstance(result, list | tuple):
+        return result[0] if result else None
+    return result
 
 
 #: The bytes-like types a vector telemetry field must never be read through.

@@ -39,7 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+from strands_robots.utils import (
+    positive_finite_number_error,
+    positive_whole_number_error,
+    refusal_repr,
+    refusal_str,
+)
 
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
@@ -146,7 +151,7 @@ def diffusion_steps_error(value: Any, context: str) -> str | None:
         return error
     if value > _KIMODO_MAX_DIFFUSION_STEPS:
         return (
-            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {value} - "
+            f"{context}: diffusion_steps must be <= {_KIMODO_MAX_DIFFUSION_STEPS}, got {refusal_str(value)} - "
             "the step count multiplies the cost of every sample, so a run this long is a stall "
             "rather than a better motion."
         )
@@ -213,7 +218,7 @@ def sampling_seed_error(value: Any, context: str) -> str | None:
     """
     if value is None:
         return None
-    prefix = f"{context}: seed must be a whole number or None, got {value!r}"
+    prefix = f"{context}: seed must be a whole number or None, got {refusal_repr(value)}"
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return f"{prefix} (None draws fresh entropy for every sample)."
     try:
@@ -225,7 +230,7 @@ def sampling_seed_error(value: Any, context: str) -> str | None:
     if whole != value:
         return (
             f"{prefix}: the buffered-motion key rounds a seed to a whole number, so "
-            f"{value!r} would name the sample keyed by {whole!r} and replay it instead of sampling its own."
+            f"{refusal_repr(value)} would name the sample keyed by {whole!r} and replay it instead of sampling its own."
         )
     return None
 
@@ -311,8 +316,7 @@ class KimodoConfig:
 
         Only recognised keys are consumed; unknown keys are ignored for forward
         compatibility, and no warning is emitted for a dropped key - the policy
-        :mod:`strands_robots.policies.motionbricks.config` and
-        :mod:`strands_robots.policies.wbc.config` state for their own
+        :mod:`strands_robots.policies.wbc.config` states for its own
         ``from_dict``.
 
         Args:
@@ -332,12 +336,11 @@ class KimodoConfig:
 
         A file that cannot supply fields is reported by name rather than
         reaching :meth:`from_dict`, which is the reporting the sibling
-        policy-config file loaders in
-        :mod:`strands_robots.policies.motionbricks.config` and
-        :mod:`strands_robots.policies.wbc.config` already give. ``~`` in
+        policy-config file loader in
+        :mod:`strands_robots.policies.wbc.config` already gives. ``~`` in
         ``path`` is expanded.
 
-        The extension is deliberately not checked, unlike those two loaders: a
+        The extension is deliberately not checked, unlike that loader: a
         JSON object stored under any name loads here today, and refusing one
         would stop a payload that currently works. Every refusal below names an
         input that already fails.

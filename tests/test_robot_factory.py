@@ -1021,23 +1021,24 @@ class TestRealModeConfigDiscovery:
         assert front.index_or_path == "/dev/video2"
         assert (front.fps, front.width, front.height) == (60, 1280, 720)
 
-    def test_unsupported_camera_type_raises_value_error(self):
-        """A non-opencv camera ``type`` is rejected with an actionable error.
+    def test_unregistered_camera_type_raises_value_error(self):
+        """A camera ``type`` lerobot does not register is rejected actionably.
 
-        ``opencv`` is the only backend ``_create_minimal_config`` knows how to
-        build; any other ``type`` (e.g. a typo or an unimplemented backend) must
-        fail loudly at config-build time rather than be silently dropped, so the
-        operator learns immediately the camera will not be wired up.
+        The accepted types are ``CameraConfig``'s choice registry, so a backend
+        lerobot ships is attachable; a ``type`` absent from it (a typo, a
+        backend that needs a plugin that is not installed) must fail loudly at
+        config-build time rather than be silently dropped, so the operator
+        learns immediately the camera will not be wired up.
         """
         pytest.importorskip("lerobot.robots.so_follower")
         from strands_robots.hardware_robot import Robot as HwRobot
 
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "so101_badcam"
-        with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+        with pytest.raises(ValueError, match="Unsupported camera type for camera 'depth': 'thermal'"):
             hw._create_minimal_config(
                 "so101_follower",
-                cameras={"depth": {"type": "realsense", "index_or_path": 0}},
+                cameras={"depth": {"type": "thermal", "index_or_path": 0}},
                 port="/dev/null",
             )
 
@@ -1631,12 +1632,38 @@ class TestThirdPartyPluginGuardIsNarrow:
         """#291: the register_third_party_plugins() guard must NOT be a bare
         except Exception. Pin the narrowed (ImportError, AttributeError,
         OSError) tuple by source inspection so the BLE001 pattern cannot
-        silently return."""
+        silently return.
+
+        The function under inspection is *discovered* from the call it guards
+        rather than named: this test previously read
+        ``_ensure_lerobot_robots_registered``, and moving the call into its own
+        helper -- so the camera registry could reuse it -- made the assertion
+        read a body that no longer contained the guard. A guard keyed on a
+        function name passes vacuously the moment that call moves one function
+        over.
+        """
+        import ast
         import inspect
 
         from strands_robots import hardware_robot
 
-        src = inspect.getsource(hardware_robot._ensure_lerobot_robots_registered)
+        module = ast.parse(inspect.getsource(hardware_robot))
+        callers = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.FunctionDef)
+            and any(
+                isinstance(call.func, ast.Name) and call.func.id == "register_third_party_plugins"
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+            )
+        ]
+        assert len(callers) == 1, (
+            f"expected exactly one function to call register_third_party_plugins(); "
+            f"found {[node.name for node in callers]}"
+        )
+
+        src = ast.get_source_segment(inspect.getsource(hardware_robot), callers[0]) or ""
         assert "except (ImportError, AttributeError, OSError)" in src, (
             "register_third_party_plugins must be guarded by a narrow exception tuple (#291)"
         )

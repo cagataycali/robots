@@ -49,6 +49,7 @@ from strands_robots.utils import (
     finite_vector_error,
     orientation_quaternion_error,
     pose_vector_error,
+    refusal_repr,
 )
 
 logger = logging.getLogger(__name__)
@@ -2615,7 +2616,7 @@ def _geom_shape_error(shape: Any) -> str | None:
         return None
     accepted = ", ".join(sorted(set(_SIZE_LAYOUT) - _UNSUPPORTED_GEOM_SHAPES))
     return (
-        f"add_geom: 'type' cannot be {shape!r} - this op has no key that names a mesh asset, "
+        f"add_geom: 'type' cannot be {refusal_repr(shape)} - this op has no key that names a mesh asset, "
         "so the geom it would add has no mesh to take its extent from and MuJoCo refuses the "
         'whole scene at recompile. Add a mesh with add_object(shape="mesh", mesh_path=...), '
         f"which registers the asset alongside the body. Accepted 'type' values: {accepted}."

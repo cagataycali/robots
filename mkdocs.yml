@@ -41,7 +41,6 @@ nav:
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md
   - WBC Gait-Clock Variant: policies/wbc_gait.md
-  - MotionBricks (G1 generative motion): policies/motionbricks.md
   - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
   - ProtoMotions (G1 motion tracker): policies/protomotions.md
   - Microduck (Pollen 14-DOF biped): policies/microduck.md
@@ -49,6 +48,7 @@ nav:
   - LeRobot Async (gRPC inference): policies/lerobot-async.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
   - Remote (WebSocket inference): policies/remote.md
+  - RL Checkpoint (trained actor): policies/rl.md
   - Persistent Worker (long-lived inference): policies/persistent-worker.md
   - Camera Naming: policies/camera-naming.md
   - Custom Policies: policies/custom-policies.md

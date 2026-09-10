@@ -59,7 +59,7 @@ Those two keep ``str`` rather than moving to ``repr``: NumPy 2 reprs a scalar
 with its type, so a documented-as-accepted ``np.float32`` fov would start
 reporting ``got np.float32(200.0)`` in text an agent reads.
 
-The fix routes all of them through ``_refusal_repr`` / ``_refusal_str``, which
+The fix routes all of them through ``refusal_repr`` / ``refusal_str``, which
 defer to ``repr`` / ``str`` wherever those work. So no verdict and no
 agent-visible text changes, which is what
 :class:`TestTheTextIsUnchangedForAValueThatCanBeRendered` pins.
@@ -101,8 +101,6 @@ import pytest
 import strands_robots.utils as utils
 from strands_robots.utils import (
     _describe_unrenderable,
-    _refusal_repr,
-    _refusal_str,
     camera_fov_error,
     entity_name_error,
     finite_number_error,
@@ -114,6 +112,8 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
+    refusal_repr,
+    refusal_str,
     tcp_port_error,
     validation_split_error,
 )
@@ -320,21 +320,21 @@ CONVERTING_IDS = tuple(g.name for g in CONVERTING_GUARDS)
 # The shared renderers                                                        #
 # --------------------------------------------------------------------------- #
 class TestTheSharedRenderers:
-    """``_refusal_repr`` / ``_refusal_str`` are the only ways a refused value is rendered."""
+    """``refusal_repr`` / ``refusal_str`` are the only ways a refused value is rendered."""
 
     def test_a_renderable_value_renders_exactly_as_repr(self) -> None:
         """The whole reason no message text changes: it defers wherever it can."""
         for value in (-1, -1.0, None, "3", [3], True, np.float32(-1.0), np.int64(-1), NAN):
-            assert _refusal_repr(value) == repr(value)
+            assert refusal_repr(value) == repr(value)
 
     def test_a_renderable_value_renders_exactly_as_str(self) -> None:
         for value in (-1, -1.0, None, "3", [3], True, np.float32(200.0), np.int64(200)):
-            assert _refusal_str(value) == str(value)
+            assert refusal_str(value) == str(value)
 
     def test_the_two_forms_are_not_interchangeable(self) -> None:
         """Why the ``str`` sites keep ``str``: NumPy 2 reprs a scalar with its type."""
-        assert _refusal_str(np.float32(200.0)) == "200.0"
-        assert _refusal_repr(np.float32(200.0)) == "np.float32(200.0)"
+        assert refusal_str(np.float32(200.0)) == "200.0"
+        assert refusal_repr(np.float32(200.0)) == "np.float32(200.0)"
 
     def test_an_outsized_integer_is_described_by_its_magnitude(self) -> None:
         """``int.bit_length`` needs no decimal conversion, so this stays possible."""
@@ -343,14 +343,14 @@ class TestTheSharedRenderers:
             repr(BEYOND_INT_STR_LIMIT)
         with pytest.raises(ValueError):
             str(BEYOND_INT_STR_LIMIT)
-        assert _refusal_repr(BEYOND_INT_STR_LIMIT) == expected
-        assert _refusal_str(BEYOND_INT_STR_LIMIT) == expected
+        assert refusal_repr(BEYOND_INT_STR_LIMIT) == expected
+        assert refusal_str(BEYOND_INT_STR_LIMIT) == expected
 
     def test_both_forms_describe_an_unrenderable_value_identically(self) -> None:
         """One describer, so the two render forms cannot disagree about one value."""
         for value in (BEYOND_INT_STR_LIMIT, Unprintable(), UnrenderableReal()):
-            assert _refusal_repr(value) == _describe_unrenderable(value)
-            assert _refusal_str(value) == _describe_unrenderable(value)
+            assert refusal_repr(value) == _describe_unrenderable(value)
+            assert refusal_str(value) == _describe_unrenderable(value)
 
     def test_the_description_of_an_outsized_integer_does_not_carry_its_sign(self) -> None:
         """A known limit of the description, pinned rather than left to be discovered.
@@ -367,10 +367,10 @@ class TestTheSharedRenderers:
         assert "must be a positive integer" in refusal
 
     def test_a_value_that_cannot_render_itself_is_described_by_its_type(self) -> None:
-        assert _refusal_repr(Unprintable()) == "<unrepresentable Unprintable>"
-        assert _refusal_repr(UnrenderableReal()) == "<unrepresentable UnrenderableReal>"
-        assert _refusal_str(UnrenderableFov()) == "<unrepresentable UnrenderableFov>"
-        assert _refusal_repr(UnrenderableName("arm")) == "<unrepresentable UnrenderableName>"
+        assert refusal_repr(Unprintable()) == "<unrepresentable Unprintable>"
+        assert refusal_repr(UnrenderableReal()) == "<unrepresentable UnrenderableReal>"
+        assert refusal_str(UnrenderableFov()) == "<unrepresentable UnrenderableFov>"
+        assert refusal_repr(UnrenderableName("arm")) == "<unrepresentable UnrenderableName>"
 
     def test_the_fallback_is_unconditional_rather_than_a_known_exception_list(self) -> None:
         """A third-party type may raise anything, so the guarantee cannot enumerate."""
@@ -383,18 +383,18 @@ class TestTheSharedRenderers:
             def __repr__(self) -> str:
                 raise KeyboardInterrupt
 
-        assert _refusal_repr(RaisesUnusual()) == "<unrepresentable RaisesUnusual>"
+        assert refusal_repr(RaisesUnusual()) == "<unrepresentable RaisesUnusual>"
         # ``except Exception`` does not cover a ``BaseException`` and must not:
         # swallowing a ``KeyboardInterrupt`` to render an error message would be a
         # worse failure than the one being reported. Pinned so the boundary is a
         # decision rather than an oversight.
         with pytest.raises(KeyboardInterrupt):
-            _refusal_repr(RaisesBaseException())
+            refusal_repr(RaisesBaseException())
 
     def test_every_rendering_is_ascii(self) -> None:
         for value in (-1, NAN, None, [3], BEYOND_INT_STR_LIMIT, Unprintable()):
-            _refusal_repr(value).encode("ascii")
-            _refusal_str(value).encode("ascii")
+            refusal_repr(value).encode("ascii")
+            refusal_str(value).encode("ascii")
 
 
 # --------------------------------------------------------------------------- #
@@ -644,7 +644,7 @@ class TestTheContainerGuardsAnswerAnUnrenderableElement:
     ``repr`` of a container recurses into its elements, so a container was
     unrenderable whenever any one element was, and these guards raised out of a
     refusal they had already decided. They now answer, through
-    ``_refusal_container_repr``: the container is rendered elementwise and only
+    ``refusal_container_repr``: the container is rendered elementwise and only
     the components that cannot print are substituted, so the shape and the
     element count - often the refusal's entire reason - survive.
 
@@ -700,7 +700,7 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
         Every function that renders a caller value directly, mapped to
         ``(parameter, form)`` pairs where form is ``"!r"`` or ``"plain"``. A guard
         on the shared renderers contributes nothing, because
-        ``_refusal_repr(value)`` is a call rather than a bare name.
+        ``refusal_repr(value)`` is a call rather than a bare name.
     """
     tree = ast.parse(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
@@ -721,12 +721,49 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
     return found
 
 
-#: Empty, and that is the assertion: **no** function in ``utils.py`` renders a
-#: caller value directly any more. The five container guards that used to be
-#: listed here were #1875 and now route through ``_refusal_container_repr``, so
-#: the table has nothing left to hold. Any entry appearing here is a new guard
-#: that skipped the shared renderers.
-KNOWN_DIRECT_RENDERS: dict[str, tuple[tuple[str, str], ...]] = {}
+#: The guards that still render a caller value directly, keyed by the module they
+#: live in. The rule is stated over the **package**, not over ``utils.py``: the
+#: renderers were private to that module while the same guard shape was written
+#: in nineteen others, so a scan of one file reported an empty table while
+#: forty-three functions elsewhere interpolated the value straight into their text.
+#: Widening the population is what closed them, and it is why the renderers are
+#: package API rather than ``utils``-private helpers.
+#:
+#: The two left are in the Isaac backend, which an in-flight rewrite owns, so they
+#: are recorded rather than edited here. The relation asserted below is ``<=``
+#: rather than ``==`` for exactly that reason: a recorded guard that gets fixed -
+#: or whose file is deleted, as a third entry's was - must not fail this file.
+KNOWN_DIRECT_RENDERS: dict[str, dict[str, tuple[tuple[str, str], ...]]] = {
+    "simulation/isaac/config.py": {"_stage_path_error": (("value", "!r"), ("value", "plain"))},
+    "simulation/isaac/simulation.py": {"_mesh_path_error": (("mesh_path", "!r"),)},
+}
+
+#: The modules the package-wide scan must reach, so an empty result cannot be a
+#: scanner that stopped looking. Each held at least one guard that raised out of a
+#: refusal it had already decided; ``simulation/base.py`` held sixteen renders.
+REWRITTEN_MODULES = frozenset(
+    {
+        "drivers/base.py",
+        "hardware_robot.py",
+        "policies/kimodo/config.py",
+        "policies/wbc/config.py",
+        "rendering/compositor.py",
+        "rendering/video.py",
+        "ros_telemetry.py",
+        "simulation/base.py",
+        "simulation/ik.py",
+        "simulation/motion_primitives_base.py",
+        "simulation/mujoco/physics.py",
+        "simulation/mujoco/scene_ops.py",
+        "simulation/policy_runner.py",
+        "streaming_dataset.py",
+        "tools/lerobot_camera.py",
+        "tools/pose_tool.py",
+        "tools/serial_tool.py",
+        "training/_validate.py",
+        "utils.py",
+    }
+)
 
 #: The guards that render a *container*, which need the elementwise renderer
 #: rather than the whole-value one. Named so the scan below is shown to reach
@@ -783,9 +820,9 @@ GUARDED_READERS = frozenset(
         "_read_name_list",
         "_read_pose_vector",
         "_read_to_quote",
-        "_refusal_container_repr",
-        "_refusal_repr",
-        "_refusal_str",
+        "refusal_container_repr",
+        "refusal_repr",
+        "refusal_str",
         "sequence_length",
     }
 )
@@ -796,7 +833,7 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
 
     The companion to :func:`_scan_direct_renders`, and the escape that scan is
     blind to. It reports a caller value *rendered* without a shared renderer,
-    which is why ``_refusal_container_repr(list(value))`` satisfied it: the value
+    which is why ``refusal_container_repr(list(value))`` satisfied it: the value
     reaching the renderer is a ``list`` the guard built, and building it ran the
     caller's ``__iter__``. So the render was guarded and the read feeding it was
     not, and the whole of #1903 lived in that gap - as did the four escapes on
@@ -810,10 +847,13 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
     ordinary value - so a local bound from one is no longer the caller's object
     and reading it cannot run their code.
 
-    Only public functions are scanned. The private helpers below them are the
-    guarded layer a guard is built from, so a read inside one is the point rather
-    than a defect, and reporting them would make the table a list of the fixes
-    instead of a list of the escapes.
+    The guarded layer itself is not scanned: a read inside one of those is the
+    point rather than a defect, and reporting them would make the table a list of
+    the fixes instead of a list of the escapes. Membership is
+    :data:`GUARDED_READERS` plus the private helpers - named explicitly rather than
+    inferred from the leading underscore, because the shared renderers are package
+    API now that the contract is stated over the package, and a name is not what
+    makes one of them safe to read from.
 
     Args:
         source: The contents of a Python module.
@@ -826,7 +866,7 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
     tree = ast.parse(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
-        if fn.name.startswith("_"):
+        if fn.name.startswith("_") or fn.name in GUARDED_READERS:
             continue
         args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
         tainted = {arg.arg for arg in args if arg.annotation is not None and ast.unparse(arg.annotation) == "Any"}
@@ -912,18 +952,71 @@ class TestNoGuardRendersACallerValueDirectly:
     """A guard must render a refused value through a shared renderer.
 
     A fixed list of guards would not survive a tenth being added, so this scans
-    the module instead: the assertion is over the whole file, and a new function
-    that renders a value it returns shows up as a new entry.
+    for them: the assertion is over every module in the package, and a new
+    function that renders a value it returns shows up as a new entry.
+
+    The population is the package because the guard shape is. ``utils.py`` is
+    where the rule was established, and the scan that established it read that one
+    file - so it reported an empty table while the same
+    ``(value: Any, param: str, context: str) -> str | None`` guard was written in
+    nineteen other modules, forty-three of them interpolating the value directly.
     """
 
     def _source(self) -> str:
+        """``utils.py``'s own text, for the assertions that are about that module."""
         return pathlib.Path(inspect.getfile(utils)).read_text(encoding="utf-8")
 
-    def test_no_scalar_guard_renders_a_caller_value_directly(self) -> None:
-        found = _scan_direct_renders(self._source())
-        adrift = {name: sites for name, sites in found.items() if name not in KNOWN_DIRECT_RENDERS}
+    def _package_sources(self) -> dict[str, str]:
+        """Every module in the installed package, keyed by its path within it."""
+        root = pathlib.Path(inspect.getfile(utils)).parent
+        return {str(f.relative_to(root)): f.read_text(encoding="utf-8") for f in sorted(root.rglob("*.py"))}
+
+    def test_no_guard_in_the_package_renders_a_caller_value_directly(self) -> None:
+        found = {
+            module: sites
+            for module, source in self._package_sources().items()
+            if (sites := _scan_direct_renders(source))
+        }
+        adrift = {
+            module: {name: at for name, at in sites.items() if name not in KNOWN_DIRECT_RENDERS.get(module, {})}
+            for module, sites in found.items()
+        }
+        adrift = {module: sites for module, sites in adrift.items() if sites}
         assert adrift == {}, f"these render a caller value without a shared renderer: {adrift}"
-        assert found == KNOWN_DIRECT_RENDERS, f"the set of direct renders changed: {found}"
+
+    def test_the_recorded_guards_are_a_subset_of_what_was_recorded(self) -> None:
+        """``<=`` rather than ``==``: fixing a recorded guard must not fail here.
+
+        The three recorded modules are being rewritten elsewhere, so the table is a
+        record of what was deferred rather than a count to keep matching. What may
+        not happen is a *new* module appearing, which is the assertion above.
+        """
+        found = {
+            module: sites
+            for module, source in self._package_sources().items()
+            if (sites := _scan_direct_renders(source))
+        }
+        assert set(found) <= set(KNOWN_DIRECT_RENDERS), (
+            f"a new module renders directly: {set(found) - set(KNOWN_DIRECT_RENDERS)}"
+        )
+
+    def test_the_package_scan_reaches_the_modules_it_is_asserted_over(self) -> None:
+        """An empty result and a scanner reading nothing are the same table.
+
+        A relative path resolved from the wrong working directory globs nothing and
+        passes this file vacuously, so the module count is asserted too.
+        """
+        sources = self._package_sources()
+        assert len(sources) > 100, f"the package scan read only {len(sources)} modules"
+        missing = REWRITTEN_MODULES - set(sources)
+        assert missing == set(), f"the scan never reached: {missing}"
+        for module in sorted(REWRITTEN_MODULES):
+            planted = sources[module] + _PLANTED_DIRECT_RENDER
+            assert "new_guard_error" in _scan_direct_renders(planted), f"the scan does not reach into {module}"
+
+    def test_no_scalar_guard_renders_a_caller_value_directly(self) -> None:
+        """The original statement, still made about ``utils.py`` on its own."""
+        assert _scan_direct_renders(self._source()) == {}
 
     def test_the_scan_actually_reaches_the_guards_this_change_owns(self) -> None:
         """An empty scan would satisfy the assertion above just as well."""
@@ -956,7 +1049,7 @@ class TestNoGuardRendersACallerValueDirectly:
         tree = ast.parse(self._source())
         defined = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
         owned = set(GUARD_IDS) | CONTAINER_GUARDS | {"validation_split_error"}
-        renderers = {"_refusal_repr", "_refusal_str", "_refusal_container_repr"}
+        renderers = {"refusal_repr", "refusal_str", "refusal_container_repr"}
         for name in sorted(owned & set(defined)):
             reached: set[str] = set()
             pending = [name]
@@ -1005,7 +1098,7 @@ class TestNoGuardRendersACallerValueDirectly:
             """
             def new_guard_error(value: Any, param: str, context: str) -> str | None:
                 if value < 0:
-                    return f"{context}: {param} must be positive, got {_refusal_repr(value)}."
+                    return f"{context}: {param} must be positive, got {refusal_repr(value)}."
                 return None
             """
         )
@@ -1039,7 +1132,7 @@ class TestNoGuardReadsACallerValueOutsideATry:
     ``TestNoGuardRendersACallerValueDirectly`` above holds the *rendering* of a
     refused value, and that is not the same property. Its table is empty because
     every guard renders through a shared renderer - and
-    ``_refusal_container_repr(list(value))`` satisfied it completely, because the
+    ``refusal_container_repr(list(value))`` satisfied it completely, because the
     value handed to the renderer was a ``list`` the guard had already built. The
     render could not raise; building its argument ran the caller's ``__iter__``,
     which could.
@@ -1074,7 +1167,7 @@ class TestNoGuardReadsACallerValueOutsideATry:
                 """
                 def new_guard_error(value: Any, param: str, context: str) -> str | None:
                     if isinstance(value, Mapping):
-                        return f"{param} must be a list: {_refusal_container_repr(list(value))}."
+                        return f"{param} must be a list: {refusal_container_repr(list(value))}."
                     return None
                 """
             )
@@ -1093,7 +1186,7 @@ class TestNoGuardReadsACallerValueOutsideATry:
                     shown = value.decode(errors="replace") if isinstance(value, bytes) else value
                     return (
                         f"{param}: read as {[c for c in shown][:6]} ({len(shown)} name(s)). "
-                        f"Wrap it in a list: [{_refusal_repr(shown)}]."
+                        f"Wrap it in a list: [{refusal_repr(shown)}]."
                     )
                 """
             )
@@ -1116,7 +1209,7 @@ class TestNoGuardReadsACallerValueOutsideATry:
                             names = list(value)
                         except Exception:
                             return f"{param}: could not be read."
-                        return f"{param} must be a list: {_refusal_container_repr(names)}."
+                        return f"{param} must be a list: {refusal_container_repr(names)}."
                     """
                 )
             )
@@ -1473,6 +1566,17 @@ class TestTheCoercionsCountTheComponentsTheyRead:
         assert len(nothing) == 3
         assert list(nothing) == []
 
+
+#: A guard that renders the caller's value straight into its message, appended to
+#: each module the package-wide scan is asserted over, so the scan is shown to
+#: reach into every one of them rather than into the first.
+_PLANTED_DIRECT_RENDER = textwrap.dedent(
+    """
+
+def new_guard_error(value: Any, param: str, context: str) -> str | None:
+    return f"{context}: {param} is out of range, got {value!r}."
+"""
+)
 
 #: A guard that reads the caller's value straight into its message, appended to
 #: ``utils.py``'s own source so the scan is shown to reach a function it has never

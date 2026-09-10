@@ -32,7 +32,7 @@ pytest.importorskip("lerobot")
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 
-from strands_robots.hardware_robot import _OPENCV_CAMERA_DEFAULTS, _build_camera_config
+from strands_robots.hardware_robot import _CAMERA_STREAM_DEFAULTS, _build_camera_config
 
 from .test_hardware_robot_config import _make_robot
 
@@ -105,7 +105,7 @@ class TestFieldReachability:
         If lerobot renames one of these, forwarding the stale key would fail at
         construction time for every camera. Catch the drift here instead.
         """
-        assert set(_OPENCV_CAMERA_DEFAULTS) <= set(_declared_fields())
+        assert set(_CAMERA_STREAM_DEFAULTS) <= set(_declared_fields())
 
 
 class TestUnknownOptionsRefused:

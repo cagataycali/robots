@@ -53,6 +53,7 @@ _MODULES = (
     "mock.py",
     "reward.py",
     "rl/base_algo.py",
+    "rl/checkpoint.py",
     "rl/env.py",
     "rl/fast_sac.py",
     "rl/fast_td3.py",
@@ -76,6 +77,7 @@ _EXPECTED_CLASSES = {
     "mock.py::MockTrainer",
     "rl/base_algo.py::RLTrainSpec",
     "rl/base_algo.py::BaseRLAlgo",
+    "rl/checkpoint.py::DeployableActor",
     "rl/env.py::SimEnv",
     "rl/fast_sac.py::FastSacTrainer",
     "rl/fast_td3.py::FastTd3Trainer",
@@ -94,7 +96,12 @@ _EXPECTED_FUNCTIONS = {
     "reward.py::compute_rabc_weights",
     "reward.py::load_reward_model",
     "reward.py::reward_progress",
+    "rl/checkpoint.py::load_deployable_actor",
+    "rl/checkpoint.py::read_checkpoint_meta",
+    "rl/fast_sac.py::build_actor_critic",
+    "rl/fast_td3.py::build_actor_critic",
     "rl/gym_env.py::GymSimEnv",
+    "rl/ppo.py::build_actor_critic",
     "rl/ppo.py::compute_gae",
 }
 

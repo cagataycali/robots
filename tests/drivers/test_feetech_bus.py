@@ -20,7 +20,6 @@ from strands_robots.drivers.feetech.bus import (
     READABLE_REGISTERS,
     SO_ARM_MOTORS,
     FeetechBus,
-    MotorSpec,
 )
 from tests.drivers.conftest import FakeServoPort, open_bus
 
@@ -30,51 +29,56 @@ from tests.drivers.conftest import FakeServoPort, open_bus
 
 
 class TestUnits:
-    """Degrees in, counts out, and back - the conversion a wrong motion hides in."""
+    """Degrees in, counts out, and back - the conversion a wrong motion hides in.
+
+    An uncalibrated bus, which spans the servo's own full rotation. What one
+    arm's measured travel makes of the same counts is graded in
+    :mod:`tests.drivers.test_feetech_calibrated_units`.
+    """
 
     @pytest.mark.parametrize(
         ("joint", "value", "counts"),
         [
-            # Each joint's two ends and midpoint. The gripper is percent, not
-            # degrees, which is the one asymmetry in the map.
+            # Each joint's two ends and midpoint. Every joint spans the same
+            # rotation, because an uncalibrated servo cannot say where THIS
+            # arm stops. The gripper is percent, not degrees, which is the one
+            # asymmetry in the map.
             ("shoulder_pan", -180.0, 0),
-            ("shoulder_pan", 0.0, 2048),
+            ("shoulder_pan", 0.0, 2047),
             ("shoulder_pan", 180.0, 4095),
-            ("shoulder_lift", -90.0, 0),
-            ("shoulder_lift", 90.0, 4095),
-            ("elbow_flex", -150.0, 0),
-            ("elbow_flex", 150.0, 4095),
-            ("wrist_roll", 0.0, 2048),
+            ("shoulder_lift", -180.0, 0),
+            ("shoulder_lift", 180.0, 4095),
+            ("elbow_flex", 0.0, 2047),
+            ("wrist_roll", 0.0, 2047),
             ("gripper", 0.0, 0),
-            ("gripper", 50.0, 2048),
+            ("gripper", 50.0, 2047),
             ("gripper", 100.0, 4095),
         ],
     )
     def test_a_target_encodes_to_the_counts_the_servo_expects(self, joint: str, value: float, counts: int) -> None:
-        assert SO_ARM_MOTORS[joint].to_counts(value) == counts
+        assert FeetechBus(port="/dev/fake").to_counts(joint, value) == counts
 
     @pytest.mark.parametrize("joint", sorted(SO_ARM_MOTORS))
     def test_encoding_round_trips_within_one_count(self, joint: str) -> None:
-        """A value survives degrees -> counts -> degrees.
+        """A count survives counts -> unit -> counts.
 
-        One count of 4095 across the joint's span is the encoder's own
-        resolution, so that is the tolerance; anything looser would hide a
-        scale or offset error.
+        One count of 4095 is the encoder's own resolution, so that is the
+        tolerance; anything looser would hide a scale or offset error.
         """
-        spec = SO_ARM_MOTORS[joint]
-        tolerance = (spec.high - spec.low) / spec.resolution
-        for value in (spec.low, (spec.low + spec.high) / 2, spec.high):
-            assert spec.to_value(spec.to_counts(value)) == pytest.approx(value, abs=tolerance)
+        bus = FeetechBus(port="/dev/fake")
+        resolution = SO_ARM_MOTORS[joint].resolution
+        for counts in (0, resolution // 2, resolution):
+            assert bus.to_counts(joint, bus.to_value(joint, counts)) == pytest.approx(counts, abs=1)
 
     def test_a_target_outside_the_range_is_refused_not_clamped(self) -> None:
         """A clamp would report success for a motion it did not make.
 
         This is the whole reason the bus validates: silently turning a
-        400-degree command into a 90-degree one moves the arm somewhere the
+        400-degree command into a 180-degree one moves the arm somewhere the
         caller never asked for and tells them it worked.
         """
-        with pytest.raises(ValueError, match="outside range"):
-            SO_ARM_MOTORS["shoulder_lift"].to_counts(400.0)
+        with pytest.raises(ValueError, match="outside the travel the encoder can hold"):
+            FeetechBus(port="/dev/fake").to_counts("shoulder_lift", 400.0)
 
 
 # ============================================================================
@@ -86,13 +90,13 @@ class TestReads:
     """``sync_read`` is the method the mesh reaches for joint telemetry."""
 
     def test_positions_come_back_in_the_joints_own_unit(self, servo_port: FakeServoPort) -> None:
-        """Midpoint counts decode to the middle of every joint's range."""
+        """Midpoint counts decode to the middle of the servo's rotation."""
         bus = open_bus(servo_port)
         reading = bus.sync_read("Present_Position")
         assert set(reading) == set(SO_ARM_MOTORS)
         for joint, value in reading.items():
-            spec = SO_ARM_MOTORS[joint]
-            assert value == pytest.approx((spec.low + spec.high) / 2, abs=0.1)
+            middle = 50.0 if SO_ARM_MOTORS[joint].norm_mode == "range_0_100" else 0.0
+            assert value == pytest.approx(middle, abs=0.1)
 
     def test_a_reply_behind_echoed_bytes_is_still_read(self) -> None:
         """Leading noise offsets a frame; it does not corrupt it.
@@ -175,7 +179,7 @@ class TestWrites:
             ({"nope": 0.0}, "unknown motor"),
             ({"gripper": float("nan")}, "must be finite"),
             ({"gripper": float("inf")}, "must be finite"),
-            ({"shoulder_lift": 400.0}, "outside range"),
+            ({"shoulder_lift": 400.0}, "outside the travel"),
         ],
     )
     def test_a_write_the_arm_cannot_honour_is_refused(self, targets: dict[str, float], match: str) -> None:
@@ -226,5 +230,5 @@ class TestLifecycle:
 
     def test_motors_may_be_narrowed_to_a_subset_of_the_arm(self) -> None:
         """A bus carrying two servos reads and writes only those two."""
-        bus = open_bus(FakeServoPort({6: 4095}), motors={"gripper": MotorSpec(6, 0, 100)})
+        bus = open_bus(FakeServoPort({6: 4095}), motors={"gripper": SO_ARM_MOTORS["gripper"]})
         assert bus.sync_read("Present_Position") == {"gripper": pytest.approx(100.0)}

@@ -39,7 +39,14 @@ from strands_robots.simulation.mujoco.scene_ops import (
     refresh_body_inertial_from_geometry,
 )
 from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
-from strands_robots.utils import BOOLEAN_VECTOR_REASON, boolean_flag_error, coerce_rgba, is_boolean
+from strands_robots.utils import (
+    BOOLEAN_VECTOR_REASON,
+    boolean_flag_error,
+    coerce_rgba,
+    is_boolean,
+    refusal_container_repr,
+    refusal_repr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +117,9 @@ def _coerce_finite_vector(
     except TypeError:
         return None, {
             "status": "error",
-            "content": [{"text": f"{method}: '{name}' must be a sequence of numbers, got {values!r}"}],
+            "content": [
+                {"text": f"{method}: '{name}' must be a sequence of numbers, got {refusal_container_repr(values)}"}
+            ],
         }
     out: list[float] = []
     for elem in seq:
@@ -126,7 +135,7 @@ def _coerce_finite_vector(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {refusal_container_repr(values)}). {BOOLEAN_VECTOR_REASON}"
                     }
                 ],
             }
@@ -135,18 +144,28 @@ def _coerce_finite_vector(
         except (TypeError, ValueError):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' elements must be numbers, got {values!r}"}],
+                "content": [
+                    {"text": f"{method}: '{name}' elements must be numbers, got {refusal_container_repr(values)}"}
+                ],
             }
         if not math.isfinite(f):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         if min_value is not None and ((f <= min_value) if strict_min else (f < min_value)):
             rel = ">" if strict_min else ">="
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' values must be {rel} {min_value}, got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' values must be {rel} {min_value}, got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         out.append(f)
     if accepted_lengths is not None and len(out) not in accepted_lengths:
@@ -238,7 +257,7 @@ def _coerce_ray_batch(directions: Any, method: str) -> tuple[list[Any] | None, d
                 {
                     "text": (
                         f"{method}: 'directions' must be a sequence of direction vectors, "
-                        f"got {directions!r}. {_RAY_BATCH_HINT}"
+                        f"got {refusal_container_repr(directions)}. {_RAY_BATCH_HINT}"
                     )
                 }
             ],
@@ -287,7 +306,7 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
             {
                 "text": (
                     f"{method}: 'exclude_body' must be -1 (exclude nothing) or a body id "
-                    f"in [0, {nbody}), got {value!r}. Read an id from list_bodies()."
+                    f"in [0, {nbody}), got {refusal_repr(value)}. Read an id from list_bodies()."
                 )
             }
         ],

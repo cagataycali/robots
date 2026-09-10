@@ -48,6 +48,7 @@ import pytest
 
 import strands_robots
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _process_stop
 from tests.tools.test_lerobot_train import _write_dataset
 
 build_train_command = train_mod.build_train_command
@@ -114,7 +115,7 @@ def _isolated_sessions(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) 
     """Keep the on-disk session store inside the test's own tmp_path."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
