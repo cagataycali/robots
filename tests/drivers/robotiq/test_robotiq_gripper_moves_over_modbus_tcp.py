@@ -10,6 +10,8 @@ assertions read what reached the wire.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
@@ -229,6 +231,33 @@ def test_stopping_halts_the_fingers_without_dropping_activation(connected: Conne
     assert fake.writes[-1]["go_to"] == 0, "rGTO must be cleared to halt"
     assert fake.writes[-1]["activate"] == 1, "rACT must stay set to keep the gripper activated"
     assert fake.activation == 3
+
+
+def test_a_halt_that_could_not_reach_the_gripper_is_reported_not_swallowed(
+    connected: Connected, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The verdict-free ``stop`` hook has only the log to record an unreached halt.
+
+    ``stop_task`` decides a verdict for the same write and can say the gripper
+    refused it; ``stop`` is annotated ``-> None`` and cannot. So a halt that did
+    not land has to be reported at a level a default logging configuration emits,
+    naming the gripper - the fingers are still travelling to the last commanded
+    aperture, and nothing else anywhere records that the gripper did not stop.
+    """
+    driver, fake = connected()
+    fake.exception_code = 0x02  # a connected controller that starts refusing.
+
+    # The information the hook needs exists: the same write, read as an envelope.
+    assert driver.stop_task()["status"] == "error"
+
+    with caplog.at_level(logging.WARNING, logger="strands_robots.drivers.robotiq.driver"):
+        asyncio.run(driver.stop())
+
+    reported = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert reported, "an unreached halt was reported nowhere a default configuration emits"
+    message = reported[0].getMessage()
+    assert "robotiq_2f85" in message, f"the report must name the gripper: {message!r}"
+    assert "0x02" in message, f"the report must carry what the wire said: {message!r}"
 
 
 @pytest.mark.parametrize("verb", ["start_task", "run_policy"])

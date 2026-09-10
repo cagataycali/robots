@@ -43,7 +43,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
 from strands_robots.drivers.robotiq.protocol import (
     DEFAULT_TCP_PORT,
     DEFAULT_UNIT_ID,
@@ -479,14 +479,23 @@ class RobotiqDriver:
         Clearing ``rGTO`` stops motion without dropping the activation, so the
         next :meth:`send_action` moves immediately rather than paying for
         another calibration stroke. A stop on a disconnected gripper is a no-op
-        rather than an error - there is nothing moving to halt.
+        rather than an error - there is nothing moving to halt, which is the
+        ``success`` :meth:`stop_task` answers there.
+
+        Annotated ``-> None`` by the driver protocol, so it carries no verdict:
+        this delegates to :meth:`stop_task` rather than repeating its write, and
+        logs what that envelope decided. A halt that did not reach the gripper
+        leaves the fingers travelling to their last commanded aperture - closing
+        on whatever is between them, or opening and releasing it - so the log is
+        the only surface left that can say the gripper did not stop.
         """
-        if not self.is_connected:
-            return
-        try:
-            self._write_command(activate=True, go_to=False)
-        except (OSError, ProtocolError) as exc:
-            logger.debug("stop could not reach the gripper: %s", exc)
+        if (detail := halt_failure_detail(self.stop_task())) is not None:
+            logger.error(
+                "%s.stop(): the halt did not reach the gripper, whose fingers may still be "
+                "travelling to the last commanded aperture: %s",
+                self._tool_name,
+                detail,
+            )
 
     def cleanup(self) -> None:
         """Close the socket. Leaves the gripper activated and holding position."""
