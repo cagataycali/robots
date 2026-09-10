@@ -501,6 +501,19 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # backend screens it against its own names in turn.
         reject_misspelled_kwargs(kwargs, own_keyword_names(Robot), owner="Robot(mode='sim')")
 
+        # ``ros2_transport`` is a hardware-bridge choice (``mode="real"``): the
+        # simulation bridge is rclpy-only. Left alone it is not close to any sim
+        # name, so the backend absorbed it and the caller who chose the
+        # rclpy-free transport was then told "rclpy is required" - a false
+        # remedy for a request that was never honoured.
+        transport = kwargs.get("ros2_transport")
+        if transport is not None and transport != "rclpy":
+            raise ValueError(
+                f"ros2_transport={transport!r} is a hardware option: the simulation ROS 2 "
+                "bridge publishes over rclpy only. Pass mode='real' to use the pure-RTPS "
+                "hardware bridge, or drop ros2_transport to bridge the simulation over rclpy."
+            )
+
         # Resolve the backend through create_simulation - the single source of
         # truth for backend selection (built-in registry + entry-point plugins +
         # runtime registrations). The MuJoCo path is unchanged (returns the same
