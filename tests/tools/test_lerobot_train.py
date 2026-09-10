@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _session
 from tests.tool_result_contract import tool_json
 
 build_train_command = train_mod.build_train_command
@@ -57,7 +58,7 @@ def _write_dataset(root: Path, total_episodes: int = 10) -> Path:
 def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 

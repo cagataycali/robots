@@ -59,7 +59,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools import _process_stop
+from strands_robots.tools import _process_stop, _session
 from strands_robots.tools._process_stop import PID_STARTED_SINCE_BOOT, process_started_since_boot
 
 
@@ -147,14 +147,13 @@ def _json_block(result: dict[str, Any]) -> dict[str, Any]:
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point both tools' session stores at one file under ``tmp_path``.
 
-    Both modules read a module-level ``SESSION_DIR`` when a manager is built, so
+    Both tools read one ``_session.SESSION_DIR`` when a manager is built, so
     redirecting the attribute on each is what keeps the verbs off the store of
     whatever machine runs this.
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(teleop_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     path = session_dir / "active_sessions.json"
 
     def write(records: dict[str, Any]) -> None:

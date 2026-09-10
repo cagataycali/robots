@@ -64,17 +64,28 @@ inside it - an install that omits it ships both tools and can load neither.
 
 Because the session runs detached, the on-disk session store is the only place
 its pid is recorded - `stop` and `status` both look the session up there. Both
-stores load, modify and write back, so a record a load leaves out is erased from
-disk by the next session started or stopped. What a load counts as "finished"
-therefore decides whether a session stays stoppable.
+tools share one store, so `list` shows every robot session at once, and both use
+one `SessionManager` over it (`strands_robots.tools._session`). What that store
+counts as "finished" therefore decides whether a session stays stoppable, in
+both tools at once.
 
-Loading and writing back is also why the *write* has to land whole. Both tools
-write the same file, so a store that lands partially does not lose the session
-being changed - it loses every session the file held, in both tools at once, and
-both load paths report an unparseable store as *no sessions*. So the map is
+Two rules follow from the sharing. A **read never writes**: `list`, `status` and
+the load beneath them report what is stored and change nothing, so one tool's
+query cannot delete the other tool's records. And the **load-modify-write is
+locked** (`fcntl.flock`, on a lock file beside the store rather than the store
+itself, which the atomic rename below swaps out from under a lock), so two
+sessions starting at once cannot each store a map built before the other's record
+existed.
+
+Locking is also why the *write* has to land whole. Both tools write the same file,
+so a store that lands partially does not lose the session being changed - it
+loses every session the file held, in both tools at once, and the load path
+reports an unparseable store as *no sessions*. So the map is
 serialized in full before the destination is opened and committed through a temp
-file plus an atomic rename: a full disk during a training run leaves the previous
-store intact rather than truncated, and a record holding a value JSON cannot
+file plus an atomic rename - the temp file named for the writing process, so two
+writers cannot interleave into one temp path and commit a document neither of
+them wrote: a full disk during a training run leaves the previous store intact
+rather than truncated, and a record holding a value JSON cannot
 represent is refused naming the store, with everything already recorded still
 listed and still stoppable.
 
@@ -94,41 +105,32 @@ arrives from a file rather than from a caller. So it is graded, not converted:
 produces from a well-formed file (`1e400`, `NaN`, or the U+FFFD the store's own
 decode policy substitutes for a damaged byte). A `pid` field holding anything but
 a positive integer within the platform's `pid_t` range therefore means "this
-record names no process": `list` and `status` report it as stopped, the teleop
-store prunes it like any other record with no live process, the training store
-keeps it and `stop` refuses it naming the type it found, and nothing is
-signalled either way.
+record names no process": `list` and `status` report it as stopped, the record is
+kept - nothing can inspect it, and converting the value would inspect a different
+process - and `stop` refuses it naming the type it found, with nothing signalled
+either way.
 
-`lerobot_teleoperate` prunes a finished session:
-
-| What the probe reports | Verdict |
-|------------------------|---------|
-| the pid no longer exists | finished - pruned |
-| `psutil.NoSuchProcess` (reaped between the existence check and the probe) | finished - pruned |
-| the process holding the pid started at some other time | the pid was reused - pruned |
-| `psutil.AccessDenied` (the pid exists, this user may not inspect it) | kept on existence alone, and reported at `WARNING` |
-
-The last row is why a session started under `sudo` - a common way to reach a
-serial port - is still listed and still stoppable when the tool is later invoked
-as the unprivileged user. Being kept is not a claim that it is running: `list`
-and `status` each re-derive that at the moment you ask.
-
-`lerobot_train` keeps a store of the same shape, held to the same rule, with one
-deliberate difference: a finished run is *retained* so `status` can still show
-the final log tail. Its load therefore drops nothing at all, and `stop` -
-through `remove_session` - is what ends a record:
+The store's one prune runs on a write, in `add_session`: the one step that
+already holds the lock and is already rewriting the whole document, so reaping
+costs no extra write and cannot be triggered by another tool merely reading. It
+drops only a record it can *prove* is finished:
 
 | What the probe reports | Verdict |
 |------------------------|---------|
-| the pid no longer exists, or another process now holds it | finished - kept for its log tail |
-| `psutil.NoSuchProcess` (reaped between the existence check and the probe) | the same finished run - kept |
+| the pid no longer exists, or another process now holds it | finished - dropped by the next write |
+| `psutil.NoSuchProcess` (reaped between the existence check and the probe) | the same finished run - dropped |
 | `psutil.AccessDenied` (the pid exists, this user may not inspect it) | kept, and reported at `WARNING` |
+| the `pid` field is not a process id, or is absent | kept, and reported at `WARNING` |
 
 The first two rows are one state reached two ways, and which way a given run
 takes is a race between the two probes, so they are not classified differently.
-The last row is the one where dropping the record would lose a pid that still
-names a *live* process - a training run holding a GPU, with nothing left
-recording where it is.
+The last two are the ones where dropping the record would lose a pid that may
+still name a *live* process - a training run holding a GPU, or a teleoperation
+session started under `sudo` to reach a serial port and later listed as the
+unprivileged user, with nothing left recording where it is. Being kept is not a
+claim that it is running: `list` and `status` each re-derive that at the moment
+you ask, so a retained record reads as running only while its pid still holds the
+process the record was written for.
 
 `stop` is held to the same standard from the other side. It checks that the pid is
 still its session's process before it signals anything, and captures the process

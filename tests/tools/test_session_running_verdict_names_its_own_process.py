@@ -52,6 +52,7 @@ import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _session
 from strands_robots.tools._process_stop import (
     _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
@@ -83,7 +84,7 @@ def _isolate_session_dirs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     for module in (train_mod, tele_mod):
         session_dir = tmp_path / module.__name__.rsplit(".", 1)[-1]
         session_dir.mkdir()
-        monkeypatch.setattr(module, "SESSION_DIR", session_dir)
+        monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
 
 
 #: The real ``os.kill``, bound before any test can replace it. A cell that pins
@@ -320,19 +321,26 @@ def test_stop_still_signals_the_process_the_record_does_name(
 
 
 # ---------------------------------------------------------------------------
-# The teleoperation store's prune, which exists to drop exactly this record.
+# The store's prune, which exists to drop exactly this record.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("gap", "survives"),
     [pytest.param(0.0, True, id="own-process"), pytest.param(STALE_GAP_S, False, id="reused-pid")],
 )
-def test_the_teleop_prune_drops_a_record_whose_pid_was_reused(stranger: Any, gap: float, survives: bool) -> None:
-    """A prune that keeps a record because the number exists prunes nothing."""
+def test_the_prune_drops_a_record_whose_pid_was_reused(stranger: Any, gap: float, survives: bool) -> None:
+    """A prune that keeps a record because the number exists prunes nothing.
+
+    The prune runs on a write: a read reports what is stored, so the record is
+    dropped by the next ``add_session`` rather than by the listing.
+    """
     live = process_started_since_boot(stranger.pid)
     assert live is not None, "premise"
     mgr = _seed(tele_mod, "arm_teleop", _record(stranger.pid, "teleoperate", live - gap))
+    assert "arm_teleop" in mgr.list_sessions(), "premise: a read prunes nothing"
 
-    assert ("arm_teleop" in mgr.list_sessions()) is survives
+    mgr.add_session("later", _record(os.getpid(), "record", None))
+
+    assert ("arm_teleop" in json.loads(mgr.sessions_file.read_text())) is survives
 
 
 # ---------------------------------------------------------------------------

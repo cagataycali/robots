@@ -358,9 +358,18 @@ def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
     plain ``open(path, "w")`` gave it: replacing its contents is not the moment
     to decide who may read it.
 
+    The temp file carries the writing process's pid in its name. A name derived
+    from the store alone is shared by every writer of it, and two of them
+    interleaving their writes into that one file commit a document neither wrote
+    - which the load path reads as *no sessions*, losing every recorded pid at
+    once rather than one. The lock in
+    :meth:`strands_robots.tools._session.SessionManager._locked` serialises the
+    tools' own writes; the pid keeps the commit private to its writer regardless.
+
     Args:
         sessions_file: The store to replace. Its parent directory must exist -
-            both callers create it when their module loads.
+            :func:`strands_robots.tools._session.ensure_session_dir` creates it
+            at the first write.
         sessions: The whole session map to store.
 
     Raises:
@@ -383,7 +392,7 @@ def store_sessions(sessions_file: Path, sessions: Mapping[str, Any]) -> None:
             f"None, list, dict)."
         ) from exc
 
-    tmp = sessions_file.with_suffix(sessions_file.suffix + ".tmp")
+    tmp = sessions_file.with_name(f"{sessions_file.name}.{os.getpid()}.tmp")
     try:
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, sessions_file)

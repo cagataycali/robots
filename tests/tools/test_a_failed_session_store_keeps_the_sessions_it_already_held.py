@@ -40,6 +40,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from strands_robots.tools import _session
 from strands_robots.tools._process_stop import (
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
@@ -117,14 +118,14 @@ def full_disk(monkeypatch: pytest.MonkeyPatch):
 def managers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Both session managers, pointed at one throwaway store.
 
-    Both modules compute ``SESSION_DIR`` at import time from ``cwd``; rebind it
-    so the tools share a temporary store, which is what they do in production -
-    ``lerobot_train`` reuses the teleoperate directory on purpose.
+    Both tools resolve one ``_session.SESSION_DIR`` when a manager is built;
+    rebind it so they share a temporary store, which is what they do in
+    production - the store is shared on purpose, so ``list`` shows every robot
+    session at once.
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return {"teleop": tele_mod.SessionManager(), "train": train_mod.SessionManager()}
 
 
@@ -161,6 +162,17 @@ def _seed(managers: dict[str, Any], live_pids: Any) -> dict[str, int]:
     managers["teleop"].add_session("teleop_arm", _record(teleop_proc.pid, "teleoperate"))
     managers["train"].add_session("train_act", _record(train_proc.pid, "train"))
     return {"teleop_arm": teleop_proc.pid, "train_act": train_proc.pid}
+
+
+def _partial_stores_beside(manager: Any) -> list[str]:
+    """Names of documents left beside the store that are not the store itself.
+
+    The lock guarding the load-modify-write lives beside the store by design and
+    holds no session state, so it is not a partial store; anything else is.
+    """
+    store = manager.sessions_file
+    expected = {store.name, manager.lock_file.name}
+    return [q.name for q in store.parent.iterdir() if q.name not in expected]
 
 
 @pytest.mark.parametrize("writer", ["teleop", "train"])
@@ -239,7 +251,7 @@ def test_a_record_json_cannot_encode_is_refused_before_the_store_is_touched(
     # into the temp file would keep the store intact but strand a partial one
     # beside it, and raise the encoder's own ``TypeError`` rather than a refusal
     # naming the store.
-    strays = [q.name for q in store.parent.iterdir() if q.name != store.name]
+    strays = _partial_stores_beside(managers["train"])
     assert strays == [], f"a rejected record left a partial store behind: {strays}"
 
 
@@ -248,12 +260,11 @@ def test_a_failed_store_leaves_no_partial_sibling_behind(
 ) -> None:
     """A commit that did not happen leaves no second, partial store next to the real one."""
     _seed(managers, live_pids)
-    store = managers["teleop"].sessions_file
 
     full_disk()
     managers["teleop"].add_session("late_session", _record(live_pids().pid, "teleoperate"))
 
-    strays = [p.name for p in store.parent.iterdir() if p.name != store.name]
+    strays = _partial_stores_beside(managers["teleop"])
     assert strays == [], f"a partial store was left beside the real one: {strays}"
 
 

@@ -38,7 +38,7 @@ import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
+from strands_robots.tools import _process_stop, _session
 
 # Every recorded PID below is fake and every signal is captured, so nothing here
 # can reach a real process.
@@ -65,8 +65,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect both session stores to a temp dir so no test touches the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 

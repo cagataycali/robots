@@ -22,12 +22,13 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _session
 from tests.tool_result_contract import tool_json
 
 # Bind the public names off the single module handle rather than a second
 # ``from ... import`` of the same module (CodeQL: import + import-from of one
 # module). ``tele_mod`` is still needed directly so monkeypatch can rebind module
-# globals (``subprocess``/``os``/``time``/``SESSION_DIR``) and reach ``psutil`` by
+# globals (``subprocess``/``os``/``time``) and reach ``psutil`` by
 # setting an attribute on the module object it names -- rebinding the name itself
 # would be invisible to the prune, whose verdict is answered in another module.
 SessionManager = tele_mod.SessionManager
@@ -50,12 +51,12 @@ def _assert_ascii(text: str) -> None:
 def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the module-level session dir + manager to a temp location.
 
-    The module computes ``SESSION_DIR`` at import time from ``cwd``; rebind it so
+    The store resolves ``_session.SESSION_DIR`` when a manager is built; rebind it so
     tests never touch the real working tree and start from an empty store.
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -589,12 +590,20 @@ def test_session_manager_add_get_remove_round_trip() -> None:
     assert mgr.get_session("s1") is None
 
 
-def test_session_manager_prunes_dead_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_session_manager_reaps_dead_processes_on_the_next_write(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = SessionManager()
     # Persist a session with a pid that no longer exists.
     mgr.sessions_file.write_text(json.dumps({"ghost": {"pid": 999999}}))
     monkeypatch.setattr(tele_mod.psutil, "pid_exists", lambda pid: False)
-    assert mgr.list_sessions() == {}
+
+    # A read reports what is stored and writes nothing: both tools read this one
+    # file, so a prune here would delete the other tool's records.
+    assert "ghost" in mgr.list_sessions()
+
+    # The reap happens where the document is already being rewritten.
+    mgr.add_session("fresh", {"pid": os.getpid()})
+
+    assert list(json.loads(mgr.sessions_file.read_text())) == ["fresh"]
 
 
 def test_session_manager_handles_corrupt_store(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1073,7 +1082,7 @@ def test_status_log_tail_read_error_is_reported(monkeypatch: pytest.MonkeyPatch)
     """When the recorded log path exists but cannot be read (here it is a
     directory), status still succeeds and folds the read error into the body
     instead of aborting."""
-    log_dir = tele_mod.SESSION_DIR / "unreadable.log"
+    log_dir = _session.session_dir() / "unreadable.log"
     log_dir.mkdir()  # exists() is true but open() raises IsADirectoryError
     SessionManager().add_session("withbadlog", {"pid": os.getpid(), "start_time": 0.0, "log_file": str(log_dir)})
     result = lerobot_teleoperate(action="status", session_name="withbadlog")

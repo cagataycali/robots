@@ -42,7 +42,7 @@ import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
+from strands_robots.tools import _process_stop, _session
 from strands_robots.tools._process_stop import session_is_running
 
 #: A pid this process certainly holds, so "exists" is settled and the only thing
@@ -82,8 +82,7 @@ def _isolate_both_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     """Point both tools' session stores at a temp dir, never the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -162,35 +161,27 @@ def test_a_live_integer_pid_still_reads_as_running() -> None:
 # both stores degrade rather than aborting the action that asked              #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_the_teleop_store_drops_an_unusable_record_without_raising(
-    _isolate_both_stores: Path, _label: str, pid: Any, _why: str
+@pytest.mark.parametrize("tool", [tele_mod, train_mod], ids=["teleop", "train"])
+def test_the_store_keeps_an_unusable_record_without_raising(
+    _isolate_both_stores: Path, tool: Any, _label: str, pid: Any, _why: str
 ) -> None:
-    """A record naming no process is pruned like any other with none live.
+    """A record naming no process is kept, and reads the same from either tool.
 
-    That store prunes on every read and writes the prune back, so the classifying
-    question has to be answerable for every spelling. It was not: four of these
-    aborted the read.
-    """
-    _write_store(_isolate_both_stores, "arm", pid)
+    Retention is the point: the record is the only place a detached run's pid is
+    written down, and nothing can inspect a pid that is not one - converting it
+    would inspect a different process - so a drop here would destroy the only
+    handle on a run that may still be live.
 
-    assert tele_mod.SessionManager().list_sessions() == {}
-
-
-@pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_the_training_store_keeps_an_unusable_record_without_raising(
-    _isolate_both_stores: Path, _label: str, pid: Any, _why: str
-) -> None:
-    """The training store drops nothing, so it must read every spelling too.
-
-    Its retention is the point: the record is the only place a detached run's pid
-    is written down. Before the fix ``psutil.pid_exists`` was handed the raw
-    value and raised ``TypeError`` for a ``str``, a ``float`` and a ``list`` -
-    including two spellings the teleop store accepted as live, so one record read
-    as a running session in one tool and as an aborted read in the other.
+    Both tools read one store, so the answer cannot depend on which one asks.
+    They used to disagree on exactly these values: one pruned the record on every
+    read and wrote the prune back, deleting the other's records. And the
+    classifying question has to be answerable for every spelling at all: before
+    the fix ``psutil.pid_exists`` was handed the raw value and raised
+    ``TypeError`` for a ``str``, a ``float`` and a ``list``.
     """
     _write_store(_isolate_both_stores, "run", pid)
 
-    assert list(train_mod.SessionManager().list_sessions()) == ["run"]
+    assert list(tool.SessionManager().list_sessions()) == ["run"]
 
 
 def test_a_store_whose_pid_field_is_undecodable_degrades_to_no_sessions(_isolate_both_stores: Path) -> None:
@@ -204,10 +195,10 @@ def test_a_store_whose_pid_field_is_undecodable_degrades_to_no_sessions(_isolate
     store = _isolate_both_stores / "active_sessions.json"
     store.write_bytes(b'{"arm": {"pid": "12\xff34", "action": "teleoperate", "start_time": 0.0}}')
 
-    # The training store first: the teleop read below prunes the record and
-    # writes the pruned map back over the same file.
+    # One store, so both tools read the damaged record the same way and neither
+    # read writes: the record stays on disk for whichever tool asks next.
     assert list(train_mod.SessionManager().list_sessions()) == ["arm"]
-    assert tele_mod.SessionManager().list_sessions() == {}
+    assert list(tele_mod.SessionManager().list_sessions()) == ["arm"]
 
 
 # --------------------------------------------------------------------------- #

@@ -32,6 +32,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _session
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -43,10 +44,10 @@ _LOGGER_NAME = "strands_robots.tools.lerobot_teleoperate"
 #: ``"calibration"``, which made the "names the session" assertion vacuous.
 _SESSION = "wrist-rig-7"
 
-# The store prunes any record whose pid is not a live process on every read, so
-# a fake pid would make the session vanish before a test could read it back.
-# This process's own pid is live for the duration of the test, which is what a
-# real session's pid is too.
+# A record whose pid names a finished process is reaped by the next write, so a
+# fake pid would make the session vanish as soon as another one started. This
+# process's own pid is live for the duration of the test, which is what a real
+# session's pid is too.
 _LIVE_PID = os.getpid()
 
 
@@ -60,7 +61,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the module-level session dir so tests never touch the real store."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -264,17 +265,36 @@ def test_stop_and_status_refuse_an_absent_session_identically() -> None:
     assert _texts(stop) == _texts(status)
 
 
-def test_a_pidless_session_record_is_pruned_so_the_no_pid_refusal_is_unreachable() -> None:
-    """The store drops any record without a live pid, on every read.
+def test_a_pidless_session_record_survives_so_stop_can_refuse_it() -> None:
+    """The store keeps a record whose pid it cannot inspect, so ``stop`` sees it.
 
-    ``stop`` carries a "No PID found" refusal below the lookup. It cannot be
-    reached through any input, because a record that reaches a caller has
-    already been filtered on ``pid and psutil.pid_exists(pid)``. Pinning the
-    pruning keeps that accounting honest: the day the store stops filtering,
-    this fails and the refusal becomes live code that needs its own test.
+    ``stop`` carries a "No PID found" refusal below the lookup. It used to be
+    unreachable, because the store pruned any record without a live pid before a
+    caller could see one - and the note here said the day the store stopped
+    filtering, the refusal would become live code needing its own test. It did:
+    a read no longer prunes, and a pid that is not a process id is never pruned,
+    because nothing can inspect it and converting it would inspect a different
+    process. The refusal is graded below.
     """
     manager = SessionManager()
     manager.add_session("nopid", {"start_time": 0.0, "action": "record"})
 
-    assert manager.get_session("nopid") is None, "a pidless record survived the store's pruning"
-    assert "nopid" not in manager.list_sessions()
+    assert manager.get_session("nopid") is not None, (
+        "a record whose pid cannot be inspected is the only handle on a run that may still be live"
+    )
+    assert "nopid" in manager.list_sessions()
+
+
+def test_stop_refuses_a_session_whose_record_names_no_pid() -> None:
+    """The refusal the retained record makes reachable names the session.
+
+    Reported rather than raised, like every other tool outcome, and it must say
+    which session it could not stop: the record is the only handle on the run,
+    and an operator who sees this has to go and find the process by hand.
+    """
+    SessionManager().add_session("nopid", {"start_time": 0.0, "action": "record"})
+
+    result = lerobot_teleoperate(action="stop", session_name="nopid")
+
+    assert result["status"] == "error"
+    assert "nopid" in _texts(result), f"the refusal must name the session it could not stop: {result}"

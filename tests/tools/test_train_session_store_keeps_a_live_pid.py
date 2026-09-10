@@ -68,7 +68,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
+from strands_robots.tools import _process_stop, _session
 
 SessionManager = train_mod.SessionManager
 lerobot_train = train_mod.lerobot_train
@@ -84,7 +84,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the session store to a temp dir so no test touches the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 

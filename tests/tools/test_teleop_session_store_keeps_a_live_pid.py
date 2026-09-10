@@ -40,7 +40,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
-from strands_robots.tools import _process_stop
+from strands_robots.tools import _process_stop, _session
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -51,7 +51,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect the session store to a temp dir so no test touches the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_session, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -128,6 +128,21 @@ def _stored(mgr: Any) -> dict[str, Any]:
     if not mgr.sessions_file.exists():
         return {}
     return json.loads(mgr.sessions_file.read_text())
+
+
+def _reap(mgr: Any) -> dict[str, Any]:
+    """Drive the store's only prune - a write - and return what it left on disk.
+
+    Reads report what is stored and change nothing, so a finished record is
+    dropped by the next ``add_session``: the one step that already holds the lock
+    and is already rewriting the whole document. The record this writes to trigger
+    it is removed from the result, so callers grade only the records they seeded.
+    """
+    probe = "_reap_probe"
+    mgr.add_session(probe, {"pid": os.getpid(), "action": "teleoperate", "start_time": 0.0})
+    stored = _stored(mgr)
+    stored.pop(probe, None)
+    return stored
 
 
 # ---------------------------------------------------------------------------
@@ -244,23 +259,23 @@ def test_retaining_the_record_is_reported(monkeypatch: pytest.MonkeyPatch, caplo
 # Controls: a session that really is finished is still pruned.
 # ---------------------------------------------------------------------------
 def test_a_process_reaped_mid_probe_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``NoSuchProcess`` names nothing, so the record goes - including on disk."""
+    """``NoSuchProcess`` names nothing, so the record goes on the next write."""
     mgr = SessionManager()
     mgr.add_session("racy", _identified(_live_pid()))
     _raise_on_probe(monkeypatch, tele_mod, tele_mod.psutil.NoSuchProcess)
 
-    assert mgr.list_sessions() == {}
-    assert _stored(mgr) == {}, "a reaped session must still be pruned from the store"
+    assert "racy" in mgr.list_sessions(), "a read reports what is stored and prunes nothing"
+    assert _reap(mgr) == {}, "a reaped session must still be dropped by the next write"
 
 
 def test_a_pid_that_no_longer_exists_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ordinary finished-session path is unchanged."""
+    """The ordinary finished-session path still ends in a drop."""
     mgr = SessionManager()
     mgr.add_session("done", {"pid": _live_pid(), "action": "teleoperate", "start_time": 0.0})
     monkeypatch.setattr(tele_mod.psutil, "pid_exists", lambda pid: False)
 
-    assert mgr.list_sessions() == {}
-    assert _stored(mgr) == {}, "a session whose PID is gone must still be pruned"
+    assert "done" in mgr.list_sessions(), "a read reports what is stored and prunes nothing"
+    assert _reap(mgr) == {}, "a session whose PID is gone must still be dropped by the next write"
 
 
 def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -281,6 +296,12 @@ def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.Monke
         def create_time(self) -> float:
             return tele_mod.psutil.boot_time() + _RECORDED_START_S + 3600.0
 
+        def is_running(self) -> bool:
+            # Another process holds the number, so it is running - just not ours.
+            # The store probes this for what it raises, and a stand-in that
+            # omitted it would report a denial the host never gave.
+            return True
+
     monkeypatch.setattr(tele_mod.psutil, "Process", _AnotherProcess)
     # Route the identity read through the double so the mismatched start time
     # reaches the verdict on Linux, where the procfs read would otherwise bypass
@@ -291,15 +312,13 @@ def test_a_pid_held_by_another_process_is_still_pruned(monkeypatch: pytest.Monke
         lambda pid: _RECORDED_START_S + 3600.0,
     )
 
-    assert mgr.list_sessions() == {}
-    assert _stored(mgr) == {}, "a PID held by another process must still be pruned"
+    assert "taken_over" in mgr.list_sessions(), "a read reports what is stored and prunes nothing"
+    assert _reap(mgr) == {}, "a PID held by another process must still be dropped by the next write"
 
 
-# The sibling store is held to the same rule in
-# ``tests.tools.test_train_session_store_keeps_a_live_pid``. It used to be
-# checked from here, but only through ``list_sessions`` - a read - and that
-# store's prune reaches disk through ``add_session``/``remove_session``, so the
-# read alone could not see it drop the record. The write paths are graded there.
+# Both tools now share one store, so the rule above is one rule. Its write paths
+# are graded from the training side too, in
+# ``tests.tools.test_train_session_store_keeps_a_live_pid``.
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +404,7 @@ class TestTheVerdictIsControlledWhereItIsAnswered:
         mgr.add_session("unidentified", {"pid": _free_pid(), "action": "teleoperate", "start_time": 0.0})
         monkeypatch.setattr(tele_mod, "psutil", _WouldKeepIt)
 
-        assert mgr.list_sessions() == {}, "the stand-in would have kept this record"
+        assert _reap(mgr) == {}, "the stand-in would have kept this record"
         assert consulted == [], f"the prune must not be reachable this way, but consulted {consulted}"
 
     def test_the_module_object_is_the_seam_the_prune_reads(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -405,5 +424,5 @@ class TestTheVerdictIsControlledWhereItIsAnswered:
         mgr.add_session("live", _identified(pid))
         monkeypatch.setattr(tele_mod.psutil, "pid_exists", pid_exists)
 
-        assert mgr.list_sessions() == {}
+        assert _reap(mgr) == {}
         assert pid in asked, f"the prune must read the module object, but asked {asked}"
