@@ -29,10 +29,10 @@ The decision is not ROS-shaped, though. :func:`gate_motion` is the same
 allowlist -> bypass -> operator-interrupt -> audit-row path with the blocklist
 factored out, for tools whose command surface is not a graph name at all: a
 serial write to a motor bus, where the target is a port and the verb is a wire
-instruction, or a rollout the real-hardware ``Robot`` agent tool dispatches,
-where the target is the robot and the verb is ``execute`` or ``start``. Such a
-caller names its own allowlist variable and its own way of matching it; the
-interrupt, the
+instruction, an arm motion named by the pose action carrying it, or a rollout
+the real-hardware ``Robot`` agent tool dispatches, where the target is the robot
+and the verb is ``execute`` or ``start``. Such a caller names its own allowlist
+variable and its own way of matching it; the interrupt, the
 fail-closed rule and the audit row are the one copy here, so an operator's "no"
 means the same thing whichever tool asked. :func:`gate_command` is now a thin
 blocklist front on that path.
@@ -218,8 +218,9 @@ def gate_motion(
     the caller's allowlist variable, then ``BYPASS_TOOL_CONSENT``, then the
     operator, failing closed when no interrupt is reachable. It is the one
     copy of that path, shared by the ROS transports (through
-    :func:`gate_command`), :mod:`~strands_robots.tools.serial_tool` and the
-    real-hardware :class:`~strands_robots.hardware_robot.Robot` tool, so the
+    :func:`gate_command`), :mod:`~strands_robots.tools.serial_tool`,
+    :mod:`~strands_robots.tools.pose_tool` and the real-hardware
+    :class:`~strands_robots.hardware_robot.Robot` tool, so the
     interrupt id, the refusal wording and the audit row cannot differ between
     two tools reaching the same robot.
 
