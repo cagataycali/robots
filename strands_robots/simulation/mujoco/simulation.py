@@ -126,6 +126,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
     SpecBuilder,
@@ -3403,6 +3404,13 @@ class MuJoCoSimEngine(
         reported as a scalar joint (its qpos is [xyz+quat], not a single angle),
         and the base ``quaternion``/``angular_velocity`` match get_observation's
         ``base_quat``/``base_ang_vel`` for the same robot.
+
+        A robot whose every actuator is a torque ``<motor>`` (a Menagerie
+        quadruped or humanoid) additionally carries ``"actuation": "torque"``,
+        with the same fact as a ``note:`` line in the text: its ``ctrl`` is a
+        force in Nm rather than a pose, so it holds no configuration and settles
+        under gravity unless a controller drives it every step. Absent for a
+        robot with even one position servo, whose pose writes do hold.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3511,6 +3519,22 @@ class MuJoCoSimEngine(
                     f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
                 )
                 json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+
+        # Name torque-only actuation, because its normal behaviour reads as a
+        # broken model. A Menagerie quadruped is driven entirely by <motor>, so
+        # ctrl is a force and a pose written there is a torque: go2 sinks from
+        # base z 0.445 to 0.20 within 2 s of the first step, holding nothing.
+        # The reading above reports that collapse without a word on its cause,
+        # which is the one thing a caller needs to know it is not a defect --
+        # the robot needs a controller every step (run_policy), not a fix.
+        # torque_only_actuation owns the three-term classification.
+        if torque_only_actuation(model, robot, mj):
+            text += (
+                f"note: all {len(robot.actuator_ids)} actuators are torque motors (ctrl in Nm) - a "
+                "position target written to them is a force, so nothing holds the pose and the robot "
+                "settles under gravity unless a controller drives it every step (run_policy).\n"
+            )
+            json_payload["actuation"] = "torque"
         return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
