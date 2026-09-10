@@ -104,7 +104,9 @@ class _Recorder:
         self.calls.append("get_observation")
         return {"A": 0.0, "B": 0.0}
 
-    def send_action(self, action: Any, robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(
+        self, action: Any, robot_name: str | None = None, n_substeps: int = 1, clamp: bool = False
+    ) -> dict[str, Any]:
         self.calls.append("send_action")
         vals = [float(v) for v in action]
         self.actions.append(vals)
@@ -279,7 +281,9 @@ class TestWhatTheUnusableScalesDid:
         # Why a non-finite scale is silent: the refusal never reaches the caller.
         # ``step`` banks the reward for a step whose command the engine rejected.
         class _AlwaysRefuses(_Recorder):
-            def send_action(self, action: Any, robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
+            def send_action(
+                self, action: Any, robot_name: str | None = None, n_substeps: int = 1, clamp: bool = False
+            ) -> dict[str, Any]:
                 super().send_action(action, robot_name, n_substeps)
                 self.statuses[-1] = "error"
                 return {"status": "error", "content": [{"text": "refused"}]}

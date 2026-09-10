@@ -43,7 +43,7 @@ class _OneJointEngine:
     def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
         return {"J": 0.0, "J.vel": 1.0}
 
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
+    def send_action(self, action, robot_name=None, n_substeps: int = 1, clamp: bool = False) -> dict:
         return {"status": "success"}
 
 

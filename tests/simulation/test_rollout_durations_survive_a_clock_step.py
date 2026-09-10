@@ -139,6 +139,7 @@ class _FakeEngine(SimEngine):
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         self.frame_starts_mono.append(self._clock.monotonic())
         self.substeps.append(n_substeps)

@@ -38,7 +38,7 @@ class _CountdownEngine:
     def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
         return {"J": self._j, "J.vel": 1.0}
 
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
+    def send_action(self, action, robot_name=None, n_substeps: int = 1, clamp: bool = False) -> dict:
         self._j += 1.0
         return {"status": "success"}
 

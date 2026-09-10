@@ -84,7 +84,7 @@ class _CountingSim(SimEngine):
     def get_observation(self, robot_name=None, *, skip_images=False):
         return {n: 0.0 for n in self._joint_names}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         with self._lock:
             self.send_count += 1
         if self._exec_sleep:
@@ -177,7 +177,7 @@ def test_async_rtc_starts_next_inference_mid_chunk() -> None:
     infer_started = threading.Event()
 
     class _RendezvousSim(_CountingSim):
-        def send_action(self, action, robot_name=None, n_substeps=1):
+        def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
             # Block the final action of the first chunk until the prefetch
             # worker has begun inference. The worker is submitted at the
             # mid-chunk trigger (strictly before this step), so it cannot

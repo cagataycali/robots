@@ -122,7 +122,7 @@ class _Engine(SimEngine):
     def get_observation(self, robot_name=None, skip_images: bool = False) -> dict[str, Any]:
         return {}
 
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(self, action, robot_name=None, n_substeps: int = 1, clamp: bool = False) -> dict[str, Any]:
         return {"status": "success"}
 
     def render(self, *args: Any, **kwargs: Any) -> dict[str, Any]:

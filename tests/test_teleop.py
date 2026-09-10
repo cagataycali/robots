@@ -61,7 +61,7 @@ class FakeHost(TeleopMixin):
         self.sent: list[tuple[dict, str | None]] = []
         self._send_lock = threading.Lock()
 
-    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1):  # noqa: ARG002
+    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1, clamp: bool = False):  # noqa: ARG002
         with self._send_lock:
             self.sent.append((dict(action), robot_name))
         return {"status": "success", "content": [{"text": "ok"}]}
@@ -382,7 +382,7 @@ def test_attached_teleop_dataclass():
 class ErrorHost(FakeHost):
     """Host whose send_action always reports a structured error."""
 
-    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1):  # noqa: ARG002
+    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1, clamp: bool = False):  # noqa: ARG002
         with self._send_lock:
             self.sent.append((dict(action), robot_name))
         return {"status": "error", "content": [{"text": "actuator fault"}]}
@@ -542,7 +542,7 @@ class FlakyHost(FakeHost):
         super().__init__(tool_name)
         self._tick = 0
 
-    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1):  # noqa: ARG002
+    def send_action(self, action: dict, robot_name: str | None = None, n_substeps: int = 1, clamp: bool = False):  # noqa: ARG002
         with self._send_lock:
             self.sent.append((dict(action), robot_name))
         self._tick += 1

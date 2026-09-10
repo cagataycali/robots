@@ -49,7 +49,7 @@ class _FakeEngine:
     def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
         return {"J": self._j, "J.vel": self._vel}
 
-    def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
+    def send_action(self, action, robot_name=None, n_substeps: int = 1, clamp: bool = False) -> dict:
         a = float(action[0]) if len(action) else 0.0
         self._vel = 0.1 * a
         self._j += self._vel

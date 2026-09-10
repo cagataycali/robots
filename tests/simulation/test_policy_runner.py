@@ -104,7 +104,7 @@ class FakeSim(SimEngine):
         self.calls.append(("get_observation", robot_name))
         return {n: 0.0 for n in self._joint_names}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", dict(action), robot_name))
         self._step_count += 1
         self._sim_time += 0.002
@@ -793,7 +793,7 @@ class _SubstepRecordingSim(FakeSim):
     def physics_timestep(self):  # noqa: D102 - see SimEngine.physics_timestep
         return self._dt
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.substeps_seen.append(n_substeps)
         super().send_action(action, robot_name=robot_name, n_substeps=n_substeps)
 

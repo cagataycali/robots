@@ -36,7 +36,7 @@ class _RaisingProbeSim(FakeSim):
     def physics_timestep(self) -> float | None:
         raise RuntimeError("backend cannot report a fixed timestep")
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.substeps_seen.append(n_substeps)
         return super().send_action(action, robot_name=robot_name)
 

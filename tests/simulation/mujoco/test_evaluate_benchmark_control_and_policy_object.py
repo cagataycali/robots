@@ -116,9 +116,9 @@ def _capture_substeps(sim) -> list[int]:
     captured: list[int] = []
     orig = sim.send_action
 
-    def _spy(action, robot_name=None, n_substeps: int = 1):
+    def _spy(action, robot_name=None, n_substeps: int = 1, clamp: bool = False):
         captured.append(int(n_substeps))
-        return orig(action, robot_name=robot_name, n_substeps=n_substeps)
+        return orig(action, robot_name=robot_name, n_substeps=n_substeps, clamp=clamp)
 
     sim.send_action = _spy  # type: ignore[method-assign]
     return captured

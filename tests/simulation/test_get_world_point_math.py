@@ -85,7 +85,7 @@ class _StubSim(SimEngine):
     def get_observation(self, robot_name=None, *, skip_images=False):
         return {}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         return {"status": "success"}
 
     def render(self, camera_name="default", width=None, height=None):

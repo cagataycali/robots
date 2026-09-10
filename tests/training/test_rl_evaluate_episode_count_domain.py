@@ -76,7 +76,9 @@ class _StandInEngine:
     def get_observation(self, robot_name: Any = None, *, skip_images: bool = False) -> dict[str, float]:
         return {"J": self._j, "J.vel": self._vel}
 
-    def send_action(self, action: Any, robot_name: Any = None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(
+        self, action: Any, robot_name: Any = None, n_substeps: int = 1, clamp: bool = False
+    ) -> dict[str, Any]:
         self._vel = 0.1 * (float(action[0]) if len(action) else 0.0)
         self._j += self._vel
         return {"status": "success"}

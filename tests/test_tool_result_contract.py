@@ -89,7 +89,7 @@ class _FakeHost(TeleopMixin):
         self.peer_id = None
         self._send_lock = threading.Lock()
 
-    def send_action(self, action, robot_name=None, n_substeps=1):  # noqa: ARG002
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):  # noqa: ARG002
         return {"status": "success", "content": [{"text": "ok"}]}
 
 

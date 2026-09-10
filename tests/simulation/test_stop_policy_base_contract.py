@@ -118,6 +118,7 @@ class _MinimalEngine(SimEngine):
         action: dict[str, Any] | Sequence[float],
         robot_name: str | None = None,
         n_substeps: int = 1,
+        clamp: bool = False,
     ) -> dict[str, Any]:
         values = [float(action[j]) for j in _JOINTS] if isinstance(action, dict) else [float(v) for v in action]
         self._q = np.asarray(values, dtype=float)

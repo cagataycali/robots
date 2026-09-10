@@ -72,7 +72,7 @@ class _Sim(SimEngine):
     def get_observation(self, robot_name=None, *, skip_images=False):
         return {n: 0.0 for n in _JOINTS}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.send_count += 1
 
     def render(self, camera_name="default", width=None, height=None):

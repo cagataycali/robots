@@ -112,7 +112,7 @@ class _FakeSim(SimEngine):
         self.calls.append(("get_observation", robot_name))
         return {n: 0.0 for n in self._joint_names}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", robot_name))
         self._step_count += 1
         self._sim_time += 0.002
@@ -124,7 +124,7 @@ class _FakeSim(SimEngine):
 class _PartialResolutionSim(_FakeSim):
     """``send_action`` that resolves some keys and rejects the rest."""
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", robot_name))
         self._step_count += 1
         self._sim_time += 0.002
@@ -141,7 +141,7 @@ class _PartialResolutionSim(_FakeSim):
 class _CoarseErrorSim(_FakeSim):
     """Backend refusal with no complete per-key evidence."""
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", robot_name))
         return {"status": "error", "content": [{"text": "atomic refusal"}]}
 
@@ -149,7 +149,7 @@ class _CoarseErrorSim(_FakeSim):
 class _CoarseThenFullSim(_FakeSim):
     """One unknown refusal followed by a fully applied action."""
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", robot_name))
         attempts = sum(name == "send_action" for name, _ in self.calls)
         if attempts == 1:
@@ -167,7 +167,7 @@ class _StateOnlyClockSim(_FakeSim):
         del self._sim_time
         self.state_calls = 0
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.calls.append(("send_action", robot_name))
         self._step_count += 1
 

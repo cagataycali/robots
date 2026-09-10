@@ -88,9 +88,9 @@ def test_replay_steps_full_control_period(so101_sim):
     used: list[int] = []
     original = so101_sim.send_action
 
-    def spy(action, robot_name=None, n_substeps=1):
+    def spy(action, robot_name=None, n_substeps=1, clamp=False):
         used.append(n_substeps)
-        return original(action, robot_name=robot_name, n_substeps=n_substeps)
+        return original(action, robot_name=robot_name, n_substeps=n_substeps, clamp=clamp)
 
     so101_sim.send_action = spy  # type: ignore[method-assign]
     try:

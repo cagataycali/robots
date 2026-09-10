@@ -84,7 +84,7 @@ class _ClockSim(SimEngine):
     def get_observation(self, robot_name=None, *, skip_images=False):
         return {"clock": self.clock, **{n: 0.0 for n in self._joint_names}}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):
         self.send_count += 1
         self.clock += 1
 

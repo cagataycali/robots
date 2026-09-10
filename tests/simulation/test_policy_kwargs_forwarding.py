@@ -73,7 +73,7 @@ class FakeSim(SimEngine):
     def get_observation(self, robot_name=None, *, skip_images=False):  # type: ignore[no-untyped-def]
         return {n: 0.0 for n in self._joint_names}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):  # type: ignore[no-untyped-def]
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):  # type: ignore[no-untyped-def]
         return {"status": "success"}
 
     def render(self, camera_name="default", width=None, height=None):  # type: ignore[no-untyped-def]

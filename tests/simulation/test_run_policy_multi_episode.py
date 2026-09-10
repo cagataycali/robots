@@ -88,7 +88,7 @@ class _RecordinglessEngine(SimEngine):
     def get_observation(self, robot_name=None, skip_images=False):  # type: ignore[no-untyped-def]
         return {"status": "success", "content": []}
 
-    def send_action(self, action, robot_name=None, n_substeps=1):  # type: ignore[no-untyped-def]
+    def send_action(self, action, robot_name=None, n_substeps=1, clamp: bool = False):  # type: ignore[no-untyped-def]
         return {"status": "success", "content": []}
 
     def physics_timestep(self):  # type: ignore[no-untyped-def]

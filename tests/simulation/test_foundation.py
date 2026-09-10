@@ -99,7 +99,11 @@ def _make_dummy_engine_class() -> type[SimEngine]:
             return {}
 
         def send_action(
-            self, action: dict[str, Any] | Sequence[float], robot_name: str | None = None, n_substeps: int = 1
+            self,
+            action: dict[str, Any] | Sequence[float],
+            robot_name: str | None = None,
+            n_substeps: int = 1,
+            clamp: bool = False,
         ) -> dict[str, Any]:
             return {"status": "success", "content": [{"text": "ok"}]}
 
