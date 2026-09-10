@@ -47,9 +47,9 @@ tests_integ/               # Integration tests (run with: hatch run test-integ)
 ## Development
 
 ```bash
-# Install with all optional deps. `[dev]` alone installs the test tooling
-# (plus pyserial/msgpack, which tests/tools/conftest.py and the cosmos3 wire
-# tests import at module level); the graders and most of the suite need [all].
+# Install with all optional deps. This is the only install that runs the suite
+# and scripts/check_whole_tree_graders.py: [dev] alone is the test tooling, and
+# tests/tools imports the [lerobot] extra (lerobot, psutil) at module level.
 pip install -e ".[all,dev]"
 
 # Run tests
