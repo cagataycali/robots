@@ -54,7 +54,12 @@ dependencies = [
     # enters ``strands.hooks.__all__`` at 1.10.0, but ``interrupt`` only enters
     # its MRO at 1.13.0. On 1.10.0-1.12.x the gate therefore imports cleanly and
     # raises ``AttributeError`` at the moment it should pause a real robot, which
-    # is a worse outcome than refusing the install. See
+    # is a worse outcome than refusing the install. The same release ships the
+    # rest of the interrupt machinery the real-hardware ``Robot`` tool's
+    # operator gate uses at module import time,
+    # ``strands.interrupt.InterruptException`` and
+    # ``strands.types._events.ToolInterruptEvent`` (both absent from the 1.12.0
+    # wheel), so they sit on the floor rather than raise it. See
     # tests/test_strands_agents_floor_ships_the_imported_api.py, which owns that
     # measurement, grades the members the gate calls, and fails the moment a
     # newer strands symbol is imported without raising this floor.

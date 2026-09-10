@@ -26,17 +26,21 @@ returning a result - see ``_Gate.owner`` and ``_drive_dashboard_agent_hitl``.
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from strands.types.interrupt import Interrupt
 
 import strands_robots
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod
+import strands_robots.hardware_robot as hw_mod
 import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
@@ -62,6 +66,41 @@ def _ctx(response: object) -> MagicMock:
 def _drive_use_ros(response: object) -> dict[str, Any] | None:
     """A publish aimed at a blocklisted drive topic."""
     return ros_mod._gate_command("publish", "/cmd_vel", _ctx(response))
+
+
+class _AnsweredInterrupts(dict):
+    """An agent interrupt table whose every new question already carries the reply."""
+
+    def __init__(self, response: object) -> None:
+        super().__init__()
+        self._response = response
+
+    def setdefault(self, key: str, default: Any = None) -> Any:  # type: ignore[override]
+        if key not in self:
+            self[key] = Interrupt(default.id, default.name, default.reason, self._response)
+        return self[key]
+
+
+def _drive_robot(response: object) -> dict[str, Any] | None:
+    """A real-mode ``execute`` through the ``Robot`` agent tool.
+
+    ``Robot`` is an ``AgentTool``, so the operator is reached through the agent in
+    ``invocation_state`` rather than a ``tool_context`` argument; the fake agent
+    carries a real interrupt state answering *response*. The dispatcher is stood
+    in for so an approval moves nothing; the gate runs before it, so a decline
+    never reaches it either.
+    """
+    agent = SimpleNamespace(_interrupt_state=SimpleNamespace(interrupts=_AnsweredInterrupts(response)))
+    robot = hw_mod.Robot.__new__(hw_mod.Robot)
+    robot.tool_name_str = "so101"
+    robot._execute_task_sync = lambda *a: {"status": "success", "content": [{"text": "done"}]}  # type: ignore[method-assign]
+
+    async def _run() -> list[Any]:
+        tool_use = {"toolUseId": "tu-1", "input": {"action": "execute", "instruction": "wave", "policy_port": 5555}}
+        return [ev async for ev in robot.stream(tool_use, {"agent": agent})]
+
+    res = asyncio.run(_run())[-1].tool_result
+    return res if res["status"] == "error" else None
 
 
 def _drive_lerobot_train(response: object) -> dict[str, Any] | None:
@@ -155,8 +194,13 @@ class _Gate:
 # single peer is named and its row's target is legitimately empty - the verb is
 # what identifies it. Pinning the expected value per gate keeps that deliberate
 # rather than letting an empty target pass everywhere.
+# ``robot`` (the real-hardware agent tool) asks through the same site
+# (``gate_motion``, the transport-agnostic path ``gate_command`` fronts with its
+# blocklist), so its row grades that a rollout dispatch and a ROS publish leave
+# the same shape of row.
 _GATES: tuple[_Gate, ...] = (
-    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_command"),
+    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_motion"),
+    _Gate("robot", "robot_tool", "execute", "so101", _drive_robot, gate_mod, "gate_motion"),
     _Gate(
         "lerobot_train",
         "lerobot_train_tool",
@@ -188,6 +232,7 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "BYPASS_TOOL_CONSENT",
         "STRANDS_ROS2_COMMAND_ALLOW",
+        hw_mod.COMMAND_ALLOW_ENV,
         "STRANDS_TRAIN_EXTRA_FLAGS_ALLOW",
         dash_hitl_mod.MOTION_ENV,
     ):
