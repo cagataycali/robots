@@ -176,6 +176,8 @@ except ValidationError as refusal:
 - **Codes are additive.** They were introduced without changing a single refusal message, and new codes may be added for refusals that become continuable later. Switch on the codes you know and fall through to the message for the rest.
 - **Every code you receive is in `REFUSAL_CODES`.** Nothing validates `code` at runtime - it is stored as given - so what backs the closed vocabulary is a static scan over every raise site in the package, reading the code in each spelling a site can use it (a `refusal_codes` attribute, a name imported from it, or the literal string). That means `REFUSAL_GRANTS[refusal.code]` is safe for any code you are handed: a code outside the vocabulary is a defect in this package, not a case for you to handle.
 
+The in-tree consumer of this contract is `strands_robots.dashboard.consent.classify_refusal`, which builds the dashboard's consent card from `code` and `subject` alone and carries the message only for display.
+
 Reference: `strands_robots.refusal_codes`; `strands_robots.mesh.security.SecurityError`; `strands_robots.policies.factory.UntrustedRemoteCodeError`.
 
 ## HuggingFace policy code execution (`trust_remote_code`)
