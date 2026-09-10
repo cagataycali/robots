@@ -5,7 +5,7 @@ description: HuggingFace LeRobot direct inference - ACT, Pi0, SmolVLA, Diffusion
 # LeRobot Local
 
 ```bash
-uv pip install "strands-robots[lerobot]"
+uv pip install "strands-robots[smolvla]"  # [lerobot] plus transformers, which SmolVLA needs at load
 export STRANDS_TRUST_REMOTE_CODE=1        # required; raises UntrustedRemoteCodeError otherwise
 ```
 
@@ -14,7 +14,7 @@ from strands_robots.policies import create_policy
 
 policy = create_policy(
     "lerobot_local",
-    pretrained_name_or_path="lerobot/pi0_so100",   # HF model_id or local path
+    pretrained_name_or_path="lerobot/smolvla_base",   # HF model_id or local path
     device="cuda",
 )
 ```
@@ -224,7 +224,7 @@ the still-unexecuted tail of the previous one and lets inference overlap
 execution. Enable it per policy:
 
 ```python
-policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so100",
+policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/smolvla_base",
                         rtc_enabled=True, rtc_execution_horizon=16, rtc_max_guidance_weight=1.0)
 ```
 
@@ -246,7 +246,7 @@ to the state at the new query, so the seam does not double-apply the offset.
 
 ```python
 sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
-               policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
+               policy_config={"pretrained_name_or_path": "lerobot/smolvla_base", "rtc_enabled": True},
                action_horizon=8, async_rtc=False)
 ```
 
