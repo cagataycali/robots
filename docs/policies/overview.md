@@ -65,7 +65,7 @@ so neither can silently drift.
 | [`groot`](groot.md) | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
-| [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
+| [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket; embodiments `droid`, `umi`, `av`, `bridge`, `openarm` |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
 | [`rl`](rl.md) | `RLCheckpointPolicy` | _(core)_ | Roll out an actor trained by `create_trainer("ppo"|"fast_sac"|"fast_td3")`: loads the run's `policy.pt` + `policy_meta.json` and drives the robot deterministically (non-VLA) |
 | [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |

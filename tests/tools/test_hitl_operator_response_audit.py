@@ -36,19 +36,22 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from strands.types.interrupt import Interrupt
-from strands.types.tools import ToolUse
 
-import strands_robots
-import strands_robots.dashboard.agent_hitl as dash_hitl_mod
-import strands_robots.hardware_robot as hw_mod
-import strands_robots.tools._command_gate as gate_mod
-import strands_robots.tools.lerobot_train as train_mod
-import strands_robots.tools.pose_tool as pose_mod
-import strands_robots.tools.robot_mesh as mesh_mod
-import strands_robots.tools.serial_tool as serial_mod
-import strands_robots.tools.use_ros as ros_mod
-from strands_robots.mesh.audit import audit_log_path, read_audit_log
+pytest.importorskip("psutil")
+
+from strands.types.interrupt import Interrupt  # noqa: E402
+from strands.types.tools import ToolUse  # noqa: E402
+
+import strands_robots  # noqa: E402
+import strands_robots.dashboard.agent_hitl as dash_hitl_mod  # noqa: E402
+import strands_robots.hardware_robot as hw_mod  # noqa: E402
+import strands_robots.tools._command_gate as gate_mod  # noqa: E402
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+import strands_robots.tools.pose_tool as pose_mod  # noqa: E402
+import strands_robots.tools.robot_mesh as mesh_mod  # noqa: E402
+import strands_robots.tools.serial_tool as serial_mod  # noqa: E402
+import strands_robots.tools.use_ros as ros_mod  # noqa: E402
+from strands_robots.mesh.audit import audit_log_path, read_audit_log  # noqa: E402
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only

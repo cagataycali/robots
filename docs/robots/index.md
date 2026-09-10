@@ -1,10 +1,10 @@
 ---
-description: 74 robots across 8 categories. Every name addressable from Robot('name').
+description: Every robot in the registry, by category. Every name addressable from Robot('name').
 ---
 
 # Robot catalog
 
-`strands-robots` ships with a registry of **74 robots** across 8 categories. Every robot
+`strands-robots` ships with a registry of **{{n:robots}} robots** across {{n:categories}} categories. Every robot
 is addressable by name through the factory:
 
 ```python
@@ -88,15 +88,15 @@ sim = Robot("aloha")
 
 | Category | Count | Page |
 |----------|------:|------|
-| Arms | 22 | [arms](arms.md) |
-| Bimanual | 3 | [bimanual](bimanual.md) |
-| Humanoids | 18 | [humanoids](humanoids.md) |
-| Hands | 8 | [hands](hands.md) |
-| Mobile | 10 | [mobile](mobile.md) |
-| Mobile manip | 4 | [mobile](mobile.md) |
-| Aerial | 2 | [mobile](mobile.md) |
-| Expressive | 1 | [humanoids](humanoids.md) |
-| **Total** | **68** | |
+| Arms | {{n:arm}} | [arms](arms.md) |
+| Bimanual | {{n:bimanual}} | [bimanual](bimanual.md) |
+| Humanoids | {{n:humanoid}} | [humanoids](humanoids.md) |
+| Hands | {{n:hand}} | [hands](hands.md) |
+| Mobile | {{n:mobile}} | [mobile](mobile.md) |
+| Mobile manip | {{n:mobile_manip}} | [mobile](mobile.md) |
+| Aerial | {{n:aerial}} | [mobile](mobile.md) |
+| Expressive | {{n:expressive}} | [humanoids](humanoids.md) |
+| **Total** | **{{n:robots}}** | |
 
 
 ## Add a new robot

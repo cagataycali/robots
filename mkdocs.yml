@@ -69,10 +69,17 @@ nav:
   - Overview: examples/overview.md
 - Architecture: architecture.md
 - API Reference: api-reference.md
+- Configuration: reference/configuration.md
 - Security: security.md
 - Tool Result Contract: contracts.md
 - Contributing: contributing.md
 - Troubleshooting: troubleshooting.md
+hooks:
+  - docs/hooks/numbers.py
+validation:
+  links:
+    anchors: warn
+
 theme:
   name: material
   logo: assets/strands-logo.svg

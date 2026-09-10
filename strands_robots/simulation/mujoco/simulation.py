@@ -2748,7 +2748,8 @@ class MuJoCoSimEngine(
         # own robot's worker outlived the stop budget, so reaching here means
         # every worker is done. The XML round-trip below still
         # reallocates model/data, so serialize it under self._lock to exclude
-        # the render/recorder daemon (rendering.py reads mjData under the same
+        # the render/recorder daemon (``simulation.mujoco.rendering`` reads mjData
+        # under the same
         # lock). remove_robot is dispatched WITHOUT the blanket lock (see
         # _SELF_LOCKING_ACTIONS), so this acquisition is the real critical
         # section, not a reentrant no-op.

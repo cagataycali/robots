@@ -36,9 +36,11 @@ from typing import Any
 
 import pytest
 
-import strands_robots
-from strands_robots.tools.lerobot_train import _read_total_tasks, build_train_command
-from strands_robots.utils import validation_split_error
+pytest.importorskip("psutil")
+
+import strands_robots  # noqa: E402
+from strands_robots.tools.lerobot_train import _read_total_tasks, build_train_command  # noqa: E402
+from strands_robots.utils import validation_split_error  # noqa: E402
 
 #: Requested held-out episode count, and the dataset the request is made against.
 VAL_EPISODES = 2

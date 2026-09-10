@@ -25,21 +25,21 @@ INTERRUPT_NAME = "physical_motion"
 MOTION_ACTIONS: dict[str, frozenset[str]] = {
     "fleet": frozenset({"task"}),
     # robot_mesh is deliberately ABSENT: it raises its own SDK-native interrupt
-    # (tool_context.interrupt in strands_robots/tools/robot_mesh.py) on every
+    # (tool_context.interrupt in ``strands_robots.tools.robot_mesh``) on every
     # physical action, so listing it here would ask the operator twice for one
-    # command. So is the Robot agent tool (strands_robots/hardware_robot.py):
+    # command. So is the Robot agent tool (``strands_robots.hardware_robot``):
     # its real-mode execute/start run through the shared command gate and spend
     # a grant this hook deposited (consume_grant) rather than asking again.
     # This dict gates only the dashboard's bespoke tools.
-    # The direct-serial tools live in strands_robots/tools/serial_tool.py and
-    # strands_robots/tools/pose_tool.py. Both now gate their own write / motion
+    # The direct-serial tools live in ``strands_robots.tools.serial_tool`` and
+    # ``strands_robots.tools.pose_tool``. Both now gate their own write / motion
     # actions through the shared command gate (serial_tool's four writes, and
     # pose_tool's five motions), so for an agent built without this hook neither
     # is unguarded; they stay listed here because this hook shows the operator
     # the dashboard's richer detail line and deposits a grant each tool spends
     # (consume_grant) instead of asking a second time. Reads, emergency_stop and
     # delete_pose stay out: stopping is never gated. serial "monitor" only ever
-    # calls ser.read (serial_tool.py) so it is a read too.
+    # calls ser.read (``strands_robots.tools.serial_tool``) so it is a read too.
     "pose_tool": frozenset({"load_pose", "move_motor", "move_multiple", "incremental_move", "reset_to_home"}),
     "serial_tool": frozenset({"send", "send_read", "feetech_position", "feetech_velocity"}),
 }
