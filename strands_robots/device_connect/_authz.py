@@ -289,8 +289,10 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any 
     if _insecure_transport_active(device):
         _warn_insecure_acl_once(env_scope)
 
-    # Allowlist configured: a missing caller identity cannot be authorized.
-    if not caller:
+    # Allowlist configured: a missing caller identity cannot be authorized, and
+    # neither can one that is not a name - the transport reports a device id as
+    # a string, so anything else is not an identity the allowlist can speak to.
+    if not caller or not isinstance(caller, str):
         return False
     return _matches(caller, patterns)
 
