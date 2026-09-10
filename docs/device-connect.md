@@ -195,8 +195,8 @@ only `REACHY_DAEMON_TLS` encrypts, so they are only useful together.
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `STRANDS_MESH_HITL_ACTIONS` | built-in set | Which actions need operator (human-in-the-loop) approval. |
-| `DEVICE_CONNECT_RPC_ALLOW` | allow all | Caller allowlist for state-mutating RPCs (`execute`/`stop`/`step`/`reset`); `*` globs. |
-| `DEVICE_CONNECT_ESTOP_ALLOW` | inherits `DEVICE_CONNECT_RPC_ALLOW` | Caller allowlist for `emergencyStop`. Unset - or holding no entry after stripping, so `""`, `" "` and `","` all count - falls back to the RPC allowlist. |
+| `DEVICE_CONNECT_RPC_ALLOW` | **nobody** (unset refuses every state-mutating RPC) | Caller allowlist for state-mutating RPCs (`execute`/`stop`/`step`/`reset`); `*` globs; a literal `*` allows every named caller and logs a warning. Set it before the device will act. |
+| `DEVICE_CONNECT_ESTOP_ALLOW` | inherits `DEVICE_CONNECT_RPC_ALLOW` | Caller allowlist for `emergencyStop`. Unset - or holding no entry after stripping, so `""`, `" "` and `","` all count - falls back to the RPC allowlist. With neither set, a *named* caller may still stop the robot (stopping never gets harder than moving); an anonymous one may not. |
 | `STRANDS_ROBOT_MESH_AGENT_ID` | anonymous | Caller id the agent presents — **required** when a device sets an allowlist (else it's denied). |
 
 #### Other

@@ -67,7 +67,10 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from ..utils import positive_whole_number_error
+from ..utils import (
+    positive_whole_number_error,
+    refusal_repr,
+)
 from .backgrounds import BackgroundRenderer, PanoramaBackground
 from .camera import CameraParams
 from .color import linear_to_srgb, relative_luminance, srgb_to_linear
@@ -93,7 +96,7 @@ def _feather_pixels_error(value: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"HybridCompositor: feather_pixels must be a whole number of pixels >= 0, got {value!r}."
+    message = f"HybridCompositor: feather_pixels must be a whole number of pixels >= 0, got {refusal_repr(value)}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
     numeric = float(value)
@@ -129,7 +132,7 @@ def _depth_epsilon_error(value: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"HybridCompositor: depth_epsilon must be a finite distance in meters >= 0, got {value!r}."
+    message = f"HybridCompositor: depth_epsilon must be a finite distance in meters >= 0, got {refusal_repr(value)}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
     numeric = float(value)
@@ -154,7 +157,9 @@ def _shadow_plane_z_error(value: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"HybridCompositor: shadow_plane_z must be a finite world-frame height in meters, got {value!r}."
+    message = (
+        f"HybridCompositor: shadow_plane_z must be a finite world-frame height in meters, got {refusal_repr(value)}."
+    )
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
     if not math.isfinite(float(value)):
@@ -177,7 +182,9 @@ def _shadow_plane_tolerance_error(value: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"HybridCompositor: shadow_plane_tolerance must be a finite distance in meters > 0, got {value!r}."
+    message = (
+        f"HybridCompositor: shadow_plane_tolerance must be a finite distance in meters > 0, got {refusal_repr(value)}."
+    )
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
     numeric = float(value)
@@ -201,7 +208,7 @@ def _shadow_min_factor_error(value: Any) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"HybridCompositor: shadow_min_factor must be a number in [0, 1], got {value!r}."
+    message = f"HybridCompositor: shadow_min_factor must be a number in [0, 1], got {refusal_repr(value)}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
     numeric = float(value)

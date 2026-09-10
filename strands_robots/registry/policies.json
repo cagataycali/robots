@@ -237,27 +237,6 @@
         "sonic_gait"
       ]
     },
-    "motionbricks": {
-      "module": "strands_robots.policies.motionbricks",
-      "class": "MotionBricksPolicy",
-      "description": "NVIDIA MotionBricks generative kinematic motion for the Unitree G1 (in-process, torch)",
-      "requires": [],
-      "config_keys": [
-        "config",
-        "result_dir",
-        "style",
-        "target_velocity",
-        "device",
-        "motion_agent"
-      ],
-      "defaults": {
-        "style": "walk"
-      },
-      "shorthands": [
-        "motionbricks",
-        "motion_bricks"
-      ]
-    },
     "kimodo": {
       "module": "strands_robots.policies.kimodo",
       "class": "KimodoPolicy",
@@ -324,6 +303,22 @@
       ],
       "url_patterns": [
         "^wss?://"
+      ]
+    },
+    "rl": {
+      "module": "strands_robots.policies.rl",
+      "class": "RLCheckpointPolicy",
+      "description": "Deterministic rollout of an RL training checkpoint's actor (policy.pt + policy_meta.json written by create_trainer('ppo'|'fast_sac'|'fast_td3'))",
+      "requires": [],
+      "config_keys": [
+        "checkpoint_dir",
+        "device"
+      ],
+      "defaults": {
+        "device": "cpu"
+      },
+      "shorthands": [
+        "rl"
       ]
     },
     "microduck": {

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -48,7 +49,13 @@ if TYPE_CHECKING:
 
 from strands_robots.bus_access import bus_lock
 from strands_robots.drivers.base import undeclared_verb_error
-from strands_robots.drivers.feetech.bus import DEFAULT_TIMEOUT_S, SO_ARM_MOTORS, FeetechBus
+from strands_robots.drivers.feetech.bus import (
+    DEFAULT_TIMEOUT_S,
+    SO_ARM_MOTORS,
+    FeetechBus,
+    MotorCalibration,
+    load_calibration,
+)
 from strands_robots.utils import boolean_flag_error, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -115,6 +122,14 @@ class FeetechDriver:
       that is not a count is applied instead of refused.
     * ``motor_ids`` - the servo IDs on the bus, in wire order. Optional at
       construction; the bus discovers them on connect.
+    * ``calibration`` - this arm's own calibration: the path of the JSON
+      ``lerobot-calibrate`` wrote (see
+      :func:`~strands_robots.drivers.feetech.bus.lerobot_calibration_path`), or
+      the records themselves. Omitting it reads and commands the servo's full
+      travel instead of the arm's measured travel, which is off by however far
+      the stops sit inside that rotation - so an arm that HAS been calibrated
+      should be given the file, and ``get_status`` reports which of the two is
+      in force under ``calibration_source``.
     * ``timeout`` - how long a read waits for a servo's reply, in seconds,
       defaulting to :data:`~strands_robots.drivers.feetech.bus.DEFAULT_TIMEOUT_S`.
       Forwarded to the bus rather than recorded, for the reason ``motor_ids`` is:
@@ -167,6 +182,24 @@ class FeetechDriver:
         if (reason := positive_finite_number_error(timeout, "timeout", f"FeetechDriver({tool_name!r})")) is not None:
             raise ValueError(reason)
         self._timeout: float = float(timeout)
+        # The arm's own measured travel, or None for the servo's full rotation.
+        # Loaded here rather than in the bus so a path that is not a
+        # calibration is refused while the caller still has the traceback that
+        # names their keyword, and so ``get_status`` can report the source.
+        calibration = kwargs.pop("calibration", None)
+        self._calibration_source: str | None = None
+        records: dict[str, MotorCalibration] | None = None
+        if isinstance(calibration, str | Path):
+            self._calibration_source = str(calibration)
+            records = load_calibration(calibration)
+        elif isinstance(calibration, dict):
+            self._calibration_source = "caller"
+            records = calibration
+        elif calibration is not None:
+            raise ValueError(
+                f"FeetechDriver({tool_name!r}): calibration must be a path to the JSON "
+                f"lerobot-calibrate wrote, or the records themselves, got {type(calibration).__name__}",
+            )
         self._motor_ids: tuple[int, ...] = tuple(kwargs.pop("motor_ids", ()))
         # ``motor_ids`` narrows the arm to a subset of SO_ARM_MOTORS. Honoured
         # rather than recorded: a keyword that changes nothing is worse than one
@@ -182,7 +215,13 @@ class FeetechDriver:
                     f"ids {sorted(known)} map to {[known[i] for i in sorted(known)]}",
                 )
             motors = {known[i]: SO_ARM_MOTORS[known[i]] for i in self._motor_ids}
-        self._bus = FeetechBus(port=self._port, baud_rate=self._baud_rate, motors=motors, timeout=self._timeout)
+        self._bus = FeetechBus(
+            port=self._port,
+            baud_rate=self._baud_rate,
+            motors=motors,
+            timeout=self._timeout,
+            calibration=records,
+        )
         self._connect_error: str | None = None
         # Extras from the caller are kept for a downstream driver package
         # to consume; refusing them here would refuse a valid future
@@ -496,6 +535,11 @@ class FeetechDriver:
                         "port": self._port,
                         "baud_rate": self._baud_rate,
                         "motors": {name: spec.motor_id for name, spec in self._bus.motors.items()},
+                        # Which travel the degrees on this bus are measured
+                        # against. ``None`` is the servo's full rotation, and a
+                        # caller who calibrated the arm reads that as the
+                        # keyword they forgot rather than as a wrong number.
+                        "calibration_source": self._calibration_source,
                         "motor_ids": list(self._motor_ids),
                         "supported_robots": list(SUPPORTED_ROBOTS),
                     }
