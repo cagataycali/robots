@@ -378,7 +378,12 @@ class TestSetJointPositionsForms:
             import pytest as _pytest
 
             _pytest.skip("robot has no named joints")
-        res = sim_with_robot.set_joint_positions(positions=[0.0] * len(joint_names))
+        # Not the zero pose: panda joint4's range is [-3.07, -0.07], so 0 is a
+        # teleport outside the joint's limits and is (rightly) refused.
+        robot = list(sim_with_robot._world.robots.values())[0]
+        model = sim_with_robot._world._model
+        mid = [float(model.jnt_range[jid].mean()) if model.jnt_limited[jid] else 0.0 for jid in robot.joint_ids]
+        res = sim_with_robot.set_joint_positions(positions=mid)
         assert res["status"] == "success", res["content"][0]["text"]
 
     def test_list_form_wrong_length_errors(self, sim_with_robot):

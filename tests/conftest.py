@@ -17,6 +17,7 @@ has started says so instead of reporting counts that read as a total.
 """
 
 import os
+import sys
 
 import pytest
 
@@ -34,6 +35,16 @@ os.environ.setdefault("STRANDS_MESH", "false")
 # Device Connect (Zenoh) connections. The GUIDE E2E demo runs outside pytest
 # and leaves this unset, so Device Connect remains the primary path at runtime.
 os.environ.setdefault("STRANDS_ROBOT_MESH_DC", "off")
+
+# Choose MuJoCo's GL backend once for the whole session, before any test module
+# is imported. 29 modules under tests/ set it at import time with setdefault,
+# and 18 of those hard-coded "egl", which mujoco refuses on macOS ("invalid
+# value for environment variable MUJOCO_GL: egl"). Collection imports every
+# module, so whichever of them pytest reached first decided the value for the
+# whole session. Set here, a module-level setdefault under tests/ is a no-op
+# whatever it says, and a user's own MUJOCO_GL still wins. tests_integ/ has no
+# conftest, so the defaults in its own modules stay load-bearing.
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from tests.mocks.torch_mock import install_torch_mock
 

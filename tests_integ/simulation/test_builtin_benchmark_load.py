@@ -41,11 +41,12 @@ from __future__ import annotations
 import copy
 import math
 import os
+import sys
 from typing import Any
 
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 import mujoco  # noqa: E402 - after the MUJOCO_GL default is set
 

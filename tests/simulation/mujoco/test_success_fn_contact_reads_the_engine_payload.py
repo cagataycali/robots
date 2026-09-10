@@ -34,11 +34,12 @@ there is one reader instead of two. These tests pin:
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from strands_robots.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner

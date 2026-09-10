@@ -40,6 +40,7 @@ optional dependency or the ``strands-robots-sim`` plugin to be installed)::
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import os
 import threading
@@ -59,6 +60,7 @@ from strands_robots.registry import (
     has_hardware,
     has_sim,
     is_discoverable,
+    list_robots,
     resolve_name,
 )
 
@@ -173,10 +175,19 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
                 f".attach_teleop({canonical!r}, port=...)``. Passing a leader to ``Robot()`` would "
                 "drive the arm a human is holding as a position servo."
             )
+        # Say what was typed, and only add the resolved spelling when the
+        # resolver changed it - "'so1000' (resolved to 'so1000')" tells the
+        # caller nothing. Then offer the nearest registered names, the way
+        # add_robot(data_config=...) already does: a caller who typed 'so1000'
+        # wants 'so100' or 'so101', not a catalog of 74 to read through.
+        resolved = f" (resolved to {canonical!r})" if canonical != original else ""
+        names = [r["name"] for r in list_robots()]
+        close = difflib.get_close_matches(canonical.lower(), names, n=3, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
         raise ValueError(
-            f"Unknown robot {original!r} (resolved to {canonical!r}). "
-            "Pass a registered name (see ``list_robots()``), one of the "
-            "``robot_descriptions`` robots (see ``list_discoverable()``), "
+            f"Unknown robot {original!r}{resolved}.{hint} "
+            "Pass a registered name (see ``strands_robots.list_robots()``), one of the "
+            "``robot_descriptions`` robots (see ``strands_robots.list_discoverable()``), "
             "or supply ``urdf_path=``."
         )
 
