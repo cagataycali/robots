@@ -54,5 +54,12 @@ rollout that kept updating would drift the whitening the trained weights expect.
 Missing weights, missing metadata, metadata that is not an object, an omitted
 required field and an unknown `provider` each refuse by name.
 
+The provider is also allowlisted for the fleet rail: `_REGISTRY_POLICY_PROVIDERS`
+in `strands_robots/mesh/security.py` gates which `policy_provider` a mesh /
+Device Connect `execute` or `start` payload may name, and a provider absent from
+it is refused on the wire. Widening it does not relax any other gate - the
+`policy_host`, `server_address`, `pretrained_name_or_path` and `model_path`
+allowlists still apply to every payload.
+
 Documented in `docs/policies/rl.md`, the provider table, and a "Deploying the
 checkpoint" section on `docs/training/rl.md`.
