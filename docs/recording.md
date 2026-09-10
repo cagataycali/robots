@@ -15,15 +15,19 @@ sim.stop_recording()
 # LeRobot v3 dataset written to $HF_LEROBOT_HOME/user/my_dataset
 ```
 
-`start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording` for plain MP4.
+`start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording`
+for plain MP4. The dataset format, its `meta/info.json`, stats and video layout
+are LeRobot's - see the
+[LeRobot dataset docs](https://huggingface.co/docs/lerobot). This page covers
+what strands adds.
 
 ## `fps` must equal the rollout's `control_frequency`
 
-The recorder captures **one frame per control step and never decimates**, so the
-rate frames arrive at is the rollout's `control_frequency` - and LeRobot derives
-every timestamp from the dataset's declared `fps` positionally
-(`timestamp = frame_index / fps`). A differing `fps` therefore cannot be
-honored, only mislabelled, so it is refused:
+The recorder writes one frame per control step and never decimates, and
+LeRobot derives every timestamp from the declared `fps`
+(`timestamp = frame_index / fps`), so a differing rate can only mislabel the
+episode. `run_policy`, `PolicyRunner.run`, `start_policy` and
+`start_recording` all refuse the mismatch before a frame is written:
 
 ```python
 sim.start_recording(repo_id="user/my_dataset", task="t", fps=30)
@@ -34,79 +38,13 @@ sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
 #     run_policy(), or record at the rollout's rate"
 ```
 
-The refusal lands before any frame is written, so nothing is lost - pass either
-rate. It matters beyond the label: that per-frame interval is the control period
-a policy trains on, and `replay_episode` derives its per-frame physics budget
-from the dataset rate, so a mislabelled episode also replays at the wrong speed.
-To record at a lower rate than you control at, run the rollout at that rate -
-there is no decimating recorder.
-
-`PolicyRunner` is drivable directly, and the engine's check is not on that path,
-so `PolicyRunner.run` / `PolicyRunner.evaluate` apply the same rule themselves.
-They raise `ValueError` rather than returning an error dict, because a direct
-caller has no tool envelope to read:
-
-```python
-runner = PolicyRunner(sim)
-runner.run("so100", policy, control_frequency=50.0, on_frame=hook)
-# -> ValueError: PolicyRunner.run: the active recording declares 30 fps but this
-#    rollout captures at control_frequency=50 Hz. [...] pass control_frequency=30
-#    to PolicyRunner.run()
-```
-
-The rule holds whichever call comes first. `start_policy` returns while its
-rollout keeps running, so a recording can be opened against a rollout already in
-flight - and on the defaults (`fps=30` against `control_frequency=50.0`) that
-recorded a 1.667x mislabelled episode with every call reporting success.
-`start_recording` refuses the same disagreement, before creating the dataset:
-
-```python
-sim.start_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
-sim.start_recording(repo_id="user/my_dataset", task="t", fps=30)
-# -> "start_recording: this recording would declare 30 fps but a rollout is
-#     already running ('so100' at 50 Hz). [...] Align the two rates: record at
-#     the rollout's rate (start_recording(fps=50)), or restart the rollout at the
-#     recording's rate (stop_policy(robot_name='so100'), then
-#     start_policy(..., control_frequency=30))"
-```
-
-Rollouts running at *different* rates are refused outright, even when `fps`
-matches one of them: their frames interleave into one episode whose single
-declared rate cannot describe both, so there is no `fps` to pass instead. Stop
-all but one, or restart them at a common `control_frequency`.
-
-The `run_policy` tool owns both rates at once - it takes `dataset_fps` and
-`control_frequency` as its own arguments and drives the whole
-`start_recording` -> rollout -> `stop_recording` cycle - so it settles the pair
-up front, before it opens anything. That matters because it opens its recording
-with `overwrite=True`: left to the per-episode rollout, the disagreement was
-reported only after any dataset already at `dataset_root` had been replaced with
-an empty one, and after every episode had failed with the same message.
-
-```python
-run_policy(simulation=sim, robot_name="so100", n_episodes=2,
-           control_frequency=50.0, dataset_fps=30,      # cannot both hold
-           dataset_root="/tmp/my_dataset")
-# -> "run_policy: this call would open a recording declaring 30 fps for a
-#     rollout capturing at control_frequency=50 Hz. [...] Align the two rates:
-#     pass control_frequency=30, or record at the rollout's rate
-#     (dataset_fps=50)."
-# The dataset already at /tmp/my_dataset is untouched.
-```
-
-`dataset_fps` is ignored when `dataset_root` is omitted (the recording-less
-smoke-test mode), so a rollout with no recording runs at any rate.
-
 ## Selecting which cameras to record
 
-By default every camera in the scene is recorded into the dataset - including
-the implicit `default` free camera that exists even before you call
-`add_camera`. A policy that declares a fixed set of image features (e.g. SmolVLA
-expects exactly `observation.images.camera1/camera2/camera3`) then trains
-against a dataset that carries a stray `observation.images.default` view it
-never asked for, and the extra MP4 stream bloats every episode.
-
-Pass `cameras=` to record exactly the views the policy expects:
+Every camera in the scene is recorded by default, including the implicit
+`default` free camera. A policy with a fixed image schema (SmolVLA expects
+exactly `observation.images.camera1/camera2/camera3`) needs the list pinned;
+`cameras=` on `start_recording` (or `dataset_cameras=` on `run_policy`) refuses
+a name that is not a camera:
 
 ```python
 sim.add_camera(name="camera1", ...)
@@ -118,217 +56,21 @@ sim.start_recording(
 )
 ```
 
-The dataset schema then declares only those three image features. Names may be
-given in raw MuJoCo form (`arm0/wrist_cam`) or schema-safe form
-(`arm0__wrist_cam`); an unknown name fails loudly and lists the available
-cameras rather than silently recording the wrong set. The names are checked
-before any dataset is created, resumed or wiped, so a typo costs nothing even
-under `overwrite=True`. Omit `cameras=` to keep
-the legacy behavior of recording every camera - in that case a one-time
-warning is logged when the implicit `default` overview camera is swept in
-alongside your real sensor cameras, so the stray view is never recorded
-silently.
-
-A robot's own cameras are offered under two names: the short name from its
-MJCF (`wrist`) and the namespaced name the compiled scene uses
-(`arm0/wrist`). Both address the same physical camera and record the same
-frames, so pick one per dataset - listing both records the same view twice
-under two columns. Every camera key carries the view of the camera it names:
-a key the scene can no longer render (for example after `replace_scene_mjcf`,
-which swaps the compiled scene but leaves the camera registry untouched) is
-absent from the observation rather than filled in with the
-overview, so a column is never quietly populated from the wrong camera.
-
-That guarantee needs the scene's cameras to have distinct column names, and the
-`/` -> `__` collapse is not injective: `arm0/wrist` and `arm0__wrist` are two
-cameras and one column. `start_recording` refuses such a scene up front, naming
-both cameras and the key they share, before any dataset is created, resumed or
-wiped - rename one of them (`add_camera(name=...)`) so the names still differ
-once `/` becomes `__`. Scoping with `cameras=` is not a way around it: whichever
-of the pair won the column, the column would be named after the other one, and
-if the two render at different sizes the first frame is rejected and the episode
-is lost.
-
-`cameras=` is a list of **distinct** camera names, and every surface that accepts
-one - `start_recording`, `render_all`, and the plain-MP4
-`start_cameras_recording` / `start_cameras_recording_synchronous` - enforces that
-shape up front. Two mistakes are refused rather than guessed at, because neither
-can be honored as written:
-
-- **A single name passed as a bare string.** `cameras="wrist"` is iterable per
-  character, so it would be read as five cameras, one per letter. Wrap it in a
-  list: `cameras=["wrist"]`.
-- **A repeated name.** `cameras=["wrist", "wrist"]` cannot mean one camera and
-  cannot mean two. In a dataset schema it collapses to a single column, so the
-  recording declares fewer views than were asked for; in `render_all` it renders
-  the same view twice; and in a plain-MP4 recording it opens a second encoder on
-  the one output path, so the camera is rendered and appended twice per capture
-  tick and the artifact ledger reports two files where one exists.
-
-A `Mapping` is refused for the same reason - it is iterable over its keys, so its
-values would be silently discarded. `cameras=None` keeps its "every camera"
-meaning.
-
-
 ### Where the dataset is written (`root` / `overwrite`)
 
-`root` is the on-disk directory for the dataset, used verbatim. When omitted,
-the directory is derived from `repo_id`: an `owner/name` id records into
-`$HF_LEROBOT_HOME/{repo_id}` (default `~/.cache/huggingface/lerobot`), and a
-`repo_id` that is itself a path is taken as the directory. The home is read from
-LeRobot's own `HF_LEROBOT_HOME` constant, so exporting it moves both the
-recording and where `LeRobotDataset` later reads it back from -
-`resolve_dataset_dir` is the one owner of those rules and every backend's
-`start_recording` applies it.
-
-Being the one owner is what makes `overwrite` mean something: the resolved
-directory is forwarded to `LeRobotDataset.create` as an explicit `root`, so the
-directory inspected (and, under `overwrite=True`, deleted) before the write is
-the directory the dataset is then written into. LeRobot derives an absent root
-as `$HF_LEROBOT_HOME/{repo_id}` for any id, so letting it derive one of its own
-would part company with the rule above for exactly the path-like ids.
-
-`DatasetRecorder.resume` - the append entry point - forwards the same resolved
-directory, so the `repo_id` that created a dataset reopens it. LeRobot refuses an
-absent `root` there outright, because the directory it would derive for a writer
-is the revision-safe Hub snapshot cache; resolving here is what keeps the append
-reachable on the same arguments the recording was made with.
-
-Reading back applies the same rule, so a path-like `repo_id` replays, streams
-and transforms the directory it recorded to with no `root` restated. Only that
-rule is applied on the read side: an `owner/name` id keeps its absent root so
-LeRobot resolves its own revision-safe snapshot cache for a download - which is
-already the directory a local recording under that id wrote to.
-
-Passing an existing **empty** directory - for example one returned by
-`tempfile.mkdtemp()` - is accepted and recorded into:
-
-```python
-import tempfile
-root = tempfile.mkdtemp()                       # existing empty dir
-sim.start_recording(repo_id="user/my_dataset", root=root, fps=30)   # records here
-```
-
-When `root` already contains a LeRobotDataset (a `meta/` directory),
-`start_recording` **resumes** it and appends new episodes unless
-`overwrite=True`, which wipes and recreates it. A `root` that exists, is not a
-LeRobotDataset, and is **not empty** is left untouched and reported as an error
-rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
-
-Because `overwrite=True` is the one posture that deletes a dataset without
-asking, it is applied as the last step before the recorder is built: every
-refusal `start_recording` can make - the fps and camera domains, the boolean
-postures, an unknown camera name, a scene whose camera names collide - happens
-first, so a refused call leaves the dataset that was already there untouched.
-
-`overwrite` and `push_to_hub` select a **posture**, so both must be booleans and
-are checked before anything is created, resumed, wiped or published. Neither is
-read by truthiness: every non-empty string is truthy, so `overwrite="false"` -
-the spelling an operator reaches for when opting out - used to reach the wipe
-branch and delete the dataset it was meant to append to, and
-`push_to_hub="false"` used to publish it at `stop_recording`. Both now report the
-flag instead:
-
-```python
-sim.start_recording(repo_id="user/my_dataset", root=root, fps=30, overwrite="false")
-# -> error: "start_recording: overwrite must be a boolean, got 'false'. ..."
-```
-
-A resume inherits the existing dataset's schema, so `fps` must match the rate it
-was created at - a resume cannot change it. Requesting a different rate is
-refused, naming the on-disk value, rather than appending frames timestamped on
-the dataset's timebase instead of the one they were captured at:
-
-```python
-sim.start_recording(repo_id="user/my_dataset", root=root, fps=60)  # dataset is 30 fps
-# -> error: "dataset fps differs: on-disk=30 vs requested=60
-#            (a resumed dataset keeps its on-disk rate; pass fps=30 to append at it)"
-```
-
-Pass `fps=30` to append at the dataset's rate, or `overwrite=True` to record a
-fresh dataset at 60.
-
-When you drive recording through the `run_policy` tool (which owns the
-`start_recording` -> rollout -> `stop_recording` cycle), forward the same
-subset with `dataset_cameras=`:
-
-```python
-from strands_robots.tools.run_policy import run_policy
-
-run_policy(
-    simulation=sim,
-    robot_name="so101",
-    policy_provider="lerobot_local",
-    instruction="pick up the cube",
-    n_episodes=1,
-    dataset_root="/tmp/my_dataset",
-    dataset_cameras=["camera1", "camera2", "camera3"],  # drops the implicit 'default'
-)
-```
-
-When set, `dataset_cameras` is forwarded as `start_recording(cameras=...)`,
-which both the MuJoCo and Newton backends support, so the subset is applied
-identically on either engine. Omit it (the default `None`) to record every
-scene camera - the default path forwards no `cameras` kwarg at all.
-
-To also capture a rollout MP4 (the visual artifact for review or VLM
-defect-checking), pass the same `video={...}` config the
-`Simulation.run_policy` facade accepts - the tool forwards it per episode:
-
-```python
-run_policy(
-    simulation=sim,
-    robot_name="so101",
-    policy_provider="lerobot_local",
-    instruction="pick up the cube",
-    n_episodes=3,
-    dataset_root="/tmp/my_dataset",
-    video={"path": "/tmp/rollout.mp4", "fps": 30, "camera": "camera1",
-           "width": 640, "height": 480},
-)
-```
-
-`video["path"]` is required to enable recording; a falsy/absent path disables
-it. Only the keys above are accepted: any other key (`filename`, `resolution`,
-...) is rejected with an error listing the accepted set, so a mistyped option
-cannot silently produce a rollout with no video or a video at the wrong
-resolution. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
-(`/tmp/rollout_ep0.mp4`, `_ep1`, ...) so episodes do not overwrite one another -
-matching the facade's own multi-episode naming. The returned `{"json": {...}}`
-block carries `video_paths`, the list of MP4s that actually landed on disk
-(only existing files are reported, never the requested paths).
-
-![run_policy tool rollout video (SmolVLA on a simulated SO-101, MuJoCo headless)](assets/run_policy_video_demo.gif)
-
-*A SmolVLA-on-SO-101 rollout recorded through the `run_policy` tool's `video=`
-config (MuJoCo headless, `MUJOCO_GL=egl`).*
+`root` is used verbatim. Without it an `owner/name` `repo_id` records into
+`$HF_LEROBOT_HOME/{repo_id}` (default `~/.cache/huggingface/lerobot`) and a
+path-like `repo_id` is the directory. An existing non-empty target is refused
+unless `overwrite=True`; an existing dataset is appended to at its on-disk
+`fps` (a different `fps` is refused, naming both rates). `overwrite` must be a
+real boolean - `"false"` is refused, not read as truthy.
 
 ## Multi-episode recording
 
-A recording session is one dataset. The simplest way to collect N episodes in
-one session is `run_policy(n_episodes=N)` - it runs N rollouts back-to-back,
-flushes a dataset episode boundary after each, and resets the sim between
-episodes for you:
-
-```python
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
-sim.run_policy(robot_name="so100", instruction="pick up the cube",
-               policy_provider="mock", n_steps=60, n_episodes=20)
-sim.stop_recording()
-# -> 20 episodes, each with its own episode_index / length / from_index / to_index
-```
-
-`n_steps` (or `duration`) is the per-episode horizon. `reset_between=False`
-chains episodes from the previous end state instead of resetting. When a `seed`
-is given it is offset per episode (`seed + i`) for reproducible-yet-distinct
-rollouts, and a `video={...}` config is written per episode to a path with
-`_ep{i}` inserted before the extension so episodes do not overwrite one another.
-The aggregate result carries `n_episodes_completed`, `episodes_saved`,
-`total_steps`, and a per-episode list in its `{"json": {...}}` block.
-
-If you need full control over each rollout (different instructions, custom
-randomization, conditional logic between episodes), drive the loop yourself and
-call `save_episode()` after each rollout to flush it as its own episode:
+A recording session is one dataset. `run_policy(n_episodes=N)` runs N rollouts,
+flushes an episode boundary after each and resets the sim between them. The
+manual loop is the same three verbs - `reset()` is an episode boundary on every
+backend, so either order works:
 
 ```python
 sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
@@ -340,49 +82,11 @@ for _ in range(20):
 sim.stop_recording()          # flushes any trailing rollout automatically
 ```
 
-`save_episode` is idempotent on an empty buffer, so it is safe to call
-unconditionally inside a loop. LeRobot computes `stats.json` per episode and then
-aggregates, so per-rollout boundaries keep dataset statistics correct across the
-`reset()` teleport between rollouts.
-
-`reset()` is itself an episode boundary during a recording: if frames are
-buffered when you call it, `reset()` flushes them as their own episode before
-re-initializing the world (it reports the saved episode in its result text).
-This means a bare `run_policy` + `reset` collection loop already produces one
-episode per rollout - the explicit `save_episode()` is optional when you reset
-between rollouts:
-
-```python
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
-for _ in range(20):
-    sim.run_policy(robot_name="so100", instruction="pick up the cube",
-                   policy_provider="mock", n_steps=60)
-    sim.reset()               # flushes this rollout as one episode, then resets
-sim.stop_recording()          # flushes any trailing rollout automatically
-# -> 20 episodes
-```
-
-Without `n_episodes`, an explicit `save_episode()`, or a `reset()` between rollouts, all
-20 rollouts append to the same buffer and `stop_recording` flushes them as a
-single `episode_index=0` (1200 steps in one episode). To DISCARD a partial
-rollout instead of flushing it on the next `reset()`, call
-`clear_episode_buffer()` first.
-
-Every backend cuts the boundary: `reset()` asks one shared rule, so the loop
-above yields 20 episodes on MuJoCo, Newton and Isaac alike. The one exception is
-a *partial* Isaac reset - `reset(env_ids=[...])` re-initializes only the named
-environments, and whether the recorded robot's rollout ended is not knowable
-from `env_ids`, so no boundary is cut and the buffer stays open. Call
-`save_episode()` yourself if a partial reset does end the episode you are
-recording.
-
 ## Verifying episode count
 
-An LLM agent narrating "20 episodes recorded" is not proof: a single
-`run_policy(n_episodes=1)` (or 20 looped tool calls into one open buffer)
-produces one merged `episode_index=0` mega-episode while the agent believes it
-recorded 20. Never trust agent narration for dataset structure - verify against
-the on-disk metadata. After `stop_recording`, call `verify_dataset_episodes`:
+Twenty looped `run_policy` calls into one open buffer without `save_episode`
+produce one merged `episode_index=0`. Verify against `meta/info.json`, not the
+agent's narration:
 
 ```python
 sim.stop_recording()
@@ -390,119 +94,9 @@ result = sim.verify_dataset_episodes(expected=20)
 assert result["status"] == "success"   # else MISMATCH, fail loud
 ```
 
-It checks two independent sources of truth and requires them to AGREE:
-
-* the parquet under `meta/episodes/**/*.parquet` (the distinct `episode_index`
-  set - the ground truth), and
-* the `total_episodes` header in `meta/info.json`.
-
-`status` is `"error"` when the parquet count differs from `expected` OR when the
-parquet disagrees with `info.json` (an internally inconsistent dataset, e.g. an
-interrupted finalize - `sources_agree` is then `False`), so a dataset that
-happens to match `expected` on one source but not the other still fails. The
-`{"json": {...}}` block carries `expected`, `actual`, `info_total_episodes`,
-`info_problems`, `sources_agree`, `episode_indices`, and `total_frames` for
-programmatic CI gating. The pure-pyarrow `read_dataset_episode_indices(root)`
-exposes the same facts without instantiating a `LeRobotDataset`.
-
-A header that is present but is not a count at all - `2.5`, `"2"`, `true`, or a
-JSON number outside double range such as `1e400` (which `json.load` parses to
-`inf`) - is a THIRD outcome, distinct from both a matching count and an absent
-header: `info_total_episodes` is `None`, the reason lands in `info_problems`, and
-`sources_agree` is `False`. Such a header is never coerced to a nearby number,
-because `int(2.5)` is `2` - exactly the count a two-episode parquet holds, so
-coercing it would certify the inconsistent dataset. Every reader of that header
-(this facade, `verify-dataset`, `read_dataset_episode_indices`, and the
-training-side validation split) shares one domain,
-`strands_robots.utils.declared_count`, so one file cannot get two verdicts.
-
-The same check runs from the shell against any LeRobot dataset on disk, with an
-exit code suitable for CI:
-
 ```bash
 strands-robots verify-dataset /path/to/dataset --expected 20   # exit 0 pass, 1 fail
-strands-robots verify-dataset /path/to/dataset --json          # machine-readable report
-strands-robots verify-dataset /path/to/dataset --no-check-videos  # skip the per-episode MP4 checks
 ```
-
-`verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
-helper (no `lerobot` import) and flags five failure modes: the mega-episode
-(fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
-`total_frames` drifting from the parquet ground truth - or declaring something
-that is not a count at all - (caught even without `--expected`), any episode below `--min-frames` (default 1), - unless
-`--no-check-videos` is passed - any per-episode video file that is missing or
-empty on disk, and - unless `--no-check-stats` is passed - a dead control
-column. The video check is the video-modality sibling of the
-mega-episode class: a dataset can carry the right episode count yet have no
-pixels because the recorder's video encoder failed or the MP4 streams were
-never written. It resolves each camera's MP4 from `meta/info.json`'s
-`video_path` template and the episode parquet's `videos/<key>/chunk_index` /
-`file_index` columns, and reports the count it checked in
-`video_files_checked`. The programmatic form is
-`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True, check_stats=True)`,
-which returns the same report dict.
-
-The dead-control-column check is the proprioceptive sibling: correct counts and
-pixels, but the `action` (or `observation.state`) column was written as all
-zeros because the writer's keys never resolved to the declared columns. It reads
-the per-episode `min`/`max` stats LeRobot v3 writes inline, so it needs no video
-decode and no `data/` scan.
-
-A multi-robot recording is graded one level finer, per robot. `start_recording`
-gives every robot its own state/action columns and namespaces each declared name
-with the robot's instance name (`alice__shoulder_pan`), so a resolution failure
-that affects one robot alone leaves that robot's whole block of columns zero
-while the other robot's columns carry real measurements. The vector as a whole
-therefore still varies, and a whole-vector test reports `[PASS]`. The check
-splits the vector into the per-robot blocks `meta/info.json` declares and flags
-any block that is wholly zero, naming the robot:
-
-```
-feature 'observation.state' is identically zero for every 'bob' column across
-episode 0 (20 frame(s)) - dead control column block
-```
-
-A zero *subset* of one robot's block is left alone - a gripper parked at zero for
-a whole episode is a measurement, not a writer fault - and a dataset that
-declares no column names is graded by the whole-vector rule exactly as before.
-
-`--expected` and `--min-frames` are both non-negative integers, and each has a
-meaningful `0`: `--expected 0` asks that a dataset be empty, and `--min-frames 0`
-skips the per-episode length check (useful when the writer omits the `length`
-column). Anything else - a negative threshold, a fraction, a non-finite value -
-is reported as a problem and exits non-zero, rather than being applied. That
-matters for `--min-frames` specifically: the length check runs only when the
-threshold is above zero, so a value that is not a usable count would otherwise
-switch the check off and certify a dataset holding a zero-length episode. The
-same domain backs `verify_dataset_episodes(expected=...)`, so neither surface
-accepts an episode count the other refuses.
-
-The dataset can switch that check off the same way the threshold could: the
-length check runs only when the parquet carries per-episode lengths at all, and
-availability is whether a `length` was *read*, not whether one was positive. A
-run that wrote three episodes of zero frames is graded and named
-(`3 episode(s) below min_frames=1`), and its `meta/info.json total_frames` is
-still compared against the zero the parquet holds - previously the whole-run
-corruption read as "this writer omits the `length` column" and passed while the
-strictly better `[5, 0, 0]` failed. A column that is absent, or present but
-wholly null, remains unavailable: a length nobody recorded is unknown, not zero,
-so neither gains a zero-length verdict.
-
-`verify-dataset` always produces a report - it never crashes on the corruption
-it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
-`video_path` template, or a truncated / unreadable MP4 is reported as a problem
-string in the report (and a non-zero exit code), not surfaced as a raw
-traceback.
-
-Corruption confined to SOME episode parquet shards (the usual outcome of an
-interrupted rsync or hub download) is localised rather than fatal: each
-unreadable shard is named as a problem, the readable shards still supply
-`total_episodes` / `frames_per_episode`, and the info.json, video, and
-dead-column checks still run against them. Only a `meta/episodes` tree with no
-readable shard at all reports zero episodes. The same holds for
-`verify_dataset_episodes`, which additionally refuses to certify a dataset with
-unreadable shards even when the readable count matches `expected` - the count is
-then only a lower bound, reported in the `unreadable_files` diagnostics.
 
 ## Recording paths
 
@@ -512,405 +106,59 @@ then only a lower bound, reported in the `unreadable_files` diagnostics.
 | `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
-`stop_cameras_recording` returns a verdict, not just a report. Two things stop
-it finishing, and both answer the same way: a structured **error** carrying
-`stopped: False` and the per-camera buffered frame counts, no MP4 written, and
-the recording left registered so a later call can still encode it.
-
-The first is a join that expires. The daemon recorder runs in its own thread, so
-the stop asks that loop to exit and waits 5 s for it; if the loop is still inside
-`render` when the budget runs out -- a wedged GL context, an EGL device that
-stopped answering -- reading a buffer it may still append to is refused rather
-than encoded.
-
-The second is a flush with no encoder to call. `imageio` comes with
-`[sim-mujoco]`, but `[sim-newton]` and `[cosmos3-sim]` bring `mujoco` without
-it, and neither start verb probes the encoder, so the flush is the first call
-that needs one. It reports before opening any writer, so every buffer is intact
-and installing the encoder and calling again writes them.
-
-"No encoder" covers two modules, not one: `imageio` declares the plugin that
-actually writes MP4 -- `imageio_ffmpeg` -- as an optional extra of its own, so an
-install can have `imageio` and still no MP4 writer. The flush requires both, and quotes whichever is missing, so
-the remedy it prints is the one that works:
-
-```
-'imageio_ffmpeg' is required for MP4 video encoding (encode_clip)
-Install with:
-  pip install 'strands-robots[sim-mujoco]'
-  pip install imageio-ffmpeg
-```
-
-```python
-result = sim.stop_cameras_recording()
-if result["status"] == "error":
-    # Nothing was encoded -- either the loop is still capturing (an MP4 read
-    # from a buffer that is still growing would not describe either frame list)
-    # or there is no encoder installed. Either way the frames are still there
-    # and the recording is still registered, so calling again flushes them.
-    result = sim.stop_cameras_recording()
-```
-
-Only a flush deregisters a recording, so being registered is exactly what "holds
-frames nobody has encoded" means -- and that is what both start verbs check.
-`start_cameras_recording` and `start_cameras_recording_synchronous` refuse a new
-recording for as long as the old one is registered, whether or not its thread is
-still alive: while it is, starting would put a second thread on the same cameras,
-and once it has exited, starting would silently discard the frames the failed
-stop just promised were recoverable. Retrying the stop is the remedy in both
-cases, and on a recording whose loop has exited it joins immediately and encodes.
-
-`get_cameras_recording_status` reports which of the four phases holds, in its
-text and as `phase` in its JSON block:
-
-| `phase` | `running` | `thread_alive` | Meaning |
-|---|---|---|---|
-| `recording` | `True` | `True` | Capturing normally. |
-| `stopping` | `False` | `True` | A stop's join expired; frames can still land. |
-| `unflushed` | `False` | `False` | The loop has exited, frames still unencoded -- stop again to flush. |
-| `idle` | - | - | Nothing registered; there is no buffer left to encode. |
-
-`[idle]` is therefore a promise that nothing is pending, which is why the
-settled-but-registered state gets its own name instead of borrowing it.
-
-The Isaac backend exposes the same pair. It captures through the `on_frame` hook
-`start_cameras_recording` returns rather than a daemon thread, so it has no join
-to expire and none of the thread-dependent phases above. The encoder-absence rule
-is the same one, and both recorders word it from one place
-(`encoder_absent_flush_refusal`): nothing is encoded and nothing is dropped, the
-refusal carries `stopped: False` with the per-camera buffered counts, the
-recording stays registered, and installing the encoder and calling
-`stop_cameras_recording` again encodes the frames it kept. A start is refused for
-as long as those frames are registered, for the same reason.
-
-`fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
-must be positive whole numbers - the same domain `run_policy(video={...})`,
-`start_recording(fps=...)` and the shared encoder
-`strands_robots.rendering.encode_clip` enforce. An unusable value (`fps=0`, a
-negative frame cap) is a structured error naming the parameter rather than a
-recording that reports success and writes no file. Omit `width`/`height` to use
-each camera's configured resolution.
-
-Encoding frames directly through `encode_clip(frames, path, fps=...)` follows the
-same rule and raises `ValueError` for a rate it cannot honor - a fractional or
-non-positive `fps` previously produced a clip at some other rate (the GIF writer
-clamped it to 1 fps, ffmpeg substituted its own default) or no file at all, with
-the output path still returned. `encode_clip` also raises `RuntimeError` when the
-encoder wrote no clip despite accepting the frames, so a returned path always
-names a clip that exists.
-
-`encode_clip`'s `quality` is a finite number in `[1, 10]` (higher is better), and
-that domain holds for both containers even though only the MP4 writer reads the
-value - so one call does not become valid by changing the output extension. The
-bound is the encoder's own: `0` is refused despite older documentation offering
-`0-10`, and `True` is refused rather than acting as a silent quality of `1`, the
-lowest offered. A NumPy real such as `np.int64(8)` is accepted and converted,
-since the ffmpeg writer only recognises a plain `int`/`float`. The refusal is a
-`ValueError` from `encode_clip` rather than the encoder's own `assert`, so it
-does not disappear when Python runs with `-O`:
-
-```python
-from strands_robots.rendering import encode_clip
-
-encode_clip(frames, "clip.mp4", fps=30, quality=9)   # a usable quality
-encode_clip(frames, "clip.mp4", fps=30, quality=0)   # ValueError: quality must be between 1 and 10
-```
+`stop_cameras_recording` returns `status: "error"` when nothing was encoded
+(the loop is still capturing, or no `imageio-ffmpeg`); the frames are still
+held and a second call flushes them. A new cameras recording is refused while
+the old one is still registered.
 
 ## Video codec (H.264 default, AV1 opt-in)
 
-`start_recording` (and `DatasetRecorder.create`/`resume`) default to
-`vcodec="h264"`. H.264 is universally decodable - including by OpenCV's
-`cv2.VideoCapture`, which is what many downstream VLM video readers use to
-*watch* a recorded episode. The recorded per-camera MP4s therefore reopen and
-decode everywhere without a transcode step:
-
-```python
-import cv2
-cap = cv2.VideoCapture(".../videos/observation.images.base/chunk-000/file-000.mp4")
-ok, frame = cap.read()   # H.264: ok is True, frame is a real (H, W, 3) array
-```
-
-Pass `vcodec="libsvtav1"` to opt into AV1 for smaller files in
-storage-constrained training pipelines. AV1 reads back fine through LeRobot's
-own loader (`torchcodec`/`pyav`), but OpenCV wheels commonly lack an AV1 decoder
-and silently yield **0 frames** (`VideoCapture.read()` returns `False`
-immediately even though the stream has frames) - so avoid AV1 if anything in
-your pipeline reads the videos through OpenCV.
-
-The flat `vcodec` value accepts either codec names (`h264`, `hevc`,
-`libsvtav1`) or ffmpeg encoder names (`libx264`, `libx265`); it is normalized
-to whatever the installed LeRobot version's encoder config expects. An
-unsupported codec fails loudly rather than silently reverting to the default.
+`start_recording` and `DatasetRecorder.create` / `resume` default to
+`vcodec="h264"`, which every downstream reader - including
+`cv2.VideoCapture` - decodes. Pass `vcodec="av1"` only when the whole
+pipeline reads AV1.
 
 ## DatasetRecorder direct API
 
 ```python
 from strands_robots.dataset_recorder import DatasetRecorder
-
 recorder = DatasetRecorder.create(
     repo_id="user/my_dataset",
     fps=30,
     robot_type="so100",
-    # When recording from a real LeRobot hardware robot pass the schema dicts
-    # straight through:
-    #   robot_features=robot.observation_features,
-    #   action_features=robot.action_features,
-    # When recording from a sim Robot (no `observation_features` attr), pass
-    # `joint_names=[...]` instead - the recorder builds the schema for you.
-    # The names must be the observation's own keys: for the so100 sim these
-    # are Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw - i.e.
-    # `list(sim.get_observation()["so100"].keys())`. A declared name that a
-    # frame's observation (or action) does not carry makes `add_frame` raise;
-    # nothing is ever recorded as a stand-in 0.0.
+    # hardware: robot_features=robot.observation_features, action_features=robot.action_features
+    # sim: joint_names=[...] and the recorder builds the schema; the names are the
+    # observation's own keys (`list(sim.get_observation()["so100"].keys())`)
     camera_keys=["default"],
     joint_names=["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"],
     task="pick up the red cube",
-    # root=None → $HF_LEROBOT_HOME/user/my_dataset
-    # vcodec="h264", streaming_encoding=True, image_writer_threads=4
 )
-
 for step in control_loop:
     recorder.add_frame(observation, action, task="pick up the red cube")
 recorder.save_episode()
 recorder.finalize()
 recorder.push_to_hub(tags=["so100", "sim"], private=False)
-```
 
-Append to existing dataset (requires `lerobot>=0.5.2`):
-
-```python
+# append to an existing dataset (lerobot>=0.5.2)
 recorder = DatasetRecorder.resume(repo_id="user/my_dataset", task="pick up the blue cube")
-# root=None -> $HF_LEROBOT_HOME/user/my_dataset, the directory create() wrote to
-recorder.add_frame(observation, action)
-recorder.save_episode()
-recorder.finalize()
 ```
 
-### A failed import names the install that fixes it
+`add_frame` raises when a declared joint or action name is missing from the
+frame; nothing is recorded as a stand-in `0.0`. `create()` refuses before it
+touches disk: a failed lerobot import (the
+`ImportError` names which of `strands-robots[lerobot]` / `lerobot[dataset]` /
+a version-pinned reinstall fixes it); duplicate or blank `camera_keys` /
+`joint_names` / `action_names`; a `camera_dims` entry that is not a declared
+camera or not a `(height, width)` pair (camera features are written
+`(height, width, 3)`, names `[height, width, channels]` - lerobot's own
+layout); a non-positive `video_width` / `video_height`; an `fps` that is not a positive whole number; a non-boolean
+`use_videos` / `streaming_encoding` / `overwrite`; an existing dataset
+directory without `overwrite=True`.
 
-`create()` and `resume()` import `lerobot.datasets.lerobot_dataset`, which fails
-for four unrelated reasons that need four different instructions - so the
-`ImportError` says which one happened, exactly as every backend's
-`start_recording` does:
-
-| Cause | What the error says to do |
-|-------|---------------------------|
-| lerobot itself is absent | `pip install 'strands-robots[lerobot]'` |
-| lerobot is installed, but a package its dataset stack needs (`datasets`, `pandas`, `pyarrow`, `av`, `torchcodec`) is not | `pip install 'lerobot[dataset]'` - installing lerobot alone does not pull those in |
-| lerobot is installed but does not provide that module (an out-of-range or from-source lerobot) | `pip install 'strands-robots[lerobot]'`, which pins the supported range |
-| the import failed with nothing missing (a binary conflict between installed packages) | No install fixes it; reconcile the conflicting packages |
-
-### Schema column names must be distinct
-
-`camera_keys`, `joint_names` and `action_names` each declare the recorded
-dataset's **column names**, so each must be a list of distinct, non-blank names.
-`create()` refuses anything else before it touches the on-disk target, so a
-refused `overwrite=True` call leaves an existing dataset intact:
-
-```python
-DatasetRecorder.create(repo_id="user/d", joint_names="gripper")     # ValueError
-DatasetRecorder.create(repo_id="user/d", camera_keys=["front", "front"])  # ValueError
-```
-
-Both mistakes used to be accepted and only surfaced in the recorded data:
-
-- A single name passed as a **bare string** is iterable per character, so
-  `joint_names="gripper"` declared seven columns (`g`, `r`, `i`, `p`, `p`, `e`,
-  `r`). `add_frame` reads each declared name out of the observation, and none of
-  those names is in it, so every column recorded `0.0` for the whole episode -
-  `create()`, `add_frame()`, `save_episode()` and `finalize()` all succeeded.
-  Wrap a single name in a list: `joint_names=["gripper"]`.
-- A **repeated** name collapses where it keys a dict and doubles where it indexes
-  a position. `camera_keys=["front", "front"]` declared one camera column for the
-  two the caller asked for; `joint_names=["j1", "j2", "j2"]` recorded `j2` twice
-  and the joint the caller meant not at all.
-
-`None` and `[]` still mean "not supplied" - the schema is then derived from
-`robot_features` / `action_features`, or from `joint_names` for the action
-columns.
-
-### Camera frame shape must be a usable pixel count
-
-`camera_dims` and the `video_width` / `video_height` pair are one quantity in two
-spellings: the recorder declares each camera at
-`camera_dims.get(camera, (video_height, video_width))`, so the mapping sets the
-shape of the cameras it covers and the pair sets the shape of every other one.
-Note the order - `camera_dims` is `(height, width)`, the reverse of the pair.
-
-It is a **declaration, not a resize** - the recorder rescales nothing - so
-whatever is given goes straight into the LeRobot feature as
-`(height, width, 3)` with names `[height, width, channels]` - the layout
-lerobot itself records and every published v3 dataset uses.
-`create()` refuses a shape it cannot honor, on the same shared domain and in the
-same place as the column names above:
-
-```python
-DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
-                       camera_dims={"imagee": (240, 320)})   # ValueError: not a declared camera
-DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
-                       camera_dims={"image": (240,)})        # ValueError: not a (height, width) pair
-DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
-                       video_width=0)                        # ValueError: must be a positive integer
-```
-
-Three mistakes used to be accepted, and none was reported near the parameter that
-caused it:
-
-- A key `camera_keys` does not declare is **never looked up**, so the camera it
-  was meant for silently took the global pair instead. A camera streaming
-  240x320 declared as `camera_dims={"imagee": (240, 320)}` against
-  `camera_keys=["image"]` was declared `(3, 480, 640)` from the defaults -
-  nothing logged, dataset created, and the mismatch surfacing later against
-  `add_frame`.
-- A component that is **not a positive integer** was written in as given, so the
-  schema declared `(3, 480, nan)` or `(3, 480, '640')` and no frame could match
-  it. A pixel count is written into `meta/info.json`, so it has to be a true
-  `int`: an integral float would be declared as `480.0`, and a NumPy integer is
-  not JSON-serializable.
-- A value that is **not a two-element sequence** unpacked as a bare `TypeError`,
-  and a non-mapping `camera_dims` as a bare `AttributeError` from the lookup.
-
-`camera_dims=None` and `{}` still mean "not supplied" - every camera then takes
-the global pair. Passing the shape as a list rather than a tuple is accepted.
-
-### The recording rate must be a usable frame count
-
-`fps` is the rate the dataset is **declared** at - it is written into
-`meta/info.json` and every timestamp is derived from it positionally - so
-`create()` holds it to the same positive-whole-number domain every backend's
-`start_recording(fps=...)` already applies to the rate it forwards here:
-
-```python
-DatasetRecorder.create(repo_id="user/d", fps=2.7)    # ValueError: fps must be a positive whole number
-DatasetRecorder.create(repo_id="user/d", fps=float("nan"))   # same refusal
-DatasetRecorder.create(repo_id="user/d", fps=True)   # refused, not read as 1 fps
-```
-
-LeRobot rejects only `fps <= 0`, so everything above used to be accepted by the
-direct API and cost the caller the episode without reporting anything: a
-fractional `2.7`, a `nan` or an `inf` created the dataset and then saved **zero
-frames**, with `create`, `add_frame`, `save_episode` and `finalize` all returning
-normally. `fps=True` recorded a 1 fps dataset (an `int` subclass acting as a 1),
-and `fps="30"` dead-ended in a bare `TypeError` naming neither the parameter nor
-the method.
-
-The rule is the facades' rule by construction - one shared domain, reached from
-both - so a rate `start_recording` accepts cannot be refused deeper. A rate that
-disagrees with a rollout's `control_frequency` is a separate check that only the
-facades can make (see [`fps` must equal the rollout's
-`control_frequency`](#fps-must-equal-the-rollouts-control_frequency)); `create()`
-judges the rate on its own terms.
-
-### A posture flag must be a boolean
-
-`use_videos`, `streaming_encoding` and `overwrite` select a *branch* rather than
-scaling a quantity, so `create()` holds them to the shared boolean domain - the
-one every backend's `start_recording` already applies to the `overwrite` it
-forwards here, and the one `push_to_hub(private=...)` and `sync_to_bucket()`
-apply to their own flags. `resume()` checks the `streaming_encoding` it forwards
-on the same domain:
-
-```python
-DatasetRecorder.create(repo_id="user/d", overwrite="false")   # ValueError: overwrite must be a boolean
-DatasetRecorder.create(repo_id="user/d", use_videos="no")     # same refusal
-DatasetRecorder.resume(repo_id="user/d", streaming_encoding=0)  # same refusal
-```
-
-Read by truthiness, every non-empty string is truthy, so the spellings a caller
-reaches for when opting *out* selected the branch they were opting out of.
-`overwrite` is a confirmation gate in front of a delete, so it was the expensive
-one: `overwrite="false"` (also `"no"`, `"off"`, `"0"`) removed the existing
-dataset - a dataset holding one recorded episode came back holding zero, and
-`create()` returned a working recorder throughout. `use_videos="false"` declared
-every camera as `dtype="video"` where `False` declares `"image"`, a schema
-decision written into `meta/info.json` and fixed for the life of the dataset, and
-the same unconverted string then reached LeRobot's own boolean parameter, as
-`streaming_encoding="false"` did.
-
-The check runs in the same guard block as the schema and rate checks above -
-before the lerobot extra is probed and before the on-disk target is touched - so
-a refused flag cannot remove a dataset on the way to being reported.
-
-### Re-recording into an existing `repo_id`
-
-`DatasetRecorder.create()` builds a **fresh** dataset. If the resolved dataset
-directory already exists, LeRobot's `create()` would raise a bare
-`FileExistsError` (its `mkdir` uses `exist_ok=False`). `create()` resolves this
-up front, matching the `start_recording` facade:
-
-- `overwrite=True` wipes the existing directory and creates a fresh dataset.
-- `overwrite=False` (default) on an existing dataset (a dir containing `meta/`)
-  raises a clear `FileExistsError` naming `overwrite=True` (fresh) and
-  `resume()` (append) - not a cryptic LeRobot error, and never a silent clobber.
-- An existing **empty** directory (e.g. from `tempfile.mkdtemp()`) is cleared so
-  `create()` does not dead-end on its own existence guard.
-- A non-empty **non-dataset** directory raises `ValueError` rather than deleting
-  unrelated files.
-- `overwrite` must be a boolean (see [A posture flag must be a
-  boolean](#a-posture-flag-must-be-a-boolean)), checked before the target is
-  touched, so a value that is not one cannot delete a dataset.
-
-```python
-# Re-run a capture script into the same repo_id, replacing the old dataset:
-recorder = DatasetRecorder.create(
-    repo_id="user/my_dataset", fps=30, joint_names=[...], overwrite=True,
-)
-```
-
-Use `resume()` (not `create(overwrite=True)`) when you want to **append**
-episodes to the existing dataset instead of replacing it.
-
-### A frame the recorder cannot write fails the rollout
-
-`DatasetRecorder` is fail-fast by default (`strict=True`): if the underlying
-`LeRobotDataset` write fails, it raises
-`strands_robots.dataset_recorder.RecordingFrameError` instead of continuing. When
-the recorder is driven by `run_policy`, that ends the rollout with
-`status="error"` naming the frame the recording stopped being complete at:
-
-```
-Policy failed: dataset add_frame failed after 7 frame(s) written; the recording
-is incomplete from this frame on (strict=True, so it is not dropped silently):
-<the underlying error>
-```
-
-Continuing past a lost frame is not a smaller failure. Timestamps are derived
-positionally from the declared `fps`, so the surviving frames are re-stamped into
-a shorter span than they were captured over - a rollout that loses every other
-frame at 50 Hz produces an episode labelled at 2x speed, with no gap to detect.
-
-Construct the recorder with `strict=False` to trade that for best-effort
-recording: a failed write is counted in `dropped_frame_count`, warned about at
-`WARNING` (on the 1st, 2nd, 4th, 8th ... failure so a 50 Hz loop cannot flood the
-log), and the rollout continues.
-
-### An episode the recorder cannot flush stops a recorded evaluation
-
-`save_episode` is the episode-level counterpart, and a failed flush is worse than
-a lost frame rather than milder. The recorder marks itself closed, because the
-LeRobot episode buffer is in an undefined state after a partial write - and
-`add_frame` returns immediately on a closed recorder, without writing a frame,
-without raising `RecordingFrameError`, and without counting a
-`dropped_frame_count`. Every later episode is therefore discarded in silence,
-leaving no trace even in the recorder's own accounting.
-
-So every flush refuses rather than continues. `save_episode()` and
-`stop_recording()` drop the poisoned recorder and return `status="error"`,
-`run_policy(n_episodes=N)` aborts its remaining episodes, `reset()` surfaces the
-failure instead of resetting into an undefined state, and a recorded
-`eval_policy` / `evaluate_benchmark` - one driven with an `on_frame` hook that
-calls `add_frame`, which is the only way those two feed a recorder - stops at the
-episode whose flush failed and reports the reason:
-
-```python
-result = sim.eval_policy(robot_name="so100", n_episodes=20, on_frame=hook)
-payload = next(b["json"] for b in result["content"] if "json" in b)
-if payload["recording_save_error"]:      # None on every healthy evaluation
-    ...   # status is "error"; episodes_completed is the episode it stopped at
-```
-
-`episodes_completed` and `success_rate` then cover only the episodes that ran, so
-an aggregate is never reported over episodes whose frames reached no dataset.
+The recorder is fail-fast (`strict=True`): a frame LeRobot cannot write raises
+`RecordingFrameError` and ends the rollout, and an episode it cannot flush
+closes the recorder and stops a recorded `eval_policy` with
+`recording_save_error` set in the result.
 
 ## Instance methods
 
@@ -920,79 +168,27 @@ an aggregate is never reported over episodes whose frames reached no dataset.
 | `save_episode()` | Flush buffer as a new episode |
 | `clear_episode_buffer()` | Discard current episode |
 | `finalize()` | Write metadata, stats, close writers |
-| `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo. `private` selects the published repo's visibility, so it must be a boolean — a truthy spelling of off such as `"false"` would otherwise select the opposite posture |
-| `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) — Xet-deduped collection target; needs the `hf` CLI. `bucket` (`name` or `org/name`) and `run_id` (single segment) are allowlist-validated (`[A-Za-z0-9._-]`, no traversal) before the sync, and `create` / `private` / `delete` must each be a boolean — `delete` mirror-deletes remote files absent locally, so a truthy `"false"` must not select it |
-
-## Read back
-
-Fully materialized (downloads everything):
-
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-ds = LeRobotDataset(repo_id="user/my_dataset", root="/tmp/my_dataset")
-print(len(ds), ds[0].keys())
-```
+| `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo (`private` must be a boolean) |
+| `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) |
 
 ## Replay an episode
 
 `sim.replay_episode(repo_id, robot_name=..., episode=0, root=None, speed=1.0)`
-plays a recorded episode back through the sim: each recorded frame is one
-control step, applied via `send_action` and integrated for a full control period
-derived from the dataset fps, so a position-servo robot reproduces the recorded
-trajectory. `speed` scales only the wall-clock playback rate.
-
-`root` is resolved from `repo_id` exactly as recording resolves it, so whatever
-id `start_recording` was given replays with nothing restated:
-
-```python
-sim.start_recording(repo_id="sim_recording", task="pick the cube", fps=30)
-...
-sim.stop_recording()
-sim.replay_episode("sim_recording", robot_name="so101")   # same id, same directory
-```
-
-Each recorded action index is bound to an action key. By default those are
-`robot_action_keys(robot_name)` — the robot's **actuator** keys, which is the
-ordering the recorder writes the `action` column in. Pass `action_key_map` only
-when the dataset's action ordering differs:
-
-```python
-sim.replay_episode(
-    "user/my_dataset",
-    robot_name="so101",
-    root="/tmp/my_dataset",
-    action_key_map=["1", "2", "3", "4", "5", "6"],  # one key per action index
-)
-```
-
-`action_key_map` must be a non-empty list/tuple of unique strings whose length
-equals the recorded action vector's width. A bare string (consumed one key per
-character), a non-string entry, a duplicate key, or a width mismatch is rejected
-with an actionable error before the dataset is fetched — never truncated to fit.
-
-A `"success"` status means **every** frame reached the actuators. If a recorded
-action cannot be applied — e.g. the mapped keys resolve to no actuator on this
-robot — the replay aborts at that frame and returns `status="error"` with the
-frame index, how many frames were applied, and the unresolved keys:
-
-```python
-result = sim.replay_episode("user/my_dataset", robot_name="so101", action_key_map=["wrong"] * 6)
-result["status"]                                  # "error"
-result["content"][1]["json"]["unresolved_keys"]   # ['wrong', ...]
-result["content"][1]["json"]["frames_applied"]    # 0
-```
+plays a recorded episode back through the sim: each frame is one control step
+applied via `send_action` for a control period derived from the dataset `fps`.
+A recording made with a path-like `repo_id` replays from the same directory.
+`action_key_map=[...]` names one actuator per action index; an unresolvable key
+returns `status: "error"` with `unresolved_keys` and `frames_applied: 0`.
 
 ## Stream back (no full download)
 
-`sim.stream_dataset()` is the in-process counterpart to `start_recording` /
-`stop_recording` — it reads frames lazily from the Hub (or a local `root`) via
-LeRobot's `StreamingLeRobotDataset`. Camera frames are decoded on the fly from
-the MP4 shards; state/action come from the parquet shards.
+`sim.stream_dataset()` reads frames lazily from the Hub or a local `root`
+through LeRobot's `StreamingLeRobotDataset`; `buffer_size=1` is the knob that
+delivers capture order (the reservoir otherwise reorders), and the reader's
+`dataloader()` shuffles internally:
 
 ```python
 from strands_robots import Robot
-
 sim = Robot("so100")
 reader = sim.stream_dataset(
     "user/my_dataset",                 # a path-like repo_id needs no root=
@@ -1007,84 +203,15 @@ reader = sim.stream_dataset(
 print(reader.num_episodes, reader.num_frames, reader.fps)
 for frame in reader:
     ...
-
 # torch DataLoader (shuffles INTERNALLY — do not pass shuffle=True):
 for batch in reader.dataloader(batch_size=64, num_workers=4):
     ...
 ```
 
-A `repo_id` that is itself a path (no `owner/name` slash, or `./`-prefixed) is
-resolved to the directory recording wrote to, so the record -> read-back loop
-needs no `root` restated:
-
-```python
-sim.start_recording(repo_id="sim_recording", task="pick the cube", fps=30)
-...
-sim.stop_recording()
-reader = sim.stream_dataset("sim_recording")   # ./sim_recording, not the Hub
-```
-
-Equivalently, the standalone reader: `from strands_robots import StreamingDatasetReader`.
-
-`shuffle` is **not** the read-order knob, and `shuffle=False` on its own reads
-shuffled frames with nothing reporting it. It selects only which generator
-drives the reordering (a generator reseeded from `seed` on every exhaustion, or
-the dataset's advancing one), so it decides reproducibility *across epochs* —
-lerobot documents it as "whether to shuffle the dataset across exhaustions".
-`StreamingLeRobotDataset` reorders either way: it samples a shard at random per
-frame and yields from a reservoir buffer. Capture order is therefore
-`buffer_size=1` (a reservoir of one cannot reorder) plus `max_num_shards=1`
-(a single shard has nothing to interleave), as above.
-
-Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
-`episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
-`return_uint8=True` (default; halves frame bandwidth), and
-`drop_videos=True` (proprio-only — skips video decode entirely, so it works on
-edge devices without a torchcodec wheel; requires `delta_timestamps` with at
-least one non-video key, otherwise `open()` raises `ValueError` rather than
-silently streaming video anyway).
-
-The four numeric kwargs (`tolerance_s`, `buffer_size`, `max_num_shards`,
-`seed`) are checked before the lerobot import: `StreamingLeRobotDataset`
-validates only `repo_type` and stores the rest verbatim, so every consumer of
-them is downstream of a call that already returned. `open()` raises `ValueError`
-naming the parameter instead - a shard count of `0` used to open successfully
-and then stream **zero frames**, a `buffer_size` of `0` raised out of NumPy
-part-way through iteration, and a `tolerance_s` of `inf` switched off the
-delta-grid check below. `tolerance_s=0` is accepted and means "require an exact
-grid match"; `seed=0` is accepted and is simply a seed.
-
-The five boolean kwargs (`streaming`, `shuffle`, `return_uint8`,
-`validate_deltas`, `drop_videos`) are checked there too, on the same domain the
-recording postures use ([A posture flag must be a
-boolean](#a-posture-flag-must-be-a-boolean)) and for the same reason - read by
-truthiness, each selected the branch the caller was opting *out* of:
-
-```python
-reader = sim.stream_dataset("user/d", drop_videos="false")  # ValueError: drop_videos must be a boolean
-reader = sim.stream_dataset("user/d", validate_deltas=0)    # same refusal
-```
-
-`drop_videos="false"` (also `"no"`, `"off"`, `"0"`) is truthy, so it *removed*
-the camera keys from `delta_timestamps` - the opposite of the opt-out it spells -
-and when nothing but camera keys were requested it reported
-`drop_videos=True requires ...`, naming a value the caller had never passed and
-pointing at a remedy that lands on the silent proprio-only stream. Falsy
-non-booleans took the other branch just as silently: `validate_deltas=0` skipped
-the delta-grid check, so an off-grid `delta_timestamps` that `validate_deltas=True`
-refuses opened and streamed; `return_uint8=None` streamed float32 at ~4x the
-bandwidth with the warning about that cost suppressed by the same truthiness; and
-`streaming=0` failed inside LeRobot on `num_shards`. `reader.dataloader(shuffle=...)`
-needs no such check - it discards the key whatever it held.
-
-One kwarg is **not** tolerant-forwarded because its absence changes semantics:
-`repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
-floors — so a resolver-conformant install always has it. On an environment
-carrying an older lerobot, `open()` raises `RuntimeError` naming the upgrade
-instead of silently streaming from the versioned dataset namespace (a different
-storage system).
-
-For **training**, the upstream trainer uses the same engine:
+Boolean kwargs (`drop_videos`, `validate_deltas`, `return_uint8`, `streaming`)
+must be real booleans and are refused otherwise. `repo_type="bucket"` requires
+`lerobot>=0.6.1`, which the `[lerobot]` extra floors; an older lerobot raises
+`RuntimeError` naming the upgrade. Training streams through the same engine:
 
 ```bash
 python -m lerobot.scripts.lerobot_train --policy.type=act \
@@ -1092,9 +219,7 @@ python -m lerobot.scripts.lerobot_train --policy.type=act \
 ```
 
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
-> strands_robots` auto-fixes this (zero-touch); disable with
-> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`. See the README "Recording & streaming
-> datasets" section.
+> strands_robots` auto-fixes this; disable with `STRANDS_ROBOTS_NO_DYLD_SHIM=1`.
 
 ## See also
 
