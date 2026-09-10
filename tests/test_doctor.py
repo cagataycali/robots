@@ -383,7 +383,8 @@ class TestDoctorDegradedPaths:
 
 class TestDoctorSerialPermissions:
     """``check_serial_permissions`` must distinguish: non-Linux (skip), missing
-    dialout group (skip), user not in dialout (fail), and user in dialout with /
+    dialout group (skip), user not in dialout with nothing plugged in (warn), with
+    a device they cannot open (fail) or can (pass), and user in dialout with /
     without accessible devices (fail / pass)."""
 
     @staticmethod
@@ -420,6 +421,7 @@ class TestDoctorSerialPermissions:
         import grp
         import os
         import platform
+        from pathlib import Path
 
         from strands_robots.doctor import check_serial_permissions
 
@@ -427,8 +429,50 @@ class TestDoctorSerialPermissions:
         monkeypatch.setenv("USER", "nobody")
         monkeypatch.setattr(grp, "getgrnam", lambda _n: self._fake_group(["someone_else"], gid=20))
         monkeypatch.setattr(os, "getgroups", lambda: [1000])
+        monkeypatch.setattr(Path, "glob", lambda self, pat: iter([Path("/dev/ttyACM0")]) if "ACM" in pat else iter([]))
+        monkeypatch.setattr(os, "access", lambda _p, _m: False)
         result = check_serial_permissions()
         assert "  FAIL  " in result
+        assert "/dev/ttyACM0" in result
+
+    def test_not_in_dialout_with_a_udev_rule_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A device the user can already open is not a permissions problem."""
+        import grp
+        import os
+        import platform
+        from pathlib import Path
+
+        from strands_robots.doctor import check_serial_permissions
+
+        monkeypatch.setattr(platform, "system", lambda: "Linux")
+        monkeypatch.setenv("USER", "nobody")
+        monkeypatch.setattr(grp, "getgrnam", lambda _n: self._fake_group(["someone_else"], gid=20))
+        monkeypatch.setattr(os, "getgroups", lambda: [1000])
+        monkeypatch.setattr(Path, "glob", lambda self, pat: iter([Path("/dev/ttyACM0")]) if "ACM" in pat else iter([]))
+        monkeypatch.setattr(os, "access", lambda _p, _m: True)
+        result = check_serial_permissions()
+        assert "  PASS  " in result
+
+    def test_not_in_dialout_with_nothing_plugged_in_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Measured on an L40S EC2 box (user ubuntu, sim only, no /dev/ttyACM*
+        or ttyUSB*): this line was the only FAIL and made ``doctor`` exit 1."""
+        import grp
+        import os
+        import platform
+        from pathlib import Path
+
+        from strands_robots.doctor import check_serial_permissions
+
+        monkeypatch.setattr(platform, "system", lambda: "Linux")
+        monkeypatch.setenv("USER", "ubuntu")
+        monkeypatch.setattr(grp, "getgrnam", lambda _n: self._fake_group(["someone_else"], gid=20))
+        monkeypatch.setattr(os, "getgroups", lambda: [1000])
+        monkeypatch.setattr(Path, "glob", lambda _self, _pat: iter([]))
+        result = check_serial_permissions()
+        assert "  WARN  " in result
+        assert "  FAIL  " not in result
+        assert "no serial device connected" in result
+        assert "usermod -aG dialout" in result
 
     def test_in_dialout_no_devices_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import grp

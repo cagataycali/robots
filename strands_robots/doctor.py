@@ -604,9 +604,8 @@ def check_serial_permissions() -> str:
     except (KeyError, OSError):
         in_effective = False
 
+    devs = list(Path("/dev").glob("ttyACM*")) + list(Path("/dev").glob("ttyUSB*"))
     if in_dialout or in_effective:
-        # Check if any serial devices exist
-        devs = list(Path("/dev").glob("ttyACM*")) + list(Path("/dev").glob("ttyUSB*"))
         if devs:
             # Check read/write permission on first device
             dev = devs[0]
@@ -617,10 +616,15 @@ def check_serial_permissions() -> str:
                 fix=f"sudo chmod 666 {dev}  # or add udev rule",
             )
         return _pass("serial: user in dialout (no devices connected)")
-    return _fail(
-        f"serial: user '{username}' not in dialout group",
-        fix="sudo usermod -aG dialout $USER && newgrp dialout  # then re-login",
-    )
+    fix = "sudo usermod -aG dialout $USER && newgrp dialout  # then re-login"
+    if devs:
+        if os.access(devs[0], os.R_OK | os.W_OK):
+            return _pass(f"serial: {devs[0]} accessible (udev rule; user '{username}' not in dialout)")
+        return _fail(f"serial: user '{username}' not in dialout group and {devs[0]} not accessible", fix=fix)
+    # Nothing is plugged in: a sim-only user has nothing to fail. The
+    # verdict rc turns on FAIL, and this line alone made a green sim
+    # setup exit 1 - a false alarm the moment before hardware matters.
+    return _warn(f"serial: user '{username}' not in dialout group (no serial device connected)", note=fix)
 
 
 def check_hf_auth() -> str:
