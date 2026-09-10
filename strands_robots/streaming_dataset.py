@@ -451,6 +451,8 @@ class StreamingDatasetReader:
             max_num_shards,
         )
         ds = StreamingCls(**kwargs)
+        if drop_videos:
+            _hide_video_features(ds)
 
         # Tolerance grid-check - the streaming path skips check_delta_timestamps;
         # replicate it for parity with the materialized dataset.
@@ -506,6 +508,33 @@ class StreamingDatasetReader:
 
     def __iter__(self) -> Any:
         return iter(self.dataset)
+
+
+def _hide_video_features(ds: Any) -> None:
+    """Make ``drop_videos=True`` actually skip video decode.
+
+    Stripping camera keys from ``delta_timestamps`` is not enough: lerobot's
+    ``StreamingLeRobotDataset.make_frame`` decodes every key in
+    ``meta.video_keys`` - a key absent from ``delta_timestamps`` is simply
+    queried at the current timestamp (``_get_query_timestamps``). So a
+    proprio-only reader on a machine without a working torchcodec opened fine
+    and then raised on its first frame. ``video_keys`` is derived from the
+    metadata's feature table, so the honest fix is to hide the video features
+    on this instance's metadata (memory only; nothing on disk changes).
+    """
+    meta = getattr(ds, "meta", None)
+    info = getattr(meta, "info", None)
+    if info is None:
+        return
+    is_mapping = isinstance(info, dict)
+    features = info.get("features") if is_mapping else getattr(info, "features", None)
+    if not isinstance(features, dict):
+        return
+    kept = {k: v for k, v in features.items() if not (isinstance(v, dict) and v.get("dtype") == "video")}
+    if is_mapping:
+        info["features"] = kept
+    else:
+        info.features = kept
 
 
 def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
