@@ -128,6 +128,41 @@ class TestTheRemedyFitsTheMachine:
         assert "https://pypi.jetson-ai-lab.io/jp6/cu126" in remedy
         assert "R36" in remedy
 
+    @pytest.mark.parametrize(
+        ("release_file", "expected"),
+        [
+            ("# R32 (release), REVISION: 7.5\n", "jetson-index"),
+            ("# R36 (release), REVISION: 4.3\n", "jetson-index"),
+            ("# R37 (release), REVISION: 1.0\n", "jetson-index"),
+            ("# R38 (release), REVISION: 2.2\n", "pypi"),
+            ("# R39 (release), REVISION: 0.1\n", "pypi"),
+            ("# R100 (release), REVISION: 0.1\n", "pypi"),
+            ("", "generic"),
+            ("# R (release)\n", "generic"),
+            ("garbage\n", "generic"),
+        ],
+    )
+    def test_the_l4t_major_is_read_as_a_number_and_an_unreadable_one_gets_no_index(
+        self, tegra: Path, release_file: str, expected: str
+    ) -> None:
+        """The major decides the index, so it has to be compared as a number:
+        as strings ``"R100" < "R38"``, which would send a future board to the
+        JetPack 6 index, and so would an ``/etc/nv_tegra_release`` this cannot
+        read as ``R<major>``. An unidentified board gets the generic command
+        instead of a confidently wrong index.
+        """
+        from strands_robots.doctor import _torch_cuda_remedy
+
+        tegra.write_text(release_file)
+        remedy = _torch_cuda_remedy()
+        if expected == "jetson-index":
+            assert "https://pypi.jetson-ai-lab.io/jp6/cu126" in remedy
+        elif expected == "pypi":
+            assert remedy.startswith("uv pip install torch")
+            assert "jetson-ai-lab" not in remedy
+        else:
+            assert remedy == "UV_TORCH_BACKEND=auto uv pip install torch"
+
     def test_an_x86_box_gets_the_generic_command(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.doctor as doctor
 
