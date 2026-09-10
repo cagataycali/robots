@@ -41,6 +41,7 @@ from strands_robots.utils import (
     dial_host_error,
     name_list_error,
     positive_finite_number_error,
+    require_optional,
     tcp_port_error,
 )
 
@@ -265,6 +266,13 @@ class RemotePolicy(Policy):
 
     def _connect(self) -> None:
         """Open the WebSocket, read the handshake, and flush pending config."""
+        # Refuse a missing transport here, the first line that needs it, with
+        # the extra named: ``create_policy("remote")`` on a venv without
+        # ``websockets`` used to die inside ``get_actions`` with a bare
+        # ``ModuleNotFoundError``. Construction stays transport-free so the
+        # pre-wire contracts (ports, key lists, handshake refusals) keep
+        # working - and testable - without the [inference] extra installed.
+        require_optional("websockets", extra="inference", purpose="RemotePolicy (remote inference client)")
         from websockets.sync.client import connect
 
         try:

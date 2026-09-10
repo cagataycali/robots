@@ -1,0 +1,2 @@
+### Fixed
+- `RemotePolicy` / `create_policy("remote")` on a venv without the `[inference]` extra now fails at the first connect with `'websockets' is required for RemotePolicy ... pip install 'strands-robots[inference]'` (the house `require_optional` path) instead of a bare `ModuleNotFoundError: No module named 'websockets'` inside `get_actions`. Construction stays transport-free, so the pre-wire contracts keep working without the extra.
