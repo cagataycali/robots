@@ -7514,7 +7514,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 # move_to, Isaac half of the GH #1645 vocabulary; shared
                 # contract in strands_robots.simulation.motion_primitives_base).
                 "move_to": (
-                    "(robot_name=None, position=[x,y,z], orientation=None, tol=0.01, "
+                    "(robot_name=None, position=[x,y,z], orientation=None, tol=0.015, "
                     "max_steps=200, orientation_tol=None) -> dict  # IK-solve (shared mink "
                     "bridge on the registry MJCF) then servo the end-effector to a world-frame "
                     "Cartesian target; position-only when orientation is omitted, otherwise "

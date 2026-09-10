@@ -509,7 +509,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         robot_name: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
-        tol: float = 0.01,
+        tol: float = 0.015,
         max_steps: int = 200,
         orientation_tol: float | None = None,
     ) -> dict[str, Any]:
@@ -571,7 +571,9 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 arms with fewer than 6 DOF (e.g. SO-100/SO-101), which cannot
                 realize an arbitrary full pose.
             tol: Position convergence tolerance in meters (> 0). Bounds the
-                TRANSLATION only; ``orientation_tol`` bounds the rotation.
+                TRANSLATION only; ``orientation_tol`` bounds the rotation. The
+                default 0.015 is where the so100 position servos settle within
+                200 ticks (measured residual 0.0105 m against a 0.01 default).
             max_steps: Max control ticks before returning a not-reached error
                 (1..10000).
             orientation_tol: Orientation convergence tolerance in radians
