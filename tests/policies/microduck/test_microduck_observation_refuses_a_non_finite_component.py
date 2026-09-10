@@ -47,12 +47,11 @@ everything that can, and the shared domain costs more than the whole build
 ``TestTheSharedDomainWouldAgreeHere`` pins the agreement so the equivalence is
 measured rather than assumed.
 
-The sibling locomotion policy holds its caller-supplied vectors to both width and
-finiteness and says so in its own module docstring
-(``strands_robots.policies.motionbricks.observation``: "Every component must be a
-finite number; a count outside two or three, a ``nan``/``inf`` component or a
-``bool`` is refused by name"). This package refused a non-finite vector on the
-graph's OUTPUT and not on the caller's INPUT.
+The rule this states - a caller-supplied vector is held to both width and
+finiteness at the entry that received it - is the convention
+``WBCPolicy._validate_velocity`` applies to the same well-known goal key. This
+package refused a non-finite vector on the graph's OUTPUT and not on the caller's
+INPUT.
 """
 
 from __future__ import annotations
@@ -328,12 +327,6 @@ class TestThePremisesTheDefectRestedOn:
         src = textwrap.dedent(inspect.getsource(policy_mod.MicroduckPolicy.get_actions))
         assert "finite_vector_error(" in src, "the graph's action is held to the domain"
         assert "the ONNX action" in src, "and it is named as the graph's action"
-
-    def test_the_sibling_policy_holds_its_caller_vectors_to_finiteness(self) -> None:
-        from strands_robots.policies.motionbricks import observation as mb_obs
-
-        doc = " ".join((mb_obs.__doc__ or "").split())
-        assert "finite" in doc, "the sibling observation builder states this rule"
 
 
 class TestWhatIsUnchanged:

@@ -74,6 +74,7 @@ from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
@@ -1398,9 +1399,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         there is no upper cap.
 
         Args:
-            name: Unique camera name; a non-empty ``str`` containing no NUL, the
-                same domain the MuJoCo backend's ``add_camera`` accepts
-                (:func:`~strands_robots.utils.entity_name_error`). Duplicate
+            name: Unique camera name; a non-empty ``str`` containing no NUL and
+                not a free-camera routing token, the same rule and the same
+                order the MuJoCo backend's ``add_camera`` applies
+                (:func:`~strands_robots.utils.camera_name_error`, judged before
+                any value below). Duplicate
                 names are rejected; remove the existing camera with
                 :meth:`remove_camera` first.
             position: Camera eye ``[x, y, z]`` (world frame, or the parent
@@ -1423,10 +1426,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
 
-        # Refuse a name that cannot address the camera this call creates, on the
-        # shared ``entity_name_error`` domain the MuJoCo backend's ``add_camera``
-        # uses, so a camera name one backend refuses is refused by both.
-        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+        # The whole name rule, in the one order ``camera_name_error`` owns and
+        # the MuJoCo backend's ``add_camera`` reads too: a value that cannot be
+        # a registry key, then a ``str`` this backend's render entry points
+        # resolve past. Both guards precede every value rule below, so the two
+        # backends name the same cause for the same request - the reserved-name
+        # test used to sit after the pose, fov and pixel-dimension rules here,
+        # and a request with a routing token AND a bad value was refused by both
+        # backends for different reasons.
+        if (name_err := camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
 
         # Validate shape, element type AND finiteness with the shared helpers the
@@ -1484,11 +1492,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         for _param, _value in (("width", width), ("height", height)):
             if (e := positive_count_error(_value, _param, "add_camera")) is not None:
                 return {"status": "error", "content": [{"text": e}]}
-        # Refuse a name this backend's own render entry points would resolve past.
-        # Shared with the MuJoCo sibling, which routes the same tokens and until
-        # now refused none of them, so the two cannot state the rule differently.
-        if (reserved_err := reserved_camera_name_error("add_camera", "name", name)) is not None:
-            return {"status": "error", "content": [{"text": reserved_err}]}
         if name in self._world.cameras:
             return {
                 "status": "error",

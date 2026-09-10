@@ -67,6 +67,10 @@ from strands_robots.tools.reachy import (
 from tests.test_reachy_mini_driver import _force_real_device_connect_edge
 from tests.test_reachy_motion_domain import USABLE_MOTION_VALUES
 
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
+
 
 def _outside(limit: float) -> float:
     """A travel request comfortably outside ``limit``, in degrees."""

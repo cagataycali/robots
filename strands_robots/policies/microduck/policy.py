@@ -390,10 +390,9 @@ class MicroduckPolicy(Policy):
             self._command = new
         tv = kwargs.get("target_velocity")
         if tv is not None:
-            # Two sibling providers reading this same well-known goal key hold it
-            # to a domain that names it - ``WBCPolicy._validate_velocity`` and the
-            # ``param_name="target_velocity"`` guard MotionBricks applies on both
-            # its constructor and per-call paths - and this one did not. A
+            # A sibling provider reading this same well-known goal key holds it
+            # to a domain that names it - ``WBCPolicy._validate_velocity``, on
+            # both its constructor and per-call paths - and this one did not. A
             # non-finite component WAS still refused, but downstream by
             # ``build_observation``, which names ``command`` and the assembled
             # observation rather than the parameter the caller passed. Ask here,

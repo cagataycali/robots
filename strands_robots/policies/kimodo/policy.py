@@ -7,8 +7,7 @@ strides"``) and samples per-frame full-body ``qpos`` sequences for the Unitree
 G1 via a diffusion process. This policy adapts that sequence into the
 per-tick action-dict contract the rest of ``strands_robots`` expects.
 
-Where it sits in the stack (identical seat to
-:class:`~strands_robots.policies.motionbricks.MotionBricksPolicy`):
+Where it sits in the stack:
 
 * Kimodo emits **motion targets** (kinematic ``qpos``) for all 29 leg + waist +
   arm joints - a whole-body reference, not a joint subset.
@@ -75,7 +74,7 @@ logger = logging.getLogger(__name__)
 
 
 # The 29 leg+waist+arm joints Kimodo drives, in the sampler's ``qpos[7:]``
-# order. Verified identical to the canonical WBC/MotionBricks ordering so a
+# order. Verified identical to the canonical WBC ordering so a
 # Kimodo reference and a WBC/PD tracker name the same joints - they compose
 # without a remapping table.
 KIMODO_G1_JOINTS: tuple[str, ...] = WBC_G1_ALL_JOINTS

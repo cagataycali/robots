@@ -28,7 +28,11 @@ from typing import Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
-from strands_robots.utils import coerce_orientation_quaternion, coerce_pose_vector
+from strands_robots.utils import (
+    coerce_orientation_quaternion,
+    coerce_pose_vector,
+    refusal_repr,
+)
 
 # Name hints (lowercased substring match on the gripper DOF's name) used to
 # resolve the gripper when the robot registry carries no gripper metadata for
@@ -182,7 +186,13 @@ class MotionPrimitivesCore:
         if quat_err is not None:
             return None, None, 0, None, _err(quat_err)
         if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return None, None, 0, None, _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
+            return (
+                None,
+                None,
+                0,
+                None,
+                _err(f"move_to: 'tol' must be a positive number of meters, got {refusal_repr(tol)}."),
+            )
         if orientation_tol is not None and orientation is None:
             return (
                 None,
@@ -201,7 +211,9 @@ class MotionPrimitivesCore:
                 None,
                 0,
                 None,
-                _err(f"move_to: 'orientation_tol' must be a positive number of radians, got {orientation_tol!r}."),
+                _err(
+                    f"move_to: 'orientation_tol' must be a positive number of radians, got {refusal_repr(orientation_tol)}."
+                ),
             )
         err = self._validate_step_budget("move_to", "max_steps", max_steps)
         if err is not None:
@@ -218,7 +230,7 @@ class MotionPrimitivesCore:
     def _validate_set_gripper_args(self, state: Any, steps: Any) -> tuple[int, dict[str, Any] | None]:
         """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``."""
         if state not in ("open", "close"):
-            return 0, _err(f'set_gripper: \'state\' must be "open" or "close", got {state!r}.')
+            return 0, _err(f'set_gripper: \'state\' must be "open" or "close", got {refusal_repr(state)}.')
         err = self._validate_step_budget("set_gripper", "steps", steps)
         if err is not None:
             return 0, err
@@ -231,9 +243,13 @@ class MotionPrimitivesCore:
         if target_yaw is None:
             return 0.0, 0, _err("rotate_wrist requires 'target_yaw' (wrist joint set-point in radians).")
         if not _is_finite_real(target_yaw):
-            return 0.0, 0, _err(f"rotate_wrist: 'target_yaw' must be a finite number of radians, got {target_yaw!r}.")
+            return (
+                0.0,
+                0,
+                _err(f"rotate_wrist: 'target_yaw' must be a finite number of radians, got {refusal_repr(target_yaw)}."),
+            )
         if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return 0.0, 0, _err(f"rotate_wrist: 'tol' must be a positive number of radians, got {tol!r}.")
+            return 0.0, 0, _err(f"rotate_wrist: 'tol' must be a positive number of radians, got {refusal_repr(tol)}.")
         err = self._validate_step_budget("rotate_wrist", "max_steps", max_steps)
         if err is not None:
             return 0.0, 0, err

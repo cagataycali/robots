@@ -36,6 +36,7 @@ from strands_robots.utils import (
     dds_domain_id_error,
     finite_number_error,
     positive_count_error,
+    refusal_repr,
     require_optional,
 )
 
@@ -131,7 +132,7 @@ def _qos_history_depth_error(value: Any, param: str, context: str) -> str | None
         return error
     if value > MAX_QOS_HISTORY_DEPTH:
         return (
-            f"{context}: {param} {value!r} is a positive integer that the rclpy transport "
+            f"{context}: {param} {refusal_repr(value)} is a positive integer that the rclpy transport "
             f"cannot build a publisher with (it carries 1-{MAX_QOS_HISTORY_DEPTH}; the "
             "middleware QoS profile stores the depth as a signed 32-bit integer)"
         )

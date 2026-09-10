@@ -49,6 +49,7 @@ from strands_robots.utils import (
     finite_vector_error,
     orientation_quaternion_error,
     pose_vector_error,
+    refusal_repr,
 )
 
 logger = logging.getLogger(__name__)
@@ -344,6 +345,63 @@ def joint_rate_drive_map(model: Any, mj: Any) -> dict[int, int]:
         if commands_a_rate:
             rate_drives[target] = act_id
     return rate_drives
+
+
+def torque_only_actuation(model: Any, robot: SimRobot, mj: Any) -> bool:
+    """Whether every actuator ``robot`` owns commands a raw force.
+
+    The third question in this family: :func:`joint_drive_map` asks which
+    actuator commands a *pose*, :func:`joint_rate_drive_map` which commands a
+    *rate*, and this one whether NOTHING the robot carries commands either. A
+    pure torque motor's ``ctrl`` is a force in Nm, so such a robot holds no
+    configuration on its own -- it settles under gravity unless a controller
+    supplies the holding force every step. That is the normal state of a
+    Menagerie quadruped or humanoid (``go2``, ``g1``), whose actuators are all
+    ``<motor>``.
+
+    Three terms, for the reason :func:`joint_drive_map` gives: the actuator
+    shortcuts overlap on any one of them, so no single field separates a motor
+    (measured on mujoco 3.13, one shortcut per row):
+
+    * ``gaintype == mjGAIN_FIXED`` - the force is ``ctrl`` times a constant, so
+      ``ctrl`` IS the force. ``<damper kv>`` clears the other two terms with
+      ``gaintype == mjGAIN_AFFINE``, and its ``ctrl`` scales a damping
+      coefficient rather than being a torque, so this term is what keeps the
+      claim "ctrl is in Nm" true of everything reported here.
+    * ``biastype == mjBIAS_NONE`` - no bias computed from the joint's own state,
+      so nothing restores toward a setpoint (``<position kp>`` and
+      ``<velocity kv>`` are both affine-bias).
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly, with
+      no ``act`` state in between (``<intvelocity>`` integrates it,
+      ``<cylinder>`` filters it).
+
+    Per actuator, and unanimous: a robot with even one position servo is not
+    reported here, because a pose written to that joint does hold.
+
+    Args:
+        model: The compiled ``MjModel``.
+        robot: The robot to scope, read through its already resolved
+            ``actuator_ids`` (control indices, which index the ``actuator_*``
+            arrays because :func:`_unaddressable_actuator_reason` declines any
+            model where the two spaces differ).
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``True`` when ``robot`` owns at least one actuator and every one of them
+        is a torque motor. An unactuated robot is ``False``: it has no ``ctrl``
+        to describe.
+    """
+    if not robot.actuator_ids:
+        return False
+    fixed_gain = int(mj.mjtGain.mjGAIN_FIXED)
+    no_bias = int(mj.mjtBias.mjBIAS_NONE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
+    return all(
+        int(model.actuator_gaintype[act_id]) == fixed_gain
+        and int(model.actuator_biastype[act_id]) == no_bias
+        and int(model.actuator_dyntype[act_id]) == stateless
+        for act_id in robot.actuator_ids
+    )
 
 
 def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
@@ -2615,7 +2673,7 @@ def _geom_shape_error(shape: Any) -> str | None:
         return None
     accepted = ", ".join(sorted(set(_SIZE_LAYOUT) - _UNSUPPORTED_GEOM_SHAPES))
     return (
-        f"add_geom: 'type' cannot be {shape!r} - this op has no key that names a mesh asset, "
+        f"add_geom: 'type' cannot be {refusal_repr(shape)} - this op has no key that names a mesh asset, "
         "so the geom it would add has no mesh to take its extent from and MuJoCo refuses the "
         'whole scene at recompile. Add a mesh with add_object(shape="mesh", mesh_path=...), '
         f"which registers the asset alongside the body. Accepted 'type' values: {accepted}."
