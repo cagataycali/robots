@@ -167,8 +167,28 @@ directory with contents is left for lerobot to refuse by name, and
 run: a `policy_type` whose stats want quantiles (`molmoact2`, `pi05`) on a
 dataset without `q01..q99`; a `codebase_version` older than the installed
 lerobot reads (names the converter); `val_episodes` on a streamed, multi-task,
-or count-less dataset (lerobot splits by fraction per task); `use_relative_actions`
+or count-less dataset (lerobot splits by fraction per task); `extra["relative_actions"]`
 on any policy other than `pi0` / `pi05` / `pi0_fast`.
+
+**Reward models train through the same trainer.** `extra["reward_model"]`
+selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
+`reward_classifier`) with that type's own fields, and
+`extra["sample_weighting"]` (`type`, `progress_path`, `head_mode`, `kappa`,
+`epsilon`) weights a policy run by RA-BC progress. Both dicts are refused before
+launch for a field the chosen type has no home for, for a `type` lerobot does not
+ship, and for the pipeline-ordering mistake of weighting a reward-model run.
+The progress parquet between the two runs is lerobot's to produce:
+
+```bash
+python -m lerobot.rewards.sarm.compute_rabc_weights \
+    --dataset-repo-id org/cube_pick \
+    --reward-model-path /tmp/sarm_out/checkpoints/last/pretrained_model \
+    --output-path /tmp/sarm_progress.parquet
+```
+
+So the loop is three runs: train the reward model here, compute the parquet
+there, then point `extra["sample_weighting"]["progress_path"]` at it. To score
+frames with a trained reward model, load it with lerobot's `make_reward_model`.
 
 ### GR00T (`groot`) and Cosmos3 (`cosmos3`)
 
