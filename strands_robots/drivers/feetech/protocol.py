@@ -70,6 +70,7 @@ the datasheet page it comes from.
 from __future__ import annotations
 
 import enum
+from collections.abc import Sequence
 from typing import Final, Literal
 
 # ---------------------------------------------------------------------------
@@ -82,12 +83,20 @@ HEADER: Final[bytes] = b"\xff\xff"
 
 BROADCAST_ID: Final[int] = 0xFE
 """ID a controller writes to when every servo on the bus should receive the
-packet and none should reply. :func:`sync_write_packet` uses this; a
-broadcast that expects replies (``SYNC_READ``, ``BULK_READ``) needs a
-distinct primitive that reads N status packets back."""
+packet. :func:`sync_write_packet` uses it for a write no servo answers, and
+:func:`sync_read_packet` for the one broadcast that *does* expect replies - N
+status packets back to back, which :func:`parse_sync_read_replies` frames."""
 
 MAX_UNICAST_ID: Final[int] = 0xFD
 """Highest ID a specific servo may hold. 0xFE is the broadcast."""
+
+STATUS_OVERHEAD: Final[int] = 6
+"""Bytes a status packet carries besides its params: ``FF FF ID LEN ERR .. CHK``.
+
+Named because two callers need it and neither should count it again: a reply's
+full length is ``STATUS_OVERHEAD + params``, which is what
+:func:`sync_read_reply_size` multiplies out and what
+:func:`parse_status_packet` checks a lone frame against."""
 
 _MAX_PARAM_COUNT: Final[int] = 0xFA
 """``LEN`` is one byte, and it must carry ``params + 2``. Anything above
@@ -189,6 +198,7 @@ class Instruction(enum.IntEnum):
     REG_WRITE = 0x04
     ACTION = 0x05
     RESET = 0x06
+    SYNC_READ = 0x82
     SYNC_WRITE = 0x83
 
 
@@ -481,6 +491,147 @@ def sync_write_packet(address: int, per_motor_length: int, motor_data: list[tupl
         params += data
 
     return build_packet(BROADCAST_ID, Instruction.SYNC_WRITE, bytes(params), allow_broadcast=True)
+
+
+def sync_read_packet(address: int, length: int, motor_ids: Sequence[int]) -> bytes:
+    """Frame a ``SYNC_READ`` asking every listed servo for one register.
+
+    The counterpart of :func:`sync_write_packet` on the read side: one
+    broadcast frame naming the register once and then the IDs, which the servos
+    answer with one status packet each, in ID order, back to back. That is the
+    only Feetech instruction where a broadcast expects replies, so the reply
+    stream needs framing rather than a single :func:`parse_status_packet` -
+    :func:`parse_sync_read_replies` does that, and :func:`sync_read_reply_size`
+    says how many bytes to read.
+
+    Protocol 0 only. The SCS series (protocol 1) does not answer ``SYNC_READ``
+    at all - lerobot refuses the instruction outright for it, keyed on the same
+    per-model protocol number this module's word order is keyed on - and this
+    codec is protocol 0, so the restriction costs nothing here beyond saying it.
+
+    Args:
+        address: First register byte to read, the same for every servo.
+        length: Bytes to read from each servo, ``1..0xFA``.
+        motor_ids: The servos to ask, in the order their replies are expected.
+
+    Returns:
+        The frame, byte-identical to ``scservo_sdk``'s
+        ``GroupSyncRead.txPacket()`` for the same address, width and IDs.
+
+    Raises:
+        TypeError: If any ID is not an :class:`int`.
+        ValueError: If ``address`` or ``length`` is out of range, if
+            ``motor_ids`` is empty, if it names one ID twice - two replies from
+            one servo cannot be told apart - or if it contains the broadcast.
+    """
+    if not 0 <= address <= 0xFF:
+        raise ValueError(f"address out of range 0..0xFF: {address:#x}")
+    if not 1 <= length <= _MAX_PARAM_COUNT:
+        raise ValueError(f"length out of range 1..{_MAX_PARAM_COUNT:#x}: {length}")
+    if not motor_ids:
+        raise ValueError("sync_read with no motors is a no-op; refused")
+
+    params = bytearray([address, length])
+    seen: set[int] = set()
+    for motor_id in motor_ids:
+        _validate_id(motor_id, allow_broadcast=False)  # a broadcast INSIDE sync_read is a bug
+        if motor_id in seen:
+            raise ValueError(f"sync_read lists motor_id {motor_id:#x} twice")
+        seen.add(motor_id)
+        params.append(motor_id)
+
+    return build_packet(BROADCAST_ID, Instruction.SYNC_READ, bytes(params), allow_broadcast=True)
+
+
+def sync_read_reply_size(motor_count: int, length: int) -> int:
+    """Bytes a :func:`sync_read_packet` reply stream carries in full.
+
+    ``motor_count * (STATUS_OVERHEAD + length)``, which is the byte budget the
+    vendor SDK computes for the same read (``setPacketTimeout((6 + data_length)
+    * param_length)`` in ``syncReadTx``). A caller that asks the port for more
+    than this waits out its whole read window for bytes no servo is going to
+    send; one that asks for less truncates the last servo's frame.
+
+    Args:
+        motor_count: How many servos the frame addressed.
+        length: Bytes read from each of them.
+
+    Returns:
+        The total reply length in bytes.
+
+    Raises:
+        ValueError: If either argument is not positive.
+    """
+    if motor_count < 1:
+        raise ValueError(f"motor_count must be positive: {motor_count}")
+    if length < 1:
+        raise ValueError(f"length must be positive: {length}")
+    return motor_count * (STATUS_OVERHEAD + length)
+
+
+def parse_sync_read_replies(raw: bytes, motor_ids: Sequence[int], expected_param_count: int) -> dict[int, bytes]:
+    """Frame a ``SYNC_READ`` reply stream into one param block per servo.
+
+    :func:`parse_status_packet` grades exactly one packet and refuses trailing
+    bytes, because a lone read cannot know whether they are noise or the next
+    frame. Here they are the next frame, so this walks the stream, cuts each
+    packet at the length its own ``LEN`` byte declares, and hands the slice to
+    that same parser - one framing implementation, not two.
+
+    A servo that did not answer, answered a frame that does not verify, or was
+    not asked for is simply absent from the result: a position that failed its
+    checksum is not a measurement, and guessing one is how a stopped joint
+    reports as moving. The host's own echoed request frame is skipped for the
+    same reason - it is addressed to the broadcast ID, which no servo holds.
+
+    Args:
+        raw: The bytes read back after the frame went out. Leading echo and a
+            truncated tail are both tolerated.
+        motor_ids: The servos the request named. A frame from any other ID is
+            ignored rather than trusted.
+        expected_param_count: Bytes each servo was asked for, so a servo that
+            answered a different width is refused rather than read short.
+
+    Returns:
+        Motor ID -> its param bytes, for every reply that verified. Ordered by
+        first appearance in the stream.
+
+    Raises:
+        TypeError: If ``raw`` is not bytes-like.
+        ValueError: If ``expected_param_count`` is outside the protocol's
+            domain - the same domain :func:`parse_status_packet` holds.
+    """
+    if not isinstance(raw, (bytes, bytearray)):
+        raise TypeError(f"raw must be bytes, got {type(raw).__name__}")
+    if expected_param_count < 0 or expected_param_count > _MAX_PARAM_COUNT:
+        raise ValueError(f"expected_param_count out of range: {expected_param_count}")
+
+    stream = bytes(raw)
+    wanted = set(motor_ids)
+    out: dict[int, bytes] = {}
+    offset = 0
+    while offset < len(stream):
+        header = _find_header(stream[offset:])
+        if header < 0:
+            break
+        start = offset + header
+        if start + 4 > len(stream):
+            break
+        end = start + 4 + stream[start + 3]  # header(2) + ID + LEN + LEN's own count
+        if end > len(stream):
+            break  # the stream stops mid-frame: a short read, not a bad servo
+        frame = stream[start:end]
+        offset = end
+        motor_id = frame[2]
+        if motor_id not in wanted or motor_id in out:
+            continue
+        try:
+            _error, params = parse_status_packet(frame, motor_id, expected_param_count)
+        except ProtocolError:
+            # A frame that did not verify is not a measurement.
+            continue
+        out[motor_id] = params
+    return out
 
 
 # ---------------------------------------------------------------------------

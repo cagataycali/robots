@@ -40,8 +40,11 @@ from strands_robots.drivers.feetech.protocol import (
     encode_word,
     max_magnitude,
     parse_status_packet,
+    parse_sync_read_replies,
     ping_packet,
     read_packet,
+    sync_read_packet,
+    sync_read_reply_size,
     sync_write_packet,
     write_packet,
 )
@@ -69,8 +72,11 @@ __all__ = [
     "load_calibration",
     "max_magnitude",
     "parse_status_packet",
+    "parse_sync_read_replies",
     "ping_packet",
     "read_packet",
+    "sync_read_packet",
+    "sync_read_reply_size",
     "sync_write_packet",
     "write_packet",
 ]
