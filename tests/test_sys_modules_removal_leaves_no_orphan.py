@@ -54,9 +54,36 @@ It is deliberately one-directional and under-reports rather than over-reports:
 * Every name bound to ``sys`` in the file is followed, so an aliased
   ``import sys as _sys`` is graded on both sides of the rule - four files use
   that spelling, all of them with the restoring idiom.
-* Any ``finally``, ``patch.dict``, ``monkeypatch.setitem`` or re-assignment in
-  the same function counts as restoring, without checking that it restores the
-  same key.
+* **Restoring** is judged per key, and means the value was *captured*: a
+  ``sys.modules[key]`` read, or a ``get``/``pop`` of that key whose result is
+  bound to something rather than discarded as a bare statement. It is looked for
+  in the removing function and, so that a ``setup_method`` which saves and a
+  ``teardown_method`` which restores are read as the one unit they are, in the
+  enclosing class. ``patch.dict``, ``monkeypatch.setitem`` and
+  ``registry.update`` are taken at face value, each restoring on its own.
+
+  A ``finally`` is **not** restoration, and reading it as one is what let this
+  rule pass over two live offenders. The obvious teardown for
+  ``sys.modules[name] = None`` is ``del sys.modules[name]`` - a second removal,
+  not an undo - so a block whose ``finally`` deletes the key it planted looks
+  maximally careful and orphans the entry anyway. Both absent-``imageio`` blocks
+  were that shape. Measured after the isaac one, in the ordering the full suite
+  collects, against the module object every collected file had bound:
+
+  ===============================  ==================  ==================
+  after                            ``sys.modules``     ``_lazy_modules``
+  ===============================  ==================  ==================
+  nothing (control)                the bound object    no entry
+  the isaac block                  a different object  a different object
+  the mujoco block                 a different object  the bound object
+  ===============================  ==================  ==================
+
+  With both mappings wrong, ``require_optional("imageio")`` answered with a
+  module nothing had patched and
+  ``tests/simulation/test_policy_runner_video_writer_cleanup.py`` reported
+  "video writer was leaked when the rollout raised" against a runner that closes
+  it. The mujoco copy left only ``sys.modules`` wrong, so it had no symptom -
+  the same defect, one ordering away from the same failure.
 * Purging a module **no test patches** stays legal. That is a deliberate
   cache-invalidation idiom here - ``tests/policies/lerobot_local/
   test_resolution.py`` drops ``lerobot.*`` to force re-registration, and it
@@ -67,6 +94,12 @@ It is deliberately one-directional and under-reports rather than over-reports:
 ``monkeypatch.setitem(sys.modules, name, None)`` is the idiom for "make
 ``import name`` raise ``ImportError``": it has the same effect and it restores.
 ``tests/mesh/test_iot_camera_offload.py`` uses it for ``cv2`` in the same file.
+Blocking an *optional* dependency needs a second mapping cleared as well -
+:data:`strands_robots.utils._lazy_modules`, or a memoised earlier import answers
+instead of the block - and :func:`tests._blocked_module.blocked` is the one place
+that pairs them and restores both. Three files had copied the two-step idiom by
+hand and two of the copies restored only one of the two mappings, which is the
+duplication that made one defect two.
 
 A second rule lives here, for the cells that remove an entry in order to
 **import the module again**. ``importlib.import_module`` binds a submodule in
@@ -108,7 +141,7 @@ from __future__ import annotations
 
 import ast
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -245,27 +278,95 @@ def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: 
     return found
 
 
-def _restores(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> bool:
-    """Whether *fn* puts something back. Permissive on purpose - see the module docstring."""
-    source = ast.unparse(fn)
-    if "finally" in source or "patch.dict" in source:
-        return True
-    return any(
-        f"setitem({registry}" in source
-        or f"{registry}.update" in source
-        or (f"{registry}[" in source and "] =" in source)
-        for registry in registries
-    )
+def _discarded_calls(scope: ast.AST) -> set[int]:
+    """``id()`` of each call in *scope* whose value goes nowhere.
+
+    A call standing alone as a statement discards what it returns, which is the
+    difference between ``held = sys.modules.pop(name)`` and a bare
+    ``sys.modules.pop(name, None)``: both remove the entry, only the first keeps
+    the value needed to put it back.
+    """
+    return {
+        id(node.value) for node in ast.walk(scope) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    }
+
+
+def _captures_displaced(scope: ast.AST, registries: set[str], key: str) -> bool:
+    """Whether *scope* reads *key*'s value into something it could put back."""
+    discarded = _discarded_calls(scope)
+    for node in ast.walk(scope):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get", "pop"}
+            and ast.unparse(node.func.value) in registries
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == key
+            and id(node) not in discarded
+        ):
+            return True
+        if (
+            isinstance(node, ast.Subscript)
+            and ast.unparse(node.value) in registries
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == key
+            and isinstance(node.ctx, ast.Load)
+        ):
+            return True
+    return False
+
+
+def _restores(scopes: Sequence[ast.AST], registries: set[str], key: str) -> bool:
+    """Whether *key*'s displaced value is put back anywhere in *scopes*.
+
+    Per key, because a function that restores one entry says nothing about a
+    second one it also removed - and not satisfied by a ``finally``, which is
+    where the removal itself usually lives.
+    """
+    for scope in scopes:
+        source = ast.unparse(scope)
+        if "patch.dict" in source:
+            return True
+        if any(f"setitem({registry}" in source or f"{registry}.update" in source for registry in registries):
+            return True
+        if _captures_displaced(scope, registries, key):
+            return True
+    return False
+
+
+def _method_owners(tree: ast.Module) -> dict[int, ast.ClassDef]:
+    """Each method's enclosing class, keyed by ``id()`` of the function node.
+
+    A ``setup_method`` that saves and a ``teardown_method`` that restores are one
+    unit; read a method alone and the save is invisible.
+    """
+    owners: dict[int, ast.ClassDef] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for child in ast.walk(node):
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                    owners.setdefault(id(child), node)
+    return owners
 
 
 def unrestored_removals(tree: ast.Module) -> list[tuple[int, str, str]]:
     """``(lineno, function, key)`` for each literal removal *tree* never undoes."""
     registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
+    owners = _method_owners(tree)
     reported: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or _restores(node, registries):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
-        reported.extend((lineno, node.name, key) for lineno, key in _own_scope_removals(node, registries))
+        scopes: list[ast.AST] = [node]
+        owner = owners.get(id(node))
+        if owner is not None:
+            scopes.append(owner)
+        reported.extend(
+            (lineno, node.name, key)
+            for lineno, key in _own_scope_removals(node, registries)
+            if not _restores(scopes, registries, key)
+        )
     return reported
 
 
@@ -295,7 +396,9 @@ class TestNoRemovalOrphansAPatchedModule:
             "does not put it back - the sibling's reference is orphaned, so its patch "
             "is invisible to the next import and the real package is used instead. "
             "Use monkeypatch.setitem(sys.modules, name, None) to make `import name` "
-            "raise ImportError with restoration, or restore the entry in a finally:\n  " + "\n  ".join(offenders)
+            "raise ImportError with restoration, tests._blocked_module.blocked to block an "
+            "optional dependency, or capture the displaced value and assign it back - a "
+            "finally that deletes the key is a second removal, not an undo:\n  " + "\n  ".join(offenders)
         )
 
     def test_the_protected_set_is_derived_from_the_test_tree(self) -> None:
@@ -366,6 +469,81 @@ class TestTheScanIsSpecific:
                 "        pass",
                 "    finally:",
                 "        sys.modules['boto3'] = held",
+            ]
+        )
+        assert unrestored_removals(ast.parse(source)) == []
+
+    def test_a_finally_that_only_deletes_the_key_is_reported(self) -> None:
+        """The shape both absent-``imageio`` blocks had: careful-looking, still an orphan.
+
+        The block plants an entry and its ``finally`` deletes it, so the module
+        the interpreter had is gone rather than restored. Reading the ``finally``
+        as restoration is what let this rule pass over it.
+        """
+        source = "\n".join(
+            [
+                "import sys",
+                "def blocked():",
+                "    sys.modules['boto3'] = None",
+                "    try:",
+                "        yield",
+                "    finally:",
+                "        del sys.modules['boto3']",
+            ]
+        )
+        assert unrestored_removals(ast.parse(source)) == [(7, "blocked", "boto3")]
+
+    def test_a_discarded_pop_is_not_a_capture(self) -> None:
+        """``pop(key, None)`` as a statement removes the entry and keeps nothing."""
+        discarded = "\n".join(
+            [
+                "import sys",
+                "def test_x():",
+                "    sys.modules.pop('boto3', None)",
+                "    try:",
+                "        pass",
+                "    finally:",
+                "        sys.modules['boto3'] = object()",
+            ]
+        )
+        captured = "\n".join(
+            [
+                "import sys",
+                "def test_x():",
+                "    held = sys.modules.pop('boto3', None)",
+                "    try:",
+                "        pass",
+                "    finally:",
+                "        sys.modules['boto3'] = held",
+            ]
+        )
+        assert unrestored_removals(ast.parse(discarded)) == [(3, "test_x", "boto3")]
+        assert unrestored_removals(ast.parse(captured)) == []
+
+    def test_restoration_is_judged_per_key(self) -> None:
+        """Putting one entry back says nothing about a second the function also removed."""
+        source = "\n".join(
+            [
+                "import sys",
+                "def test_x():",
+                "    held = sys.modules.pop('boto3')",
+                "    del sys.modules['awscrt']",
+                "    sys.modules['boto3'] = held",
+            ]
+        )
+        assert unrestored_removals(ast.parse(source)) == [(4, "test_x", "awscrt")]
+
+    def test_a_setup_teardown_pair_is_read_as_one_unit(self) -> None:
+        """``tests/mesh/test_transport.py`` saves in one method and restores in another."""
+        source = "\n".join(
+            [
+                "import sys",
+                "class TestX:",
+                "    def setup_method(self):",
+                "        self.saved = sys.modules.get('awscrt')",
+                "        sys.modules['awscrt'] = object()",
+                "    def teardown_method(self):",
+                "        sys.modules.pop('awscrt', None)",
             ]
         )
         assert unrestored_removals(ast.parse(source)) == []

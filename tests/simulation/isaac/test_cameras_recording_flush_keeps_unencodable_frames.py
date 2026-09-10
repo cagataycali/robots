@@ -28,44 +28,23 @@ lifecycle runs without the Isaac Sim Kit runtime.
 
 from __future__ import annotations
 
-import contextlib
-import sys
 import threading
 
 import numpy as np
 import pytest
 
-from strands_robots import utils
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
+from tests._blocked_module import blocked
 
 _CAMERAS = ["front", "wrist"]
 _FRAMES = 4
 
 
-@contextlib.contextmanager
-def _blocked_encoder():
-    """An install with no ``imageio``, for one block.
-
-    Two steps, because :func:`~strands_robots.utils.require_optional` memoises a
-    module it has already imported: the ``sys.modules`` entry is what makes the
-    import fail, and dropping the cache entry is what stops an earlier import in
-    the same session from answering instead.
-    """
-    cached = utils._lazy_modules.pop("imageio", None)
-    sys.modules["imageio"] = None  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        del sys.modules["imageio"]
-        if cached is not None:
-            utils._lazy_modules["imageio"] = cached
-
-
 @pytest.fixture
 def no_encoder():
-    """:func:`_blocked_encoder` for a whole cell."""
-    with _blocked_encoder():
+    """:func:`tests._blocked_module.blocked` on ``imageio`` for a whole cell."""
+    with blocked("imageio"):
         yield
 
 
@@ -176,7 +155,7 @@ class TestAFlushWithNoEncoder:
     def test_a_later_call_encodes_them(self, recorder, tmp_path) -> None:
         """Following the message's own advice recovers every frame."""
         imageio = pytest.importorskip("imageio.v2")
-        with _blocked_encoder():
+        with blocked("imageio"):
             buffered = recorder.buffer_a_few()
             first = recorder.sim.stop_cameras_recording()
             assert first["status"] == "error", first

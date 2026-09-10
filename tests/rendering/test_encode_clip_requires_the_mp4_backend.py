@@ -54,10 +54,8 @@ from __future__ import annotations
 
 import ast
 import io
-import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -66,8 +64,8 @@ import pytest
 
 imageio = pytest.importorskip("imageio", reason="imageio not installed - pip install imageio imageio-ffmpeg")
 
-from strands_robots import utils  # noqa: E402
 from strands_robots.rendering import encode_clip  # noqa: E402
+from tests._blocked_module import blocked  # noqa: E402
 
 #: The ``imageio`` plugin that writes MP4, spelled out here rather than imported
 #: from the encoder: what a caller experiences is this module being absent, and
@@ -89,35 +87,10 @@ def _frames(n: int = 4, w: int = 32, h: int = 24) -> list[np.ndarray]:
     return [np.full((h, w, 3), (i * 40) % 256, dtype=np.uint8) for i in range(n)]
 
 
-@contextmanager
-def _no_mp4_backend() -> Iterator[None]:
-    """An install with ``imageio`` but not its MP4 plugin, for one block.
-
-    Two steps, because :func:`~strands_robots.utils.require_optional` memoises a
-    module it has already imported: the ``sys.modules`` entry is what makes the
-    import fail, and dropping the cache entry is what stops an earlier import in
-    the same session from answering instead. Mirrors
-    ``tests/simulation/mujoco/test_camera_recorder_stop_reports_the_join.py``'s
-    absent-``imageio`` block.
-    """
-    cached = utils._lazy_modules.pop(_MP4_BACKEND_MODULE, None)
-    saved = sys.modules.get(_MP4_BACKEND_MODULE, "absent")
-    sys.modules[_MP4_BACKEND_MODULE] = None  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        if saved == "absent":
-            del sys.modules[_MP4_BACKEND_MODULE]
-        else:
-            sys.modules[_MP4_BACKEND_MODULE] = saved  # type: ignore[assignment]
-        if cached is not None:
-            utils._lazy_modules[_MP4_BACKEND_MODULE] = cached
-
-
 @pytest.fixture
 def no_mp4_backend() -> Iterator[None]:
-    """:func:`_no_mp4_backend` for a whole cell."""
-    with _no_mp4_backend():
+    """:func:`tests._blocked_module.blocked` on the MP4 plugin for a whole cell."""
+    with blocked(_MP4_BACKEND_MODULE):
         yield
 
 
@@ -292,7 +265,7 @@ class TestTheMujocoFlushKeepsTheFramesItCannotEncode:
 
     def test_the_stop_refuses_and_leaves_the_recording_registered(self, recording: Any, tmp_path: Path) -> None:
         """The buffers survive an install the encoder cannot use, and are recoverable."""
-        with _no_mp4_backend():
+        with blocked(_MP4_BACKEND_MODULE):
             result = recording.stop_cameras_recording()
 
         assert result["status"] == "error", result
@@ -311,7 +284,7 @@ class TestTheMujocoFlushKeepsTheFramesItCannotEncode:
     ) -> None:
         """What the refusal promises: install the plugin, stop again, get the clip."""
         pytest.importorskip(_MP4_BACKEND_MODULE)
-        with _no_mp4_backend():
+        with blocked(_MP4_BACKEND_MODULE):
             buffered = recording.stop_cameras_recording()
         frames = next(b["json"] for b in buffered["content"] if "json" in b)["buffered_frames"]["cam_a"]
 
