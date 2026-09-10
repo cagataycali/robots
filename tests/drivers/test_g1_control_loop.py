@@ -87,12 +87,24 @@ class _StubCRC:
 
 @pytest.fixture(autouse=True)
 def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+    """Install a ``unitree_sdk2py`` stub for the duration of one test."""
+    install_unitree_sdk_stub(monkeypatch)
 
-    Every submodule the driver imports is registered on :mod:`sys.modules`
-    so ``from unitree_sdk2py.idl.default import ...`` and its siblings
-    resolve here.  ``monkeypatch.setitem`` restores the previous value
-    (typically absent) on teardown.
+
+def install_unitree_sdk_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register a ``unitree_sdk2py`` stub on :mod:`sys.modules`.
+
+    Every submodule the driver imports is registered so
+    ``from unitree_sdk2py.idl.default import ...`` and its siblings resolve
+    here.  ``monkeypatch.setitem`` restores the previous value (typically
+    absent) on teardown.
+
+    A plain function rather than only a fixture, so a sibling suite grading the
+    same driver installs the same stub instead of keeping a second copy of it -
+    the shape :mod:`tests.drivers.test_go2_driver` already uses.
+
+    Args:
+        monkeypatch: The requesting test's patcher, which owns the teardown.
     """
     root = types.ModuleType("unitree_sdk2py")
     idl = types.ModuleType("unitree_sdk2py.idl")

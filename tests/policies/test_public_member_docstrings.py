@@ -4,7 +4,7 @@
 
 :mod:`tests.policies.test_provider_policy_docstrings` already pins the docstring
 contract for the backend *provider* Policy classes (GR00T, cuRobo, cosmos3, the
-two lerobot providers, MotionBricks, MoveIt2, the two WBC controllers) and
+two lerobot providers, MoveIt2, the two WBC controllers) and
 :mod:`tests.policies.test_builtin_policy_docstrings` pins the dependency-free
 built-ins. Neither reaches the *ancillary* public classes the providers lean on:
 the ZMQ ``MsgSerializer`` wire codecs and the LeRobot

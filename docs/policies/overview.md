@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, remote, curobo, moveit2, wbc, wbc_gait, kimodo, protomotions.
 ---
 
 # Policy providers
@@ -9,7 +9,7 @@ truth - list the providers with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'wbc', 'wbc_gait']
+# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'moveit2', 'protomotions', 'remote', 'wbc', 'wbc_gait']
 ```
 
 `create_policy` also accepts each provider's declared aliases and shorthands,
@@ -67,11 +67,11 @@ so neither can silently drift.
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
+| [`rl`](rl.md) | `RLCheckpointPolicy` | _(core)_ | Roll out an actor trained by `create_trainer("ppo"|"fast_sac"|"fast_td3")`: loads the run's `policy.pt` + `policy_meta.json` and drives the robot deterministically (non-VLA) |
 | [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
 | [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
 | [`wbc`](wbc.md) | `WBCPolicy` | `wbc` | NVIDIA GR00T Whole-Body-Control (SONIC) Unitree G1 humanoid locomotion, in-process ONNX, no GPU (non-VLA) |
 | [`wbc_gait`](wbc_gait.md) | `WBCGaitPolicy` | `wbc` | WBC gait-clock variant: single ONNX policy, 95-dim obs + bipedal phase clock (non-VLA) |
-| [`motionbricks`](motionbricks.md) | `MotionBricksPolicy` | `motionbricks` | Generative kinematic Unitree G1 motion (style-driven: walk/stealth_walk/...), in-process torch (non-VLA) |
 | [`kimodo`](kimodo.md) | `KimodoPolicy` | `kimodo` | Text-to-motion diffusion for the Unitree G1 (free-form prompt -> kinematic qpos), in-process torch (non-VLA) |
 | [`protomotions`](protomotions.md) | `ProtoMotionsPolicy` | `protomotions` | ProtoMotions Generalist Tracking Policy: tracks a reference motion clip on the Unitree G1, in-process ONNX (non-VLA) |
 | [`microduck`](microduck.md) | `MicroduckPolicy` | `microduck` | Pollen Microduck 14-DOF open biped locomotion (walk/stand), in-process ONNX with the normaliser fused into the graph (non-VLA) |
@@ -141,7 +141,6 @@ structured error naming the parameter, before any policy is created.
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA, no in-venv ROS 2).
 - [WBC](wbc.md) - GR00T Whole-Body-Control (SONIC) G1 locomotion (non-VLA, in-process ONNX).
 - [WBC gait-clock variant](wbc_gait.md) - single-ONNX gait-clock G1 controller (non-VLA).
-- [MotionBricks](motionbricks.md) - generative kinematic G1 motion (non-VLA, in-process torch).
 - [Kimodo](kimodo.md) - text-to-motion diffusion for the G1 (non-VLA, in-process torch).
 - [ProtoMotions](protomotions.md) - GTP reference-motion tracker for the G1 (non-VLA, in-process ONNX).
 - [Custom policies](custom-policies.md) - implement the ABC.

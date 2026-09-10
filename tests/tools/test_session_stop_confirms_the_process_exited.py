@@ -16,7 +16,7 @@ the process table until that wait returns. Two things then go wrong at once:
 the caller is told the arm is released and the GPU is free, and the record is
 dropped. That store is the only place a detached session's PID is written down
 (``SessionManager._load_sessions`` says so, and
-``tests.tools.test_teleop_session_store_keeps_a_live_pid`` pins it), so the
+``tests.tools.test_the_session_store_keeps_a_live_pid`` pins it), so the
 process carries on driving the robot with no supported way left to stop it.
 
 The sibling teardown in the same package already refuses to do this:
@@ -65,8 +65,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Redirect both session stores to a temp dir so no test touches the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 

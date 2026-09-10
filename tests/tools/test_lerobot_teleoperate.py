@@ -22,14 +22,16 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from strands_robots.tools import _process_stop
+from strands_robots.tools._process_stop import session_is_running
 from tests.tool_result_contract import tool_json
 
 # Bind the public names off the single module handle rather than a second
 # ``from ... import`` of the same module (CodeQL: import + import-from of one
 # module). ``tele_mod`` is still needed directly so monkeypatch can rebind module
-# globals (``subprocess``/``os``/``time``/``SESSION_DIR``) and reach ``psutil`` by
-# setting an attribute on the module object it names -- rebinding the name itself
-# would be invisible to the prune, whose verdict is answered in another module.
+# globals (``subprocess``/``os``/``time``) and reach ``psutil`` by setting an
+# attribute on the module object it names -- rebinding the name itself would be
+# invisible to the running verdict, which is answered in another module.
 SessionManager = tele_mod.SessionManager
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
@@ -55,7 +57,7 @@ def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -589,12 +591,21 @@ def test_session_manager_add_get_remove_round_trip() -> None:
     assert mgr.get_session("s1") is None
 
 
-def test_session_manager_prunes_dead_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_session_manager_keeps_a_finished_session_and_reports_it_not_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished run keeps its record, and is not claimed to be running.
+
+    The store is one document shared with the training tool, so a read that
+    deleted a finished record would delete it for both. Being listed is not the
+    running claim: ``list`` and ``status`` derive that from the pid.
+    """
     mgr = SessionManager()
     # Persist a session with a pid that no longer exists.
     mgr.sessions_file.write_text(json.dumps({"ghost": {"pid": 999999}}))
-    monkeypatch.setattr(tele_mod.psutil, "pid_exists", lambda pid: False)
-    assert mgr.list_sessions() == {}
+    monkeypatch.setattr(_process_stop.psutil, "pid_exists", lambda pid: False)
+    assert list(mgr.list_sessions()) == ["ghost"]
+    assert session_is_running(mgr.get_session("ghost") or {}) is False
 
 
 def test_session_manager_handles_corrupt_store(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -798,8 +809,8 @@ def test_start_record_action_label_when_dataset_given(monkeypatch: pytest.Monkey
 def test_stop_already_dead_process_is_cleaned_up(monkeypatch: pytest.MonkeyPatch) -> None:
     """If the OS reports the process is already gone, the session is still
     removed and the call succeeds."""
-    # Use a live PID so the session survives the load-time liveness prune,
-    # then have the kill report the process is already gone.
+    # Use a live PID so the record reads as a running session, then have the
+    # kill report the process is already gone.
     SessionManager().add_session("ghost", {"pid": os.getpid(), "start_time": 0.0})
 
     def _raise_lookup(pid: int, sig: int) -> None:
@@ -1018,9 +1029,9 @@ def test_dagger_dispatch_starts_session(monkeypatch: pytest.MonkeyPatch) -> None
 # Degrade + error contracts: the dispatcher must return a structured
 # ``{"status": "error"}`` (never raise past dispatch) for missing arguments,
 # command-build failures, and unexpected internal faults, and the SessionManager
-# must survive an unreadable/unwritable store. What the prune makes of a process
+# must survive an unreadable/unwritable store. What the store makes of a process
 # that has gone away is graded where that verdict is answered, in
-# ``tests.tools.test_teleop_session_store_keeps_a_live_pid``.
+# ``tests.tools.test_the_session_store_keeps_a_live_pid``.
 # ---------------------------------------------------------------------------
 def test_save_sessions_swallows_oserror(tmp_path, caplog: pytest.LogCaptureFixture) -> None:
     """``_save_sessions`` logs and returns when the store path is unwritable
@@ -1073,7 +1084,7 @@ def test_status_log_tail_read_error_is_reported(monkeypatch: pytest.MonkeyPatch)
     """When the recorded log path exists but cannot be read (here it is a
     directory), status still succeeds and folds the read error into the body
     instead of aborting."""
-    log_dir = tele_mod.SESSION_DIR / "unreadable.log"
+    log_dir = _process_stop.SESSION_DIR / "unreadable.log"
     log_dir.mkdir()  # exists() is true but open() raises IsADirectoryError
     SessionManager().add_session("withbadlog", {"pid": os.getpid(), "start_time": 0.0, "log_file": str(log_dir)})
     result = lerobot_teleoperate(action="status", session_name="withbadlog")

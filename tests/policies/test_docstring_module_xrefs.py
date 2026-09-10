@@ -14,8 +14,8 @@ This guard walks every module/class/function docstring in the *top-level*
 ``strands_robots.policies`` modules (``base.py``, ``factory.py``, ``mock.py``,
 ``composite.py``, ``registry.py``, ...) and fails if any embeds a
 ``<something>.py`` filename token. It is intentionally non-recursive: the
-provider subpackages (``wbc/``, ``lerobot_local/``, ``cosmos3/``,
-``motionbricks/``, ...) legitimately cite *upstream* reference scripts by
+provider subpackages (``wbc/``, ``lerobot_local/``, ``cosmos3/``, ...)
+legitimately cite *upstream* reference scripts by
 filename (``run_mujoco_gear_wbc.py``, ``launch_finetune.py``), which name real
 files in other repositories and are not internal siblings.
 """
