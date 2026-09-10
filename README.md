@@ -1101,7 +1101,7 @@ with Device Shadow mirroring, S3 camera offload, and account-wide Fleet
 Provisioning. Hardened with CA pinning, strict thing-name validation,
 deny-by-default IoT policy scoping, and a safety audit log.
 Install with `uv pip install "strands-robots[mesh-iot]"`. See the
-[Configuration](#configuration) matrix for the `STRANDS_MESH_*` knobs.
+[Configuration](docs/reference/configuration.md) matrix for the `STRANDS_MESH_*` knobs.
 
 ## ROS 2 interoperability
 
@@ -1201,7 +1201,7 @@ process in [SECURITY.md](SECURITY.md) (AWS VDP / HackerOne).
 
 Note the `trust_remote_code` gate on `lerobot_local` (see
 [Policy providers](#policy-providers)) and the mesh CA-pinning / thing-name
-validation controls in the [Configuration](#configuration) matrix
+validation controls in the [Configuration](docs/reference/configuration.md) matrix
 Rotating the pinned Amazon Root CA1 has an ordered procedure:
 [CA Pin Rotation Runbook](#ca-pin-rotation-runbook).
 
