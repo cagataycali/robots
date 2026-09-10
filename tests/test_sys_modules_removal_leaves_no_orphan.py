@@ -54,9 +54,17 @@ It is deliberately one-directional and under-reports rather than over-reports:
 * Every name bound to ``sys`` in the file is followed, so an aliased
   ``import sys as _sys`` is graded on both sides of the rule - four files use
   that spelling, all of them with the restoring idiom.
-* Any ``finally``, ``patch.dict``, ``monkeypatch.setitem`` or re-assignment in
-  the same function counts as restoring, without checking that it restores the
-  same key.
+* A removal is undone by a restoring helper whose key a static read cannot
+  attribute (``patch.dict``, ``monkeypatch.setitem``, a bulk ``update``), or by
+  an assignment of the **same key on a later line**. Position is the whole
+  question for a removal inside a ``finally``: a context manager assigns the key
+  on the way *in*, so a function-scope read that ignored order called the
+  removal restored by the very statement that established the block. Two
+  ``_blocked_encoder`` copies were that shape - ``sys.modules["imageio"] =
+  None`` to block, ``del sys.modules["imageio"]`` in the ``finally`` - and the
+  orphan they left made
+  ``tests/simulation/test_policy_runner_video_writer_cleanup.py`` report a
+  leaked video writer whenever it ran behind either of them.
 * Purging a module **no test patches** stays legal. That is a deliberate
   cache-invalidation idiom here - ``tests/policies/lerobot_local/
   test_resolution.py`` drops ``lerobot.*`` to force re-registration, and it
@@ -66,7 +74,9 @@ It is deliberately one-directional and under-reports rather than over-reports:
 
 ``monkeypatch.setitem(sys.modules, name, None)`` is the idiom for "make
 ``import name`` raise ``ImportError``": it has the same effect and it restores.
-``tests/mesh/test_iot_camera_offload.py`` uses it for ``cv2`` in the same file.
+``tests/mesh/test_iot_camera_offload.py`` uses it for ``cv2`` in the same file,
+and :func:`tests._blocked_encoder.blocked_encoder` is the shared owner of the
+two-registry version optional modules need.
 
 A second rule lives here, for the cells that remove an entry in order to
 **import the module again**. ``importlib.import_module`` binds a submodule in
@@ -245,16 +255,42 @@ def _own_scope_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: 
     return found
 
 
-def _restores(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> bool:
-    """Whether *fn* puts something back. Permissive on purpose - see the module docstring."""
+def _putbacks(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> list[tuple[int, str | None]]:
+    """``(lineno, key)`` for each assignment in *fn* that writes a registry entry.
+
+    ``key`` is ``None`` when a static read cannot resolve it, and such an
+    assignment then covers every removal in the function - the rule
+    under-reports rather than guesses at a computed key.
+    """
+    found: list[tuple[int, str | None]] = []
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Subscript) or ast.unparse(target.value) not in registries:
+                continue
+            index = target.slice
+            if isinstance(index, ast.Constant) and isinstance(index.value, str):
+                found.append((node.lineno, index.value))
+            else:
+                found.append((node.lineno, None))
+    return found
+
+
+def _restores(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str], key: str, lineno: int) -> bool:
+    """Whether *fn* puts *key* back after the removal on *lineno*.
+
+    Permissive by design and one-directional - see the module docstring. Either
+    shape counts: a helper that restores at teardown, wherever in the function
+    it is written, or an assignment of the same key on a later line.
+    """
     source = ast.unparse(fn)
-    if "finally" in source or "patch.dict" in source:
+    if "patch.dict" in source or any(
+        f"setitem({registry}" in source or f"{registry}.update" in source for registry in registries
+    ):
         return True
     return any(
-        f"setitem({registry}" in source
-        or f"{registry}.update" in source
-        or (f"{registry}[" in source and "] =" in source)
-        for registry in registries
+        put_key is None or (put_key == key and put_line > lineno) for put_line, put_key in _putbacks(fn, registries)
     )
 
 
@@ -263,9 +299,13 @@ def unrestored_removals(tree: ast.Module) -> list[tuple[int, str, str]]:
     registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
     reported: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or _restores(node, registries):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
-        reported.extend((lineno, node.name, key) for lineno, key in _own_scope_removals(node, registries))
+        reported.extend(
+            (lineno, node.name, key)
+            for lineno, key in _own_scope_removals(node, registries)
+            if not _restores(node, registries, key, lineno)
+        )
     return reported
 
 
@@ -369,6 +409,38 @@ class TestTheScanIsSpecific:
             ]
         )
         assert unrestored_removals(ast.parse(source)) == []
+
+    def test_a_finally_that_only_removes_the_key_is_reported(self) -> None:
+        """The shape that shipped the orphan, reduced to its statements.
+
+        A block goes in by assigning the key and comes out by deleting it, so
+        the function names the key twice and carries a ``finally`` - and still
+        leaves nothing where the displaced module was.
+        """
+        source = "\n".join(
+            [
+                "import sys",
+                "def blocked():",
+                "    sys.modules['boto3'] = None",
+                "    try:",
+                "        yield",
+                "    finally:",
+                "        del sys.modules['boto3']",
+            ]
+        )
+        assert unrestored_removals(ast.parse(source)) == [(7, "blocked", "boto3")]
+
+    def test_putting_a_different_key_back_does_not_cover_the_removal(self) -> None:
+        """Restoration is per key: a sibling entry is not the one that was taken."""
+        source = "\n".join(
+            [
+                "import sys",
+                "def test_x():",
+                "    del sys.modules['boto3']",
+                "    sys.modules['cv2'] = object()",
+            ]
+        )
+        assert unrestored_removals(ast.parse(source)) == [(3, "test_x", "boto3")]
 
     def test_the_restoring_monkeypatch_idiom_is_accepted(self) -> None:
         source = "\n".join(

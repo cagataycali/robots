@@ -40,10 +40,8 @@ second rather than the production wait.
 from __future__ import annotations
 
 import io
-import sys
 import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -53,9 +51,9 @@ import pytest
 mujoco = pytest.importorskip("mujoco", reason="mujoco not installed - pip install strands-robots[sim-mujoco]")
 imageio = pytest.importorskip("imageio", reason="imageio not installed - pip install imageio imageio-ffmpeg")
 
-from strands_robots import utils  # noqa: E402
 from strands_robots.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.mujoco import rendering  # noqa: E402
+from tests._blocked_encoder import blocked_encoder  # noqa: E402
 
 # Short enough that a cell's failed join is not felt, long enough that the
 # capture loop reaches the wedge on a loaded box.
@@ -172,29 +170,10 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             thread.join(timeout=10)
 
 
-@contextmanager
-def _blocked_encoder():
-    """An install that has ``mujoco`` but not ``imageio``, for one block.
-
-    Two steps, because :func:`~strands_robots.utils.require_optional` memoises a
-    module it has already imported: the ``sys.modules`` entry is what makes the
-    import fail, and dropping the cache entry is what stops an earlier import in
-    the same session from answering instead.
-    """
-    cached = utils._lazy_modules.pop("imageio", None)
-    sys.modules["imageio"] = None  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        del sys.modules["imageio"]
-        if cached is not None:
-            utils._lazy_modules["imageio"] = cached
-
-
 @pytest.fixture
 def no_encoder():
-    """:func:`_blocked_encoder` for a whole cell."""
-    with _blocked_encoder():
+    """:func:`~tests._blocked_encoder.blocked_encoder` for a whole cell."""
+    with blocked_encoder():
         yield
 
 
@@ -398,7 +377,7 @@ class TestAStopWhoseFlushCannotEncode:
 
     def test_the_recording_stays_registered_so_a_later_call_encodes_it(self, recorder, tmp_path) -> None:
         """Following the message's own advice recovers every frame."""
-        with _blocked_encoder():
+        with blocked_encoder():
             buffered = recorder.buffer_a_few()
             first = recorder.sim.stop_cameras_recording()
             assert first["status"] == "error", first
@@ -449,7 +428,7 @@ class TestAStopWhoseFlushCannotEncode:
             on_frame(step, {}, {})
         assert rec.buffered() == 3, "premise: the synchronous recorder buffered frames"
 
-        with _blocked_encoder():
+        with blocked_encoder():
             first = finalize()
             assert first["status"] == "error", first
             assert rec.sim._cams_rec_state is not None
