@@ -28,8 +28,8 @@ def _refused(value: Any) -> str | None:
     return None
 
 
-class TestTheValueRuleTheCensusNowStates:
-    """What the corrected census claims, pinned against the validator."""
+class TestTheInputFrameValueDomain:
+    """Which values :func:`validate_input_frame` admits, and which it refuses."""
 
     @pytest.mark.parametrize("value", [True, False])
     def test_a_python_bool_is_refused_rather_than_coerced(self, value: bool) -> None:
@@ -72,8 +72,8 @@ class TestTheValueRuleTheCensusNowStates:
         assert refusal is not None and "out of range" in refusal, refusal
 
 
-class TestTheActionRulesTheCensusNowStates:
-    """The census's new bullets describe what the validator really does."""
+class TestTheCommandActionRules:
+    """The per-action identifier and override-code rules of a mesh command."""
 
     @pytest.mark.parametrize("identifier", ["**", "*", "a/b", "with space", "semi;colon"])
     def test_a_teleop_source_peer_id_outside_the_charset_is_refused(self, identifier: str) -> None:
@@ -104,7 +104,7 @@ class TestTheActionRulesTheCensusNowStates:
         with pytest.raises(security.ValidationError, match="must be a string"):
             security.validate_command({"action": "resume", "override_code": code})
 
-    def test_an_override_code_past_the_cited_bound_is_refused(self) -> None:
+    def test_an_override_code_past_the_length_bound_is_refused(self) -> None:
         over = "a" * (security.MAX_OVERRIDE_CODE_LEN + 1)
         with pytest.raises(security.ValidationError, match="too long"):
             security.validate_command({"action": "resume", "override_code": over})
@@ -114,7 +114,7 @@ class TestTheActionRulesTheCensusNowStates:
         with pytest.raises(security.ValidationError, match="control characters"):
             security.validate_command({"action": "resume", "override_code": code})
 
-    def test_a_printable_override_code_at_the_bound_is_admitted(self) -> None:
+    def test_a_printable_override_code_at_the_length_bound_is_admitted(self) -> None:
         at_bound = "a" * security.MAX_OVERRIDE_CODE_LEN
         assert security.validate_command({"action": "resume", "override_code": at_bound})["override_code"] == at_bound
 

@@ -1106,10 +1106,12 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     bound, charset with no control byte); a numeric domain via
     :func:`_coerce_float` / :func:`_coerce_int` (``duration``, ``policy_port``,
     ``target_pose`` [7], ``target_velocity``, ``control_frequency``,
-    ``action_horizon``, ``n_steps``, ``steps``); or a structural one-off
-    (``instruction`` non-empty with no control character, ``policy_provider``
-    required on execute/start, ``target_joints`` dict bounded by
-    :data:`MAX_TARGET_JOINTS`, ``world_update`` bounded by
+    ``action_horizon``, ``n_steps``, ``steps``), with ``target_velocity`` also
+    held to the locomotion envelope of
+    :mod:`strands_robots.locomotion_envelope` that the WBC sink re-applies; or
+    a structural one-off (``instruction`` non-empty with no control character,
+    ``policy_provider`` required on execute/start, ``target_joints`` dict
+    bounded by :data:`MAX_TARGET_JOINTS`, ``world_update`` bounded by
     :data:`MAX_WORLD_UPDATE_BYTES`). Refusal messages name the codepoint and
     offset of an offending byte rather than echo the payload, because the
     dispatcher logs the error.
