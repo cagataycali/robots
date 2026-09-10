@@ -1739,6 +1739,31 @@ class LerobotLocalPolicy(Policy):
             # Auto-detect: use model's rtc_config.enabled
             self._rtc_enabled = rtc_config is not None and getattr(rtc_config, "enabled", False)
         elif self._rtc_requested is True:
+            if (
+                rtc_config is None
+                and config is not None
+                and hasattr(config, "rtc_config")
+                and hasattr(self._policy, "init_rtc_processor")
+            ):
+                # A flow-matching policy whose checkpoint ships ``rtc_config=None``
+                # - every public SmolVLA/Pi0 checkpoint does, RTC is an inference
+                # time choice - so construct the config the caller asked for and
+                # let lerobot build its processor from it (``init_rtc_processor``
+                # also pushes the processor into the already-built model).
+                from lerobot.policies.rtc.configuration_rtc import RTCConfig
+
+                overrides: dict[str, Any] = {"enabled": True}
+                if self._rtc_execution_horizon is not None:
+                    overrides["execution_horizon"] = self._rtc_execution_horizon
+                if self._rtc_max_guidance_weight is not None:
+                    overrides["max_guidance_weight"] = self._rtc_max_guidance_weight
+                rtc_config = RTCConfig(**overrides)
+                config.rtc_config = rtc_config
+                self._policy.init_rtc_processor()
+                logger.info(
+                    "RTC requested and policy '%s' shipped no rtc_config - constructed one.",
+                    type(self._policy).__name__,
+                )
             if rtc_config is None:
                 # User explicitly asked for RTC, but this policy has no rtc_config.
                 # This means it's not a flow-matching policy - warn and disable.

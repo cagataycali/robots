@@ -1,0 +1,2 @@
+### Fixed
+- `create_policy("lerobot_local", ..., rtc_enabled=True)` now engages RTC on public flow-matching checkpoints (`lerobot/smolvla_base`, Pi0), which ship `config.rtc_config = None`. The adapter constructs an `RTCConfig` from the caller's `rtc_execution_horizon` / `rtc_max_guidance_weight` (lerobot defaults otherwise) and calls lerobot's `init_rtc_processor()`. It used to warn `has no rtc_config` and silently run `select_action()`.
