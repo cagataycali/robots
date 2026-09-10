@@ -1,8 +1,10 @@
 """Policy factory - create_policy() and runtime registration."""
 
+import json
 import logging
 import os
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from strands_robots import refusal_codes
 from strands_robots.policies.base import Policy
@@ -142,7 +144,33 @@ _HF_REMOTE_CODE_PROVIDERS: frozenset[str] = frozenset(
 )
 
 
-def _check_trust_remote_code(provider: str) -> None:
+# lerobot policy types whose modeling code never calls ``trust_remote_code``.
+# Measured on lerobot 0.5.x with
+#   grep -rl "trust_remote_code\|TokenizerProcessorStep" lerobot/policies/*/
+# -> evo1 gaussian_actor groot multi_task_dit pi0 pi0_fast pi05 smolvla wall_x xvla
+# all fetch tokenizers/encoders from the Hub with it even when the checkpoint
+# directory is local, so they stay gated. Re-run the grep before widening this.
+_LOCAL_NO_REMOTE_CODE_TYPES: frozenset[str] = frozenset({"act", "diffusion", "tdmpc", "vqbet"})
+
+
+def _is_local_checkpoint_without_remote_code(kwargs: Mapping[str, Any]) -> bool:
+    """True when ``pretrained_name_or_path`` is a directory on disk whose
+    ``config.json`` names a policy type in ``_LOCAL_NO_REMOTE_CODE_TYPES``.
+
+    Loading such a checkpoint executes nothing fetched from the Hub, so the
+    customer who just trained it does not need the opt-in.
+    """
+    path = kwargs.get("pretrained_name_or_path")
+    if not isinstance(path, str | os.PathLike) or not os.path.isdir(path):
+        return False
+    try:
+        with open(os.path.join(path, "config.json"), encoding="utf-8") as fh:
+            return json.load(fh).get("type") in _LOCAL_NO_REMOTE_CODE_TYPES
+    except (OSError, ValueError):
+        return False
+
+
+def _check_trust_remote_code(provider: str, kwargs: Mapping[str, Any] | None = None) -> None:
     """Enforce the trust-remote-code gate for HuggingFace-backed providers.
 
     Only providers listed in ``_HF_REMOTE_CODE_PROVIDERS`` are gated.
@@ -150,8 +178,12 @@ def _check_trust_remote_code(provider: str) -> None:
     allows **arbitrary code execution** from the model repository.
 
     Set the environment variable ``STRANDS_TRUST_REMOTE_CODE=1`` to opt in.
+    A local ACT/Diffusion/TD-MPC/VQ-BeT checkpoint directory (see
+    :func:`_is_local_checkpoint_without_remote_code`) needs no opt-in.
     """
     if provider not in _HF_REMOTE_CODE_PROVIDERS:
+        return
+    if provider == "lerobot_local" and kwargs and _is_local_checkpoint_without_remote_code(kwargs):
         return
 
     opted_in = os.environ.get("STRANDS_TRUST_REMOTE_CODE", "").strip()
@@ -291,7 +323,7 @@ def create_policy(provider: str, **kwargs) -> Policy:
             is not set.
     """
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
-    _check_trust_remote_code(canonical)
+    _check_trust_remote_code(canonical, resolved_kwargs)
     return PolicyClass(**resolved_kwargs)
 
 

@@ -5,6 +5,8 @@
 * kwargs forwarding to the chosen provider
 """
 
+import json
+
 import pytest
 
 from strands_robots.policies import (
@@ -17,6 +19,7 @@ from strands_robots.policies import (
     preflight_policy,
     register_policy,
 )
+from strands_robots.policies.factory import _check_trust_remote_code
 
 # Detect groot-service availability for conditional test grouping.
 try:
@@ -358,3 +361,33 @@ class TestPolicyOverridesPreflight:
         assert policy_overrides_preflight("mock") is False
         preflight_policy("mock", {"joint_0", "camera_top"})
         assert len(_PreflightPolicy.preflight_calls) == 1
+
+
+class TestTrustGateLocalCheckpoint:
+    """A checkpoint the customer trained on disk executes no Hub code, so it needs no opt-in."""
+
+    @staticmethod
+    def _checkpoint(tmp_path, policy_type):
+        ckpt = tmp_path / "pretrained_model"
+        ckpt.mkdir()
+        (ckpt / "config.json").write_text(json.dumps({"type": policy_type}))
+        return ckpt
+
+    def test_local_act_directory_passes_without_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        ckpt = self._checkpoint(tmp_path, "act")
+        _check_trust_remote_code("lerobot_local", {"pretrained_name_or_path": str(ckpt)})
+
+    def test_local_pi0_directory_still_gated(self, monkeypatch, tmp_path):
+        """pi0 pulls its tokenizer from the Hub with trust_remote_code even from a local dir."""
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        ckpt = self._checkpoint(tmp_path, "pi0")
+        with pytest.raises(UntrustedRemoteCodeError):
+            _check_trust_remote_code("lerobot_local", {"pretrained_name_or_path": str(ckpt)})
+
+    def test_hub_repo_id_still_gated(self, monkeypatch):
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        with pytest.raises(UntrustedRemoteCodeError):
+            _check_trust_remote_code(
+                "lerobot_local", {"pretrained_name_or_path": "lerobot/act_aloha_sim_transfer_cube_human"}
+            )
