@@ -1381,6 +1381,24 @@ class G1Driver:
         itself as ``None`` and leaves the other three intact, rather than
         raising past the dict and abandoning a frame that carried three good
         readings.
+
+        ``mode_machine`` is read the same way, through
+        :func:`~strands_robots.drivers.base.telemetry_int`.  It is a reading
+        like any other and it is the one this method sends back out: the
+        firmware drops a ``LowCmd_`` whose layout id does not match, so an id
+        built from something that was not a number is a write the robot
+        silently ignores.  ``int()`` read a ``bool`` as ``1``/``0``, both valid
+        uint8 layout ids, so a flag on the field was indistinguishable from a
+        reading; it also raised on a buffer or a word, which the shared
+        ``except`` then logged as a failure of the whole lowstate rather than of
+        one field.  A float is still truncated, because that is the owner's own
+        answer and the Go2 accepts it too.
+
+        A refused reading leaves :attr:`_mode_machine` at its previous value,
+        matching :meth:`_refresh_fsm_id` two ranges over: the layout id does
+        not change while the robot is powered, so the last reading that parsed
+        is a better answer than ``None`` - which the gate reads as "lowstate
+        has not delivered yet".
         """
         try:
             imu = getattr(msg, "imu_state", None)
@@ -1392,9 +1410,9 @@ class G1Driver:
                     "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
                     "t": time.time(),
                 }
-            mode_machine = getattr(msg, "mode_machine", None)
+            mode_machine = telemetry_int(getattr(msg, "mode_machine", None))
             if mode_machine is not None:
-                self._mode_machine = int(mode_machine)
+                self._mode_machine = mode_machine
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
             logger.debug("%s: lowstate decode failed: %s", self._tool_name, exc)
 

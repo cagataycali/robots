@@ -174,6 +174,20 @@ which driver asked. Each returns `None` for anything that is not a reading, incl
 vector of the wrong length). The vector readers are all-or-nothing and return a fresh list, so a
 caller mutating the envelope does not race the callback thread's next write.
 
+The rule covers the scalars a decoder sends back out, not only the ones it publishes. The Unitree
+`mode_machine` is read from `rt/lowstate` and echoed on every `LowCmd_`, and the firmware drops a
+frame whose layout id does not match the one it announced -- so an id that came from something other
+than a number is a write the robot silently ignores. A bare `int()` is the wrong coercion for that:
+`int(True)` is `1` and `int(False)` is `0`, both valid uint8 ids, so a flag on the field would be
+indistinguishable from a reading. `telemetry_int` refuses both. A float is still truncated, because
+that is the shared answer and a decoder stricter than its sibling on a value both accept is the
+drift these functions exist to prevent.
+
+A refused scalar leaves the cached value at the last reading that parsed, rather than clearing it.
+That matters when a gate reads the cache: `mode_machine` gates every G1 motion write and its refusal
+reads "lowstate has not delivered yet", which one unreadable frame should not make true of a robot
+whose lowstate is arriving.
+
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python
