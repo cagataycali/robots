@@ -54,3 +54,28 @@ def test_rtc_overrides_land_in_the_constructed_config():
     )
     rtc_config = policy._policy.config.rtc_config
     assert (rtc_config.execution_horizon, rtc_config.max_guidance_weight) == (8, 2.0)
+
+
+def test_the_second_chunk_runs_rtc_guidance_end_to_end():
+    """The guidance step takes ``torch.autograd.grad`` against the previous
+    chunk's leftover, so it only runs from the second call on - and only
+    outside ``torch.inference_mode`` (measured: the adapter's former
+    ``inference_mode`` wrapper failed it with "element 0 of tensors does not
+    require grad and does not have a grad_fn")."""
+    pytest.importorskip("lerobot.policies.smolvla.modeling_smolvla", reason="needs the [smolvla] extra")
+    import asyncio
+
+    import numpy as np
+
+    from strands_robots import create_policy
+
+    policy = create_policy(
+        "lerobot_local", pretrained_name_or_path="lerobot/smolvla_base", device="cuda", rtc_enabled=True
+    )
+    keys = policy.robot_state_keys or [f"joint_{i}" for i in range(6)]
+    obs: dict[str, object] = {k: 0.0 for k in keys}
+    obs["front"] = np.zeros((256, 256, 3), dtype=np.uint8)
+    first = asyncio.run(policy.get_actions(obs, instruction="pick up the red cube"))
+    second = asyncio.run(policy.get_actions(obs, instruction="pick up the red cube"))
+    assert len(first) == len(second) == policy.execution_horizon
+    assert policy._rtc_prev_chunk is not None

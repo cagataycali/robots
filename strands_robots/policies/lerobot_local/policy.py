@@ -2275,7 +2275,13 @@ class LerobotLocalPolicy(Policy):
         else:
             batch = self._build_observation_batch(observation, instruction)
 
-        with torch.inference_mode():
+        # ``no_grad`` rather than ``inference_mode``: lerobot's RTC guidance
+        # (``RTCProcessor.denoise_step``) re-enables autograd inside the denoiser
+        # to take ``torch.autograd.grad`` against the prefix error, which an
+        # inference-mode tensor cannot do ("element 0 of tensors does not
+        # require grad"). The non-RTC paths are unaffected: ``predict_action_chunk``
+        # / ``select_action`` already run under lerobot's own ``@torch.no_grad``.
+        with torch.no_grad():
             assert self._policy is not None
             self._policy.eval()
             # RTC uses predict_action_chunk() directly with cross-chunk guidance;
