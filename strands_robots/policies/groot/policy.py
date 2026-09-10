@@ -671,7 +671,8 @@ class Gr00tPolicy(Policy):
             if _detect_groot_version() is None:
                 raise ImportError(
                     "Gr00tPolicy: model_path= loads a GR00T checkpoint in-process, which "
-                    "needs NVIDIA's Isaac-GR00T; no gr00t entry point is importable. " + _LOCAL_ALTERNATIVES
+                    "needs NVIDIA's Isaac-GR00T; no gr00t entry point is importable. " + _LOCAL_ALTERNATIVES,
+                    name="gr00t",
                 )
             logger.info("GR00T local mode, model=%s", model_path)
             self._load_local_policy(model_path, embodiment_tag, device)
