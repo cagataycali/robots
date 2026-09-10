@@ -194,7 +194,9 @@ class TestTheFreshnessBoundGovernsAReceiverAheadOfTheOperator:
 
 def _env_table_rows() -> list[tuple[str, str]]:
     """Return ``(name_cell, description_cell)`` for every env-var README row."""
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    readme = (_REPO_ROOT / "docs" / "reference" / "configuration.md").read_text(
+        encoding="utf-8"
+    )  # env-var matrix (moved out of README)
     rows = []
     for name_cell, desc_cell, _default in re.findall(r"^\|\s*(.+?)\s*\|(.*)\|(.*)\|\s*$", readme, re.M):
         if re.search(r"`(?:STRANDS|ZENOH)_[A-Z0-9_]+`", name_cell):
@@ -214,7 +216,7 @@ class TestTheRecoveryKnobsAreDocumented:
         documented = {
             name for name_cell, _desc in _env_table_rows() for name in re.findall(r"`([A-Z_][A-Z0-9_]*)`", name_cell)
         }
-        assert documented, "found no env-var rows in README.md; the scan is broken"
+        assert documented, "found no env-var rows in docs/reference/configuration.md; the scan is broken"
         required = (
             "STRANDS_MESH_OVERRIDE_CODE",
             "STRANDS_MESH_RESUME_FRESHNESS_S",
@@ -222,7 +224,7 @@ class TestTheRecoveryKnobsAreDocumented:
         )
         missing = [name for name in required if name not in documented]
         assert not missing, (
-            f"these govern whether a resume is accepted but have no README row: {missing}. "
+            f"these govern whether a resume is accepted but have no configuration.md row: {missing}. "
             "An operator can only discover them once the fleet is already locked out."
         )
 
@@ -234,7 +236,7 @@ class TestTheRecoveryKnobsAreDocumented:
         operator is trying to reach.
         """
         rows = _env_table_rows()
-        assert rows, "found no env-var rows in README.md; the scan is broken"
+        assert rows, "found no env-var rows in docs/reference/configuration.md; the scan is broken"
         listed = {name for name_cell, _desc in rows for name in re.findall(r"`([A-Z_][A-Z0-9_]*)`", name_cell)}
         dangling = sorted(
             {
@@ -256,11 +258,11 @@ class TestTheRecoveryKnobsAreDocumented:
         can invert while the suite stays green.
         """
         rows = dict(_env_table_rows())
-        assert rows, "found no env-var rows in README.md; the scan is broken"
+        assert rows, "found no env-var rows in docs/reference/configuration.md; the scan is broken"
 
         def _row_for(name: str) -> str:
             matches = [desc for name_cell, desc in rows.items() if f"`{name}`" in name_cell]
-            assert matches, f"premise: README has a row for {name}"
+            assert matches, f"premise: configuration.md has a row for {name}"
             return matches[0]
 
         freshness = _row_for("STRANDS_MESH_RESUME_FRESHNESS_S")

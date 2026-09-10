@@ -2616,7 +2616,7 @@ Corrections from code review that apply to all future contributions:
   command.** A docstring one-liner that recomputes a pin is necessary but not
   sufficient; on-call at 3 AM needs a documented grace-period strategy. For the
   Amazon Root CA1 pin (`provision._AMAZON_ROOT_CA1_PINS`) the runbook lives in
-  README.md > "CA Pin Rotation Runbook": dual-pin tuple during the overlap, ship
+  docs/reference/configuration.md > "CA Pin Rotation Runbook": dual-pin tuple during the overlap, ship
   the new pin first, drop the old pin in a follow-up release after fleet uptake,
   and use `STRANDS_MESH_CA_PINS` only as an emergency out-of-band override.
 - **Make the accepted-pin set a collection, never a scalar.** `_resolve_ca_pins()`
