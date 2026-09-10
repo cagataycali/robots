@@ -30,15 +30,12 @@ from __future__ import annotations
 import ast
 import os
 import pathlib
-import sys
 import tempfile
 
 import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 import mujoco as mj  # noqa: E402
 

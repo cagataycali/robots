@@ -12,7 +12,7 @@ routes traffic through AWS IoT Core". Installing the extra routes nothing: the
 default is ``zenoh`` and stays ``zenoh`` until this variable is set. So a
 reader who followed the page installed the dependency, believed the fleet was
 on IoT, and got Zenoh - and the one variable that would have moved it was not
-in the matrix ``README.md``'s own IoT section points them at.
+in the matrix README.md's own IoT section points them at (docs/reference/configuration.md).
 
 That is the same shape ``tests/test_docs_device_connect_env_reference.py``
 exists for, where ``REACHY_DAEMON_TLS`` - the knob that encrypts a link - was
@@ -68,7 +68,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: The page whose IoT section tells the reader to consult the configuration
 #: matrix for the ``STRANDS_MESH_*`` knobs, so the selector has to be in it.
-_MATRIX_PAGE = "README.md"
+_MATRIX_PAGE = "docs/reference/configuration.md"
 
 #: The extra that installs the dependency ``iot`` and ``bridge`` need. Naming it
 #: is not a routing claim; naming it *as* the routing mechanism is.
@@ -87,7 +87,7 @@ _MINIMUM_PARAGRAPHS = 200
 
 def _pages() -> list[Path]:
     """Every shipped markdown page a reader configures the mesh from."""
-    return [_REPO_ROOT / _MATRIX_PAGE, *sorted((_REPO_ROOT / "docs").rglob("*.md"))]
+    return [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]
 
 
 def _paragraphs(text: str) -> list[str]:

@@ -36,9 +36,11 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod
-import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
+pytest.importorskip("psutil")
+
+import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
 
 # Every recorded PID below is fake and every signal is captured, so nothing here
 # can reach a real process.

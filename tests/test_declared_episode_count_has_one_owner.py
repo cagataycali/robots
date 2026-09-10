@@ -48,6 +48,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("pyarrow")
+pytest.importorskip("psutil")
 
 import pyarrow as pa
 import pyarrow.parquet as pq

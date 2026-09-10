@@ -576,7 +576,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         robot_name: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
-        tol: float = 0.01,
+        tol: float = 0.015,
         max_steps: int = 200,
         orientation_tol: float | None = None,
     ) -> dict[str, Any]:

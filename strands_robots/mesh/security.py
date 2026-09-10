@@ -1093,102 +1093,39 @@ def validate_mesh_identifier(value: Any, param: str) -> str:
 
 
 def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
-    """Validate a mesh command and return a sanitised copy.
+    """Validate a mesh command and return a copy built only from validated keys.
 
-    Performed checks:
-
-    * ``action`` must be a string and a member of :data:`ALLOWED_ACTIONS`.
-    * ``turn_id`` and ``sender_id`` (both optional) are checked on *every*
-      action, not per-action: each must be a str of at most
-      :data:`MAX_PASSTHROUGH_LEN` characters, printable ASCII only (no C0/DEL
-      or non-printable byte). They are wire-routing fields rather than action
-      payload, so a publisher minting them needs the bound and a control byte
-      must not reach the audit trail through either. These are the *command's*
-      copies: what :class:`~strands_robots.mesh.core.Mesh` routes on is the
-      enclosing envelope's own ``sender_id`` / ``turn_id`` one level up, which it
-      correlates a turn on, keys its command-replay cache on, and interpolates
-      into the reply key -- so those are held to the stricter
-      :func:`validate_mesh_identifier` charset where they are read, and this
-      check is not the routing gate. Any other unvalidated key is dropped from
-      the sanitised copy rather than refused.
-    * ``execute`` and ``start`` actions require:
-        - ``instruction``: non-empty str up to :data:`MAX_INSTRUCTION_LEN`,
-          carrying no C0/DEL/C1 control character. Printable non-ASCII is
-          admitted -- it is a natural-language field, so the charset gate
-          bounds only the control range.
-        - ``policy_host``: in the allowlist (defaults to ``"localhost"``).
-        - ``duration``: ``[0, MAX_DURATION_S]``, defaults to 30.
-        - ``policy_port`` (optional): integer in ``[1, 65535]``.
-        - ``pretrained_name_or_path`` (optional): HF repo, allowlist-gated.
-        - ``model_path`` (optional): HF id or local path, no traversal.
-        - ``policy_type`` (optional): in :func:`is_safe_policy_type`.
-        - ``policy_provider``: REQUIRED, in :func:`is_safe_policy_provider`.
-          No silent default -- a peer that omits this is rejected so it is
-          never ambiguous whether ``mock`` was an explicit choice or a bug.
-        - ``server_address`` (optional): in :func:`is_safe_server_address`.
-        - ``robot_name`` (optional): peer-id charset, at most
-          :data:`MAX_PEER_ID_LEN` characters, used by sim peers
-          to disambiguate which robot in the world the policy targets.
-        - ``target_pose`` (optional): list of 7 floats
-          ``[x, y, z, qw, qx, qy, qz]`` for planner-style providers
-          (issue #300 well-known kwarg).
-        - ``target_joints`` (optional): dict of joint-name to float
-          (issue #300 well-known kwarg). Key count bounded by
-          :data:`MAX_TARGET_JOINTS`, and each key by
-          :data:`MAX_PEER_ID_LEN` characters.
-        - ``target_velocity`` (optional): list of floats
-          ``[vx, vy, omega]`` (m/s, m/s, rad/s) for locomotion providers
-          (issue #300 well-known kwarg). Component count bounded by
-          :data:`MAX_TARGET_VELOCITY_COMPONENTS`; the arity a given
-          policy needs is that policy's verdict, not the wire's.
-        - ``world_update`` (optional): opaque dict forwarded to the
-          policy via ``policy_config``. Bounded by
-          :data:`MAX_WORLD_UPDATE_BYTES` JSON-encoded bytes.
-        - ``control_frequency`` (optional): float in ``[0.1, 2000]`` Hz.
-        - ``action_horizon`` (optional): integer in ``[1, 10_000]``.
-        - ``fast_mode`` (optional): boolean.
-        - ``n_steps`` (optional): integer in ``[1, 10_000_000]``.
-    * ``step``: ``steps`` integer in ``[1, 10_000]``, defaults to 1.
-    * ``teleop_receive``: both identifiers are checked by
-      :func:`validate_mesh_identifier`, so the admitted charset is
-      ``[A-Za-z0-9_.-]+`` rather than any non-empty string -- a Zenoh
-      wildcard is refused instead of silently widening the subscription
-      the follower builds out of them.
-        - ``source_peer_id``: REQUIRED.
-        - ``device_name`` (optional): defaults to ``"leader"`` downstream.
-    * ``teleop_stop``: ``device_name`` (optional) must be a str or null.
-    * ``resume``: ``override_code`` (optional, defaults to ``""``): str of at
-      most :data:`MAX_OVERRIDE_CODE_LEN` characters, printable ASCII only
-      (no C0/DEL/CRLF). The operator's second factor for clearing an e-stop
-      lockout is bounded here so it cannot carry a control character into the
-      audit trail, and cannot reach ``Mesh._resume_lockout`` as a non-string.
-
-    Raises :class:`ValidationError` on any rule violation.
+    ``action`` must be in :data:`ALLOWED_ACTIONS`; unknown keys are dropped,
+    never forwarded. Every refusal raises :class:`ValidationError` and falls in
+    one of four shapes: an allowlisted string (``policy_host`` /
+    ``server_address`` -> ``POLICY_HOST_NOT_ALLOWED``, ``policy_type`` /
+    ``policy_provider`` -> ``POLICY_TYPE_NOT_ALLOWED``,
+    ``pretrained_name_or_path`` -> ``HF_REPO_NOT_ALLOWED``, ``model_path``
+    without traversal); a bounded identifier (``turn_id`` / ``sender_id`` /
+    ``robot_name`` / ``override_code`` / the teleop identifiers: str, length
+    bound, charset with no control byte); a numeric domain via
+    :func:`_coerce_float` / :func:`_coerce_int` (``duration``, ``policy_port``,
+    ``target_pose`` [7], ``target_velocity``, ``control_frequency``,
+    ``action_horizon``, ``n_steps``, ``steps``), with ``target_velocity`` also
+    held to the locomotion envelope of
+    :mod:`strands_robots.locomotion_envelope` that the WBC sink re-applies; or
+    a structural one-off (``instruction`` non-empty with no control character,
+    ``policy_provider`` required on execute/start, ``target_joints`` dict
+    bounded by :data:`MAX_TARGET_JOINTS`, ``world_update`` bounded by
+    :data:`MAX_WORLD_UPDATE_BYTES`). Refusal messages name the codepoint and
+    offset of an offending byte rather than echo the payload, because the
+    dispatcher logs the error.
     """
     if not isinstance(cmd, dict):
         raise ValidationError("command must be a dict")
-
     action = cmd.get("action", "status")
     if not isinstance(action, str):
         raise ValidationError("action must be a string")
     if action not in ALLOWED_ACTIONS:
         raise ValidationError(f"unknown action: {action!r} (allowed: {sorted(ALLOWED_ACTIONS)})")
-
-    # strict per-action key allowlist.
-    #
-    # Earlier the validator did ``out = dict(cmd)`` and overlaid the
-    # validated fields, preserving every unknown key the caller sent.
-    # Today's ``Mesh._dispatch`` only reads a known whitelist of keys,
-    # so this was not exploitable -- but the contract was fragile: any
-    # future action handler that did ``**cmd`` or pulled a not-yet-
-    # validated key would silently pick up an attacker-controlled
-    # value. Defence-in-depth: build ``out`` from the *validated*
-    # subset only.
     out: dict[str, Any] = {"action": action}
-    # turn_id and sender_id are wire-routing fields (RPC turn correlation,
-    # not action payload). Type-check, length-bound, and charset-validate
-    # them so control bytes / non-string types cannot reach audit logs or
-    # downstream string ops. Anything else gets dropped silently.
+    # Wire-routing fields, checked on every action; the envelope copies the
+    # Mesh routes on are held to validate_mesh_identifier where they are read.
     for passthrough in ("turn_id", "sender_id"):
         if passthrough in cmd:
             value = cmd[passthrough]
@@ -1199,7 +1136,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
                 raise ValidationError(f"{passthrough} contains control characters, NUL, or non-printable bytes")
             out[passthrough] = value
-
     if action in ("execute", "start"):
         instruction = cmd.get("instruction", "")
         if not isinstance(instruction, str) or not instruction.strip():
@@ -1208,17 +1144,12 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(f"instruction exceeds {MAX_INSTRUCTION_LEN} chars (got {len(instruction)})")
         control = _NATURAL_TEXT_CONTROL_RE.search(instruction)
         if control is not None:
-            # Identified by codepoint and offset rather than echoed. A
-            # ValidationError is itself logged by the dispatcher, so
-            # interpolating the payload would carry the injection into the
-            # very record that reports it.
             raise ValidationError(
                 f"instruction contains a control character (U+{ord(control.group()):04X} "
                 f"at offset {control.start()}); send printable text only "
                 "(CRLF, NUL and other C0/C1 bytes are refused)"
             )
         out["instruction"] = instruction
-
         policy_host = cmd.get("policy_host", "localhost")
         if not is_safe_policy_host(str(policy_host)):
             raise ValidationError(
@@ -1226,19 +1157,14 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 code=refusal_codes.POLICY_HOST_NOT_ALLOWED,
                 subject=str(policy_host),
             )
-        # R7 defence-in-depth. ``is_safe_policy_host`` now applies the
-        # same charset gate before its internal strip, so this
-        # post-check is redundant for in-process call sites. Kept
-        # because we Reject at the validator boundary regardless of
-        # how the membership compare is implemented; a future refactor
-        # of the allowlist must not silently drop the wire rejection.
+        # Reject at the validator boundary even though is_safe_policy_host gates
+        # the charset too: the wire rejection must not depend on the allowlist.
         host_str = str(policy_host)
         if not _SAFE_PASSTHROUGH_RE.fullmatch(host_str):
             raise ValidationError(
                 f"policy_host={policy_host!r} contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["policy_host"] = policy_host
-
         out["duration"] = _coerce_float(
             "duration",
             cmd.get("duration", 30.0),
@@ -1246,10 +1172,8 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             hi=MAX_DURATION_S,
             default=30.0,
         )
-
         if "policy_port" in cmd and cmd["policy_port"] is not None:
             out["policy_port"] = _coerce_int("policy_port", cmd["policy_port"], lo=1, hi=65535, default=None)
-
         if "pretrained_name_or_path" in cmd:
             value = cmd["pretrained_name_or_path"]
             if not isinstance(value, str) or not is_safe_model_path(value, hf_only=True):
@@ -1260,7 +1184,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     subject=value if isinstance(value, str) else None,
                 )
             out["pretrained_name_or_path"] = value
-
         if "model_path" in cmd:
             value = cmd["model_path"]
             if not isinstance(value, str) or not is_safe_model_path(value, hf_only=False):
@@ -1268,7 +1191,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     f"model_path={value!r} contains disallowed characters or path-traversal segments."
                 )
             out["model_path"] = value
-
         if "policy_type" in cmd:
             value = cmd["policy_type"]
             if not isinstance(value, str) or not is_safe_policy_type(value):
@@ -1278,7 +1200,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     subject=value if isinstance(value, str) else None,
                 )
             out["policy_type"] = value.strip().lower()
-
         if "policy_provider" in cmd:
             value = cmd["policy_provider"]
             if not isinstance(value, str) or not is_safe_policy_provider(value):
@@ -1296,7 +1217,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "set it explicitly (e.g. 'mock' for the noop policy). "
                 "Silent defaults are not honoured on the security boundary."
             )
-
         if "server_address" in cmd:
             value = cmd["server_address"]
             if not isinstance(value, str) or not is_safe_server_address(value):
@@ -1305,20 +1225,13 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     code=refusal_codes.POLICY_HOST_NOT_ALLOWED,
                     subject=value if isinstance(value, str) else None,
                 )
-            # Same CRLF/NUL/control-byte gate as policy_host.
             if not _SAFE_PASSTHROUGH_RE.fullmatch(value):
                 raise ValidationError(
                     f"server_address={value!r} contains control characters (CRLF/NUL/C0). Use printable ASCII only."
                 )
             out["server_address"] = value
-
-        # Sim-targeted execute/start fields. These are admitted only for
-        # the ``execute`` / ``start`` actions and are inert when the
-        # receiving peer is a HardwareRobot - ``Mesh._dispatch`` ignores
-        # them on the hardware path. Validating them here keeps the wire
-        # schema honest end-to-end so a malicious peer cannot smuggle
-        # control-byte instruction strings in via ``robot_name`` or
-        # exhaust the dispatcher with a multi-MB ``world_update`` blob.
+        # Sim-targeted fields; inert on the hardware path but validated so the
+        # wire schema is the same for every receiver.
         if "robot_name" in cmd:
             value = cmd["robot_name"]
             if not isinstance(value, str) or not value:
@@ -1331,19 +1244,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     "control chars, shell metacharacters, or '/')."
                 )
             out["robot_name"] = value
-
-        # Issue #300 well-known per-call policy kwargs. Forwarded into
-        # ``policy_kwargs`` by the dispatcher, which is what reaches
-        # ``get_actions(obs, instruction, **policy_kwargs)``. Planner-style
-        # providers (cuRobo, MoveIt2) read a Cartesian or joint-space goal;
-        # locomotion providers (WBC, wbc_gait, microduck) read
-        # ``target_velocity``. VLA providers ignore all of them.
-        #
-        # Every key ``SimEngine.run_policy`` documents as a #300 goal key is
-        # admitted here, because that docstring offers the mesh ``tell()``
-        # path as the analogue of the local call. A key it names and this
-        # allowlist omits is dropped without a word - the ``out`` dict below
-        # is built key by key, so an unlisted one simply never arrives.
+        # Issue #300 per-call policy kwargs, forwarded as policy_kwargs. Every
+        # key SimEngine.run_policy documents is admitted here; an unlisted key
+        # never reaches out.
         if "target_pose" in cmd:
             value = cmd["target_pose"]
             if not isinstance(value, list) or len(value) != 7:
@@ -1352,7 +1255,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             for i, component in enumerate(value):
                 coerced_pose.append(_coerce_float(f"target_pose[{i}]", component, lo=-1e6, hi=1e6, default=None))
             out["target_pose"] = coerced_pose
-
         if "target_joints" in cmd:
             value = cmd["target_joints"]
             if not isinstance(value, dict):
@@ -1378,7 +1280,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     f"target_joints[{joint_name}]", joint_value, lo=-1e6, hi=1e6, default=None
                 )
             out["target_joints"] = coerced_joints
-
         if "target_velocity" in cmd:
             value = cmd["target_velocity"]
             if not isinstance(value, list) or not value:
@@ -1406,15 +1307,11 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     raise ValidationError(envelope_error)
                 coerced_velocity.append(coerced)
             out["target_velocity"] = coerced_velocity
-
         if "world_update" in cmd:
             value = cmd["world_update"]
             if value is not None and not isinstance(value, dict):
                 raise ValidationError("world_update must be a dict or null")
             if isinstance(value, dict):
-                # Bound the encoded size - mesh treats world_update as
-                # opaque and forwards it to the planner provider; we
-                # only need to keep it from becoming a DoS vector.
                 try:
                     encoded = json.dumps(value)
                 except (TypeError, ValueError) as exc:
@@ -1424,10 +1321,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                         f"world_update encoded size > MAX_WORLD_UPDATE_BYTES ({MAX_WORLD_UPDATE_BYTES})."
                     )
             out["world_update"] = value
-
-        # Optional sim-side controls. Bounds match the SimEngine.run_policy
-        # surface so a wire-side ``tell()`` cannot drive the runner to
-        # absurd frequencies / step counts.
         if "control_frequency" in cmd:
             out["control_frequency"] = _coerce_float(
                 "control_frequency", cmd["control_frequency"], lo=0.1, hi=2000.0, default=None
@@ -1441,41 +1334,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
             out["fast_mode"] = value
         if "n_steps" in cmd:
             out["n_steps"] = _coerce_int("n_steps", cmd["n_steps"], lo=1, hi=10_000_000, default=None)
-
     elif action == "step":
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
-
     elif action == "teleop_receive":
-        # Both fields flow into ``r.start_teleop_receive(source, dev)``, which
-        # interpolates them into the ``strands/{peer}/input/{device}`` key
-        # expression the follower subscribes to, into log messages, and into
-        # the per-device state keys. An authenticated peer publishing a
-        # ``teleop_receive`` cmd whose identifiers carry a Zenoh wildcard or
-        # arbitrary unicode / control characters / shell metacharacters has no
-        # business reaching downstream code, regardless of whether today's
-        # downstream consumers happen to be safe. Shared with the constructors
-        # of InputReceiver / InputPublisher so the wire surface and the direct
-        # API cannot drift apart on what a valid identifier is.
         out["source_peer_id"] = validate_mesh_identifier(cmd.get("source_peer_id", ""), "teleop_receive.source_peer_id")
-        # device_name is optional and defaults to "leader" in _dispatch.
         if "device_name" in cmd:
             out["device_name"] = validate_mesh_identifier(cmd["device_name"], "teleop_receive.device_name")
-
     elif action == "teleop_stop":
-        # device_name optional; if present, must be a string.
         if "device_name" in cmd:
             device = cmd["device_name"]
             if device is not None and not isinstance(device, str):
                 raise ValidationError("teleop_stop.device_name must be a string or null")
             out["device_name"] = device
-
     elif action == "resume":
-        # override_code is the operator-supplied second factor for
-        # clearing an estop lockout. Bound the type and length defensively
-        # so a non-string or oversized value cannot reach
-        # Mesh._resume_lockout (which calls.strip() and would
-        # raise AttributeError on a list/dict, surfacing as a generic
-        # dispatch error rather than a clean ValidationError).
+        # The second factor for clearing a lockout: bounded here so a
+        # non-string or oversized value never reaches Mesh._resume_lockout.
         override_code = cmd.get("override_code", "")
         if not isinstance(override_code, str):
             raise ValidationError("resume.override_code must be a string")
@@ -1486,7 +1359,6 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
             )
         out["override_code"] = override_code
-
     return out
 
 

@@ -694,7 +694,8 @@ def parse_status_packet(raw: bytes, expected_id: int, expected_param_count: int)
 
     # Resync on the header. A half-duplex bus can put the host's own echo
     # (a single 0xFF) in front of the reply; :func:`_parse_status_packet` in
-    # pose_tool.py handles that by scanning, and the codec does the same so
+    # ``strands_robots.tools.pose_tool`` handles that by scanning, and the codec
+    # does the same so
     # the two agree on what a valid frame looks like.
     start = _find_header(raw)
     if start < 0:

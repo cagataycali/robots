@@ -17,9 +17,6 @@ call has valid geom transforms.
 
 from __future__ import annotations
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
@@ -27,8 +24,6 @@ pytest.importorskip("mujoco")
 pytest.importorskip("PIL")
 
 from io import BytesIO  # noqa: E402
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from PIL import Image  # noqa: E402
 

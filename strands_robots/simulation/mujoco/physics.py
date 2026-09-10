@@ -1784,6 +1784,21 @@ class PhysicsMixin:
         ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
         the integrator on the next step or raising past the tool-dispatch contract.
 
+        Finite is not enough. MuJoCo's own ``mj_step`` reads a huge ``qvel``, or
+        the ``qacc`` that ``qvel`` produces, as ``"Nan, Inf or huge value in
+        QVEL ... The simulation is unstable"`` and answers it by resetting every
+        joint and object to its initial state, with only a warning on stderr --
+        so a value past that ceiling used to be reported as a successful write
+        and then wipe the world on the next step. The write therefore applies
+        that same test, ``mjMAXVAL`` (1e10) on ``qvel`` and on the ``qacc`` one
+        forward pass produces from it, under a state checkpoint: a value that
+        would trip it returns ``status="error"`` naming the values and ``qvel``
+        is put back exactly as it was. The ceiling is not the ceiling on the
+        number the caller passes: on a hinge held by a position servo ``1e9``
+        already trips through ``qacc`` alone. Accepting the write costs that one
+        forward pass, which also refreshes the derived state (``qacc``,
+        velocity sensors) the new ``qvel`` implies.
+
         The write is all-or-nothing on the same terms as
         :meth:`set_joint_positions`: an unresolvable joint name (or an empty
         mapping) returns ``status="error"`` and leaves ``qvel`` untouched.
@@ -1887,13 +1902,46 @@ class PhysicsMixin:
             return err
 
         with self._lock:
+            # Finite is not enough. MuJoCo's own mj_checkVel / mj_checkAcc treat a
+            # huge qvel, or the qacc it produces, as "Nan, Inf or huge value ...
+            # The simulation is unstable" and RESET the whole state - every joint,
+            # every object - with only a stderr warning. Measured: velocities=
+            # {"Rotation": 1e300} returned success and the world was back at qpos 0
+            # five steps later. So write, run one forward pass under a checkpoint
+            # and apply mj_step's own test (finite and below mjMAXVAL, on qvel and
+            # on the qacc it produces); if it would trip, put the state back.
+            spec = mj.mjtState.mjSTATE_INTEGRATION
+            checkpoint = np.empty(mj.mj_stateSize(model, spec))
+            mj.mj_getState(model, data, checkpoint, spec)
+            for jnt_name, value in velocities.items():
+                data.qvel[model.jnt_dofadr[joint_ids[jnt_name]]] = float(value)
+            mj.mj_forward(model, data)
+            unstable = any(
+                not np.all(np.isfinite(vec)) or np.any(np.abs(vec) >= mj.mjMAXVAL) for vec in (data.qvel, data.qacc)
+            )
+            if unstable:
+                mj.mj_setState(model, data, checkpoint, spec)
+                mj.mj_forward(model, data)
+                sample = ", ".join(f"{n}={float(v):.3g}" for n, v in list(velocities.items())[:3])
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_velocities: MuJoCo flags the simulation unstable with these "
+                                f"'velocities' ({sample}) - the next step would reset every joint and object "
+                                f"to its initial state. Nothing was written; the state is unchanged. "
+                                f"MuJoCo's ceiling is mjMAXVAL={mj.mjMAXVAL:.0e} on qvel and on the "
+                                "acceleration it produces."
+                            )
+                        }
+                    ],
+                }
+
             rate_drives = joint_rate_drive_map(model, mj)
             stale: list[str] = []
             for jnt_name, value in velocities.items():
                 jnt_id = joint_ids[jnt_name]
-                dof_adr = model.jnt_dofadr[jnt_id]
-                data.qvel[dof_adr] = float(value)
-
                 act_id = rate_drives.get(jnt_id)
                 if act_id is None:
                     continue

@@ -24,10 +24,12 @@ from pathlib import Path
 
 import pytest
 
-import strands_robots
-from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.tools import _process_stop
-from tests.tool_result_contract import (
+pytest.importorskip("psutil")
+
+import strands_robots  # noqa: E402
+from strands_robots.teleop_mixin import TeleopMixin  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
+from tests.tool_result_contract import (  # noqa: E402
     VALID_TOP_LEVEL_KEYS,
     assert_strands_tool_result,
     tool_json,

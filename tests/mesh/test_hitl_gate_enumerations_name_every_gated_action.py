@@ -67,8 +67,8 @@ def _enumerations() -> tuple[_Enumeration, ...]:
         # The env var's whole accepted vocabulary: this row is what an
         # operator writing a subset copies from.
         _Enumeration(
-            "the README configuration row",
-            _REPO_ROOT / "README.md",
+            "the configuration.md row",
+            _REPO_ROOT / "docs" / "reference" / "configuration.md",
             "| `STRANDS_MESH_HITL_ACTIONS` |",
             gateable,
         ),
@@ -157,8 +157,8 @@ def test_the_documented_vocabulary_can_express_the_shipped_default() -> None:
     default from that row. A default action absent from the row is dropped
     from every such subset, silently.
     """
-    row = _anchored_paragraph(_REPO_ROOT / "README.md", "| `STRANDS_MESH_HITL_ACTIONS` |")
-    assert row is not None, "premise: the README no longer documents STRANDS_MESH_HITL_ACTIONS"
+    row = _anchored_paragraph(_REPO_ROOT / "docs" / "reference" / "configuration.md", "| `STRANDS_MESH_HITL_ACTIONS` |")
+    assert row is not None, "premise: docs/reference/configuration.md no longer documents STRANDS_MESH_HITL_ACTIONS"
     unspellable = sorted(action for action in rmt._DEFAULT_INTERRUPT_ACTIONS if action not in row)
     assert not unspellable, (
         f"the documented vocabulary cannot express the shipped default gate: {unspellable} "

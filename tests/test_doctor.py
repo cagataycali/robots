@@ -32,6 +32,7 @@ class TestDoctorChecks:
         result = check_mujoco()
         assert "PASS" in result
 
+    @pytest.mark.skipif(sys.platform != "linux", reason="egl is a Linux-only backend; mujoco refuses it elsewhere")
     def test_check_mujoco_gl_with_egl(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from strands_robots.doctor import check_mujoco_gl
 
@@ -39,6 +40,7 @@ class TestDoctorChecks:
         result = check_mujoco_gl()
         assert "PASS" in result
 
+    @pytest.mark.skipif(sys.platform != "linux", reason="only Linux needs DISPLAY to render; macOS uses cgl")
     def test_check_mujoco_gl_no_display(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from strands_robots.doctor import check_mujoco_gl
 
