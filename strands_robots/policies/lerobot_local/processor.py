@@ -239,6 +239,19 @@ def _register_policy_processor_steps(policy_type: str | None) -> None:
             logger.debug("Could not import %s for processor-step registration: %s", mod, exc)
 
 
+# The per-dimension stats each NormalizationMode's arithmetic reads
+# (lerobot HEAD: processor/normalize_processor.py). A dataset's stats also
+# carry per-feature scalars such as ``count`` (shape (1,)), which never meet
+# the feature tensor, so they are not a width mismatch.
+_STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
+    "MEAN_STD": ("mean", "std"),
+    "MIN_MAX": ("min", "max"),
+    "QUANTILES": ("q01", "q99"),
+    "QUANTILE10": ("q10", "q90"),
+}
+_STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
+
+
 class ProcessorBridge:
     """Bridge between strands-robots observation/action format and LeRobot's processor pipeline.
 
@@ -813,12 +826,45 @@ class ProcessorBridge:
         canonical ``action`` / ``observation.state`` keys.
         """
         try:
-            from lerobot.configs.types import FeatureType, NormalizationMode
+            from lerobot.configs.types import FeatureType
             from lerobot.utils.constants import ACTION
         except ImportError:
             return []
 
         inert: list[str] = []
+        for _step, key, _feature, ftype, mode, stat_keys in self._declared_normalization_targets():
+            lookup = ACTION if ftype == FeatureType.ACTION else key
+            if lookup not in stat_keys:
+                descriptor = f"{key} ({ftype.value}/{mode.value})"
+                if descriptor not in inert:
+                    inert.append(descriptor)
+        return inert
+
+    def _declared_normalization_targets(self) -> list[tuple[Any, str, Any, Any, Any, set[str]]]:
+        """Declared normalizations a pipeline transition actually exercises.
+
+        ``NormalizerProcessorStep`` and ``UnnormalizerProcessorStep`` each
+        process BOTH observation and action when present, but at inference the
+        preprocessor transition carries only the observation (action is
+        ``None``) and the postprocessor only the action, so only the feature
+        type matching the pipeline's position is ever touched. That scoping
+        rule is spelled once, here, and both
+        :meth:`inert_normalization_features` (stats absent -> silent
+        passthrough) and :meth:`mismatched_normalization_widths` (stats present
+        at the wrong width -> guaranteed raise) read it, so the two cannot
+        disagree about which normalization a rollout will really perform.
+
+        Returns:
+            ``(step, key, feature, feature_type, mode, stat_keys)`` per declared,
+            non-IDENTITY normalization that the transition exercises. Empty when
+            lerobot cannot be imported.
+        """
+        try:
+            from lerobot.configs.types import FeatureType, NormalizationMode
+        except ImportError:
+            return []
+
+        targets: list[tuple[Any, str, Any, Any, Any, set[str]]] = []
         for is_post_pipeline, pipeline in ((False, self._preprocessor), (True, self._postprocessor)):
             if pipeline is None:
                 continue
@@ -850,12 +896,62 @@ class ProcessorBridge:
                         continue
                     if not is_post_pipeline and ftype == FeatureType.ACTION:
                         continue
-                    lookup = ACTION if ftype == FeatureType.ACTION else key
-                    if lookup not in stat_keys:
-                        descriptor = f"{key} ({ftype.value}/{mode.value})"
-                        if descriptor not in inert:
-                            inert.append(descriptor)
-        return inert
+                    targets.append((step, key, feature, ftype, mode, stat_keys))
+        return targets
+
+    def mismatched_normalization_widths(self) -> list[str]:
+        """Declared normalizations whose supplied stats cannot broadcast onto the feature.
+
+        The sibling :meth:`inert_normalization_features` reports stats that are
+        ABSENT, which LeRobot answers by returning the tensor unchanged. Stats
+        that are PRESENT at the wrong width are the opposite failure: LeRobot
+        reaches the arithmetic and raises ``RuntimeError`` from the tensor
+        broadcast, naming neither the feature, the step, nor either width -
+        and it raises on the first inference, after a rollout has started and
+        the robot has been commanded. The widths are both known at load, on the
+        same step object, so a mismatch is reported here instead.
+
+        Width is exactly what varies between embodiments, and supplying stats
+        is what the inert-pipeline warning tells a caller to do, so stats for a
+        6-DOF arm reaching a 7-DOF checkpoint is a routine mistake.
+
+        Only flat, one-dimensional features are compared. VISUAL features are
+        exempt because LeRobot reshapes a flat ``(C,)`` visual stat to
+        ``(C, 1, 1)`` on purpose (``_reshape_visual_stats``), so a channel-wide
+        stat is correct for a ``(C, H, W)`` feature.
+
+        Returns:
+            One descriptor per mismatch, naming the feature, the declared width
+            and the supplied width. Empty when every present stat matches.
+        """
+        try:
+            from lerobot.configs.types import FeatureType
+            from lerobot.utils.constants import ACTION
+        except ImportError:
+            return []
+
+        bad: list[str] = []
+        for step, key, feature, ftype, mode, _stat_keys in self._declared_normalization_targets():
+            if ftype == FeatureType.VISUAL:
+                continue
+            shape = tuple(getattr(feature, "shape", None) or ())
+            if len(shape) != 1:
+                continue
+            lookup = ACTION if ftype == FeatureType.ACTION else key
+            stats = (getattr(step, "_tensor_stats", None) or {}).get(lookup) or {}
+            for stat_name in _STAT_NAMES_READ_BY_MODE.get(mode.value, _STAT_NAMES_READ_BY_ANY_MODE):
+                value = stats.get(stat_name)
+                if value is None:
+                    continue
+                width = tuple(getattr(value, "shape", None) or ())
+                if len(width) == 1 and width[0] != shape[0]:
+                    descriptor = (
+                        f"{key} ({ftype.value}/{mode.value}): feature declares width "
+                        f"{shape[0]}, stats '{lookup}.{stat_name}' supply {width[0]}"
+                    )
+                    if descriptor not in bad:
+                        bad.append(descriptor)
+        return bad
 
     def preprocess(self, observation: dict[str, Any], instruction: str | None = None) -> dict[str, Any]:
         """Preprocess a raw observation dict through the pipeline.

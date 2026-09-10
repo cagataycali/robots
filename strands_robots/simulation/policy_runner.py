@@ -74,6 +74,7 @@ from strands_robots.utils import (
     positive_finite_number_error,
     positive_whole_number_error,
     process_rss_mb,
+    refusal_container_repr,
 )
 
 if TYPE_CHECKING:
@@ -738,7 +739,7 @@ def _validate_action_key_map(action_key_map: Any) -> dict[str, Any] | None:
 
     if isinstance(action_key_map, str | bytes):
         return _error(
-            f"action_key_map must be a list of action keys, not a bare string (got {action_key_map!r}); "
+            f"action_key_map must be a list of action keys, not a bare string (got {refusal_container_repr(action_key_map)}); "
             "a string is consumed one character per action index."
         )
     if not isinstance(action_key_map, list | tuple):

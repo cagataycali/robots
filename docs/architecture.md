@@ -83,7 +83,7 @@ graph TB
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
 | `strands_robots/policies/` | ABC + 14 providers + factory + JSON registry. | `Policy`, `create_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 writer. | `DatasetRecorder` |
-| `strands_robots/tools/` | 25 `@tool`-decorated helpers. | `lerobot_camera`, `serial_tool`, etc. |
+| `strands_robots/tools/` | 19 `@tool`-decorated helpers. | `lerobot_camera`, `serial_tool`, etc. |
 
 ## ABCs
 
@@ -107,7 +107,7 @@ graph TB
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |
-| `[all]` | 21 of the 33 extras - not a union; see [installation](getting-started/installation.md) for the 12 it leaves opt-in | CI / exploration |
+| `[all]` | 20 of the 32 extras - not a union; see [installation](getting-started/installation.md) for the 12 it leaves opt-in | CI / exploration |
 
 ## See also
 

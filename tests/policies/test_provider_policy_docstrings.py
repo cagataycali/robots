@@ -6,7 +6,7 @@
 :mod:`tests.policies.test_builtin_policy_docstrings` already pins that guard for
 the dependency-free built-ins (``MockPolicy`` / ``CompositePolicy`` /
 ``PersistentPolicy``). The backend providers - GR00T, cuRobo, cosmos3, the two
-lerobot providers, MotionBricks, Kimodo, MoveIt2 and the two WBC
+lerobot providers, Kimodo, MoveIt2 and the two WBC
 controllers - each override public members such as ``provider_name``,
 ``get_actions``, ``requires_images`` and ``config``. An agent picking a
 provider reads those docstrings to learn which one it is holding and what it
@@ -46,10 +46,10 @@ _PROVIDER_POLICIES = {
     "curobo/policy.py": "CuroboPolicy",
     "wbc/policy.py": "WBCPolicy",
     "wbc/gait.py": "WBCGaitPolicy",
-    "motionbricks/policy.py": "MotionBricksPolicy",
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
+    "rl.py": "RLCheckpointPolicy",
 }
 
 # Built-in policy classes documented by test_builtin_policy_docstrings; the

@@ -37,9 +37,10 @@ Ctrl+C releases the robot before the process exits. `.run()` is the only entry p
 Because the mesh is stopped *for* Device Connect, a bring-up that fails leaves the process on no transport at all — so `.run()` logs the cause (naming the extra when that is what is missing) and prints `<peer-id> is NOT online` instead of announcing a device that is not there. It keeps running, so a broker that comes back is not a lost process.
 
 !!! warning "Secure by default"
-    Device Connect does not enable unencrypted transport implicitly. To run authenticated + encrypted, point it at a bundled credentials file (`MESSAGING_CREDENTIALS_FILE` — a single `*.creds.json` with the CA, cert and key) — this works **broker-less (D2D) or brokered**, they're independent choices. For a quick trial on a **trusted, isolated LAN** you can instead skip auth (a warning is logged while active):
+    `.run()` refuses to start on a transport nobody authenticates: with no credentials configured it exits the bring-up with an error naming both remedies instead of coming online in plaintext. To run authenticated + encrypted, point it at a bundled credentials file (`MESSAGING_CREDENTIALS_FILE` — a single `*.creds.json` with the CA, cert and key) or a `tls/` endpoint — this works **broker-less (D2D) or brokered**, they're independent choices. For a quick trial on a **trusted, isolated LAN** you can instead skip auth (a warning is logged while active) — and then restrict who may drive the robot, because on a plaintext transport a caller's id is whatever it claims:
     ```bash
     export DEVICE_CONNECT_ALLOW_INSECURE=true
+    export DEVICE_CONNECT_RPC_ALLOW=my-agent   # matches STRANDS_ROBOT_MESH_AGENT_ID on the agent side
     ```
     See [Environment variables](#environment-variables) for both paths.
 
@@ -195,8 +196,8 @@ only `REACHY_DAEMON_TLS` encrypts, so they are only useful together.
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `STRANDS_MESH_HITL_ACTIONS` | built-in set | Which actions need operator (human-in-the-loop) approval. |
-| `DEVICE_CONNECT_RPC_ALLOW` | allow all | Caller allowlist for state-mutating RPCs (`execute`/`stop`/`step`/`reset`); `*` globs. |
-| `DEVICE_CONNECT_ESTOP_ALLOW` | inherits `DEVICE_CONNECT_RPC_ALLOW` | Caller allowlist for `emergencyStop`. Unset - or holding no entry after stripping, so `""`, `" "` and `","` all count - falls back to the RPC allowlist. |
+| `DEVICE_CONNECT_RPC_ALLOW` | **nobody** (unset refuses every state-mutating RPC) | Caller allowlist for state-mutating RPCs (`execute`/`stop`/`step`/`reset`); `*` globs; a literal `*` allows every named caller and logs a warning. Set it before the device will act. |
+| `DEVICE_CONNECT_ESTOP_ALLOW` | inherits `DEVICE_CONNECT_RPC_ALLOW` | Caller allowlist for `emergencyStop`. Unset - or holding no entry after stripping, so `""`, `" "` and `","` all count - falls back to the RPC allowlist. With neither set, a *named* caller may still stop the robot (stopping never gets harder than moving); an anonymous one may not. |
 | `STRANDS_ROBOT_MESH_AGENT_ID` | anonymous | Caller id the agent presents — **required** when a device sets an allowlist (else it's denied). |
 
 #### Other

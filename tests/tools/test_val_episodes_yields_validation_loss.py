@@ -15,17 +15,53 @@ rather than silently rounded.
 """
 
 import dataclasses
+import importlib
 import inspect
 import json
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from strands_robots.tools.lerobot_train import build_train_command
-from strands_robots.utils import validation_split_error, validation_split_fraction
+from strands_robots.utils import (
+    effective_episode_count,
+    episode_subset_budget_error,
+    validation_split_error,
+    validation_split_fraction,
+)
+
+
+def _importable(module: str, symbol: str | None = None) -> bool:
+    """Whether ``from module import symbol`` (or ``import module``) would succeed here."""
+    try:
+        mod = importlib.import_module(module)
+    except ImportError:
+        return False
+    return symbol is None or hasattr(mod, symbol)
+
+
+# lerobot 0.6.1 (the declared floor) has neither resolve_episode_indices nor
+# DatasetConfig.exclude_episodes; both landed in a single commit (64b23178d).
+# Cells that assert resolver semantics (exclusion lists, allowlist+exclusion,
+# out-of-range index shrinkage) are gated on its presence so the required check
+# passes on the locked environment.
+_HAS_RESOLVER = _importable("lerobot.datasets.utils", "resolve_episode_indices")
+
+_NEEDS_RESOLVER = pytest.mark.skipif(
+    not _HAS_RESOLVER,
+    reason="resolve_episode_indices absent in locked lerobot 0.6.1",
+)
+
+_HAS_DRACCUS = _importable("draccus.cfgparsing")
+
+_NEEDS_DRACCUS = pytest.mark.skipif(
+    not _HAS_DRACCUS,
+    reason="draccus (lerobot's CLI decoder for text-form episode lists) not installed",
+)
 
 
 def _write_dataset(root: Path, total_episodes: int = 10, total_tasks: int = 1) -> Path:
@@ -141,6 +177,275 @@ class TestCallerOverridesTakePrecedence:
         cmd = build_train_command(dataset_root=str(root), policy_type="act", val_episodes=2, extra_flags={key: 7})
         # _flag asserts the flag appears at most once, so a duplicate fails here.
         assert _flag(cmd, key) == "7"
+
+
+def _held_out(cmd: list[str], loaded_episodes: int) -> int:
+    """Episodes lerobot will hold out of the emitted split, for a single task.
+
+    Mirrors ``lerobot.datasets.factory.make_train_eval_datasets``, which takes
+    ``ceil(len(eps) * eval_split)`` from the tail of the episodes the DATASET was
+    built from - the subset ``dataset.episodes`` / ``dataset.exclude_episodes``
+    left, not the header's ``total_episodes``.
+    """
+    split = _flag(cmd, "dataset.eval_split")
+    return 0 if split is None else math.ceil(loaded_episodes * float(split))
+
+
+# Every spelling of "load 15 of the 30 episodes" a passthrough accepts, with the
+# episode count each one leaves the run. The text form is the one lerobot's own
+# CLI decoder reads, so it reaches training exactly as the list does.
+_FIFTEEN_OF_THIRTY: list[Any] = [
+    ("allowlist", {"dataset.episodes": list(range(15))}, 15),
+    pytest.param("allowlist as text", {"dataset.episodes": str(list(range(15)))}, 15, marks=_NEEDS_DRACCUS),
+    # --- resolver-dependent: exclusion lists and out-of-range shrinkage ---
+    pytest.param("exclusion list", {"dataset.exclude_episodes": list(range(15, 30))}, 15, marks=_NEEDS_RESOLVER),
+    pytest.param(
+        "allowlist and exclusion",
+        {"dataset.episodes": list(range(20)), "dataset.exclude_episodes": [0, 1, 2, 3, 4]},
+        15,
+        marks=_NEEDS_RESOLVER,
+    ),
+    # lerobot's resolver drops an index outside the dataset with a warning
+    # instead of refusing it, so an out-of-range entry SHRINKS the subset.
+    pytest.param(
+        "allowlist with an out-of-range index", {"dataset.episodes": [*range(15), 99]}, 15, marks=_NEEDS_RESOLVER
+    ),
+]
+
+
+class TestTheSplitIsSizedAgainstTheLoadedSubset:
+    """The requested COUNT must survive an episode subset, on every surface.
+
+    ``val_episodes`` is delivered as one ``eval_split`` FRACTION, and lerobot
+    multiplies that fraction by the episodes the dataset was BUILT from. Dividing
+    it by the header's ``total_episodes`` while lerobot multiplies by the subset
+    reserved fewer episodes than asked - 2 of the 15 episodes an episode filter
+    kept, for a caller who asked for 3 - and the run still logged an eval loss,
+    so it looked correct. This is the documented ``filter_episodes`` recipe in
+    ``docs/data/episode-labels.md``.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "passthrough", "loaded"),
+        _FIFTEEN_OF_THIRTY,
+    )
+    def test_the_tool_reserves_exactly_n_of_the_subset(
+        self, tmp_path: Path, label: str, passthrough: dict[str, Any], loaded: int
+    ) -> None:
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        cmd = build_train_command(
+            dataset_root=str(root), policy_type="act", val_episodes=3, extra_flags=dict(passthrough)
+        )
+        assert _held_out(cmd, loaded) == 3
+
+    @pytest.mark.parametrize(
+        ("label", "passthrough", "loaded"),
+        _FIFTEEN_OF_THIRTY,
+    )
+    def test_the_trainspec_backend_reserves_exactly_n_of_the_subset(
+        self, tmp_path: Path, label: str, passthrough: dict[str, Any], loaded: int
+    ) -> None:
+        pytest.importorskip("lerobot")
+        from strands_robots.training.lerobot import LerobotTrainer
+
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        spec = _spec(dataset_root=str(root), val_episodes=3, extra={"policy_type": "act", **passthrough})
+        trainer = LerobotTrainer(device="cpu")
+        assert _held_out(trainer.build_command(spec), loaded) == 3
+        # The in-process config must carry the same fraction the argv does, or
+        # the two launch paths reserve different numbers of episodes.
+        assert trainer.build_config(spec).dataset.eval_split == pytest.approx(validation_split_fraction(3, loaded))
+
+    def test_a_hydra_prefixed_key_names_the_same_subset(self, tmp_path: Path) -> None:
+        """``--dataset.episodes`` and ``dataset.episodes`` are one flag in the argv."""
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        cmd = build_train_command(
+            dataset_root=str(root),
+            policy_type="act",
+            val_episodes=3,
+            extra_flags={"--dataset.episodes": list(range(15))},
+        )
+        assert _held_out(cmd, 15) == 3
+
+    def test_no_subset_still_divides_by_the_whole_dataset(self, tmp_path: Path) -> None:
+        """The fix must not shrink a denominator nothing restricted."""
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        cmd = build_train_command(dataset_root=str(root), policy_type="act", val_episodes=3)
+        assert _held_out(cmd, 30) == 3
+
+
+class TestASubsetTooSmallForTheHoldoutIsRefused:
+    """The holdout is bounded by the episodes loaded, not by the header count.
+
+    ``val_episodes=5`` against a 30-episode header whose passthrough selected 4
+    cleared the whole-dataset bound check and emitted a fraction that held out 1.
+    """
+
+    def test_the_tool_refuses_and_names_both_counts(self, tmp_path: Path) -> None:
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        with pytest.raises(ValueError, match="cannot be reserved from the 4 episode") as excinfo:
+            build_train_command(
+                dataset_root=str(root),
+                policy_type="act",
+                val_episodes=5,
+                extra_flags={"dataset.episodes": [0, 1, 2, 3]},
+            )
+        assert "out of 30 in the dataset" in str(excinfo.value)
+
+    def test_the_trainspec_backend_refuses_and_names_both_counts(self, tmp_path: Path) -> None:
+        pytest.importorskip("lerobot")
+        from strands_robots.training.lerobot import LerobotTrainer
+
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        spec = _spec(
+            dataset_root=str(root),
+            val_episodes=5,
+            extra={"policy_type": "act", "dataset.episodes": [0, 1, 2, 3]},
+        )
+        problems = LerobotTrainer(device="cpu").validate(spec)
+        named = [p for p in problems if "cannot be reserved from the 4 episode" in p]
+        assert named, problems
+        assert "out of 30 in the dataset" in named[0]
+
+    @_NEEDS_RESOLVER
+    def test_an_out_of_range_allowlist_is_refused_here_not_at_train_time(self, tmp_path: Path) -> None:
+        """lerobot drops an out-of-range index, so the subset can be too small.
+
+        The resolver warns rather than raising, so the shrunken subset is what
+        reaches the split - and a holdout that no longer fits it is refused by
+        the same bound check, before a run starts.
+        """
+        root = _write_dataset(tmp_path / "ds", total_episodes=30)
+        with pytest.raises(ValueError, match="cannot be reserved from the 3 episode"):
+            build_train_command(
+                dataset_root=str(root),
+                policy_type="act",
+                val_episodes=3,
+                extra_flags={"dataset.episodes": [0, 1, 2, 99]},
+            )
+
+    def test_the_whole_dataset_refusal_is_unchanged_without_a_subset(self, tmp_path: Path) -> None:
+        """No subset means the caller's own header-count refusal still answers."""
+        root = _write_dataset(tmp_path / "ds", total_episodes=10)
+        with pytest.raises(ValueError, match="leaves no training data"):
+            build_train_command(dataset_root=str(root), policy_type="act", val_episodes=10)
+        assert episode_subset_budget_error(10, 10, 10, "ctx", passthrough_param="extra") is None
+
+
+class TestTheLoadedEpisodeCountHasOneOwner:
+    """Both surfaces read the subset through :func:`effective_episode_count`."""
+
+    @pytest.mark.parametrize(
+        ("episodes", "exclude", "expected"),
+        [
+            (None, None, 30),
+            (None, [], 30),
+            (list(range(15)), None, 15),
+            # --- resolver-dependent: the floor ignores exclusion / counts verbatim ---
+            pytest.param(None, list(range(15, 30)), 15, marks=_NEEDS_RESOLVER),
+            pytest.param(list(range(20)), [0, 1, 2, 3, 4], 15, marks=_NEEDS_RESOLVER),
+            pytest.param([0, 1, 2, 99], None, 3, marks=_NEEDS_RESOLVER),
+            # --- floor-path expectations (no resolver: exclusion ignored, allowlist verbatim) ---
+            pytest.param(None, list(range(15, 30)), 30, marks=pytest.mark.skipif(_HAS_RESOLVER, reason="floor-only")),
+            pytest.param(
+                list(range(20)), [0, 1, 2, 3, 4], 20, marks=pytest.mark.skipif(_HAS_RESOLVER, reason="floor-only")
+            ),
+            pytest.param([0, 1, 2, 99], None, 4, marks=pytest.mark.skipif(_HAS_RESOLVER, reason="floor-only")),
+            pytest.param("[0, 1, 2]", None, 3, marks=_NEEDS_DRACCUS),
+            ([], None, 0),
+            # Values the config field itself refuses are no restriction here:
+            # no run starts on them, so there is no split to size. A bool is an
+            # int in Python, and reading True as "episode 1" would size a split
+            # against one episode.
+            (True, None, 30),
+            ("not-a-list", None, 30),
+            ([0, 1.5], None, 30),
+            ([0, True], None, 30),
+        ],
+    )
+    def test_the_loaded_count_is_what_lerobot_will_build_the_dataset_from(
+        self, episodes: Any, exclude: Any, expected: int
+    ) -> None:
+        assert effective_episode_count(30, episodes, exclude) == expected
+
+    @pytest.mark.parametrize(
+        ("hostile", "expected"),
+        [
+            pytest.param("iter", 30, id="__iter__ raises - no restriction"),
+            pytest.param("next", 30, id="an element raises mid-read - no restriction"),
+            # The read iterates rather than measuring, so a value with no usable
+            # length is still read: 3 indices is the honest count, not a fallback.
+            pytest.param("len", 3, id="__len__ raises - still read by iteration"),
+        ],
+    )
+    def test_a_sequence_that_will_not_be_read_does_not_escape_the_preflight(self, hostile: str, expected: int) -> None:
+        """The count feeds ``validate()``, which must return a verdict, not raise.
+
+        A ``Sequence`` is only a promise; reading one runs the caller's code. So
+        the read is guarded element by element and a value that cannot be read
+        counts as no restriction - the config field refuses it with the spellings
+        it accepts.
+        """
+
+        class Hostile(Sequence):  # type: ignore[type-arg]
+            def __iter__(self) -> Any:
+                if hostile == "iter":
+                    raise RuntimeError("no iteration for you")
+                if hostile == "next":
+
+                    def produce() -> Any:
+                        yield 0
+                        raise RuntimeError("no second element for you")
+
+                    return produce()
+                return iter([0, 1, 2])
+
+            def __getitem__(self, index: Any) -> Any:
+                raise RuntimeError("no subscript for you")
+
+            def __len__(self) -> int:
+                if hostile == "len":
+                    raise RuntimeError("no length for you")
+                return 3
+
+        assert effective_episode_count(30, Hostile(), None) == expected
+
+    def test_a_lerobot_without_the_resolver_counts_the_allowlist_verbatim(self, monkeypatch: Any) -> None:
+        """lerobot 0.6.1, the declared floor, has no ``resolve_episode_indices``.
+
+        It also has no ``DatasetConfig.exclude_episodes`` (both landed in one
+        commit) and hands ``dataset.episodes`` to ``LeRobotDataset`` unchanged,
+        so the allowlist length is the loaded count there.
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def refuse_resolver(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "lerobot.datasets.utils":
+                raise ImportError("no resolve_episode_indices on the floor")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", refuse_resolver)
+        assert effective_episode_count(30, list(range(15)), None) == 15
+        assert effective_episode_count(30, None, None) == 30
+
+    def test_a_multi_task_dataset_is_still_refused_with_a_subset(self, tmp_path: Path) -> None:
+        """A subset can only narrow the task set, so the header guard stays a superset.
+
+        ``validation_split_error`` reads ``total_tasks`` from the header rather
+        than over the subset. Since the subset's tasks are a subset of the
+        dataset's, a single-task header still means a single-task subset, and a
+        multi-task header is refused either way - never silently honored.
+        """
+        root = _write_dataset(tmp_path / "ds", total_episodes=30, total_tasks=3)
+        with pytest.raises(ValueError, match="cannot be reserved exactly"):
+            build_train_command(
+                dataset_root=str(root),
+                policy_type="act",
+                val_episodes=3,
+                extra_flags={"dataset.episodes": list(range(15))},
+            )
 
 
 class TestEverySurfaceAgrees:

@@ -169,7 +169,6 @@ extras you need:
 | `cosmos3-service` | websockets, msgpack | NVIDIA Cosmos 3 policy-server client |
 | `curobo` | _(empty; install cuRobo from source)_ | In-process collision-aware motion planning (CUDA GPU) |
 | `wbc` | onnxruntime | GR00T Whole-Body-Control (SONIC) humanoid locomotion - in-process ONNX, no GPU |
-| `motionbricks` | torch + vector-quantize-pytorch, pytorch-lightning, hydra-core (install `motionbricks` from source) | NVIDIA MotionBricks generative kinematic motion for the G1 - in-process torch, composes with `wbc` |
 | `mesh` | eclipse-zenoh, json5 | Peer-to-peer robot mesh |
 | `mesh-iot` | awsiotsdk, awscrt, boto3 | AWS IoT Core mesh transport for fleets |
 | `sagemaker` | boto3 | Submit a `TrainSpec` as a managed SageMaker training job (`create_trainer("sagemaker")`) |
@@ -806,7 +805,6 @@ runnable example + full install/deploy notes in its linked doc:
 | `moveit2` | `moveit` | ZMQ sidecar (ROS 2 / `moveit_py`, out-of-process) | `target_pose` / `target_joints` | `[moveit2]` extra (`pyzmq`, `msgpack`); a running sidecar | [MoveIt2 docs](https://strands-labs.github.io/robots/policies/moveit2/) |
 | `curobo` | `cumotion` | in-process CUDA | `target_pose` / `target_joints` (+ `world_update`) | NVIDIA GPU; cuRobo from source (not on PyPI) | [cuRobo source](https://github.com/NVlabs/curobo) |
 | `wbc` | `sonic` | in-process ONNX (CPU) | `target_velocity` `[vx, vy, omega]` | `[wbc]` extra (`onnxruntime`); a SONIC checkpoint | [WBC docs](https://strands-labs.github.io/robots/policies/wbc/) |
-| `motionbricks` | `motion_bricks` | in-process torch (CPU/CUDA) | `style` / `mode`, `target_velocity`, `target_heading` | `[motionbricks]` extra + `motionbricks` from source + git-LFS checkpoints | [MotionBricks docs](https://strands-labs.github.io/robots/policies/motionbricks/) |
 
 ```python
 from strands_robots.policies import create_policy

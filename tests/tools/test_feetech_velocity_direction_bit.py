@@ -96,6 +96,11 @@ class _FakeSerial:
 @pytest.fixture
 def opened(monkeypatch: pytest.MonkeyPatch) -> list[_FakeSerial]:
     """Record every port this tool opens; empty means the bus was never touched."""
+    # The four write actions now stop for operator approval before the port is
+    # opened (F-009). This file grades what reaches the fake port, so it
+    # pre-approves the surface; the gate has its own file,
+    # tests/tools/test_serial_tool_gates_bus_writes.py.
+    monkeypatch.setenv(serial_mod.COMMAND_ALLOW_ENV, "*")
     created: list[_FakeSerial] = []
 
     def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> _FakeSerial:

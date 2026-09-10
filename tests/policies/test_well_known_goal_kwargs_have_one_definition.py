@@ -24,18 +24,18 @@ The discriminator between a shared vocabulary key and a provider-private kwarg i
 the one AGENTS.md convention 11 already codifies for value-domain guards: a second
 independent caller is the evidence that a shared name is right, and one caller is
 evidence of nothing. Applied here, a "provider family" is the provider package
-(``policies/wbc/``, ``policies/motionbricks/``, ...), so ``wbc/policy.py`` and its
+(``policies/wbc/``, ``policies/kimodo/``, ...), so ``wbc/policy.py`` and its
 ``wbc/gait.py`` variant count once between them. Measured on this tree the rule
 separates the vocabulary from the private kwargs with no special cases at all:
 
     read by two or more families -> target_pose, target_joints,
                                     target_velocity, world_update
-    read by exactly one family   -> target_orientation, target_heading,
-                                    target_heading_angle, height,
-                                    gait_frequency, style, mode,
-                                    locomotion_style, speed_scale, replan,
-                                    scene_model, planning_group, seed,
-                                    text_prompt, guidance_scale, ... (26 keys)
+    read by exactly one family   -> target_orientation, height,
+                                    gait_frequency, command, select,
+                                    replan, scene_model, planning_group,
+                                    seed, text_prompt, guidance_scale,
+                                    diffusion_steps, motion, dof_pos,
+                                    ... (22 keys)
 
 which is why the assertion below can be a set *equality* rather than a
 containment: the vocabulary is neither missing a key two families share nor
@@ -82,9 +82,10 @@ def _abc_well_known_keys() -> frozenset[str]:
 def _is_kwargs_name(node: ast.expr) -> bool:
     """True for ``kwargs`` and the locals providers derive from it.
 
-    ``motionbricks`` reads its goal off a ``call_kwargs`` copy it forwards, so
-    matching the bare name only would miss a real read - and reading a key off a
-    derived mapping is the same exposure as reading it off ``kwargs`` directly.
+    A provider that reads its goal off a copy of ``kwargs`` it forwards is read
+    here too: matching the bare name only would miss a real read, and reading a
+    key off a derived mapping is the same exposure as reading it off ``kwargs``
+    directly.
     """
     return isinstance(node, ast.Name) and node.id.endswith("kwargs")
 
@@ -208,9 +209,9 @@ def test_the_abc_documents_every_goal_key_two_provider_families_share() -> None:
     """A key two provider families read is shared vocabulary and must be on the ABC.
 
     This is the direction that catches the real defect. ``target_velocity`` was
-    read by ``wbc`` and ``motionbricks`` while the ABC listed three keys, so a
-    provider author reading the contract could not discover the goal key two
-    shipped families already honoured.
+    read by two provider families while the ABC listed three keys, so a provider
+    author reading the contract could not discover the goal key two shipped
+    families already honoured.
     """
     shared = _shared_goal_kwargs()
     documented = _abc_well_known_keys()
@@ -252,16 +253,19 @@ def test_a_single_family_kwarg_stays_out_of_the_shared_vocabulary() -> None:
     """Negative control naming the keys the fix must NOT have swept in.
 
     ``target_orientation`` and ``height`` are read by ``wbc`` (across its policy
-    and its gait variant, one family) and ``target_heading`` by ``motionbricks``
-    alone. They are ``target_``-shaped and sit in the same ``get_actions`` bodies
-    as the real vocabulary, so a guard keyed on the name shape rather than on the
+    and its gait variant, one family) and ``command`` by ``microduck`` alone.
+    Each is a plausible false positive rather than an arbitrary key: the first is
+    ``target_``-shaped, and all three sit in the same ``get_actions`` bodies as
+    ``target_velocity`` - ``command`` in ``microduck``, one of the two families
+    that makes ``target_velocity`` shared in the first place. A guard keyed on
+    name shape or on proximity to a real goal key rather than on the
     second-caller rule would promote them. Pinning them here is what makes the
     equality above evidence that the allowlist was extended by one key rather
     than opened to everything that looks like a goal.
     """
     by_family = _goal_kwargs_by_provider_family()
     documented = _abc_well_known_keys()
-    for private in ("target_orientation", "target_heading", "height"):
+    for private in ("target_orientation", "command", "height"):
         assert private in by_family, (
             f"{private} is no longer read by any provider; this control now pins "
             "nothing and should be re-pointed at a current single-family kwarg"
