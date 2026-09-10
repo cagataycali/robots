@@ -2,31 +2,20 @@
 
 The Isaac Sim backend runs the simulation on
 [NVIDIA Isaac Sim](https://developer.nvidia.com/isaac-sim) (PhysX GPU physics +
-RTX path-traced rendering). It is a **built-in, in-tree** backend that lives at
-`strands_robots.simulation.isaac`, a peer of the `mujoco` and `newton` backends.
-It implements the same `SimEngine` contract as the MuJoCo backend, so the
-`Robot()` / `Simulation` / policy APIs are identical - only the physics and
-rendering run on the GPU through Isaac Sim.
-
-`strands-robots` has **no hard dependency** on Isaac Sim: the `sim-isaac` extra
-provides the pip-installable helpers, and `create_simulation("isaac")` resolves
-the **built-in** backend, exactly like `create_simulation("mujoco")`. The Isaac
-Sim runtime itself (~30 GB) is provisioned separately - via its own pip wheels
-on Python 3.12, or out-of-band (see below).
+RTX path-traced rendering). It is a built-in backend at
+`strands_robots.simulation.isaac`, a peer of `mujoco` and `newton`, and it
+implements the same `SimEngine` contract, so the `Robot()` / `Simulation` /
+policy APIs are identical. `strands-robots` has no hard dependency on Isaac Sim:
+the `sim-isaac` extra provides the pip-installable helpers, and the ~30 GB
+runtime is provisioned separately.
 
 ## When to use it
 
-- You have an NVIDIA RTX GPU (Ubuntu 22.04+, CUDA 12+) and want photoreal,
-  path-traced observations for sim2real visuals or paper-grade frames.
-- You want USD-native scenes (real CAD assets, Nucleus, IsaacLab compatibility).
-- You want Replicator synthetic data - ground-truth depth, segmentation, and
-  bounding boxes alongside RGB.
-- You want fleet RL on PhysX GPU with 1024+ parallel environments.
-
-On macOS / Apple Silicon or CPU-only hosts, install the lightweight default
-[`strands-robots`](https://github.com/strands-labs/robots) and use the MuJoCo
-backend instead - it runs everywhere and the agent contract is identical. Isaac
-Sim is a ~30 GB install and requires an NVIDIA GPU.
+An NVIDIA RTX GPU (Ubuntu 22.04+, CUDA 12+) and one of: photoreal path-traced
+observations, USD-native scenes (CAD assets, Nucleus, IsaacLab), Replicator
+synthetic data (depth, segmentation, boxes alongside RGB), or fleet RL with
+1024+ PhysX environments. On macOS or a CPU-only host use the MuJoCo backend -
+the agent contract is identical.
 
 ## Install
 
@@ -44,20 +33,15 @@ Install the Isaac Sim runtime first, then the `sim-isaac` extra:
 pip install 'strands-robots[sim-isaac]'
 ```
 
-The `sim-isaac` extra lives in **`strands-robots`** (a peer of `sim-mujoco` and
-`sim-newton`). Requesting `create_simulation("isaac")` without the extra
-installed raises a `ValueError` whose message carries the exact install hint
-(`pip install 'strands-robots[sim-isaac]'`). Backend discovery is lazy, so
-MuJoCo-only users never pay the Isaac Sim import cost.
+Requesting `create_simulation("isaac")` without the extra raises a `ValueError`
+carrying the install hint. Backend discovery is lazy, so MuJoCo-only users
+never pay the Isaac Sim import cost.
 
-### Installing Isaac Sim via pip - caveats
+### Installing Isaac Sim via pip
 
-Since the cp312 wheels shipped for Isaac Sim 6.0.x, the runtime itself is
-pip-installable on Python 3.12. The `extscache` extra is **required** - the
-bare `isaacsim[all]` metapackage omits the `isaacsim-extscache-*` packages, and
-`SimulationApp` aborts resolving its extension graph without them. The pip
-install also degrades an existing dev environment in ways pip only *warns*
-about, so run this exact sequence:
+The cp312 wheels make Isaac Sim 6.0.x pip-installable on Python 3.12. The
+`extscache` extra is required, and the install degrades an existing dev
+environment in ways pip only warns about, so run this exact sequence:
 
 ```bash
 # 1. Install the Isaac Sim wheels (NVIDIA index required):
@@ -72,29 +56,12 @@ export OMNI_KIT_ACCEPT_EULA=YES
 
 Known collateral (observed with isaacsim 6.0.0.1 and 6.0.1.0):
 
-- **`coverage` downgrade breaks any numba-backed import with a red-herring
-  error.** `isaacsim-kernel` pins `coverage==7.4.4`, silently downgrading modern
-  coverage. numba's tracer probe then fails, and the first visible symptom is far
-  from the cause: an unrelated import dies with `module 'coverage.types' has no
-  attribute 'Tracer'`. Verified remedy: `pip install 'coverage>=7.6.1'` after the
-  isaacsim install. The reverse pip conflict warning (`isaacsim-kernel requires
-  coverage==7.4.4`) is cosmetic: coverage is test tooling for the kit, not a
-  runtime dependency.
-- **torch stack bump vs lerobot pins.** The isaacsim install upgrades
-  `torch`/`torchvision` (and numpy/scipy/pyarrow), leaving pip conflict
-  warnings against lerobot's `torchvision` pin. Expect those warnings; they do
-  not by themselves indicate breakage. Validated combination as of 2026-07-31:
-  isaacsim 6.0.x with torch 2.11 / torchvision 0.26.0 alongside lerobot 0.5.1 -
-  GR00T-on-MuJoCo re-verified green post-install. The environment is outside
-  lerobot's declared support, so re-verify your own policy path after
-  installing.
-- **EULA prompt on first import.** Any non-interactive first import fails with
-  `Do you accept the EULA? ... EOF when reading a line` unless
-  `OMNI_KIT_ACCEPT_EULA=YES` is set.
-- **Exit code 134 after successful work.** Isaac Sim has a known atexit
-  segfault that makes otherwise-clean scripts exit 134 *after* completing
-  successfully. Scripts that boot SimulationApp should guard with
-  `os._exit(...)` after SimulationApp teardown.
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| An unrelated import dies with `module 'coverage.types' has no attribute 'Tracer'` | `isaacsim-kernel` pins `coverage==7.4.4`, silently downgrading it; numba's tracer probe fails | `pip install 'coverage>=7.6.1'` after the isaacsim install; the reverse pip warning is cosmetic |
+| pip conflict warnings against lerobot's `torchvision` pin | isaacsim bumps torch / torchvision / numpy / scipy / pyarrow | Expected; not breakage by itself. Validated 2026-07-31: isaacsim 6.0.x, torch 2.11, torchvision 0.26.0, lerobot 0.5.1. Re-verify your own policy path |
+| First import fails with `Do you accept the EULA? ... EOF when reading a line` | Non-interactive first import | `export OMNI_KIT_ACCEPT_EULA=YES` |
+| Exit code 134 after successful work | Known atexit segfault in Isaac Sim | Guard scripts that boot `SimulationApp` with `os._exit(...)` after teardown |
 
 ## Usage
 
@@ -113,16 +80,9 @@ frame = sim.render(camera_name="front")          # RGB + depth
 sim.destroy()
 ```
 
-`Robot("so100", backend="isaac", ...)` routes through the same factory, so the
-backend selection is identical whether you go through `Robot()` or
-`create_simulation()`.
-
-`scale=` above is an accepted alias for `add_object(size=...)`, and it is the only
-extra keyword that method reads. Any other keyword is refused by name rather than
-dropped -- the same contract `IsaacConfig` applies to `create_simulation` kwargs,
-and the same verdict the MuJoCo and Newton backends give (they declare the same
-`add_object` parameters and no `**kwargs`, so an unknown keyword is a `TypeError`
-there):
+`Robot("so100", backend="isaac", ...)` routes through the same factory. `scale=`
+is an accepted alias for `add_object(size=...)` and the only extra keyword that
+method reads; any other keyword is refused by name, as on MuJoCo and Newton:
 
 ```python
 sim.add_object(name="cube", heigth=0.3)
@@ -154,13 +114,12 @@ rejected eagerly. The commonly used fields:
 
 ### Environment variables
 
-The Isaac backend reads three `STRANDS_ISAAC_*` variables (resolved when
-`IsaacConfig` is constructed). `STRANDS_ISAAC_NUCLEUS_URL` is read only when
-`nucleus_url` is not passed, so there the kwarg wins; the two switches override
-their field whenever they are set. Which of those two directions the switches
-*should* have is [#2062](https://github.com/strands-labs/robots/issues/2062).
-
-Both switches accept four symmetric pairs, case-insensitively and ignoring
+Three `STRANDS_ISAAC_*` variables are resolved when `IsaacConfig` is
+constructed. `STRANDS_ISAAC_NUCLEUS_URL` is read only when `nucleus_url` is not
+passed (the kwarg wins); the two switches override their field whenever set -
+which direction they *should* have is
+[#2062](https://github.com/strands-labs/robots/issues/2062). Both switches are
+two-sided and accept four symmetric pairs, case-insensitively, ignoring
 surrounding whitespace:
 
 | on | off |
@@ -170,11 +129,9 @@ surrounding whitespace:
 | `yes` | `no` |
 | `on` | `off` |
 
-Unset -- or set to an empty value, which is what an undefined `${{ vars.* }}`
-interpolation in a GitHub Actions `env:` block produces -- leaves the field
-alone. Any other spelling raises `ValueError` naming both vocabularies, rather
-than falling through to the off side: `STRANDS_ISAAC_HEADLESS=enabled` used to
-open a window.
+Unset or empty (what an undefined `${{ vars.* }}` in a GitHub Actions `env:`
+block produces) leaves the field alone. Any other spelling raises `ValueError`
+naming both vocabularies rather than falling through to the off side.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -188,148 +145,32 @@ open a window.
 
 - **World & lifecycle** - `create_world`, `destroy`, `reset`, `step`,
   `get_state`, `cleanup`.
-- **Robots** - `add_robot` (procedural builders, or USD via `usd_path=`, or
-  URDF), `remove_robot`, `list_robots`, `robot_joint_names`, `send_action`,
+- **Robots** - `add_robot` (procedural builders, USD via `usd_path=`, or URDF),
+  `remove_robot`, `list_robots`, `robot_joint_names`, `send_action`,
   `get_observation`.
 - **Objects** - `add_object` (`cuboid` / `sphere` / `cylinder` / `capsule` /
   `mesh`, dynamic or static), `remove_object`. A `shape="mesh"` add takes a
-  `mesh_path` to an STL/OBJ/MSH asset (converted to USD once and cached under
-  `$STRANDS_BASE_DIR/asset_cache/usd_meshes/`, content-addressed) or to a
-  USD file (referenced directly). The asset defines the extent - `size` is
-  ignored for a mesh, the MuJoCo read of that parameter (the Newton backend
-  consumes it as a scale instead; see
-  [#2300](https://github.com/strands-labs/robots/issues/2300)) - and
-  collision uses the mesh's **convex hull**, also the MuJoCo contract, with
-  the same caveat for concave assets: the hull fills every cavity. A missing
-  file, an unconvertible format, or an asset declaring a vertex coordinate
-  that is not finite is refused up front, never realized as a
-  fallback primitive.
+  `mesh_path` (STL/OBJ/MSH, converted to USD once and cached content-addressed
+  under `$STRANDS_BASE_DIR/asset_cache/usd_meshes/`, or a USD file);
+  the asset defines the extent and collision is its convex hull, the MuJoCo
+  contract (Newton reads `size` as a scale,
+  [#2300](https://github.com/strands-labs/robots/issues/2300)).
 - **Cameras & rendering** - `add_camera` (look-at, FOV), `render` (RGB + depth).
-  World-fixed only: `parent_body` (a body-mounted wrist camera, supported on
-  mujoco/newton) is refused here with an error naming those backends, because
-  camera prims are parented to the stage camera scope rather than to an
-  articulation link.
+  World-fixed only: `parent_body` is refused with an error naming the backends
+  that support it.
 - **Loaders** - `load_urdf` / `load_mjcf` / `load_usd` resolve to a
-  `ProceduralRobot` dataclass. Both XML loaders report each link's pose in its
-  parent's frame. `load_mjcf` reads the rotation from whichever of MJCF's five
-  spellings the body uses - `quat`, `euler`, `axisangle`, `xyaxes` or `zaxis` -
-  under the model-global `<compiler angle>` and `<compiler eulerseq>`. The
-  reported orientation is always a unit quaternion, the one MuJoCo's compiler
-  stores: a non-unit spelling such as `quat="1 -1 0 0"` (the idiomatic quarter
-  turn) is reported as the quarter turn it means, not as the components as
-  written, which applied as a rotation would scale the frame by `|q|^2` as well
-  as turning it. `load_urdf` reads both halves from the `<origin>` of the joint
-  that reaches the link, since URDF places a link on that joint rather than on
-  the `<link>` element: `xyz` into `position` and `rpy` - fixed-axis
-  roll-pitch-yaw, always radians - into `orientation`. A root link, reached by no
-  joint, keeps the identity pose. A joint's axis comes from `<axis xyz>`, and
-  each format's own default applies when the element states no vector the
-  parser can read: a URDF joint that omits the optional `<axis>` acts about
-  **+X**, an MJCF `<joint>` that omits `axis` about **+Z**. Both are valid
-  axes, so a joint read under the other format's default would be reported
-  acting in the perpendicular plane with the load still reporting success. A
-  default applies only where the format declares one, which is why the two
-  formats answer an omitted `type` differently: MJCF documents `hinge` as the
-  default for a `<joint>`, so an MJCF joint with no `type` is read as a hinge,
-  while URDF requires `type` on every `<joint>`, so a URDF joint that omits it
-  is refused by name - by both readers, `load_urdf` and `urdf_joint_names`.
-  Reading it as `fixed` welded a joint the file never described and returned a
-  robot with fewer actuated DOFs than the file declares, indistinguishable from
-  a deliberate `type="fixed"`. Both
-  of MJCF's spellings of a free joint are read - the dedicated `<freejoint>`
-  element and `<joint type="free">`, which MuJoCo compiles to the same joint -
-  so a floating base is reported rather than absent. `<freejoint>` is how every
-  shipped quadruped and humanoid states its base, and it resolves no default
-  class, because MJCF has no `<default><freejoint>` block: a `<default><joint>`
-  class reaches the `type="free"` spelling only, exactly as MuJoCo applies it.
-  Either spelling is reported with `joint_type="fixed"`, since `JointDef` has no
-  6-DOF spelling, so a floating base is visible in `joints` without being
-  counted as an actuated DOF by `num_joints`.
+  `ProceduralRobot`. Each XML loader reads its format's own rotation spellings
+  and defaults (URDF joint axis +X, MJCF +Z and `hinge`; both free-joint
+  spellings), and a URDF joint with no `type` is refused rather than read as
+  `fixed`.
 
-Because the joint-name and observation contract matches the MuJoCo backend,
-policies and observation mappings transfer unchanged between backends.
-
-Mesh-bearing scenes get the same treatment for their *visuals*: `load_scene`
-renders each scene object with its real mesh (bowls, plates - the assets a
-pixel-conditioned policy was trained on) while keeping the validated
-collision-AABB box as the invisible physics proxy, so switching backends does
-not also switch what the cameras see. That box covers both MJCF spellings of a
-capsule or cylinder - `pos` plus `size="radius half-length"`, and `fromto` plus
-`size="radius"`, where the two endpoints carry the placement and the axis
-extent - so a `fromto` bar is proxied by its full length at its midpoint rather
-than by a ball of its radius at the body origin. An object whose mesh cannot be resolved
-keeps a visible box proxy, and the `load_scene` report then carries an
-explicit caveat that pixel-conditioned policy scores on that scene are not
-comparable across backends; when every object renders its mesh, the caveat
-disappears. A mesh asset that is declared but missing on disk fails the scene
-load loudly - never a silent box - and so does one declaring a vertex
-coordinate that is not finite: `min`/`max` order a NaN as neither smaller nor
-larger than anything, so the collision AABB measured from such an asset is the
-box of the vertices that *are* finite, numerically indistinguishable from a
-mesh that declared only those, while an infinite coordinate makes the proxy
-unbounded. MuJoCo refuses the same asset (`vertex coordinate N is not
-finite`), so the scene loader does too rather than sizing a proxy around it.
-
-The accepted *input* domain matches too, so a call one backend refuses is
-refused by all three. For the setup methods that means the pose vectors, an
-object's `color` and `mass`, the camera `fov` and the pixel dimensions - and the
-entity `name`: `add_robot`,
-`add_object` and `add_camera` each require a non-empty string containing no NUL.
-That matters more here than on MuJoCo because the name is interpolated into the
-USD prim path (`{stage_path}/Robots/{name}`), so an unaddressable name does not
-just produce an entity you cannot look up - `add_robot("")` resolved to
-`/World/Robots/`, the *container* scope for every robot, and `remove_robot`
-prunes its cleanup registry by that prefix. Unlike the MuJoCo backend there is
-no "derive a label from the model" short form: `name` is also the procedural
-lookup key, so `None` / `""` are refused rather than replaced with a generated
-label.
-
-`stage_path` is the other half of that same path and carries the same floor, so
-a path this backend records is one it can address whichever component the caller
-got wrong. It must be an absolute USD prim path with at least one component,
-every component a prim name (`[A-Za-z_][A-Za-z0-9_]*`). A non-`str` was
-previously interpolated as its rendered text (`stage_path=None` recorded
-`None/Robots/arm`); a relative prefix (`"World"`) recorded a path that
-`get_body_state` cannot take, because it distinguishes an absolute prim path
-from a `<robot>/<link>` pair by the leading `/`; a trailing or doubled separator
-(`"/World/"`) left an empty component; and a component outside USD's identifier
-alphabet (`"/My World"`) is transcoded by USD, so the prim does not land at the
-path recorded for it. The identifier rule applies to the prefix only - `name` is
-shared with backends whose entity names are not USD identifiers.
-
-The one deliberate difference in that list is `mass=0`. The Newton backend
-documents it as an alternative spelling of `is_static=True` and honours it, so it
-stays accepted there; this backend documents no such spelling, so a zero mass is
-refused with `is_static=True` named as the remedy - the MuJoCo contract these
-docs otherwise mirror. A static object's mass is read by nobody on any backend,
-so it is not validated there.
-
-Looking an entity *up* is the other half of that contract, and it answers rather
-than refuses: a name only *addresses* an entity here, so a name that cannot be a
-registry key is honestly absent. `remove_robot`, `remove_object`,
-`remove_camera`, `send_action`, `move_object`, `get_body_state` and the rest
-report it with the unknown-entity message they already had, `robot_joint_names`
-and `get_observation` keep answering empty, and `get_frame` /
-`get_camera_params` raise the `KeyError` their contract names. Previously the
-membership test itself raised `TypeError: unhashable type` for a list or dict
-name, so the miss escaped the envelope those methods document as their only
-failure channel - reachable with no entities registered at all.
-
-`render` is the one lookup that cannot answer with a frame, so it reports the
-same verdict as its raw sibling. Given a `camera_name` that *names* a camera the
-scene does not carry it returns `{"status": "error"}` with
-`Camera '<name>' not found. Available: [...]` - the message `get_frame` raises
-for the identical name, and the one the MuJoCo and Newton `render` give. It used
-to report `status="success"` with an all-black frame instead, tagged
-`Rendered (no camera)`, plus `pixel_mean` `0.0` as a measurement and the missing
-name in the `camera` field; because that envelope carries the PNG block the
-shared frame extractor reads, a rollout recording a mistyped camera wrote an
-all-black video and reported success. A `camera_name` that names *no* camera -
-`None`, `""`, `"default"` (the signature default) or `"free"` - still gets that
-blank frame: Isaac has no free camera to fall back to, unlike the two backends
-whose render entry points resolve those tokens to one, so for them it is a
-degradation rather than a mistake. Registering a camera under one of those names
-is accepted here and renders normally, since nothing on this backend routes them.
+The joint-name and observation contract and the accepted *input* domain match
+the MuJoCo backend: policies transfer unchanged, and a call one backend refuses
+(a malformed pose, `color`, `mass`, camera `fov`, an empty entity `name`) is
+refused by all three with the same text. Two Isaac-specific edges: `mass=0` is
+refused with `is_static=True` named as the remedy (Newton honours it as that
+spelling), and `stage_path` must be an absolute USD prim path of identifier
+components, because entity names are interpolated into it.
 
 ## Fleet (IsaacLab-style) preview
 
