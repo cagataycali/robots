@@ -223,7 +223,12 @@ def make_hitl_gate() -> Callable[[str, str, str], bool]:
         return auto_approve
 
     def prompt_operator(action: str, robot: str, instruction: str) -> bool:
-        answer = input(f"  [HITL] approve {action} -> {robot}: {instruction!r} [y/N] ")
+        try:
+            answer = input(f"  [HITL] approve {action} -> {robot}: {instruction!r} [y/N] ")
+        except EOFError:
+            # stdin closed (CI, a pipe, a detached run): nobody can approve.
+            print(f"  [HITL] {action} -> {robot}: declined, no operator on stdin: {instruction!r}")
+            return False
         return answer.strip().lower() in {"y", "yes", "approve", "approved"}
 
     return prompt_operator
