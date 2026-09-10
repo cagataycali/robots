@@ -43,11 +43,11 @@ import strands_robots
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod
 import strands_robots.hardware_robot as hw_mod
 import strands_robots.tools._command_gate as gate_mod
+import strands_robots.tools.g1.use_unitree as unitree_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.pose_tool as pose_mod
 import strands_robots.tools.robot_mesh as mesh_mod
 import strands_robots.tools.serial_tool as serial_mod
-import strands_robots.tools.g1.use_unitree as unitree_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots.mesh.audit import audit_log_path, read_audit_log
 
@@ -70,6 +70,7 @@ def _ctx(response: object) -> MagicMock:
 def _drive_use_ros(response: object) -> dict[str, Any] | None:
     """A publish aimed at a blocklisted drive topic."""
     return ros_mod._gate_command("publish", "/cmd_vel", _ctx(response))
+
 
 def _drive_use_unitree(response: object) -> dict[str, Any] | None:
     """A ``loco.SetVelocity`` through the raw Unitree escape hatch.
@@ -260,8 +261,8 @@ _GATES: tuple[_Gate, ...] = (
     _Gate(
         "use_unitree",
         "use_unitree_tool",
+        "SetVelocity",
         "loco.SetVelocity",
-        "",
         _drive_use_unitree,
         gate_mod,
         "gate_motion",
