@@ -126,6 +126,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
     SpecBuilder,
@@ -139,6 +140,7 @@ from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_diffi
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
+    camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
@@ -3403,6 +3405,13 @@ class MuJoCoSimEngine(
         reported as a scalar joint (its qpos is [xyz+quat], not a single angle),
         and the base ``quaternion``/``angular_velocity`` match get_observation's
         ``base_quat``/``base_ang_vel`` for the same robot.
+
+        A robot whose every actuator is a torque ``<motor>`` (a Menagerie
+        quadruped or humanoid) additionally carries ``"actuation": "torque"``,
+        with the same fact as a ``note:`` line in the text: its ``ctrl`` is a
+        force in Nm rather than a pose, so it holds no configuration and settles
+        under gravity unless a controller drives it every step. Absent for a
+        robot with even one position servo, whose pose writes do hold.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3511,6 +3520,22 @@ class MuJoCoSimEngine(
                     f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
                 )
                 json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+
+        # Name torque-only actuation, because its normal behaviour reads as a
+        # broken model. A Menagerie quadruped is driven entirely by <motor>, so
+        # ctrl is a force and a pose written there is a torque: go2 sinks from
+        # base z 0.445 to 0.20 within 2 s of the first step, holding nothing.
+        # The reading above reports that collapse without a word on its cause,
+        # which is the one thing a caller needs to know it is not a defect --
+        # the robot needs a controller every step (run_policy), not a fix.
+        # torque_only_actuation owns the three-term classification.
+        if torque_only_actuation(model, robot, mj):
+            text += (
+                f"note: all {len(robot.actuator_ids)} actuators are torque motors (ctrl in Nm) - a "
+                "position target written to them is a force, so nothing holds the pose and the robot "
+                "settles under gravity unless a controller drives it every step (run_policy).\n"
+            )
+            json_payload["actuation"] = "torque"
         return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -4201,12 +4226,15 @@ class MuJoCoSimEngine(
         so a camera created under any of them could never be rendered from even
         though it is registered, compiled into the model and listed by
         ``list_cameras``; a non-string name is additionally not addressable
-        through the agent-tool surface. This is the same set the Newton backend's
-        ``add_camera`` refuses, on the shared
-        :func:`~strands_robots.utils.reserved_camera_name_error` domain, because
-        that backend routes the same tokens. The Isaac backend does not route
-        them - its ``get_frame`` looks the name up directly - so ``"default"``
-        there is an ordinary camera name and stays accepted. ``position`` and ``target``
+        through the agent-tool surface. Both halves of the name rule come from
+        the shared :func:`~strands_robots.utils.camera_name_error`, which every
+        backend's ``add_camera`` reads, so the rule and its order are stated
+        once: the name is judged BEFORE any value, because a reserved name is
+        the one fault no change of value can clear. The Newton backend refuses
+        the same set because it routes the same tokens; the Isaac backend does
+        not route them - its ``get_frame`` looks the name up directly - so it
+        passes ``routes_free_camera_tokens=False`` and ``"default"`` there is an
+        ordinary camera name. ``position`` and ``target``
         must each be 3 finite numbers (a list, tuple or NumPy array; NumPy
         scalar elements accepted). Omit a vector to take its default - an empty
         vector is a wrong-length request and is rejected rather than silently
@@ -4223,35 +4251,18 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # Refuse a name that cannot address the camera this call creates, on the
-        # shared ``entity_name_error`` domain. An empty name is worse here than
-        # for an object: ``render``/``get_frame`` route ``camera_name in (None,
-        # "", "default", "free")`` to the FREE camera by an explicit token
-        # check, so a camera registered as "" could never be rendered from. It
-        # precedes the duplicate-name test for the same reason it does in
-        # ``add_object`` - that test is partial for an unhashable name.
-        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+        # The whole name rule, in the one order ``camera_name_error`` owns: a
+        # value that cannot be a registry key at all, then a ``str`` this
+        # backend's render entry points (``render`` / ``render_depth`` /
+        # ``get_frame``) resolve past. It precedes every value rule below, and
+        # the duplicate-name test, because a reserved name is the one fault no
+        # change of value can clear - and because that test answered for
+        # ``"default"`` misleadingly: ``create_world`` registers the built-in
+        # free view under that name, so the refusal was "already exists. Remove
+        # it first.", and following that prescription succeeded, leaving the
+        # scene with an unreachable camera where the free-view alias had been.
+        if (name_err := camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
-
-        # Refuse a name this backend's own render entry points resolve past. The
-        # three of them (``render`` / ``render_depth`` / ``get_frame``) select the
-        # free camera for every ``FREE_CAMERA_TOKENS`` member by an explicit token
-        # check, so claiming one produced a camera that is registered, compiled
-        # into the model and offered by ``list_cameras`` - and that every render
-        # of silently answers with the free view instead, under a success result.
-        # ``entity_name_error`` above covers only the two falsy tokens, which is
-        # why this is a second guard rather than a widening of that domain: the
-        # other two are perfectly addressable *names* that this backend alone
-        # cannot address as *cameras*.
-        #
-        # It precedes the duplicate-name test because that test answered for
-        # ``"default"`` and answered misleadingly: ``create_world`` registers the
-        # built-in free view under that name, so the refusal was "already exists.
-        # Remove it first." - and following that prescription succeeded, leaving
-        # the scene with an unreachable camera where the advertised free-view
-        # alias had been.
-        if (reserved_err := reserved_camera_name_error("add_camera", "name", name)) is not None:
-            return {"status": "error", "content": [{"text": reserved_err}]}
 
         # Validate position / target shape before we bake them into XML.
         # Membership, not truthiness: ``position or <default>`` raised a bare

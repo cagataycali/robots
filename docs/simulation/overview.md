@@ -262,18 +262,21 @@ chunk N+1 exec               |####|
 
 **Hardening.** A policy that returns no actions at all on its FIRST query ends the rollout with `status="error"` after that one query, on both the synchronous and the async path - there is no budget a chunk of zero actions can ever spend, so re-querying only burns inference. If a *prefetched* chunk arrives empty the runner instead degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread). That deadline must be a positive finite number of seconds, or `None` (the default) to wait without one - `0`, a negative value and `nan` all make the wait give up before any inference can answer, and `inf` overflows the platform's timestamp arithmetic, so each is refused at the call naming the parameter rather than reported one rollout later as a stuck policy.
 
-**Telemetry.** Every `run_policy` result `{"json": {...}}` block carries six RTC fields so latency masking is provable from the payload, not the logs:
+**Telemetry.** Every `run_policy` result `{"json": {...}}` block carries the chunk-prefetch fields so latency masking is provable from the payload, not the logs. The prefetch pipeline runs for any chunk-emitting policy (an ACT checkpoint included); only `policy_rtc_enabled` says whether the policy blended the seams with real-time chunking:
 
 | Field | Meaning |
 |-------|---------|
-| `rtc_async_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
-| `rtc_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries), counted on the synchronous path too |
-| `rtc_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
-| `rtc_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
-| `rtc_avg_inference_ms` | Mean `get_actions` wall time across the rollout |
-| `rtc_max_inference_ms` | Slowest `get_actions` wall time |
+| `chunk_prefetch_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
+| `policy_rtc_enabled` | The policy's own `supports_rtc` - real seam blending, independent of the pipeline |
+| `chunk_prefetch_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries), counted on the synchronous path too |
+| `chunk_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
+| `chunk_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
+| `avg_inference_ms` | Mean `get_actions` wall time across the rollout |
+| `max_inference_ms` | Slowest `get_actions` wall time |
 
-A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
+The previous `rtc_async_enabled`, `rtc_chunks_acquired`, `rtc_prefetch_hits`, `rtc_prefetch_blocks`, `rtc_avg_inference_ms` and `rtc_max_inference_ms` spellings are still emitted with the same values for one release.
+
+A healthy masked rollout shows `chunk_prefetch_hits` near the chunk count and `chunk_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
 
 **Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking. Being synchronous, the spec path declares an observed delay of exactly `0` to the policy before every inference, like the other two loops - so a policy object carried over from an async rollout cannot keep slicing its chunk seam against that rollout's stale step count.
 
