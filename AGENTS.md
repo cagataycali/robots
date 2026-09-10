@@ -289,7 +289,7 @@ hatch run format            # ruff check --fix, ruff format
    and that none already edits the file the defect lives in:
 
    ```
-   python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>
+   python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>
    python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <the paths you are about to edit>
    ```
 
@@ -339,7 +339,7 @@ hatch run format            # ruff check --fix, ruff format
    question:
 
    ```
-   python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --all-open
+   python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --all-open
    ```
 
    It reports only pairs that **create the same thing**, which over the 2002 pairs
@@ -519,8 +519,8 @@ hatch run format            # ruff check --fix, ruff format
    you is the part that does not survive a context rebuild, so ask a command:
 
    ```
-   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr <N>
-   python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
+   python3 .github/scripts/check_thread_is_answered.py --repo strands-labs/robots --pr <N>
+   python3 .github/scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
    ```
 
    `settled` is not work. `awaiting-the-author` is a reply, `answered` is the
@@ -1118,11 +1118,11 @@ hatch run format            # ruff check --fix, ruff format
      checks above:
 
      ```
-     python3 scripts/check_pr_head_is_current.py --repo <owner/name> --all-open
+     python3 .github/scripts/check_pr_head_is_current.py --repo <owner/name> --all-open
      ```
 
      It agreed with `git ls-remote` on all 10 open pull requests, so it needs no
-     clone. Pinned by tests/test_pr_head_is_current.py. See #2538.
+     clone. See #2538.
    - *And that the tree you are deriving from is that tip.* The third answer is
      `refs/pull/N/head`, and it is the one every checkout reaches for and the
      only one with no signal at all. It is a mirror ref GitHub refreshes on its
@@ -1167,7 +1167,7 @@ hatch run format            # ruff check --fix, ruff format
      itself and exits 1 on a stale tree, so it can sit in front of the work:
 
      ```
-     python3 scripts/check_checkout_is_pr_head.py --repo <owner/name> --pr <N>
+     python3 .github/scripts/check_checkout_is_pr_head.py --repo <owner/name> --pr <N>
      ```
 
      It compares by **ancestry, not equality**: a clone sitting at its own
@@ -1175,7 +1175,7 @@ hatch run format            # ruff check --fix, ruff format
      state between a commit and its push and is not a finding. A tip missing
      from the local object database is `stale-checkout` rather than
      indeterminate - a clone that never fetched a commit cannot contain it.
-     Pinned by tests/test_checkout_is_pr_head.py. See #2520, which records four
+     See #2520, which records four
      instances: #2511 (one thread, four author replies), #2566 and #2577 (two
      runs deriving one fix, the duplicate discarded only because a plain push
      was refused) and #2678 above. That refusal is load-bearing by accident -
@@ -1321,8 +1321,8 @@ hatch run format            # ruff check --fix, ruff format
    Rather than infer which of these is operating, read it:
 
    ```
-   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --pr <N>
-   python3 scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
+   python3 .github/scripts/check_merge_blockers.py --repo strands-labs/robots --pr <N>
+   python3 .github/scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
    ```
 
    It reads the branch ruleset - so a rule that is changed in settings cannot
@@ -1367,7 +1367,6 @@ hatch run format            # ruff check --fix, ruff format
 
    It composes `check_last_push_approval.py` rather than restating it, so what
    counts as a current approval has one owner. Neither script gates a merge.
-   Pinned by tests/test_merge_blockers.py.
 
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge

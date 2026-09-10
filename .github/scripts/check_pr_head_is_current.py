@@ -134,12 +134,10 @@ Usage
 -----
 ::
 
-    python3 scripts/check_pr_head_is_current.py --repo strands-labs/robots --pr 2508
-    python3 scripts/check_pr_head_is_current.py --repo strands-labs/robots --all-open
+    python3 .github/scripts/check_pr_head_is_current.py --repo strands-labs/robots --pr 2508
+    python3 .github/scripts/check_pr_head_is_current.py --repo strands-labs/robots --all-open
 
 Exit 1 when at least one evaluated pull request has a stale head record.
-
-Pinned by tests/test_pr_head_is_current.py.
 """
 
 from __future__ import annotations

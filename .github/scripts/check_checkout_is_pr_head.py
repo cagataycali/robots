@@ -106,8 +106,8 @@ Usage
 -----
 ::
 
-    python3 scripts/check_checkout_is_pr_head.py --repo strands-labs/robots --pr 2678
-    python3 scripts/check_checkout_is_pr_head.py --repo strands-labs/robots --pr 2678 \\
+    python3 .github/scripts/check_checkout_is_pr_head.py --repo strands-labs/robots --pr 2678
+    python3 .github/scripts/check_checkout_is_pr_head.py --repo strands-labs/robots --pr 2678 \\
         --checkout 33f8bcf4749a9146111294b4274be81326b50672
 
 ``--checkout`` defaults to ``git rev-parse HEAD`` in ``--git-dir`` (default: the
@@ -117,7 +117,7 @@ the work in a shell ``&&`` chain.
 Unlike its sibling this takes no ``--all-open``: a checkout is a property of one
 clone, so there is no population to sweep.
 
-Pinned by tests/test_checkout_is_pr_head.py. See #2520.
+See #2520.
 """
 
 from __future__ import annotations

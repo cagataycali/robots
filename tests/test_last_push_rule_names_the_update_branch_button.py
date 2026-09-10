@@ -28,7 +28,7 @@ Two tiers, because the rule lives in two kinds of place:
   be -- a rule keyed on the name would have demanded the button of a check that
   never mentions approvals.
 
-See scripts/check_last_push_approval.py, scripts/check_pr_head_is_current.py,
+See scripts/check_last_push_approval.py, .github/scripts/check_pr_head_is_current.py,
 issue #3190, and the "PR Workflow" section of AGENTS.md.
 """
 
@@ -42,7 +42,11 @@ from typing import Any
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-_SCRIPTS = _ROOT / "scripts"
+#: Both directories that hold a check: the triage tools sit in
+#: ``.github/scripts/`` beside the other repository automation, the checks a
+#: workflow step runs in ``scripts/``. The remedy population is derived from
+#: both, so a relocated tool keeps owing the guidance below.
+_SCRIPT_DIRS = (_ROOT / "scripts", _ROOT / ".github" / "scripts")
 
 # The one-click spelling. Required verbatim: an operator searching the guidance
 # for what they just pressed is searching for the button's own label.
@@ -54,8 +58,9 @@ STATES_THE_CONSEQUENCE = "consumes the approval"
 
 
 def _load(stem: str) -> Any:
-    """Import a ``scripts/`` check by path; they are standalone stdlib modules."""
-    spec = importlib.util.spec_from_file_location(stem, _SCRIPTS / f"{stem}.py")
+    """Import a check by path; they are standalone stdlib modules."""
+    path = next(d / f"{stem}.py" for d in _SCRIPT_DIRS if (d / f"{stem}.py").exists())
+    spec = importlib.util.spec_from_file_location(stem, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -74,9 +79,9 @@ def _flat(text: str) -> str:
 
 
 def _remedy_modules() -> dict[str, Any]:
-    """Every ``scripts/`` check whose ``WHAT_CLEARS_THIS`` states this rule."""
+    """Every check whose ``WHAT_CLEARS_THIS`` states this rule."""
     found: dict[str, Any] = {}
-    for path in sorted(_SCRIPTS.glob("check_*.py")):
+    for path in sorted(p for d in _SCRIPT_DIRS for p in d.glob("check_*.py")):
         module = _load(path.stem)
         remedy = getattr(module, "WHAT_CLEARS_THIS", None)
         if remedy and STATES_THE_CONSEQUENCE in _flat("\n".join(remedy)):

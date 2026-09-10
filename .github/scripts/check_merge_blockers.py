@@ -194,8 +194,8 @@ Usage
 -----
 ::
 
-    python3 scripts/check_merge_blockers.py --repo strands-labs/robots --pr 2574
-    python3 scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
+    python3 .github/scripts/check_merge_blockers.py --repo strands-labs/robots --pr 2574
+    python3 .github/scripts/check_merge_blockers.py --repo strands-labs/robots --all-open
 
 Exit status follows the sibling's contract, so the two can be run side by side
 and read the same way: ``1`` is a finding, ``0`` is clean or undeterminable,
@@ -229,7 +229,12 @@ _TIMEOUT = 30
 # Imported by path because ``scripts`` is not a package; see the module
 # docstring for why this is a shared primitive rather than a copy.
 # --------------------------------------------------------------------------
-_SIBLING = Path(__file__).resolve().parent / "check_last_push_approval.py"
+#: The checks a workflow step runs live in ``scripts/``; the pull-request triage
+#: tools live in ``.github/scripts/``. A tool that composes one across that
+#: boundary resolves it from the repository root rather than from beside itself.
+_WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+
+_SIBLING = _WORKFLOW_SCRIPTS / "check_last_push_approval.py"
 
 
 def _load_sibling() -> Any:

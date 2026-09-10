@@ -353,8 +353,14 @@ FRAGMENT_DIR = "changelog.d/"
 TESTS_DIR = "tests/"
 
 
+#: The checks a workflow step runs live in ``scripts/``; the pull-request triage
+#: tools live in ``.github/scripts/``. A tool that composes one across that
+#: boundary resolves it from the repository root rather than from beside itself.
+_WORKFLOW_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+
+
 def _load_assembler() -> ModuleType:
-    """Load ``assemble_changelog`` from beside this script, for the naming rule.
+    """Load ``assemble_changelog`` from ``scripts/``, for the naming rule.
 
     By path, registered in :data:`sys.modules` before execution and reusing an
     already-loaded copy: the shape and every reason for it are
@@ -364,7 +370,7 @@ def _load_assembler() -> ModuleType:
     loaded = sys.modules.get("assemble_changelog")
     if loaded is not None:
         return loaded
-    path = Path(__file__).resolve().parent / "assemble_changelog.py"
+    path = _WORKFLOW_SCRIPTS / "assemble_changelog.py"
     spec = importlib.util.spec_from_file_location("assemble_changelog", path)
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
         raise RuntimeError(f"cannot load the fragment naming rule from {path}")

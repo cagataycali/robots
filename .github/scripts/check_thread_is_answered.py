@@ -123,10 +123,10 @@ resolved, so on a finished pull request ``settled`` is the only outcome left. Th
 two discriminating outcomes exist only in the window between a reviewer's comment
 and its resolution -- which is exactly the window a scheduled run reads in, and
 exactly when the wrong answer costs a permanent duplicate reply, or a pull request
-that sits unmergeable with nothing in the sweep saying so. Their coverage therefore
-comes from ``tests/test_thread_is_answered.py``, which replays the measured payloads
-of the incidents above with the flags as they stood in that window, rather than from
-a historical sweep that cannot contain them.
+that sits unmergeable with nothing in the sweep saying so. Reaching them therefore
+means running this tool inside that window -- against a pull request whose thread is
+still open -- rather than over a finished one, where ``settled`` is the only outcome
+left.
 
 The incidents are attributable on timestamped fields alone, which is why
 authorship carries the rule. Thread resolution has no timestamp in the API, so
@@ -184,13 +184,11 @@ Usage
 -----
 ::
 
-    python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --pr 2577
-    python3 scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
+    python3 .github/scripts/check_thread_is_answered.py --repo strands-labs/robots --pr 2577
+    python3 .github/scripts/check_thread_is_answered.py --repo strands-labs/robots --all-open
 
 Exit 1 when at least one evaluated pull request owes its author a move: a reply on
 a thread awaiting one, or the resolve on a thread it has already answered.
-
-Pinned by tests/test_thread_is_answered.py.
 """
 
 from __future__ import annotations
