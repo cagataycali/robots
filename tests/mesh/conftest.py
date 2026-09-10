@@ -90,3 +90,21 @@ def _restore_real_zenoh_module():
     if mod is not None and (isinstance(mod, NonCallableMock) or type(mod).__module__ == "unittest.mock"):
         del sys.modules["zenoh"]
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_acl_thread_snapshot():
+    """Leave no ACL snapshot on the main thread once a test is over.
+
+    ``Mesh.start`` clears the snapshot its gate stashed, but a test that calls
+    ``Mesh._refuse_under_permissive_default_acl()`` directly never reaches that
+    ``finally`` and leaves ``auth_mode="mtls"`` behind; every later
+    ``session._build_config()`` on the thread then reads mTLS whatever the env
+    says. Measured at 4e73dc0f3: test_default_acl_warning.py and
+    test_docs_mesh_accept_permissive_acl_env_var_reference.py both leak.
+    """
+    from strands_robots.mesh import _acl_config
+
+    _acl_config._clear_thread_snapshot()
+    yield
+    _acl_config._clear_thread_snapshot()
