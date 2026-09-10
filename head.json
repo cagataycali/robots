@@ -1,0 +1,123 @@
+{
+ "tree": "/home/cagatay/actions-runner-harness-3/_work/_temp/robots-src",
+ "declared": [
+  "sensors",
+  "status",
+  "camera",
+  "move",
+  "lamp",
+  "speak",
+  "stop"
+ ],
+ "properties": [
+  "action",
+  "angular",
+  "camera",
+  "duration_s",
+  "linear",
+  "on",
+  "text"
+ ],
+ "calls": [
+  {
+   "label": "drive forward, hold 1s",
+   "input": {
+    "action": "move",
+    "linear": 0.35,
+    "duration_s": 1.0
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "",
+   "blocks": [
+    "json"
+   ]
+  },
+  {
+   "label": "headlamp on",
+   "input": {
+    "action": "lamp",
+    "on": true
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "",
+   "blocks": [
+    "json"
+   ]
+  },
+  {
+   "label": "look at the front camera",
+   "input": {
+    "action": "camera",
+    "camera": "front"
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "[front] ",
+   "blocks": [
+    "text",
+    "image"
+   ]
+  },
+  {
+   "label": "announce it",
+   "input": {
+    "action": "speak",
+    "text": "scanning ahead"
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "",
+   "blocks": [
+    "json"
+   ]
+  },
+  {
+   "label": "read telemetry",
+   "input": {
+    "action": "sensors"
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "battery 87% | signal 3/4 | heading 128 deg | speed 0 | lamp off | GPS 41.015000, 28.979000 ",
+   "blocks": [
+    "text",
+    "json"
+   ]
+  }
+ ],
+ "rover_move_tool": "absent: ModuleNotFoundError",
+ "control_frames": [
+  [
+   0.4014,
+   {
+    "linear": 0.35,
+    "angular": 0.0
+   }
+  ],
+  [
+   1.4015,
+   {
+    "linear": 0.0,
+    "angular": 0.0
+   }
+  ],
+  [
+   1.4021,
+   {
+    "linear": 0.0,
+    "angular": 0.0,
+    "lamp": 1
+   }
+  ]
+ ],
+ "other_posts": [
+  [
+   "speak",
+   {
+    "text": "scanning ahead"
+   }
+  ]
+ ]
+}

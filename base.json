@@ -1,0 +1,94 @@
+{
+ "tree": "/tmp/base-34433697635",
+ "declared": [
+  "sensors",
+  "status",
+  "stop"
+ ],
+ "properties": [
+  "action"
+ ],
+ "calls": [
+  {
+   "label": "drive forward, hold 1s",
+   "input": {
+    "action": "move",
+    "linear": 0.35,
+    "duration_s": 1.0
+   },
+   "through": "the robot handle",
+   "status": "error",
+   "text": "EarthRoverDriver: unknown action 'move'; declared verbs are ['sensors', 'status', 'stop']",
+   "blocks": [
+    "text"
+   ]
+  },
+  {
+   "label": "headlamp on",
+   "input": {
+    "action": "lamp",
+    "on": true
+   },
+   "through": "the robot handle",
+   "status": "error",
+   "text": "EarthRoverDriver: unknown action 'lamp'; declared verbs are ['sensors', 'status', 'stop']",
+   "blocks": [
+    "text"
+   ]
+  },
+  {
+   "label": "look at the front camera",
+   "input": {
+    "action": "camera",
+    "camera": "front"
+   },
+   "through": "the robot handle",
+   "status": "error",
+   "text": "EarthRoverDriver: unknown action 'camera'; declared verbs are ['sensors', 'status', 'stop']",
+   "blocks": [
+    "text"
+   ]
+  },
+  {
+   "label": "announce it",
+   "input": {
+    "action": "speak",
+    "text": "scanning ahead"
+   },
+   "through": "the robot handle",
+   "status": "error",
+   "text": "EarthRoverDriver: unknown action 'speak'; declared verbs are ['sensors', 'status', 'stop']",
+   "blocks": [
+    "text"
+   ]
+  },
+  {
+   "label": "read telemetry",
+   "input": {
+    "action": "sensors"
+   },
+   "through": "the robot handle",
+   "status": "success",
+   "text": "",
+   "blocks": [
+    "json"
+   ]
+  },
+  {
+   "label": "drive forward, hold 1s",
+   "through": "rover_move tool",
+   "input": {
+    "driver": "earthrover",
+    "linear": 0.35,
+    "duration_s": 1.0
+   },
+   "status": "error",
+   "text": "rover_move: `driver` of type 'str' does not expose a twist write (`move`); pass the live EarthRoverDriver handle",
+   "blocks": [
+    "text"
+   ]
+  }
+ ],
+ "control_frames": [],
+ "other_posts": []
+}
