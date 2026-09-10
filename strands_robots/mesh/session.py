@@ -920,11 +920,21 @@ def _build_config() -> Any:
                 "examples/mesh/mesh_acl_example.json5."
             )
     else:
+        # Name the knob the operator actually set: under LOCAL_DEV the
+        # auth mode defaults to "none" without the I_KNOW_THIS_IS_INSECURE
+        # factor, so blaming that variable describes an opt-in that never
+        # happened.
+        opt_in = (
+            "STRANDS_MESH_LOCAL_DEV"
+            if _zenoh_config._local_dev_enabled()
+            else "STRANDS_MESH_AUTH_MODE=none + STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1"
+        )
         logger.error(
             "[mesh] WIRE SECURITY DISABLED -- STRANDS_MESH_AUTH_MODE=none. "
             "Both the mTLS terminator AND the ACL block are off. "
-            "Operator opted in via STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1. "
-            "This mode is for development on trusted networks only."
+            "Operator opted in via %s. "
+            "This mode is for development on trusted networks only.",
+            opt_in,
         )
 
     for path, value in blocks:
