@@ -560,8 +560,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--events",
         type=Path,
-        default=Path(tempfile.gettempdir()) / "work_order_events.jsonl",
-        help="outbound JSONL queue for completion/failure/NACK events (default: under the temp dir, not the CWD)",
+        default=None,
+        help=(
+            "outbound JSONL queue for completion/failure/NACK events "
+            "(default: a fresh private directory under the temp dir, never the CWD)"
+        ),
     )
     parser.add_argument("--seed", type=int, default=42, help="world seed (live mode)")
     parser.add_argument("--n-steps", type=int, default=25, help="policy steps per dispatched skill (live mode)")
@@ -573,6 +576,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     random.seed(args.seed)
+    if args.events is None:
+        # Per-run and mode 0700: a fixed name in the shared temp dir is a path
+        # another user can pre-create, and emit_event appends through symlinks.
+        args.events = Path(tempfile.mkdtemp(prefix="work_order_dispatch_")) / "work_order_events.jsonl"
 
     manifests = [manifest_from_dict(m) for m in FLEET_MANIFESTS]
     print(f"fleet: {', '.join(f'{m.robot}@{m.site}' for m in manifests)}")

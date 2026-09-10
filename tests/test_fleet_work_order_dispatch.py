@@ -314,6 +314,17 @@ def test_chooser_out_of_set_pick_still_dispatches_deterministically(example, tmp
     assert dispatched_robots <= set(example.ROBOT_EMBODIMENT)
 
 
+def _run_with_no_events_flag(example, monkeypatch, cwd: Path, spool: Path) -> int:
+    def _no_operator(_prompt: str = "") -> str:
+        raise EOFError("EOF when reading a line")
+
+    monkeypatch.setattr(tempfile, "tempdir", str(spool))
+    monkeypatch.setattr("builtins.input", _no_operator)
+    monkeypatch.delenv("STRANDS_MESH_HITL_ACTIONS", raising=False)
+    monkeypatch.chdir(cwd)
+    return example.main(["--dry-run"])
+
+
 def test_the_default_events_queue_lands_outside_the_cwd(example, monkeypatch, tmp_path):
     """With no ``--events`` and no operator, the run completes and leaves the CWD alone.
 
@@ -326,16 +337,40 @@ def test_the_default_events_queue_lands_outside_the_cwd(example, monkeypatch, tm
     cwd.mkdir()
     spool.mkdir()
 
-    def _no_operator(_prompt: str = "") -> str:
-        raise EOFError("EOF when reading a line")
-
-    monkeypatch.setattr(tempfile, "tempdir", str(spool))
-    monkeypatch.setattr("builtins.input", _no_operator)
-    monkeypatch.delenv("STRANDS_MESH_HITL_ACTIONS", raising=False)
-    monkeypatch.chdir(cwd)
-
-    assert example.main(["--dry-run"]) == 0
+    assert _run_with_no_events_flag(example, monkeypatch, cwd, spool) == 0
 
     assert list(cwd.iterdir()) == [], "the example wrote into the reader's current directory"
-    events = [json.loads(line) for line in (spool / "work_order_events.jsonl").read_text().splitlines()]
+    queues = list(spool.glob("work_order_dispatch_*/work_order_events.jsonl"))
+    assert len(queues) == 1
+    events = [json.loads(line) for line in queues[0].read_text().splitlines()]
     assert {e["reason"]["code"] for e in events if e["event"] == "work_order_failed"} == {"hitl_declined"}
+
+
+def test_the_default_events_queue_is_private_to_the_run(example, monkeypatch, tmp_path):
+    """The default queue is not a fixed name in the shared temp dir.
+
+    ``emit_event`` appends with ``open("a")``, which follows a symlink and never
+    truncates, so a predictable ``$TMPDIR/work_order_events.jsonl`` is a path
+    another user of the host can pre-create - as a symlink to redirect the
+    operator's writes, or as a plain file that makes the first append raise
+    ``PermissionError`` after approvals have already been granted. The default
+    therefore lives in a directory ``mkdtemp`` created for this run alone:
+    unpredictable, mode 0700, and distinct from every other run's.
+    """
+    cwd = tmp_path / "cwd"
+    spool = tmp_path / "spool"
+    cwd.mkdir()
+    spool.mkdir()
+    # What a hostile neighbour would have planted against the fixed name.
+    planted = spool / "work_order_events.jsonl"
+    planted.write_text("planted\n")
+
+    assert _run_with_no_events_flag(example, monkeypatch, cwd, spool) == 0
+    assert _run_with_no_events_flag(example, monkeypatch, cwd, spool) == 0
+
+    assert planted.read_text() == "planted\n", "the run appended to the predictable path"
+    run_dirs = sorted(spool.glob("work_order_dispatch_*"))
+    assert len(run_dirs) == 2, "two runs must not share one queue"
+    if sys.platform != "win32":
+        assert all(d.stat().st_mode & 0o777 == 0o700 for d in run_dirs)
+    assert all((d / "work_order_events.jsonl").read_text().strip() for d in run_dirs)
