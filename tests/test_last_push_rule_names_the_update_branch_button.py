@@ -8,8 +8,8 @@ pusher exactly as a push does.
 
 That silence has a measured cost. #2907's head ``1c66c8f3`` is a base refresh the
 button produced: its git *author* is the maintainer, its **committer is
-``web-flow``**, all twelve workflow runs on it report
-``triggering_actor: cagataycali``, and the branch author is ``logesh4v``. So the
+``web-flow``**, all twelve workflow runs on it report ``actor: cagataycali``
+(and ``triggering_actor`` likewise), and the branch author is ``logesh4v``. So the
 sole approval stopped counting. It happened twice, four days apart, the second
 time after the mechanism had been written up in a comment on that same pull
 request -- because the remedy the checks print at the moment the finding fires

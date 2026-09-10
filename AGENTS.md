@@ -1651,8 +1651,17 @@ hatch run format            # ruff check --fix, ruff format
    place it is legible:
 
    ```
-   GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>  ->  triggering_actor
+   GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>  ->  actor
    ```
+
+   Read `actor`, not `triggering_actor`. A run carries both; `triggering_actor`
+   names the account behind its *latest attempt*, so approving a held run or
+   re-running one rewrites it. On #3448 -- a first-time contributor's fork, every
+   run held at `action_required` -- releasing the CI moved `triggering_actor` to
+   the maintainer on all nine `pull_request` runs while `actor` stayed
+   `shipitfast`, so the check named its approver as the pusher. The two agree
+   wherever no run had a second attempt (measured on #1894, #1920, #1722, #1035
+   and #2907).
 
    #1035 is the control - same author, same fork, same `strands_robots/mesh/`
    files, one approval from the same account post-dating its head commit,
@@ -1661,7 +1670,7 @@ hatch run format            # ruff check --fix, ruff format
    `APPROVED` - until a later push moved that one input and took it into the
    blocked row as well:
 
-   | PR | commit author | `triggering_actor` | approver | `reviewDecision` |
+   | PR | commit author | `actor` | approver | `reviewDecision` |
    |---|---|---|---|---|
    | #1035 at `2be59dad` | the contributor | the contributor | the maintainer | `APPROVED` |
    | #1035 at `8d6a4c42` | the maintainer | the maintainer | the maintainer | `REVIEW_REQUIRED` |
@@ -1718,8 +1727,8 @@ hatch run format            # ruff check --fix, ruff format
    `8d6a4c42`.
 
    Do not try to settle this from the commit metadata, which misleads in three
-   different directions. All three heads below read `REVIEW_REQUIRED`; only
-   `triggering_actor` is load-bearing.
+   different directions. All three heads below read `REVIEW_REQUIRED`; only the
+   workflow run's `actor` is load-bearing.
 
    | head | git author / committer | metadata reads as |
    |---|---|---|
@@ -1731,8 +1740,9 @@ hatch run format            # ruff check --fix, ruff format
    prompt a check: a commit whose committer is a GitHub service account reads as
    GitHub having performed the merge rather than a person. It is what the
    **"Update branch" button** leaves behind, and the clicker survives only in the
-   git *author* field and in `triggering_actor` -- both `cagataycali` on that
-   head, across all 12 of its workflow runs, on a branch authored by `logesh4v`.
+   git *author* field and in the run attribution -- `cagataycali` in `actor` and
+   in `triggering_actor` alike, across all 12 of that head's workflow runs, on a
+   branch authored by `logesh4v`.
    A table that stopped two of the three shapes is why this one was read twice as
    harmless.
 
