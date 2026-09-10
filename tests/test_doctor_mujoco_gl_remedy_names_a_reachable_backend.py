@@ -81,7 +81,7 @@ def linux_host(monkeypatch: pytest.MonkeyPatch):
     model a host with both libraries, one, or neither without touching the
     machine running the suite.
     """
-    import strands_robots.simulation.mujoco.backend as backend
+    import strands_robots._mujoco_gl as backend
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(sys, "platform", "linux")
@@ -184,7 +184,7 @@ class TestTheProbeSetsAnswerDifferentQuestions:
     """Premises: what each set is for, and that the extractor above is sound."""
 
     def test_the_platform_set_ignores_the_libraries(self, linux_host) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         linux_host(set())
         assert sorted(backend._mujoco_gl_offscreen_values()) == ["egl", "osmesa"], (
@@ -193,7 +193,7 @@ class TestTheProbeSetsAnswerDifferentQuestions:
 
     @pytest.mark.parametrize("loadable", [set(), {"egl"}, {"osmesa"}, {"egl", "osmesa"}])
     def test_the_reachable_set_is_the_installed_subset(self, linux_host, loadable: set[str]) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         linux_host(loadable)
         reachable = backend._mujoco_gl_loadable_offscreen_values()
@@ -216,7 +216,7 @@ class TestTheProbeItselfAnswersAboutTheLoader:
     """
 
     def test_a_soname_no_distribution_supplies_is_absent(self) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         assert not backend._library_loads("libstrands_robots_no_such_library.so.99"), (
             "a probe that reports every soname present would recommend a backend on any host"
@@ -226,7 +226,7 @@ class TestTheProbeItselfAnswersAboutTheLoader:
     def test_the_probe_agrees_with_the_loader(self, library: str) -> None:
         import ctypes
 
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         try:
             ctypes.cdll.LoadLibrary(library)
@@ -242,7 +242,7 @@ class TestTheProbeHasOneOwner:
     """The configurator and the verdict must agree about what a host can reach."""
 
     def test_the_table_matches_the_module(self) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         assert backend._MUJOCO_GL_OFFSCREEN_LIBRARIES == _OFFSCREEN_LIBRARIES, (
             "the transcribed second opinion above has drifted from the module"
@@ -256,7 +256,7 @@ class TestTheProbeHasOneOwner:
         libraries decide: a configurator probing one soname while the verdict
         recommends from another would disagree about the same host.
         """
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         source = inspect.getsource(backend._configure_gl_backend)
         probed = set(re.findall(r"LoadLibrary\(\"([^\"]+)\"\)", source))

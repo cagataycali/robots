@@ -188,6 +188,6 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'strands_robots.simulation' has no attribute {name!r}")
 
 
-# NOTE: MuJoCo GL backend configuration lives in the top-level
-# strands_robots/__init__.py to ensure it runs before any `import mujoco`.
-# Do NOT duplicate it here - that module is the canonical location.
+# NOTE: MuJoCo GL backend configuration lives in strands_robots/_mujoco_gl.py
+# and runs from the top-level strands_robots/__init__.py before any
+# `import mujoco`. Do NOT duplicate it here.

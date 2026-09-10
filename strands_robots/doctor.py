@@ -184,7 +184,7 @@ def check_mujoco_gl() -> str:
     module, which sets this variable when it is unset, so both are asked there
     rather than restated here.
     """
-    from strands_robots.simulation.mujoco.backend import (
+    from strands_robots._mujoco_gl import (
         _MUJOCO_GL_OFFSCREEN_LIBRARIES,
         _is_headless,
         _mujoco_gl_disables_rendering,

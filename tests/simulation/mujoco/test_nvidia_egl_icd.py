@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-import strands_robots.simulation.mujoco.backend as backend
+import strands_robots._mujoco_gl as backend
 
 _FILENAMES = "__EGL_VENDOR_LIBRARY_FILENAMES"
 _DIRS = "__EGL_VENDOR_LIBRARY_DIRS"

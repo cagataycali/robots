@@ -86,7 +86,7 @@ def linux_headless(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     machine ran the suite, so a host without OSMesa disagreed about the advice
     while agreeing about the verdict.
     """
-    import strands_robots.simulation.mujoco.backend as backend
+    import strands_robots._mujoco_gl as backend
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(sys, "platform", "linux")
@@ -327,7 +327,7 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
 
     @pytest.fixture
     def icd_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         staged: list[bool] = []
         monkeypatch.setattr(backend, "_ensure_nvidia_egl_vendor_icd", lambda: staged.append(True))
@@ -340,7 +340,7 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_every_spelling_of_egl_stages_the_vendor_icd(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
         backend._configure_gl_backend()
@@ -353,7 +353,7 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_a_non_egl_backend_does_not_stage_the_vendor_icd(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
         backend._configure_gl_backend()
@@ -363,7 +363,7 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_a_user_value_is_never_overwritten(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
         backend._configure_gl_backend()
@@ -372,7 +372,7 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_a_whitespace_only_value_is_not_a_preference(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool]
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as backend
 
         monkeypatch.setenv("MUJOCO_GL", "   ")
         monkeypatch.setattr(backend.ctypes.cdll, "LoadLibrary", lambda _name: None)

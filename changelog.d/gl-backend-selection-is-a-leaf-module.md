@@ -1,0 +1,3 @@
+### Fixed:
+
+`import strands_robots` with mujoco installed no longer imports the simulation package. The `MUJOCO_GL` selection helpers (`_configure_gl_backend` and the doctor's vocabulary) moved from `strands_robots.simulation.mujoco.backend` to the stdlib-only leaf `strands_robots._mujoco_gl`; `backend` re-exports every name. Reaching `backend` ran `simulation/__init__.py`, whose eager imports loaded 14 simulation modules on every package import in a `[sim-mujoco]` environment just to set one environment variable. L40S x86_64, `[all]` extras, median of 9: LAZY_BEFORE ms -> LAZY_AFTER ms with the cosmos3 fix (#451) applied; alone the chain via `policies.cosmos3.sim_ik` still loads the package until #451 lands.

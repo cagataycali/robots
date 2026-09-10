@@ -348,7 +348,7 @@ class TestImportResilience:
         pytest.importorskip("mujoco")
         import importlib
 
-        import strands_robots.simulation.mujoco.backend as backend_mod
+        import strands_robots._mujoco_gl as backend_mod
 
         real = backend_mod._configure_gl_backend
 

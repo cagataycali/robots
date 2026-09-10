@@ -69,7 +69,7 @@ class TestConfigureGLBackend:
     def test_headless_picks_egl_when_available(self, restore_env):
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = [None]
             try:
@@ -83,7 +83,7 @@ class TestConfigureGLBackend:
     def test_headless_falls_back_to_osmesa(self, restore_env):
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = [OSError("no libEGL"), None]
             try:
@@ -98,10 +98,10 @@ class TestConfigureGLBackend:
 
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = OSError("no GL")
-            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+            with caplog.at_level(logging.WARNING, logger="strands_robots._mujoco_gl"):
                 backend_mod._configure_gl_backend()
             # MUJOCO_GL stays unset.
             assert "MUJOCO_GL" not in os.environ

@@ -259,7 +259,7 @@ import importlib.util as _importlib_util  # noqa: E402
 
 if _importlib_util.find_spec("mujoco") is not None:
     try:
-        from strands_robots.simulation.mujoco.backend import _configure_gl_backend
+        from strands_robots._mujoco_gl import _configure_gl_backend
 
         _configure_gl_backend()
     except (ImportError, AttributeError, OSError):
