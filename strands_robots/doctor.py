@@ -338,7 +338,7 @@ def _torch_cuda_remedy() -> str:
     """
     tegra = Path("/etc/nv_tegra_release")
     if platform.machine() == "aarch64" and tegra.exists():
-        release = tegra.read_text(errors="replace").split(",")[0].strip("# ").split(" ")[0]
+        release = tegra.read_text(encoding="utf-8", errors="replace").split(",")[0].strip("# ").split(" ")[0]
         if release < "R38":
             return (
                 f"Jetson L4T {release} ships CUDA 12.6, which PyPI's CUDA 13 aarch64 torch cannot use: "
