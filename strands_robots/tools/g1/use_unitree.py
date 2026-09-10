@@ -585,6 +585,21 @@ def use_unitree(
             "message": f"unknown service '{service_name}'. Valid: {sorted(SERVICES)} (or 'meta' for discovery)",
         }
 
+    # Private SDK plumbing (_Call, _CallNoReply, _CallBinary, ...) on the
+    # base rpc.client.Client bypasses the prefix-based classifier, so refuse
+    # it before the classifier runs.  list_operations already filters these
+    # names, so they are undiscoverable; this makes them undispatchable too.
+    if operation_name.startswith("_"):
+        return {
+            "status": "error",
+            "message": (
+                f"{service_name}.{operation_name} refused: private SDK methods "
+                f"(names starting with '_') are not dispatchable. "
+                f"Use list_operations to discover the public surface."
+            ),
+            "dispatched": False,
+        }
+
     high_danger = (service_name, operation_name) in HIGH_DANGER_OPS
     mutative = _is_mutative(operation_name)
 
