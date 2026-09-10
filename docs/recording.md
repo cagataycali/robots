@@ -1102,8 +1102,7 @@ flags are draccus `--dotted.key=value` form.)
 
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
 > strands_robots` auto-fixes this (zero-touch); disable with
-> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`. See the README "Recording & streaming
-> datasets" section.
+> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`.
 
 ## See also
 

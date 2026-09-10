@@ -76,6 +76,9 @@ nav:
 - Troubleshooting: troubleshooting.md
 hooks:
   - docs/hooks/numbers.py
+validation:
+  links:
+    anchors: warn
 
 theme:
   name: material

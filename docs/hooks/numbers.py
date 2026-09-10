@@ -2,7 +2,8 @@
 
 Every ``{{n:key}}`` token in a page is replaced at build time with a value read
 from the tree, so a count can no longer drift from the code it describes
-(index.md said 68 robots, robots/index.md said 73, the registry held 73).
+(index.md said 68 robots and robots/index.md said 73; only the registry
+knows).
 
 Keys (all derived, none configured):
 
