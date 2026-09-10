@@ -2,12 +2,11 @@
 and ``DatasetRecorder.sync_to_bucket``.
 
 Mirrors test_dataset_recorder.py: inject fakes so tests run WITHOUT lerobot or
-the ``hf`` CLI installed. Covers version-tolerant kwarg forwarding, the
-proprio-only ``drop_videos`` path, delta-grid validation, and the bucket-sync
-CLI construction + meta/ guard.
+the ``hf`` CLI installed. Covers kwarg forwarding, the proprio-only
+``drop_videos`` path, delta-grid validation, and the bucket-sync CLI
+construction + meta/ guard.
 """
 
-import logging
 import os
 import subprocess
 
@@ -31,164 +30,118 @@ class _FakeStreaming:
         yield {"observation.state": [0.0], "action": [0.0], "task": "t"}
 
 
-def test_open_forwards_supported_kwargs(monkeypatch):
+def test_open_forwards_every_knob_to_the_constructor(monkeypatch):
+    """Every knob reaches StreamingLeRobotDataset, none of them conditionally.
+
+    ``repo_type`` is the one that decides WHICH storage system is read, so a
+    dropped one would silently stream the versioned dataset namespace instead of
+    the requested bucket.
+    """
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
     r = sd.StreamingDatasetReader.open(
         "org/ds",
         buffer_size=256,
         shuffle=False,
         max_num_shards=8,
+        seed=7,
+        tolerance_s=0.5,
+        return_uint8=True,
+        repo_type="bucket",
         validate_deltas=False,
     )
     assert r.dataset.repo_id == "org/ds"
-    assert r.dataset.kw["buffer_size"] == 256
-    assert r.dataset.kw["shuffle"] is False
-    assert r.dataset.kw["max_num_shards"] == 8
+    assert r.dataset.kw == {
+        "buffer_size": 256,
+        "shuffle": False,
+        "max_num_shards": 8,
+        "seed": 7,
+        "tolerance_s": 0.5,
+        "return_uint8": True,
+        "repo_type": "bucket",
+        "streaming": True,
+    }
     assert r.num_episodes == 10
     assert r.fps == 30
 
 
-def test_open_drops_unknown_kwargs(monkeypatch):
-    """A narrow constructor (only repo_id) must not raise on extra kwargs."""
+def _two_frame_dataset_with_a_video_feature(root):
+    """A real v3.0 dataset whose camera is DECLARED as a video feature but whose
+    MP4 does not exist. Any video decode attempt fails loudly (no file, and no
+    torchcodec needed), so iterating it proves decode was never attempted."""
+    import json
 
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
+    import numpy as np
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", buffer_size=999, shuffle=True, validate_deltas=False)
-    assert r.dataset.repo_id == "org/ds"
-
-
-def test_repo_type_forwarded_when_supported(monkeypatch):
-    """repo_type reaches a StreamingLeRobotDataset that declares the parameter."""
-
-    class _WithRepoType:
-        def __init__(self, repo_id, repo_type="dataset", **kw):
-            self.repo_id = repo_id
-            self.repo_type = repo_type
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _WithRepoType, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert r.dataset.repo_type == "bucket"
-
-
-def test_repo_type_bucket_raises_when_unsupported(monkeypatch):
-    """repo_type='bucket' on a constructor without the parameter must raise,
-    never silently open the versioned dataset namespace instead (a different
-    storage system - the forbidden silent-kwarg-drop class).
-
-    The message names the lerobot version that serves bucket streaming rather
-    than the pre-0.6.1 "no released lerobot supports this" - that claim was
-    true when written and left the caller with no remedy; the capability
-    shipped in 0.6.1, which the [lerobot] extra now floors."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            raise AssertionError("constructor must never be reached")
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"repo_type='bucket' requires lerobot >= 0\.6\.1"):
-        sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-
-
-def test_bucket_guard_message_survives_unresolvable_lerobot_version(monkeypatch):
-    """The repo_type='bucket' fail-fast must surface as the actionable
-    RuntimeError even when lerobot's version metadata is unresolvable: the
-    version lookup that enriches the message must not raise a secondary
-    PackageNotFoundError that masks the primary, upgrade-actionable error."""
-    import importlib.metadata as md
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            raise AssertionError("constructor must never be reached")
-
-    def _raise(_name):
-        raise md.PackageNotFoundError("lerobot")
-
-    monkeypatch.setattr(md, "version", _raise)
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"installed: unknown") as exc:
-        sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert "repo_type='bucket' requires lerobot >= 0.6.1" in str(exc.value)
-
-
-def test_repo_type_bucket_forwarded_via_var_kwargs(monkeypatch):
-    """A constructor with **kwargs accepts repo_type; the guard must not fire."""
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert r.dataset.kw["repo_type"] == "bucket"
-
-
-def test_repo_type_dataset_default_ok_when_unsupported(monkeypatch):
-    """The 'dataset' default is semantics-preserving on an old lerobot: it is
-    skipped by tolerant forwarding and open() succeeds without error."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="dataset", validate_deltas=False)
-    assert r.dataset.repo_id == "org/ds"
-
-
-def test_return_uint8_drop_warns_when_unsupported(monkeypatch, caplog):
-    """return_uint8=True on a lerobot whose StreamingLeRobotDataset lacks the
-    parameter is dropped (semantics unchanged) but streams float32 - ~4x the
-    bandwidth of uint8. That cost must be surfaced as a warning, not silent."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
-        sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
-    assert any("return_uint8=True dropped" in r.message for r in caplog.records)
-
-
-def test_return_uint8_no_warn_when_supported(monkeypatch, caplog):
-    """No bandwidth warning when the constructor accepts return_uint8 (**kwargs
-    here): the kwarg is forwarded and honored, so nothing is dropped."""
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
-        r = sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
-    assert r.dataset.kw["return_uint8"] is True
-    assert not any("return_uint8=True dropped" in rec.message for rec in caplog.records)
-
-
-def test_drop_videos_strips_camera_deltas(monkeypatch):
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    r = sd.StreamingDatasetReader.open(
-        "org/ds",
-        delta_timestamps={
-            "observation.images.front": [-0.1, 0.0],
-            "observation.state": [0.0],
-            "action": [0.0],
-        },
-        drop_videos=True,
-        validate_deltas=False,
+    feats = {
+        "observation.images.cam": {"dtype": "image", "shape": (8, 8, 3), "names": ["height", "width", "channels"]},
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+        "action": {"dtype": "float32", "shape": (2,), "names": ["a", "b"]},
+    }
+    ds = LeRobotDataset.create(
+        "org/two-frames",
+        fps=10,
+        root=root,
+        features=feats,
+        use_videos=False,
+        image_writer_threads=0,
+        image_writer_processes=0,
     )
-    dt = r.dataset.kw["delta_timestamps"]
-    assert "observation.images.front" not in dt
-    assert "observation.state" in dt and "action" in dt
+    for i in range(2):
+        ds.add_frame(
+            {
+                "observation.images.cam": np.zeros((8, 8, 3), np.uint8),
+                "observation.state": np.array([i, i], np.float32),
+                "action": np.array([i, i], np.float32),
+                "task": "t",
+            }
+        )
+    ds.save_episode()
+    if hasattr(ds, "finalize"):
+        ds.finalize()
+    info_path = root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["observation.images.cam"]["dtype"] = "video"
+    info["features"]["observation.images.cam"]["info"] = {"video.fps": 10, "video.codec": "libsvtav1"}
+    info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info_path.write_text(json.dumps(info))
+
+
+def test_drop_videos_never_decodes_video_with_the_real_streaming_dataset(tmp_path):
+    """The claim under test is docs/recording.md's: drop_videos=True "skips video
+    decode entirely". lerobot's StreamingLeRobotDataset decodes every key in
+    meta.video_keys whether or not it is in delta_timestamps, so stripping the
+    camera deltas alone (the previous implementation) still decoded - and the
+    old monkeypatched test could not see it. This one runs lerobot for real."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _two_frame_dataset_with_a_video_feature(root)
+
+    reader = sd.StreamingDatasetReader.open(
+        "org/two-frames",
+        root=root,
+        buffer_size=1,
+        max_num_shards=1,
+        drop_videos=True,
+        delta_timestamps={"observation.state": [0.0], "action": [0.0]},
+    )
+    assert reader.dataset.meta.video_keys == []
+    frames = []
+    for frame in reader:
+        frames.append(frame)
+        if len(frames) == 2:
+            break
+    assert len(frames) == 2
+    assert all("observation.state" in f and "action" in f for f in frames)
+
+
+def test_drop_videos_false_keeps_the_video_keys(tmp_path):
+    """The hide is opt-in: without drop_videos the metadata is untouched."""
+    pytest.importorskip("lerobot.datasets.streaming_dataset")
+    root = tmp_path / "ds"
+    _two_frame_dataset_with_a_video_feature(root)
+    reader = sd.StreamingDatasetReader.open("org/two-frames", root=root, buffer_size=1, max_num_shards=1)
+    assert reader.dataset.meta.video_keys == ["observation.images.cam"]
 
 
 def test_drop_videos_all_camera_keys_raises(monkeypatch):
@@ -707,21 +660,6 @@ def test_open_rejects_misaligned_deltas(monkeypatch):
             "org/ds",
             delta_timestamps={"observation.state": [0.017]},  # 0.017*30 = 0.51, off-grid
         )
-
-
-def test_open_skips_validation_when_checker_unavailable(monkeypatch):
-    """If check_delta_timestamps cannot be imported, validation is skipped
-    silently and open still succeeds (validation is best-effort parity)."""
-    import sys as _sys
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    broken = type(_sys)("lerobot.datasets.feature_utils")  # lacks check_delta_timestamps
-    monkeypatch.setitem(_sys.modules, "lerobot.datasets.feature_utils", broken)
-    r = sd.StreamingDatasetReader.open(
-        "org/ds",
-        delta_timestamps={"observation.state": [0.017]},  # off-grid but unchecked
-    )
-    assert r.dataset.kw["delta_timestamps"]["observation.state"] == [0.017]
 
 
 # ── reader metadata + iteration passthrough ────────────────────────────────

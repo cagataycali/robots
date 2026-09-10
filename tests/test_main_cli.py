@@ -41,6 +41,28 @@ class TestMainDispatch:
         assert "Unknown command: bogus" in out
         assert "Available commands: doctor" in out
 
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_help_flag_prints_usage_and_exits_0(self, flag, monkeypatch, capsys) -> None:
+        """``strands-robots --help`` is the first thing a new install is asked; it must not read as an error."""
+        monkeypatch.setattr("sys.argv", ["strands_robots", flag])
+
+        main()
+
+        out = capsys.readouterr().out
+        assert "Usage: strands-robots <command>" in out
+        assert "doctor" in out and "verify-dataset" in out
+        assert "Unknown command" not in out
+
+    @pytest.mark.parametrize("flag", ["--version", "-V"])
+    def test_version_flag_prints_the_installed_version(self, flag, monkeypatch, capsys) -> None:
+        from importlib.metadata import version
+
+        monkeypatch.setattr("sys.argv", ["strands_robots", flag])
+
+        main()
+
+        assert capsys.readouterr().out.strip() == f"strands-robots {version('strands-robots')}"
+
     def test_doctor_command_dispatches_to_doctor_main(self, monkeypatch) -> None:
         """``doctor`` should call doctor.main() exactly once."""
         calls: list[bool] = []

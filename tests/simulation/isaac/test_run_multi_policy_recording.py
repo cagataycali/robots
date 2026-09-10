@@ -138,7 +138,7 @@ from pathlib import Path  # noqa: E402
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: E402
 
-from strands_robots.dataset_recorder import read_dataset_episode_indices  # noqa: E402
+from strands_robots.verify_dataset import read_dataset_episode_indices  # noqa: E402
 
 
 def test_synchronized_two_robot_rollout_records_merged_frames(sim_two_robots, tmp_path) -> None:

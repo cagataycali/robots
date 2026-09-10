@@ -217,7 +217,13 @@ class TestAddRobotInjectionRollback:
         # robot already in the scene must not be disturbed because a different
         # robot was refused.
         joints = sim._world.robots["so100"].joint_names
-        pose = {name: 0.15 + 0.05 * i for i, name in enumerate(joints)}
+        # so100 Pitch's range is [-3.32, 0.17], so pick every joint's range
+        # midpoint rather than a pose that teleports outside a limit.
+        model = sim._world._model
+        pose = {
+            name: float(model.jnt_range[jid].mean()) if model.jnt_limited[jid] else 0.1 * i
+            for i, (name, jid) in enumerate(zip(joints, sim._world.robots["so100"].joint_ids, strict=True))
+        }
         assert sim.set_joint_positions(positions=pose, robot_name="so100")["status"] == "success"
         before = {name: sim.get_observation(robot_name="so100")[name] for name in joints}
 

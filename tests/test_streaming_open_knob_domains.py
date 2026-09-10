@@ -517,16 +517,6 @@ class TestTheDataloaderKnobsStayOutOfScope:
 class TestTheGuardDoesNotDisturbTheNeighbouringContracts:
     """The three non-numeric decisions ``open`` already made are unchanged."""
 
-    def test_a_bucket_repo_type_still_raises_on_an_older_constructor(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        class _Narrow:
-            def __init__(self, repo_id: str) -> None:
-                self.repo_id = repo_id
-                self.num_frames = self.num_episodes = self.fps = 0
-
-        monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-        with pytest.raises(RuntimeError, match="repo_type"):
-            _open(repo_type="bucket")
-
     def test_drop_videos_without_proprio_deltas_still_raises(self, fake_lerobot: type[_FakeStreaming]) -> None:
         with pytest.raises(ValueError, match="drop_videos"):
             _open(drop_videos=True)

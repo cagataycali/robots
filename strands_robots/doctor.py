@@ -305,8 +305,64 @@ def check_lerobot() -> str:
         )
 
 
+def cuda_devices_per_driver() -> int | None:
+    """How many CUDA devices the driver reports, asked without torch.
+
+    ``libcuda.so.1`` is the driver's own library and is present wherever a CUDA
+    device is - on a Jetson it ships with L4T, never through pip - so asking it
+    is what lets this command tell "no GPU" from "no torch". Falls back to the
+    kernel module's per-GPU directory. ``None`` means no driver was found, which
+    is a real "no CUDA device", not an unanswered question.
+    """
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL("libcuda.so.1")
+        count = ctypes.c_int(0)
+        if lib.cuInit(0) == 0 and lib.cuDeviceGetCount(ctypes.byref(count)) == 0:
+            return count.value
+    except OSError:
+        # No libcuda.so.1 on the loader path. That is the expected shape of a
+        # machine without a driver (and of a container the driver is not
+        # mounted into), not an error to report: the /proc fallback below is
+        # the second opinion, and None is the honest answer when it is empty.
+        pass
+    gpus = Path("/proc/driver/nvidia/gpus")
+    return len(list(gpus.iterdir())) if gpus.is_dir() else None
+
+
+def _torch_cuda_remedy() -> str:
+    """The install command that yields a CUDA torch on THIS machine.
+
+    PyPI's ``linux_aarch64`` torch wheel carries CUDA from 2.11 on: 2.11.0 is
+    420 MB and its ``nvidia-*-cu13`` dependencies apply to any Linux, while
+    2.10.0 was a 146 MB CPU build whose CUDA dependencies were marked
+    ``platform_machine == "x86_64"`` (2.9.1: 104 MB) - the same fact behind this
+    project's aarch64 ``torch>=2.11`` requirement. So the generic command is
+    right on x86_64 and on a Jetson whose L4T ships a CUDA 13 driver (R38,
+    JetPack 7). A JetPack 6 board (R36) has a 12.6 driver that cannot load those
+    wheels; its torch comes from NVIDIA's Jetson index. A release this cannot
+    read as ``R<major>`` gets the generic command rather than a confidently
+    wrong index - and the major is compared as a number, so an R100 board is not
+    sent to the JetPack 6 index the way ``"R100" < "R38"`` would send it.
+    """
+    tegra = Path("/etc/nv_tegra_release")
+    if platform.machine() == "aarch64" and tegra.exists():
+        release = tegra.read_text(encoding="utf-8", errors="replace").split(",")[0].strip("# ").split(" ")[0]
+        major = int(release[1:]) if release.startswith("R") and release[1:].isdigit() else None
+        if major is not None and major < 38:
+            return (
+                f"Jetson L4T {release} ships CUDA 12.6, which PyPI's CUDA 13 aarch64 torch cannot use: "
+                "uv pip install torch --index-url https://pypi.jetson-ai-lab.io/jp6/cu126"
+            )
+        if major is not None:
+            return f"uv pip install torch  (PyPI's aarch64 wheel carries CUDA 13; L4T {release} supports it)"
+    return "UV_TORCH_BACKEND=auto uv pip install torch"
+
+
 def check_cuda() -> str:
-    """CUDA / GPU availability via torch."""
+    """CUDA / GPU availability: the driver's answer first, then torch's."""
+    devices = cuda_devices_per_driver()
     try:
         import torch
 
@@ -316,16 +372,25 @@ def check_cuda() -> str:
         # torch installed but no CUDA
         cuda_ver = getattr(torch.version, "cuda", None)
         if cuda_ver is None:
+            if devices:
+                return _warn(
+                    f"torch {torch.__version__} is a CPU-only build, but the driver reports {devices} CUDA device(s)",
+                    note=_torch_cuda_remedy(),
+                )
             return _warn(
                 f"torch {torch.__version__} is CPU-only build",
-                note="Policy inference will run on CPU. For GPU: install torch with CUDA "
-                "(e.g. UV_TORCH_BACKEND=auto uv pip install torch)",
+                note="Policy inference will run on CPU (no CUDA device found on this machine)",
             )
         return _warn(
             f"torch {torch.__version__} has CUDA {cuda_ver} but torch.cuda.is_available()=False",
             note="Check CUDA drivers (nvidia-smi) and CUDA_VISIBLE_DEVICES",
         )
     except ImportError:
+        if devices:
+            return _warn(
+                f"torch not installed, but the driver reports {devices} CUDA device(s) (needed for policy inference)",
+                note=_torch_cuda_remedy(),
+            )
         return _warn("torch not installed (needed for policy inference)", note="uv pip install torch")
 
 
@@ -338,8 +403,9 @@ def _driver_compute_arch() -> int | None:
 
     Returns:
         The device architecture (``110`` for an ``sm_110`` GPU), or ``None`` when
-        there is no CUDA device to ask about - including when torch, the one
-        driver query this module has, is not installed.
+        torch cannot see a CUDA device - including when torch is not installed,
+        which is why callers pair this with :func:`cuda_devices_per_driver` to
+        tell a missing device from a missing torch.
     """
     try:
         import torch
@@ -506,6 +572,8 @@ def check_torch_arch() -> str:
     """
     device_arch = _driver_compute_arch()
     if device_arch is None:
+        if cuda_devices_per_driver():
+            return _skip("torch arch: a CUDA device is present but torch cannot see it (see CUDA line)")
         return _skip("torch arch: no CUDA device to compare against")
     report = _torch_cuda_report()
     if report is None:
@@ -556,6 +624,8 @@ def check_warp_arch() -> str:
     """
     device_arch = _driver_compute_arch()
     if device_arch is None:
+        if cuda_devices_per_driver():
+            return _skip("Warp arch: a CUDA device is present but torch, which reads its architecture, cannot see it")
         return _skip("Warp arch: no CUDA device to compare against")
     report = _warp_cuda_report()
     if report is None:

@@ -19,10 +19,11 @@ from __future__ import annotations
 import inspect
 import os
 import struct
+import sys
 
 import pytest
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 pytest.importorskip("mujoco")
 

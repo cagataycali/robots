@@ -59,6 +59,7 @@ what makes the pair a reader observes always a matching one. The lock is an
 real guard when the verb is called directly as a Python API.
 """
 
+import atexit
 import contextlib
 import inspect
 import json
@@ -68,6 +69,7 @@ import numbers
 import os
 import threading
 import time
+import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -126,6 +128,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
     SpecBuilder,
@@ -139,6 +142,7 @@ from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_diffi
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
+    camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
@@ -505,6 +509,61 @@ def _reported_param_name(param: str, field_aliases: Mapping[str, str], received:
     )
 
 
+# Engines whose ``__init__`` completed and that no caller has released yet.
+#
+# Held weakly: an engine must stay collectable while it is registered, so this
+# registry never keeps a simulation (and its MuJoCo model, renderers and worker
+# threads) alive past the caller's last reference.
+_LIVE_ENGINES: "weakref.WeakSet[MuJoCoSimEngine]" = weakref.WeakSet()
+
+
+def _release_live_engines() -> None:
+    """Release every still-live engine as the interpreter starts to exit.
+
+    :meth:`MuJoCoSimEngine.cleanup` cannot do this from a finalizer. CPython
+    sets a module's globals to ``None`` before it destroys the objects that
+    module built, so by the time ``__del__`` runs at exit the teardown path has
+    no names left to call: ``cleanup`` reads four of its own module globals and
+    delegates into four more modules that read theirs
+    (``Mesh.stop``, ``stop_teleoperate``, ``_detach_robot_from_mesh``,
+    ``_prune_done_futures``). The first of them raises ``AttributeError`` on a
+    ``None`` module, :meth:`SimEngine.__del__` reports it as a warning, and
+    nothing is released - the ROS 2 bridge node stays up, teleoperated devices
+    stay connected, the sim stays advertised to the fleet as a live peer, and
+    policy workers are never joined before the world they are stepping is
+    freed, which is the stale-pointer window :meth:`cleanup` documents.
+
+    An ``atexit`` hook runs while the import system is still intact, so the
+    ordered teardown ``cleanup`` describes actually executes. This mirrors the
+    session singleton's own :mod:`atexit` teardown and the gateway mesh's
+    (:func:`strands_robots.tools.robot_mesh._stop_gateway_mesh`), whose
+    docstring notes that every other mesh "is closed by the ``Robot`` or
+    ``Simulation`` that built it" - which is what this restores for a caller
+    who never called :meth:`cleanup` or used the context manager.
+
+    Ordering against other ``atexit`` hooks is not guaranteed and does not need
+    to be: every step of ``cleanup`` already tolerates a transport or peer that
+    closed first.
+    """
+    for engine in list(_LIVE_ENGINES):
+        try:
+            engine.cleanup()
+        except Exception as exc:  # noqa: BLE001 - teardown continues to the next engine
+            # DEBUG: this path makes no success claim to contradict, matching
+            # the level the session and gateway exit hooks log their own
+            # failures at.
+            logger.debug("cleanup at exit failed for '%s': %s", getattr(engine, "tool_name", "?"), exc)
+        finally:
+            # Whether or not it succeeded, do not let ``__del__`` retry the
+            # teardown during module destruction: the retry runs with the
+            # globals already nulled, so it cannot do better than this attempt
+            # and only reports the interpreter's state as a cleanup failure.
+            engine._released_at_exit = True
+
+
+atexit.register(_release_live_engines)
+
+
 class MuJoCoSimEngine(
     TeleopMixin,
     PhysicsMixin,
@@ -712,7 +771,13 @@ class MuJoCoSimEngine(
         self._mj = _ensure_mujoco()
         logger.info("MuJoCo simulation tool '%s' initialized", tool_name)
 
-        # Construction complete - the finalizer may now release what we hold.
+        # Construction complete - the finalizer may now release what we hold,
+        # and so may the interpreter-exit hook (:func:`_release_live_engines`),
+        # which is the only one of the two that can still reach the teardown
+        # path once the interpreter starts nulling module globals. Registered
+        # before the flag so ``_init_complete = True`` stays the final
+        # statement (see SimEngine._init_complete).
+        _LIVE_ENGINES.add(self)
         # See SimEngine._init_complete: this must be the final statement.
         self._init_complete = True
 
@@ -3403,6 +3468,13 @@ class MuJoCoSimEngine(
         reported as a scalar joint (its qpos is [xyz+quat], not a single angle),
         and the base ``quaternion``/``angular_velocity`` match get_observation's
         ``base_quat``/``base_ang_vel`` for the same robot.
+
+        A robot whose every actuator is a torque ``<motor>`` (a Menagerie
+        quadruped or humanoid) additionally carries ``"actuation": "torque"``,
+        with the same fact as a ``note:`` line in the text: its ``ctrl`` is a
+        force in Nm rather than a pose, so it holds no configuration and settles
+        under gravity unless a controller drives it every step. Absent for a
+        robot with even one position servo, whose pose writes do hold.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3511,6 +3583,22 @@ class MuJoCoSimEngine(
                     f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
                 )
                 json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+
+        # Name torque-only actuation, because its normal behaviour reads as a
+        # broken model. A Menagerie quadruped is driven entirely by <motor>, so
+        # ctrl is a force and a pose written there is a torque: go2 sinks from
+        # base z 0.445 to 0.20 within 2 s of the first step, holding nothing.
+        # The reading above reports that collapse without a word on its cause,
+        # which is the one thing a caller needs to know it is not a defect --
+        # the robot needs a controller every step (run_policy), not a fix.
+        # torque_only_actuation owns the three-term classification.
+        if torque_only_actuation(model, robot, mj):
+            text += (
+                f"note: all {len(robot.actuator_ids)} actuators are torque motors (ctrl in Nm) - a "
+                "position target written to them is a force, so nothing holds the pose and the robot "
+                "settles under gravity unless a controller drives it every step (run_policy).\n"
+            )
+            json_payload["actuation"] = "torque"
         return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -4201,12 +4289,15 @@ class MuJoCoSimEngine(
         so a camera created under any of them could never be rendered from even
         though it is registered, compiled into the model and listed by
         ``list_cameras``; a non-string name is additionally not addressable
-        through the agent-tool surface. This is the same set the Newton backend's
-        ``add_camera`` refuses, on the shared
-        :func:`~strands_robots.utils.reserved_camera_name_error` domain, because
-        that backend routes the same tokens. The Isaac backend does not route
-        them - its ``get_frame`` looks the name up directly - so ``"default"``
-        there is an ordinary camera name and stays accepted. ``position`` and ``target``
+        through the agent-tool surface. Both halves of the name rule come from
+        the shared :func:`~strands_robots.utils.camera_name_error`, which every
+        backend's ``add_camera`` reads, so the rule and its order are stated
+        once: the name is judged BEFORE any value, because a reserved name is
+        the one fault no change of value can clear. The Newton backend refuses
+        the same set because it routes the same tokens; the Isaac backend does
+        not route them - its ``get_frame`` looks the name up directly - so it
+        passes ``routes_free_camera_tokens=False`` and ``"default"`` there is an
+        ordinary camera name. ``position`` and ``target``
         must each be 3 finite numbers (a list, tuple or NumPy array; NumPy
         scalar elements accepted). Omit a vector to take its default - an empty
         vector is a wrong-length request and is rejected rather than silently
@@ -4223,35 +4314,18 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # Refuse a name that cannot address the camera this call creates, on the
-        # shared ``entity_name_error`` domain. An empty name is worse here than
-        # for an object: ``render``/``get_frame`` route ``camera_name in (None,
-        # "", "default", "free")`` to the FREE camera by an explicit token
-        # check, so a camera registered as "" could never be rendered from. It
-        # precedes the duplicate-name test for the same reason it does in
-        # ``add_object`` - that test is partial for an unhashable name.
-        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+        # The whole name rule, in the one order ``camera_name_error`` owns: a
+        # value that cannot be a registry key at all, then a ``str`` this
+        # backend's render entry points (``render`` / ``render_depth`` /
+        # ``get_frame``) resolve past. It precedes every value rule below, and
+        # the duplicate-name test, because a reserved name is the one fault no
+        # change of value can clear - and because that test answered for
+        # ``"default"`` misleadingly: ``create_world`` registers the built-in
+        # free view under that name, so the refusal was "already exists. Remove
+        # it first.", and following that prescription succeeded, leaving the
+        # scene with an unreachable camera where the free-view alias had been.
+        if (name_err := camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
-
-        # Refuse a name this backend's own render entry points resolve past. The
-        # three of them (``render`` / ``render_depth`` / ``get_frame``) select the
-        # free camera for every ``FREE_CAMERA_TOKENS`` member by an explicit token
-        # check, so claiming one produced a camera that is registered, compiled
-        # into the model and offered by ``list_cameras`` - and that every render
-        # of silently answers with the free view instead, under a success result.
-        # ``entity_name_error`` above covers only the two falsy tokens, which is
-        # why this is a second guard rather than a widening of that domain: the
-        # other two are perfectly addressable *names* that this backend alone
-        # cannot address as *cameras*.
-        #
-        # It precedes the duplicate-name test because that test answered for
-        # ``"default"`` and answered misleadingly: ``create_world`` registers the
-        # built-in free view under that name, so the refusal was "already exists.
-        # Remove it first." - and following that prescription succeeded, leaving
-        # the scene with an unreachable camera where the advertised free-view
-        # alias had been.
-        if (reserved_err := reserved_camera_name_error("add_camera", "name", name)) is not None:
-            return {"status": "error", "content": [{"text": reserved_err}]}
 
         # Validate position / target shape before we bake them into XML.
         # Membership, not truthiness: ``position or <default>`` raised a bare
@@ -6680,6 +6754,13 @@ class MuJoCoSimEngine(
     # ``_DEFAULT_POLICY_STOP_TIMEOUT`` makes for a wedged policy worker.
     _WORLD_HANDOFF_LOCK_TIMEOUT = 5.0
 
+    # Whether :func:`_release_live_engines` already tore this engine down as the
+    # interpreter began to exit. Only that hook sets it, so a caller calling
+    # ``cleanup()`` twice - or calling it, building a new world, and calling it
+    # again - is unaffected. Declared on the class so the read in ``cleanup``
+    # can never raise on an instance the hook has not reached.
+    _released_at_exit: bool = False
+
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release every resource owned by this Simulation instance.
 
@@ -6723,12 +6804,19 @@ class MuJoCoSimEngine(
                 completes; see :func:`_resolve_policy_stop_timeout`.
 
         Note:
-            Every name this method needs is bound at module scope. A
-            finalizer calls this during interpreter shutdown, where the
-            import system is already gone, so a function-local import here
-            raises before the first teardown step and the ``__del__`` safety
-            net releases nothing at all - reported only as a warning naming
-            the interpreter rather than anything the caller can act on.
+            Binding every name at module scope is not enough to make this
+            callable from a finalizer during interpreter shutdown: CPython sets
+            a module's globals to ``None`` before destroying the objects that
+            module built, so at that point *module-scope* names are exactly the
+            ones that have gone. This method reads four of its own, and
+            delegates into four more modules that read theirs, so the first one
+            reached raises ``AttributeError`` and the ``__del__`` safety net
+            releases nothing at all - reported only as a warning naming the
+            interpreter rather than anything the caller can act on. A caller
+            who never calls this method (or uses the context manager) is
+            covered by :func:`_release_live_engines` instead, which runs while
+            the import system is intact. A function-local import here is still
+            wrong, for the same reason it was.
         """
         # Detach from the mesh network first (if attached). A truthy
         # ``self.mesh`` is any object exposing ``.stop()``; falsy values
@@ -6747,6 +6835,14 @@ class MuJoCoSimEngine(
         # (TeleopMixin) before mesh teardown. Best-effort.
         # Tear down the ROS 2 telemetry bridge (if any) before other teardown
         # so external subscribers see the node leave cleanly.
+        if self._released_at_exit:
+            # Already released by :func:`_release_live_engines`, while the
+            # import system was still intact. Re-running the teardown now (this
+            # call can only be ``__del__`` during module destruction) would
+            # raise on a nulled module global and be reported as a cleanup
+            # failure of a simulation that was in fact cleaned up.
+            return
+
         with contextlib.suppress(Exception):
             self._shutdown_ros_bridge()
         if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):

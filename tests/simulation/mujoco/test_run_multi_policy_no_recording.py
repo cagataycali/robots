@@ -14,6 +14,7 @@ respond to a cooperative stop - all with no recorder in the world.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -22,7 +23,7 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from strands_robots.policies.base import Policy  # noqa: E402
 from strands_robots.policies.mock import MockPolicy  # noqa: E402

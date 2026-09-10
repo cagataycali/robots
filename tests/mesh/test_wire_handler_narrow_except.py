@@ -55,16 +55,18 @@ def test_all_four_wire_handlers_use_same_tuple() -> None:
     handlers = [
         mesh_core.Mesh._on_cmd,
         mesh_core.Mesh._on_response,
-        mesh_core.Mesh._on_safety_estop,
-        mesh_core.Mesh._on_safety_resume,
+        # _on_safety_estop and _on_safety_resume decode through this one helper.
+        mesh_core.Mesh._decode_bound_safety_envelope,
     ]
     expected = "except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):"
     for handler in handlers:
         src = _source_of(handler)
         assert expected in src, (
             f"{handler.__qualname__} must use the canonical narrow tuple; "
-            f"see _on_safety_estop for the reference pattern"
+            f"see _decode_bound_safety_envelope for the reference pattern"
         )
+    for safety_handler in (mesh_core.Mesh._on_safety_estop, mesh_core.Mesh._on_safety_resume):
+        assert "_decode_bound_safety_envelope(sample" in _source_of(safety_handler)
 
 
 # === bridge_transport dedup decode path uses the same narrow tuple ===

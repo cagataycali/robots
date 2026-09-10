@@ -20,6 +20,17 @@ def main() -> None:
         sys.exit(1)
 
     cmd = sys.argv[1]
+    # The two flags every console script is tried with first. Answering them
+    # with "Unknown command" and exit 1 makes a fresh install look broken.
+    if cmd in ("-h", "--help"):
+        print("Usage: strands-robots <command> [options]")
+        print(f"Commands: {', '.join(_COMMANDS)}")
+        return
+    if cmd in ("-V", "--version"):
+        from importlib.metadata import version
+
+        print(f"strands-robots {version('strands-robots')}")
+        return
     # Remove the command from argv so sub-parsers see clean args
     sys.argv = [sys.argv[0]] + sys.argv[2:]
 

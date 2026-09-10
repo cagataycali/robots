@@ -95,7 +95,7 @@ def _read_parquet_truth(dataset_root: str | Path) -> dict[str, Any]:
       truth - and agreed with the requested count, which is the silent collapse
       this gate was written to catch. The same header is "metadata is corrupt"
       to :func:`~strands_robots.verify_dataset.verify_dataset` and to
-      :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`.
+      :func:`~strands_robots.verify_dataset.read_dataset_episode_indices`.
     * ``1e400`` (a well-formed JSON number ``json.load`` parses to ``inf``),
       ``NaN`` and ``null`` raised ``OverflowError`` / ``ValueError`` /
       ``TypeError`` out of this function and past the tool envelope, from a file

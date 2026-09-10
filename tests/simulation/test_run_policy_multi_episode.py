@@ -24,12 +24,13 @@ These tests pin the first-class multi-episode API:
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
 pytest.importorskip("mujoco")
 
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from strands_robots.simulation import create_simulation  # noqa: E402
 from strands_robots.simulation.base import SimEngine  # noqa: E402
