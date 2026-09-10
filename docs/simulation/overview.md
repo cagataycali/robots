@@ -9,7 +9,12 @@ from strands_robots import Robot
 sim = Robot("so100")   # preferred factory; 60+ actions as an AgentTool
 ```
 
-For walkthroughs see [Simulation overview](../simulation/overview.md).
+Every action below is also listed in `sim.describe()["methods"]`, so an agent
+can discover the whole surface from one call. Numeric parameters share one
+domain everywhere: a value is refused with a structured `status="error"` when
+it is a boolean (`float(True)` is `1.0`, and `numpy.bool_` is refused too),
+`nan` / `inf`, or a vector of the wrong component count; a refused call
+changes nothing. For composing scenes see [World building](world-building.md).
 
 ## World
 
@@ -57,19 +62,9 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `remove_camera` | `name` |
 | `list_cameras` | - renderable camera names, `"default"` first, incl. model + user cameras |
 
-Robot-URDF cameras are auto-discovered on `add_robot`.
-
-`sim.list_cameras()` returns every name `render` / `start_recording` accepts -
-the built-in `"default"` free view first, then all model-defined and
-`add_camera` cameras. It equals `sim.describe()["cameras"]` and matches the
-Newton backend, so a rollout rig can be enumerated instead of guessed.
-
-!!! tip "Discover the scene-construction surface"
-    `add_robot`, `add_object`, `remove_object`, `add_camera`,
-    `remove_camera`, and `list_cameras` are all listed in
-    `sim.describe()["methods"]`, so an agent can learn how to build a scene
-    (robot, manipulanda, camera rig) before a rollout from one `describe()`
-    call instead of guessing method names.
+Robot-URDF cameras are auto-discovered on `add_robot`. `list_cameras()` returns
+every name `render` / `start_recording` accepts - `"default"` first, then
+model-defined and `add_camera` cameras - and equals `sim.describe()["cameras"]`.
 
 ## Rendering
 
@@ -81,31 +76,13 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `get_world_point(camera_name="default", pixels=[[u, v], ...])` | Ground picked pixels to metric world coordinates via the depth buffer; `point` is the median over the valid samples, `points` aligns with the input pixels |
 | `open_viewer` / `close_viewer` | Interactive MuJoCo passive viewer |
 
-!!! note "Get a numpy frame"
-    `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
-
-!!! tip "Discover the render surface"
-    `render`, `render_depth`, `render_all`, and `get_world_point` are all
-    listed in `sim.describe()["methods"]`, so an agent can enumerate the full
-    rendering surface in one call instead of guessing method names.
-
-!!! note "Frame reads are serialised against physics"
-    `render`, `render_depth` and `get_frame` copy mjData into the renderer under
-    the simulation lock and hand back an independent buffer, so a frame captured
-    while a policy worker, the `step()` loop or the camera recorder is advancing
-    physics is a consistent snapshot rather than a torn one. Only the PNG
-    encoding runs unlocked. This holds for a direct Python call and for a call
-    from your own thread, not just through the tool surface.
-
-!!! note "Camera intrinsics follow the renderer"
-    `sim.get_camera_params(camera_name)` returns the pinhole `K` of the frame
-    the renderer actually draws. A camera declaring a physical sensor (MJCF
-    `sensorsize` / `focal` / `principal` / `resolution`) has its `K` read from
-    the view frustum MuJoCo computes for that camera, so non-square pixels
-    (`fx != fy`) and an off-center principal point are honored - including the
-    vertical principal-point convention, which MuJoCo changed in 3.6.0. Every
-    other camera falls back to `fovy`: square pixels, principal point at the
-    image center.
+`sim.get_observation(robot_name)[camera_name]` returns the frame as
+`np.uint8 (H, W, 3)`. Frame reads copy `mjData` under the simulation lock, so a
+frame captured while a policy or recorder is stepping is a consistent snapshot.
+`sim.get_camera_params(camera_name)` returns the pinhole `K` the renderer
+actually draws with - a camera declaring an MJCF sensor (`sensorsize` /
+`focal` / `principal` / `resolution`) keeps its non-square pixels and
+off-center principal point; every other camera derives `K` from `fovy`.
 
 ## Physics
 
@@ -127,68 +104,10 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
 
-!!! tip "Discovering joint names"
-    The dict form of `set_joint_positions` / `set_joint_velocities` keys by
-    joint name, and a name the model cannot resolve is refused rather than
-    skipped (the write is all-or-nothing), so the refusal has to say where the
-    real names come from. From an agent that is `get_robot_state`, which reports
-    every joint of one robot by name with its position and velocity - the
-    joint-side counterpart of `list_bodies` for body names. `robot_joint_names`
-    returns the same ordering as a plain list, but it is a Python-only
-    capability: it is not in the tool schema's `action` enum, so an agent that
-    calls it is refused. Reach for it from Python, and for `get_robot_state`
-    from a tool call.
-
-!!! note "Numeric domain of the state writers"
-    `set_joint_positions`, `set_joint_velocities` and the `apply_force`
-    vectors take finite real numbers - a python or NumPy scalar - and refuse a
-    boolean. `float(True)` is `1.0`, so a `True` would be written as 1 radian,
-    1 rad/s or 1 N and the call would report success; `nan` / `inf` are refused
-    because `mj_forward` propagates a `nan` across the whole kinematic state
-    and an `inf` velocity blows up the integrator. Each write is
-    all-or-nothing, so a refused value leaves `qpos` / `qvel` and every latched
-    wrench untouched. This is the same domain the scene-construction vectors
-    (`add_object`, `add_camera`) and [`send_action`](#actions) enforce - one
-    library, one answer to "is this a usable number".
-
-!!! note "The same domain applies to the world-configuration parameters"
-    `set_gravity` / `create_world(gravity=...)`, `set_timestep` /
-    `create_world(timestep=...)`, the `mass` on `set_body_properties` and
-    `add_object`, the `randomize` ranges and the `set_obs_noise` magnitudes all
-    refuse a boolean for the same reason, as do the vectors `raycast`,
-    `multi_raycast` and `set_geom_properties` take (a ray origin and direction, a
-    geom size and friction, an rgba colour).
-
-    Passing one is not a near miss. `set_gravity(True)` would have configured a
-    gravity of **+1 m/s^2, pointing up**, and `set_timestep(True)` a 1-second
-    integration step - each reported as `status="success"`. The check is on the
-    type, not the value: `1`, `1.0` and `numpy` scalars remain accepted
-    everywhere, so `set_timestep(1.0)` is still a legal (if unusual) request.
-
-    Both spellings are refused - a python `bool` and a `numpy.bool_`. The second
-    matters more in practice, because it is what a comparison such as
-    `gripper > 0.5` produces, and because `numpy.bool_` is not a `bool` subclass
-    an `isinstance(x, bool)` guard silently misses it.
-
-!!! note "Component count of a vector parameter"
-    Every vector parameter (`position`, `target`, `origin`, `force`, `torque`,
-    `point`, `gravity`, `direction`, `orientation`, `color`, `get_world_point`'s
-    `pixels`, and `send_action`'s ordered-vector form) is checked for its
-    component count before it is read, and a value that carries no readable
-    count is refused with a structured error like any other. That includes a
-    0-d NumPy array or torch tensor - `np.mean(...)`, `np.array(0.5)`, a
-    squeezed observation slice - which *declares* `__len__` and then raises
-    from it, so it is reported as "not a vector of N numbers" rather than
-    escaping as a bare `len() of unsized object`. Correctly sized NumPy arrays
-    are accepted throughout, so an observation slice can be passed straight
-    through.
-
-!!! tip "Discover the sim-state surface"
-    `get_state` plus the checkpoint (`save_state` / `load_state`) and
-    direct pose-setting (`set_joint_positions` / `set_joint_velocities`)
-    methods are all listed in `sim.describe()["methods"]`, so an agent can
-    learn how to snapshot/restore the world and set a deterministic initial
-    condition from one `describe()` call - no method-name guessing.
+The dict form of `set_joint_positions` / `set_joint_velocities` keys by joint
+name; an unresolvable name refuses the whole write. `get_robot_state` reports
+every joint of one robot by name (from a tool call); `robot_joint_names` is the
+Python-only list.
 
 ## Actions
 
@@ -199,11 +118,11 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `{joint_or_actuator_name: value}` mapping | applied by name; unresolved keys are reported in an `unresolved_keys` JSON block so a caller can self-correct (no silent drop) |
 | ordered numeric vector (`list` / `tuple` / 1-D `numpy` array) | bound positionally to `robot_action_keys(robot_name)` (the robot's actuator keys) in declaration order - the same convention `replay_episode` uses |
 
-A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. It binds to `robot_action_keys` (not `robot_joint_names`) because those are the keys `send_action` resolves and the ordering the `LeRobotDataset` recorder writes the `action` column in; the two coincide unless a robot has passive/mimic joints, a tendon gripper, or a floating base on the Newton backend (whose 6-DoF free joint is a joint but not a commandable scalar, so it is absent from the action keys). The vector length must match the robot's actuator count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the actuator count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of actuators.
-
-`n_substeps` is the number of physics steps the written targets are held for. It must be a **positive** whole number: a NumPy or integral-float count (`np.int64(3)`, a `3.0` read from a config) is honored and coerced, and a fractional, zero, negative, non-finite, boolean or non-numeric count returns a structured `status="error"` dict. Nothing is written when it does - a refusal arriving after the write would leave the robot commanded and the world un-advanced. The floor is `1` rather than `step`'s `0` because of that write: to advance without commanding, use `step(n)`, whose `0` is an accepted no-op. It is also the floor both producers of this count already enforce (`PolicyRunner`'s `control_substeps` and the RL env's `n_substeps`).
-
-Each action *value* must be a finite number, and must not be a boolean. `nan` / `inf` are refused because they are not clamped into the actuator's range - MuJoCo discards the step and resets every robot in the scene while reporting success. A `bool` (or `numpy.bool_`) is refused because `float(True)` is `1.0`, and each drive reads 1.0 in its own units: a 1-radian target on a joint-position drive, a full-travel command on a normalized or tendon drive (a `[0, 255]` tendon gripper reads it as fully open), and an out-of-range value that is silently clamped where `ctrlrange` excludes 1 - so the same `True` commands a different pose on every actuator. Send the command in the actuator's own units; for a binary gripper, its endpoint value rather than a flag. This is the domain the teleop wire validator already enforces on an input frame, and `InputReceiver` applies those frames through `send_action`.
+The vector form binds to `robot_action_keys` (the keys `send_action` resolves
+and the order the `LeRobotDataset` recorder writes `action` in), not to
+`robot_joint_names` - the two differ for robots with passive or mimic joints.
+`n_substeps` is the number of physics steps the targets are held for: a
+positive whole number (`np.int64(3)` and `3.0` are honored).
 
 ## Policy
 
@@ -215,50 +134,57 @@ Each action *value* must be a finite number, and must not be a boolean. `nan` / 
 | `list_policies_running` | - |
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
 | `eval_policy` | `robot_name` (optional; auto-resolves the sole robot like `run_policy`), `n_episodes=1`, `max_steps=300`, `success_fn=None`, `async_rtc=False`, `rtc_inference_timeout_s=None`, `video=None` |
+| `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
 
-When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the simulation configures the policy's output keys with the robot's *action keys* via `set_robot_state_keys(robot_action_keys(robot_name))`. `robot_action_keys` returns the actuator short-names that `send_action` resolves - which are not always the robot's joints. Robots with passive / mimic finger joints (no driving actuator) or a tendon-driven gripper (an actuator with no matching joint name) have an actuator set distinct from their joint set, so keying a policy by `robot_joint_names` would emit keys that resolve to nothing and leave those DOFs unmoved. The list can also be *narrower* than the joint names rather than differently spelled: on the Newton backend a floating base's 6-DoF free joint is a joint with no scalar target to write, so it is excluded from the action keys (its pose is read as the structured `base_pos` / `base_quat` / `base_lin_vel` / `base_ang_vel` signals instead) and `send_action` refuses it as a command key. The default `robot_action_keys` mirrors `robot_joint_names` for backends whose actuators match their joints; do not assume the two have the same width.
+When a policy runs, the simulation sets its output keys to the robot's
+*action keys* (`set_robot_state_keys(robot_action_keys(robot_name))`), which
+are actuator names, not always joint names. Provider name + `policy_config`
+(a dict) or a pre-built `policy_object=`: see
+[Policy providers - in simulation](../policies/overview.md#in-simulation).
 
-`stop_policy` is honored at **any** point after `start_policy` returns, including before the rollout's first frame and while it is still queued behind a busy executor. The rollout is claimed by the launching thread rather than by the background worker, so a stop can only ever land on a rollout that is already marked as running: it reports `Stopped on '<robot>'` and the rollout takes no further frames. Its verdict is derived from the same in-flight population `list_policies_running` reads, so the two never report opposite facts about the same robot at the same instant. That population counts a rollout in either launch shape - one submitted by `start_policy` and one being driven right now by the blocking `run_policy`, which registers no future - so a blocking rollout is reported as running, is named by `list_policies_running`, and is halted by a stop that carries no `robot_name` (the shape the mesh e-stop fanout broadcasts); `Was not running on '<robot>'` is reserved for the genuinely idempotent case, where nothing is in flight at all. Every stop path goes through one seam - `SimRobot.request_policy_stop` - which is what makes the halt durable: `stop_policy`, `remove_robot`, teardown, and the Device Connect `stop` / `emergencyStop` handlers cannot drift to different answers about whether a rollout was actually halted.
+`stop_policy` is honored at any point after `start_policy` returns, including
+before the first frame; `list_policies_running` names the robots in flight on
+every backend, and a backend that cannot enumerate its rollouts is refused
+rather than reported idle.
 
-`list_policies_running` answers on every backend, from that same in-flight population, so the pair above holds wherever a rollout can run rather than only where the population was first read: a MuJoCo, Newton or Isaac engine names the robots it is driving, and a peer polled over the mesh reports the same names at the same instant. It is a `SimEngine` verb reading one seam (`_rollouts_in_flight`, which each backend answers from the rollout claim its own hooks raise and lower), not a per-backend reimplementation, which is what would let the two drift. It is discoverable on every backend too: `describe()["methods"]` names it beside `stop_policy`, read from a single shared entry rather than written once per backend, so a caller enumerating the surface finds the verb wherever it answers. A backend narrows that surface only by hiding a verb it does not implement -- Newton hides `get_contacts` and `load_scene`, both of which raise -- so a name absent from `describe()` means the verb does not work there, not that it was never advertised.
-
-A backend that reports no population at all is refused rather than reported as idle. "No policies running" is an affirmative claim about every robot in the world, and a backend that cannot enumerate its rollouts has no evidence for it - the same reason the state topic omits its `active` flag instead of publishing `false` there. The refusal names the backend and the seam to override, mirroring `stop_policy`, which declines rather than reporting a halt it cannot stand behind. This is reachable today on an Isaac engine before `create_world`: there is no world whose rollouts could be enumerated.
-
-The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes. The same entry-point check covers the two provider keyword bags: `policy_config` (splatted into `create_policy`) and `policy_kwargs` (splatted into `policy.get_actions`) must be dicts, so a `policy_config="host=127.0.0.1"` string returns a structured error naming the parameter instead of a bare `TypeError` from the splat - and, on the `start_policy` path, instead of a false "started" for a rollout that never produced an action. The policy configuration itself is judged there in full, not just the provider name: the provider's own class-level `preflight` hook - the check that refuses a camera the model's declared image inputs cannot be routed from, or an action-chunk count the consumer cannot execute - runs before the submit, so `start_policy` returns exactly the refusal `run_policy` returns for the same request. Nothing reads the worker's result (the future is tracked only to answer whether the robot is busy, and is pruned once done), so a refusal produced there is discarded and `list_policies_running` then reads the same as a rollout that completed. A pre-built `policy_object` skips the check on both surfaces - the provider is unused in that case. The pair resolves the same way one layer down, on `PolicyRunner.run` - the surface those entry points delegate to, which is documented as drivable directly - and both knobs carry their domain there too, raising `ValueError` rather than returning an error dict because a direct caller has no envelope to read a refusal from. `n_steps` is judged whenever it is *given*, which is the condition the entry point's own resolver judges it on; unvalidated, a step count outside the domain did not fail but handed the horizon to the other knob, so `n_steps=0` ran `duration`'s `10.0`s default - 500 control steps and 500 applied actions for a caller who asked for zero. `duration` is judged only when no step count was given, because that is the only case in which it sets the horizon; unvalidated, `0` and a negative value returned `status="success"` with zero steps and `stopped_reason="budget"` - the field a caller reads to decide whether to retry, asserting a horizon was exhausted when there was none.
-
-`action_horizon` (how many actions are consumed from each policy chunk before it is re-queried) is validated the same way at every entry point, so a horizon the rollout cannot run - `0`, a negative value, a float, `nan` - is a structured error rather than a value silently clamped to 1. `run_multi_policy` additionally accepts per-robot mappings (`instructions={robot: text}`, `action_horizon={robot: horizon}`): a key must name a robot driven by that call (i.e. a key of `policies`), because an unmatched key cannot be applied to anything - a robot omitted from a mapping keeps its documented default. The same domain applies one layer down, on `PolicyRunner.run` / `PolicyRunner.evaluate` - the surfaces those entry points delegate to, which are documented as drivable directly. There it raises `ValueError` rather than returning an error dict, matching the sibling `control_substeps` and `control_frequency` guards of the same signature, because a direct caller has no envelope to read a refusal from; unvalidated, the value was clamped to 1 inside the first chunk query or leaked a bare `int()` conversion error naming neither the parameter nor the method. The two bounds of `PolicyRunner.evaluate`'s own episode loop - `n_episodes` and, on the legacy `success_fn` path, `max_steps` - carry that same domain for a stronger reason: a horizon outside it degrades a rollout, while a loop bound outside it removes the evaluation and still reports one. `n_episodes=0` returned `status="success"` over zero episodes and `max_steps=0` over episodes of zero length, both with `success_rate: 0.0` and `success_measured: true` - the flag that exists so a `0.0` cannot be read as a measurement - and with no action ever applied; `max_steps=inf` never terminated at all, since `while steps < max_steps` has no false case. `max_steps` is checked only when it is the horizon actually read, because a `spec=` call takes its horizon off the benchmark (validated at that read) and never reads the parameter.
+The horizon is `duration` (seconds) or `n_steps` (`n_steps` wins when both are
+set; `max_steps` is an alias). `action_horizon` is how many actions are
+consumed from each chunk before the policy is re-queried; `0`, negatives,
+floats and `nan` are refused at every entry point rather than clamped.
+`run_multi_policy` also accepts per-robot mappings (`instructions={robot: text}`,
+`action_horizon={robot: horizon}`).
 
 The four **posture** flags in the same signature are held to a domain of their own. `fast_mode`, `reset_between`, `wbc_install_torque_control` and `async_rtc` each select one of two branches rather than scale a quantity - pace the loop at `control_frequency` or run it unpaced, reset the scene between episodes or carry the end state over, install the WBC torque shim for the call or leave the actuators alone, overlap inference with actuation or drain each chunk first - so there is nothing to clamp and no partial effect, and a value that is not a boolean is refused rather than read by truthiness. Every non-empty string is truthy, so `"false"`, `"no"`, `"off"` and `"0"` would select the posture the word asks to skip, while `0`, `""` and `[]` would take the other branch without being a declared spelling of it; read that way, `run_policy(fast_mode="false")` ran unpaced, `run_policy(n_episodes=2, reset_between=0)` started episode two from wherever episode one left the arm, and `run_policy(async_rtc="false")` reported `rtc_async_enabled=True` beside the background inference thread the caller had declined - each with `status="success"`. The domain is the shared `boolean_flag_error` one that the recording postures and the mesh wire schema already use (the wire schema refuses this same `fast_mode` field unless it is a `bool`), bound to the tool-error envelope through `SimEngine._validate_posture_flags` and checked ahead of robot resolution, so a refused call builds no policy and touches no scene. `run_policy` checks all four; `async_rtc=None` is its documented "resolve from the policy" spelling and is checked only when a value is supplied, while `eval_policy` declares `async_rtc` as a plain `bool` and refuses `None` with everything else. MuJoCo's `start_policy` checks `fast_mode` before the submit, for the reason its numeric knobs already do: a refusal produced on the worker is discarded with the future and the caller reads "started". The `run_policy` agent tool checks its own `fast_mode` before it starts the recording it was asked to make, so the facade's refusal cannot arrive after the dataset at `dataset_root` has been replaced with an empty one. Unlike the numeric knobs above, the check sits at the facades only: `PolicyRunner.run` takes these flags as the facades hand them and does not repeat it.
 
-The episode-outcome criterion carries the same posture one step further in. Both eval routes call a caller-supplied criterion after every applied action - `success_fn(observation)` on the `eval_policy` route, `is_success(sim)` / `is_failure(sim)` on the `evaluate_benchmark` route - and a criterion that *raises* is fatal, with a message naming the criterion, the episode and the step and chaining the original exception. That mirrors `run_policy`'s `stop_when`, which is fatal for the same reason: the caller asked for a semantics the runner can no longer honor, and a `success_rate` averaged over episodes whose outcome was never determined is not a measurement. It is deliberately *not* the `on_frame` posture - that hook is best-effort telemetry, so a generic failure is logged and the evaluation continues (a `RecordingFrameError` from it is data loss and propagates). Which surface the failure arrives on is each method's own: `run_policy` converts it to `status="error"` via its terminal handler, while `eval_policy` propagates rollout failures by design, exactly as a raising `get_actions` does. Verdicts are read with `bool()` rather than type-checked, so the NumPy scalar an ordinary predicate returns (`observation["x"] > 0.5` is a `numpy.bool_`, not a `bool`) is accepted unchanged.
+**Episode outcome.** `eval_policy` calls `success_fn(observation)` and
+`evaluate_benchmark` calls `is_success(sim)` / `is_failure(sim)` after every
+applied action; a criterion that raises is fatal (naming criterion, episode and
+step), as is `run_policy`'s `stop_when`, because a success rate over
+undetermined episodes is not a measurement. Verdicts are read with `bool()`,
+so a `numpy.bool_` is accepted. Predicate-DSL clauses (`stop_when`, a benchmark
+spec's `success` / `failure` / `dense_reward`) refuse non-finite numeric
+kwargs at compile time; `staged_reward` nests (a stage's `reward` may be
+another `staged_reward`) and each machine resets its own sub-terms per episode.
 
-A clause authored in the predicate DSL (`stop_when`, and a benchmark spec's `success` / `failure` / `dense_reward`) is held to a numeric domain when it compiles, because the alternative is a clause that runs and never fires. Every numeric kwarg must be a finite number: `nan` compiles clean and then makes every comparison `False`, so the clause is unsatisfiable and the rollout spends its whole step budget reporting an honest miss. A kwarg that names a **tolerance** - `tol`, `threshold`, or any `*_tol` such as `xy_tol` / `z_tol` - must additionally be `>= 0`, for the same reason by a second route: a tolerance is a bound on a distance, an absolute difference or a squared magnitude, none of which is ever negative, so `{predicate: distance_less_than, threshold: -0.3}` is unsatisfiable rather than loose - and unlike `nan` it reads as a *wider* bound. Signed params keep both signs, because their sign is part of the value: `body_on`'s `z_offset` is an offset a caller lowers below zero to accept a body resting slightly under the reference, `base_velocity`'s `vx` is a velocity component whose sign is a direction, and `body_below_z`'s `z` is a coordinate. Both halves are enforced in `make_predicate`, the one choke point every clause passes through - including the per-stage calls a `staged_reward` compiles by calling back into it - so the refusal names the predicate, the parameter and the value at authoring time rather than one rollout later.
-
-The same nesting matters at the episode boundary. `staged_reward` is a registered predicate, so a stage's `reward` may be another `staged_reward` and a curriculum can be authored as a machine of machines. Every such machine carries per-episode state, and `SimEnv.reset` / a benchmark's `on_episode_start` can only reach the terms they hold directly, so each machine clears its own sub-terms - by the same rule, anything exposing a zero-arg `reset()` - and a nested one clears its children in turn. Without that a second episode opens inside a sub-curriculum it has not earned: its earlier shaping signal is never emitted again and its one-time `bonus` is paid once per process instead of once per episode, while the outer phase reports a clean reset either way.
-
-Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
+Pass `seed=` to `run_policy` / `start_policy` for a reproducible rollout: it
+reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`;
+`eval_policy` seeds per episode.
 
 ### Async-RTC chunk pipeline (latency masking)
 
-`async_rtc` overlaps policy inference with action execution: while the current action chunk drains, the *next* `get_actions` runs on a single background worker (using a fresh mid-chunk observation) and is atomically swapped in when the current chunk runs out. A policy whose inference latency is at most one chunk's execution time then pays (almost) zero visible stall at the chunk seam - the same way an async real-time controller hides inference latency on real hardware.
+`async_rtc` overlaps policy inference with action execution; the flag's three
+values, the auto-enable rule and the deterministic inference delay are
+documented once, in
+[LeRobot Local - synchronous vs async chunk execution](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
+`eval_policy` defaults to `async_rtc=False` so success rates stay
+bit-reproducible. `rtc_inference_timeout_s` bounds a stuck inference (a
+positive finite number of seconds, or `None`); a policy that returns no
+actions on its first query ends the rollout with `status="error"` after that
+one query on both paths, and a *prefetched* chunk that arrives empty gets one
+synchronous re-query before erroring. The spec path (`evaluate_benchmark` /
+`evaluate(spec=...)`) stays synchronous and declares an observed delay of `0`
+before every inference.
 
-```
-async_rtc=True (inference <= chunk execution):
-
-chunk N exec   |####============|
-prefetch N+1            |~~~~~~~|              <- fires at ~50% of chunk N
-chunk N+1 exec                  |####========|   <- ready at the seam: HIT, no stall
-
-async_rtc=False (synchronous chunk-then-drain):
-
-chunk N exec   |####|
-infer N+1            |~~~~~~~|                 <- the loop stalls here every seam
-chunk N+1 exec               |####|
-```
-
-**Auto-enable rule.** `async_rtc=None` (the default) resolves the flag from `policy.is_chunk_emitting()`: chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) get the overlap automatically, while single-step policies (MockPolicy, classical planners) stay on the synchronous loop, where overlap would gain nothing. An explicit `async_rtc=True` / `async_rtc=False` always wins over the auto-resolution. `Policy.is_chunk_emitting()` defaults to `execution_horizon > 1`; `LerobotLocalPolicy` additionally reports `True` for an RTC model or a checkpoint that must be driven via `predict_action_chunk` (MolmoAct2). See [LeRobot Local -> RTC](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
-
-**Hardening.** A policy that returns no actions at all on its FIRST query ends the rollout with `status="error"` after that one query, on both the synchronous and the async path - there is no budget a chunk of zero actions can ever spend, so re-querying only burns inference. If a *prefetched* chunk arrives empty the runner instead degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread). That deadline must be a positive finite number of seconds, or `None` (the default) to wait without one - `0`, a negative value and `nan` all make the wait give up before any inference can answer, and `inf` overflows the platform's timestamp arithmetic, so each is refused at the call naming the parameter rather than reported one rollout later as a stuck policy.
 
 **Telemetry.** Every `run_policy` result `{"json": {...}}` block carries six RTC fields so latency masking is provable from the payload, not the logs:
 
@@ -267,23 +193,24 @@ chunk N+1 exec               |####|
 | `rtc_async_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
 | `rtc_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries), counted on the synchronous path too |
 | `rtc_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
-| `rtc_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
-| `rtc_avg_inference_ms` | Mean `get_actions` wall time across the rollout |
-| `rtc_max_inference_ms` | Slowest `get_actions` wall time |
 
-A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
+A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and
+`rtc_prefetch_blocks == 0`.
 
-**Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking. Being synchronous, the spec path declares an observed delay of exactly `0` to the policy before every inference, like the other two loops - so a policy object carried over from an async rollout cannot keep slicing its chunk seam against that rollout's stale step count.
-
-`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `video_fps` (the rate the MP4 *plays* at - the requested `fps` capped to `control_frequency`, since a rollout renders at most one frame per control step, so `video_frames / video_fps` is the file's real length), `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. `elapsed_s` is measured on a monotonic clock, so it is the time that actually elapsed rather than the difference between two readings of a date that a correction can move. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
-
-At `n_episodes > 1` the same call returns an aggregate, and the aggregate keeps every field above whose value the call already knows. That is the identity fields, the policy-binding flags (`positional_fallback_used`, `generic_state_keys_used`, `missing_state_keys_used`) and the policy-load telemetry (`policy_load_time_s`, `policy_load_cache_hit`, `policy_resident_rss_mb`) - all read off the ONE policy object every episode ran with, which is how `eval_policy` and `evaluate_benchmark` already report them for their own multi-episode aggregates. Two of those fields are only meaningful across a loop in the first place: a `policy_load_cache_hit` of `false` on episode 2+ means the caller rebuilt the policy instead of reusing `policy_object=`, and a flat `policy_resident_rss_mb` is what says the model stayed resident rather than reloading per episode. The binding flags matter most here for a different reason - the multi-episode shape is the one that collects a dataset, and a `true` flag means those episodes recorded a robot moving on meaningless inputs while `status` stayed `"success"`. Read them the same way at any episode count.
-
-What the aggregate adds is `total_steps`, `stopped_reasons` (aligned with `episodes`), `video_paths` and the per-episode `episodes` records; `steps_used` equals `total_steps` and `stopped_reason` is the last episode's. Per-episode action health is *not* summarised, because a per-step rate has no single aggregate an N-episode call can report without choosing one - each record in `episodes` carries its own `action_errors`, `action_resolution_rate` and `partial_action_failure_rate`, so the worst episode is `max(e["partial_action_failure_rate"] for e in report["episodes"])`.
+`run_policy` returns a `{"json": {...}}` block beside the human-readable
+`text`: `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`,
+`stopped_early`, `stopped_reason`, `action_errors`, `video_path` /
+`video_frames` / `video_fps`, the policy-binding flags and the policy-load
+telemetry (`policy_load_time_s`, `policy_load_cache_hit`). At `n_episodes > 1`
+the same call returns an aggregate that adds `total_steps`, `stopped_reasons`,
+`video_paths` and per-episode `episodes` records; per-step action health is
+reported per episode, not averaged.
 
 ### Watching a rollout: the `observer` lane
 
-`run_policy(observer=...)` takes a read-only callable that receives one `RunPolicyStarted`, one `RunPolicyStep` per completed `send_action` call, and one `RunPolicyEnded`. A complete backend breakdown says what physically applied; a coarse error keeps that state explicitly `unknown`. It is a *second* lane beside the backend's `on_frame` hook, not a use of it - that hook is filled from `_make_run_policy_hook` (cooperative cancellation, the trajectory mirror, mesh step telemetry, dataset recording) and is not available to callers, so supplying one would remove all of that rather than add observation.
+`run_policy(observer=...)` takes a read-only callable that receives one
+`RunPolicyStarted`, one `RunPolicyStep` per completed `send_action`, and one
+`RunPolicyEnded` - a second lane beside the backend's `on_frame` hook.
 
 ```python
 from strands_robots.simulation.observers import RunPolicyStep
@@ -295,7 +222,8 @@ def watch(event):
 sim.run_policy(robot_name="alice", policy_provider="mock", observer=watch)
 ```
 
-The events use observer schema version **2** and report four things `on_frame`'s `(step, obs, action)` signature cannot carry:
+The events (observer schema version **2**) report four things `on_frame`'s
+`(step, obs, action)` cannot carry:
 
 | Field | Why it is not derivable from `on_frame` |
 |-------|------------------------------------------|
@@ -304,41 +232,28 @@ The events use observer schema version **2** and report four things `on_frame`'s
 | `observation_age_steps` | Authoritative nonnegative age in control-step terms: completed rollout action attempts since the snapshot was sampled. Sync chunks report their chunk index. Async chunks carry the prefetch sample's remaining-old-chunk-attempt count across the swap and add the new chunk index. An active recording refreshes every step and reports `0`. On an `unknown` action resolution this field does not claim physical advancement. |
 | `legacy_hook_outcome` | What the backend's hook did - `ok`, `cancelled`, `recording_error`, `error`, or `absent`. |
 
-`applied_action_index == legacy_step_index` for every `RunPolicyStep`, including a cancelled or recording-failed step: both identify the same zero-based action passed to the hook. The abort is identified by `legacy_hook_outcome`, not by an index offset. Terminal counts have a different boundary: the hook runs *after* `send_action` and `step_count` increments *after* the hook, so `RunPolicyEnded.applied_actions` can exceed `legacy_steps_used` by one when that final hook aborts.
 
-Ordering is explicit: `event_seq` is dense and 0-based within one `run_id`, so a gap is observable; `monotonic_ns` orders the stream (no NTP correction or `date -s` can move it) and `utc_ns` is derived from a single rollout anchor so a wall-clock label can never disagree with it. At `n_episodes > 1` each episode is its own lifecycle with its own `run_id`. Once dispatch of `RunPolicyStarted` is attempted, dispatch of exactly one `RunPolicyEnded` is attempted on every Python exit, including process-control/cancellation exceptions and result-assembly failures. Those non-cooperative exceptions retain their identity and traceback and still propagate. If Step or Ended observer dispatch raises a second non-cooperative exception while one is already unwinding from the legacy hook or rollout, the original remains primary and the secondary failure is logged and attached as an exception note. A preflight refusal opens no lifecycle. `sim_time_s` is read only from a cached `_world.sim_time` or engine `_sim_time`; observation telemetry never calls `get_state`.
+`event_seq` is dense and 0-based within one `run_id`; `monotonic_ns` orders the
+stream and `utc_ns` derives from one rollout anchor. The lane is additive (it
+adds only `observer_failures` to the result), contained (an observer's
+`Exception` or `CooperativeStop` never changes the rollout outcome;
+`KeyboardInterrupt`, `SystemExit`, `GeneratorExit` and `CancelledError`
+propagate), borrowed (`observation` / `action` are the hook's own objects -
+snapshot synchronously, do not retain) and not isolated (dispatch is
+synchronous on the rollout thread, so a slow observer slows the robot). Scope:
+`run_policy` and `PolicyRunner.run`; `eval_policy`, `evaluate_benchmark` and
+`run_multi_policy` carry no observer yet.
 
-Five rules the lane holds to, and one it does not:
+`eval_policy` accepts the same `video={...}` config as `run_policy` but writes
+one MP4 per episode (`eval.mp4` -> `eval_ep0.mp4`, ...).
 
-- **Additive.** Installing an observer changes no action applied, no existing result-json field, and no observation or render call. It adds one key, `observer_failures`.
-- **Contained, for the classes it is an observer's business to raise.** An `Exception` never alters the rollout outcome and never reaches the `max_onframe_failures` watchdog - that exists for a recorder losing dataset frames, not a visualiser that cannot draw. `CooperativeStop` is contained too, and by name: it is a `BaseException` precisely so a hook's broad `except Exception` cannot swallow a cancellation, so without naming it here any observer could cancel a rollout it is only supposed to watch. Every contained failure is counted and reported as `observer_failures`, so a stream with holes says so.
-- **Not contained: the four signals that are nobody's telemetry.** `KeyboardInterrupt`, `SystemExit`, `GeneratorExit` and `asyncio.CancelledError` propagate. None of the four is an `Exception` subclass, so the guard's `(CooperativeStop, Exception)` clause passes them through by construction. A generator closed underneath a visualiser, or a task cancelled while one was drawing, is a real teardown rather than a drawing failure, and reporting it as `observer_failures` on a rollout that then ran to its full budget said the opposite. If Step or Ended dispatch raises one while another exception is already unwinding from the legacy hook or rollout, the original exception remains primary; the secondary observer failure is logged and attached to it as a note.
-- **Borrowed, not copied.** `observation` and `action` are the same objects the hook received. Treat them as read-only and do not retain them past the call; snapshot what you need synchronously.
-- **Not isolated.** Dispatch is synchronous on the rollout thread, so a blocking observer blocks the robot. This is telemetry, not a sandbox. The rollout loop paces on a *deadline* rather than a delay, so a consumer has a budget of one control period (`1 / control_frequency`) that costs the rollout no wall clock at all - work inside it is absorbed by the period instead of added to it. Overrun that budget and the pace is what gives: the loop drops the missed deadline rather than firing a burst of catch-up actions at the arm, so the arm sees a gap. Keep the callback short and hand anything slower to another thread.
-
-Scope: `run_policy` (including its `n_episodes > 1` path) and `PolicyRunner.run`. `eval_policy`, `evaluate_benchmark` and `run_multi_policy` are separate loops with different step semantics and carry no observer yet.
-
-`eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height` - an unknown key or a non-positive size is a caller error, never silently ignored), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
-| `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
-
-!!! tip "Discover the benchmark scoring surface"
-    `evaluate_benchmark`, `list_benchmarks`, `register_benchmark_from_file`,
-    and `register_builtin_benchmarks` are listed in `sim.describe()["methods"]`, so an agent that can run a
-    policy from one `describe()` call can also discover how to score it
-    against a success/failure/dense_reward benchmark - and author a new
-    benchmark spec at runtime - without guessing the method names.
-
-**Built-in benchmarks.** `sim.register_builtin_benchmarks()` (or the module
-function `strands_robots.simulation.register_builtin_benchmarks()`) registers
-the benchmarks shipped with the library so they appear in `list_benchmarks()`
-and run via `evaluate_benchmark(...)` without hand-authoring a spec. It ships
-`go2_walk_forward` - a canonical velocity-tracking locomotion task for the
-Unitree Go2: succeed by walking the base past `x = 2 m` (`base_beyond_x`), fail
-on a topple (`base_tipped`) or a height collapse (`base_below_z`), and shape on
-a dense `base_velocity_tracking` (exp-kernel twist tracking) + `base_height` +
-`base_orientation` reward. Registration is opt-in (mirrors the on-demand LIBERO
-suite), so importing the library mutates no registry. `builtin_benchmark_specs()`
-returns the spec dicts to copy/fork as a starting point for your own task.
+**Benchmarks.** `evaluate_benchmark`, `list_benchmarks`,
+`register_benchmark_from_file` and `register_builtin_benchmarks` score a policy
+against a `success` / `failure` / `dense_reward` spec.
+`register_builtin_benchmarks()` is opt-in and ships `go2_walk_forward`
+(succeed past `x = 2 m`, fail on topple or height collapse, dense
+velocity-tracking reward); `builtin_benchmark_specs()` returns the spec dicts
+to fork.
 
 ## Recording
 
@@ -367,15 +282,13 @@ Destructive - writes into model arrays. Recompile scene to undo.
 | `register_urdf(name, path)` | Register additional asset - it is named by `list_urdfs` from then on |
 | `get_features(robot_name=None)` | Joint / actuator / camera / robot names of the scene (scoped to one robot with `robot_name`) - the source of truth for the action keys a policy must emit, and the feature schema used for recording |
 
-!!! tip "Discover the expected action keys"
-    `get_features` is listed in `sim.describe()["methods"]`, so an agent can
-    find it from one `describe()` call. When a policy's emitted action keys
-    resolve to no actuator, `run_policy` fails fast with an error that names
-    `get_features(robot_name=...)` as the way to inspect the keys the robot
-    actually expects - the recommended method and the discovery surface agree.
+When a policy's action keys resolve to no actuator, `run_policy` fails fast
+naming `get_features(robot_name=...)` as the way to inspect the expected keys.
 
 ## See also
 
 - [World building](world-building.md) - composing scenes.
 - [Domain randomization](domain-randomization.md) - `randomize` distributions.
+- [Policy providers](../policies/overview.md) - `policy_config` / `policy_object` forms.
+- [LeRobot Local](../policies/lerobot-local.md) - `async_rtc`, RTC and the deterministic inference delay.
 - [Architecture](../architecture.md)
