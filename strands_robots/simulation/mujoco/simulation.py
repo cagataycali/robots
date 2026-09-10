@@ -84,7 +84,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
 )
-from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
+from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, discover_ee_frame, hint_matches_name
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -3483,6 +3483,24 @@ class MuJoCoSimEngine(
         json_payload: dict[str, Any] = {"state": state}
         if base is not None:
             json_payload["base"] = base
+
+        # Name the frame move_to drives and where it is now. Without this an
+        # agent reads the pose of whichever body looks like a hand (the jaw),
+        # sends move_to a target offset from THAT, and gets "unreachable" for a
+        # point the wrist frame never was at - two wasted turns per motion.
+        frame = discover_ee_frame(model, pfx or None)
+        if frame is not None:
+            frame_name, frame_type = frame
+            obj = mj.mjtObj.mjOBJ_SITE if frame_type == "site" else mj.mjtObj.mjOBJ_BODY
+            frame_id = mj_name_to_id(model, obj, frame_name)
+            if frame_id >= 0:
+                xpos = data.site_xpos[frame_id] if frame_type == "site" else data.xpos[frame_id]
+                ee_pos = [float(xpos[0]), float(xpos[1]), float(xpos[2])]
+                text += (
+                    f"end_effector ({frame_type} '{frame_name}', the frame move_to drives): "
+                    f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
+                )
+                json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
         return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -5245,7 +5263,7 @@ class MuJoCoSimEngine(
                 "get_total_mass, get_ground_height, get_sensor_data, get_jacobian, get_mass_matrix, inverse_dynamics, "
                 "forward_kinematics, save_state, load_state, set_body_properties, set_geom_properties; "
                 "[Manipulation] attach_bodies, detach_bodies, actuate_robot, zero_dynamics; "
-                "[Motion primitives] move_to (Cartesian EE transport via IK; not collision-aware), "
+                "[Motion primitives] move_to (Cartesian transport of the end_effector frame that get_robot_state names, via IK; not collision-aware), "
                 "set_gripper (open/close set-point), rotate_wrist (wrist-yaw set-point holding position); "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
                 "[Recording] start_recording, stop_recording, get_recording_status, "
