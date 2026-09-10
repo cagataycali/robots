@@ -360,14 +360,17 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
 
 
 def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
-    """Whether a stop result AFFIRMATIVELY reports that nothing was stopped.
+    """Whether a result AFFIRMATIVELY reports that it did not do the thing.
 
-    The single owner of that rule. Two callers read it and they must not drift:
-    :func:`_peers_that_did_not_stop` grades the envelopes an
-    :meth:`Mesh.emergency_stop` broadcast collected, and the fleet-wide sim
-    branch of :meth:`Mesh._dispatch` grades each per-robot ``stop_policy``
-    answer before deciding its own ``ok``. A second copy of the rule is how the
-    branch came to report ``ok=True`` over a refusal it had in hand.
+    The single owner of that rule. Three callers read it and they must not
+    drift: :func:`_peers_that_did_not_stop` grades the envelopes an
+    :meth:`Mesh.emergency_stop` broadcast collected, the fleet-wide sim branch
+    of :meth:`Mesh._dispatch` grades each per-robot ``stop_policy`` answer
+    before deciding its own ``ok``, and :meth:`Mesh._exec_cmd` grades the
+    handler's own return before naming the audit event. A second copy of the
+    rule is how the branch came to report ``ok=True`` over a refusal it had in
+    hand. Named for the stop verbs it was written for, but the rule is the
+    failure REPORT itself, which is why a refused command reads it too.
 
     Two spellings mean the same thing here, because the stop verbs disagree
     about their envelope: ``stop_task`` and the dispatch's own branches answer
@@ -375,11 +378,11 @@ def _reports_failure_to_stop(result: Mapping[str, Any]) -> bool:
     ``{"status": "success"|"error"}``.
 
     Args:
-        result: A stop result, either a ``_dispatch`` return value or the
-            ``result`` member of a response envelope.
+        result: A ``_dispatch`` return value, the ``result`` member of a
+            response envelope, or a command handler's own return.
 
     Returns:
-        ``True`` only when the result explicitly says a stop did not happen.
+        ``True`` only when the result explicitly says it did not happen.
         A shape carrying neither key is not a failure report -- see
         :func:`_peers_that_did_not_stop` on why that stays conservative.
     """
@@ -2088,7 +2091,13 @@ class Mesh(SensorLoopsMixin):
                 refused = isinstance(result, dict) and ("error" in result or _reports_failure_to_stop(result))
                 payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
                 if refused:
-                    payload["error"] = str(result.get("error") or result.get("status") or "ok=False")
+                    # A tool-envelope refusal (``{"status": "error", "content":
+                    # [...]}``) carries no ``error`` key: name the shape that
+                    # made it a refusal rather than auditing the bare word
+                    # "error". Reads the value, never a second copy of the rule.
+                    status = result.get("status")
+                    reason = result.get("error") or (f"status={status}" if status else "ok=False")
+                    payload["error"] = str(reason)
                 try:
                     log_safety_event(
                         "command_refused" if refused else "command_executed",
