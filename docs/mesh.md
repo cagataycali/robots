@@ -390,7 +390,7 @@ from strands_robots.mesh import init_mesh
 from strands_robots.simulation import create_simulation
 
 sim = create_simulation("mujoco")
-sim.mesh = init_mesh(sim, peer_id="bench-sim")   # None when mesh is disabled
+sim.mesh = init_mesh(sim, peer_id="bench-sim")   # None when mesh is disabled; alive=False when it did not start
 ```
 
 The `Simulation(mesh=...)` constructor argument takes that same started client -
@@ -412,7 +412,12 @@ renderers and executor are always released.
 Unset `STRANDS_MESH` with no `mesh=` argument is the default, and it leaves the
 mesh off.
 
-Mesh failures are non-fatal - `robot.mesh` becomes `None`; the sim/hardware instance still works.
+Mesh failures are non-fatal; the sim/hardware instance still works. `robot.mesh` is
+`None` only when the mesh is switched off. When it is on but did not start (refused
+ACL posture, `eclipse-zenoh` missing, no session) `robot.mesh` is a `Mesh` whose
+`alive` is `False` - it publishes nothing and discovers nothing, and `emergency_stop()`
+on it returns `[]`. Check `robot.mesh is not None and robot.mesh.alive` before relying
+on the wire (see [Troubleshooting](troubleshooting.md)).
 
 ## Transport selection: `STRANDS_MESH_BACKEND`
 
