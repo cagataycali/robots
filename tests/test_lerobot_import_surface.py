@@ -48,12 +48,20 @@ _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 # guard must not flag them. Remove an entry once the pinned lerobot range ships
 # the symbol (it then resolves like any other).
 #
-# Empty: the pinned range is now lerobot>=0.6.0, which ships every symbol
-# strands imports -- reanchor_relative_rtc_prefix (previously forward-compat)
-# lands in lerobot 0.6, so it is now checked like any other import. A new entry
-# belongs here only when strands starts importing a symbol that exists on
-# lerobot main but not yet in the pinned range.
-_FORWARD_COMPAT_SYMBOLS: frozenset[tuple[str, str]] = frozenset()
+# A new entry belongs here only when strands starts importing a symbol that
+# exists on lerobot main but not yet in the pinned range. The previous entry,
+# reanchor_relative_rtc_prefix, left when lerobot 0.6 shipped it.
+#
+# resolve_episode_indices: the episode-subset resolver that landed on lerobot
+# main in 64b23178d beside DatasetConfig.exclude_episodes, absent from 0.6.1 -
+# the only release inside the declared range. utils.effective_episode_count
+# imports it inside a try/except ImportError and falls back to counting the
+# allowlist verbatim, which is what 0.6.1's own make_train_eval_datasets does.
+_FORWARD_COMPAT_SYMBOLS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("lerobot.datasets.utils", "resolve_episode_indices"),
+    }
+)
 
 
 def _python_sources() -> list[Path]:

@@ -15,6 +15,7 @@ rather than silently rounded.
 """
 
 import dataclasses
+import importlib
 import inspect
 import json
 import math
@@ -33,29 +34,29 @@ from strands_robots.utils import (
     validation_split_fraction,
 )
 
+
+def _importable(module: str, symbol: str | None = None) -> bool:
+    """Whether ``from module import symbol`` (or ``import module``) would succeed here."""
+    try:
+        mod = importlib.import_module(module)
+    except ImportError:
+        return False
+    return symbol is None or hasattr(mod, symbol)
+
+
 # lerobot 0.6.1 (the declared floor) has neither resolve_episode_indices nor
 # DatasetConfig.exclude_episodes; both landed in a single commit (64b23178d).
 # Cells that assert resolver semantics (exclusion lists, allowlist+exclusion,
 # out-of-range index shrinkage) are gated on its presence so the required check
 # passes on the locked environment.
-try:
-    from lerobot.datasets.utils import resolve_episode_indices as _resolve  # noqa: F401
-
-    _HAS_RESOLVER = True
-except ImportError:
-    _HAS_RESOLVER = False
+_HAS_RESOLVER = _importable("lerobot.datasets.utils", "resolve_episode_indices")
 
 _NEEDS_RESOLVER = pytest.mark.skipif(
     not _HAS_RESOLVER,
     reason="resolve_episode_indices absent in locked lerobot 0.6.1",
 )
 
-try:
-    from draccus import cfgparsing as _cfgparsing  # noqa: F401
-
-    _HAS_DRACCUS = True
-except ImportError:
-    _HAS_DRACCUS = False
+_HAS_DRACCUS = _importable("draccus.cfgparsing")
 
 _NEEDS_DRACCUS = pytest.mark.skipif(
     not _HAS_DRACCUS,
