@@ -1877,19 +1877,15 @@ class Mesh(SensorLoopsMixin):
                 # ``turn_id`` rejection carries a sender known to be an
                 # identifier, and a sender rejection carries only the repr.
                 logger.warning("[mesh] %s: refused cmd with unroutable %s -- %s", self.peer_id, field, exc)
-                try:
-                    log_safety_event(
-                        "command_rejected",
-                        self.peer_id,
-                        {
-                            "sender": sender if field != "sender_id" else None,
-                            "field": field,
-                            "reason": str(exc),
-                            "value": repr(value)[: _security.MAX_PEER_ID_LEN],
-                        },
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                self._audit_local(
+                    "command_rejected",
+                    {
+                        "sender": sender if field != "sender_id" else None,
+                        "field": field,
+                        "reason": str(exc),
+                        "value": repr(value)[: _security.MAX_PEER_ID_LEN],
+                    },
+                )
                 return
         # require an explicit ``command`` key.
         # Earlier the fallback ``data.get("command", data)`` allowed a
@@ -1939,18 +1935,14 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
-            try:
-                log_safety_event(
-                    "command_rejected",
-                    self.peer_id,
-                    {
-                        "sender": sender,
-                        "reason": "non-dict envelope or missing command key",
-                        "type": type(cmd).__name__,
-                    },
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            self._audit_local(
+                "command_rejected",
+                {
+                    "sender": sender,
+                    "reason": "non-dict envelope or missing command key",
+                    "type": type(cmd).__name__,
+                },
+            )
             return
 
         # Validate the command shape against the action allowlist + per-action
@@ -1970,24 +1962,14 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
-            try:
-                log_safety_event(
-                    "command_rejected",
-                    self.peer_id,
-                    {
-                        "sender": sender,
-                        "reason": str(exc),
-                        "action": cmd.get("action") if isinstance(cmd, dict) else None,
-                    },
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                # narrow per AGENTS.md > Review
-                # Learnings (#86). ``log_safety_event`` raises TypeError
-                # / ValueError on payload shape, OSError on disk failure;
-                # the audit best-effort contract means we drop those, but
-                # an unexpected RuntimeError from a future audit-module
-                # refactor should NOT be silently swallowed.
-                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            self._audit_local(
+                "command_rejected",
+                {
+                    "sender": sender,
+                    "reason": str(exc),
+                    "action": cmd.get("action") if isinstance(cmd, dict) else None,
+                },
+            )
             return
 
         # H-3: reject replayed commands. Read-only actions (status / state /
@@ -2043,14 +2025,7 @@ class Mesh(SensorLoopsMixin):
                             "timestamp": time.time(),
                         },
                     )
-                try:
-                    log_safety_event(
-                        "command_rejected_replay",
-                        self.peer_id,
-                        {"sender": sender, "turn_id": turn, "action": _action},
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                self._audit_local("command_rejected_replay", {"sender": sender, "turn_id": turn, "action": _action})
                 return
 
         try:
@@ -2077,14 +2052,7 @@ class Mesh(SensorLoopsMixin):
             # audit failure must never break the dispatch path (same narrow
             # except tuple as every other audit call site).
             if _action not in _READONLY:
-                try:
-                    log_safety_event(
-                        "command_executed",
-                        self.peer_id,
-                        {"sender": sender, "turn_id": turn, "action": _action},
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                self._audit_local("command_executed", {"sender": sender, "turn_id": turn, "action": _action})
         except _security.LockoutError as exc:
             # Lockout is the most operationally interesting rejection -- emit
             # a structured error on the response topic and audit it.
@@ -2100,17 +2068,10 @@ class Mesh(SensorLoopsMixin):
                         "timestamp": time.time(),
                     },
                 )
-            try:
-                log_safety_event(
-                    "command_rejected_lockout",
-                    self.peer_id,
-                    {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                # narrow per AGENTS.md > "Exception
-                # Clauses Must Be Narrow". Same tuple as the symmetric
-                # narrowing at the ValidationError audit path above.
-                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            self._audit_local(
+                "command_rejected_lockout",
+                {"sender": sender, "action": cmd.get("action") if isinstance(cmd, dict) else None},
+            )
             return
         except (
             ValueError,
@@ -2161,21 +2122,14 @@ class Mesh(SensorLoopsMixin):
             # forensic trail (issue #257). Reuses ``command_rejected``
             # event_type with reason="dispatch error" to keep the
             # operator audit-walker grep simple.
-            try:
-                log_safety_event(
-                    "command_rejected",
-                    self.peer_id,
-                    {
-                        "sender": sender,
-                        "reason": "dispatch error",
-                        "action": cmd.get("action") if isinstance(cmd, dict) else None,
-                    },
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                # Wrap audit emission in narrow except so an audit-sink
-                # failure on the dispatch-error path doesn't crash back
-                # through the mesh wire handler we just narrowed in R24-A.
-                logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+            self._audit_local(
+                "command_rejected",
+                {
+                    "sender": sender,
+                    "reason": "dispatch error",
+                    "action": cmd.get("action") if isinstance(cmd, dict) else None,
+                },
+            )
 
     def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
         action = cmd.get("action", "status")
@@ -2685,29 +2639,48 @@ class Mesh(SensorLoopsMixin):
                     responder,
                     expected,
                 )
-                try:
-                    log_safety_event(
-                        "response_hijack_rejected",
-                        self.peer_id,
-                        {
-                            "turn_prefix": turn[:12],
-                            "responder_id": responder,
-                            "expected": expected,
-                        },
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    # narrow per AGENTS.md > Review
-                    # Learnings (#86). Same tuple as the other audit-publish
-                    # wrappers in this file. Audit best-effort still holds;
-                    # MemoryError / RuntimeError / future programmer errors
-                    # propagate to the test harness instead of being
-                    # silently swallowed at DEBUG.
-                    logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+                self._audit_local(
+                    "response_hijack_rejected",
+                    {
+                        "turn_prefix": turn[:12],
+                        "responder_id": responder,
+                        "expected": expected,
+                    },
+                )
                 return
             self._responses.setdefault(turn, []).append(data)
         event.set()
 
     # Safety -- inbound estop / resume
+    _AUDIT_FAILURES = (TypeError, ValueError, OSError)
+
+    def _audit(self, event_type: str, severity: str = "warning", payload: dict[str, Any] | None = None) -> None:
+        """Publish a safety event to the mesh and the audit log, never raising.
+
+        The one wrapper every safety-path audit record goes through. A refused
+        or unwritable record (an unencodable payload, a closed session, a full
+        disk) is reported at DEBUG and swallowed: the decision the record
+        describes has already been taken, and letting a failed write of it
+        unwind a command handler would turn the audit trail into a new
+        denial-of-service surface on the safety path.
+        """
+        try:
+            self.publish_safety_event(event_type=event_type, severity=severity, payload=payload)
+        except self._AUDIT_FAILURES as audit_exc:
+            logger.debug("[mesh] %s: %s audit publish failed: %s", self.peer_id, event_type, audit_exc)
+
+    def _audit_local(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Append a safety event to the local audit log only (not broadcast), never raising.
+
+        Same contract as :meth:`_audit` for the records that must stay off the
+        wire: a rejected inbound command names the sender and the reason, and
+        broadcasting that would hand an attacker a free oracle for the ACL.
+        """
+        try:
+            log_safety_event(event_type, self.peer_id, payload)
+        except self._AUDIT_FAILURES as audit_exc:
+            logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
+
     def _on_safety_estop(self, sample: Any) -> None:
         """Engage the local emergency-stop lockout in response to a fleet-
         wide ``strands/safety/estop`` broadcast.
@@ -2923,27 +2896,16 @@ class Mesh(SensorLoopsMixin):
                     and self._estop_lockout.is_set()
                     and (time.monotonic() - self._last_estop_mono) < 0.2
                 ):
-                    try:
-                        self.publish_safety_event(
-                            event_type="estop_corroborated",
-                            severity="info",
-                            payload={
-                                "issuer": issuer_id,
-                                "issuer_t": envelope_t,
-                                "wire_zid": wire_zid,
-                                "corroborates_wire_zid": cached_wire_zid,
-                            },
-                        )
-                    except (TypeError, ValueError, OSError) as audit_exc:
-                        # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
-                        # publish_safety_event raises only TypeError/ValueError
-                        # on payload shape and OSError on disk failure; everything
-                        # else is a programmer bug worth seeing.
-                        logger.debug(
-                            "[mesh] %s: estop_corroborated audit publish failed: %s",
-                            self.peer_id,
-                            audit_exc,
-                        )
+                    self._audit(
+                        event_type="estop_corroborated",
+                        severity="info",
+                        payload={
+                            "issuer": issuer_id,
+                            "issuer_t": envelope_t,
+                            "wire_zid": wire_zid,
+                            "corroborates_wire_zid": cached_wire_zid,
+                        },
+                    )
                     return
                 # Original replay rejection (now also covers same-wire-zid
                 # mutated-peer_id replays and attribution-less transports).
@@ -2953,22 +2915,11 @@ class Mesh(SensorLoopsMixin):
                     issuer_id,
                     envelope_t,
                 )
-                try:
-                    self.publish_safety_event(
-                        event_type="estop_replay_rejected",
-                        severity="warning",
-                        payload={"issuer": issuer_id, "issuer_t": envelope_t},
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    # Audit publish is best-effort and must never block the
-                    # safety path; narrow the catch tuple so a future
-                    # programmer error surfaces in tests rather than
-                    # being swallowed at DEBUG.
-                    logger.debug(
-                        "[mesh] %s: estop_replay_rejected audit publish failed: %s",
-                        self.peer_id,
-                        audit_exc,
-                    )
+                self._audit(
+                    event_type="estop_replay_rejected",
+                    severity="warning",
+                    payload={"issuer": issuer_id, "issuer_t": envelope_t},
+                )
                 return
             # evict using the tuple-valued cache. We extract a
             # mono_ts view, run the standard eviction, then re-key
@@ -3012,22 +2963,15 @@ class Mesh(SensorLoopsMixin):
                 # but the lockout below still engages -- a legitimate
                 # safety event is preserved even if the cache itself
                 # cannot hold it.
-                try:
-                    self.publish_safety_event(
-                        event_type="estop_per_issuer_cap_exceeded",
-                        severity="warning",
-                        payload={
-                            "issuer": issuer_id,
-                            "issuer_t": envelope_t,
-                            "cap": per_issuer_cap,
-                        },
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    logger.debug(
-                        "[mesh] %s: estop_per_issuer_cap_exceeded audit publish failed: %s",
-                        self.peer_id,
-                        audit_exc,
-                    )
+                self._audit(
+                    event_type="estop_per_issuer_cap_exceeded",
+                    severity="warning",
+                    payload={
+                        "issuer": issuer_id,
+                        "issuer_t": envelope_t,
+                        "cap": per_issuer_cap,
+                    },
+                )
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
 
@@ -3070,22 +3014,15 @@ class Mesh(SensorLoopsMixin):
             # the signal that another operator also tried to engage.
             # Mirror the corroboration audit shape so every issuer of an
             # estop is preserved on the forensic record.
-            try:
-                self.publish_safety_event(
-                    event_type="remote_estop_redundant",
-                    severity="info",
-                    payload={
-                        "issuer": data.get("peer_id"),
-                        "issuer_t": envelope_t,
-                        "lockout_engaged_since": lockout_engaged_since,
-                    },
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                logger.debug(
-                    "[mesh] %s: remote_estop_redundant audit publish failed: %s",
-                    self.peer_id,
-                    audit_exc,
-                )
+            self._audit(
+                event_type="remote_estop_redundant",
+                severity="info",
+                payload={
+                    "issuer": data.get("peer_id"),
+                    "issuer_t": envelope_t,
+                    "lockout_engaged_since": lockout_engaged_since,
+                },
+            )
 
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout in response to ``strands/safety/resume``.
@@ -3326,23 +3263,14 @@ class Mesh(SensorLoopsMixin):
                 # Audit the replay attempt -- this is exactly the
                 # forensic signal an operator wants on a compromised
                 # peer trying captured-and-replayed envelopes.
-                try:
-                    self.publish_safety_event(
-                        event_type="resume_replay_rejected",
-                        severity="warning",
-                        payload={
-                            "issuer": issuer_id,
-                            "proof_nonce_prefix": proof_nonce[:16],
-                        },
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    # Audit publish is best-effort and must never block the
-                    # safety path; narrow the catch tuple per AGENTS.md.
-                    logger.debug(
-                        "[mesh] %s: resume_replay_rejected audit publish failed: %s",
-                        self.peer_id,
-                        audit_exc,
-                    )
+                self._audit(
+                    event_type="resume_replay_rejected",
+                    severity="warning",
+                    payload={
+                        "issuer": issuer_id,
+                        "proof_nonce_prefix": proof_nonce[:16],
+                    },
+                )
                 return
             # TTL math uses time.monotonic() (see this PR B5) --
             # envelope freshness above stays on time.time() because it
@@ -3380,23 +3308,15 @@ class Mesh(SensorLoopsMixin):
                 # itself is refused (unlike estop, which still engages
                 # lockout, a refused resume must NOT clear lockout --
                 # returning here is the safe direction).
-                try:
-                    self.publish_safety_event(
-                        event_type="resume_per_issuer_cap_exceeded",
-                        severity="warning",
-                        payload={
-                            "issuer": issuer_id,
-                            "proof_nonce_prefix": proof_nonce[:16],
-                            "cap": per_issuer_cap,
-                        },
-                    )
-                except (TypeError, ValueError, OSError) as audit_exc:
-                    # Narrow per AGENTS.md > "Exception Clauses Must Be Narrow".
-                    logger.debug(
-                        "[mesh] %s: resume_per_issuer_cap_exceeded audit publish failed: %s",
-                        self.peer_id,
-                        audit_exc,
-                    )
+                self._audit(
+                    event_type="resume_per_issuer_cap_exceeded",
+                    severity="warning",
+                    payload={
+                        "issuer": issuer_id,
+                        "proof_nonce_prefix": proof_nonce[:16],
+                        "cap": per_issuer_cap,
+                    },
+                )
                 return
             self._resume_replay_cache[cache_key] = now_mono
 
@@ -3425,22 +3345,15 @@ class Mesh(SensorLoopsMixin):
             # reconciling estop_engaged/resume_applied pairs has gaps for
             # the case where multiple operators legitimately hit resume
             # in close succession.
-            try:
-                self.publish_safety_event(
-                    event_type="remote_resume_redundant",
-                    severity="info",
-                    payload={
-                        "trigger": "remote",
-                        "issuer": sender,
-                        "issuer_t": data.get("t"),
-                    },
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                logger.debug(
-                    "[mesh] %s: remote_resume_redundant audit publish failed: %s",
-                    self.peer_id,
-                    audit_exc,
-                )
+            self._audit(
+                event_type="remote_resume_redundant",
+                severity="info",
+                payload={
+                    "trigger": "remote",
+                    "issuer": sender,
+                    "issuer_t": data.get("t"),
+                },
+            )
 
     # RPC -- outgoing
     def _cmd_topic_size_problem(self, msg: dict[str, Any]) -> str | None:
@@ -4006,31 +3919,12 @@ class Mesh(SensorLoopsMixin):
         # work shape (one local audit + one wire publish) so the
         # latency oracle collapses too.
         def _emit_resume_denied(reason_text: str, severity: str) -> None:
-            try:
-                log_safety_event(
-                    "resume_denied",
-                    self.peer_id,
-                    {"sender_id": self.peer_id, "reason": reason_text, "severity": severity},
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                logger.debug(
-                    "[mesh] %s: resume_denied local audit failed: %s",
-                    self.peer_id,
-                    audit_exc,
-                )
-            try:
-                # Wire-broadcast carries ONLY the opaque code, no reason.
-                self.publish_safety_event(
-                    event_type="resume_denied",
-                    severity=severity,
-                    payload={"sender_id": self.peer_id, "reason_code": "denied"},
-                )
-            except (TypeError, ValueError, OSError) as audit_exc:
-                logger.debug(
-                    "[mesh] %s: resume_denied wire publish failed: %s",
-                    self.peer_id,
-                    audit_exc,
-                )
+            self._audit_local("resume_denied", {"sender_id": self.peer_id, "reason": reason_text, "severity": severity})
+            self._audit(
+                event_type="resume_denied",
+                severity=severity,
+                payload={"sender_id": self.peer_id, "reason_code": "denied"},
+            )
 
         if _throttled:
             _emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
