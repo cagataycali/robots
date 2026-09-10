@@ -1637,7 +1637,7 @@ class DatasetRecorder:
                 # this frame's to supply and a missing one is refused. The
                 # backends' hooks always pass a scope; for them a bystander
                 # robot whose state read failed degrades to the fill below
-                # (see simulation/recording.py::undriven_robot_state) rather
+                # (see ``strands_robots.simulation.recording.undriven_robot_state``) rather
                 # than ending the driven robot's episode.
                 gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
                 if gap is not None:

@@ -38,14 +38,15 @@ if TYPE_CHECKING:
 
 # PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
 # We could defer these with inline lazy imports (and historically did), but
-# policy_runner.py only imports `SimEngine` from base under TYPE_CHECKING so
+# ``simulation.policy_runner`` only imports `SimEngine` from base under
+# TYPE_CHECKING so
 # the runtime cycle doesn't actually exist. Keep the imports at module level
 # to break the AST-visible cycle that static analysers flag.
 #
 # Note (#191): we deliberately do NOT import ``OnFrame`` here, even under
 # ``TYPE_CHECKING`` - CodeQL's ``py/unsafe-cyclic-import`` rule walks
 # ``TYPE_CHECKING`` blocks too and would flag the static cycle (
-# policy_runner.py imports SimEngine from base under TYPE_CHECKING,
+# ``simulation.policy_runner`` imports SimEngine from base under TYPE_CHECKING,
 # so importing OnFrame from policy_runner here closes the loop in the
 # AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
 # signature as a *string* annotation; ``from __future__ import
