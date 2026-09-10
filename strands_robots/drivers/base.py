@@ -56,6 +56,8 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ..utils import refusal_repr
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
 
@@ -377,7 +379,7 @@ def undeclared_verb_error(driver: Any, action: Any) -> dict[str, Any]:
         "content": [
             {
                 "text": (
-                    f"{type(driver).__name__}: unknown action {action!r}; "
+                    f"{type(driver).__name__}: unknown action {refusal_repr(action)}; "
                     f"declared verbs are {declared_verbs(driver.tool_spec)}"
                 )
             }
