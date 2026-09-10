@@ -917,6 +917,11 @@ class Robot(TeleopMixin, AgentTool):
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> LeRobotRobot:
         """Initialize LeRobot robot instance using native lerobot patterns."""
+        # Without the [lerobot] extra this used to surface as a bare
+        # ``ModuleNotFoundError: No module named 'lerobot'`` from the first
+        # import below -- no extra named, no install line -- on the very first
+        # ``Robot("so101", mode="real")`` a customer types.
+        require_optional("lerobot", extra="lerobot", purpose='hardware control (Robot(..., mode="real"))')
         from lerobot.robots.config import RobotConfig
         from lerobot.robots.robot import Robot as LeRobotRobot
         from lerobot.robots.utils import make_robot_from_config
