@@ -353,7 +353,13 @@ def _sim_with_fake_render(clock: _SteppingClock, stamps: list[float]) -> Simulat
 def _capture(
     clock: _SteppingClock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Run the real recorder thread through ``clock`` until the cap is reached."""
+    """Run the real recorder thread through ``clock`` until the cap is reached.
+
+    The render hook finds ``ready`` through ``sim._cams_rec_state``, so the
+    recorder must publish that attribute before its thread starts: published
+    after, a caller that lost the CPU right after ``start()`` saw the whole
+    virtual-time capture finish first (0-4 stamps in ~1 of 10 runs at load 21).
+    """
     stamps: list[float] = []
     sim = _sim_with_fake_render(clock, stamps)
     # ``start_cameras_recording`` binds its clock with a function-local

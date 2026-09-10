@@ -2442,8 +2442,12 @@ class RenderingMixin:
                     _time.sleep(interval - lag)
 
         state["thread"] = _threading.Thread(target=_loop, daemon=True)
-        state["thread"].start()
+        # Publish the state before the thread runs: a reader that finds the
+        # recorder through ``self._cams_rec_state`` (a render hook, a stop
+        # racing the start) must see the same ``ready`` the thread will set,
+        # not ``None`` for however long the caller is off the CPU.
         self._cams_rec_state = state
+        state["thread"].start()
 
         # Wait for the recorder thread to warm its GL context and enter the
         # capture loop before reporting success. Worst case is the 30-attempt
