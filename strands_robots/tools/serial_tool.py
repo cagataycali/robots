@@ -45,7 +45,7 @@ that already fits.
 Operator approval: the four actions that write to the bus - ``send``,
 ``send_read``, ``feetech_position`` and ``feetech_velocity`` - stop for a human
 BEFORE the port is opened, through the same decision path the ROS transports
-and ``use_unitree`` use (:func:`~strands_robots.tools._command_gate.gate_motion`).
+use (:func:`~strands_robots.tools._command_gate.gate_motion`).
 ``STRANDS_SERIAL_COMMAND_ALLOW`` (comma-separated action names, or ``*``)
 pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
 otherwise the operator is prompted through the tool context and, with none

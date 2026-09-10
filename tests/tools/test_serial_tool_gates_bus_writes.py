@@ -17,6 +17,7 @@ The audit row is graded beside the other gates in
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -65,7 +66,7 @@ def opened(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[_FakeSerial]
     return ports
 
 
-WRITES = {
+WRITES: dict[str, dict[str, Any]] = {
     "send": {"data": "go"},
     "send_read": {"hex_data": "FF FF 01 02 01 FB"},
     "feetech_position": {"motor_id": 1, "position": 2048},
@@ -224,7 +225,7 @@ class TestTheDashboardHookIsNotAskedTwice:
 
         real_import = builtins.__import__
 
-        def _no_dashboard(name: str, *args: object, **kwargs: object) -> object:
+        def _no_dashboard(name: str, *args: Any, **kwargs: Any) -> Any:
             if name.startswith("strands_robots.dashboard"):
                 raise ImportError("No module named 'strands_robots.dashboard'")
             return real_import(name, *args, **kwargs)
@@ -242,10 +243,11 @@ class TestTheDashboardHookIsNotAskedTwice:
 
 class TestReadsAreNeverGated:
     @pytest.mark.parametrize(
-        ("action", "kwargs"), [("read", {}), ("feetech_ping", {"motor_id": 1}), ("monitor", {"timeout": 0.0})]
+        ("action", "kwargs"),
+        [("read", {}), ("feetech_ping", {"motor_id": 1}), ("monitor", {"timeout": 0.0})],
     )
     def test_a_read_needs_no_context_and_no_approval(
-        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, object]
+        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, Any]
     ) -> None:
         ctx = _ctx("n")
         res = serial_mod.serial_tool(action=action, port=PORT, tool_context=ctx, **kwargs)

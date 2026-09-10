@@ -17,4 +17,5 @@ context reachable the call is refused and nothing is written. A grant the
 dashboard hook already deposited for this exact call is spent instead of asking
 twice, and an absent dashboard extra reads as "no grant", never a crash. Reads,
 `monitor` and `feetech_ping` are never gated. The gate's transport-agnostic half
-lives in `_command_gate.gate_motion`, shared with the ROS transports.
+lives in `_command_gate.gate_motion`, shared with the ROS transports, which
+now reach the operator through it too.
