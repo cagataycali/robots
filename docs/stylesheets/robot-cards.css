@@ -1,0 +1,15 @@
+/* Generated robot catalog cards (docs/hooks/robot_cards.py). */
+.robot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; margin: 1rem 0 2rem; }
+.robot-card { border: 1px solid var(--md-default-fg-color--lightest); border-radius: 14px; padding: 1rem; display: flex; flex-direction: column; gap: .5rem; }
+.robot-card figure { margin: 0; }
+.robot-card img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 8px; background: var(--md-code-bg-color); }
+.robot-card figcaption { font-size: .7rem; opacity: .7; text-align: right; }
+.robot-card h3 { margin: 0; font-size: 1rem; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.robot-card p { margin: 0; font-size: .8rem; }
+.robot-card pre { margin: 0; }
+.robot-card dl, .robot-card dd { margin: 0; font-size: .75rem; opacity: .8; }
+.robot-card details { font-size: .75rem; }
+.robot-card details code { margin-right: .3rem; }
+.rc-badge { font-size: .65rem; padding: .05rem .45rem; border-radius: 999px; border: 1px solid currentColor; font-family: var(--md-text-font-family); font-weight: 500; }
+.rc-sim { color: var(--md-primary-fg-color); }
+.rc-real { color: #b26a00; }

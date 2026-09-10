@@ -5,6 +5,7 @@ repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
 extra_css:
 - stylesheets/extra.css?v=2
+- stylesheets/robot-cards.css
 extra_javascript:
 - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 - assets/mermaid-init.js
@@ -73,6 +74,9 @@ nav:
 - Tool Result Contract: contracts.md
 - Contributing: contributing.md
 - Troubleshooting: troubleshooting.md
+hooks:
+  - docs/hooks/robot_cards.py
+
 theme:
   name: material
   logo: assets/strands-logo.svg
