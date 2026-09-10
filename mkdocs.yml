@@ -4,7 +4,7 @@ site_description: "Robot control, simulation, and training for Strands Agents"
 repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
 extra_css:
-- stylesheets/extra.css?v=2
+- stylesheets/extra.css
 extra_javascript:
 - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 - assets/mermaid-init.js
@@ -80,17 +80,18 @@ theme:
   favicon: assets/strands-logo.svg
   palette:
     - scheme: default
-      primary: white
-      accent: green
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: black
-      accent: green
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+  font: false
   features:
   - navigation.sections
   - navigation.expand
