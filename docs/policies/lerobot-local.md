@@ -633,6 +633,15 @@ policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so1
                         rtc_enabled=True, rtc_execution_horizon=16, rtc_max_guidance_weight=1.0)
 ```
 
+`rtc_enabled=True` is what turns RTC on. Public flow-matching checkpoints
+ship `config.rtc_config = None` - RTC is an inference-time choice, not a
+training artifact - so the provider builds an `RTCConfig` from your
+`rtc_execution_horizon` / `rtc_max_guidance_weight` (lerobot's defaults for
+whatever you leave out) and hands it to lerobot's `init_rtc_processor()`. Only
+the flow-matching config classes declare that field; ask an ACT or Diffusion
+checkpoint for RTC and the provider warns and runs `select_action()` instead.
+Leave `rtc_enabled=None` (the default) to follow the checkpoint's own setting.
+
 Real-Time Chunking does two things. First, **seam blending**: each new action
 chunk is denoised conditioned on the still-unexecuted tail of the previous
 chunk (`rtc_execution_horizon`), so the trajectory has no discontinuity where

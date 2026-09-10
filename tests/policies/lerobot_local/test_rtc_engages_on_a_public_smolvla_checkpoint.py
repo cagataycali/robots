@@ -25,6 +25,17 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _opt_in_to_remote_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``create_policy("lerobot_local")`` is gated on ``STRANDS_TRUST_REMOTE_CODE``.
+
+    Set here rather than assumed from the environment: without it every cell
+    below raises :class:`~strands_robots.policies.factory.UntrustedRemoteCodeError`
+    and reports the gate instead of the RTC behaviour it is measuring.
+    """
+    monkeypatch.setenv("STRANDS_TRUST_REMOTE_CODE", "1")
+
+
 def test_rtc_enabled_true_constructs_rtc_config_and_engages():
     pytest.importorskip("lerobot.policies.smolvla.modeling_smolvla", reason="needs the [smolvla] extra")
     from strands_robots import create_policy

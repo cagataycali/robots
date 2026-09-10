@@ -1706,11 +1706,17 @@ class LerobotLocalPolicy(Policy):
         """Initialize RTC if the loaded policy supports it.
 
         RTC is supported by flow-matching policies that implement
-        ``predict_action_chunk(**kwargs)``. It requires the policy to have
-        an ``rtc_config`` on its config.
+        ``predict_action_chunk(**kwargs)`` and whose config class declares an
+        ``rtc_config`` field: SmolVLA, Pi0 and Pi0.5 do, ACT and Diffusion do
+        not. The field's VALUE is an inference-time choice rather than a
+        training artifact, so every public checkpoint ships it as ``None``.
 
-        Auto-detection: if ``rtc_enabled=None`` (default), RTC is enabled
-        when the model's config has ``rtc_config.enabled=True``.
+        ``rtc_enabled=None`` (the default) auto-detects and therefore enables
+        RTC only for a checkpoint saved with ``rtc_config.enabled=True``.
+        ``rtc_enabled=True`` constructs the config the caller asked for and
+        hands it to lerobot's ``init_rtc_processor()``; a policy whose config
+        declares no ``rtc_config`` field is warned about and falls back to
+        ``select_action()``.
         """
         if not self._loaded or self._policy is None:
             return
