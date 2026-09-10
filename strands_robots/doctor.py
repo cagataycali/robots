@@ -620,6 +620,8 @@ def check_warp_arch() -> str:
     """
     device_arch = _driver_compute_arch()
     if device_arch is None:
+        if cuda_devices_per_driver():
+            return _skip("Warp arch: a CUDA device is present but torch, which reads its architecture, cannot see it")
         return _skip("Warp arch: no CUDA device to compare against")
     report = _warp_cuda_report()
     if report is None:

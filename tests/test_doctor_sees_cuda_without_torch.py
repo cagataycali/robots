@@ -76,22 +76,31 @@ class TestTheCudaLine:
 
 
 class TestTheArchLine:
-    def test_a_present_gpu_torch_cannot_see_is_not_reported_as_absent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from strands_robots.doctor import check_torch_arch
+    """Both arch lines compare against the architecture ``_driver_compute_arch``
+    reads, and it reads it through torch - so both reported a present GPU as
+    absent on a machine whose only missing piece was torch.
+    """
+
+    @pytest.mark.parametrize("check", ["check_torch_arch", "check_warp_arch"])
+    def test_a_present_gpu_torch_cannot_see_is_not_reported_as_absent(
+        self, monkeypatch: pytest.MonkeyPatch, check: str
+    ) -> None:
+        import strands_robots.doctor as doctor
 
         _no_torch(monkeypatch)
         _driver_reports(monkeypatch, 1)
-        line = check_torch_arch()
+        line = getattr(doctor, check)()
         assert "SKIP" in line
         assert "no CUDA device" not in line
         assert "present" in line
 
-    def test_no_gpu_is_still_no_gpu(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from strands_robots.doctor import check_torch_arch
+    @pytest.mark.parametrize("check", ["check_torch_arch", "check_warp_arch"])
+    def test_no_gpu_is_still_no_gpu(self, monkeypatch: pytest.MonkeyPatch, check: str) -> None:
+        import strands_robots.doctor as doctor
 
         _no_torch(monkeypatch)
         _driver_reports(monkeypatch, None)
-        assert "no CUDA device to compare against" in check_torch_arch()
+        assert "no CUDA device to compare against" in getattr(doctor, check)()
 
 
 class TestTheRemedyFitsTheMachine:
