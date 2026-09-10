@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from strands.types._events import ToolInterruptEvent, ToolResultEvent
 from strands.types.interrupt import Interrupt
+from strands.types.tools import ToolUse
 
 from strands_robots import hardware_robot as hardware_robot_module
 from strands_robots.hardware_robot import Robot as HwRobot
@@ -97,7 +99,7 @@ def _make_robot() -> HwRobot:
 
 
 @pytest.fixture
-def dispatched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[HwRobot, list[tuple[str, str]]]:
+def dispatched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[tuple[HwRobot, list[tuple[str, str]]]]:
     """A robot whose two dispatchers record instead of moving, in a clean gate environment."""
     hw = _make_robot()
     calls: list[tuple[str, str]] = []
@@ -120,7 +122,7 @@ def dispatched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[HwRobot
 
 
 def _stream(hw: HwRobot, action: str, state: dict[str, Any], **extra: Any) -> list:
-    tool_use = {"toolUseId": f"tu-{action}", "input": {"action": action, **MOTION[action], **extra}}
+    tool_use = cast(ToolUse, {"toolUseId": f"tu-{action}", "input": {"action": action, **MOTION[action], **extra}})
     return _drain(hw.stream(tool_use, state))
 
 

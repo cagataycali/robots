@@ -32,11 +32,12 @@ import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from strands.types.interrupt import Interrupt
+from strands.types.tools import ToolUse
 
 import strands_robots
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod
@@ -97,7 +98,9 @@ def _drive_robot(response: object) -> dict[str, Any] | None:
     robot._execute_task_sync = lambda *a: {"status": "success", "content": [{"text": "done"}]}  # type: ignore[method-assign]
 
     async def _run() -> list[Any]:
-        tool_use = {"toolUseId": "tu-1", "input": {"action": "execute", "instruction": "wave", "policy_port": 5555}}
+        tool_use = cast(
+            ToolUse, {"toolUseId": "tu-1", "input": {"action": "execute", "instruction": "wave", "policy_port": 5555}}
+        )
         return [ev async for ev in robot.stream(tool_use, {"agent": agent})]
 
     res = asyncio.run(_run())[-1].tool_result

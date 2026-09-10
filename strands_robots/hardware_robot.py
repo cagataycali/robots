@@ -2907,7 +2907,7 @@ class Robot(TeleopMixin, AgentTool):
 
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
-    ) -> AsyncGenerator[ToolResultEvent, None]:
+    ) -> AsyncGenerator[ToolResultEvent | ToolInterruptEvent, None]:
         """Stream robot task execution with async actions."""
         try:
             tool_use_id = tool_use.get("toolUseId", "")
