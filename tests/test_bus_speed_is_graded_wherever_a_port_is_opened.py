@@ -198,6 +198,7 @@ class TestPyserialCoerces:
     def test_a_speed_that_is_not_a_count_is_coerced_not_refused(self, value: Any, coerced: int) -> None:
         serial = pytest.importorskip("serial")
         conn = serial.Serial(None, value)
+        assert conn.is_open is False, "a port here would put the case back on the platform's ioctl"
         assert conn.baudrate == coerced
 
     @pytest.mark.parametrize(
