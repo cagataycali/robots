@@ -84,16 +84,16 @@ def test_the_extra_supplies_every_server_dependency(distribution: str) -> None:
 
 
 def test_the_extra_is_folded_into_all() -> None:
-    """`pip install 'strands-robots[all]'` serves the dashboard.
+    """`pip install 'strands-robots[all]'` carries the dashboard modules.
 
-    `docs/dashboard/index.md` documents `[all]` as an install command, and the
-    hatch development environment reaches the four dependencies only through this
-    fold -- so it is load-bearing for both the docs and CI.
+    The hatch development environment reaches the four dependencies only through
+    this fold, so it is load-bearing for CI as well as for an operator who asked
+    for everything.
     """
     assert "strands-robots[dashboard]" in _optional_dependencies()["all"], (
         "the dashboard extra is not folded into `all`, so `pip install "
-        "'strands-robots[all]'` -- which docs/dashboard/index.md tells operators "
-        "to run -- installs a dashboard it cannot start"
+        "'strands-robots[all]'` installs a strands_robots.dashboard that refuses "
+        "to import"
     )
 
 

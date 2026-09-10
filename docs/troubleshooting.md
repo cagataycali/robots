@@ -4,6 +4,19 @@ description: Error → fix table for the most common gotchas across install, sim
 
 # Troubleshooting
 
+## Diagnose first
+
+`doctor` checks the Python version, which extras are importable, GPU/CUDA,
+serial permissions, the MuJoCo GL backend, HuggingFace auth and a sim smoke
+test, then prints a pass/fail table:
+
+```bash
+strands-robots doctor            # or: python -m strands_robots doctor
+```
+
+`strands-robots --help` lists the commands the package ships: `doctor` and
+`verify-dataset`.
+
 ## Install
 
 | Symptom | Likely cause | Fix |
