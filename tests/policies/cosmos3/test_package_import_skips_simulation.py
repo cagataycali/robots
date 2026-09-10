@@ -3,7 +3,7 @@
 ``strands_robots/__init__.py`` imports ``strands_robots.policies`` eagerly, which
 imports ``strands_robots.policies.cosmos3``. Until this contract existed the
 cosmos3 package re-exported ``sim_ik`` at import time, and ``sim_ik`` imports
-``strands_robots.simulation.ik`` (mink, the IK solver) - so every process that
+``strands_robots.simulation.ik`` (the mink IK bridge) - so every process that
 imported the package root paid for the IK stack without asking for a simulator.
 The two bridge names are now resolved on first attribute access.
 
@@ -29,8 +29,9 @@ loaded = sorted(m for m in sys.modules if m.startswith("strands_robots."))
 print(json.dumps(loaded))
 """
 
-# The chain this branch cut. ``simulation.ik`` pulls mink; ``sim_ik`` is the
-# cosmos3 side of the bridge.
+# The chain this branch cut. ``simulation.ik`` is the mink IK bridge - it defers
+# the ``mink``/``qpsolvers`` imports themselves, so what the eager re-export cost
+# was the simulation package around it; ``sim_ik`` is the cosmos3 side.
 _IK_CHAIN = ("strands_robots.policies.cosmos3.sim_ik", "strands_robots.simulation.ik")
 
 
@@ -54,3 +55,17 @@ def test_sim_ik_names_still_resolve_from_the_package(name: str) -> None:
 def test_unknown_attribute_raises_the_standard_message() -> None:
     with pytest.raises(AttributeError, match="has no attribute 'nope'"):
         getattr(cosmos3, "nope")  # noqa: B009
+
+
+def test_first_access_caches_the_resolved_name_in_the_module_dict() -> None:
+    """Only the first access pays the lookup, as in ``simulation.newton``.
+
+    Popping the cached entry puts the package back in its post-import state, so
+    the next access goes through ``__getattr__`` again and must leave the object
+    it resolved in ``vars()``.
+    """
+    vars(cosmos3).pop("MinkIKBridge", None)
+
+    resolved = cosmos3.MinkIKBridge
+
+    assert vars(cosmos3)["MinkIKBridge"] is resolved

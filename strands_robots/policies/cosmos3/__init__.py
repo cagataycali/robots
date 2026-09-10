@@ -74,7 +74,11 @@ def __getattr__(name: str) -> object:
     if name in _LAZY_SIM_IK:
         from . import sim_ik
 
-        return getattr(sim_ik, name)
+        resolved = getattr(sim_ik, name)
+        # Cache in the module dict so only the first access pays the lookup,
+        # matching the lazy export in ``strands_robots.simulation.newton``.
+        globals()[name] = resolved
+        return resolved
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
