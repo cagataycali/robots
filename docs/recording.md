@@ -928,6 +928,21 @@ an aggregate is never reported over episodes whose frames reached no dataset.
 first ship in 1.5.0; every earlier release, including 1.0-1.4.x, installs an
 `hf` entry point without them).
 
+`sync_to_bucket` is the recorder's own method, so it needs the live session.
+Any dataset directory already on disk - recorded earlier in the process, or on
+hardware via `lerobot-record` - syncs (or re-syncs daily) through the
+module-level helper instead:
+
+```python
+from strands_robots import sync_dataset_to_bucket
+
+sync_dataset_to_bucket("/tmp/demo", "your-org/robot-fave")
+# -> {"status": "success", "bucket_uri": "hf://buckets/your-org/robot-fave/demo"}
+```
+
+`run_id` defaults to the directory name; pass `run_id="nightly"` to choose the
+bucket subpath, and `delete=True` for mirror semantics.
+
 ## Read back
 
 Fully materialized (downloads everything):
