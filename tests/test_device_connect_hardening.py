@@ -19,6 +19,8 @@ import sys
 
 import pytest
 
+pytest.importorskip("device_connect_edge", reason="needs the [device-connect] extra")
+
 
 def _force_real_device_connect_edge():
     """Restore the REAL device_connect_edge submodules and purge our
