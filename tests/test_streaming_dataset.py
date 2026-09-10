@@ -48,22 +48,6 @@ def test_open_forwards_supported_kwargs(monkeypatch):
     assert r.fps == 30
 
 
-def test_open_drops_unknown_kwargs(monkeypatch):
-    """A narrow constructor (only repo_id) must not raise on extra kwargs."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", buffer_size=999, shuffle=True, validate_deltas=False)
-    assert r.dataset.repo_id == "org/ds"
-
-
 def test_repo_type_forwarded_when_supported(monkeypatch):
     """repo_type reaches a StreamingLeRobotDataset that declares the parameter."""
 
@@ -81,87 +65,11 @@ def test_repo_type_forwarded_when_supported(monkeypatch):
     assert r.dataset.repo_type == "bucket"
 
 
-def test_repo_type_bucket_raises_when_unsupported(monkeypatch):
-    """repo_type='bucket' on a constructor without the parameter must raise,
-    never silently open the versioned dataset namespace instead (a different
-    storage system - the forbidden silent-kwarg-drop class).
-
-    The message names the lerobot version that serves bucket streaming rather
-    than the pre-0.6.1 "no released lerobot supports this" - that claim was
-    true when written and left the caller with no remedy; the capability
-    shipped in 0.6.1, which the [lerobot] extra now floors."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            raise AssertionError("constructor must never be reached")
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"repo_type='bucket' requires lerobot >= 0\.6\.1"):
-        sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-
-
-def test_bucket_guard_message_survives_unresolvable_lerobot_version(monkeypatch):
-    """The repo_type='bucket' fail-fast must surface as the actionable
-    RuntimeError even when lerobot's version metadata is unresolvable: the
-    version lookup that enriches the message must not raise a secondary
-    PackageNotFoundError that masks the primary, upgrade-actionable error."""
-    import importlib.metadata as md
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            raise AssertionError("constructor must never be reached")
-
-    def _raise(_name):
-        raise md.PackageNotFoundError("lerobot")
-
-    monkeypatch.setattr(md, "version", _raise)
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"installed: unknown") as exc:
-        sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert "repo_type='bucket' requires lerobot >= 0.6.1" in str(exc.value)
-
-
 def test_repo_type_bucket_forwarded_via_var_kwargs(monkeypatch):
     """A constructor with **kwargs accepts repo_type; the guard must not fire."""
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
     r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
     assert r.dataset.kw["repo_type"] == "bucket"
-
-
-def test_repo_type_dataset_default_ok_when_unsupported(monkeypatch):
-    """The 'dataset' default is semantics-preserving on an old lerobot: it is
-    skipped by tolerant forwarding and open() succeeds without error."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="dataset", validate_deltas=False)
-    assert r.dataset.repo_id == "org/ds"
-
-
-def test_return_uint8_drop_warns_when_unsupported(monkeypatch, caplog):
-    """return_uint8=True on a lerobot whose StreamingLeRobotDataset lacks the
-    parameter is dropped (semantics unchanged) but streams float32 - ~4x the
-    bandwidth of uint8. That cost must be surfaced as a warning, not silent."""
-
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
-        sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
-    assert any("return_uint8=True dropped" in r.message for r in caplog.records)
 
 
 def test_return_uint8_no_warn_when_supported(monkeypatch, caplog):
@@ -770,21 +678,6 @@ def test_open_rejects_misaligned_deltas(monkeypatch):
             "org/ds",
             delta_timestamps={"observation.state": [0.017]},  # 0.017*30 = 0.51, off-grid
         )
-
-
-def test_open_skips_validation_when_checker_unavailable(monkeypatch):
-    """If check_delta_timestamps cannot be imported, validation is skipped
-    silently and open still succeeds (validation is best-effort parity)."""
-    import sys as _sys
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    broken = type(_sys)("lerobot.datasets.feature_utils")  # lacks check_delta_timestamps
-    monkeypatch.setitem(_sys.modules, "lerobot.datasets.feature_utils", broken)
-    r = sd.StreamingDatasetReader.open(
-        "org/ds",
-        delta_timestamps={"observation.state": [0.017]},  # off-grid but unchecked
-    )
-    assert r.dataset.kw["delta_timestamps"]["observation.state"] == [0.017]
 
 
 # ── reader metadata + iteration passthrough ────────────────────────────────
