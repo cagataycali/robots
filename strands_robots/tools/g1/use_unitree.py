@@ -248,10 +248,26 @@ def _ast_methods_for_class(qualname: str) -> dict[str, list[str]]:
 
 
 def list_services() -> list[dict[str, Any]]:
+    """Every service this tool can dispatch, each with the SDK class that serves it."""
     return [{"service_name": name, "sdk_class": qualname} for name, (qualname, _t) in SERVICES.items()]
 
 
 def list_operations(service_name: str) -> list[str]:
+    """The operations one service exposes.
+
+    Read off the installed SDK when it is importable and off the vendored client
+    source by AST when it is not, so the surface stays discoverable on a machine
+    with no ``unitree_sdk2py``.
+
+    Args:
+        service_name: A key of :data:`SERVICES`.
+
+    Returns:
+        Sorted operation names.
+
+    Raises:
+        KeyError: If *service_name* is not a service this tool knows.
+    """
     if service_name not in SERVICES:
         raise KeyError(f"unknown service: {service_name}")
     qualname, _t = SERVICES[service_name]
@@ -275,6 +291,19 @@ def list_operations(service_name: str) -> list[str]:
 
 
 def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]:
+    """What one operation takes, and where that answer came from.
+
+    Args:
+        service_name: A key of :data:`SERVICES`.
+        operation_name: An operation on that service.
+
+    Returns:
+        The operation's ``signature`` / ``parameters`` / danger classification
+        plus a ``source`` naming the reader that answered (``inspect`` for the
+        installed SDK, ``ast`` for the vendored source), or an ``error`` entry
+        naming the unknown service or operation. This verb reports rather than
+        raises, so an agent exploring the surface is never handed a traceback.
+    """
     if service_name not in SERVICES:
         return {"error": f"unknown service: {service_name}"}
 

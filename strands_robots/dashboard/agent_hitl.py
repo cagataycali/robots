@@ -261,6 +261,7 @@ def _grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
 
 
 def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
+    """Grant one pass through the gate to the next call with this exact shape."""
     with _grants_lock:
         _grants.add(_grant_key(tool_name, tool_input))
 
@@ -302,6 +303,7 @@ class MotionInterruptHook(HookProvider):
         self._proxy_targets = dict(proxy_targets or {})
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        """Subscribe the motion gate to every tool call the agent is about to make."""
         registry.add_callback(BeforeToolCallEvent, self._gate)
 
     def _gate(self, event: BeforeToolCallEvent) -> None:
