@@ -60,9 +60,13 @@ class RLTrainSpec(TrainSpec):
             policy update (the on-policy batch horizon, holosoma ``num_steps``).
         num_envs: Parallel environments. ``1`` for the MuJoCo single-env
             backend; vectorized backends raise it.
-        actor_obs_keys / critic_obs_keys: Documentation of the observation
-            contract (the env enforces it); kept on the spec so a plan/advisor
-            can echo it without constructing the env.
+        actor_obs_keys: Ordered observation keys the actor sees, as
+            :class:`~strands_robots.training.rl.env.SimEnv` enforces them. Kept
+            on the spec so a plan advisor can echo the observation contract
+            without constructing the env.
+        critic_obs_keys: Privileged simulation-only keys appended to the critic
+            observation (asymmetric actor-critic), defaulting to
+            ``actor_obs_keys``. Same source of truth as that field.
         gamma: Discount factor.
         lam: GAE-lambda.
         clip_param: PPO clip range (also clips the value loss).
