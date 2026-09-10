@@ -126,11 +126,12 @@ class TestMaterializingAToolDoesNotConfigureTheHostProcess:
     on a named logger are import-safe.
 
     ``mkdir()`` at the top level writes to the filesystem for an import that may
-    never call the tool. The two session stores below do it under
+    never call the tool. The one session store below does it under
     ``Path.cwd()``, so merely reading a tool's help litters the directory the
-    process happens to be in; they are named here rather than fixed because
-    their contents are load-bearing session state, and moving them is a
-    behaviour change this contract does not make. A *third* one is refused.
+    process happens to be in; it is named here rather than fixed because its
+    contents are load-bearing session state, and moving it is a behaviour change
+    this contract does not make. A *second* one is refused - which is what a
+    tool defining its own copy of the store path would be.
 
     Graded with ``ast``, not by importing, so each offender is attributed to its
     own module: ``basicConfig`` is a no-op once any handler exists, so the second
@@ -140,8 +141,7 @@ class TestMaterializingAToolDoesNotConfigureTheHostProcess:
     #: Top-level ``mkdir`` calls that predate this contract, with the store each
     #: creates. A new entry here is a regression, not a waiver.
     KNOWN_TOP_LEVEL_MKDIR = {
-        "lerobot_teleoperate.py": "SESSION_DIR",
-        "lerobot_train.py": "SESSION_DIR",
+        "_process_stop.py": "SESSION_DIR",
     }
 
     @staticmethod
