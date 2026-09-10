@@ -26,7 +26,7 @@ sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube",
 ```
 
 ```bash
-uv pip install "strands-robots[mesh]"   # eclipse-zenoh; already in the default install
+uv pip install "strands-robots[mesh]"   # eclipse-zenoh + json5; not in the base install
 ```
 
 `[mesh]` requires `eclipse-zenoh>=1.6.1`: e-stop and resume publishers are
