@@ -12,7 +12,12 @@ from strands_robots import Robot
 robot = Robot(
     "so100",
     mode="real",
-    cameras={"wrist": {"type": "opencv", "index_or_path": "/dev/video0"}},
+    cameras={
+        "wrist": {"type": "opencv", "index_or_path": "/dev/video0"},
+        # A RealSense is selected by lerobot's registered name for it,
+        # ``intelrealsense``, and identified by serial rather than by device path.
+        "top": {"type": "intelrealsense", "serial_number_or_name": "819312071961", "use_depth": True},
+    },
     port="/dev/tty.usbserial-A50285BI",
     control_frequency=50.0,
 )
@@ -35,7 +40,7 @@ robot.cleanup()
 |-------|------|
 | `tool_name` | Tool identifier for the agent. |
 | `robot` | LeRobot `Robot` instance, `RobotConfig`, or string (e.g. `"so100"`). |
-| `cameras` | `{name: config_dict}`. Config keys are `type` (backend selector, `opencv`) plus the fields of lerobot's `OpenCVCameraConfig`: `index_or_path` (required), `fps`, `width`, `height`, `color_mode`, `rotation`, `warmup_s`, `fourcc`, `backend`. An unknown key raises `ValueError`. |
+| `cameras` | `{name: config_dict}`. Each dict is a serialized lerobot `CameraConfig`: `type` selects the backend from lerobot's own registry (`opencv` default, `intelrealsense`, `zmq`, `reachy2_camera`, plus any installed `lerobot_camera_*` plugin) and the remaining keys are the fields of the class it resolves to. `fps`/`width`/`height` are common to every backend and default to 30/640/480; the required field is per backend (`index_or_path` for `opencv`, `serial_number_or_name` for `intelrealsense`, `server_address` for `zmq`). An unknown `type` or key raises `ValueError` listing the accepted vocabulary. |
 | `action_horizon` | Actions per inference step (default 8; must be a positive integer). |
 | `data_config` | GR00T data_config name. |
 | `control_frequency` | Control loop Hz (default 50). |

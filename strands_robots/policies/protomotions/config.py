@@ -450,11 +450,10 @@ def load_config_from_yaml(path: str | Path) -> ProtoMotionsConfig:
     same information. ``~`` in ``path`` is expanded, the file is read as a
     file, and a payload that is not a mapping is reported by name rather than
     reaching the field lookups below: the reporting the sibling policy-config
-    file loaders in :mod:`strands_robots.policies.kimodo.config`,
-    :mod:`strands_robots.policies.motionbricks.config` and
+    file loaders in :mod:`strands_robots.policies.kimodo.config` and
     :mod:`strands_robots.policies.wbc.config` already give.
 
-    The extension is deliberately not checked, unlike the two loaders that do:
+    The extension is deliberately not checked, unlike the loader that does:
     a yaml document stored under any name loads here today, and refusing one
     would stop a payload that currently works.
 

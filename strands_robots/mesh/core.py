@@ -2492,7 +2492,7 @@ class Mesh(SensorLoopsMixin):
     # it, and a key admitted here that no provider reads is inert.
     #
     # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
-    # ``[vx, vy, omega]``, MotionBricks reads a planar direction. Every one of
+    # ``[vx, vy, omega]``, microduck accepts that or ``[vx, vy]``. Every one of
     # those providers is reachable over the mesh: the policy-provider
     # allowlist is derived from the registry (see
     # ``strands_robots.mesh.security``), so a locomotion peer can be told to

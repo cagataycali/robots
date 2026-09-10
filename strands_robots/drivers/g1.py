@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import (
     decode_motor_state,
+    policy_step,
     telemetry_float,
     telemetry_float_list,
     telemetry_int,
@@ -240,6 +241,135 @@ _SDK_KD: tuple[float, ...] = _LEG_KD + _LEG_KD + _WAIST_KD + _ARM_KD + _ARM_KD
 # command. Single-sourced so the fields accepted and the fields checked cannot
 # drift apart.
 _WIRE_FIELDS: tuple[str, ...] = ("q", "kp", "kd", "dq", "tau")
+
+# Per-joint command envelope (F-004, CWE-1284).  Finiteness says a value CAN go
+# on the wire; these tables say whether the joint can honor it.  Every number
+# below is the vendor's own: the ``<limit lower= upper= effort= velocity=>``
+# element of each revolute joint in ``robots/g1_description/g1_29dof.urdf`` in
+# unitreerobotics/unitree_ros.  Travel is radians; effort is the actuator's peak
+# torque in N m; velocity is rad/s.  The 29 travel rows are also the joint
+# ``range`` values of the compiled ``unitree_g1`` asset (mujoco_menagerie
+# ``unitree_g1/g1.xml``), so this transcription has an oracle on any machine
+# that has the asset: a slipped decimal disagrees with the vendor's own model
+# instead of reading as a plausible bound.  Roll joints are mirrored
+# left/right, which is why the two hips and the two shoulders do not share one
+# row.
+#
+# A value outside its row is REFUSED, never clamped: a clamped target still
+# moves the joint to a place the caller did not ask for, and on a standing
+# humanoid an unrequested motion is the failure these rows exist to prevent.
+_G1_JOINT_TRAVEL_RAD: dict[str, tuple[float, float]] = {
+    "left_hip_pitch": (-2.5307, 2.8798),
+    "left_hip_roll": (-0.5236, 2.9671),
+    "left_hip_yaw": (-2.7576, 2.7576),
+    "left_knee": (-0.087267, 2.8798),
+    "left_ankle_pitch": (-0.87267, 0.5236),
+    "left_ankle_roll": (-0.2618, 0.2618),
+    "right_hip_pitch": (-2.5307, 2.8798),
+    "right_hip_roll": (-2.9671, 0.5236),
+    "right_hip_yaw": (-2.7576, 2.7576),
+    "right_knee": (-0.087267, 2.8798),
+    "right_ankle_pitch": (-0.87267, 0.5236),
+    "right_ankle_roll": (-0.2618, 0.2618),
+    "waist_yaw": (-2.618, 2.618),
+    "waist_roll": (-0.52, 0.52),
+    "waist_pitch": (-0.52, 0.52),
+    "left_shoulder_pitch": (-3.0892, 2.6704),
+    "left_shoulder_roll": (-1.5882, 2.2515),
+    "left_shoulder_yaw": (-2.618, 2.618),
+    "left_elbow": (-1.0472, 2.0944),
+    "left_wrist_roll": (-1.972222054, 1.972222054),
+    "left_wrist_pitch": (-1.614429558, 1.614429558),
+    "left_wrist_yaw": (-1.614429558, 1.614429558),
+    "right_shoulder_pitch": (-3.0892, 2.6704),
+    "right_shoulder_roll": (-2.2515, 1.5882),
+    "right_shoulder_yaw": (-2.618, 2.618),
+    "right_elbow": (-1.0472, 2.0944),
+    "right_wrist_roll": (-1.972222054, 1.972222054),
+    "right_wrist_pitch": (-1.614429558, 1.614429558),
+    "right_wrist_yaw": (-1.614429558, 1.614429558),
+}
+
+# Peak torque (``effort``) and peak speed (``velocity``) per joint, same URDF.
+# ``tau`` is the feed-forward torque the frame carries verbatim; ``dq`` the
+# velocity reference.  Either past the actuator's peak asks for what the motor
+# cannot deliver, so the request is refused rather than left to saturate.
+_G1_TAU_MAX_NM: dict[str, float] = {
+    **{name: 88.0 for name in ("left_hip_pitch", "left_hip_roll", "left_hip_yaw")},
+    **{name: 88.0 for name in ("right_hip_pitch", "right_hip_roll", "right_hip_yaw")},
+    "left_knee": 139.0,
+    "right_knee": 139.0,
+    **{name: 35.0 for name in ("left_ankle_pitch", "left_ankle_roll", "right_ankle_pitch", "right_ankle_roll")},
+    "waist_yaw": 88.0,
+    "waist_roll": 35.0,
+    "waist_pitch": 35.0,
+    **{
+        f"{side}_{joint}": 25.0
+        for side in ("left", "right")
+        for joint in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_roll")
+    },
+    **{f"{side}_{joint}": 5.0 for side in ("left", "right") for joint in ("wrist_pitch", "wrist_yaw")},
+}
+_G1_DQ_MAX_RAD_S: dict[str, float] = {
+    **{name: 32.0 for name in ("left_hip_pitch", "left_hip_roll", "left_hip_yaw")},
+    **{name: 32.0 for name in ("right_hip_pitch", "right_hip_roll", "right_hip_yaw")},
+    "left_knee": 20.0,
+    "right_knee": 20.0,
+    **{name: 30.0 for name in ("left_ankle_pitch", "left_ankle_roll", "right_ankle_pitch", "right_ankle_roll")},
+    "waist_yaw": 32.0,
+    "waist_roll": 30.0,
+    "waist_pitch": 30.0,
+    **{
+        f"{side}_{joint}": 37.0
+        for side in ("left", "right")
+        for joint in ("shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow", "wrist_roll")
+    },
+    **{f"{side}_{joint}": 22.0 for side in ("left", "right") for joint in ("wrist_pitch", "wrist_yaw")},
+}
+
+# Gain ceilings.  ``kp``/``kd`` are not physical limits the URDF states; they
+# are what the firmware's PD loop multiplies error by, and the wire carries them
+# verbatim.  The stiffest reference gain in :data:`_SDK_KP` is the knee at 100
+# and in :data:`_SDK_KD` the knee at 2; the vendor's RL locomotion configs
+# (unitree_rl_gym ``g1_config.py``) reach ``kp=150`` on the hips and knees and
+# ``kd`` in the low single digits.  Twice the stiffest reference position gain
+# and five times the stiffest reference damping gain admits every published
+# controller with headroom and still refuses the ``kp=500`` that turns a 1 rad
+# error into 500 N m of demand on a knee whose actuator peaks at 139.  A
+# negative gain is refused outright: negative stiffness or damping is an
+# unstable loop, not a softer one.
+_G1_KP_MAX: float = 200.0
+_G1_KD_MAX: float = 10.0
+
+
+def _bounded_error(value: float, *, joint: str, field: str, lo: float, hi: float, unit: str) -> str | None:
+    """Refusal text when a finite ``value`` lies outside ``[lo, hi]``, else ``None``.
+
+    Names the joint, the field, the value and both bounds, so the caller can see
+    what to change without reading a table.  Runs AFTER
+    :func:`~strands_robots.utils.finite_number_error`: a ``nan`` compares false
+    against every bound and would slip through a bare comparison.
+    """
+    if lo <= value <= hi:
+        return None
+    return f"send_action: {joint}.{field}={value!r} is outside the joint's envelope [{lo}, {hi}] {unit}; refusing"
+
+
+def _envelope_error(joint: str, q: float, kp: float, kd: float, dq: float, tau: float) -> str | None:
+    """Hold one joint's five wire fields to :data:`_G1_JOINT_TRAVEL_RAD` and friends."""
+    lo, hi = _G1_JOINT_TRAVEL_RAD[joint]
+    checks = (
+        ("q", q, lo, hi, "rad"),
+        ("kp", kp, 0.0, _G1_KP_MAX, "(position gain)"),
+        ("kd", kd, 0.0, _G1_KD_MAX, "(damping gain)"),
+        ("dq", dq, -_G1_DQ_MAX_RAD_S[joint], _G1_DQ_MAX_RAD_S[joint], "rad/s"),
+        ("tau", tau, -_G1_TAU_MAX_NM[joint], _G1_TAU_MAX_NM[joint], "N m"),
+    )
+    for field, value, f_lo, f_hi, unit in checks:
+        reason = _bounded_error(value, joint=joint, field=field, lo=f_lo, hi=f_hi, unit=unit)
+        if reason is not None:
+            return reason
+    return None
 
 
 class G1Driver:
@@ -1045,12 +1175,14 @@ class G1Driver:
         1. A control loop.  A caller who wants 500 Hz calls this on their own
            timer; the driver's job here is one wire frame, not a schedule.
            :meth:`run_policy` owns that loop today; this method is one frame.
-        2. A safety filter.  The FSM and battery gates are the safety
-           envelope; command-magnitude limits are the arm-SDK client's job.
-           Every commanded field is still required to be a finite number, which
-           is a different question from how large it may be: a ``nan`` target is
-           not a bold move the SDK can clamp, it is a value the motor controller
-           cannot honor at all.
+        2. A controller.  The FSM and battery gates decide WHEN a frame may be
+           admitted; the per-joint envelope (:data:`_G1_JOINT_TRAVEL_RAD`,
+           :data:`_G1_TAU_MAX_NM`, :data:`_G1_DQ_MAX_RAD_S`, :data:`_G1_KP_MAX`,
+           :data:`_G1_KD_MAX`) decides WHICH values a frame may carry.  Both are
+           refusals, never clamps: a value the joint cannot honor is answered,
+           not quietly moved to a place the caller did not ask for.  Nothing
+           here plans a trajectory or checks self-collision between joints; a
+           caller who needs that owns it.
 
         Scope is ``"arm"`` because ``send_action`` writes to ``rt/lowcmd`` for
         arm-SDK-shaped targets; base velocity is not a ``send_action`` verb.
@@ -1154,16 +1286,30 @@ class G1Driver:
         allowed set.
 
         ``policy_object`` is either a built :class:`~strands_robots.policies.Policy`
-        or a bare callable - the admission check below accepts a ``.step()``
-        attribute *or* a callable object, so the annotation admits the same
-        set the refusal enforces.  It is called on each step with a snapshot
-        of the cached observations (``mode_machine``, ``fsm_id``, ``imu``, etc.)
-        and is expected to return a joint-name-keyed action dict of the
-        same shape :meth:`send_action` accepts.  A policy that returns
-        ``None`` or an unusable action is refused inside the loop; the
-        refusal name and count surface through :meth:`get_task_status`.
+        or a bare callable, resolved by
+        :func:`~strands_robots.drivers.base.policy_step` - so the admission
+        below accepts exactly the set :meth:`~strands_robots.drivers.base.HardwareDriver.run_policy` types
+        plus the two untyped shapes (``step``, bare callable) this loop has
+        always run.  It is called on each step with a snapshot of the cached
+        observations (``mode_machine``, ``fsm_id``, ``imu``, etc.) and is
+        expected to return a joint-name-keyed action dict of the same shape
+        :meth:`send_action` accepts, or a chunk of them whose first action is
+        commanded.  A policy that returns ``None`` or an unusable action is
+        refused inside the loop; the refusal name and count surface through
+        :meth:`get_task_status`.
+
+        Args:
+            policy_object: The policy to roll out.
+            instruction: Handed to the policy each step, as the second argument
+                of ``get_actions_sync``. The untyped shapes take no
+                instruction, so it does not reach those.
+            duration: Wall-clock budget for the rollout, in seconds.
+            n_steps: Step budget; when given it wins over ``duration``.
+
+        Returns:
+            A success envelope naming the running task's budgets, or an error
+            envelope naming the gate or the argument that refused it.
         """
-        del instruction  # policies own their own conditioning
         # Validate the continuous knobs on the shared domains before the
         # gate.  ``duration`` reaches ``deadline = started_at + duration``
         # inside the loop; ``nan`` poisons every comparison there so the
@@ -1185,9 +1331,8 @@ class G1Driver:
             return refusal
         if policy_object is None:
             return _refuse("run_policy: policy_object is required")
-        step_fn = getattr(policy_object, "step", None)
-        if not callable(step_fn) and not callable(policy_object):
-            return _refuse("run_policy: policy_object must be callable or expose a .step() method")
+        if policy_step(policy_object, instruction) is None:
+            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         # Admission held across the ``is_running`` check, the reference
         # assignment and ``start()`` so a second thread cannot pass the check
         # before either assigns ``self._loop`` (two rollouts on one wire),
@@ -1198,6 +1343,7 @@ class G1Driver:
             policy=policy_object,
             duration=float(duration),
             n_steps=n_steps,
+            instruction=instruction,
         )
         with self._task_admission:
             if self._loop is not None and self._loop.is_running:
@@ -1678,9 +1824,15 @@ def _build_lowcmd_from_action(
       A ``nan`` or ``inf`` survives a bare ``float()`` and serializes onto the
       wire as a valid IEEE-754 float, so the motor controller integrates it
       instead of rejecting it; ``True`` would land as a silent ``1.0`` rad. This
-      is not a magnitude limit - it is the gate that keeps an unrepresentable
-      target off the wire, and refusing the whole action is the same posture an
-      unknown joint name gets, for the same reason.
+      is the gate that keeps an unrepresentable target off the wire, and
+      refusing the whole action is the same posture an unknown joint name gets,
+      for the same reason.
+    * Every field is then held to the joint's envelope: ``q`` inside
+      :data:`_G1_JOINT_TRAVEL_RAD`, ``|tau|`` under :data:`_G1_TAU_MAX_NM`,
+      ``|dq|`` under :data:`_G1_DQ_MAX_RAD_S`, ``kp``/``kd`` in
+      ``[0, _G1_KP_MAX]`` / ``[0, _G1_KD_MAX]``.  Out of envelope is refused,
+      never clamped, with a reason naming joint, field, value and bounds
+      (F-004).
 
     Wire-frame contract:
 
@@ -1748,6 +1900,12 @@ def _build_lowcmd_from_action(
                 return None, reason
         q_f, kp_f, kd_f = float(q), float(kp), float(kd)
         dq_f, tau_f = float(dq), float(tau)
+        # Finite says the value can go on the wire; the envelope says the joint
+        # can honor it.  Checked on every field, supplied or defaulted, so a
+        # table edit that put a default out of range would be caught here too.
+        reason = _envelope_error(name, q_f, kp_f, kd_f, dq_f, tau_f)
+        if reason is not None:
+            return None, reason
         motor = cmd.motor_cmd[slot]
         motor.mode = 1  # Enable - a Disable slot commands nothing regardless of CRC.
         motor.q = q_f
@@ -1881,9 +2039,16 @@ class _ControlLoop:
         policy: Any,
         duration: float,
         n_steps: int | None,
+        instruction: str = "",
     ) -> None:
         self._driver = driver
         self._policy = policy
+        # Resolved once, here, rather than per step: the resolution reads
+        # attributes off the policy, and this loop calls it at 500 Hz.  It is
+        # the same resolver ``run_policy``'s admission consulted, so a policy
+        # admitted at the door cannot fail to resolve on the thread.
+        self._step_fn = policy_step(policy, instruction)
+        self._instruction = instruction
         self._duration = float(duration)
         self._n_steps = n_steps
         self._stop_event = threading.Event()
@@ -2202,7 +2367,12 @@ class _ControlLoop:
                     self._driver._loop = None
 
     def _call_policy(self) -> Any:
-        """Invoke the policy with a snapshot of cached observations."""
+        """Invoke the policy with a snapshot of cached observations.
+
+        Returns:
+            The action dict the policy commanded for this step, or ``None`` when
+            it yielded none - which the caller refuses as ``policy``.
+        """
         obs = {
             "mode_machine": self._driver._mode_machine,
             "fsm_id": self._driver._fsm_id,
@@ -2210,10 +2380,8 @@ class _ControlLoop:
             "imu": self._driver._imu,
             "joints": self._driver._joints,
         }
-        step = getattr(self._policy, "step", None)
-        if callable(step):
-            return step(obs)
-        return self._policy(obs)  # pragma: no cover - covered by direct-callable tests
+        assert self._step_fn is not None, "run_policy admits only a resolvable policy"
+        return self._step_fn(obs)
 
     def _emit_zero_torque(self) -> None:
         """Publish one zero-torque frame.  Errors are logged, not raised."""

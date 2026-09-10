@@ -1,7 +1,7 @@
 """A container guard must not raise while rendering the container it refuses (#1875).
 
 ``strands_robots.utils``' scalar guards were made total in two passes: #1873 gave
-them a rendering that cannot raise (``_refusal_repr`` / ``_refusal_str``), and
+them a rendering that cannot raise (``refusal_repr`` / ``refusal_str``), and
 #1874 gave them a *conversion* that cannot raise. Both passes deliberately
 stopped at the container guards - ``finite_vector_error``, ``pose_vector_error``,
 ``coerce_pose_vector``, ``coerce_rgba`` and ``name_list_error`` - and this module
@@ -10,7 +10,7 @@ is the pass that finishes them.
 Why a container could not simply reuse the scalar fallback
 ----------------------------------------------------------
 ``repr`` of a list recurses into its elements, so a container is unrenderable
-whenever any *one* of its elements is. Applying ``_refusal_repr`` to the whole
+whenever any *one* of its elements is. Applying ``refusal_repr`` to the whole
 container answers that with ``<unrepresentable list>``, which erases:
 
 * every element that rendered perfectly well, and
@@ -18,7 +18,7 @@ container answers that with ``<unrepresentable list>``, which erases:
   ``must be a 3-element vector, got 4``.
 
 So a container needs a *rendering* rather than a fallback:
-``_refusal_container_repr`` describes it component by component and substitutes
+``refusal_container_repr`` describes it component by component and substitutes
 only the components that cannot print, keeping the shape legible::
 
     raycast: 'origin' must contain finite numbers (no nan/inf), got
@@ -81,14 +81,14 @@ import pytest
 from strands_robots import utils
 from strands_robots.utils import (
     _describe_unrenderable,
-    _refusal_container_repr,
-    _refusal_repr,
     coerce_pose_vector,
     coerce_rgba,
     coerce_size_vector,
     finite_vector_error,
     name_list_error,
     pose_vector_error,
+    refusal_container_repr,
+    refusal_repr,
 )
 
 # --------------------------------------------------------------------------- #
@@ -189,7 +189,7 @@ class UniterableContainer:
 
     The floor of the rendering: with no ``repr`` and no elements to walk, the only
     honest answer left is the whole-value description, which is what
-    :func:`_refusal_repr` would have given.
+    :func:`refusal_repr` would have given.
 
     ``__iter__`` raises ``TypeError``, which is what "not iterable" means in
     Python and what every guard here already routes to a refusal. A ``__iter__``
@@ -456,7 +456,7 @@ class TestTheConversionEscapeIsClosedToo:
 # The renderer's own contract                                                 #
 # --------------------------------------------------------------------------- #
 class TestTheElementwiseRenderer:
-    """``_refusal_container_repr``: ``repr`` where it works, elementwise where it cannot."""
+    """``refusal_container_repr``: ``repr`` where it works, elementwise where it cannot."""
 
     @pytest.mark.parametrize(
         "value",
@@ -481,10 +481,10 @@ class TestTheElementwiseRenderer:
         trying the whole container first is not merely an optimisation - it is what
         keeps those containers reported in their own notation.
         """
-        assert _refusal_container_repr(value) == repr(value)
+        assert refusal_container_repr(value) == repr(value)
 
     def test_only_the_components_that_cannot_print_are_substituted(self) -> None:
-        assert _refusal_container_repr([1.0, UNRENDERABLE_INT, 3.0]) == f"[1.0, {UNRENDERABLE_INT_SHOWN}, 3.0]"
+        assert refusal_container_repr([1.0, UNRENDERABLE_INT, 3.0]) == f"[1.0, {UNRENDERABLE_INT_SHOWN}, 3.0]"
 
     def test_the_offending_component_is_located_by_position_not_by_an_index(self) -> None:
         """A decision #1875 asked to be settled, so it is stated rather than implied.
@@ -495,7 +495,7 @@ class TestTheElementwiseRenderer:
         disagree, and would not match the ``repr`` this stands in for. Position
         alone locates the component, so position is what is used.
         """
-        rendered = _refusal_container_repr([1.0, UNRENDERABLE_INT])
+        rendered = refusal_container_repr([1.0, UNRENDERABLE_INT])
         assert rendered == f"[1.0, {UNRENDERABLE_INT_SHOWN}]"
         assert "[0]" not in rendered and "[1]" not in rendered
 
@@ -512,7 +512,7 @@ class TestTheElementwiseRenderer:
         """
         values: list[Any] = [float(i) for i in range(50)]
         values[25] = UNRENDERABLE_INT
-        rendered = _refusal_container_repr(values)
+        rendered = refusal_container_repr(values)
         assert rendered.count(",") == 49
         assert rendered.startswith("[0.0, 1.0,") and rendered.endswith("49.0]")
         assert UNRENDERABLE_INT_SHOWN in rendered
@@ -523,7 +523,7 @@ class TestTheElementwiseRenderer:
         message = pose_vector_error("add_object", "position", [1.0, UNRENDERABLE_INT], 3)
         assert message is not None
         assert "must be a 3-element vector, got 2" in message
-        assert _refusal_container_repr([UNRENDERABLE_INT] * 4).count(UNRENDERABLE_INT_SHOWN) == 4
+        assert refusal_container_repr([UNRENDERABLE_INT] * 4).count(UNRENDERABLE_INT_SHOWN) == 4
 
     def test_a_mapping_is_rendered_as_a_mapping(self) -> None:
         """``name_list_error`` refuses a mapping *for* discarding its values.
@@ -531,20 +531,20 @@ class TestTheElementwiseRenderer:
         Rendering it as the list of its keys would perform, in the message, the
         very discarding the message is complaining about.
         """
-        rendered = _refusal_container_repr({UNRENDERABLE_INT: "camera"})
+        rendered = refusal_container_repr({UNRENDERABLE_INT: "camera"})
         assert rendered == f"{{{UNRENDERABLE_INT_SHOWN}: 'camera'}}"
 
     def test_an_unrenderable_value_inside_a_mapping_is_substituted_too(self) -> None:
-        assert _refusal_container_repr({"k": Unprintable()}) == "{'k': <unrepresentable Unprintable>}"
+        assert refusal_container_repr({"k": Unprintable()}) == "{'k': <unrepresentable Unprintable>}"
 
     def test_a_container_whose_own_repr_fails_still_reports_every_element(self) -> None:
-        assert _refusal_container_repr(UnprintableContainer([1.0, 2.0])) == "[1.0, 2.0]"
+        assert refusal_container_repr(UnprintableContainer([1.0, 2.0])) == "[1.0, 2.0]"
 
     def test_a_value_that_cannot_be_walked_falls_back_to_the_whole_value_description(self) -> None:
         """With no repr and no elements, the scalar answer is the only honest one."""
         value = UniterableContainer()
-        assert _refusal_container_repr(value) == _describe_unrenderable(value)
-        assert _refusal_container_repr(value) == "<unrepresentable UniterableContainer>"
+        assert refusal_container_repr(value) == _describe_unrenderable(value)
+        assert refusal_container_repr(value) == "<unrepresentable UniterableContainer>"
 
     def test_an_arbitrary_iteration_failure_is_recovered_too(self) -> None:
         """``TypeError`` is what "not iterable" means, but the renderer promises more.
@@ -552,7 +552,7 @@ class TestTheElementwiseRenderer:
         It runs on a path that must not raise, so it recovers any ``Exception`` from
         the walk rather than only the one a well-behaved type would raise.
         """
-        assert _refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"
+        assert refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"
 
     def test_a_mapping_whose_items_cannot_be_walked_is_described(self) -> None:
         class HostileMapping(dict):  # type: ignore[type-arg]
@@ -562,12 +562,12 @@ class TestTheElementwiseRenderer:
             def items(self) -> Any:
                 raise RuntimeError("no items for you")
 
-        assert _refusal_container_repr(HostileMapping()) == "<unrepresentable HostileMapping>"
+        assert refusal_container_repr(HostileMapping()) == "<unrepresentable HostileMapping>"
 
     def test_a_non_container_is_answered_as_the_scalar_renderer_would(self) -> None:
         """Every one of these guards accepts ``Any``, so a scalar reaches them."""
-        assert _refusal_container_repr(UNRENDERABLE_INT) == _refusal_repr(UNRENDERABLE_INT)
-        assert _refusal_container_repr(UNRENDERABLE_INT) == UNRENDERABLE_INT_SHOWN
+        assert refusal_container_repr(UNRENDERABLE_INT) == refusal_repr(UNRENDERABLE_INT)
+        assert refusal_container_repr(UNRENDERABLE_INT) == UNRENDERABLE_INT_SHOWN
 
     def test_the_rendering_is_one_level_deep(self) -> None:
         """A nested container is described, not recursed into, and that is deliberate.
@@ -583,7 +583,7 @@ class TestTheElementwiseRenderer:
         terminate. The whole-value description is the right answer for an inner
         element, because at that point the element *is* the value.
         """
-        assert _refusal_container_repr([[UNRENDERABLE_INT], 2.0]) == "[<unrepresentable list>, 2.0]"
+        assert refusal_container_repr([[UNRENDERABLE_INT], 2.0]) == "[<unrepresentable list>, 2.0]"
         assert finite_vector_error("m", "p", [[UNRENDERABLE_INT], 2.0]) == (
             "m: 'p' elements must be numbers, got [<unrepresentable list>, 2.0]"
         )
@@ -592,14 +592,14 @@ class TestTheElementwiseRenderer:
         """The fast path handles it, which is the other reason not to recurse."""
         cyclic: list[Any] = []
         cyclic.append(cyclic)
-        assert _refusal_container_repr(cyclic) == "[[...]]"
+        assert refusal_container_repr(cyclic) == "[[...]]"
 
     def test_it_does_not_swallow_a_base_exception(self) -> None:
         """``KeyboardInterrupt`` is not an error to recover from."""
         with pytest.raises(KeyboardInterrupt):
-            _refusal_container_repr([InterruptingRepr()])
+            refusal_container_repr([InterruptingRepr()])
         with pytest.raises(KeyboardInterrupt):
-            _refusal_container_repr({"k": InterruptingRepr()})
+            refusal_container_repr({"k": InterruptingRepr()})
 
 
 class TestTheWholeValueFallbackWouldHaveBeenWrong:
@@ -613,14 +613,14 @@ class TestTheWholeValueFallbackWouldHaveBeenWrong:
 
     def test_the_scalar_renderer_erases_the_elements_that_print(self) -> None:
         container = [1.0, UNRENDERABLE_INT, 3.0]
-        assert _refusal_repr(container) == "<unrepresentable list>"
-        assert "1.0" not in _refusal_repr(container)
-        assert "1.0" in _refusal_container_repr(container)
+        assert refusal_repr(container) == "<unrepresentable list>"
+        assert "1.0" not in refusal_repr(container)
+        assert "1.0" in refusal_container_repr(container)
 
     def test_the_scalar_renderer_erases_the_element_count(self) -> None:
         """And the count is frequently the entire reason for the refusal."""
-        assert _refusal_repr([UNRENDERABLE_INT] * 4) == _refusal_repr([UNRENDERABLE_INT])
-        assert _refusal_container_repr([UNRENDERABLE_INT] * 4) != _refusal_container_repr([UNRENDERABLE_INT])
+        assert refusal_repr([UNRENDERABLE_INT] * 4) == refusal_repr([UNRENDERABLE_INT])
+        assert refusal_container_repr([UNRENDERABLE_INT] * 4) != refusal_container_repr([UNRENDERABLE_INT])
 
     def test_no_guard_message_shows_the_whole_value_form_for_a_container(self) -> None:
         """The negative form, over every guard: none of them took the shortcut."""
@@ -839,7 +839,7 @@ class TestEveryContainerGuardRoutesThroughTheRenderer:
         called = self._calls(name)
         for helper in called & self.READ_HELPERS:
             called |= self._calls(helper)
-        assert "_refusal_container_repr" in called
+        assert "refusal_container_repr" in called
 
     @pytest.mark.parametrize("name", RENDERING_GUARDS)
     def test_the_guard_renders_no_parameter_directly(self, name: str) -> None:
@@ -989,7 +989,7 @@ class TestTheIterationIsAnsweredNotEscaped:
 
     def test_the_rendering_half_was_already_closed(self) -> None:
         """The renderer was never what left this open, and still is not."""
-        assert _refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"
+        assert refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"
 
 
 class LazySizedVector:

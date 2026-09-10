@@ -190,7 +190,7 @@ def _missing_config_errors() -> tuple[type[BaseException], ...]:
     when a checkpoint ships no ``policy_preprocessor.json`` /
     ``policy_postprocessor.json`` and instead carries legacy/normalization
     stats. Treating that as "no standard config" lets the bridge fall back to
-    the ``norm_stats.json`` path rather than crashing.
+    the in-model normalization path rather than crashing.
     """
     errors: tuple[type[BaseException], ...] = (FileNotFoundError, ValueError)
     try:
@@ -239,6 +239,19 @@ def _register_policy_processor_steps(policy_type: str | None) -> None:
             logger.debug("Could not import %s for processor-step registration: %s", mod, exc)
 
 
+# The per-dimension stats each NormalizationMode's arithmetic reads
+# (lerobot HEAD: processor/normalize_processor.py). A dataset's stats also
+# carry per-feature scalars such as ``count`` (shape (1,)), which never meet
+# the feature tensor, so they are not a width mismatch.
+_STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
+    "MEAN_STD": ("mean", "std"),
+    "MIN_MAX": ("min", "max"),
+    "QUANTILES": ("q01", "q99"),
+    "QUANTILE10": ("q10", "q90"),
+}
+_STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
+
+
 class ProcessorBridge:
     """Bridge between strands-robots observation/action format and LeRobot's processor pipeline.
 
@@ -255,7 +268,6 @@ class ProcessorBridge:
         preprocessor: Any | None = None,
         postprocessor: Any | None = None,
         device: str | None = None,
-        inert_reason: str | None = None,
     ):
         """Initialize with optional pre/post processor pipelines.
 
@@ -263,14 +275,10 @@ class ProcessorBridge:
             preprocessor: LeRobot DataProcessorPipeline for observation preprocessing.
             postprocessor: LeRobot DataProcessorPipeline for action postprocessing.
             device: Target device for tensor operations (auto-detected if None).
-            inert_reason: Why this bridge carries no pipelines, when the cause is
-                a nameable caller error rather than a checkpoint that ships none.
-                ``None`` for every other bridge.
         """
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
-        self._inert_reason = inert_reason
         # The embodiment's obs_rename map ({runtime_key: model_feature}),
         # latched by apply_embodiment. Used to enrich the 'image_keys
         # missing' preprocessor failure with the expected camera source
@@ -286,7 +294,6 @@ class ProcessorBridge:
         postprocessor_config: str = POSTPROCESSOR_CONFIG,
         overrides: dict[str, Any] | None = None,
         policy_type: str | None = None,
-        norm_tag: str | None = None,
         policy_config: Any | None = None,
         revision: str | None = None,
     ) -> "ProcessorBridge":
@@ -304,14 +311,12 @@ class ProcessorBridge:
             overrides: Dict of step overrides (passed to both pipelines).
             policy_type: Policy type name, used to register policy-specific
                 processor steps before loading the standard pipeline configs.
-            norm_tag: Embodiment tag selecting which stats to apply from a
-                ``norm_stats.json`` fallback (auto-resolved when None).
             policy_config: The loaded policy's ``PreTrainedConfig``. Enables the
                 in-model-normalization fallback (see Notes) for OLD-FORMAT
                 checkpoints; when None that fallback is skipped.
             revision: Optional Hub branch/tag/commit SHA. Pins the processor
-                config JSONs, the ``norm_stats.json`` fallback, and the
-                single-file ``model.safetensors`` download to the SAME revision
+                config JSONs and the single-file ``model.safetensors`` download
+                to the SAME revision
                 as the policy weights. Without it a revision-pinned load would
                 silently run default-branch preprocessor/postprocessor pipelines
                 and normalization buffers against pinned weights. Degrades to an
@@ -322,15 +327,8 @@ class ProcessorBridge:
             ProcessorBridge instance with loaded pipelines.
 
         Notes:
-            When a checkpoint ships neither ``policy_preprocessor.json`` nor
-            ``policy_postprocessor.json`` but DOES ship a recognized
-            ``norm_stats.json`` (e.g. the MolmoAct2 SO-100/101 family), the
-            bridge falls back to building quantile/min-max/mean-std normalizers
-            from those stats instead of silently passing data through
-            un-normalized. See :mod:`.norm_stats`.
-
-            When a checkpoint ships no processor configs AND no
-            ``norm_stats.json`` but DOES carry OLD-FORMAT in-model normalization
+            When a checkpoint ships no processor configs but DOES carry
+            OLD-FORMAT in-model normalization
             buffers in its ``model.safetensors`` (``normalize_inputs.*`` /
             ``unnormalize_outputs.*`` -- the pre-processor-era lerobot format
             still used by the canonical zoo checkpoints, e.g.
@@ -392,32 +390,8 @@ class ProcessorBridge:
             revision=revision,
         )
 
-        # Fallback: a checkpoint may ship NEITHER standard pipeline config but a
-        # recognized norm_stats.json (e.g. MolmoAct2 SO-100/101). Without this,
-        # both pipelines are None and the bridge silently passes data through
-        # un-normalized -- the single biggest cause of off-policy arm motion on
-        # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
-        inert_reason: str | None = None
-        if preprocessor is None and postprocessor is None:
-            from .norm_stats import NormStatsFilenameError, UnknownNormTagError
-
-            try:
-                preprocessor, postprocessor = cls._load_norm_stats_fallback(
-                    pretrained_name_or_path, norm_tag=norm_tag, revision=revision
-                )
-            except (NormStatsFilenameError, UnknownNormTagError) as exc:
-                # Reachable stats the loader refused to apply: a tag the caller
-                # named that the file does not declare, or a stats filename the
-                # checkpoint's config.json points outside itself. Record the cause
-                # instead of propagating: the policy narrows on ValueError to treat
-                # an absent bridge as benign, so a raise here degrades to the same
-                # passthrough with its reason at debug, and the load report then
-                # blames a missing postprocessor the checkpoint was never going to
-                # ship.
-                inert_reason = str(exc)
-
-        # Third fallback: an OLD-FORMAT checkpoint ships no processor configs and
-        # no norm_stats.json, but carries in-model normalization buffers that
+        # Fallback: an OLD-FORMAT checkpoint ships no processor configs but
+        # carries in-model normalization buffers that
         # current lerobot drops on load (see the class-level Notes). Reconstruct
         # the pre/post pipelines from those buffers so the policy runs normalized
         # instead of flailing on raw MEAN_STD actions. Needs the policy config.
@@ -430,7 +404,6 @@ class ProcessorBridge:
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             device=device,
-            inert_reason=inert_reason,
         )
 
     @classmethod
@@ -596,45 +569,6 @@ class ProcessorBridge:
             # No config file found - model doesn't ship this pipeline. Normal.
             logger.debug("No %s found: %s", kind, exc)
             return None
-
-    @staticmethod
-    def _load_norm_stats_fallback(
-        pretrained_name_or_path: str,
-        norm_tag: str | None = None,
-        revision: str | None = None,
-    ) -> tuple[Any | None, Any | None]:
-        """Build pre/post pipelines from a ``norm_stats.json`` when present.
-
-        Returns ``(None, None)`` if no recognized norm-stats file is found, so
-        the bridge stays a passthrough only when there is genuinely nothing to
-        apply.
-
-        Args:
-            pretrained_name_or_path: HF model ID or local checkpoint path.
-            norm_tag: Explicit embodiment tag (auto-resolved when None).
-
-        Returns:
-            ``(preprocessor, postprocessor)`` pipelines or ``(None, None)``.
-
-        Raises:
-            UnknownNormTagError: If ``norm_tag`` names a tag the recognized stats
-                file does not declare - a caller error, not an absence, so it does
-                not share the ``(None, None)`` verdict.
-            NormStatsFilenameError: If the checkpoint's ``config.json`` declares a
-                ``norm_stats_filename`` that does not name a file inside the
-                checkpoint - likewise a malformed declaration, not an absence.
-        """
-        from . import norm_stats as _norm_stats
-
-        payload = _norm_stats.load_norm_stats(pretrained_name_or_path, revision=revision)
-        if not _norm_stats.is_norm_stats_payload(payload):
-            return None, None
-        assert payload is not None  # narrowed by is_norm_stats_payload
-        logger.info(
-            "No standard processor configs for %s; falling back to norm_stats.json",
-            pretrained_name_or_path,
-        )
-        return _norm_stats.build_norm_stats_processors(payload, norm_tag=norm_tag)
 
     @staticmethod
     def _load_in_model_normalization_fallback(
@@ -867,22 +801,6 @@ class ProcessorBridge:
         """Whether any processing pipeline is active."""
         return self.has_preprocessor or self.has_postprocessor
 
-    @property
-    def inert_reason(self) -> str | None:
-        """Why this bridge carries no pipelines, when the cause is a caller error.
-
-        A bridge with neither pipeline is normally benign - the checkpoint ships
-        no processor configs and no recognized stats file, so there is genuinely
-        nothing to apply. When instead the pipelines were WITHIN REACH and a
-        caller-supplied argument put them out of reach, that reason is recorded
-        here so the load report can name the actual cause rather than the generic
-        "this checkpoint ships no postprocessor" one, whose remedy (supply the
-        checkpoint's postprocessor) does not address it.
-
-        ``None`` whenever the bridge is active, or inert for a benign reason.
-        """
-        return self._inert_reason
-
     def inert_normalization_features(self) -> list[str]:
         """Declared normalization features that will silently pass through.
 
@@ -897,9 +815,9 @@ class ProcessorBridge:
         no bare ``action`` key, so a present, active pipeline normalizes
         NOTHING: ``observation.state`` reaches the model raw and the predicted
         ``action`` reaches the robot without unnormalization. This is the same
-        silent-passthrough hazard :mod:`.norm_stats` guards for the MolmoAct2
-        ``norm_stats.json`` path, but it slips past the standard-pipeline path
-        because the pipeline *is* present.
+        silent-passthrough hazard a checkpoint with no pipeline at all is
+        guarded against, but it slips past the standard-pipeline path because
+        the pipeline *is* present.
 
         Returns a list of ``"<key> (<type>/<mode>)"`` descriptors for every
         feature whose declared, non-IDENTITY normalization will be skipped.
@@ -908,12 +826,45 @@ class ProcessorBridge:
         canonical ``action`` / ``observation.state`` keys.
         """
         try:
-            from lerobot.configs.types import FeatureType, NormalizationMode
+            from lerobot.configs.types import FeatureType
             from lerobot.utils.constants import ACTION
         except ImportError:
             return []
 
         inert: list[str] = []
+        for _step, key, _feature, ftype, mode, stat_keys in self._declared_normalization_targets():
+            lookup = ACTION if ftype == FeatureType.ACTION else key
+            if lookup not in stat_keys:
+                descriptor = f"{key} ({ftype.value}/{mode.value})"
+                if descriptor not in inert:
+                    inert.append(descriptor)
+        return inert
+
+    def _declared_normalization_targets(self) -> list[tuple[Any, str, Any, Any, Any, set[str]]]:
+        """Declared normalizations a pipeline transition actually exercises.
+
+        ``NormalizerProcessorStep`` and ``UnnormalizerProcessorStep`` each
+        process BOTH observation and action when present, but at inference the
+        preprocessor transition carries only the observation (action is
+        ``None``) and the postprocessor only the action, so only the feature
+        type matching the pipeline's position is ever touched. That scoping
+        rule is spelled once, here, and both
+        :meth:`inert_normalization_features` (stats absent -> silent
+        passthrough) and :meth:`mismatched_normalization_widths` (stats present
+        at the wrong width -> guaranteed raise) read it, so the two cannot
+        disagree about which normalization a rollout will really perform.
+
+        Returns:
+            ``(step, key, feature, feature_type, mode, stat_keys)`` per declared,
+            non-IDENTITY normalization that the transition exercises. Empty when
+            lerobot cannot be imported.
+        """
+        try:
+            from lerobot.configs.types import FeatureType, NormalizationMode
+        except ImportError:
+            return []
+
+        targets: list[tuple[Any, str, Any, Any, Any, set[str]]] = []
         for is_post_pipeline, pipeline in ((False, self._preprocessor), (True, self._postprocessor)):
             if pipeline is None:
                 continue
@@ -945,12 +896,62 @@ class ProcessorBridge:
                         continue
                     if not is_post_pipeline and ftype == FeatureType.ACTION:
                         continue
-                    lookup = ACTION if ftype == FeatureType.ACTION else key
-                    if lookup not in stat_keys:
-                        descriptor = f"{key} ({ftype.value}/{mode.value})"
-                        if descriptor not in inert:
-                            inert.append(descriptor)
-        return inert
+                    targets.append((step, key, feature, ftype, mode, stat_keys))
+        return targets
+
+    def mismatched_normalization_widths(self) -> list[str]:
+        """Declared normalizations whose supplied stats cannot broadcast onto the feature.
+
+        The sibling :meth:`inert_normalization_features` reports stats that are
+        ABSENT, which LeRobot answers by returning the tensor unchanged. Stats
+        that are PRESENT at the wrong width are the opposite failure: LeRobot
+        reaches the arithmetic and raises ``RuntimeError`` from the tensor
+        broadcast, naming neither the feature, the step, nor either width -
+        and it raises on the first inference, after a rollout has started and
+        the robot has been commanded. The widths are both known at load, on the
+        same step object, so a mismatch is reported here instead.
+
+        Width is exactly what varies between embodiments, and supplying stats
+        is what the inert-pipeline warning tells a caller to do, so stats for a
+        6-DOF arm reaching a 7-DOF checkpoint is a routine mistake.
+
+        Only flat, one-dimensional features are compared. VISUAL features are
+        exempt because LeRobot reshapes a flat ``(C,)`` visual stat to
+        ``(C, 1, 1)`` on purpose (``_reshape_visual_stats``), so a channel-wide
+        stat is correct for a ``(C, H, W)`` feature.
+
+        Returns:
+            One descriptor per mismatch, naming the feature, the declared width
+            and the supplied width. Empty when every present stat matches.
+        """
+        try:
+            from lerobot.configs.types import FeatureType
+            from lerobot.utils.constants import ACTION
+        except ImportError:
+            return []
+
+        bad: list[str] = []
+        for step, key, feature, ftype, mode, _stat_keys in self._declared_normalization_targets():
+            if ftype == FeatureType.VISUAL:
+                continue
+            shape = tuple(getattr(feature, "shape", None) or ())
+            if len(shape) != 1:
+                continue
+            lookup = ACTION if ftype == FeatureType.ACTION else key
+            stats = (getattr(step, "_tensor_stats", None) or {}).get(lookup) or {}
+            for stat_name in _STAT_NAMES_READ_BY_MODE.get(mode.value, _STAT_NAMES_READ_BY_ANY_MODE):
+                value = stats.get(stat_name)
+                if value is None:
+                    continue
+                width = tuple(getattr(value, "shape", None) or ())
+                if len(width) == 1 and width[0] != shape[0]:
+                    descriptor = (
+                        f"{key} ({ftype.value}/{mode.value}): feature declares width "
+                        f"{shape[0]}, stats '{lookup}.{stat_name}' supply {width[0]}"
+                    )
+                    if descriptor not in bad:
+                        bad.append(descriptor)
+        return bad
 
     def preprocess(self, observation: dict[str, Any], instruction: str | None = None) -> dict[str, Any]:
         """Preprocess a raw observation dict through the pipeline.
@@ -1102,7 +1103,6 @@ class ProcessorBridge:
             "has_preprocessor": self.has_preprocessor,
             "has_postprocessor": self.has_postprocessor,
             "is_active": self.is_active,
-            "inert_reason": self.inert_reason,
             "repr": repr(self),
         }
 

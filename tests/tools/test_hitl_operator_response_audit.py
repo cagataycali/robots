@@ -40,6 +40,7 @@ import strands_robots.dashboard.agent_hitl as dash_hitl_mod
 import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
+import strands_robots.tools.serial_tool as serial_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots.mesh.audit import audit_log_path, read_audit_log
 
@@ -62,6 +63,19 @@ def _ctx(response: object) -> MagicMock:
 def _drive_use_ros(response: object) -> dict[str, Any] | None:
     """A publish aimed at a blocklisted drive topic."""
     return ros_mod._gate_command("publish", "/cmd_vel", _ctx(response))
+
+
+def _drive_serial_tool(response: object) -> dict[str, Any] | None:
+    """A ``feetech_position`` write through the raw serial tool.
+
+    ``serial.Serial`` is stood in for so an approval opens no real port; the
+    gate runs before the constructor, so a decline never reaches it either.
+    """
+    with patch.object(serial_mod.serial, "Serial", return_value=MagicMock(name="Serial")):
+        res = serial_mod.serial_tool(
+            action="feetech_position", port="/dev/ttyFAKE", motor_id=1, position=2048, tool_context=_ctx(response)
+        )
+    return res if res["status"] == "error" else None
 
 
 def _drive_lerobot_train(response: object) -> dict[str, Any] | None:
@@ -151,12 +165,24 @@ class _Gate:
 # The module/function columns name where the interrupt is raised, which for the
 # ROS 2 command gate is the owner shared by all three graph transports rather
 # than any one tool - one interrupt site, one audit row, whichever tool asked.
+# ``serial_tool`` asks through the same site (``gate_motion``, the transport-
+# agnostic path ``gate_command`` fronts with its blocklist), so its row here
+# grades that a bus write and a ROS publish leave the same shape of row.
 # The target each drive above aims at. ``emergency_stop`` is fleet-wide, so no
 # single peer is named and its row's target is legitimately empty - the verb is
 # what identifies it. Pinning the expected value per gate keeps that deliberate
 # rather than letting an empty target pass everywhere.
 _GATES: tuple[_Gate, ...] = (
-    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_command"),
+    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_motion"),
+    _Gate(
+        "serial_tool",
+        "serial_tool_tool",
+        "feetech_position",
+        "/dev/ttyFAKE",
+        _drive_serial_tool,
+        gate_mod,
+        "gate_motion",
+    ),
     _Gate(
         "lerobot_train",
         "lerobot_train_tool",
@@ -188,6 +214,7 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "BYPASS_TOOL_CONSENT",
         "STRANDS_ROS2_COMMAND_ALLOW",
+        serial_mod.COMMAND_ALLOW_ENV,
         "STRANDS_TRAIN_EXTRA_FLAGS_ALLOW",
         dash_hitl_mod.MOTION_ENV,
     ):

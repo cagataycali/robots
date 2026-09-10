@@ -407,10 +407,12 @@ def _jwt_secret() -> str:
 
 
 def has_credentials() -> bool:
+    """True once at least one passkey is enrolled."""
     return len(_load().get("credentials", [])) > 0
 
 
 def list_credentials() -> list[dict[str, Any]]:
+    """The enrolled passkeys as the login screen sees them: id, name, creation time."""
     return [
         {"id": c["id"], "name": c.get("name", "passkey"), "created": c.get("created")}
         for c in _load().get("credentials", [])
@@ -858,6 +860,18 @@ def renewal_verdict(
 
 
 def verify_token(token: str) -> dict[str, Any]:
+    """The claims of a session token, or a refusal the caller can return as-is.
+
+    Args:
+        token: The signed session token the client presented.
+
+    Returns:
+        The decoded claims.
+
+    Raises:
+        HTTPException: 401, distinguishing an expired session from one that
+            does not verify at all.
+    """
     try:
         return jwt.decode(token, _jwt_secret(), algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -867,6 +881,17 @@ def verify_token(token: str) -> dict[str, Any]:
 
 
 def renew_if_due(token: str, now: float | None = None) -> str | None:
+    """A longer-lived token when this session is past its half-life, else None.
+
+    Args:
+        token: The session token the client currently holds.
+        now: Override for the current epoch seconds; the wall clock by default.
+
+    Returns:
+        A newly issued token, never expiring earlier than the one held and never
+        past the session's maximum age, or None when the session is still fresh,
+        has reached that maximum, or does not verify.
+    """
     if not token:
         return None
     try:
@@ -1019,6 +1044,23 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
 
 
 def finish_registration(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
+    """Verify a passkey registration ceremony, enrol the credential, sign the caller in.
+
+    The relying-party id the ceremony verified against is recorded with the
+    credential, which is what stops a later Host header from introducing a
+    different one.
+
+    Args:
+        request: The request the ceremony was served over, read for its origin.
+        challenge_id: The id handed out by the matching begin_registration call.
+        credential: The authenticator's registration response.
+
+    Returns:
+        ``{"ok": True, "token": ..., "credential_id": ...}``.
+
+    Raises:
+        HTTPException: 409 if this credential is already enrolled.
+    """
     rec = _pop_challenge(challenge_id, "reg")
     verification = verify_registration_response(
         credential=credential,
@@ -1048,6 +1090,20 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> di
 
 
 def begin_authentication(request: Any) -> dict[str, Any]:
+    """Start a passkey authentication ceremony for this origin.
+
+    Args:
+        request: The request being served, read for the relying-party id and
+            the client address the challenge is bound to.
+
+    Returns:
+        ``{"challenge_id": ..., "options": ...}``, the options being the
+        WebAuthn request options for the browser.
+
+    Raises:
+        HTTPException: 400 when no credential is enrolled, or when this origin
+            yields no relying-party id a ceremony can use.
+    """
     store = _load()
     if not store.get("credentials"):
         raise HTTPException(400, "no credentials enrolled - setup required")
@@ -1065,6 +1121,19 @@ def begin_authentication(request: Any) -> dict[str, Any]:
 
 
 def finish_authentication(request: Any, challenge_id: str, credential: dict) -> dict[str, Any]:
+    """Verify a passkey assertion and issue a session token.
+
+    Args:
+        request: The request the ceremony was served over, read for its origin.
+        challenge_id: The id handed out by the matching begin_authentication call.
+        credential: The authenticator's assertion response.
+
+    Returns:
+        ``{"ok": True, "token": ..., "credential_id": ...}``.
+
+    Raises:
+        HTTPException: 404 if the asserted credential is not enrolled.
+    """
     rec = _pop_challenge(challenge_id, "auth")
     store = _load()
     cred_id = credential.get("id") or credential.get("rawId")
@@ -1092,6 +1161,18 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
 
 
 def status(request: Any = None) -> dict[str, Any]:
+    """What the login screen may know before anyone has signed in.
+
+    Args:
+        request: The request being served, when the advisory relying-party
+            block is wanted too; omit it for the transport-independent fields
+            alone.
+
+    Returns:
+        Whether auth is enabled, whether enrolment or a bootstrap token is
+        required, the enrolled credentials, and - given a request - an advisory
+        ``rp_id`` block for the login screen's hints.
+    """
     store = _load()
     out: dict[str, Any] = {
         "enabled": auth_enabled(),

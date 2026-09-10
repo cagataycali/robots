@@ -15,6 +15,7 @@ These use the REAL device_connect_edge package (editable install) so the
 
 import asyncio
 import importlib
+import logging
 import sys
 
 import pytest
@@ -145,13 +146,15 @@ def _clean_env(monkeypatch):
 
     az._warned_permissive.clear()
     az._warned_insecure_acl.clear()
+    az._warned_unconfigured.clear()
     yield
 
 
 # ── policy_provider allowlist (anti-SSRF) ─────────────────────
 
 
-def test_robot_execute_rejects_ssrf_policy_provider():
+def test_robot_execute_rejects_ssrf_policy_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     d = RobotDeviceDriver(_FakeRobot())
@@ -160,7 +163,8 @@ def test_robot_execute_rejects_ssrf_policy_provider():
     assert "policy_provider" in res["reason"]
 
 
-def test_robot_execute_allows_vetted_provider():
+def test_robot_execute_allows_vetted_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     robot = _FakeRobot()
@@ -170,7 +174,8 @@ def test_robot_execute_allows_vetted_provider():
     assert robot.started["policy_provider"] == "mock"
 
 
-def test_sim_execute_rejects_ssrf_policy_provider():
+def test_sim_execute_rejects_ssrf_policy_provider(monkeypatch):
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
     from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 
     d = SimulationDeviceDriver(_FakeSim())
@@ -276,14 +281,60 @@ def test_secure_acl_no_insecure_advisory(monkeypatch, caplog):
     assert not [r for r in caplog.records if "SELF-ASSERTED" in r.getMessage()]
 
 
-def test_permissive_when_no_allowlist(monkeypatch):
-    # Out-of-the-box: no allowlist => allowed (with a logged warning).
+def test_no_allowlist_refuses_every_state_mutating_rpc(monkeypatch, caplog):
+    """Out-of-the-box: no allowlist => nobody may move the robot (F-003, CWE-862).
+
+    An allowlist nobody configured used to authorize everyone, with a warning
+    as the only sign. Now the call is refused before the driver is reached, and
+    the log names the variable that opens the door.
+    """
+    import strands_robots.device_connect._authz as az
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     robot = _FakeRobot()
     d = RobotDeviceDriver(robot)
-    res = _run(d.execute("go", policy_provider="mock", source_device="anyone"))
-    assert res["status"] == "success"
+    with caplog.at_level(logging.WARNING, logger=az.__name__):
+        res = _run(d.execute("go", policy_provider="mock", source_device="anyone"))
+        _run(d.execute("go", policy_provider="mock", source_device="anyone-else"))
+    assert res["status"] == "error"
+    assert robot.started is None, "the robot was started with no allowlist configured"
+    refusals = [
+        r for r in caplog.records if "DEVICE_CONNECT_RPC_ALLOW" in r.getMessage() and "Refused" in r.getMessage()
+    ]
+    assert len(refusals) == 1, "the unconfigured-allowlist refusal is logged once, not per call"
+
+
+def test_a_star_allowlist_allows_named_callers_and_warns_once(monkeypatch, caplog):
+    """'*' is the development spelling of "allow all": every named caller passes, loudly."""
+    import strands_robots.device_connect._authz as az
+
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "*")
+    with caplog.at_level(logging.WARNING, logger=az.__name__):
+        assert az.is_authorized_caller("anyone", scope="rpc") is True
+        assert az.is_authorized_caller("someone-else", scope="rpc") is True
+    permissive = [r for r in caplog.records if "permissive" in r.getMessage()]
+    assert len(permissive) == 1
+
+
+def test_a_star_allowlist_still_refuses_an_anonymous_caller(monkeypatch):
+    """An allowlist is configured, so a caller with no id has nothing to be matched against."""
+    import strands_robots.device_connect._authz as az
+
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "*")
+    assert az.is_authorized_caller(None, scope="rpc") is False
+
+
+def test_no_allowlist_still_lets_a_named_caller_stop_the_robot(monkeypatch):
+    """Stopping must never get harder than moving: estop from a named peer is honoured."""
+    import strands_robots.device_connect._authz as az
+
+    assert az.is_authorized_caller("safety-1", scope="estop") is True
+
+
+def test_no_allowlist_refuses_an_anonymous_stop(monkeypatch):
+    import strands_robots.device_connect._authz as az
+
+    assert az.is_authorized_caller(None, scope="estop") is False
 
 
 def test_emergencystop_ignores_unauthorized_source(monkeypatch):
@@ -389,12 +440,11 @@ def test_a_populated_estop_allowlist_still_overrides_the_rpc_allowlist(monkeypat
     assert az.is_authorized_caller("rpc-only", scope="estop") is False
 
 
-def test_both_allowlists_empty_stays_permissive(monkeypatch):
-    """Out-of-the-box usability is unchanged: no allowlist anywhere allows all.
+def test_both_allowlists_empty_reads_as_unset_for_estop(monkeypatch):
+    """Nothing to inherit means nothing is configured, and estop then behaves as unset.
 
-    Nothing to inherit means nothing is configured, which stays permissive (and
-    logs the warning that makes the posture visible) rather than becoming
-    fail-closed for every deployment that never set an allowlist.
+    A named caller may still stop the robot (with the warning that makes the
+    posture visible); an anonymous one may not.
     """
     import strands_robots.device_connect._authz as az
 
@@ -402,22 +452,22 @@ def test_both_allowlists_empty_stays_permissive(monkeypatch):
     monkeypatch.setenv("DEVICE_CONNECT_ESTOP_ALLOW", " ")
 
     assert az.is_authorized_caller("anyone", scope="estop") is True
-    assert az.is_authorized_caller(None, scope="estop") is True
+    assert az.is_authorized_caller(None, scope="estop") is False
 
 
 @pytest.mark.parametrize("spelling", _EMPTY_ALLOWLIST_SPELLINGS)
 def test_the_rpc_scope_reads_an_empty_allowlist_as_unset(monkeypatch, spelling):
-    """The RPC scope's own handling of an empty allowlist is unchanged.
+    """An empty spelling is unset, and unset authorizes nobody on the RPC scope.
 
-    It has one variable and no fallback, so every empty spelling already meant
-    "unset" there. This pins that the estop fix did not disturb it.
+    It has one variable and no fallback, so every empty spelling means "unset"
+    there - which since F-003 is a refusal, not a pass.
     """
     import strands_robots.device_connect._authz as az
 
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", spelling)
 
-    assert az.is_authorized_caller("anyone", scope="rpc") is True
-    assert az.is_authorized_caller(None, scope="rpc") is True
+    assert az.is_authorized_caller("anyone", scope="rpc") is False
+    assert az.is_authorized_caller(None, scope="rpc") is False
 
 
 # ── playMove path traversal ───────────────────────────────────
@@ -457,7 +507,12 @@ def test_playmove_rejects_query_injection():
     assert res["status"] == "error"
 
 
-def test_playmove_allows_clean_name():
+def test_playmove_allows_clean_name(monkeypatch):
+    # authz is graded elsewhere: name the caller the contextvar would carry over D2D
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")
+    import strands_robots.device_connect.reachy_mini_driver as rmd_mod
+
+    monkeypatch.setattr(rmd_mod, "get_rpc_source_device", lambda: "op-1")
     drv, rmd = _make_reachy()
     captured = {}
 
