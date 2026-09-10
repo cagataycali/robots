@@ -2,20 +2,18 @@
 
 :func:`~strands_robots.drivers.booster.parse_low_state` documents the rule -
 "absent fields are omitted rather than defaulted: a snapshot that reports a
-zeroed IMU the robot never sent is worse than one that reports none" - and none
-of its reads applied it. Every field was ``float(getattr(msg, <field>, 0.0))``
-or ``[float(v) for v in getattr(imu, <field>, []) or []]``, and ``_on_battery``
-read its three the same way, so a field a firmware revision renamed, dropped or
-turned into a flag arrived as a plausible number:
+zeroed IMU the robot never sent is worse than one that reports none". #3381
+applied it to the three IMU vectors; the four motor vectors were still
+``float(getattr(motor, <field>, 0.0))`` and ``_on_battery`` read its three
+fields the same way, so one function held two conventions and a field a
+firmware revision renamed, dropped or turned into a flag arrived as a plausible
+number on the rows that were left:
 
 ==============================  ===========================  ================
 frame                           before                       after
 ==============================  ===========================  ================
 ``q`` renamed                   every joint at ``0.0``       ``None``
 ``q`` is a flag                 every joint at ``1.0``       ``None``
-``rpy`` renamed                 ``[]``, an empty attitude    ``None``
-``rpy`` is a ``memoryview``     ``[1.0, 2.0]``               ``None``
-``acc`` is a ``bytearray``      ``[1.0, 2.0]``               ``None``
 ``soc`` renamed                 ``battery_pct=0.0``          ``None``
 ``soc`` is a flag               ``battery_pct=1.0``          ``None``
 ==============================  ===========================  ================
@@ -26,7 +24,7 @@ reads it as ``held_q`` and :func:`~strands_robots.drivers.booster.build_frame`
 writes ``held_q[slot]`` as the position target of every *uncommanded* upper-body
 slot. A full-width vector of defaulted zeros is finite and non-empty, so it
 passed both of ``_on_low_state``'s guards, got cached, and the very next write
-commanded eleven arm and head joints to exactly zero - a full-travel move on a
+commanded all eight arm joints to exactly zero - a full-travel move on a
 1.2 m biped, from a frame that carried no positions at all. The refusal the
 driver already spells for that case ("no LowState frame has arrived yet, so
 neither the frame width nor the hold position of an uncommanded arm joint is
@@ -41,8 +39,10 @@ vector. The T1 reads through the same functions and keeps the same record shape
 those drivers use: the key stays and the value is ``None``, so a consumer asking
 for a field always gets an answer and the answer can be "the robot did not report
 this". This suite grades the rule as a table derived from the driver's own field
-maps, the frame surviving one bad field, the hold source end to end, and a
-derivation that refuses a typed default returning to the module.
+maps - the IMU rows included, so the three maps are graded as one roster rather
+than the motor and battery halves alone - the frame surviving one bad field, the
+hold source end to end, and a derivation that refuses a typed default returning
+to the module.
 """
 
 from __future__ import annotations
