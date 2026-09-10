@@ -321,7 +321,7 @@ Work orders arrive on a JSONL file queue speaking business vocabulary only
 Dispatch goes over the mesh behind a human-in-the-loop gate; the `order_id`
 is threaded through the signed audit log end to end; a structured
 completion/failure event lands back on the queue
-(`work_order_events.jsonl`).
+(`work_order_events.jsonl` under the temp dir; pick a path with `--events`).
 
 ```bash
 # No simulator, no mesh - validate/filter/sequence with a loopback transport:

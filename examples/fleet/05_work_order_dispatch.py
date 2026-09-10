@@ -47,6 +47,7 @@ import argparse
 import json
 import random
 import re
+import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -559,8 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--events",
         type=Path,
-        default=Path("work_order_events.jsonl"),
-        help="outbound JSONL queue for completion/failure/NACK events",
+        default=Path(tempfile.gettempdir()) / "work_order_events.jsonl",
+        help="outbound JSONL queue for completion/failure/NACK events (default: under the temp dir, not the CWD)",
     )
     parser.add_argument("--seed", type=int, default=42, help="world seed (live mode)")
     parser.add_argument("--n-steps", type=int, default=25, help="policy steps per dispatched skill (live mode)")
