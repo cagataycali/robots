@@ -1,18 +1,17 @@
 """An episode's frame range is read from that episode's own metadata row.
 
-Three readers in this package answer the same question - which slice of the
+Two readers in this package answer the same question - which slice of the
 global frame index does episode ``N`` occupy - and each walks a compatibility
 ladder over the shapes LeRobot has used for it:
 
 =================================================  ===========================
 reader                                             leading rung
 =================================================  ===========================
-``transforms/base.py::_episode_frame_range``       ``dataset_from_index``
 ``tools/episode_judge.py`` (image block decode)    ``episode_data_index``
 ``dataset_recorder.py::load_lerobot_episode``      ``episode_data_index``
 =================================================  ===========================
 
-``load_lerobot_episode`` was the only one of the three with **no**
+``load_lerobot_episode`` was the only one of the two with **no**
 ``dataset_from_index`` rung at all: it asked for ``episode_data_index`` and, on
 any dataset without it, recomputed the range by accumulating ``length`` over
 every *preceding* episode row.
@@ -73,7 +72,6 @@ from typing import Any
 import pytest
 
 from strands_robots import dataset_recorder as dr
-from strands_robots.transforms import base as transforms_base
 
 # Distinct lengths, so *which* episode was resolved is visible in the returned
 # range rather than inferred from a count.
@@ -167,18 +165,6 @@ def install_fake(monkeypatch):
         return dataset
 
     return _install
-
-
-def _transform_range(dataset: _FakeDataset, episode: int) -> tuple[int, int]:
-    """Drive the transform reader with the same stand-in, via its own method.
-
-    ``_episode_frame_range`` reads nothing but ``self.ds``, so a namespace
-    carrying that one attribute exercises the shipped ladder without building a
-    ``_SourceDataset`` (whose constructor reads a schema this question does not
-    involve).
-    """
-    holder = types.SimpleNamespace(ds=dataset)
-    return transforms_base._SourceDataset._episode_frame_range(holder, episode)  # type: ignore[arg-type]
 
 
 # ── the regression: one row read, whatever the index ────────────────
@@ -277,7 +263,7 @@ def _readers_of_the_frame_range() -> dict[str, str]:
     added later under the same rule instead of inheriting an exemption by being
     absent from a tuple.
     """
-    root = pathlib.Path(transforms_base.__file__).parent.parent
+    root = pathlib.Path(dr.__file__).parent
     found: dict[str, str] = {}
     for path in sorted(root.rglob("*.py")):
         text = path.read_text(encoding="utf-8")
@@ -292,13 +278,13 @@ def _readers_of_the_frame_range() -> dict[str, str]:
     return found
 
 
-class TestBothReadersUseTheSameLadder:
+class TestEveryReaderUsesTheSameLadder:
     """No reader of the range depends only on the rung LeRobot dropped."""
 
     def test_the_reader_set_is_not_empty(self):
         readers = _readers_of_the_frame_range()
-        assert len(readers) >= 3, (
-            f"found only {sorted(readers)}; three readers resolve this range, so a scan "
+        assert len(readers) >= 2, (
+            f"found only {sorted(readers)}; two readers resolve this range, so a scan "
             "returning fewer has stopped seeing them and grades nothing"
         )
 
@@ -310,21 +296,6 @@ class TestBothReadersUseTheSameLadder:
             f"{offenders} resolve an episode's frame range without reading dataset_from_index. "
             "No LeRobot in the declared range exposes episode_data_index, so a reader without "
             "that rung falls through to a linear recomputation of a number the row already states"
-        )
-
-    def test_the_transform_readers_parity_claim_holds(self):
-        """The transform reader says it shares this ladder; assert it does."""
-        loader = inspect.getsource(dr.load_lerobot_episode)
-        reader = inspect.getsource(transforms_base._SourceDataset._episode_frame_range)
-        claim = inspect.getdoc(transforms_base._SourceDataset._episode_frame_range) or ""
-        assert "load_lerobot_episode" in claim, (
-            "the parity claim naming load_lerobot_episode has gone from the docstring, so "
-            "this cell no longer grades a claim the tree makes"
-        )
-        order = [tuple(sorted(_LADDER_KEYS, key=source.index)) for source in (loader, reader)]
-        assert order[0] == order[1], (
-            f"the loader tries {order[0]} and the transform reader {order[1]}; the docstring "
-            "claims the same rungs in the same order, so the two must agree"
         )
 
 
@@ -339,7 +310,7 @@ class TestPremises:
     """
 
     def test_the_declared_lerobot_range_is_the_0_6_series(self):
-        pyproject = pathlib.Path(transforms_base.__file__).parent.parent.parent / "pyproject.toml"
+        pyproject = pathlib.Path(dr.__file__).parent.parent / "pyproject.toml"
         declared = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         extras = declared["project"]["optional-dependencies"]
         pins = [dep for group in extras.values() for dep in group if dep.startswith("lerobot[")]
@@ -398,14 +369,10 @@ class TestAgainstARealDataset:
         assert (row["dataset_from_index"], row["dataset_to_index"]) == (_STARTS[1], _STARTS[1] + _LENGTHS[1])
 
     @pytest.mark.parametrize("episode", [0, 1, 2])
-    def test_both_readers_resolve_the_recorded_range(self, recorded, episode):
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-        dataset = LeRobotDataset(repo_id="local/probe", root=str(recorded))
+    def test_the_loader_resolves_the_recorded_range(self, recorded, episode):
         expected = (_STARTS[episode], _STARTS[episode] + _LENGTHS[episode])
-        assert _transform_range(dataset, episode) == expected
         _, start, length = dr.load_lerobot_episode("local/probe", episode=episode, root=str(recorded))
         assert (start, start + length) == expected, (
-            "the loader and the transform reader answer the same question about the same "
-            "dataset, so a range either resolves in both or in neither"
+            "the loader answers the same question the recorded row states, so the range "
+            "either resolves from the row or not at all"
         )

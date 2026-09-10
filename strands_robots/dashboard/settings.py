@@ -123,6 +123,7 @@ def _as_bool(value: Any) -> bool:
 #: Public alias - other dashboard modules parse comma-separated endpoint
 #: strings with the same rules the settings store uses.
 def as_list(value: Any) -> list[str]:
+    """Split a comma-separated string - or a sequence - into non-empty entries."""
     return _as_list(value)
 
 
@@ -322,6 +323,17 @@ def load(refresh: bool = False) -> dict[str, dict[str, Any]]:
 
 
 def get(section: str, key: str | None = None, default: Any = None) -> Any:
+    """One settings value, or a whole section, with a default for what is unset.
+
+    Args:
+        section: Settings section name.
+        key: A key within that section; omit it for the whole section.
+        default: Returned when the section, the key or its value is absent - an
+            empty string and an empty list count as absent.
+
+    Returns:
+        The stored value, the section mapping, or *default*.
+    """
     tree = load()
     if section not in tree:
         return default

@@ -11,12 +11,35 @@ uv pip install "strands-robots[groot-service]"
 ```python
 from strands_robots.policies import create_policy
 
-# Service mode (container running separately)
+# Service mode (Isaac-GR00T container running separately) - what the extra above installs for
 policy = create_policy("groot", port=5555, data_config="so100_dualcam")
+```
 
-# Local mode (load model in-process)        # requires GPU
+## In-process inference
+
+Two routes load a GR00T checkpoint in the caller's own process. They need
+different packages, and only one of them is declared by an extra.
+
+```python
+# lerobot's own GR00T N1.7, parity-tested against NVIDIA's implementation
+policy = create_policy(
+    "lerobot_local", policy_type="groot", pretrained_name_or_path="nvidia/GR00T-N1.7-3B"
+)
+
+# NVIDIA's Isaac-GR00T, loaded directly     # requires GPU + the gr00t package
 policy = create_policy("groot", model_path="/checkpoint", data_config="so100_dualcam", device="cuda")
 ```
+
+`model_path=` needs NVIDIA's `gr00t` package, which **no extra declares**: it
+installs from [Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T) and pins
+`transformers==4.57.3`, while lerobot needs `transformers>=5` for its Qwen3-VL
+backbone - so gr00t and lerobot cannot be imported in the same Python process
+([lerobot's own GR00T notes](https://github.com/huggingface/lerobot/blob/main/docs/source/policy_groot_README.md)
+state this). In an install that has lerobot - `strands-robots[all]` does -
+`lerobot_local` is the in-process route, and it brings RTC and the
+`ProcessorBridge` normalisation with it. `create_policy("groot",
+model_path=...)` in such an install refuses with both open routes named rather
+than an install instruction that cannot be followed.
 
 ## Parameters
 
@@ -28,7 +51,7 @@ Gr00tPolicy(
     model_path=None,                # set for local mode; None = service mode
     embodiment_tag="NEW_EMBODIMENT",
     device="cuda",                  # local mode only
-    groot_version=None,             # override auto-detection (N1.5/N1.6/N1.7)
+    groot_version=None,             # force "n1.5"/"n1.6"/"n1.7"; None = auto-detect
     strict=False,
     api_token=None,                 # fallback: GROOT_API_TOKEN env var
     observation_mapping=None,

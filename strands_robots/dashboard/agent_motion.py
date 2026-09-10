@@ -1,3 +1,13 @@
+"""Whether the agent may put a real robot in motion on its own.
+
+Every gated tool call asks two questions, and both are answered here: is the
+target metal rather than a sim (:func:`peer_is_physical`), and has an operator
+granted unattended motion (:data:`MOTION_ENV`, read at call time by
+:func:`agent_motion_allowed` so a grant can be withdrawn mid-session).
+:data:`GATED_ACTIONS` names the actions that can start motion; every way of
+stopping a robot is deliberately outside it.
+"""
+
 from __future__ import annotations
 
 import os
