@@ -69,6 +69,10 @@ cannot be read as the answer to the next observation.
 
 ## Embodiments
 
+Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`, `openarm`
+(post-training only). The embodiment is chosen client-side; the server hosts one
+Cosmos 3 checkpoint for all of them.
+
 | Embodiment | Robot hardware | Strands sim asset |
 |------------|----------------|-------------------|
 | `droid` | Franka / DROID dataset | `"panda"` or `"franka"` |

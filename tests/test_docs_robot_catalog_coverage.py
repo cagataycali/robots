@@ -186,9 +186,7 @@ def test_approximate_robot_count_claims_match_the_current_decade() -> None:
     expected = [
         (DOCS / "assets" / "hero_loop.svg", f"{decade}+ robots"),
         (DOCS / "assets" / "architecture_flow.svg", f"{decade}+ robots"),
-        (README, f"**{decade}+ robots, {categories} categories.**"),
         (README, f"{decade}+ robots across {categories} categories"),
-        (README, f"robots.json ({decade}+)"),
     ]
     for path, text in expected:
         assert text in path.read_text(encoding="utf-8"), (

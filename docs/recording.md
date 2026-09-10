@@ -916,6 +916,11 @@ an aggregate is never reported over episodes whose frames reached no dataset.
 | `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo. `private` selects the published repo's visibility, so it must be a boolean — a truthy spelling of off such as `"false"` would otherwise select the opposite posture |
 | `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) — Xet-deduped collection target; needs the `hf` CLI. `bucket` (`name` or `org/name`) and `run_id` (single segment) are allowlist-validated (`[A-Za-z0-9._-]`, no traversal) before the sync, and `create` / `private` / `delete` must each be a boolean — `delete` mirror-deletes remote files absent locally, so a truthy `"false"` must not select it |
 
+`sync_to_bucket` needs the `hf` CLI with the `buckets`/`sync` subcommands
+(`pip install -U "huggingface_hub>=1.5"` + `hf auth login` - those subcommands
+first ship in 1.5.0; every earlier release, including 1.0-1.4.x, installs an
+`hf` entry point without them).
+
 ## Read back
 
 Fully materialized (downloads everything):
@@ -1080,9 +1085,12 @@ storage system).
 For **training**, the upstream trainer uses the same engine:
 
 ```bash
-python -m lerobot.scripts.lerobot_train --policy.type=act \
+lerobot-train --policy.type=act \
   --dataset.repo_id=user/my_dataset --dataset.streaming=true --num_workers=4
 ```
+
+(`lerobot-train` is the entry point over `python -m lerobot.scripts.lerobot_train`;
+flags are draccus `--dotted.key=value` form.)
 
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
 > strands_robots` auto-fixes this (zero-touch); disable with
