@@ -16,6 +16,9 @@ class MockPolicy(Policy):
     def __init__(self, **kwargs: Any) -> None:
         self.robot_state_keys: list[str] = []
         self._step = 0
+        self._sim_model: Any = None
+        self._sim_namespace = ""
+        self._ranges: dict[str, tuple[float, float]] | None = None
         logger.info("Mock Policy initialized")
 
     @property
@@ -44,6 +47,34 @@ class MockPolicy(Policy):
             raise ValueError(error)
         self.robot_state_keys = robot_state_keys
 
+    def set_sim_context(self, model: Any, namespace: str) -> None:
+        """Bind the compiled MjModel so actions land inside each actuator's ctrlrange.
+
+        The sim calls this on any policy that defines it. Without it the
+        sinusoid is unit-less (``0.5 * sin``), which the so100's ``Pitch``
+        (ctrlrange ``[-3.32, 0.174]``) and ``Jaw`` (``[-0.174, 1.75]``) cannot
+        follow: MuJoCo clamps the command, so a recorded dataset stores an
+        action the robot never executed.
+        """
+        self._sim_model = model
+        self._sim_namespace = namespace or ""
+        self._ranges = None
+
+    def _ctrl_ranges(self) -> dict[str, tuple[float, float]]:
+        """Per-key ``(lo, hi)`` for ctrl-limited actuators of the bound model; resolved once."""
+        if self._ranges is None:
+            self._ranges = {}
+            if self._sim_model is not None:
+                for key in self.robot_state_keys:
+                    try:
+                        act = self._sim_model.actuator(self._sim_namespace + key)
+                    except (KeyError, AttributeError, TypeError):
+                        continue
+                    lo, hi = (float(v) for v in act.ctrlrange)
+                    if int(act.ctrllimited) and math.isfinite(lo) and math.isfinite(hi) and hi > lo:
+                        self._ranges[key] = (lo, hi)
+        return self._ranges
+
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
@@ -67,6 +98,7 @@ class MockPolicy(Policy):
                 dim = 6
             self.robot_state_keys = [f"joint_{i}" for i in range(dim)]
 
+        ranges = self._ctrl_ranges()
         mock_actions = []
         for i in range(8):
             action_dict = {}
@@ -74,7 +106,13 @@ class MockPolicy(Policy):
             for j, key in enumerate(self.robot_state_keys):
                 freq = 0.3 + j * 0.15
                 phase = j * math.pi / 3
-                action_dict[key] = 0.5 * math.sin(2 * math.pi * freq * t + phase)
+                wave = math.sin(2 * math.pi * freq * t + phase)
+                if key in ranges:
+                    lo, hi = ranges[key]
+                    # Mid-range swing of half the actuator's span: always inside ctrlrange.
+                    action_dict[key] = (lo + hi) / 2 + 0.25 * (hi - lo) * wave
+                else:
+                    action_dict[key] = 0.5 * wave
             mock_actions.append(action_dict)
 
         self._step += len(mock_actions)

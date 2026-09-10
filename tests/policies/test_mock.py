@@ -77,3 +77,47 @@ class TestMockPolicy:
         actions = p.get_actions_sync({"observation.state": [0, 0]}, "move")
         assert len(actions) == 8
         assert all(isinstance(a, dict) for a in actions)
+
+
+class _Actuator:
+    def __init__(self, lo: float, hi: float, limited: int = 1) -> None:
+        self.ctrlrange = (lo, hi)
+        self.ctrllimited = limited
+
+
+class _Model:
+    """The two MjModel members MockPolicy reads: ``actuator(name)`` -> ctrlrange/ctrllimited."""
+
+    def __init__(self, actuators: dict[str, _Actuator]) -> None:
+        self._actuators = actuators
+
+    def actuator(self, name: str) -> _Actuator:
+        return self._actuators[name]
+
+
+class TestMockPolicyCtrlRange:
+    """With a bound sim context every action lands inside its actuator's ctrlrange."""
+
+    def test_actions_inside_ctrlrange_when_bound(self):
+        p = MockPolicy()
+        p.set_robot_state_keys(["Pitch", "Jaw", "Free"])
+        p.set_sim_context(
+            _Model({"so100/Pitch": _Actuator(-3.32, 0.174), "so100/Jaw": _Actuator(-0.174, 1.75)}),
+            "so100/",
+        )
+        for _ in range(40):
+            for a in asyncio.run(p.get_actions({}, "t")):
+                assert -3.32 <= a["Pitch"] <= 0.174
+                assert -0.174 <= a["Jaw"] <= 1.75
+                assert -0.5 <= a["Free"] <= 0.5  # no actuator -> unit-less sinusoid as before
+
+    def test_unlimited_or_degenerate_range_keeps_unit_sinusoid(self):
+        p = MockPolicy()
+        p.set_robot_state_keys(["a", "b"])
+        p.set_sim_context(_Model({"a": _Actuator(0.0, 0.0, limited=0), "b": _Actuator(1.0, 1.0)}), "")
+        assert p._ctrl_ranges() == {}
+
+    def test_unbound_policy_is_unchanged(self):
+        p = MockPolicy()
+        p.set_robot_state_keys(["j0"])
+        assert max(abs(a["j0"]) for a in asyncio.run(p.get_actions({}, "t"))) <= 0.5
