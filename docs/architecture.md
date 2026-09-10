@@ -81,13 +81,13 @@ graph TB
 | `strands_robots/simulation/` | MuJoCo `AgentTool` - 77 actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend ABC for future Isaac/Newton backends. | `SimEngine` |
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
-| `strands_robots/policies/` | ABC + 14 providers + factory + JSON registry. | `Policy`, `create_policy()` |
+| `strands_robots/policies/` | ABC + 15 providers + factory + JSON registry. | `Policy`, `create_policy()` |
 | `strands_robots/dataset_recorder.py` | LeRobot v3 writer. | `DatasetRecorder` |
 | `strands_robots/tools/` | 25 `@tool`-decorated helpers. | `lerobot_camera`, `serial_tool`, etc. |
 
 ## ABCs
 
-**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 16 implementations ship; [Policies](policies/overview.md) is the provider table.
+**`Policy`** - three abstract members every implementation supplies: `get_actions(observation_dict, instruction) -> list[dict]` (async), `set_robot_state_keys(keys)`, and the `provider_name` property. The rest of the contract is *declared* rather than implemented - the runtime reads the declaration and supplies what it names: `requires_images` (default `True`), `required_bodies` (default `()`; the only way to receive a body pose beyond the floating base - a tracker that skips it gets `base_quat`, the pelvis) and `children` (default `()`; what a wrapper returns so a capability probe reaches the policy inside it). `reset(seed)` (default no-op) is called per episode. 17 implementations ship; [Policies](policies/overview.md) is the provider table.
 
 **`SimEngine`** - `create_world()`, `step()`, 30+ abstract actions. Today: MuJoCo CPU. Roadmap: Isaac Sim, Newton.
 
