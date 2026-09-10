@@ -265,58 +265,41 @@ The bridge loads the model's own pipeline configs in priority order:
 
 1. `policy_preprocessor.json` / `policy_postprocessor.json` - LeRobot's standard
    saved pipelines (most lerobot-native checkpoints).
-2. **`norm_stats.json` fallback** - checkpoints that ship only a stats file (no
-   standard pipeline configs), such as the MolmoAct2 SO-100/101 family. The
-   bridge detects the `molmoact2_norm_stats.v1` schema and builds the
-   normalizers itself.
+2. **In-model normalization recovery** - a pre-processor-era checkpoint ships no
+   pipeline JSON but carries `normalize_inputs.*` / `unnormalize_outputs.*`
+   buffers in its `model.safetensors` (still the case for canonical zoo
+   checkpoints such as `lerobot/act_aloha_sim_transfer_cube_human`). Current
+   lerobot drops those buffers on load, so the bridge rebuilds both pipelines
+   from them using lerobot's own `extract_normalization_stats` +
+   `make_pre_post_processors`.
 
-Without the fallback in (2), a stats-only checkpoint would silently pass data
-through un-normalized: state reaches the policy in raw degrees and predicted
-actions reach the motors still in the model's normalized space, producing
-off-policy / micro-motion trajectories.
+Without (2), such a checkpoint would silently pass data through un-normalized:
+state reaches the policy in raw degrees and predicted actions reach the motors
+still in the model's normalized space, producing off-policy / micro-motion
+trajectories.
 
-The `norm_stats.json` fallback builds a minimal pipeline (the normalizer
-step only) - it has no `AddBatchDimension` or device step, unlike a standard
-`policy_preprocessor.json`. The runtime batches and device-moves the
-preprocessed observation itself, so a stats-only checkpoint runs on the
-declarative `embodiment=` path with the same batched-tensor contract as a
-standard pipeline; the model never sees an unbatched `observation.state`
-alongside a batched image.
+### MolmoAct2 normalization is lerobot's
 
-The fallback supports the `q01_q99`, `q10_q90`, `min_max` and `mean_std`
-normalization modes declared by `norm_mode`. For `q01_q99`:
+MolmoAct2 checkpoints do not take either bridge path. They are
+transformers-native (`config.json` has `model_type=molmoact2` and no lerobot
+draccus `type`), so the policy routes them to lerobot's own factory --
+`make_policy_config("molmoact2", ...)` then `make_pre_post_processors(cfg)`.
+That factory reads the checkpoint's `norm_stats.json` itself, resolves
+`norm_tag` against the tags the file declares, and honors a
+`norm_stats_filename` the checkpoint names in its `config.json`.
+
+Pass `norm_tag=` to select an embodiment's statistics. A tag the file does not
+declare is refused by lerobot, which names the tag asked for and the tags the
+checkpoint actually declares:
 
 ```
-state_norm  = clip(2 * (state - q01) / (q99 - q01) - 1, -1, 1)
-action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
+ValueError: Unknown MolmoAct2 norm_tag='so101'.
+Available tags: ['so100_so101_molmoact2'].
 ```
 
-When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
-one; a single-tag file is auto-detected.
-
-A checkpoint may point the fallback at a different file by setting
-`norm_stats_filename` in its own `config.json`. That name must be a relative
-path naming a file **inside** the checkpoint: those statistics are what
-unnormalizes every predicted action, so a name that leaves the checkpoint (an
-absolute path, or one with a `..` segment) would scale the robot's motor
-commands from a file the checkpoint does not contain. Such a name is refused
-with `NormStatsFilenameError`, and the reason is reported in the load warning in
-place of the generic missing-postprocessor message.
-
-```json
-{ "norm_stats_filename": "custom_stats.json" }      // honored
-{ "norm_stats_filename": "stats/custom.json" }      // honored (subdirectory)
-{ "norm_stats_filename": "../other/stats.json" }    // refused
-{ "norm_stats_filename": "/tmp/stats.json" }        // refused
-```
-
-A `norm_tag` the stats file does not declare is refused rather than absorbed. The
-tag is a free-form string, so a misspelling would otherwise skip normalization
-entirely - state reaching the policy un-normalized and actions reaching the robot
-un-unnormalized, with usable stats sitting unused in the payload. The load report
-names the tag that was asked for and the tags the checkpoint declares, instead of
-blaming a missing `policy_postprocessor.json` the checkpoint was never going to
-ship.
+Because lerobot owns this transform, strands does not reimplement it -- a second
+copy could drift from lerobot's normalizer without anything failing. See
+[MolmoAct2](#molmoact2) for the load path.
 
 ### Device-pinned checkpoints
 
@@ -651,6 +634,26 @@ policy decides this interval - a caller-supplied `action_horizon` is ignored for
 RTC policies (it cannot stretch the interval and break blending). For non-RTC
 policies `execution_horizon == actions_per_step` and the consumer still takes
 `max(action_horizon, actions_per_step)` so the trained chunk is never truncated.
+
+### What the prefix contains: `prev_chunk_left_over`
+
+The prefix is the previous chunk **from the observation tick to its end** - the
+same span LeRobot's `ActionQueue.get_left_over()` returns
+(`original_queue[last_index:]`). Row 0 is the action applied on the tick right
+after the observation, and row *i* the action applied on the tick the new chunk's
+row *i* lands on. LeRobot's denoiser depends on that index alignment: it builds
+`get_prefix_weights(inference_delay, execution_horizon, T)`, pinning weight 1.0
+across `[0, inference_delay)` - the steps that elapse *during* inference - and
+blending `[inference_delay, execution_horizon)` toward the prefix.
+
+The provider therefore keeps each chunk as the consumer received it and cuts the
+prefix at the next query, from the overlap the runtime reports
+(`set_rtc_observed_delay`). Under `async_rtc=True` the runner fires the prefetch
+mid-chunk, so the prefix opens on the action still pending at that moment; under
+`async_rtc=False` the chunk has drained and it opens past the execution horizon.
+Cutting the prefix when the chunk is produced cannot express the async case: how
+far the consumer has drained the chunk is not known until its next observation is
+captured.
 
 ### Relative-action policies: prefix re-anchoring
 

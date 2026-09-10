@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The read window a Feetech caller sets is graded, and reaches the port.
 
-``timeout`` is how long :meth:`FeetechBus._read_one` waits for a servo's reply.
+``timeout`` is how long :meth:`FeetechBus._sync_read_once` waits for the arm's
+reply stream.
 An unusable one does not surface as an error: pyserial accepts ``0``, ``nan``,
 ``inf`` and ``None`` as a timeout, and each of them makes the read see an empty
 buffer that the retry loop cannot tell from a servo that never answered - so

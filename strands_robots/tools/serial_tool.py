@@ -41,6 +41,22 @@ the tool nor the option, for ``inf``.
 register through the same mask and needs no bound of its own: it clamps to each
 motor's declared range before encoding, so its mask can only ever see a value
 that already fits.
+
+Operator approval: the four actions that write to the bus - ``send``,
+``send_read``, ``feetech_position`` and ``feetech_velocity`` - stop for a human
+BEFORE the port is opened, through the same decision path the ROS transports
+use (:func:`~strands_robots.tools._command_gate.gate_motion`).
+``STRANDS_SERIAL_COMMAND_ALLOW`` (comma-separated action names, or ``*``)
+pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
+otherwise the operator is prompted through the tool context and, with none
+reachable, the call is refused and nothing is written. The dashboard's
+:class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook` lists the same
+four actions; when that hook has already asked and deposited a grant for this
+exact call the in-tool gate spends the grant instead of asking twice. Before
+this gate the hook was the only human check, and it is a hook an ``Agent`` has
+to be built with - every canonical ``Agent(tools=robot.tools)`` build had none,
+so the default wiring wrote to the bus unasked (F-009, CWE-862). Reads
+(``list_ports``, ``read``, ``monitor``) and ``feetech_ping`` are never gated.
 """
 
 import time
@@ -50,6 +66,7 @@ from typing import Any
 import serial
 import serial.tools.list_ports
 from strands import tool
+from strands.types.tools import ToolContext
 
 from strands_robots.drivers.feetech.protocol import (
     BROADCAST_ID,
@@ -60,10 +77,12 @@ from strands_robots.drivers.feetech.protocol import (
     encode_word,
     max_magnitude,
 )
+from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     finite_number_error,
     non_negative_count_error,
     positive_count_error,
+    refusal_str,
 )
 
 # Bit index carrying the direction in the two STS/SMS registers this module
@@ -145,7 +164,7 @@ def _register_field_error(value: Any, param: str, action: str) -> str | None:
     if error := floor_error(value, param, action):
         return error
     if value > high:
-        return f"{action}: {param} must be at most {high} ({why}), got {value}."
+        return f"{action}: {param} must be at most {high} ({why}), got {refusal_str(value)}."
     return None
 
 
@@ -170,7 +189,7 @@ def _motor_id_error(value: Any, param: str, action: str) -> str | None:
         return (
             f"{action}: {param} {BROADCAST_ID:#x} is the broadcast, which every servo on the bus "
             f"answers at once, so no single reply can be read back; address one servo in "
-            f"[1, {MAX_UNICAST_ID}], got {value}."
+            f"[1, {MAX_UNICAST_ID}], got {refusal_str(value)}."
         )
     return None
 
@@ -197,7 +216,7 @@ def _read_timeout_error(value: Any, param: str, action: str) -> str | None:
     if error := finite_number_error(value, param, action):
         return error
     if value < 0:
-        return f"{action}: {param} must be at least 0 seconds, got {value}."
+        return f"{action}: {param} must be at least 0 seconds, got {refusal_str(value)}."
     return None
 
 
@@ -240,7 +259,68 @@ def _option_error(action: str, supplied: dict[str, Any]) -> str | None:
     return None
 
 
-@tool
+# The actions that put bytes on the bus. Everything else only reads it (or, for
+# ``feetech_ping``, writes a reply-expecting instruction that moves nothing).
+WRITE_ACTIONS = frozenset({"send", "send_read", "feetech_position", "feetech_velocity"})
+
+# Pre-approve write actions by name (comma-separated, ``*`` for all) for headless
+# runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
+COMMAND_ALLOW_ENV = "STRANDS_SERIAL_COMMAND_ALLOW"
+
+
+def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
+    """Spend a grant the dashboard's motion hook deposited for this exact call.
+
+    The dashboard registers :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`
+    on its agent, which asks the operator before the tool runs and records a
+    one-shot grant keyed on what they were shown. Asking again here would be
+    the same question twice, so a grant is consumed and the call proceeds. The
+    dashboard extra may be absent, and a missing module must read as "no
+    grant", never as a crash: the gate below then asks the operator itself.
+
+    Args:
+        tool_input: The call as the hook saw it - the same field names, with
+            the unset ones omitted.
+
+    Returns:
+        True when a grant for this exact call existed and was spent.
+    """
+    try:
+        from strands_robots.dashboard import agent_hitl
+    except ImportError:
+        return False
+    return bool(agent_hitl.consume_grant("serial_tool", tool_input))
+
+
+def _gate_write(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
+    """Operator approval for one bus write, before the port is opened.
+
+    Args:
+        action: One of :data:`WRITE_ACTIONS`.
+        tool_input: The call's own fields (port, motor_id, position, velocity,
+            data, hex_data), unset ones omitted; shown to the operator and
+            used to match a dashboard grant.
+        tool_context: The agent tool context supplying ``interrupt()``.
+
+    Returns:
+        A refusal message, or None to let the write proceed.
+    """
+    if _dashboard_grant(tool_input):
+        return None
+    port = str(tool_input.get("port") or "")
+    detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))
+    return gate_motion(
+        "serial_tool",
+        action,
+        port,
+        f"{action!r} writes to the servo bus on {port!r} ({detail}); it needs operator approval before it is sent.",
+        tool_context,
+        allow_env=COMMAND_ALLOW_ENV,
+        allow_match=lambda allowed: "*" in allowed or action in allowed,
+    )
+
+
+@tool(context=True)
 def serial_tool(
     action: str,
     port: str | None = None,
@@ -252,6 +332,7 @@ def serial_tool(
     position: int | None = None,
     velocity: int | None = None,
     read_bytes: int = 1024,
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Advanced serial communication tool for robot control and device communication.
 
@@ -286,6 +367,17 @@ def serial_tool(
             magnitude reaching bit 15 commands the opposite direction instead of
             a faster move
         read_bytes: Number of bytes to read; a positive integer
+        tool_context: Supplied by the agent runtime; carries the operator
+            interrupt the write actions are approved through. Without it a
+            write is refused unless pre-approved via
+            STRANDS_SERIAL_COMMAND_ALLOW or BYPASS_TOOL_CONSENT=true
+
+    Operator approval:
+        "send", "send_read", "feetech_position" and "feetech_velocity" put
+        bytes on the bus, so each stops for a human before the port is opened;
+        a declined or headless call writes nothing. Pre-approve with
+        STRANDS_SERIAL_COMMAND_ALLOW=feetech_position,feetech_velocity (or
+        "*"). Reads, "monitor" and "feetech_ping" are never gated.
 
     Validation:
         A numeric option the requested action consumes is checked before the
@@ -349,6 +441,25 @@ def serial_tool(
         }
         if option_error := _option_error(action, supplied):
             return {"status": "error", "content": [{"text": option_error}]}
+
+        if action in WRITE_ACTIONS:
+            tool_input = {
+                key: value
+                for key, value in (
+                    ("action", action),
+                    ("port", port),
+                    ("motor_id", motor_id),
+                    ("position", position),
+                    ("velocity", velocity),
+                    ("data", data),
+                    ("hex_data", hex_data),
+                )
+                if value is not None and value != ""
+            }
+            if refusal := _gate_write(action, tool_input, tool_context):
+                # The port is not open yet: a refused write is exactly as inert
+                # as a call that never happened.
+                return {"status": "error", "content": [{"text": f"serial_tool: {refusal}"}]}
 
         # Open serial connection
         ser = serial.Serial(port, baudrate, timeout=timeout)

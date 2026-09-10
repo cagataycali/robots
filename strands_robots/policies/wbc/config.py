@@ -24,6 +24,7 @@ from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
     require_optional,
     sequence_length,
 )
@@ -58,7 +59,7 @@ def _non_negative_number_error(value: Any, param: str, context: str) -> str | No
     """
     if error := finite_number_error(value, param, context):
         return error
-    return None if float(value) >= 0.0 else f"{context}: {param} must be >= 0, got {value!r}."
+    return None if float(value) >= 0.0 else f"{context}: {param} must be >= 0, got {refusal_repr(value)}."
 
 
 # Upstream defaults from the GR00T-WholeBodyControl reference controller

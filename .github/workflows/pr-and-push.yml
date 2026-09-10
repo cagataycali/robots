@@ -2,8 +2,8 @@ name: Pull Request and Push Action
 
 on:
   # No 'types' override: the default (opened, synchronize, reopened) is exactly
-  # the set that can change 'pull_request.head.sha', which is the ref handed to
-  # the reusable workflow below. Subscribing to an event that cannot change it -
+  # the set that can change 'pull_request.head.sha', which is what moves the
+  # refs/pull/<n>/merge commit handed to the reusable workflow below. Subscribing to an event that cannot change it -
   # this workflow was also started by ready_for_review, review_requested and
   # review_request_removed - cannot produce a new verdict, and because the
   # concurrency group below cancels in progress, it discards the in-flight run of
@@ -55,4 +55,13 @@ jobs:
     permissions:
       contents: read
     with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # The tree the one required check evaluates. On a 'pull_request' event this is
+      # the merge commit GitHub keeps at refs/pull/<n>/merge (head + base tip), not
+      # the head sha: the head is a tree that will never exist on 'main', and a
+      # branch that forked before a fix landed on 'main' is red on it while the
+      # tree its merge would produce is green (#2796). The grader that went red
+      # dismissed the approval to clear, on a branch that needed no change. The
+      # sibling gates that DO read the head (merge-base-overlap) say why in place;
+      # this one wants the tree that merges, which is what lockfile-parity checks
+      # out for the same reason. On a push there is no merge commit: 'github.sha'.
+      ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}

@@ -51,6 +51,7 @@ from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_str,
 )
 
 logger = logging.getLogger(__name__)
@@ -488,7 +489,7 @@ def _joint_target_error(action: str, label: str, motor_name: str | None, value: 
     if not low <= value <= high:
         return (
             f"{action}: {label} must be within [{low}, {high}] {_target_unit(name)} "
-            f"(the configured travel of '{name}'), got {value}."
+            f"(the configured travel of '{name}'), got {refusal_str(value)}."
         )
     return None
 
@@ -534,7 +535,7 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
     if abs(delta) > span:
         return (
             f"{action}: delta must be at most {span} {_target_unit(name)} in magnitude "
-            f"(the full travel of '{name}', so no starting position could honor more), got {delta}."
+            f"(the full travel of '{name}', so no starting position could honor more), got {refusal_str(delta)}."
         )
     return None
 

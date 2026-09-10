@@ -252,6 +252,14 @@ class ReachyDriver:
         self._connected: bool = False
         self._connect_error: str | None = None
         self._variant: str | None = None
+
+        # The halt an operator reads through ``motion_stopped``. True only once
+        # the daemon has accepted a stop, and False again as soon as this driver
+        # commits motion to the wire - a latch that outlived the halt it named
+        # would report a stopped robot while the head was moving, which is the
+        # same affirmative lie as claiming a halt that never happened, told one
+        # step later. Every clearing site is a *successful* write path, so a
+        # refused command leaves the halt standing.
         self._stopped: bool = False
 
     # ------------------------------------------------------------------ #
@@ -616,6 +624,7 @@ class ReachyDriver:
                 return _refuse(f"send_action: {error}")
         if commanded_head_yaw is not None:
             self._remember_head_yaw_target(commanded_head_yaw)
+        self._stopped = False
         return {
             "status": "success",
             "content": [{"json": {"sent": [sorted(c) for c in commands], "robot": self._tool_name}}],
@@ -741,6 +750,7 @@ class ReachyDriver:
         if (error := result.get("error")) is not None:
             return _refuse(f"play_move: daemon refused {move_name!r}: {error}")
         self._remember_head_yaw_target(None)
+        self._stopped = False
         return {"status": "success", "content": [{"json": {"played": move_name, "library": library}}]}
 
     def list_moves(self, library: str = "emotions") -> dict[str, Any]:
@@ -778,6 +788,7 @@ class ReachyDriver:
         if (error := result.get("error")) is not None:
             return _refuse(f"wake_up: daemon refused: {error}")
         self._remember_head_yaw_target(None)
+        self._stopped = False
         return {"status": "success", "content": [{"text": "asked the daemon to play the wake-up move"}]}
 
     def goto_sleep(self) -> dict[str, Any]:
@@ -792,6 +803,7 @@ class ReachyDriver:
         if (error := result.get("error")) is not None:
             return _refuse(f"goto_sleep: daemon refused: {error}")
         self._remember_head_yaw_target(None)
+        self._stopped = False
         return {"status": "success", "content": [{"text": "asked the daemon to play the go-to-sleep move"}]}
 
     def set_motors(self, mode: str) -> dict[str, Any]:

@@ -153,8 +153,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(teleop_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     path = session_dir / "active_sessions.json"
 
     def write(records: dict[str, Any]) -> None:

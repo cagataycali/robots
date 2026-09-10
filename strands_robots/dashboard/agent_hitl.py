@@ -30,10 +30,10 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
     # command. This dict gates only the dashboard's bespoke tools.
     # The direct-serial tools live in strands_robots/tools/serial_tool.py and
     # strands_robots/tools/pose_tool.py. Both now gate their own write / motion
-    # actions through the shared command gate (serial_tool: F-009, pose_tool:
-    # F-010), so for an agent built without this hook they are no longer
-    # unguarded; they stay listed here because this hook shows the operator the
-    # dashboard's richer detail line and deposits a grant each tool spends
+    # actions through the shared command gate (serial_tool's four writes, and
+    # pose_tool's five motions), so for an agent built without this hook neither
+    # is unguarded; they stay listed here because this hook shows the operator
+    # the dashboard's richer detail line and deposits a grant each tool spends
     # (consume_grant) instead of asking a second time. Reads, emergency_stop and
     # delete_pose stay out: stopping is never gated. serial "monitor" only ever
     # calls ser.read (serial_tool.py) so it is a read too.

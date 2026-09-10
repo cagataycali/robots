@@ -213,6 +213,35 @@ Bottom: every commanded step against the model ceiling._
 - Joint counts include any free joints / gripper actuators - the *control* DOF is
   usually `joints - 1` for arms with grippers.
 
+## Calibrating a Feetech SO arm
+
+`so100`, `so101` and `lekiwi` read and command **degrees**, and those degrees are
+measured against the travel `lerobot-calibrate` recorded for *that particular
+arm*. Pass the file that run wrote:
+
+```python
+from strands_robots.drivers.feetech import FeetechDriver, lerobot_calibration_path
+
+arm = FeetechDriver(
+    tool_name="so101",
+    port="/dev/ttyACM0",
+    calibration=lerobot_calibration_path("so101_follower", "my_arm"),
+)
+arm.connect_eagerly()                       # returns None, or a reason
+arm.send_action({"shoulder_pan": 30.0, "gripper": 100.0})
+```
+
+`lerobot_calibration_path(robot_type, robot_id)` is where
+`lerobot-calibrate --robot.type=so101_follower --robot.id=my_arm` put its output,
+read from LeRobot's own constants so `HF_LEROBOT_CALIBRATION` is honoured.
+Records can also be passed directly (`calibration=load_calibration(path)`), and
+`get_status()` reports which travel is in force as `calibration_source`.
+
+Omitting it spans the *servo's* full rotation instead of the arm's measured
+travel. No two SO-101s stop in the same place, so `0 degrees` and
+`0 percent closed` then land somewhere different on each one - the degrees are an
+encoder angle rather than a joint angle. Calibrate the arm and pass the file.
+
 ## See also
 
 - [Robot factory](../getting-started/robot-factory.md) - how `Robot("name")` resolves
