@@ -11,6 +11,23 @@ Features:
 - Stop functionality to interrupt running tasks
 - Connection state management with proper error handling
 - Policy abstraction for any VLA provider
+
+Operator approval: this class is the ``mode="real"`` half of
+:func:`strands_robots.Robot`, so every ``execute`` or ``start`` the agent tool
+dispatches drives real actuators. Both stop for a human BEFORE the rollout is
+dispatched, through the same decision path the ROS transports and the serial
+tool use (:func:`~strands_robots.tools._command_gate.gate_motion`):
+``STRANDS_ROBOT_COMMAND_ALLOW`` (comma-separated ``execute``/``start``, or
+``*``) pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
+otherwise the operator is asked through the agent's interrupt and, with no
+agent reachable, the call is refused and nothing is dispatched. The dashboard's
+:class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook` may already
+have asked; a grant it deposited for this exact call is spent instead of asking
+twice. ``status`` and ``stop`` are never gated - stopping must not get harder -
+and the simulation tool is a different class that never touches hardware.
+Before this gate the README's first path to metal, ``Agent(tools=[Robot("so100",
+mode="real")])``, dispatched unasked while the same robot commanded through
+``robot_mesh`` was gated (F-011, CWE-862).
 """
 
 from __future__ import annotations
@@ -33,14 +50,16 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from strands.interrupt import InterruptException
 from strands.tools.tools import AgentTool
-from strands.types._events import ToolResultEvent
-from strands.types.tools import ToolResult, ToolSpec, ToolUse
+from strands.types._events import ToolInterruptEvent, ToolResultEvent
+from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
+from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     boolean_flag_error,
     dds_domain_id_error,
@@ -58,6 +77,14 @@ if TYPE_CHECKING:
     from .policies import Policy
 
 logger = logging.getLogger(__name__)
+
+# The agent-tool actions that dispatch a rollout to real actuators. ``status``
+# and ``stop`` only read or halt, so they are never gated.
+MOTION_ACTIONS = frozenset({"execute", "start"})
+
+# Pre-approve motion actions by name (comma-separated, ``*`` for all) for
+# headless runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
+COMMAND_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 
 
 # Remedy for a missing ``rclpy`` when the caller asked for the rclpy transport.
@@ -2806,9 +2833,81 @@ class Robot(TeleopMixin, AgentTool):
         """Create a ToolResult dict with the given tool_use_id merged into result."""
         return cast(ToolResult, {"toolUseId": tool_use_id, **result})
 
+    def _dashboard_grant(self, tool_input: Mapping[str, Any]) -> bool:
+        """Spend a grant the dashboard's motion hook deposited for this exact call.
+
+        The dashboard registers :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`
+        on its agent, which asks the operator before the tool runs and records a
+        one-shot grant keyed on what they were shown. Asking again here would be
+        the same question twice, so a grant is consumed and the call proceeds.
+        The dashboard extra may be absent, and a missing module must read as
+        "no grant", never as a crash: the gate below then asks the operator.
+
+        Args:
+            tool_input: The call as the hook saw it - the tool's own input dict.
+
+        Returns:
+            True when a grant for this exact call existed and was spent.
+        """
+        try:
+            from strands_robots.dashboard import agent_hitl
+        except ImportError:
+            return False
+        return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
+
+    def _gate_motion(
+        self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
+    ) -> str | None:
+        """Operator approval for one ``execute``/``start``, before it is dispatched.
+
+        An ``AgentTool`` receives no ``tool_context`` argument; the SDK builds
+        one from the invoking agent for decorated tools, and this builds the
+        same object from the same two inputs so the shared gate can raise the
+        same interrupt. With no agent in ``invocation_state`` (a direct call,
+        a headless script) there is no operator to ask and the gate refuses.
+
+        Args:
+            action: ``"execute"`` or ``"start"``.
+            tool_input: The tool's input dict, shown to the operator and used to
+                match a dashboard grant.
+            tool_use: The tool-use request carrying ``toolUseId``.
+            invocation_state: The agent runtime's kwargs; ``"agent"`` when the
+                call came through an :class:`strands.Agent`.
+
+        Returns:
+            A refusal message, or None to let the dispatch proceed.
+
+        Raises:
+            InterruptException: When the operator has not answered yet; the
+                caller turns it into a ``ToolInterruptEvent`` exactly as the
+                SDK does for a decorated tool.
+        """
+        if self._dashboard_grant(tool_input):
+            return None
+        agent = invocation_state.get("agent")
+        tool_context: ToolContext | None = None
+        if agent is not None:
+            tool_context = ToolContext(tool_use=tool_use, agent=agent, invocation_state=dict(invocation_state))
+        instruction = str(tool_input.get("instruction", ""))
+        provider = tool_input.get("policy_provider", "groot")
+        host = tool_input.get("policy_host", "localhost")
+        port = tool_input.get("policy_port")
+        # ``tool`` is the fixed word "robot" so the interrupt id and the audit
+        # source read the same for every robot; the target names which one.
+        return gate_motion(
+            "robot",
+            action,
+            self.tool_name_str,
+            f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
+            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched.",
+            tool_context,
+            allow_env=COMMAND_ALLOW_ENV,
+            allow_match=lambda allowed: "*" in allowed or action in allowed,
+        )
+
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
-    ) -> AsyncGenerator[ToolResultEvent, None]:
+    ) -> AsyncGenerator[ToolResultEvent | ToolInterruptEvent, None]:
         """Stream robot task execution with async actions."""
         try:
             tool_use_id = tool_use.get("toolUseId", "")
@@ -2837,6 +2936,22 @@ class Robot(TeleopMixin, AgentTool):
                     )
                     return
 
+                # Ask the operator before anything is dispatched: a refused or
+                # unanswered call is exactly as inert as one that never happened.
+                try:
+                    refusal = self._gate_motion(action, input_data, tool_use, invocation_state)
+                except InterruptException as exc:
+                    yield ToolInterruptEvent(tool_use, [exc.interrupt])
+                    return
+                if refusal is not None:
+                    yield ToolResultEvent(
+                        self._make_tool_result(
+                            tool_use_id,
+                            {"status": "error", "content": [{"text": f"{self.tool_name_str}: {refusal}"}]},
+                        )
+                    )
+                    return
+
                 # Execute task synchronously
                 task_result = self._execute_task_sync(instruction, policy_port, policy_host, policy_provider, duration)
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, task_result))
@@ -2857,6 +2972,20 @@ class Robot(TeleopMixin, AgentTool):
                                 "status": "error",
                                 "content": [{"text": "instruction and policy_port are required for start action"}],
                             },
+                        )
+                    )
+                    return
+
+                try:
+                    refusal = self._gate_motion(action, input_data, tool_use, invocation_state)
+                except InterruptException as exc:
+                    yield ToolInterruptEvent(tool_use, [exc.interrupt])
+                    return
+                if refusal is not None:
+                    yield ToolResultEvent(
+                        self._make_tool_result(
+                            tool_use_id,
+                            {"status": "error", "content": [{"text": f"{self.tool_name_str}: {refusal}"}]},
                         )
                     )
                     return

@@ -57,6 +57,11 @@ from strands_robots.utils import tcp_port_error
 from tests._daemon_executor import DaemonThreadExecutor
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
+
+
 # Ports no policy can be built from. ``0`` asks the kernel for an ephemeral port
 # rather than naming one to dial; the out-of-range values have nothing to
 # connect to; ``True``/``False`` are ``int`` subclasses that would act as

@@ -29,15 +29,11 @@ python examples/microduck/render_video.py \
     --gif docs/assets/microduck/microduck_walk.gif
 ```
 
-`render_video.py` steps the sim manually at the control frequency and captures
-each frame with a tracking camera locked to the pelvis, so the duck stays
-centered as it walks. `--vx`/`--vy`/`--vyaw` set the twist command, and any
-weight that runs on the default scene (`alpha_stand`, `roulade`,
-`alpha_sitstand`, `alpha_ground_pick`) drops straight in. The script builds
-`Robot("microduck")`, so the four skills that need a different scene -
-`roller`, `roller_crouch`, `ball_kick_left`, `ball_kick_right` - need the
-scene named for them in [Skill scenes](#skill-scenes) below.
-
+`--vx`/`--vy`/`--vyaw` set the twist command, and any weight that runs on the
+default scene (`alpha_stand`, `roulade`, `alpha_sitstand`, `alpha_ground_pick`)
+drops straight in. The four skills that need a different scene — `roller`,
+`roller_crouch`, `ball_kick_left`, `ball_kick_right` — need it named, see
+[Skill scenes](#skill-scenes).
 
 ## Install
 
@@ -73,10 +69,8 @@ for the runnable script.
 ## Skill scenes
 
 A shipped weight and the scene it was trained in are one pair. `Robot("microduck")`
-resolves the entry's declared asset - flat ground, no props - which is what the
-walking, standing, sitstand, roulade and ground-pick skills need. Four skills
-need something the default scene does not contain, and Pollen ships the scene
-for each one in the same asset directory:
+resolves the entry's declared asset — flat ground, no props; four skills need
+more, and Pollen ships their scenes in the same asset directory:
 
 | skill | scene | what the scene adds |
 | --- | --- | --- |
@@ -84,9 +78,9 @@ for each one in the same asset directory:
 | `roller`, `roller_crouch` | `scene_rollers.xml` | four passive ankle wheels, so the feet can roll |
 | `ball_kick_left`, `ball_kick_right` | `scene_ball.xml` | a 70 mm, 15 g ball placed in front of the duck |
 
-Reach a non-default scene by path. The registry entry names the fourteen-hinge
-model deliberately - it is the layout the catalog documents - so the variants are
-loaded as an explicit asset rather than resolved by name:
+Reach a non-default scene by path; the registry entry deliberately names the
+fourteen-hinge model the catalog documents, so variants load as an explicit
+asset:
 
 ```python
 from pathlib import Path
@@ -105,86 +99,55 @@ sim.reset()
 sim.run_policy(policy_object=MicroduckPolicy(onnx_path="roller.onnx"), duration=8.0)
 ```
 
-Running a skill on the default scene is not an error and reports success: a
-roller policy writes the same fourteen control targets, and with no wheels under
-the feet the duck simply stands; a ball-kick policy swings at a ball that is not
-there. Nothing refuses it, so the scene is the caller's to choose.
+Running a skill on the wrong scene is not an error: a roller policy with no
+wheels simply stands, a ball-kick policy swings at nothing, and both report
+success. The scene is the caller's to choose.
 
 ### The ball scene carries the ball, not the kick geometry
 
-`scene_ball.xml` places the prop, and where it sits is not where the kick policies
-were trained to find it. The scene declares the ball 0.3 m straight ahead
-(`ball.xml`: `pos="0.3 0 0.035"`). Pollen's training reset placed it 0.09 m ahead and
-0.042 m to the side of the kicking foot, in the robot's yaw frame - 3.3x closer, and
-offset laterally to the foot that swings.
-
-Loading the scene is therefore necessary and not sufficient. Driven from the shipped
-position, `ball_kick_left` completes and reports success while no robot body ever
-touches the ball: across a four-second rollout the closest any robot geom comes to the
-ball centre is 0.109 m, against a 0.035 m radius. The ball still travels forward on its
-own - its geom sets a deliberately low rolling resistance - which is why the miss reads
-as a weak kick rather than as a miss.
-
-A caller who wants the trained geometry teleports the ball before the rollout, which is
-what Pollen's runtime does at the moment a kick is triggered: write the ball free
-joint's `qpos` to that offset rotated into the trunk's yaw frame, zero the joint's
-`qvel`, and step. The file names the joint `ball_free`; `add_robot(name=...)` prefixes
-every joint with the name the caller passed, so resolve the name rather than assuming
-either spelling.
+`scene_ball.xml` declares the ball 0.3 m straight ahead (`ball.xml`:
+`pos="0.3 0 0.035"`). Pollen's training reset placed it 0.09 m ahead and
+0.042 m to the side of the kicking foot, in the robot's yaw frame — 3.3x closer
+and offset to the foot that swings. Driven from the shipped position,
+`ball_kick_left` reports success while no robot geom comes closer than 0.109 m
+to the ball centre (radius 0.035 m); the ball's low rolling resistance still
+carries it forward, so the miss reads as a weak kick. For the trained geometry,
+teleport the ball before the rollout as Pollen's runtime does: write the ball
+free joint's `qpos` to that offset rotated into the trunk's yaw frame, zero its
+`qvel`, step. The file names the joint `ball_free`, but `add_robot(name=...)`
+prefixes every joint with the caller's name, so resolve the name rather than
+assuming either spelling.
 
 ### Reading joint positions on the rollers scene
 
 `scene_ball.xml` appends the ball's free joint after the robot's, so the robot's
-`qpos` layout is byte-for-byte the default one. `scene_rollers.xml` does not:
-it inserts two passive wheel joints after `left_ankle` and two more after
-`right_ankle`, which moves nine of the fourteen actuated joints to a different
-`qpos` index. A consumer that reads a flat `qpos[7:21]` slice therefore reads
-different joints there - the two left wheels arrive where `neck_pitch` and
-`head_pitch` sit on the default scene.
-
-The actuator order is identical across all three scenes, so a policy writing
-`ctrl` is unaffected, and `MicroduckPolicy` reads its observation by joint name
-rather than by slice, so the provider is immune either way. Only a raw position
-read has to care.
+`qpos` layout is the default one. `scene_rollers.xml` inserts two passive wheel
+joints after each ankle, which moves nine of the fourteen actuated joints to a
+different `qpos` index — a flat `qpos[7:21]` read gets the two left wheels where
+`neck_pitch` and `head_pitch` sit on the default scene. The actuator order is
+identical across all three scenes and `MicroduckPolicy` reads by joint name, so
+only a raw position read has to care.
 
 ### The stance every weight was trained in
 
-A weight and its scene are one pair; so are a weight and the stance it starts
-from. Every shipped Pollen weight bakes that stance into its ONNX metadata as
-`default_joint_pos`, and all nine declare the same fourteen values.
-`MicroduckPolicy` reads it into `default_pose` and decodes every action relative
-to it - `motor_target = default_pose + raw_action * action_scale` - so the stance
-is not advice, it is the origin the network's output is measured from. The same
-values ship as `strands_robots.policies.microduck.MICRODUCK_DEFAULT_POSE`, the
-fallback the provider uses when a session carrying no metadata is injected.
-
-The asset ships that stance too, as the `STAND` keyframe in `scene.xml` and
-`scene_rollers.xml`. Name it at spawn and the robot starts there:
+Every shipped weight bakes its start stance into the ONNX metadata as
+`default_joint_pos` (all nine declare the same fourteen values); actions decode
+as `motor_target = default_pose + raw_action * action_scale`, so the stance is
+the origin the network's output is measured from. The same values ship as
+`strands_robots.policies.microduck.MICRODUCK_DEFAULT_POSE`. The asset carries
+the stance as the `STAND` keyframe of `scene.xml` and `scene_rollers.xml`; name
+it at spawn and every `reset()` restores it:
 
 ```python
 sim = Robot("microduck", urdf_path=str(scene), keyframe="STAND")
 ```
 
-A keyframe spawn is sticky across resets: `sim.reset()` restores the pose and the
-actuator command that holds it, so every episode of a `run_policy` + `reset` loop
-begins from the same stance.
-
-Spawning without `keyframe` is not an error and reports success. The robot starts
-at the zero configuration, 0.458 rad from the trained stance at the widest joint
-- legs straight rather than crouched - while the policy still decodes relative to
-the stance it expects. Nothing refuses it, so the first inference of the rollout
-reads a pose no shipped weight was trained on.
-
-Two details a caller meets:
-
-- The keyframe is named `STAND`. The asset's own comment calls the current values
-  "STAND2", because they supersede an earlier `STAND` that is commented out
-  beside them; the live keyframe kept the name. `keyframe="STAND2"` is refused,
-  and the refusal names the keyframes the model does declare.
-- `scene_ball.xml` declares no keyframe at all, so the route above is unavailable
-  on the one scene a ball kick needs. Seat the stance yourself there, reading it
-  from `MICRODUCK_DEFAULT_POSE` rather than copying the numbers - the asset has
-  already revised this pose once.
+Spawning without `keyframe` is not an error: the robot starts at the zero
+configuration, 0.458 rad from the trained stance at the widest joint. The live
+keyframe is `STAND` although the asset's comment calls the values "STAND2"
+(`keyframe="STAND2"` is refused naming the declared keyframes), and
+`scene_ball.xml` declares no keyframe at all — seat the stance there yourself
+from `MICRODUCK_DEFAULT_POSE`, not copied numbers.
 
 ## The observation contract
 
@@ -202,17 +165,11 @@ The vector is a fixed float32 concatenation (measured off Pollen's reference
 
 Total width is `48 + C`: **61** for the shipped alpha policies (C = 13) and 51
 for legacy twist-only policies (C = 3). The width is read from `command_names`,
-never hardcoded, and unused command slots stay present and zero (the
-dead-weight rule) so one observation layout serves every skill. Actions decode
-as `motor_target = DEFAULT_POSE + action * action_scale`.
-
-`action_scale` is the only path from the network's output to the joint targets,
-so it must be a positive finite number. A scale of `0` would make every target
-exactly `DEFAULT_POSE` — the network's decision discarded and the biped holding
-its nominal stance while the rollout reports success — and a non-finite one
-would make all fourteen targets `nan`. Both routes to the decode are held to
-that domain: an explicit `action_scale=` and the value read from the ONNX
-`action_scale` metadata.
+never hardcoded, and unused command slots stay present and zero so one layout
+serves every skill. `action_scale` — explicit or read from the ONNX metadata —
+must be a positive finite number: `0` would make every target exactly
+`DEFAULT_POSE` while the rollout reports success, and a non-finite one would
+make all fourteen targets `nan`.
 
 ## Commanding motion
 
@@ -224,23 +181,15 @@ wholesale with `command=`:
 await policy.get_actions(obs, "", target_velocity=[0.3, 0.0, 0.2])  # vx, vy, ω
 ```
 
-`target_velocity` takes three components (`[vx, vy, omega]`) or two
-(`[vx, vy]`, which leaves `omega` at its current value - the command vector
-persists across ticks). Any other component count is refused rather than
-truncated or partially written, and a `nan`/`inf` component is refused before it
-reaches the command; `command=` must be `command_names`-wide and finite for the
-same reasons.
-
-What the twist slots MEAN, however, is a property of the loaded weights rather
-than of this provider. Pollen's locomotion exports (`alpha_walking`,
-`alpha_stand`, the `roller*` pair) read them as a velocity, which is exactly what
-`target_velocity` writes. Other exports in the family read the same three slots
-differently - `alpha_ground_pick`, for instance, reads them as a progress
-encoding through a one-shot motion rather than as a velocity - and for those a
-caller supplies the slots wholesale through `command=` and advances them itself.
-`target_velocity` is a locomotion kwarg, not a universal one, and the ONNX
-metadata does not distinguish the two: several exports declare the same
-`command_names` (`twist`) while reading it under different conventions.
+`target_velocity` takes three components or two (`[vx, vy]`, leaving `omega` as
+it was — the command vector persists across ticks); any other count, or a
+non-finite component, is refused before it reaches the command, and `command=`
+must be `command_names`-wide and finite. What the twist slots MEAN is a property
+of the weights: the locomotion exports (`alpha_walking`, `alpha_stand`, the
+`roller*` pair) read them as a velocity, but `alpha_ground_pick` reads the same
+three slots as a progress encoding through a one-shot motion, and the ONNX
+metadata does not distinguish the two. For those, supply the slots through
+`command=` and advance them yourself.
 
 ## Hot-swapping skills
 
@@ -262,37 +211,14 @@ bundle = MicroduckPolicyBundle(
 ```
 
 Select explicitly with `get_actions(..., select="walk")` or `bundle.switch(...)`.
-
-An explicit selection is not undone by the gate: it arbitrates *between*
-`move_key` and `idle_key`, and leaves any other skill alone until a gate key is
-selected again. That matters most for `alpha_sitstand`, whose `twist[0]` is a
-posture flag (`1` sit, `0` stand) rather than a velocity — both of its commands
-have a magnitude the gate would otherwise read as a walk or an idle request, so
-neither would have reached the skill that was asked for.
-
-`switch_on_velocity` must be a positive finite number. The gate compares a
-magnitude, so a threshold of `0` or below could never select the idle skill and
-a non-finite one could never select the move skill. Omit it (the default) to
-leave the gate off and switch only explicitly.
-
-The velocity it is compared against is held to the same standard as the threshold
-it is compared with. With the gate on, a `target_velocity` this tick cannot honor
-is refused before the gate arbitrates, naming the bundle and the parameter — so a
-refused tick leaves the active skill exactly as it was, rather than selecting the
-idle skill from a `nan` magnitude and keeping that selection on every tick after.
-The accepted values are the ones the active skill accepts: finite numeric
-components, and the same two component counts documented above. An absent
-`target_velocity` is still simply "no goal this tick" and leaves the selection
-alone.
-
-`move_key` and `idle_key` name the two skills that gate selects between, and each
-must be one of the bundle's own keys whenever the gate is enabled. The gate reads
-both every tick, so a key naming no held skill leaves it inert rather than
-failing — a bundle keyed by the weight names it loads (`alpha_walking`,
-`alpha_stand`) and left on the defaults `"walk"`/`"stand"` constructs, reports a
-validated threshold, and then never switches. Key by the names the gate expects,
-or pass `move_key=`/`idle_key=` to match the keys you used. With the gate off
-neither is read, and neither is checked.
+The gate arbitrates only *between* `move_key` and `idle_key` (defaults `"walk"` /
+`"stand"`) and leaves any other explicit selection alone — which is what lets
+`alpha_sitstand`, whose `twist[0]` is a posture flag, be selected at all.
+`switch_on_velocity` must be positive and finite (omit it to switch only
+explicitly); a `target_velocity` the active skill would refuse is refused before
+the gate reads it, so the selection never sticks on a `nan` magnitude; and with
+the gate on both keys must name held skills — a bundle keyed by weight names and
+left on the default keys constructs, validates, and never switches.
 
 ## Byte-compatibility
 
