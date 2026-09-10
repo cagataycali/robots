@@ -367,3 +367,24 @@ class TestTheRuntimeRungKeepsItsPrecedence:
             import_trainer_class("definitely_not_a_trainer_xyz")
         with pytest.raises(ValueError, match="No trainer registered"):
             create_trainer("definitely_not_a_trainer_xyz")
+
+
+class TestExportRefusesMissingCheckpoint:
+    """A failed train() returns checkpoint_dir=None; export must not pass it through as an artifact."""
+
+    def test_none_checkpoint_is_refused_naming_the_value(self):
+        from strands_robots.training.mock import MockTrainer
+
+        with pytest.raises(ValueError, match=r"checkpoint_dir must name a checkpoint directory, got None"):
+            MockTrainer().export(TrainSpec(dataset_root="/tmp/x"), None)  # type: ignore[arg-type]
+
+    def test_empty_checkpoint_is_refused(self):
+        from strands_robots.training.mock import MockTrainer
+
+        with pytest.raises(ValueError, match=r"got ''"):
+            MockTrainer().export(TrainSpec(dataset_root="/tmp/x"), "")
+
+    def test_existing_directory_passes_through(self, tmp_path):
+        from strands_robots.training.mock import MockTrainer
+
+        assert MockTrainer().export(TrainSpec(dataset_root="/tmp/x"), str(tmp_path)) == str(tmp_path)

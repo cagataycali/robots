@@ -163,6 +163,26 @@ class TrainResult:
     message: str = ""
 
 
+def _require_checkpoint_dir(provider: str, checkpoint_dir: Any) -> None:
+    """Refuse an ``export`` of nothing.
+
+    Raises:
+        ValueError: When ``checkpoint_dir`` is not a non-empty string - the bad
+            value is interpolated, and ``None`` (what a failed ``train()``
+            returns) is named as such. Existence on disk is deliberately not
+            checked here: RL trainers call ``export`` on the path their own
+            ``save_checkpoint`` just returned, and the tool boundary
+            (``train_policy`` action=export) already resolves the checkpoint
+            via ``latest_checkpoint``.
+    """
+    if not isinstance(checkpoint_dir, str) or not checkpoint_dir:
+        raise ValueError(
+            f"{provider}.export: checkpoint_dir must name a checkpoint directory, "
+            f"got {checkpoint_dir!r} - a failed train() returns checkpoint_dir=None; "
+            "check TrainResult.status before exporting"
+        )
+
+
 class Trainer(ABC):
     """Abstract base class for post-tuning a policy of one provider family.
 
@@ -494,7 +514,14 @@ class Trainer(ABC):
         HF-native backends whose checkpoints ``create_policy`` loads directly;
         Cosmos overrides to convert DCP -> safetensors. The returned path MUST
         be something ``create_policy`` accepts.
+
+        Raises:
+            ValueError: If ``checkpoint_dir`` is ``None`` or empty. A failed
+                :meth:`train` returns ``checkpoint_dir=None``, and passing
+                that straight through here used to return ``None`` as if an
+                artifact had been produced.
         """
+        _require_checkpoint_dir(self.provider_name, checkpoint_dir)
         return checkpoint_dir
 
     def latest_checkpoint(self, output_dir: str) -> str | None:
