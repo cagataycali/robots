@@ -57,35 +57,49 @@ plus `status()` for a "RUNNING ≠ learning" verdict on an in-flight job.
 
 ## The data loop, end to end
 
+```bash
+pip install "strands-robots[sim-mujoco,lerobot]" "lerobot[training]"   # training needs accelerate
+```
+
 ```python
 from strands_robots import Robot, MockPolicy, create_policy
 from strands_robots.training import create_trainer, TrainSpec
 
-# 1. RECORD - one episode is enough to smoke-test the loop
-sim = Robot("so100", mesh=False)
-sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
-sim.start_recording(repo_id="local/demo", root="/tmp/demo_ds",
-                    # fps must equal the rollout's control_frequency (default 50.0)
-                    fps=50, task="pick up the red cube", overwrite=True)
-sim.run_policy(robot_name="so100", policy_object=MockPolicy(),
-               instruction="pick up the red cube", n_steps=60)
-sim.stop_recording()        # writes a LeRobotDataset v3 at /tmp/demo_ds
+if __name__ == "__main__":   # lerobot's DataLoader workers re-import this file (macOS spawn)
+    # 1. RECORD - one episode is enough to smoke-test the loop
+    sim = Robot("so100", mesh=False)
+    sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
+    sim.start_recording(repo_id="local/demo", root="/tmp/demo_ds",
+                        # fps must equal the rollout's control_frequency (default 50.0)
+                        fps=50, task="pick up the red cube", overwrite=True,
+                        cameras=["front"])   # else the built-in overview camera is recorded too
+    sim.run_policy(robot_name="so100", policy_object=MockPolicy(),
+                   instruction="pick up the red cube", n_steps=60)
+    sim.stop_recording()        # writes a LeRobotDataset v3 at /tmp/demo_ds
 
-# 2. TRAIN - thin wrapper over lerobot_train; ACT from scratch on CPU
-trainer = create_trainer("lerobot_local", device="cpu")
-spec = TrainSpec(dataset_root="/tmp/demo_ds", base_model="",
-                 output_dir="/tmp/demo_ft", steps=2, save_freq=2,
-                 global_batch_size=2, extra={"policy_type": "act"})
-result = trainer.train(spec)
+    # 2. TRAIN - thin wrapper over lerobot_train; ACT from scratch on CPU
+    trainer = create_trainer("lerobot_local", device="cpu")
+    spec = TrainSpec(dataset_root="/tmp/demo_ds", base_model="",
+                     output_dir="/tmp/demo_ft", steps=2, save_freq=2,
+                     global_batch_size=2, extra={"policy_type": "act"})
+    result = trainer.train(spec)
 
-# 3. EXPORT - loadable artifact (HF-native passthrough for lerobot/groot)
-ckpt = trainer.export(spec, result.checkpoint_dir)
+    # 3. EXPORT - loadable artifact (HF-native passthrough for lerobot/groot)
+    ckpt = trainer.export(spec, result.checkpoint_dir)
 
-# 4. DEPLOY - load the freshly-trained checkpoint back as a Policy
-policy = create_policy(ckpt, device="cpu")
-sim.run_policy(robot_name="so100", policy_object=policy,
-               instruction="pick up the red cube", n_steps=15)
+    # 4. DEPLOY - load the freshly-trained checkpoint back as a Policy
+    policy = create_policy(ckpt, device="cpu")
+    sim.run_policy(robot_name="so100", policy_object=policy,
+                   instruction="pick up the red cube", n_steps=15)
 ```
+
+Three details the snippet carries on purpose: the `[training]` extra, because
+`lerobot_local` needs `accelerate` on CPU as well as GPU (see
+[Dependencies & extras](#dependencies-extras-per-provider)); the
+`__main__` guard, because the trainer's DataLoader workers re-import the
+script they were started from and would otherwise re-run the recording; and
+`cameras=["front"]`, because a recording with no camera list captures every
+camera the world has, including the built-in overview one.
 
 Swap `create_trainer("lerobot_local")` → `"groot"` or `"cosmos3"` and **only the
 provider string changes** - exactly how `Robot("so100", mode="real")` swaps
