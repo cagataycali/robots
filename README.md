@@ -1201,7 +1201,7 @@ Note the `trust_remote_code` gate on `lerobot_local` (see
 [Policy providers](#policy-providers)) and the mesh CA-pinning / thing-name
 validation controls in the [Configuration](docs/reference/configuration.md) matrix
 Rotating the pinned Amazon Root CA1 has an ordered procedure:
-[CA Pin Rotation Runbook](#ca-pin-rotation-runbook).
+[CA Pin Rotation Runbook](docs/reference/configuration.md#ca-pin-rotation-runbook).
 
 ## Contributing
 
