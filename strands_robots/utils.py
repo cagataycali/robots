@@ -2899,6 +2899,63 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     return None
 
 
+def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_camera_tokens: bool) -> str | None:
+    """Return an error message if ``name`` cannot address the camera it claims.
+
+    The whole name rule for a camera creation site, in one place and in one
+    order: :func:`entity_name_error` first (a value that cannot be a registry
+    key at all), then :func:`reserved_camera_name_error` (a ``str`` this
+    backend's own render entry points resolve past). Every ``add_camera``
+    reads it, so the order is a property of the rule rather than of whichever
+    body a caller reached.
+
+    That order was the defect this composition removes. The two guards had been
+    applied separately at each site, and the sites disagreed about where the
+    name rule sits relative to the *value* rules: MuJoCo refused a routing token
+    before validating ``position`` / ``target`` / ``fov`` / the pixel
+    dimensions, Newton refused it after all four. Both refused the same request
+    -- which is all the cross-backend parity test compared -- while naming
+    different causes. Measured on this tree, one ``create_world`` on each
+    backend::
+
+        add_camera("default", fov=0.0)          mujoco: 'default' is reserved
+                                                newton: 'fov' must be in (0, 180)
+        add_camera("default", position=[nan,1,1]) mujoco: 'default' is reserved
+                                                newton: 'position' must contain finite numbers
+        add_camera("free", width=0)             mujoco: 'free' is reserved
+                                                newton: width must be a positive integer
+
+    A caller fixing what the message names learns the name is unusable only on
+    the round trip after it, and the reserved-name refusal is the one fault no
+    change of value can clear. :func:`reserved_camera_name_error` documents its
+    own dependence on the order ("that guard runs first at every call site, so
+    this one is only ever reached with a genuine ``str``") - an assumption no
+    single site owned until this one did.
+
+    Args:
+        method: The calling method, for the message prefix (e.g. ``"add_camera"``).
+        param_name: The parameter being validated, for the message.
+        name: The claimed camera name. Anything at all; a value that is not a
+            ``str`` is refused by the first guard.
+        routes_free_camera_tokens: Whether this backend's render entry points
+            resolve :data:`FREE_CAMERA_TOKENS` to the free camera. Only a backend
+            that routes them may refuse them as names - the Isaac backend's
+            ``get_frame`` looks a name up directly, so ``"default"`` there is an
+            ordinary camera name and is that backend's documented signature
+            default. Passing the flag makes that divergence a stated property of
+            the call rather than a guard one site happens to omit.
+
+    Returns:
+        The first refusal in the documented order, or ``None`` when *name* can
+        address a camera on this backend.
+    """
+    if (err := entity_name_error(method, param_name, name)) is not None:
+        return err
+    if routes_free_camera_tokens:
+        return reserved_camera_name_error(method, param_name, name)
+    return None
+
+
 def published_string_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message if a field published as a string did not arrive as one.
 
