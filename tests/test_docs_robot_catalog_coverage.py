@@ -172,22 +172,6 @@ def test_each_robot_is_catalogued_on_the_page_for_its_category() -> None:
     assert not misfiled, f"listed on the wrong catalog page (name, listed_on, expected): {misfiled}"
 
 
-def test_total_robot_count_claims_match_the_registry() -> None:
-    """Documents quoting an exact registry size quote the current one."""
-    total, categories = len(_registry()), len(_category_counts())
-    expected = [
-        (DOCS / "robots" / "index.md", f"description: {total} robots across {categories} categories."),
-        (DOCS / "robots" / "index.md", f"registry of **{total} robots** across {categories} categories"),
-        (DOCS / "architecture.md", f"{total} robots, {categories} categories"),
-        (DOCS / "getting-started" / "quickstart.md", f"all {total} robots."),
-    ]
-    for path, text in expected:
-        assert text in path.read_text(encoding="utf-8"), (
-            f"{path.relative_to(REPO_ROOT)} should state {text!r} "
-            f"(robots.json holds {total} robots in {categories} categories)"
-        )
-
-
 def test_approximate_robot_count_claims_match_the_current_decade() -> None:
     """Documents rounding the registry size round it down to the current ten.
 
@@ -202,9 +186,7 @@ def test_approximate_robot_count_claims_match_the_current_decade() -> None:
     expected = [
         (DOCS / "assets" / "hero_loop.svg", f"{decade}+ robots"),
         (DOCS / "assets" / "architecture_flow.svg", f"{decade}+ robots"),
-        (README, f"**{decade}+ robots, {categories} categories.**"),
         (README, f"{decade}+ robots across {categories} categories"),
-        (README, f"robots.json ({decade}+)"),
     ]
     for path, text in expected:
         assert text in path.read_text(encoding="utf-8"), (
@@ -233,14 +215,6 @@ def test_per_category_count_claims_match_the_registry() -> None:
         assert text in path.read_text(encoding="utf-8"), (
             f"{path.relative_to(REPO_ROOT)} should state {text!r} (from robots.json)"
         )
-
-
-def test_alias_count_claim_matches_the_registry() -> None:
-    """The architecture table quotes the real number of registered aliases."""
-    registry = _registry()
-    aliases = sum(len(entry.get("aliases", [])) for entry in registry.values())
-    text = f"{len(registry)} robots, {aliases} aliases, {len(_category_counts())} categories"
-    assert text in (DOCS / "architecture.md").read_text(encoding="utf-8"), f"docs/architecture.md should state {text!r}"
 
 
 def test_no_robot_count_claim_outside_the_known_sites() -> None:

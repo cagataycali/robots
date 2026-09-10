@@ -101,7 +101,8 @@ def attached_runtime(driver: Any) -> Any:
 
     ``DeviceDriver._device`` belongs to ``device_connect_edge``, whose
     ``__init__`` initializes it to ``None`` and whose ``set_device`` later
-    rebinds it to the runtime - ``drivers/base.py`` lines 146 and 184 on both
+    rebinds it to the runtime - ``device_connect_edge/drivers/base.py`` lines
+    146 and 184 on both
     the published 0.2.5 this tree locks and ``arm/device-connect@main``, the ref
     CI redirects to when the integration changes. So an unattached driver
     presents as a ``None`` *value*, which is the case

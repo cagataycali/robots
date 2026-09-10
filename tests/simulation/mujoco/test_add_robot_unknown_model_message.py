@@ -21,12 +21,7 @@ kwarg they had just passed. It is refused naming that parameter instead, the way
 path ("File not found"), which is the boundary.
 """
 
-import os
-import sys
-
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 
 @pytest.fixture

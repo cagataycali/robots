@@ -265,20 +265,20 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 #     * The shard-size claim understated lerobot's defaults: 100 MB is the
 #       data-parquet default; video MP4 shards default to 200 MB. ---
 
-_README = _REPO_ROOT / "README.md"
+_README = _REPO_ROOT / "docs" / "recording.md"  # the bucket / streamed-training guidance page (was README)
 _DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
 
 
 def test_readme_streamed_training_invocation_is_current() -> None:
     text = _README.read_text()
     assert "lerobot.scripts.train" not in text, (
-        "README.md instructs the removed `python -m lerobot.scripts.train`; "
+        "docs/recording.md instructs the removed `python -m lerobot.scripts.train`; "
         "lerobot renamed the trainer module to `lerobot.scripts.lerobot_train`"
     )
     # the documented invocation is the entry point with draccus --dotted flags
-    assert "lerobot-train" in text, "README.md lost its `lerobot-train` reference"
+    assert "lerobot-train" in text, "docs/recording.md lost its `lerobot-train` reference"
     assert "--dataset.streaming=true" in text, (
-        "README.md streamed-training example must use draccus `--dotted.key=value` flags, not Hydra `key=value` args"
+        "docs/recording.md streamed-training example must use draccus `--dotted.key=value` flags, not Hydra `key=value` args"
     )
 
 

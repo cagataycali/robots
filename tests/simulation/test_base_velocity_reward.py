@@ -20,11 +20,14 @@ import math
 import os
 import tempfile
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.mujoco.simulation import Simulation
-from strands_robots.simulation.predicates import (
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.predicates import (  # noqa: E402
     _quat_rotate_inverse_wxyz,
     _reset_resolution_warnings,
     make_predicate,

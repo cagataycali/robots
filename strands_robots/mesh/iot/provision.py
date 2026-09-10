@@ -76,8 +76,9 @@ _AMAZON_ROOT_CA1_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem
 #
 # The ordered procedure for an actual rotation -- verify out of band,
 # ship a release carrying both pins, wait for fleet uptake, drop the old
-# one in a follow-up -- is published for operators in README >
-# "CA Pin Rotation Runbook" (issue #250). Every refusal below names it, so
+# one in a follow-up -- is published for operators in
+# docs/reference/configuration.md > "CA Pin Rotation Runbook" (issue #250).
+# Every refusal below names it, so
 # the procedure is reachable from the failure that needs it.
 #
 # this is now a TUPLE so a CA rotation can ship as a code change
@@ -96,7 +97,7 @@ _AMAZON_ROOT_CA1_PINS: tuple[str, ...] = ("2c43952ee9e000ff2acc4e2ed0897c0a72ad5
 # Where the rotation procedure is published. One owner, so the three pin
 # refusals below cannot name three different places (or drift from the
 # heading AGENTS.md > "Operational Runbooks for Security Pins" cites).
-_CA_ROTATION_RUNBOOK = 'README > "CA Pin Rotation Runbook"'
+_CA_ROTATION_RUNBOOK = 'docs/reference/configuration.md > "CA Pin Rotation Runbook"'
 
 # Regex: 64 hex chars, lowercase. Matches what hashlib.sha256(...).hexdigest()
 # emits and rejects anything else (operator typos surface immediately).
