@@ -148,6 +148,32 @@ _RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "
 # Currently pi0, pi05, and smolvla expose the field (pi0_fast does NOT).
 _EXPERT_ONLY_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
 
+# LeRobot policy types whose config exposes ``embodiment_tag`` - the tag that
+# selects WHICH state/action projector head the run trains, so a tag the caller
+# did not ask for trains a different head from the one their robot's data was
+# recorded on. Every other lerobot policy takes its state/action shape from the
+# dataset features and has no such field. Discovered live per policy type off
+# the config class (see :func:`_policy_supports_embodiment_tag`); the static set
+# is the offline FALLBACK. Currently only groot exposes the field.
+_EMBODIMENT_TAG_POLICY_TYPES_FALLBACK = frozenset({"groot"})
+
+# ``TrainSpec.tune`` component -> the lerobot policy-config field that freezes
+# or unfreezes it. ``expert_only`` is deliberately absent: it is a ``method``,
+# gated by :func:`_policy_supports_expert_only`, and :meth:`_validate_policy`
+# reads it out of ``tune`` only for the lora mutual-exclusion check.
+_TUNE_COMPONENT_FIELDS = {
+    "llm": "tune_llm",
+    "visual": "tune_visual",
+    "projector": "tune_projector",
+    "diffusion": "tune_diffusion_model",
+}
+
+# LeRobot policy types whose config exposes the ``_TUNE_COMPONENT_FIELDS``
+# toggles. Discovered live per policy type off the config class (see
+# :func:`_policy_tune_components`); the static set is the offline FALLBACK.
+# Currently only groot exposes them.
+_TUNE_COMPONENT_POLICY_TYPES_FALLBACK = frozenset({"groot"})
+
 # LeRobot policy types whose config normalizes STATE/ACTION with QUANTILES
 # (``NormalizationMode.QUANTILES``). Such a policy needs the dataset's stats to
 # carry the quantile keys (q01, q10, q50, q90, q99); a dataset recorded before
@@ -291,6 +317,47 @@ def _policy_supports_expert_only(ptype: str) -> bool:
     if reg is not None and ptype in reg:
         return any(f.name == "train_expert_only" for f in dataclasses.fields(reg[ptype]))
     return ptype in _EXPERT_ONLY_POLICY_TYPES_FALLBACK
+
+
+def _policy_supports_embodiment_tag(ptype: str) -> bool:
+    """Whether ``ptype``'s lerobot config exposes ``embodiment_tag``.
+
+    ``embodiment_tag`` selects which state/action projector head a run trains,
+    so a policy that exposes it MUST be told the caller's tag: leaving it at the
+    config default trains the default head while reporting success, which is the
+    same silent no-op :func:`_policy_supports_expert_only` describes for
+    ``train_expert_only``. Probed live off the registry's config *class* (a
+    dataclass field lookup, no instantiation - so no device warnings or
+    construction cost), so any policy lerobot adds with an embodiment tag is
+    recognized with zero per-type maintenance. Falls back to the documented
+    static set when lerobot's registry is unavailable offline.
+    """
+    reg = _policy_registry()
+    if reg is not None and ptype in reg:
+        return any(f.name == "embodiment_tag" for f in dataclasses.fields(reg[ptype]))
+    return ptype in _EMBODIMENT_TAG_POLICY_TYPES_FALLBACK
+
+
+def _policy_tune_components(ptype: str) -> set[str]:
+    """The :attr:`~strands_robots.training.base.TrainSpec.tune` components ``ptype`` can toggle.
+
+    A VLA whose config carries per-component switches can freeze or unfreeze its
+    language backbone, vision tower, projector and action head independently.
+    Probed live off the registry's config *class* by field name (see
+    :data:`_TUNE_COMPONENT_FIELDS`), the same dataclass-field lookup its three
+    sibling probes use, so a policy lerobot adds with such switches is
+    recognized with zero per-type maintenance. Falls back to the documented
+    static set when lerobot's registry is unavailable offline.
+
+    Returns:
+        The subset of :data:`_TUNE_COMPONENT_FIELDS` keys ``ptype`` exposes;
+        empty for a policy that tunes as a whole.
+    """
+    reg = _policy_registry()
+    if reg is None or ptype not in reg:
+        return set(_TUNE_COMPONENT_FIELDS) if ptype in _TUNE_COMPONENT_POLICY_TYPES_FALLBACK else set()
+    names = {f.name for f in dataclasses.fields(reg[ptype])}
+    return {component for component, field in _TUNE_COMPONENT_FIELDS.items() if field in names}
 
 
 def _policy_uses_quantile_norm(ptype: str) -> bool:
@@ -1083,8 +1150,72 @@ class LerobotTrainer(Trainer):
                 if isinstance(v, str) and v.startswith("-"):
                     problems.append(f"sample_weighting['{k}'] must not start with '-' (would parse as a stray flag)")
 
+        problems.extend(self._embodiment_problems(spec, ptype))
+        problems.extend(self._tune_component_problems(spec, ptype))
         problems.extend(self._quantile_stats_problems(spec, ptype))
         return problems
+
+    def _embodiment_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
+        """Preflight ``embodiment`` against the policy's own ``embodiment_tag``.
+
+        The mirror of the ``relative_actions`` and ``method='expert_only'``
+        checks above: a spec field that names a policy-config field is refused
+        for a policy whose config lacks it, rather than being dropped on the
+        ``hasattr`` guard in :meth:`_build_policy_config` and leaving the run to
+        train the default head while reporting success.
+        """
+        if not spec.embodiment or _policy_supports_embodiment_tag(ptype):
+            return []
+        supported = sorted(t for t in _lerobot_policy_types() if _policy_supports_embodiment_tag(t))
+        return [
+            f"embodiment='{spec.embodiment}' is not supported by policy_type '{ptype}' "
+            f"(only {supported} expose embodiment_tag; every other lerobot policy takes its "
+            "state/action shape from the dataset features); drop embodiment or pick a "
+            "supporting policy"
+        ]
+
+    def _tune_component_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
+        """Preflight ``tune``: first the spelling, then the policy's own toggles.
+
+        Two ways a component toggle goes quiet, and both end the same way - the
+        run trains the config default and reports success. A key naming no
+        component (``vision`` for ``visual``) matches nothing to forward, and a
+        recognized component on a policy with no such field has nothing to set.
+        """
+        requested = {k for k in spec.tune if k != "expert_only"}
+        if not requested:
+            return []
+        problems: list[str] = []
+        unknown = sorted(requested - set(_TUNE_COMPONENT_FIELDS))
+        if unknown:
+            problems.append(
+                f"tune key(s) {unknown} name no tunable component (accepted: "
+                f"{sorted(_TUNE_COMPONENT_FIELDS)}, plus 'expert_only' for the method "
+                "mutual-exclusion check)"
+            )
+        unsupported = sorted((requested & set(_TUNE_COMPONENT_FIELDS)) - _policy_tune_components(ptype))
+        if unsupported:
+            supported = sorted(t for t in _lerobot_policy_types() if _policy_tune_components(t))
+            problems.append(
+                f"tune component(s) {unsupported} are not supported by policy_type '{ptype}' "
+                f"(only {supported} expose per-component tune_* fields; every other lerobot "
+                "policy tunes as a whole); drop them from tune or pick a supporting policy"
+            )
+        return problems
+
+    def _tune_component_fields(self, spec: TrainSpec) -> dict[str, bool]:
+        """The requested component toggles, keyed by lerobot policy-config field.
+
+        Iterates :data:`_TUNE_COMPONENT_FIELDS` rather than ``spec.tune`` so the
+        order is the canonical one whatever order the caller's dict has - which
+        is what makes :meth:`build_command`'s argv comparable run to run.
+        ``expert_only`` is excluded: it is a ``method``, not a component.
+        """
+        return {
+            field: bool(spec.tune[component])
+            for component, field in _TUNE_COMPONENT_FIELDS.items()
+            if component in spec.tune
+        }
 
     def _quantile_stats_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
         """Preflight the dataset's quantile stats for a QUANTILES-normalizing policy.
@@ -1286,6 +1417,10 @@ class LerobotTrainer(Trainer):
                 cmd.append("--policy.train_expert_only=true")
             if self._relative_actions(spec):
                 cmd.append("--policy.use_relative_actions=true")
+            if spec.embodiment:
+                cmd.append(f"--policy.embodiment_tag={spec.embodiment}")
+            for field_name, enabled in self._tune_component_fields(spec).items():
+                cmd.append(f"--policy.{field_name}={'true' if enabled else 'false'}")
             sw = self._sample_weighting_dict(spec)
             if sw is not None:
                 for key in ("type", "progress_path", "head_mode", "kappa", "epsilon"):
@@ -1616,6 +1751,25 @@ class LerobotTrainer(Trainer):
                     f"use_relative_actions field (supported: {rel_supported})"
                 )
             policy_cfg.use_relative_actions = True
+        if spec.embodiment:
+            if not hasattr(policy_cfg, "embodiment_tag"):
+                tagged = sorted(t for t in _lerobot_policy_types() if _policy_supports_embodiment_tag(t))
+                raise ValueError(
+                    f"embodiment='{spec.embodiment}' was requested but policy_type '{ptype}' has "
+                    "no 'embodiment_tag' field (its state/action shape comes from the dataset "
+                    f"features, not a tag; supported: {tagged}). Drop embodiment, or pick a "
+                    "supporting policy."
+                )
+            policy_cfg.embodiment_tag = spec.embodiment
+        for field_name, enabled in self._tune_component_fields(spec).items():
+            if not hasattr(policy_cfg, field_name):
+                toggleable = sorted(t for t in _lerobot_policy_types() if _policy_tune_components(t))
+                raise ValueError(
+                    f"tune requested '{field_name}' but policy_type '{ptype}' has no such field "
+                    f"(it tunes as a whole; per-component toggles: {toggleable}). Drop the "
+                    "component from tune, or pick a supporting policy."
+                )
+            setattr(policy_cfg, field_name, enabled)
 
         peft_cfg = None
         if spec.method == "lora":
