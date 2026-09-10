@@ -4235,7 +4235,9 @@ dashboard = [
     { name = "webauthn" },
 ]
 dev = [
+    { name = "msgpack" },
     { name = "mypy" },
+    { name = "pyserial" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
@@ -4416,6 +4418,7 @@ requires-dist = [
     { name = "mink", marker = "extra == 'sim-newton'", specifier = ">=0.0.4" },
     { name = "msgpack", marker = "extra == 'all'", specifier = ">=1.0.0,<2.0.0" },
     { name = "msgpack", marker = "extra == 'cosmos3-service'", specifier = ">=1.0.0,<2.0.0" },
+    { name = "msgpack", marker = "extra == 'dev'", specifier = ">=1.0.0,<2.0.0" },
     { name = "msgpack", marker = "extra == 'groot-service'", specifier = ">=1.0.0,<2.0.0" },
     { name = "msgpack", marker = "extra == 'moveit2'", specifier = ">=1.0.0,<2.0.0" },
     { name = "mujoco", marker = "extra == 'all'", specifier = ">=3.5.0,<4.0.0" },
@@ -4441,6 +4444,7 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'smolvla'", specifier = ">=6.0.0,<8.0.0" },
     { name = "pyjwt", marker = "extra == 'all'", specifier = ">=2.0,<3.0" },
     { name = "pyjwt", marker = "extra == 'dashboard'", specifier = ">=2.0,<3.0" },
+    { name = "pyserial", marker = "extra == 'dev'", specifier = ">=3.5,<4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0,<10.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0,<6.0.0" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.0.0,<3.0.0" },
