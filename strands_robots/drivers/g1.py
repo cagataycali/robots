@@ -1452,22 +1452,31 @@ class G1Driver:
 
         The names read here are the ones ``LidarState_`` declares: the MID-360
         reports its fault code as ``error_state`` and its scan rate as
-        ``cloud_frequency``. Reading a name the IDL does not define is
-        indistinguishable from a healthy reading in this record, because
-        ``getattr``'s default is what lands in it - so a unit whose lidar had
-        faulted would publish ``code=-1`` and ``freq=0.0`` for as long as it
-        ran, and the fleet card would read that as "no reading yet".
+        ``cloud_frequency``. Each is read as ``getattr(msg, name, None)`` and
+        coerced by :func:`~strands_robots.drivers.base.telemetry_int` /
+        :func:`~strands_robots.drivers.base.telemetry_float`, the rule every
+        other decoder in this class follows, so a name the message does not
+        carry lands ``None`` for that key rather than a constant shaped like a
+        reading. The typed defaults this read used to carry were all such
+        constants: ``-1`` renders as a fault code, ``0.0`` on ``cloud_frequency``
+        is a unit that has stopped scanning, and ``int(False)`` on
+        ``error_state`` is ``0``, which :func:`decode_code` renders as ``OK`` - a
+        healthy lidar fabricated from a flag. ``g1_lidar_state`` documents every
+        field as "or ``None``", and this is what makes that reachable once a
+        message has arrived.
 
-        ``error_state`` is read once and used for both the numeric code and its
-        rendered text so the two cannot come to describe different fields.
+        ``code_text`` renders the coerced ``code``, not the raw field, so the
+        two describe one reading: a numeric string on the field used to publish
+        ``code=3`` beside ``code_text="'3'"``. A code that is no reading has no
+        text.
         """
         try:
-            error_state = getattr(msg, "error_state", -1)
+            code = telemetry_int(getattr(msg, "error_state", None))
             self._lidar_state = {
-                "code": int(error_state),
-                "code_text": decode_code(error_state),
-                "freq": float(getattr(msg, "cloud_frequency", 0.0)),
-                "sys_rotation_speed": float(getattr(msg, "sys_rotation_speed", 0.0)),
+                "code": code,
+                "code_text": None if code is None else decode_code(code),
+                "freq": telemetry_float(getattr(msg, "cloud_frequency", None)),
+                "sys_rotation_speed": telemetry_float(getattr(msg, "sys_rotation_speed", None)),
                 "t": time.time(),
             }
         except Exception as exc:  # noqa: BLE001
@@ -1488,17 +1497,25 @@ class G1Driver:
         for a cap to apply to. ``count`` is therefore the cloud's true size: a
         MID-360 that drops from 24000 points to 3000 is reporting a fault, and
         clamping the number would hide exactly that.
+
+        For the same reason a header field the message does not carry is
+        ``None``, not ``0``. Each is read as ``getattr(msg, name, None)`` and
+        coerced by :func:`~strands_robots.drivers.base.telemetry_int`, so a
+        renamed ``width`` reports no reading rather than a zero-point cloud -
+        which is precisely the shape of the fault ``count`` exists to show.
+        ``count`` needs both dimensions, so it is ``None`` when either is; a
+        field that is unreadable costs that field, not the frame, so the header
+        fields that did parse still reach the record.
         """
         try:
-            width = int(getattr(msg, "width", 0))
-            height = int(getattr(msg, "height", 0))
-            count = width * height
+            width = telemetry_int(getattr(msg, "width", None))
+            height = telemetry_int(getattr(msg, "height", None))
             self._lidar_summary = {
-                "count": count,
+                "count": None if width is None or height is None else width * height,
                 "width": width,
                 "height": height,
-                "point_step": int(getattr(msg, "point_step", 0)),
-                "row_step": int(getattr(msg, "row_step", 0)),
+                "point_step": telemetry_int(getattr(msg, "point_step", None)),
+                "row_step": telemetry_int(getattr(msg, "row_step", None)),
                 "t": time.time(),
             }
         except Exception as exc:  # noqa: BLE001

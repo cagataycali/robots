@@ -207,7 +207,17 @@ class TestTheRestOfTheDriverIsUnchanged:
         assert driver._lidar_state["freq"] == pytest.approx(10.0)
 
     def test_a_malformed_cloud_message_is_still_swallowed(self) -> None:
-        """The DDS thread must survive a bad frame rather than tear down."""
+        """The DDS thread must survive a bad frame rather than tear down.
+
+        The unreadable field costs that field, not the frame: ``width`` lands
+        ``None`` and so does the ``count`` that needs it, while the ``height``
+        that did parse still reaches the record. Before the header fields read
+        through the shared coercer the bare ``int()`` raised here and the whole
+        frame was dropped, so this asserted that no record was written.
+        """
         driver = G1Driver(tool_name="g1", port="1.2.3.4")
         driver._on_lidar_cloud(types.SimpleNamespace(width="not a number", height=1))
-        assert driver._lidar_summary is None
+        assert driver._lidar_summary is not None
+        assert driver._lidar_summary["width"] is None
+        assert driver._lidar_summary["count"] is None
+        assert driver._lidar_summary["height"] == 1
