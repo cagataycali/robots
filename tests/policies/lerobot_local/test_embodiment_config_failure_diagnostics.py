@@ -52,6 +52,7 @@ def _fake_bridge(*, active: bool, has_postprocessor: bool) -> MagicMock:
     bridge.is_active = active
     bridge.has_postprocessor = has_postprocessor
     bridge.inert_normalization_features.return_value = []
+    bridge.mismatched_normalization_widths.return_value = []
     return bridge
 
 

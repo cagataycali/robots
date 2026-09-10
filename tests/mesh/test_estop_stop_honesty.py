@@ -107,6 +107,9 @@ class TestFailedStopAccounting:
 class TestEmergencyStopSurfacesUnstoppablePeers:
     def _mesh_with_responses(self, monkeypatch, responses):
         mesh = Mesh(_StoppableRobot(), peer_id="operator")
+        # Every wire path is stubbed below; mark the mesh running so the
+        # not-running guard does not short-circuit the behaviour under test.
+        mesh._running = True
         monkeypatch.setattr(mesh, "broadcast", lambda cmd, timeout=3.0: responses)
         published: list[tuple[str, dict]] = []
         monkeypatch.setattr(

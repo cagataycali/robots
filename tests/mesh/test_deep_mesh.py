@@ -524,10 +524,11 @@ class TestRPCRobustness:
         assert all(r == {"status": "timeout"} for r in results)
         m.stop()
 
-    def test_broadcast_returns_empty_when_stopped(self, mock_session):
-        """broadcast() on a stopped mesh returns []."""
+    def test_broadcast_raises_when_stopped(self, mock_session):
+        """broadcast() on a stopped mesh raises instead of returning []."""
         m = Mesh(FakeRobot(), peer_id="bc-stopped")
-        assert m.broadcast({"action": "status"}) == []
+        with pytest.raises(RuntimeError, match="mesh not running"):
+            m.broadcast({"action": "status"})
 
     def test_send_returns_error_when_stopped(self, mock_session):
         """send() on a stopped mesh returns error dict."""

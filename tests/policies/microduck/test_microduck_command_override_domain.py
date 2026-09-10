@@ -20,11 +20,9 @@ domain:
   surfaced as a bare ``could not convert string to float``, naming neither this
   policy nor the parameter.
 
-Two sibling providers reading this same well-known goal key already hold it to a
-domain that names it - ``WBCPolicy._validate_velocity`` and the
-``param_name="target_velocity"`` guard MotionBricks applies on both its
-constructor and its per-call path - which is the convention these cells hold this
-one to. The two-component ``target_velocity`` spelling is deliberately KEPT
+A sibling provider reading this same well-known goal key already holds it to a
+domain that names it - ``WBCPolicy._validate_velocity``, on both its constructor
+and its per-call path - which is the convention these cells hold this one to. The two-component ``target_velocity`` spelling is deliberately KEPT
 (see :data:`TARGET_VELOCITY_WIDTHS`); the family's other readers require three
 because their command is rebuilt per call rather than carried across ticks.
 

@@ -11,19 +11,18 @@ modes and they need distinct reports:
   the caller wants the missing dependency.
 
 Collapsing the second into the first sends a caller whose spelling was correct
-to go and check the spelling. ``import_policy_class`` and
-``import_transform_class`` already separate them, each saying so in its own
-``Raises:`` block; ``import_trainer_class`` caught ``ImportError`` and fell
+to go and check the spelling. ``import_policy_class`` already separates them,
+saying so in its own ``Raises:`` block; ``import_trainer_class`` caught ``ImportError`` and fell
 through to ``No trainer registered for provider ... Available trainers: [...]``,
 so a missing backend was reported as a name that does not exist.
 
-The rule is graded over a DERIVED inventory rather than a list of three, because
+The rule is graded over a DERIVED inventory rather than a list of two, because
 the defect is what happens to the *next* resolver. A resolver is discovered
 structurally: a function that hands :func:`importlib.import_module` an f-string
 which begins ``strands_robots.`` and interpolates one of that function's own
-parameters. That signature selects exactly the shipped three and nothing else,
-and :class:`TestTheResolverInventoryIsDerived` pins that a fourth is picked up
-on arrival - a hardcoded list equal to today's three would pass every case below
+parameters. That signature selects exactly the shipped two and nothing else,
+and :class:`TestTheResolverInventoryIsDerived` pins that a third is picked up
+on arrival - a hardcoded list equal to today's two would pass every case below
 while grading nothing new.
 
 Each resolver is then driven for real: a module is planted on the package's
@@ -146,7 +145,6 @@ def discover_resolvers() -> list[_Resolver]:
 _MOCK_BASES = {
     "strands_robots.policies": ("strands_robots.policies.mock", "MockPolicy"),
     "strands_robots.training": ("strands_robots.training.mock", "MockTrainer"),
-    "strands_robots.transforms": ("strands_robots.transforms.mock", "MockTransform"),
 }
 
 #: Every resolver in the shipped tree, discovered once at collection time.
@@ -209,14 +207,13 @@ def _dependency_is_named(error: BaseException, dependency: str) -> bool:
 
 
 class TestTheResolverInventoryIsDerived:
-    """The rule below is graded over a discovered set, not a list of three."""
+    """The rule below is graded over a discovered set, not a list of two."""
 
     def test_the_scan_finds_every_shipped_provider_resolver(self) -> None:
-        """All three ladders are discovered, and nothing else is."""
+        """Both ladders are discovered, and nothing else is."""
         assert {r.function for r in RESOLVERS} == {
             "import_policy_class",
             "import_trainer_class",
-            "import_transform_class",
         }, f"discovered {RESOLVERS!r}"
 
     def test_each_resolver_names_the_package_its_fallback_searches(self) -> None:
@@ -224,14 +221,13 @@ class TestTheResolverInventoryIsDerived:
         assert {(r.function, r.package) for r in RESOLVERS} == {
             ("import_policy_class", "strands_robots.policies"),
             ("import_trainer_class", "strands_robots.training"),
-            ("import_transform_class", "strands_robots.transforms"),
         }
 
-    def test_a_fourth_resolver_is_discovered_on_arrival(self) -> None:
+    def test_a_third_resolver_is_discovered_on_arrival(self) -> None:
         """A newly added ladder is graded without editing this file.
 
         The whole value of deriving the inventory: a hardcoded list equal to
-        today's three would pass every other case here and pick up nothing.
+        today's two would pass every other case here and pick up nothing.
         """
         source = (
             "import importlib\n"

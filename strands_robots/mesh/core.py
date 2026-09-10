@@ -2495,7 +2495,7 @@ class Mesh(SensorLoopsMixin):
     # it, and a key admitted here that no provider reads is inert.
     #
     # ``target_velocity`` is the locomotion goal - WBC / wbc_gait read
-    # ``[vx, vy, omega]``, MotionBricks reads a planar direction. Every one of
+    # ``[vx, vy, omega]``, microduck accepts that or ``[vx, vy]``. Every one of
     # those providers is reachable over the mesh: the policy-provider
     # allowlist is derived from the registry (see
     # ``strands_robots.mesh.security``), so a locomotion peer can be told to
@@ -3585,7 +3585,11 @@ class Mesh(SensorLoopsMixin):
         ``BROADCAST_RESPONDER``).
         """
         if not self._running:
-            return []
+            action = cmd.get("action") if isinstance(cmd, dict) else cmd
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot broadcast {action}; "
+                "start() the mesh first (or fix the refusal it logged)"
+            )
         # client-side validate before publishing. broadcast()'s
         # return type is list[dict] (responses), so a validation failure
         # has no structured slot -- log the rejection and return [] so
@@ -3804,7 +3808,15 @@ class Mesh(SensorLoopsMixin):
         CRITICAL, and reported in the safety envelope as ``peers_not_stopped``.
         Counting them as acknowledgements would tell an operator the fleet had
         halted while a robot was still moving.
+
+        Raises ``RuntimeError`` when the mesh is not running: an e-stop that
+        reached no peer must not look like "asked, nobody answered" (``[]``).
         """
+        if not self._running:
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot emergency_stop -- no peer was told to stop; "
+                "use the robot's local stop and fix the mesh start refusal it logged"
+            )
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()

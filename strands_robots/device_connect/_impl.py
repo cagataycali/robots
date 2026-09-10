@@ -26,6 +26,7 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from device_connect_edge import DeviceRuntime
@@ -111,6 +112,53 @@ def resolve_allow_insecure(
     return False
 
 
+_TLS_ENV = (
+    "MESSAGING_CREDENTIALS_FILE",
+    "NATS_CREDENTIALS_FILE",
+    "MESSAGING_TLS_CA_FILE",
+    "MESSAGING_TLS_CERT_FILE",
+    "MESSAGING_TLS_KEY_FILE",
+    "NATS_TLS_CA_FILE",
+    "NATS_TLS_CERT_FILE",
+    "NATS_TLS_KEY_FILE",
+)
+_TLS_SCHEMES = ("tls", "quic", "zenoh+tls", "mqtts", "ssl")
+
+#: The endpoint variables ``device_connect_edge`` itself reads for a non-NATS
+#: backend, so a TLS endpoint configured through the environment counts here
+#: exactly where it counts there. ``NATS_URL`` / ``NATS_URLS`` are absent
+#: deliberately: that backend short-circuits below.
+_ENDPOINT_ENV = ("ZENOH_CONNECT", "ZENOH_LISTEN", "MESSAGING_URLS")
+
+
+def transport_is_authenticated(backend: str, urls: list[str] | None, env: Mapping[str, str] = os.environ) -> bool:
+    """Whether anything will authenticate and encrypt this transport.
+
+    ``device_connect_edge`` checks that only for NATS: its
+    ``DeviceRuntime._validate_startup_config`` returns before every check when
+    ``self._messaging_backend not in (None, "nats")`` (``device.py:810`` in
+    0.2.5), and its Zenoh adapter never reads ``allow_insecure`` at all. So on
+    the default ``zenoh`` backend nothing stands between ``allow_insecure=False``
+    and the network, and a device with no credentials comes online in plaintext
+    while believing it is secure.
+
+    Args:
+        backend: The resolved messaging backend, e.g. ``"zenoh"`` or ``"nats"``.
+        urls: The endpoints passed to the runtime, or ``None`` for D2D
+            discovery, in which case only the environment can carry one.
+        env: The environment to read, defaulting to the process's own.
+
+    Returns:
+        ``True`` when the backend validates itself (NATS), when credentials or
+        TLS material are configured, or when an endpoint asks for a TLS scheme;
+        ``False`` when the transport would be plaintext.
+    """
+    if backend == "nats" or any(env.get(name) for name in _TLS_ENV):
+        return True
+    endpoints = list(urls or []) + [u for name in _ENDPOINT_ENV for u in (env.get(name) or "").split(",")]
+    return any(e.strip().split("://")[0].split("/")[0].lower() in _TLS_SCHEMES for e in endpoints if e.strip())
+
+
 async def init_device_connect(
     robot,
     peer_id: str | None = None,
@@ -169,6 +217,14 @@ async def init_device_connect(
     # var - and we log a prominent warning whenever it is active so an insecure
     # deployment is never silent.
     allow_insecure = resolve_allow_insecure(allow_insecure, os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE"))
+    if not allow_insecure and not transport_is_authenticated(messaging_backend, urls):
+        raise RuntimeError(
+            f"Device Connect refused to start {device_id}: backend '{messaging_backend}' has no TLS configured, so "
+            "the device would be online on the LAN unencrypted and any peer could call execute/stop on it. Either "
+            "point it at credentials (MESSAGING_CREDENTIALS_FILE=<bundle>.creds.json, or a tls/ endpoint), or opt in "
+            "for a trusted isolated network with DEVICE_CONNECT_ALLOW_INSECURE=true and restrict callers with "
+            "DEVICE_CONNECT_RPC_ALLOW=<caller-id,...>"
+        )
 
     if allow_insecure:
         logger.warning(
