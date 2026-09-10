@@ -54,6 +54,18 @@ class _BodyStateSim:
         return {}
 
 
+class _RecordingBodyStateSim(_BodyStateSim):
+    """``_BodyStateSim`` that records every body name it was asked for."""
+
+    def __init__(self, positions: dict[str, list[float]]):
+        super().__init__(positions)
+        self.probed: list[str] = []
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        self.probed.append(body_name)
+        return super().get_body_state(body_name)
+
+
 class _ScopedJointObsSim:
     """Sim whose ``get_observation`` is robot-scoped, like the real backends.
 
@@ -226,57 +238,36 @@ class TestBodyPositionPredicates:
         pred = make_predicate("body_above_z", body="cube", z=0)
         assert pred(sim) is False
 
-    def test_body_position_libero_main_suffix_fallback(self):
-        """Round 46 (#176 sub-task 3d) - LIBERO objects' BDDL names
-        (``porcelain_mug_1``) map to MJCF root bodies suffixed with
-        ``_main`` (``porcelain_mug_1_main``). The predicate evaluator
-        must transparently retry with the suffix when the bare name
-        misses, mirroring upstream LIBERO's
-        ``env.objects_dict[name].root_body`` resolution. Without this,
-        BDDL goal predicates like ``(On porcelain_mug_1 plate_1)``
-        silently resolve to ``False`` even when physics has the mug
-        on the plate.
-
-        Pin: a sim that only exposes ``porcelain_mug_1_main`` (NOT
-        ``porcelain_mug_1``) must still resolve via the predicate as
-        if the bare name worked.
-        """
-        # Sim only knows the suffixed name (mimics MJCF body naming).
-        sim = _BodyStateSim({"porcelain_mug_1_main": [0.0, 0.0, 0.5]})
-        pred = make_predicate("body_above_z", body="porcelain_mug_1", z=0.4)
-        assert pred(sim) is True, (
-            "body_above_z with bare BDDL name should fall back to ``<name>_main`` "
-            "for LIBERO scenes; round-46 fix may have regressed."
-        )
-
-    def test_body_position_main_suffix_no_double_suffix(self):
-        """Already-suffixed names must not double-suffix on retry.
-        Round 46 (#176 sub-task 3d).
-        """
-        # Sim only knows the suffixed name; caller passes already-suffixed.
-        sim = _BodyStateSim({"plate_1_main": [0.0, 0.0, 0.4]})
-        pred = make_predicate("body_above_z", body="plate_1_main", z=0.3)
-        assert pred(sim) is True
-
-    def test_body_position_bare_name_wins_over_suffix(self):
-        """When BOTH ``<name>`` and ``<name>_main`` exist, prefer the
-        bare lookup. This preserves the contract for fixtures /
-        explicit-named bodies (e.g. ``living_room_table``) which don't
-        use the LIBERO suffix.
-
-        Round 46 (#176 sub-task 3d).
-        """
-        sim = _BodyStateSim(
-            {
-                "living_room_table": [0.0, 0.0, 0.46],
-                "living_room_table_main": [99.0, 99.0, 99.0],  # decoy
-            }
-        )
+    def test_a_declared_body_resolves_in_a_single_probe(self):
+        """The name the spec wrote is the only name asked for."""
+        sim = _RecordingBodyStateSim({"living_room_table": [0.0, 0.0, 0.46]})
         pred = make_predicate("body_above_z", body="living_room_table", z=0.4)
         assert pred(sim) is True
-        # Decoy at 99.0 should not be reached if bare lookup wins.
-        pred2 = make_predicate("body_above_z", body="living_room_table", z=98.0)
-        assert pred2(sim) is False, "bare name should win over _main suffix; double-resolve detected"
+        assert sim.probed == ["living_room_table"]
+
+    def test_a_body_the_scene_does_not_declare_is_not_reached_through_a_suffix(self):
+        """No suffix is synthesized for a name the scene does not declare.
+
+        A ``<name>_main`` root-body fallback used to resolve here, for the
+        procedurally-generated objects of a vendored benchmark adapter that
+        no longer ships. The contact predicates never honoured the same
+        convention (:func:`_geom_belongs_to_body` matches ``<body>_g``, so
+        ``cube_1_main_g0`` is not one of ``cube_1``'s geoms), so a spec
+        naming ``cube_1`` got a position from ``cube_1_main`` while
+        ``grasped(cube_1)`` reported no contact - two predicates over one
+        clause disagreeing about which body it named.
+        """
+        sim = _RecordingBodyStateSim({"porcelain_mug_1_main": [0.0, 0.0, 0.5]})
+        pred = make_predicate("body_above_z", body="porcelain_mug_1", z=0.4)
+        assert pred(sim) is False
+        assert sim.probed == ["porcelain_mug_1"]
+
+    def test_a_suffixed_name_the_scene_declares_still_resolves(self):
+        """``_main`` is not special-cased away either - it is just a name."""
+        sim = _RecordingBodyStateSim({"plate_1_main": [0.0, 0.0, 0.4]})
+        pred = make_predicate("body_above_z", body="plate_1_main", z=0.3)
+        assert pred(sim) is True
+        assert sim.probed == ["plate_1_main"]
 
 
 # Joint predicates
@@ -442,7 +433,7 @@ class TestRewardTerms:
         assert term(None) == pytest.approx(-0.01)
 
 
-# LIBERO / #110 predicates
+# Contact-aware manipulation predicates (#110)
 
 
 class _BodyStateWithQuatSim:
@@ -566,13 +557,12 @@ class TestGrasped:
         pred = make_predicate("grasped", body="cube", gripper_prefix="robot0_gripper")
         assert pred(sim) is False
 
-    def test_detects_libero_multi_geom_object(self):
-        # LIBERO / robosuite name a BDDL object ``cube_1``'s collision
-        # geoms ``cube_1_g0`` / ``cube_1_g1`` ... (the same ``<body>_g<idx>``
-        # convention _body_contact matches). ``(grasped cube_1)`` must fire
-        # when a gripper geom touches such a geom - previously it silently
-        # returned False because only exact ``cube_1`` / ``cube_1_geom``
-        # names were matched.
+    def test_detects_a_numbered_multi_geom_object(self):
+        # A multi-geom object numbers its collision geoms ``cube_1_g0`` /
+        # ``cube_1_g1`` ... (the ``<body>_g<idx>`` convention _body_contact
+        # matches). ``grasped(cube_1)`` must fire when a gripper geom touches
+        # such a geom - previously it silently returned False because only
+        # exact ``cube_1`` / ``cube_1_geom`` names were matched.
         sim = _ContactSim(
             [
                 {"geom1": "robot0_gripper_finger_l", "geom2": "cube_1_g0"},
@@ -581,7 +571,7 @@ class TestGrasped:
         pred = make_predicate("grasped", body="cube_1", gripper_prefix="robot0_gripper")
         assert pred(sim) is True
 
-    def test_detects_libero_multi_geom_object_higher_index(self):
+    def test_detects_a_numbered_multi_geom_object_at_a_higher_index(self):
         sim = _ContactSim(
             [
                 {"geom1": "cube_1_g3", "geom2": "robot0_gripper_finger_r"},
@@ -745,7 +735,7 @@ class TestDegradationContract:
 
 class _GeomContactSim:
     """Sim exposing both body positions and geom-prefix contacts, for the
-    ``body_on(require_contact=True)`` LIBERO-style combined check."""
+    ``body_on(require_contact=True)`` combined geometric+contact check."""
 
     def __init__(self, positions: dict[str, list[float]], contacts: list[dict[str, Any]], status: str = "success"):
         self._pos = positions
@@ -941,33 +931,42 @@ class TestExtractJsonHelperGuard:
 
 # Name-resolution surfacing (#176 follow-up): a spec that references a body /
 # joint the backend supports looking up but cannot resolve (a typo) must not be
-# silent. It still degrades to a constant, but the name is logged once, and the
-# LIBERO ``<name>_main`` root-body fallback now also covers the quaternion path.
+# silent. It still degrades to a constant, but the name is logged once.
 
 _PRED_LOGGER = "strands_robots.simulation.predicates"
 
 
-class TestBodyUprightLiberoMainFallback:
-    """body_upright must resolve the LIBERO ``<name>_main`` root body.
+class _RecordingQuatSim(_BodyStateWithQuatSim):
+    """``_BodyStateWithQuatSim`` that records every body name it was asked for."""
 
-    BDDL ``(upright X)`` compiles to ``body_upright(body=X)`` with the bare
-    object name, but the MJCF root body of a procedurally-generated LIBERO
-    object is ``X_main``. Before the fix, ``_body_quaternion`` tried only the
-    bare name (unlike ``_body_position``, which has the fallback), so an upright
-    mug silently scored as not-upright and the goal was never satisfiable.
+    def __init__(self, bodies: dict[str, dict[str, Any]]):
+        super().__init__(bodies)
+        self.probed: list[str] = []
+
+    def get_body_state(self, body_name: str) -> dict[str, Any]:
+        self.probed.append(body_name)
+        return super().get_body_state(body_name)
+
+
+class TestOrientationResolvesTheSameNamesAsPosition:
+    """The orientation lookup asks for exactly the names the position lookup does.
+
+    ``_body_quaternion`` mirrors ``_body_position``'s resolution so a single
+    clause's position and orientation can never be read off two different
+    bodies - which is what a suffix fallback on only one of the two would do.
     """
 
-    def test_upright_resolves_via_main_suffix(self):
-        # Only the _main root body exists (the bare BDDL name does not).
-        sim = _BodyStateWithQuatSim({"mug_main": {"quaternion": [1, 0, 0, 0]}})
+    def test_orientation_of_an_undeclared_body_is_not_reached_through_a_suffix(self):
+        sim = _RecordingQuatSim({"mug_main": {"quaternion": [1, 0, 0, 0]}})
         pred = make_predicate("body_upright", body="mug")
-        assert pred(sim) is True  # FAILS pre-fix: no _main fallback -> False
-
-    def test_upright_tilted_via_main_suffix_is_false(self):
-        # Resolves via _main but genuinely tipped over -> correctly False.
-        sim = _BodyStateWithQuatSim({"mug_main": {"quaternion": [0.707, 0.707, 0.0, 0.0]}})
-        pred = make_predicate("body_upright", body="mug", tol=0.1)
         assert pred(sim) is False
+        assert sim.probed == ["mug"]
+
+    def test_orientation_of_a_declared_body_resolves_in_a_single_probe(self):
+        sim = _RecordingQuatSim({"mug": {"quaternion": [0.707, 0.707, 0.0, 0.0]}})
+        pred = make_predicate("body_upright", body="mug", tol=0.1)
+        assert pred(sim) is False  # declared, resolved, and genuinely tipped over
+        assert sim.probed == ["mug"]
 
 
 class TestUnresolvedNameSurfacing:

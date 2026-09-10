@@ -165,16 +165,10 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     of writing). Future backends can add the same method signature - see
     :meth:`strands_robots.simulation.mujoco.physics.PhysicsMixin.get_body_state`.
 
-    LIBERO body-name convention: BDDL names objects without a suffix
-    (``porcelain_mug_1``), but the MJCF root body is suffixed with
-    ``_main`` (``porcelain_mug_1_main``). Upstream resolves this via
-    ``env.objects_dict[name].root_body`` (see
-    ``libero/libero/envs/bddl_base_domain.py``). We mirror that with a
-    bounded fallback: try the bare name first, then ``<name>_main`` if
-    the bare lookup fails. #176 (sub-task 3d) - without this
-    fallback, BDDL goal predicates like ``(On porcelain_mug_1
-    plate_1)`` resolve to ``None`` (body not found) → predicate
-    silently False even when the mug is physically on the plate.
+    Resolves the name the scene declares, and only that name. A name the
+    scene does not declare is surfaced by :func:`_warn_unresolved` rather
+    than guessed at from a suffix, so a spec typo degrades loudly instead
+    of silently reading some other body that happens to share a prefix.
     """
     get_body_state = getattr(sim, "get_body_state", None)
     if get_body_state is None:
@@ -194,21 +188,10 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
             return [float(c) for c in pos]
         return None
 
-    # 1. Bare name (works for fixtures with explicit body names matching
-    # the BDDL name, e.g. ``living_room_table``).
     pos = _try(body)
     if pos is not None:
         return pos
-    # 2. LIBERO ``<name>_main`` convention (the root body of
-    # procedurally-generated objects). Skip if the name already has
-    # the suffix to avoid double-suffixing on retries.
-    tried = [body]
-    if not body.endswith("_main"):
-        tried.append(f"{body}_main")
-        pos = _try(f"{body}_main")
-        if pos is not None:
-            return pos
-    _warn_unresolved("body", body, tuple(tried))
+    _warn_unresolved("body", body)
     return None
 
 
@@ -226,9 +209,8 @@ def _joint_position(sim: SimEngine, joint: str) -> float | None:
     negation* both answer ``False``, so no success criterion over that joint
     can ever hold.
 
-    So resolve over the scene, mirroring the bounded ladder
-    :func:`_body_position` already uses for the LIBERO body-name convention:
-    the unscoped observation first (single-robot scenes, and the controlled
+    So resolve over the scene with a bounded ladder over the entities the
+    world reports: the unscoped observation first (single-robot scenes, and the controlled
     robot's own joints, keep their existing fast path), then each robot the
     world reports by name via the same ``robot_name`` route the ``base_*``
     helpers use. Only once every entity has been asked is the name genuinely
@@ -325,20 +307,12 @@ def _body_quaternion(sim: SimEngine, body: str) -> list[float] | None:
             return [float(c) for c in quat]
         return None
 
-    # Mirror _body_position's resolution: bare BDDL name first, then the LIBERO
-    # ``<name>_main`` root-body convention (#176). Without the fallback,
-    # body_upright(<bddl_name>) resolved to None -> silently False for every
-    # procedurally-generated LIBERO object, whose MJCF root body is _main-suffixed.
+    # Same exact-name resolution as :func:`_body_position`, so the position
+    # and the orientation of one body are never read off two different bodies.
     quat = _try(body)
     if quat is not None:
         return quat
-    tried = [body]
-    if not body.endswith("_main"):
-        tried.append(f"{body}_main")
-        quat = _try(f"{body}_main")
-        if quat is not None:
-            return quat
-    _warn_unresolved("body", body, tuple(tried))
+    _warn_unresolved("body", body)
     return None
 
 
@@ -673,7 +647,7 @@ def _geom_belongs_to_body(geom: str, body: str) -> bool:
 
     - exact ``body`` (single-geom scenes whose geom is named after the body),
     - ``<body>_geom`` (strands :meth:`add_object`),
-    - ``<body>_g<idx>`` (LIBERO / robosuite multi-geom objects), and
+    - ``<body>_g<idx>`` (multi-geom objects that number their geoms), and
     - ``<body>/geom_<id>`` - the name ``get_contacts`` **synthesizes** for a
       geom the asset left unnamed, which is the dominant case in real MJCF
       (a Panda scene has 81 unnamed geoms out of 82).
@@ -703,14 +677,11 @@ def _body_contact(sim: SimEngine, body_a: str, body_b: str) -> bool | None:
     geometric-only checks) or hard-fail.
 
     Body-geom matching is delegated to :func:`_geom_belongs_to_body`, which
-    owns every supported geom-naming convention. This mirrors how upstream
-    LIBERO's ``ObjectState.check_contact`` walks the per-object geom list, but
-    avoids hard-coding the body→geom map by using the naming conventions.
+    owns every supported geom-naming convention, so the body→geom map is
+    derived from the names the scene reports rather than hard-coded.
 
-    Used by the contact-aware branch of :func:`_body_on` (LIBERO's
-    ``On(A, B)`` predicate semantics requires
-    ``arg2.check_contact(arg1)`` per
-    ``libero/libero/envs/predicates/base_predicates.py``).
+    Used by the contact-aware branch of :func:`_body_on`, where "A is on B"
+    means B carries A's weight and so must be touching it.
     """
     get_contacts = getattr(sim, "get_contacts", None)
     if get_contacts is None:
@@ -756,21 +727,20 @@ def _body_on(
 
     True when ``A.z > B.z + z_offset`` AND horizontal distance ``|A.xy - B.xy|
     < xy_tol``. When ``require_contact=True``, ALSO requires physics
-    contact between A and B via ``sim.get_contacts()`` - matches
-    upstream LIBERO's ``ObjectState.check_ontop`` which combines a
-    geometric check with ``check_contact``. The z-offset parameter
+    contact between A and B via ``sim.get_contacts()``, so a body hovering
+    above B is not scored as resting on it. The z-offset parameter
     accounts for B's half-height + a small buffer; tune per scene.
-    Intended for sparse-success benchmarks (LIBERO, etc.) where exact
-    geometric containment isn't required.
+    Intended for sparse-success benchmarks where exact geometric
+    containment isn't required.
 
     Contact-check graceful degradation: when
     ``require_contact=True`` but the sim engine doesn't expose
     ``get_contacts`` (e.g. test stubs, custom engines), the contact
     check is skipped and only the geometric check fires. This
     preserves backwards compatibility - engines without contact
-    support get the geometric-only verdict. LIBERO benchmarks running on
-    ``MuJoCoSimEngine`` (which implements ``get_contacts``) get the
-    strict upstream-matching semantics.
+    support get the geometric-only verdict. A benchmark running on
+    ``MuJoCoSimEngine`` (which implements ``get_contacts``) gets the
+    strict contact-confirmed semantics.
 
     For full fidelity (MJCF geom size lookup + narrow-phase collision), write
     a scene-specific predicate and register it via :func:`register_predicate`.
@@ -842,8 +812,8 @@ def _body_inside(body: str, container: str, xy_tol: float = 0.15, z_tol: float =
     """Approximate ``(in A B)`` predicate - A contained within B's volume.
 
     True when A's position is within an axis-aligned box centered on B with
-    half-extents (``xy_tol``, ``xy_tol``, ``z_tol``). LIBERO-typical use is
-    "object inside basket / drawer / compartment" where exact bbox is
+    half-extents (``xy_tol``, ``xy_tol``, ``z_tol``). The typical use is
+    "object inside basket / drawer / compartment" where the exact bbox is
     benchmark-specific; the defaults are tuned for table-top manipulation.
 
     When richer geometry is available, override by registering a
@@ -990,11 +960,11 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     gripper geom is in contact with any geom belonging to ``body``.
 
     Body-geom matching is delegated to :func:`_geom_belongs_to_body`, the
-    shared owner of that mapping, so ``grasped`` fires on real LIBERO/robosuite
-    scenes (where a BDDL object ``cube_1`` owns collision geoms
-    ``cube_1_g0`` / ``cube_1_g1`` ...), on strands-native ``add_object`` scenes
-    (``<body>_geom``), on single-geom scenes whose geom is named exactly after
-    the body, and on assets whose geoms are unnamed.
+    shared owner of that mapping, so ``grasped`` fires on multi-geom objects
+    that number their geoms (``cube_1_g0`` / ``cube_1_g1`` ...), on
+    strands-native ``add_object`` scenes (``<body>_geom``), on single-geom
+    scenes whose geom is named exactly after the body, and on assets whose
+    geoms are unnamed.
 
     Backends must implement ``get_contacts()`` returning the MuJoCo
     ``{"contacts": [{"geom1", "geom2", ...}]}`` shape. Other backends are
@@ -1021,9 +991,9 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
             g2 = c.get("geom2") or ""
             # One side must be a geom of the grasped body; the other must
             # start with the gripper prefix. ``_geom_belongs_to_body`` owns
-            # every geom-naming convention, so a LIBERO ``(grasped cube_1)``
-            # goal fires on ``cube_1_g0`` and a scene with unnamed geoms
-            # fires on the synthesized ``cube_1/geom_<id>`` name.
+            # every geom-naming convention, so a ``grasped(cube_1)`` goal
+            # fires on ``cube_1_g0`` and a scene with unnamed geoms fires on
+            # the synthesized ``cube_1/geom_<id>`` name.
             body_match = _geom_belongs_to_body(g1, body) or _geom_belongs_to_body(g2, body)
             gripper_match = any(isinstance(g, str) and g.startswith(gripper_prefix) for g in (g1, g2))
             if body_match and gripper_match:
@@ -2226,11 +2196,10 @@ def can_resolve_body(sim: SimEngine, body: str) -> bool:
     """Whether *body* resolves in *sim* right now, via the predicate DSL's own lookup.
 
     Uses the exact resolution path the body-referencing predicates use at
-    evaluation time (:func:`_body_position`), including the LIBERO
-    ``<name>_main`` fallback - so a ``True`` here means the predicate will
-    genuinely be evaluable against the live scene, and a ``False`` means it
-    would degrade to a constant ``False`` forever (a typo'd name, or a
-    backend without body lookups).
+    evaluation time (:func:`_body_position`) - so a ``True`` here means the
+    predicate will genuinely be evaluable against the live scene, and a
+    ``False`` means it would degrade to a constant ``False`` forever (a
+    typo'd name, or a backend without body lookups).
 
     Args:
         sim: The engine to probe.

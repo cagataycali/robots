@@ -3,7 +3,7 @@
 ``get_contacts`` reports a contact as a pair of geom NAMES, and for a geom the
 asset left unnamed it synthesizes ``"<body>/geom_<id>"``. Two body-level
 predicates consume those names -- ``grasped`` and
-``body_on(require_contact=True)``, the gate every LIBERO ``(on A B)`` goal runs
+``body_on(require_contact=True)``, the gate every ``on(A, B)`` goal runs
 through -- and they used two different matchers:
 
 * ``_body_contact`` matched only the ``<body>_g`` prefix inline, so a geom named
@@ -41,8 +41,8 @@ from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 _MATCHING = [
     ("mug", "a single-geom scene whose geom is named after the body"),
     ("mug_geom", "the strands add_object convention"),
-    ("mug_g0", "the LIBERO / robosuite <body>_g<idx> convention"),
-    ("mug_g11", "a double-digit LIBERO geom index"),
+    ("mug_g0", "the numbered <body>_g<idx> multi-geom convention"),
+    ("mug_g11", "a double-digit geom index"),
     ("mug/geom_2", "the name get_contacts synthesizes for an unnamed geom"),
     ("mug/geom_81", "a double-digit synthesized id"),
 ]
@@ -198,7 +198,7 @@ class TestRestingContactIsDetected:
 
     @pytest.mark.parametrize("fixture_name", ["unnamed_geoms", "geoms_named_after_bodies"])
     def test_body_on_require_contact_succeeds(self, fixture_name: str, request) -> None:
-        """The gate every LIBERO ``(on A B)`` goal is compiled with."""
+        """The gate every ``on(A, B)`` goal is compiled with."""
         sim = request.getfixturevalue(fixture_name)
         # Premise: the scene really is in contact, so a False verdict below
         # would be a false negative rather than an honest miss.
