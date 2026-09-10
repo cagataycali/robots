@@ -2076,12 +2076,24 @@ class Mesh(SensorLoopsMixin):
             # readonly set matches the H-3 dedup exemption. Best-effort: an
             # audit failure must never break the dispatch path (same narrow
             # except tuple as every other audit call site).
+            # A handler that REFUSED (``{"error": ...}``, ``ok=False`` or
+            # ``status == "error"`` -- the one rule :func:`_reports_failure_to_stop`
+            # owns; e.g. a resume with a bad override code) returned
+            # without raising, so it used to be recorded as
+            # ``command_executed`` -- the audit trail then showed
+            # ``resume_denied`` and ``command_executed action=resume`` for the
+            # same turn while the lockout stayed engaged. Name it for what it
+            # was: ``command_refused``, carrying the handler's error text.
             if _action not in _READONLY:
+                refused = isinstance(result, dict) and ("error" in result or _reports_failure_to_stop(result))
+                payload: dict[str, Any] = {"sender": sender, "turn_id": turn, "action": _action}
+                if refused:
+                    payload["error"] = str(result.get("error") or result.get("status") or "ok=False")
                 try:
                     log_safety_event(
-                        "command_executed",
+                        "command_refused" if refused else "command_executed",
                         self.peer_id,
-                        {"sender": sender, "turn_id": turn, "action": _action},
+                        payload,
                     )
                 except (TypeError, ValueError, OSError) as audit_exc:
                     logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
