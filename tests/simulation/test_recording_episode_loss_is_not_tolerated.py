@@ -46,10 +46,16 @@ from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner
 from tests.simulation.mujoco._gl_probe import requires_gl
 
+#: The so100 sim's own joint keys. The schema must name what the observation
+#: carries: ``add_frame`` refuses a declared column the frame has no value for
+#: rather than recording it as 0.0, so a fake schema of ``"1".."6"`` would be
+#: refused on the first frame and never reach the write path under test.
+_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 _FEATURES: dict[str, Any] = {
-    "observation.state": {"dtype": "float32", "names": ["1", "2", "3", "4", "5", "6"]},
-    "action": {"dtype": "float32", "names": ["1", "2", "3", "4", "5", "6"]},
+    "observation.state": {"dtype": "float32", "names": list(_JOINTS)},
+    "action": {"dtype": "float32", "names": list(_JOINTS)},
 }
+_FULL = dict.fromkeys(_JOINTS, 0.0)
 
 
 class _Dataset:
@@ -363,7 +369,7 @@ class TestTheClosedRecorderIsWhyItStops:
     def test_a_failed_flush_closes_the_recorder_and_reports_it(self) -> None:
         ds = _Dataset(fail_from_episode=0)
         recorder = DatasetRecorder(dataset=ds, task="t")
-        recorder.add_frame({"1": 0.0}, {"1": 0.0}, camera_keys=[])
+        recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
         assert recorder.episode_frame_count == 1
 
         verdict = recorder.save_episode()
@@ -375,13 +381,13 @@ class TestTheClosedRecorderIsWhyItStops:
         """The silence: no frame, no ``RecordingFrameError``, no counted drop."""
         ds = _Dataset(fail_from_episode=0)
         recorder = DatasetRecorder(dataset=ds, task="t")
-        recorder.add_frame({"1": 0.0}, {"1": 0.0}, camera_keys=[])
+        recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
         recorder.save_episode()
         assert recorder._closed is True
 
         before = (recorder.frame_count, recorder.dropped_frame_count, ds.written)
         for _ in range(5):
-            recorder.add_frame({"1": 0.0}, {"1": 0.0}, camera_keys=[])
+            recorder.add_frame(dict(_FULL), dict(_FULL), camera_keys=[])
 
         assert (recorder.frame_count, recorder.dropped_frame_count, ds.written) == before
         assert recorder.strict is True  # even fail-fast mode raises nothing here

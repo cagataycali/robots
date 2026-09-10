@@ -196,16 +196,21 @@ def test_add_frame_orders_state_and_action_by_schema():
     assert frame["task"] == "pick"
 
 
-def test_add_frame_fills_missing_keys_with_zero():
-    """A joint absent from the observation contributes 0.0 at its schema slot."""
+def test_add_frame_refuses_a_missing_state_key():
+    """A joint absent from the observation is refused, not recorded as 0.0.
+
+    0.0 is a position. Written into the column it says the joint sat at zero
+    for the episode; ``verify-dataset`` passes a constant column and a policy
+    trains on it. LeRobot's ``build_dataset_frame`` raises ``KeyError`` for the
+    same input, and so does this recorder.
+    """
     ds = _CapturingDataset(_state_action_features(["j1", "j2", "j3"], ["j1"]))
     rec = DatasetRecorder(dataset=ds)
 
-    rec.add_frame(observation={"j1": 1.0, "j3": 3.0}, action={"j1": 0.5}, task="t")
+    with pytest.raises(ValueError, match=r"state column\(s\) \['j2'\]"):
+        rec.add_frame(observation={"j1": 1.0, "j3": 3.0}, action={"j1": 0.5}, task="t")
 
-    frame = ds.frames[0]
-    assert np.allclose(frame["observation.state"], [1.0, 0.0, 3.0])
-    assert np.allclose(frame["action"], [0.5])
+    assert ds.frames == []
 
 
 def test_add_frame_flattens_vector_valued_entries():
@@ -1531,24 +1536,21 @@ class TestCodecRouting:
         assert any("RGBEncoderConfig" in rec.message for rec in caplog.records)
 
 
-def test_add_frame_fills_missing_action_key_with_zero():
-    """An action key absent from the action dict contributes 0.0 at its slot.
+def test_add_frame_refuses_a_missing_action_key_by_default():
+    """An action key absent from the action dict is refused, not written as 0.0.
 
-    ``add_frame`` flattens the action into feature-schema order. A control step
-    that does not populate every declared action key (e.g. a gripper channel the
-    policy left unset) must still emit a full-width action vector with the
-    missing slots zeroed - a short vector would silently misalign the recorded
-    ``action`` column against its declared names.
+    With no ``required_action_keys`` (the direct-API default) every declared
+    action column is this frame's to supply: a recorder fed by hand has no
+    other robot to leave columns for. 0.0 is a "travel to zero" command for an
+    absolute-position actuator, so it is never a stand-in for "unset".
     """
     ds = _CapturingDataset(_state_action_features(["j1"], ["a", "b", "c"]))
     rec = DatasetRecorder(dataset=ds)
 
-    # "b" is absent from the action dict entirely; the schema still has 3 slots.
-    rec.add_frame(observation={"j1": 1.0}, action={"a": 0.5, "c": 0.7}, task="t")
+    with pytest.raises(ValueError, match=r"action column\(s\) \['b'\]"):
+        rec.add_frame(observation={"j1": 1.0}, action={"a": 0.1, "c": 0.3}, task="t")
 
-    frame = ds.frames[0]
-    assert np.allclose(frame["action"], [0.5, 0.0, 0.7])
-    assert frame["action"].dtype == np.float32
+    assert ds.frames == []
 
 
 def test_finalize_swallows_dataset_error_and_still_closes(caplog):

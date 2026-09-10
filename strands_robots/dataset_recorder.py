@@ -753,6 +753,39 @@ def unrecordable_action_columns_error(
     )
 
 
+def unrecordable_state_columns_error(
+    observation: Mapping[str, Any],
+    declared: Sequence[str],
+) -> str | None:
+    """Reject a frame whose observation omits a declared state column.
+
+    The state sibling of :func:`unrecordable_action_columns_error`. A joint the
+    observation does not carry has no measured position at this step, and
+    ``0.0`` is a real position - the recorded column would say the joint sat at
+    zero for the whole episode, ``verify-dataset`` would pass it (a constant
+    column is a valid column), and a policy would train on it. LeRobot's own
+    ``build_dataset_frame`` raises ``KeyError`` here; so does this recorder.
+
+    Args:
+        observation: The frame's observation dict, keyed as the schema spells it.
+        declared: State column names (or vector source keys) the schema declares.
+
+    Returns:
+        An actionable message naming the missing columns, or ``None`` when every
+        declared column has a value.
+    """
+    missing = [key for key in declared if observation.get(key) is None]
+    if not missing:
+        return None
+    return (
+        f"Recorded state column(s) {missing} have no value in this frame's observation, so the "
+        "recording would persist a joint position that was never measured (0.0 is a position, "
+        "not 'unknown'). Declare joint_names that match the observation keys - for a sim "
+        "Robot that is list(sim.get_observation()[<robot>].keys()) - or record with the "
+        "backend's start_recording(), which derives the schema from the robot."
+    )
+
+
 def _frame_shape_error(
     camera_dims: Any,
     camera_keys: Sequence[str] | None,
@@ -1540,12 +1573,17 @@ class DatasetRecorder:
                 being driven. A declared column in this set that ``action``
                 omits raises ``ValueError`` rather than being written as a
                 fabricated command; see
-                :func:`unrecordable_action_columns_error`. ``None`` skips
-                the check.
+                :func:`unrecordable_action_columns_error`. ``None`` (the
+                default) requires every declared column - a recorder fed
+                directly has no other robot to leave columns for.
 
         Raises:
-            ValueError: A column in ``required_action_keys`` is declared by
-                the dataset schema but absent from ``action``.
+            ValueError: With ``required_action_keys=None`` (the direct-API
+                default), a declared state column is absent from
+                ``observation`` or a declared action column is absent from
+                ``action`` - nothing is written as 0.0 in place of a value
+                the frame did not carry. With an explicit scope, a scoped
+                action column absent from ``action``.
             RecordingFrameError: The dataset write failed and this recorder is
                 ``strict`` (the default). With ``strict=False`` the frame is
                 counted in ``dropped_frame_count`` and a warning is logged
@@ -1585,6 +1623,16 @@ class DatasetRecorder:
                     state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
                     self._cached_state_keys = state_names if state_names else sorted(state_keys)
 
+            if required_action_keys is None:
+                # Direct API: no scope was given, so every declared column is
+                # this frame's to supply and a missing one is refused. The
+                # backends' hooks always pass a scope; for them a bystander
+                # robot whose state read failed degrades to the fill below
+                # (see simulation/recording.py::undriven_robot_state) rather
+                # than ending the driven robot's episode.
+                gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
+                if gap is not None:
+                    raise ValueError(gap)
             for k in self._cached_state_keys:
                 v = observation.get(k)
                 if v is None:
@@ -1615,7 +1663,13 @@ class DatasetRecorder:
             elif action:
                 self._cached_action_keys = sorted(action.keys())
 
-        gap = unrecordable_action_columns_error(action, self._cached_action_keys or [], required_action_keys)
+        # ``None`` (the direct-API default) means every declared column is this
+        # frame's to supply: a single recorder fed by hand has no other robot to
+        # leave columns for. The backends' recording hooks pass the scoped set.
+        declared_action_keys = self._cached_action_keys or []
+        if required_action_keys is None and action:
+            required_action_keys = declared_action_keys
+        gap = unrecordable_action_columns_error(action, declared_action_keys, required_action_keys)
         if gap is not None:
             raise ValueError(gap)
 
@@ -1624,6 +1678,10 @@ class DatasetRecorder:
             for k in self._cached_action_keys or []:
                 v = action.get(k)
                 if v is None:
+                    # Only reachable for a column OUTSIDE an explicitly scoped
+                    # ``required_action_keys`` (a shared scene: the robots this
+                    # rollout does not drive). Every column this frame must
+                    # supply was checked above.
                     action_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     action_vals.append(float(v))
