@@ -438,7 +438,7 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
 # ``test_the_sweep_reaches_every_operator_facing_surface``, which is what keeps
 # this list from going stale into a vacuous sweep.
 _ALLOWLIST_DOCS: tuple[str, ...] = (
-    "README.md",
+    "docs/reference/configuration.md",
     "docs/ros2-integration.md",
     "docs/security.md",
 )
@@ -462,8 +462,8 @@ def _repo_root() -> Path:
 
 
 def _readme_allow_row() -> str:
-    """Return the README Configuration row documenting the pre-approval variable."""
-    readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
+    """Return the Configuration reference row documenting the pre-approval variable."""
+    readme = (_repo_root() / "docs/reference/configuration.md").read_text(encoding="utf-8")
     for line in readme.splitlines():
         if line.startswith("|") and f"`{gate_mod.COMMAND_ALLOW_ENV}`" in line:
             return line

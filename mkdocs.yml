@@ -69,6 +69,7 @@ nav:
   - Overview: examples/overview.md
 - Architecture: architecture.md
 - API Reference: api-reference.md
+- Configuration: reference/configuration.md
 - Security: security.md
 - Tool Result Contract: contracts.md
 - Contributing: contributing.md
