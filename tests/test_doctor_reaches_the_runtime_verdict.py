@@ -148,21 +148,20 @@ class TestDeviceConnectPosture:
     runtime's own decision functions rather than re-deriving them."""
 
     @staticmethod
-    def _impl(monkeypatch: pytest.MonkeyPatch, *, authenticated: bool | None) -> types.ModuleType:
+    def _impl(monkeypatch: pytest.MonkeyPatch, *, authenticated: bool) -> types.ModuleType:
         from strands_robots.device_connect._authz import insecure_env_opts_in
 
         mod = types.ModuleType("strands_robots.device_connect._impl")
         mod.resolve_allow_insecure = lambda explicit, env_value: insecure_env_opts_in(env_value)  # type: ignore[attr-defined]
         mod._TLS_ENV = ("MESSAGING_CREDENTIALS_FILE",)  # type: ignore[attr-defined]
-        if authenticated is not None:
-            calls: list[tuple[str, object]] = []
-            mod.calls = calls  # type: ignore[attr-defined]
+        calls: list[tuple[str, object]] = []
+        mod.calls = calls  # type: ignore[attr-defined]
 
-            def transport_is_authenticated(backend: str, urls, env=None) -> bool:
-                calls.append((backend, urls))
-                return authenticated
+        def transport_is_authenticated(backend: str, urls, env=None) -> bool:
+            calls.append((backend, urls))
+            return authenticated
 
-            mod.transport_is_authenticated = transport_is_authenticated  # type: ignore[attr-defined]
+        mod.transport_is_authenticated = transport_is_authenticated  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "strands_robots.device_connect._impl", mod)
         return mod
 
@@ -182,12 +181,12 @@ class TestDeviceConnectPosture:
         assert "  SKIP  " in result
         assert "strands-robots[device-connect]" in result
 
-    def test_skips_when_this_build_cannot_be_asked_about_tls(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Before ``transport_is_authenticated`` ships, the row says so instead of guessing."""
-        self._impl(monkeypatch, authenticated=None)
-        result = doctor.check_device_connect()
-        assert "  SKIP  " in result
-        assert "transport_is_authenticated" in result
+    def test_the_names_it_reads_are_the_ones_the_runtime_defines(self) -> None:
+        """No hedged ``getattr`` default: the row calls the shipped functions by name."""
+        from strands_robots.device_connect import _impl
+
+        for name in ("resolve_allow_insecure", "transport_is_authenticated", "_TLS_ENV"):
+            assert hasattr(_impl, name), name
 
     def test_authenticated_transport_passes_naming_the_credentials_variable(
         self, monkeypatch: pytest.MonkeyPatch
@@ -336,6 +335,39 @@ class TestMeshPosture:
         assert "ZENOH_CONNECT unreachable: tcp/10.0.0.9:7447" in result
         assert "hub.lab" not in result.split("unreachable:")[1]
         assert [s for s in seen if s[0] != "127.0.0.1"] == [("10.0.0.9", 7447, 1.0), ("hub.lab", 7448, 1.0)]
+
+    @pytest.mark.parametrize("raw", ["", "abc", "0", "99999", "-1", "74 47"])
+    def test_a_port_the_runtime_would_reject_is_not_printed_as_the_hub(
+        self, monkeypatch: pytest.MonkeyPatch, raw: str
+    ) -> None:
+        """``open_session`` range-checks the value and warns before using 7447."""
+        monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        monkeypatch.setenv("STRANDS_MESH_PORT", raw)
+        result = doctor.check_mesh()
+        assert "  WARN  " in result
+        assert "hub 127.0.0.1:7447 free" in result
+        assert f"STRANDS_MESH_PORT={raw!r}" in result
+        assert "falls back to 7447" in result
+
+    def test_a_port_the_runtime_accepts_is_the_hub_with_no_note(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        monkeypatch.setenv("STRANDS_MESH_PORT", "65535")
+        result = doctor.check_mesh()
+        assert "  PASS  " in result
+        assert "hub 127.0.0.1:65535 free" in result
+        assert "STRANDS_MESH_PORT" not in result
+
+    def test_every_exposure_is_reported_not_just_the_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Three notes at once: an early return would have hidden two of them."""
+        monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        monkeypatch.setenv("STRANDS_MESH_PORT", "abc")
+        monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
+        monkeypatch.setenv("ZENOH_CONNECT", "tcp/10.0.0.9:7447")
+        result = doctor.check_mesh()
+        assert "  WARN  " in result
+        assert "STRANDS_MESH_PORT='abc'" in result
+        assert "ZENOH_CONNECT unreachable: tcp/10.0.0.9:7447" in result
+        assert "STRANDS_MESH_MULTICAST=true" in result
 
     def test_multicast_scouting_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")

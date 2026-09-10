@@ -837,8 +837,8 @@ def check_device_connect() -> str:
 
     ``run()`` decides at start between four outcomes and this row names the one
     the current environment selects, through the runtime's own decision functions
-    (``resolve_allow_insecure`` and, once shipped, ``transport_is_authenticated``)
-    so the verdict cannot drift from the decision: the extra is missing (SKIP,
+    (``resolve_allow_insecure`` and ``transport_is_authenticated``) so the verdict
+    cannot drift from the decision: the extra is missing (SKIP,
     with the install line), TLS is configured (PASS), no TLS and no opt-in
     (WARN - ``run()`` refuses), or the insecure opt-in (WARN - plaintext on the
     LAN; FAIL when ``DEVICE_CONNECT_RPC_ALLOW`` is also empty, because then any
@@ -854,16 +854,10 @@ def check_device_connect() -> str:
             f'device-connect extra not installed ({e.name or e}); uv pip install "strands-robots[device-connect]"'
         )
 
-    is_authenticated = getattr(impl, "transport_is_authenticated", None)
-    if is_authenticated is None:
-        return _skip(
-            "device-connect posture: this build decides TLS inside run() only (transport_is_authenticated absent)"
-        )
-
     backend = os.environ.get("MESSAGING_BACKEND", "zenoh")
     allow_insecure = impl.resolve_allow_insecure(None, os.environ.get(_authz._INSECURE_ENV))
-    if is_authenticated(backend, None):
-        configured = [name for name in getattr(impl, "_TLS_ENV", ()) if os.environ.get(name)]
+    if impl.transport_is_authenticated(backend, None):
+        configured = [name for name in impl._TLS_ENV if os.environ.get(name)]
         how = f"credentials via {configured[0]}" if configured else "a TLS endpoint scheme"
         return _pass(f"device-connect ({backend}): authenticated transport, {how}")
     if not allow_insecure:
@@ -882,12 +876,25 @@ def check_device_connect() -> str:
     )
 
 
-def _mesh_port() -> int:
-    raw = os.environ.get("STRANDS_MESH_PORT", "7447").strip()
+def _mesh_port() -> tuple[int, str]:
+    """The port a zenoh session would listen on, and why it is not the configured one.
+
+    ``open_session`` parses ``STRANDS_MESH_PORT`` with a 1-65535 range check and
+    warns once before falling back to 7447 rather than raising, so a value the
+    runtime will not use must not be printed here as the hub.
+
+    Returns:
+        The port the runtime would use, and the reason a configured value was
+        rejected (empty when the value was taken as written).
+    """
+    raw = os.environ.get("STRANDS_MESH_PORT", "7447")
     try:
-        return int(raw)
-    except ValueError:
-        return 7447
+        port = int(raw)
+        if not (1 <= port <= 65535):
+            raise ValueError(f"port {port} out of range")
+    except ValueError as exc:
+        return 7447, f"STRANDS_MESH_PORT={raw!r} ({exc}) - the runtime warns and falls back to 7447"
+    return port, ""
 
 
 def _tcp_reachable(host: str, port: int, timeout_s: float) -> bool:
@@ -936,9 +943,10 @@ def check_mesh() -> str:
     session that never opens, so ``emergency_stop()`` reaches nobody. This row
     runs the same gate (``resolve_auth_mode`` + ``snapshot_acl``) without
     opening zenoh and prints the runtime's own "Pick one" text on refusal; then
-    it reports the hub port (free: this process becomes the local router;
-    bound: who owns it - 7447 is zenoh's default, so a foreign ``zenohd``
-    becomes the hub silently), each ``ZENOH_CONNECT`` endpoint's reachability
+    it reports the hub port the runtime would really bind (free: this process
+    becomes the local router; bound: who owns it - 7447 is zenoh's default, so a
+    foreign ``zenohd`` becomes the hub silently), each ``ZENOH_CONNECT``
+    endpoint's reachability
     with a one-second deadline, and whether LAN multicast scouting is on. The
     mesh is opt-in (``STRANDS_MESH`` / ``mesh=True``), so a refusal is a WARN
     unless the operator has turned it on, when it is the FAIL ``run()`` would hit.
@@ -983,7 +991,7 @@ def check_mesh() -> str:
         lines.append(f"mtls + ACL {acl}")
 
     # (2) hub port.
-    port = _mesh_port()
+    port, port_note = _mesh_port()
     owner = _listener_owner(port) if _tcp_reachable("127.0.0.1", port, 0.2) else ""
     if owner:
         lines.append(f"hub 127.0.0.1:{port} owned by {owner} (this process would join it as a client)")
@@ -1004,12 +1012,17 @@ def check_mesh() -> str:
     multicast = _zenoh_config._bool_env("STRANDS_MESH_MULTICAST", default=False)
     lines.append("LAN multicast scouting 224.0.0.224:7446 ON" if multicast else "gossip-only")
 
+    notes = [
+        note
+        for note in (
+            port_note,
+            f"ZENOH_CONNECT unreachable: {', '.join(unreachable)}" if unreachable else "",
+            "every zenoh app on the LAN sees this peer (STRANDS_MESH_MULTICAST=true)" if multicast else "",
+        )
+        if note
+    ]
     summary = "; ".join(lines)
-    if unreachable:
-        return _warn(f"mesh: {summary}", note=f"ZENOH_CONNECT unreachable: {', '.join(unreachable)}")
-    if multicast:
-        return _warn(f"mesh: {summary}", note="every zenoh app on the LAN sees this peer (STRANDS_MESH_MULTICAST=true)")
-    return _pass(f"mesh: {summary}")
+    return _warn(f"mesh: {summary}", note="; ".join(notes)) if notes else _pass(f"mesh: {summary}")
 
 
 #: The doctor's table: one ``(label, probe)`` row per check, in print order.

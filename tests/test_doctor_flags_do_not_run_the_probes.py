@@ -50,7 +50,12 @@ class TestFlagsAnswerBeforeAnyProbe:
 
 def test_a_bare_invocation_still_runs_every_row(monkeypatch) -> None:
     ran: list[str] = []
-    monkeypatch.setattr(doctor, "check_python_version", lambda: ran.append("ran") or doctor._pass("Python"))
+
+    def probe() -> str:
+        ran.append("ran")
+        return doctor._pass("Python")
+
+    monkeypatch.setattr(doctor, "check_python_version", probe)
     monkeypatch.setattr(doctor, "CHECKS", (("Python", "check_python_version"),))
     with pytest.raises(SystemExit) as exc:
         doctor.main([])
