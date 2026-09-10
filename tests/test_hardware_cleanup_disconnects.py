@@ -62,7 +62,10 @@ import time
 from typing import Any
 
 import pytest
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+
+pytest.importorskip("lerobot")  # the fakes below mirror lerobot's own error types
+
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError  # noqa: E402
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState

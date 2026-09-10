@@ -729,7 +729,10 @@ def unrecordable_action_columns_error(
         action: The frame's action dict, keyed as the dataset schema spells it.
         declared: Action column names declared by the dataset schema.
         required: Column names this frame must supply, or ``None`` to skip the
-            check entirely (the historical behaviour).
+            check. :meth:`DatasetRecorder.add_frame` no longer passes ``None``
+            for a frame that carries an action - unscoped, every declared
+            column is required - so ``None`` reaches here only from a caller
+            that deliberately makes no claim about who owes what.
 
     Returns:
         An actionable message naming the missing columns, or ``None`` when every
@@ -750,6 +753,39 @@ def unrecordable_action_columns_error(
         "injective). Record with a policy that produces a value for every declared action column "
         "- an action vector narrower than the actuator list is reported by diagnose_action_dim - "
         "or record a schema covering only the actuators it drives."
+    )
+
+
+def unrecordable_state_columns_error(
+    observation: Mapping[str, Any],
+    declared: Sequence[str],
+) -> str | None:
+    """Reject a frame whose observation omits a declared state column.
+
+    The state sibling of :func:`unrecordable_action_columns_error`. A joint the
+    observation does not carry has no measured position at this step, and
+    ``0.0`` is a real position - the recorded column would say the joint sat at
+    zero for the whole episode, ``verify-dataset`` would pass it (a constant
+    column is a valid column), and a policy would train on it. LeRobot's own
+    ``build_dataset_frame`` raises ``KeyError`` here; so does this recorder.
+
+    Args:
+        observation: The frame's observation dict, keyed as the schema spells it.
+        declared: State column names (or vector source keys) the schema declares.
+
+    Returns:
+        An actionable message naming the missing columns, or ``None`` when every
+        declared column has a value.
+    """
+    missing = [key for key in declared if observation.get(key) is None]
+    if not missing:
+        return None
+    return (
+        f"Recorded state column(s) {missing} have no value in this frame's observation, so the "
+        "recording would persist a joint position that was never measured (0.0 is a position, "
+        "not 'unknown'). Declare joint_names that match the observation keys - for a sim "
+        "Robot that is list(sim.get_observation()[<robot>].keys()) - or record with the "
+        "backend's start_recording(), which derives the schema from the robot."
     )
 
 
@@ -782,7 +818,7 @@ def _frame_shape_error(
       quiet one: nothing is logged, the dataset is created, and the mismatch
       surfaces later against ``add_frame``.
     * A component that is not a positive integer is written into the feature
-      as given - ``(3, 480, nan)``, ``(3, 480, '640')`` - so the schema
+      as given - ``(480, nan, 3)``, ``(480, '640', 3)`` - so the schema
       declares a shape no frame can match.
     * A value that is not a two-element sequence unpacks as a bare
       ``TypeError`` / ``ValueError``, and a non-mapping ``camera_dims`` as a
@@ -1411,30 +1447,36 @@ class DatasetRecorder:
 
         LeRobot v3 features format:
         {
-            "observation.images.camera_name": {"dtype": "video", "shape": (C, H, W), "names": [...]},
+            "observation.images.camera_name": {"dtype": "video", "shape": (H, W, C), "names": [...]},
             "observation.state": {"dtype": "float32", "shape": (N,), "names": [...]},
             "action": {"dtype": "float32", "shape": (N,), "names": [...]},
         }
 
         Note: "names" must be a flat list of strings, NOT a dict like {"motors": [...]}.
+
+        The camera block delegates to lerobot's ``hw_to_dataset_features``, so a
+        call that declares any camera needs lerobot importable. Every production
+        caller reaches this through :meth:`create`, which resolves
+        ``LeRobotDataset`` first and so answers an absent extra with
+        :func:`_describe_lerobot_import_failure`'s diagnosis rather than a raw
+        import error.
         """
         features = {}
 
-        # Observation: cameras → video/image features
+        # Observation: cameras -> video/image features. The declaration is
+        # lerobot's own (``hw_to_dataset_features``): HWC shape ``(H, W, 3)``
+        # with names ``[height, width, channels]``, the layout of lerobot's
+        # record path and of every published v3 dataset. Training transposes
+        # by names, so datasets this recorder wrote as CHW keep loading.
         if camera_keys:
+            from lerobot.utils.feature_utils import hw_to_dataset_features
+
             camera_dims = camera_dims or {}
-            for cam_name in camera_keys:
-                key = f"observation.images.{cam_name}"
-                dtype = "video" if use_videos else "image"
-                # Per-camera (height, width). Falls back to the global
-                # video_height/width when a camera has no explicit dims, so
-                # callers that don't pass camera_dims keep the old behaviour.
-                cam_h, cam_w = camera_dims.get(cam_name, (video_height, video_width))
-                features[key] = {
-                    "dtype": dtype,
-                    "shape": (3, cam_h, cam_w),
-                    "names": ["channels", "height", "width"],
-                }
+            # Per-camera (height, width). Falls back to the global
+            # video_height/width when a camera has no explicit dims, so
+            # callers that don't pass camera_dims keep the old behaviour.
+            hw = {cam: (*camera_dims.get(cam, (video_height, video_width)), 3) for cam in camera_keys}
+            features.update(hw_to_dataset_features(hw, "observation", use_video=use_videos))
 
         # Observation: state (joint positions)
         state_dim = 0
@@ -1540,12 +1582,17 @@ class DatasetRecorder:
                 being driven. A declared column in this set that ``action``
                 omits raises ``ValueError`` rather than being written as a
                 fabricated command; see
-                :func:`unrecordable_action_columns_error`. ``None`` skips
-                the check.
+                :func:`unrecordable_action_columns_error`. ``None`` (the
+                default) requires every declared column - a recorder fed
+                directly has no other robot to leave columns for.
 
         Raises:
-            ValueError: A column in ``required_action_keys`` is declared by
-                the dataset schema but absent from ``action``.
+            ValueError: With ``required_action_keys=None`` (the direct-API
+                default), a declared state column is absent from
+                ``observation`` or a declared action column is absent from
+                ``action`` - nothing is written as 0.0 in place of a value
+                the frame did not carry. With an explicit scope, a scoped
+                action column absent from ``action``.
             RecordingFrameError: The dataset write failed and this recorder is
                 ``strict`` (the default). With ``strict=False`` the frame is
                 counted in ``dropped_frame_count`` and a warning is logged
@@ -1585,6 +1632,16 @@ class DatasetRecorder:
                     state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
                     self._cached_state_keys = state_names if state_names else sorted(state_keys)
 
+            if required_action_keys is None:
+                # Direct API: no scope was given, so every declared column is
+                # this frame's to supply and a missing one is refused. The
+                # backends' hooks always pass a scope; for them a bystander
+                # robot whose state read failed degrades to the fill below
+                # (see simulation/recording.py::undriven_robot_state) rather
+                # than ending the driven robot's episode.
+                gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
+                if gap is not None:
+                    raise ValueError(gap)
             for k in self._cached_state_keys:
                 v = observation.get(k)
                 if v is None:
@@ -1615,7 +1672,13 @@ class DatasetRecorder:
             elif action:
                 self._cached_action_keys = sorted(action.keys())
 
-        gap = unrecordable_action_columns_error(action, self._cached_action_keys or [], required_action_keys)
+        # ``None`` (the direct-API default) means every declared column is this
+        # frame's to supply: a single recorder fed by hand has no other robot to
+        # leave columns for. The backends' recording hooks pass the scoped set.
+        declared_action_keys = self._cached_action_keys or []
+        if required_action_keys is None and action:
+            required_action_keys = declared_action_keys
+        gap = unrecordable_action_columns_error(action, declared_action_keys, required_action_keys)
         if gap is not None:
             raise ValueError(gap)
 
@@ -1624,6 +1687,10 @@ class DatasetRecorder:
             for k in self._cached_action_keys or []:
                 v = action.get(k)
                 if v is None:
+                    # Only reachable for a column OUTSIDE an explicitly scoped
+                    # ``required_action_keys`` (a shared scene: the robots this
+                    # rollout does not drive). Every column this frame must
+                    # supply was checked above.
                     action_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     action_vals.append(float(v))

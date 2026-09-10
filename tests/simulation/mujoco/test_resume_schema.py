@@ -51,7 +51,20 @@ def _features(joint_names, cams, actions=None):
     if actions is not None:
         feats["action"] = {"dtype": "float32", "shape": (len(actions),), "names": list(actions)}
     for name, (h, w) in cams.items():
+        # A dataset recorded before the HWC schema: CHW, no names.
         feats[f"observation.images.{name}"] = {"dtype": "video", "shape": (3, h, w)}
+    return feats
+
+
+def _hwc_features(joint_names, cams):
+    """What the recorder declares today (lerobot's hw_to_dataset_features): HWC with names."""
+    feats = _features(joint_names, {})
+    for name, (h, w) in cams.items():
+        feats[f"observation.images.{name}"] = {
+            "dtype": "video",
+            "shape": (h, w, 3),
+            "names": ["height", "width", "channels"],
+        }
     return feats
 
 
@@ -69,6 +82,18 @@ def test_resume_schema_extra_joint_raises():
 
 def test_resume_schema_camera_resolution_mismatch_raises():
     rec = _FakeRecorder(_features(["j"], {"front": (480, 640)}))
+    with pytest.raises(ValueError, match="resolution differs"):
+        verify(None, rec, ["j"], ["front"], {"front": (256, 256)}, fps=30)
+
+
+def test_resume_schema_reads_an_hwc_camera_by_its_names():
+    """An HWC declaration (480, 640, 3) is 480x640, not 640x3.
+
+    The recorder declares cameras HWC like lerobot; a positional CHW read
+    here would refuse to resume every dataset it records.
+    """
+    rec = _FakeRecorder(_hwc_features(["j"], {"front": (480, 640)}))
+    verify(None, rec, ["j"], ["front"], {"front": (480, 640)}, fps=30)
     with pytest.raises(ValueError, match="resolution differs"):
         verify(None, rec, ["j"], ["front"], {"front": (256, 256)}, fps=30)
 

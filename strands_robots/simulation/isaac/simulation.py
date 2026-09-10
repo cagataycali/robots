@@ -48,6 +48,7 @@ from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     camera_fov_error,
+    camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
@@ -5266,17 +5267,21 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
                 return {"status": "error", "content": [{"text": "No world created."}]}
 
             # Refuse a name that cannot address the camera this call creates, on
-            # the shared ``entity_name_error`` domain the MuJoCo and Newton
-            # backends' ``add_camera`` already applies, so a name one backend
-            # refuses is refused by all three - the same invariant this method
-            # already honours for ``position`` / ``target`` / ``fov`` / ``width``
-            # / ``height`` below. An empty name is worse than unaddressable for a
-            # camera: ``render`` routes ``camera_name in (None, "", "default",
-            # "free")`` to the free camera by an explicit token check, so a
-            # camera created as ``""`` could never be rendered from, while the
-            # prim landed at ``/World/Cameras/`` - the container scope shared by
-            # every camera on the stage.
-            if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+            # the shared ``camera_name_error`` rule every backend's
+            # ``add_camera`` reads, so a name one backend refuses is refused by
+            # all three - the same invariant this method already honours for
+            # ``position`` / ``target`` / ``fov`` / ``width`` / ``height``
+            # below. An empty name is worse than unaddressable for a camera: the
+            # prim would land at ``/World/Cameras/``, the container scope shared
+            # by every camera on the stage.
+            #
+            # ``routes_free_camera_tokens=False``: unlike the MuJoCo and Newton
+            # backends, this one's ``get_frame`` looks a camera up in
+            # ``self._cameras`` directly with no token check, so ``"default"``
+            # here is an ordinary addressable name - and is this signature's
+            # documented default. Stating the flag keeps that divergence a
+            # property of the call rather than a guard this site omits.
+            if (name_err := camera_name_error("add_camera", "name", name, routes_free_camera_tokens=False)) is not None:
                 return {"status": "error", "content": [{"text": name_err}]}
 
             # Validate the pose and the field of view on the shared domains the

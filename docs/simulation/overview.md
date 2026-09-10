@@ -22,6 +22,18 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `destroy` | - | Tear down model, data, executor |
 | `export_xml` | `output_path` | Serialise live scene to MJCF; reloadable via `load_scene` (assets referenced by absolute path) |
 
+!!! tip "Releasing a world you did not destroy"
+    `destroy` / `cleanup` (or the context manager) release the world, the
+    renderers, the executor, the ROS 2 bridge, attached teleoperated devices and
+    the mesh peer. A script that never calls them is covered at process exit:
+    the MuJoCo backend releases every still-live simulation from an `atexit`
+    hook, which runs while the import system is intact. The `__del__` safety net
+    alone cannot - by the time a finalizer runs at exit CPython has already set
+    the teardown path's module globals to `None`, so the first step raises and
+    nothing is released. Prefer explicit release anyway: it is the only form
+    that gives you the result, and it frees the GPU/GL resources at the point
+    you stop needing them rather than at exit.
+
 ## Scene-MJCF
 
 | Action | Notes |
@@ -219,6 +231,8 @@ Each action *value* must be a finite number, and must not be a boolean. `nan` / 
 When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the simulation configures the policy's output keys with the robot's *action keys* via `set_robot_state_keys(robot_action_keys(robot_name))`. `robot_action_keys` returns the actuator short-names that `send_action` resolves - which are not always the robot's joints. Robots with passive / mimic finger joints (no driving actuator) or a tendon-driven gripper (an actuator with no matching joint name) have an actuator set distinct from their joint set, so keying a policy by `robot_joint_names` would emit keys that resolve to nothing and leave those DOFs unmoved. The list can also be *narrower* than the joint names rather than differently spelled: on the Newton backend a floating base's 6-DoF free joint is a joint with no scalar target to write, so it is excluded from the action keys (its pose is read as the structured `base_pos` / `base_quat` / `base_lin_vel` / `base_ang_vel` signals instead) and `send_action` refuses it as a command key. The default `robot_action_keys` mirrors `robot_joint_names` for backends whose actuators match their joints; do not assume the two have the same width.
 
 `stop_policy` is honored at **any** point after `start_policy` returns, including before the rollout's first frame and while it is still queued behind a busy executor. The rollout is claimed by the launching thread rather than by the background worker, so a stop can only ever land on a rollout that is already marked as running: it reports `Stopped on '<robot>'` and the rollout takes no further frames. Its verdict is derived from the same in-flight population `list_policies_running` reads, so the two never report opposite facts about the same robot at the same instant. That population counts a rollout in either launch shape - one submitted by `start_policy` and one being driven right now by the blocking `run_policy`, which registers no future - so a blocking rollout is reported as running, is named by `list_policies_running`, and is halted by a stop that carries no `robot_name` (the shape the mesh e-stop fanout broadcasts); `Was not running on '<robot>'` is reserved for the genuinely idempotent case, where nothing is in flight at all. Every stop path goes through one seam - `SimRobot.request_policy_stop` - which is what makes the halt durable: `stop_policy`, `remove_robot`, teardown, and the Device Connect `stop` / `emergencyStop` handlers cannot drift to different answers about whether a rollout was actually halted.
+Scene mutations read that same in-flight population. `add_robot`, `remove_robot`, `add_object`, `remove_object`, `move_object`, `add_camera`, `remove_camera`, `load_scene`, `set_gravity`, `set_timestep` and `reset` refuse while a rollout is driving, because swapping the compiled model or writing the physics arrays under a live rollout is a segfault rather than a race the lock can serialize. The refusal names the robots in flight and the `stop_policy` remedy. Because the population is the one `list_policies_running` reports, the gate and the report cannot disagree about the same instant: a rollout that is *reported* as running is a rollout whose scene is *protected*, in either launch shape - a blocking `run_policy` registers no future, and was previously invisible to the gate while being named by every reporting surface. The rollout's own driving thread is exempt, so a multi-episode rollout still resets between its own episodes (`PolicyRunner` calls `reset()` at each episode boundary); the gate refuses the mutation arriving from *another* thread, which is the hazard.
+
 
 `list_policies_running` answers on every backend, from that same in-flight population, so the pair above holds wherever a rollout can run rather than only where the population was first read: a MuJoCo, Newton or Isaac engine names the robots it is driving, and a peer polled over the mesh reports the same names at the same instant. It is a `SimEngine` verb reading one seam (`_rollouts_in_flight`, which each backend answers from the rollout claim its own hooks raise and lower), not a per-backend reimplementation, which is what would let the two drift. It is discoverable on every backend too: `describe()["methods"]` names it beside `stop_policy`, read from a single shared entry rather than written once per backend, so a caller enumerating the surface finds the verb wherever it answers. A backend narrows that surface only by hiding a verb it does not implement -- Newton hides `get_contacts` and `load_scene`, both of which raise -- so a name absent from `describe()` means the verb does not work there, not that it was never advertised.
 
@@ -260,18 +274,21 @@ chunk N+1 exec               |####|
 
 **Hardening.** A policy that returns no actions at all on its FIRST query ends the rollout with `status="error"` after that one query, on both the synchronous and the async path - there is no budget a chunk of zero actions can ever spend, so re-querying only burns inference. If a *prefetched* chunk arrives empty the runner instead degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread). That deadline must be a positive finite number of seconds, or `None` (the default) to wait without one - `0`, a negative value and `nan` all make the wait give up before any inference can answer, and `inf` overflows the platform's timestamp arithmetic, so each is refused at the call naming the parameter rather than reported one rollout later as a stuck policy.
 
-**Telemetry.** Every `run_policy` result `{"json": {...}}` block carries six RTC fields so latency masking is provable from the payload, not the logs:
+**Telemetry.** Every `run_policy` result `{"json": {...}}` block carries the chunk-prefetch fields so latency masking is provable from the payload, not the logs. The prefetch pipeline runs for any chunk-emitting policy (an ACT checkpoint included); only `policy_rtc_enabled` says whether the policy blended the seams with real-time chunking:
 
 | Field | Meaning |
 |-------|---------|
-| `rtc_async_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
-| `rtc_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries), counted on the synchronous path too |
-| `rtc_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
-| `rtc_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
-| `rtc_avg_inference_ms` | Mean `get_actions` wall time across the rollout |
-| `rtc_max_inference_ms` | Slowest `get_actions` wall time |
+| `chunk_prefetch_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
+| `policy_rtc_enabled` | The policy's own `supports_rtc` - real seam blending, independent of the pipeline |
+| `chunk_prefetch_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries), counted on the synchronous path too |
+| `chunk_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
+| `chunk_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
+| `avg_inference_ms` | Mean `get_actions` wall time across the rollout |
+| `max_inference_ms` | Slowest `get_actions` wall time |
 
-A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
+The previous `rtc_async_enabled`, `rtc_chunks_acquired`, `rtc_prefetch_hits`, `rtc_prefetch_blocks`, `rtc_avg_inference_ms` and `rtc_max_inference_ms` spellings are still emitted with the same values for one release.
+
+A healthy masked rollout shows `chunk_prefetch_hits` near the chunk count and `chunk_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
 
 **Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking. Being synchronous, the spec path declares an observed delay of exactly `0` to the policy before every inference, like the other two loops - so a policy object carried over from an async rollout cannot keep slicing its chunk seam against that rollout's stale step count.
 

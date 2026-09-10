@@ -63,6 +63,8 @@ from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 from strands_robots.utils import (
     boolean_flag_error,
     declared_count,
+    effective_episode_count,
+    episode_subset_budget_error,
     lerobot_version,
     stale_output_dir_is_clearable,
     torch_device_error,
@@ -644,6 +646,36 @@ class LerobotTrainer(Trainer):
         except (OSError, ValueError, AttributeError):
             return None
 
+    def _effective_episode_count(self, spec: TrainSpec) -> int | None:
+        """Episodes this spec's run will actually split, or ``None`` when unknown.
+
+        :meth:`_dataset_total_episodes` answers what the dataset HOLDS; this
+        answers what the run LOADS, which ``extra['dataset.episodes']`` and
+        ``extra['dataset.exclude_episodes']`` narrow. lerobot sizes the
+        validation split against the loaded subset, so that is the denominator
+        ``val_episodes`` has to be divided by - see
+        :func:`~strands_robots.utils.effective_episode_count`, the owner both
+        this backend and the ``lerobot_train`` tool share so the two cannot
+        disagree about how many episodes a subset leaves.
+
+        The subset is read from the same ``extra`` keys
+        :meth:`_apply_extra_passthrough` delivers to lerobot's ``DatasetConfig``,
+        under the spellings that passthrough accepts.
+
+        Returns:
+            The loaded episode count, or ``None`` when the header itself is
+            unreadable - the unknown case every caller here already treats as
+            "no split can be derived".
+        """
+        total = self._dataset_total_episodes(spec.dataset_root)
+        if total is None:
+            return None
+        return effective_episode_count(
+            total,
+            spec.extra.get("dataset.episodes"),
+            spec.extra.get("dataset.exclude_episodes"),
+        )
+
     def _resume_config_path(self, output_dir: str) -> str | None:
         """Return the resumable ``train_config.json`` FILE path, or None.
 
@@ -682,8 +714,8 @@ class LerobotTrainer(Trainer):
         lerobot's loadable artifact is the ``pretrained_model`` dir that holds
         ``model.safetensors`` + ``train_config.json``; we locate it from the
         resume config file's parent. For reward-model runs this is the directory
-        :func:`~strands_robots.training.reward.compute_rabc_weights` consumes as
-        ``reward_model_path``.
+        ``python -m lerobot.rewards.sarm.compute_rabc_weights`` consumes as its
+        reward-model path.
         """
         cfg_file = self._resume_config_path(output_dir)
         return os.path.dirname(cfg_file) if cfg_file else None
@@ -721,9 +753,9 @@ class LerobotTrainer(Trainer):
             return None
         if not spec.dataset_root:
             return None
-        total = self._dataset_total_episodes(spec.dataset_root)
-        if total is not None and 0 < spec.val_episodes < total:
-            return validation_split_fraction(spec.val_episodes, total)
+        effective = self._effective_episode_count(spec)
+        if effective is not None and 0 < spec.val_episodes < effective:
+            return validation_split_fraction(spec.val_episodes, effective)
         return None
 
     def _unreadable_episode_count_problem(self, spec: TrainSpec) -> str:
@@ -1039,8 +1071,18 @@ class LerobotTrainer(Trainer):
                 # that trains on every episode and records no validation loss.
                 problems.append(self._unreadable_episode_count_problem(spec))
             else:
-                if spec.val_episodes >= total:
-                    problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+                # Compared against what the run LOADS, not what the header
+                # declares: an episode subset narrows the budget below the
+                # header count, and 5 of a selected 4 passed a check against 30.
+                effective = self._effective_episode_count(spec)
+                assert effective is not None, "a readable episode count makes the loaded count readable too"
+                if spec.val_episodes >= effective:
+                    problems.append(
+                        episode_subset_budget_error(
+                            spec.val_episodes, total, effective, self.provider_name, passthrough_param="extra"
+                        )
+                        or f"val_episodes={spec.val_episodes} >= total_episodes={total}"
+                    )
                 split_err = validation_split_error(
                     spec.val_episodes,
                     self._dataset_total_tasks(spec.dataset_root),

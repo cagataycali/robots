@@ -863,6 +863,13 @@ class TestReachyMiniDriver(unittest.TestCase):
 
 
 class TestInitDeviceConnect(unittest.TestCase):
+    def setUp(self):
+        # init_device_connect refuses a transport nobody authenticates; these
+        # tests are about the driver/id plumbing, so give it a credentials file.
+        self._env = patch.dict(os.environ, {"MESSAGING_CREDENTIALS_FILE": "/etc/dc/test.creds.json"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
     @patch("strands_robots.device_connect.DeviceRuntime")
     def test_creates_robot_driver(self, MockRuntime):
         from strands_robots.device_connect import init_device_connect

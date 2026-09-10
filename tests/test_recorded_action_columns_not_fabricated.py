@@ -118,19 +118,22 @@ class TestAddFrameRefusesToFabricateAColumn:
         assert len(ds.frames) == 1
         np.testing.assert_allclose(ds.frames[0]["action"], [0.4, 0.5, 0.6], atol=1e-6)
 
-    def test_the_default_still_fills_unmatched_columns(self):
-        """Unchanged for callers that make no claim - e.g. a shared-scene recording.
+    def test_the_default_requires_every_declared_column(self):
+        """``None`` means every declared column, not "no claim".
 
-        This is the behaviour the ``required_action_keys`` scoping deliberately
-        preserves: a rollout driving one robot in a two-robot scene supplies only
-        its own columns, and the robots it does not drive are not its to report.
+        A recorder fed directly has no other robot to leave columns for, so the
+        unscoped default refuses a partial action instead of writing 0.0 into
+        the columns it did not carry. Shared-scene recordings pass the scoped
+        set explicitly (see the test above), and only there do the columns
+        outside it stay 0.0.
         """
         rec, ds = self._recorder()
-        rec.add_frame(
-            observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
-            action={"a_shoulder": 0.4},
-        )
-        np.testing.assert_allclose(ds.frames[0]["action"], [0.4, 0.0, 0.0], atol=1e-6)
+        with pytest.raises(ValueError, match=r"\['a_elbow', 'a_grip'\]"):
+            rec.add_frame(
+                observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
+                action={"a_shoulder": 0.4},
+            )
+        assert ds.frames == []
 
     def test_an_actionless_frame_does_not_poison_the_declared_column_cache(self):
         """The declared columns are resolved from the schema, not from frame one.
@@ -365,3 +368,44 @@ def test_a_recording_never_falls_back_to_fabricating_when_the_columns_are_unknow
         sim.cleanup()
 
     assert rec.frames == 0, "no frame may be recorded when the owed columns are unknown"
+
+
+SO100 = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+def test_a_real_dataset_never_receives_a_fabricated_column(tmp_path):
+    """The documented direct API end to end: create(), add_frame(), no 0.0.
+
+    Before this guard the same two dicts produced a dataset whose parquet held
+    ``observation.state[0] == 0.0`` and ``action[5] == 0.0``, that
+    ``LeRobotDataset`` loaded, ``verify-dataset`` passed and an ACT step
+    trained on. The refusal has to happen at ``add_frame``, before anything
+    reaches the episode buffer.
+    """
+    pytest.importorskip("lerobot")
+    rec = DatasetRecorder.create(
+        repo_id="dd/refuses-missing",
+        root=str(tmp_path / "ds"),
+        fps=30,
+        robot_type="so100",
+        joint_names=SO100,
+        action_names=SO100,
+        camera_keys=["front"],
+        camera_dims={"front": (48, 64)},
+        task="t",
+        use_videos=False,
+        overwrite=True,
+    )
+    img = np.zeros((48, 64, 3), dtype=np.uint8)
+    obs = {j: 0.1 * (k + 1) for k, j in enumerate(SO100)}
+    obs["front"] = img
+    act = {j: 0.2 * (k + 1) for k, j in enumerate(SO100)}
+
+    with pytest.raises(ValueError, match=r"state column\(s\) \['shoulder_pan'\]"):
+        rec.add_frame({k: v for k, v in obs.items() if k != "shoulder_pan"}, act)
+    with pytest.raises(ValueError, match=r"action column\(s\) \['gripper'\]"):
+        rec.add_frame(obs, {k: v for k, v in act.items() if k != "gripper"})
+
+    rec.add_frame(obs, act)
+    result = rec.save_episode()
+    assert result["episode_frames"] == 1

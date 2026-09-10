@@ -1695,6 +1695,34 @@ class PhysicsMixin:
         if err:
             return err
 
+        # Refuse a pose outside a limited joint's range before any qpos write.
+        # mj_forward does not clamp qpos, so an out-of-range value used to land
+        # in the state and be reported as "Set n/n joint positions" while the
+        # next step drove the joint back through its limit at whatever velocity
+        # the constraint solver produced (99 rad on a [-1.92, 1.92] joint left
+        # it at -9.4 rad moving 23.8 rad/s after 100 steps).
+        out_of_range: list[str] = []
+        for jnt_name, value in positions.items():
+            jnt_id = joint_ids[jnt_name]
+            if not model.jnt_limited[jnt_id]:
+                continue
+            lo, hi = (float(x) for x in model.jnt_range[jnt_id])
+            if not lo <= float(value) <= hi:
+                out_of_range.append(f"{jnt_name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]")
+        if out_of_range:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "set_joint_positions: position outside the joint's range, nothing written: "
+                            + "; ".join(out_of_range)
+                            + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                        )
+                    }
+                ],
+            }
+
         with self._lock:
             servos, other_drives = joint_drive_map(model, mj)
             moved: list[str] = []

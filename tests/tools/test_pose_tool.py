@@ -36,6 +36,13 @@ from tests.tool_result_contract import tool_json
 from .conftest import FakeSerial
 
 
+@pytest.fixture(autouse=True)
+def _pre_approve_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade what a motion does once admitted; the operator gate (F-010) is graded in
+    ``test_pose_tool_gates_bus_writes.py``, so it is pre-approved here."""
+    monkeypatch.setenv("STRANDS_POSE_COMMAND_ALLOW", "*")
+
+
 def _texts(result: dict[str, Any]) -> str:
     """Concatenate all content ``text`` fields from a tool result."""
     return "\n".join(item.get("text", "") for item in result.get("content", []))

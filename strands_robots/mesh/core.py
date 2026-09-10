@@ -2187,7 +2187,10 @@ class Mesh(SensorLoopsMixin):
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        if self._estop_lockout.is_set() and action not in ("status", "resume"):
+        # ``stop`` is admitted too: it only ever de-energizes, and a second
+        # e-stop arriving while the lockout is already engaged must still halt
+        # a rollout the first one missed rather than be "rejected".
+        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop"):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
@@ -3582,7 +3585,11 @@ class Mesh(SensorLoopsMixin):
         ``BROADCAST_RESPONDER``).
         """
         if not self._running:
-            return []
+            action = cmd.get("action") if isinstance(cmd, dict) else cmd
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot broadcast {action}; "
+                "start() the mesh first (or fix the refusal it logged)"
+            )
         # client-side validate before publishing. broadcast()'s
         # return type is list[dict] (responses), so a validation failure
         # has no structured slot -- log the rejection and return [] so
@@ -3783,17 +3790,28 @@ class Mesh(SensorLoopsMixin):
 
     # Safety - emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
-        """Broadcast a stop command to every peer and engage the local lockout.
+        """Stop the local robot, broadcast a stop, and engage the local lockout.
 
-        After this call the local mesh refuses every non-status, non-resume
-        action until :meth:`_resume_lockout` is invoked with the operator
-        override code (``STRANDS_MESH_OVERRIDE_CODE``). The event is also
-        published on ``strands/safety/estop`` and recorded in the audit log
-        (see :func:`strands_robots.mesh.audit.log_safety_event`).
+        The robot registered in this process is stopped first, through the same
+        :meth:`_dispatch` path a remote peer runs. ``broadcast`` never comes
+        back to the sender -- ``_on_cmd`` drops envelopes carrying our own
+        ``sender_id`` -- so the one robot an operator is standing next to is the
+        one robot the fanout cannot reach.
 
-        Returns the list of responses received from peers within the broadcast
-        timeout -- useful for telemetry (which peers acknowledged before the
-        stop fanned out).
+        After this call the local mesh refuses every action but ``status``,
+        ``resume`` and ``stop`` until :meth:`_resume_lockout` is invoked with
+        the operator override code (``STRANDS_MESH_OVERRIDE_CODE``). ``stop``
+        stays admitted because it only ever de-energizes: a second e-stop
+        reaching an already locked-out peer must halt a rollout the first one
+        missed rather than be rejected. The event is also published on
+        ``strands/safety/estop`` and recorded in the audit log (see
+        :func:`strands_robots.mesh.audit.log_safety_event`).
+
+        Returns the responses collected within the broadcast timeout, the local
+        robot's own answer first (shaped like a peer's, with this peer's id) --
+        useful for telemetry, and counted in ``peers_not_stopped`` exactly as a
+        remote answer is. A peer with no robot registered contributes no local
+        answer: it has nothing to halt.
 
         A response is only an acknowledgement that the peer STOPPED if it says
         so. A peer whose registered robot exposes no ``stop_task`` answers
@@ -3801,11 +3819,33 @@ class Mesh(SensorLoopsMixin):
         CRITICAL, and reported in the safety envelope as ``peers_not_stopped``.
         Counting them as acknowledgements would tell an operator the fleet had
         halted while a robot was still moving.
+
+        Raises ``RuntimeError`` when the mesh is not running: an e-stop that
+        reached no peer must not look like "asked, nobody answered" (``[]``).
         """
+        if not self._running:
+            raise RuntimeError(
+                f"mesh not running: {self.peer_id} cannot emergency_stop -- no peer was told to stop; "
+                "use the robot's local stop and fix the mesh start refusal it logged"
+            )
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
-        responses = self.broadcast({"action": "stop"}, timeout=3.0)
+        # The issuer's own robot first. ``broadcast`` never reaches this
+        # process (``_on_cmd`` drops envelopes whose sender_id is ours), so
+        # before this line an e-stop halted every robot on the mesh EXCEPT the
+        # one next to the operator who pressed it, and waited the full
+        # broadcast timeout before returning. Same dispatch path the remote
+        # peers run, so the answer is shaped like theirs and counts in
+        # ``peers_not_stopped``.
+        responses: list[dict[str, Any]] = []
+        if self.robot is not None:
+            try:
+                local_result = self._dispatch({"action": "stop"})
+            except Exception as exc:  # noqa: BLE001 - a stop must answer, not raise
+                local_result = {"ok": False, "error": f"local stop failed: {exc}"}
+            responses.append({"type": "response", "responder_id": self.peer_id, "result": local_result})
+        responses += self.broadcast({"action": "stop"}, timeout=3.0)
         not_stopped = _peers_that_did_not_stop(responses)
         if not_stopped:
             logger.critical(

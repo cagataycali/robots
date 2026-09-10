@@ -353,16 +353,19 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
     envelope = next(payload for key, payload in published if key == "strands/safety/estop")
     receiver._on_safety_estop(_as_sample(envelope))
 
-    # Locked out: status still answers, everything else is refused.
+    # Locked out: status still answers, a second stop is still honoured (it
+    # only ever de-energizes), and every actuating action is refused.
     assert isinstance(receiver._dispatch({"action": "status"}), dict)
+    assert receiver._dispatch({"action": "stop"}) == {"ok": True, "status": "stopped"}
     with pytest.raises(mesh_security.LockoutError):
-        receiver._dispatch({"action": "stop"})
+        receiver._dispatch({"action": "execute", "instruction": "resume the route"})
 
     # The declined resume: refused, and the lockout is INTACT afterwards.
     denied = receiver._dispatch({"action": "resume", "override_code": "not-the-code"})
     assert denied == {"status": "error", "error": "resume rejected"}
+    assert receiver._estop_lockout.is_set()
     with pytest.raises(mesh_security.LockoutError):
-        receiver._dispatch({"action": "stop"})
+        receiver._dispatch({"action": "execute", "instruction": "resume the route"})
 
     # The audit trail names the denial with a structured local reason.
     from strands_robots.mesh.audit import read_audit_log

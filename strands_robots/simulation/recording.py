@@ -30,7 +30,7 @@ import logging
 import math
 import numbers
 import shutil
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -649,6 +649,22 @@ def requested_rate_mismatch_reason(method: str, fps: Any, control_frequency: Any
         f"capturing at control_frequency={rate:g} Hz. {rate_mismatch_explanation(fps_int, rate)} "
         f"Align the two rates: {remedy}."
     )
+
+
+def _camera_height_width(shape: Sequence[Any], names: Sequence[str] | None) -> tuple[Any, Any]:
+    """Read ``(height, width)`` from a camera feature declared in either layout.
+
+    The recorder declares cameras the way lerobot does, HWC ``(H, W, 3)`` with
+    names ``[height, width, channels]``; datasets it recorded before that are
+    CHW ``(3, H, W)`` with names ``[channels, height, width]``. Names decide
+    when present (lerobot's own transposition rule); without names the
+    3-channel axis is located by value.
+    """
+    if names and set(names) >= {"height", "width"}:
+        return shape[list(names).index("height")], shape[list(names).index("width")]
+    if shape[0] == 3 and shape[-1] != 3:
+        return shape[1], shape[2]
+    return shape[0], shape[1]
 
 
 def _resume_schema_error(diffs: list[str]) -> str:
@@ -1596,7 +1612,7 @@ class DatasetRecordingMixin:
             shape = disk_cam.get("shape")
             scene_dim = camera_dims.get(cam)
             if shape and len(shape) == 3 and scene_dim is not None:
-                _, disk_h, disk_w = shape
+                disk_h, disk_w = _camera_height_width(shape, disk_cam.get("names"))
                 scene_h, scene_w = scene_dim
                 if (int(disk_h), int(disk_w)) != (int(scene_h), int(scene_w)):
                     diffs.append(

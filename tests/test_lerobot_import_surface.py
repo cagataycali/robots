@@ -48,12 +48,33 @@ _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 # guard must not flag them. Remove an entry once the pinned lerobot range ships
 # the symbol (it then resolves like any other).
 #
-# Empty: the pinned range is now lerobot>=0.6.0, which ships every symbol
-# strands imports -- reanchor_relative_rtc_prefix (previously forward-compat)
-# lands in lerobot 0.6, so it is now checked like any other import. A new entry
-# belongs here only when strands starts importing a symbol that exists on
-# lerobot main but not yet in the pinned range.
-_FORWARD_COMPAT_SYMBOLS: frozenset[tuple[str, str]] = frozenset()
+# A new entry belongs here only when strands starts importing a symbol that
+# exists on lerobot main but not yet in the pinned range. The previous entry,
+# reanchor_relative_rtc_prefix, left when lerobot 0.6 shipped it.
+#
+# resolve_episode_indices: the episode-subset resolver that landed on lerobot
+# main in 64b23178d beside DatasetConfig.exclude_episodes, absent from 0.6.1 -
+# the only release inside the declared range. utils.effective_episode_count
+# imports it inside a try/except ImportError and falls back to counting the
+# allowlist verbatim, which is what 0.6.1's own make_train_eval_datasets does.
+#
+# That fallback is what the exemption rests on, so both halves of it are asserted
+# rather than trusted: ``test_forward_compat_allowlist_entries_are_actually_imported``
+# refuses a stale entry, and ``test_every_forward_compat_entry_is_gated_behind_a_fallback``
+# refuses one whose import does not fall back. Without the second, adding a name
+# here would silence the drift guard for an UNGUARDED import, which is the
+# rename/removal this file exists to catch.
+_FORWARD_COMPAT_SYMBOLS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("lerobot.datasets.utils", "resolve_episode_indices"),
+    }
+)
+
+# An import failure for a symbol a module does not export raises ``ImportError``
+# (``cannot import name ... from ...``), so an ``ImportError`` handler is what
+# makes a forward-compat fallback real. A wider handler is not accepted here: the
+# roster's promise is specifically that the symbol's ABSENCE is handled.
+_IMPORT_FALLBACK_HANDLERS: frozenset[str] = frozenset({"ImportError", "ModuleNotFoundError"})
 
 
 def _python_sources() -> list[Path]:
@@ -86,6 +107,56 @@ def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
                     if alias.name == "lerobot" or alias.name.startswith("lerobot."):
                         found.append((alias.name, None, f, node.lineno))
     return found
+
+
+def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    """Child -> parent for every node in ``tree`` (``ast`` keeps no back-links)."""
+    return {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+
+def _guarded_by_an_import_fallback(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    """True when ``node`` sits in the body of a ``try`` that handles an import failure.
+
+    Walks outward so a nested statement (the shipped site imports inside an ``if``
+    inside a function inside the ``try``) is credited to the enclosing handler.
+    Only the ``try``'s BODY counts -- a statement in an ``except``/``finally``
+    clause is not protected by that same handler.
+    """
+    current = node
+    while current in parents:
+        parent = parents[current]
+        if isinstance(parent, ast.Try) and current in parent.body:
+            for handler in parent.handlers:
+                caught = handler.type
+                if isinstance(caught, ast.Name):
+                    names = {caught.id}
+                elif isinstance(caught, ast.Tuple):
+                    names = {e.id for e in caught.elts if isinstance(e, ast.Name)}
+                else:
+                    names = set()
+                if names & _IMPORT_FALLBACK_HANDLERS:
+                    return True
+        current = parent
+    return False
+
+
+def _forward_compat_import_sites() -> dict[tuple[str, str], list[tuple[Path, int, bool]]]:
+    """Where each rostered symbol is imported, and whether a fallback guards it."""
+    sites: dict[tuple[str, str], list[tuple[Path, int, bool]]] = {key: [] for key in _FORWARD_COMPAT_SYMBOLS}
+    for f in _python_sources():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        parents = _parent_map(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            for alias in node.names:
+                key = (node.module, alias.name)
+                if key in sites:
+                    sites[key].append((f, node.lineno, _guarded_by_an_import_fallback(node, parents)))
+    return sites
 
 
 def _resolves_in(module: object, module_name: str, symbol: str) -> bool:
@@ -159,6 +230,36 @@ def test_imported_lerobot_symbols_resolve() -> None:
     assert not drift, (
         "lerobot API drift: strands_robots imports symbols that no longer exist in the "
         f"installed lerobot ({len(drift)} broken):\n" + "\n".join(drift)
+    )
+
+
+def test_every_forward_compat_entry_is_gated_behind_a_fallback() -> None:
+    """Every import of a rostered symbol must degrade when the symbol is absent.
+
+    An entry in ``_FORWARD_COMPAT_SYMBOLS`` exempts a symbol from the resolve
+    check on the stated grounds that its absence is already handled at every use.
+    ``test_forward_compat_allowlist_entries_are_actually_imported`` keeps the
+    roster from going stale, but nothing checked the fallback the exemption rests
+    on -- so a name added here also made an UNGUARDED import of a missing symbol
+    invisible, which is the rename/removal this file exists to catch. That import
+    resolves on a newer lerobot and raises ``ImportError`` on the pinned one, in a
+    deferred branch, with the guard reporting no drift.
+
+    An import site counts as guarded only when it sits in the BODY of a ``try``
+    whose handler catches an import failure; the site of the fallback is what the
+    caller reaches when the symbol is gone.
+    """
+    unguarded: list[str] = []
+
+    for (module, symbol), sites in _forward_compat_import_sites().items():
+        for f, lineno, guarded in sites:
+            if not guarded:
+                rel = f.relative_to(_PACKAGE_DIR.parent)
+                unguarded.append(f"  {rel}:{lineno}: `from {module} import {symbol}` - no ImportError fallback")
+
+    assert not unguarded, (
+        "_FORWARD_COMPAT_SYMBOLS exempts a symbol whose import is not guarded, so the drift guard "
+        f"is silenced for an import that will raise ({len(unguarded)}):\n" + "\n".join(unguarded)
     )
 
 

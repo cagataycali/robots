@@ -718,10 +718,15 @@ def test_allow_insecure_resolution_precedence():
     assert resolve_allow_insecure(None, "") is False
 
 
-def test_init_device_connect_uses_secure_default():
+def test_init_device_connect_uses_secure_default(monkeypatch):
     """The production entrypoint constructs the runtime secure-by-default when
-    neither the arg nor the env var opt into insecure transport."""
+    TLS is configured and neither the arg nor the env var opt into insecure
+    transport. Without TLS it refuses to start instead, which is what
+    ``test_a_fresh_install_does_not_come_online_in_plaintext`` below pins."""
     from unittest.mock import patch
+
+    monkeypatch.setenv("MESSAGING_CREDENTIALS_FILE", "/etc/dc/test.creds.json")
+    monkeypatch.delenv("DEVICE_CONNECT_ALLOW_INSECURE", raising=False)
 
     from strands_robots.device_connect import init_device_connect
 
@@ -743,6 +748,103 @@ def test_init_device_connect_uses_secure_default():
 
     _run(_go())
     assert captured["allow_insecure"] is False
+
+
+# ── A transport nobody authenticates is refused (D-074) ─────────────────────────
+#
+# Measured at 0fa5ded90 with device-connect-edge 0.2.5, two processes on one host:
+# ``Robot("so100", mode="sim", peer_id="victim-so100").run()`` with no
+# MESSAGING_CREDENTIALS_FILE, no DEVICE_CONNECT_ALLOW_INSECURE and no
+# DEVICE_CONNECT_RPC_ALLOW printed "victim-so100 is online" over plaintext Zenoh
+# multicast; an anonymous ``DeviceConnection()`` in a second process listed it in
+# 3 s, then getStatus / execute(instruction="wave") / stop all returned
+# ``status: success`` and the simulator ran the policy. The INSECURE warning never
+# fired because allow_insecure had resolved to False, and the edge package
+# validates transport security only for NATS. docs/device-connect.md promised
+# "Secure by default" for exactly this path.
+
+_D074_VARS = ("MESSAGING_CREDENTIALS_FILE", "DEVICE_CONNECT_ALLOW_INSECURE", "DEVICE_CONNECT_RPC_ALLOW")
+
+
+def _d074_init(monkeypatch, env: dict, **kwargs):
+    """Run init_device_connect against a recording runtime with exactly ``env`` set."""
+    from unittest.mock import patch
+
+    import strands_robots.device_connect._impl as impl
+    from strands_robots.device_connect import init_device_connect
+
+    for name in (*impl._TLS_ENV, *impl._ENDPOINT_ENV, *_D074_VARS, "MESSAGING_BACKEND"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    built = []
+
+    class _FakeRuntime:
+        def __init__(self, **kw):
+            built.append(kw)
+
+        def set_heartbeat_provider(self, *_a, **_k):
+            pass
+
+        async def run(self):
+            return None
+
+    async def _go():
+        with patch("strands_robots.device_connect.DeviceRuntime", _FakeRuntime):
+            await init_device_connect(_FakeRobot(), peer_id="victim", peer_type="sim", **kwargs)
+
+    _run(_go())
+    return built
+
+
+def test_a_fresh_install_does_not_come_online_in_plaintext(monkeypatch):
+    with pytest.raises(RuntimeError) as err:
+        _d074_init(monkeypatch, {})
+    for name in _D074_VARS:
+        assert name in str(err.value), f"the refusal must name {name}"
+    assert "victim" in str(err.value)
+
+
+def test_the_refusal_happens_before_any_runtime_is_built(monkeypatch):
+    built = []
+    try:
+        built = _d074_init(monkeypatch, {"ZENOH_CONNECT": "tcp/router.local:7447"})
+    except RuntimeError:
+        pass
+    assert built == []
+
+
+def test_the_documented_insecure_opt_in_still_works(monkeypatch):
+    built = _d074_init(monkeypatch, {"DEVICE_CONNECT_ALLOW_INSECURE": "true"})
+    assert built[0]["allow_insecure"] is True
+
+
+def test_a_tls_endpoint_is_accepted_without_the_opt_in(monkeypatch):
+    built = _d074_init(monkeypatch, {}, messaging_url="tls/router.local:7447")
+    assert built[0]["allow_insecure"] is False
+    assert built[0]["messaging_urls"] == ["tls/router.local:7447"]
+
+
+@pytest.mark.parametrize(
+    ("backend", "urls", "env", "authenticated"),
+    [
+        ("zenoh", None, {}, False),
+        ("zenoh", None, {"ZENOH_CONNECT": "tcp/router.local:7447"}, False),
+        ("zenoh", None, {"MESSAGING_CREDENTIALS_FILE": "/etc/dc/robot.creds.json"}, True),
+        ("zenoh", None, {"MESSAGING_TLS_CA_FILE": "/etc/dc/ca.pem"}, True),
+        ("zenoh", None, {"ZENOH_CONNECT": "tls/router.local:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tls/0.0.0.0:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tcp/0.0.0.0:7447"}, False),
+        ("zenoh", ["zenoh+tls://router.local:7447"], {}, True),
+        ("zenoh", ["quic/router.local:7447"], {}, True),
+        ("mqtt", ["mqtt://broker.local:1883"], {}, False),
+        ("nats", None, {}, True),
+    ],
+)
+def test_what_counts_as_an_authenticated_transport(backend, urls, env, authenticated):
+    import strands_robots.device_connect._impl as impl
+
+    assert impl.transport_is_authenticated(backend, urls, env=env) is authenticated
 
 
 def test_init_device_connect_insecure_emits_prominent_warning(caplog):

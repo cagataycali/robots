@@ -2899,6 +2899,63 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     return None
 
 
+def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_camera_tokens: bool) -> str | None:
+    """Return an error message if ``name`` cannot address the camera it claims.
+
+    The whole name rule for a camera creation site, in one place and in one
+    order: :func:`entity_name_error` first (a value that cannot be a registry
+    key at all), then :func:`reserved_camera_name_error` (a ``str`` this
+    backend's own render entry points resolve past). Every ``add_camera``
+    reads it, so the order is a property of the rule rather than of whichever
+    body a caller reached.
+
+    That order was the defect this composition removes. The two guards had been
+    applied separately at each site, and the sites disagreed about where the
+    name rule sits relative to the *value* rules: MuJoCo refused a routing token
+    before validating ``position`` / ``target`` / ``fov`` / the pixel
+    dimensions, Newton refused it after all four. Both refused the same request
+    -- which is all the cross-backend parity test compared -- while naming
+    different causes. Measured on this tree, one ``create_world`` on each
+    backend::
+
+        add_camera("default", fov=0.0)          mujoco: 'default' is reserved
+                                                newton: 'fov' must be in (0, 180)
+        add_camera("default", position=[nan,1,1]) mujoco: 'default' is reserved
+                                                newton: 'position' must contain finite numbers
+        add_camera("free", width=0)             mujoco: 'free' is reserved
+                                                newton: width must be a positive integer
+
+    A caller fixing what the message names learns the name is unusable only on
+    the round trip after it, and the reserved-name refusal is the one fault no
+    change of value can clear. :func:`reserved_camera_name_error` documents its
+    own dependence on the order ("that guard runs first at every call site, so
+    this one is only ever reached with a genuine ``str``") - an assumption no
+    single site owned until this one did.
+
+    Args:
+        method: The calling method, for the message prefix (e.g. ``"add_camera"``).
+        param_name: The parameter being validated, for the message.
+        name: The claimed camera name. Anything at all; a value that is not a
+            ``str`` is refused by the first guard.
+        routes_free_camera_tokens: Whether this backend's render entry points
+            resolve :data:`FREE_CAMERA_TOKENS` to the free camera. Only a backend
+            that routes them may refuse them as names - the Isaac backend's
+            ``get_frame`` looks a name up directly, so ``"default"`` there is an
+            ordinary camera name and is that backend's documented signature
+            default. Passing the flag makes that divergence a stated property of
+            the call rather than a guard one site happens to omit.
+
+    Returns:
+        The first refusal in the documented order, or ``None`` when *name* can
+        address a camera on this backend.
+    """
+    if (err := entity_name_error(method, param_name, name)) is not None:
+        return err
+    if routes_free_camera_tokens:
+        return reserved_camera_name_error(method, param_name, name)
+    return None
+
+
 def published_string_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message if a field published as a string did not arrive as one.
 
@@ -2986,6 +3043,144 @@ def stale_output_dir_is_clearable(output_dir: str) -> bool:
     if not path.is_dir():
         return False
     return not any(path.iterdir())
+
+
+def _episode_indices(value: Any) -> list[int] | None:
+    """Episode indices a passthrough value carries, or ``None`` for no restriction.
+
+    Text is read with lerobot's own CLI decoder, the decoder both the
+    ``--dataset.episodes=[0,1,2]`` argv and the in-process config assignment
+    already travel, so a subset spelled as text is counted exactly as it will be
+    configured.
+
+    The read is guarded element by element, in the shape :func:`_read_name_list`
+    uses and for its reason: this feeds a preflight that must return a verdict
+    rather than raise, and a ``Sequence`` whose ``__iter__`` or whose element
+    production raises would otherwise escape through it. ``next()`` is called
+    explicitly because a ``for`` cannot guard the call it makes.
+
+    Anything that is not a sequence of plain ints counts as no restriction -
+    including a ``bool``, which is an ``int`` in Python and would otherwise read
+    ``True`` as "episode 1". The config field itself refuses such a value with the
+    accepted spellings named, so no run starts on it and there is no split to size.
+    """
+    if isinstance(value, str):
+        try:
+            from draccus import cfgparsing
+
+            value = cfgparsing.parse_string(value)
+        except Exception:  # noqa: BLE001
+            # Both stages are third-party and raise from disjoint hierarchies
+            # (ImportError with no lerobot installed, yaml.YAMLError for the
+            # scalar parse). Nothing is swallowed that a run could proceed on:
+            # the same text is refused again by the config field it targets.
+            return None
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        return None
+    try:
+        elements = iter(value)
+    except Exception:  # noqa: BLE001
+        return None
+    indices: list[int] = []
+    while True:
+        try:
+            entry = next(elements)
+        except StopIteration:
+            return indices
+        except Exception:  # noqa: BLE001
+            return None
+        if type(entry) is not int:
+            return None
+        indices.append(entry)
+
+
+def effective_episode_count(total_episodes: int, episodes: Any, exclude_episodes: Any = None) -> int:
+    """Episodes a run will actually train and validate over.
+
+    lerobot sizes its train/eval split from the episodes the DATASET was built
+    from - ``full_dataset.episodes``, the subset left by ``dataset.episodes`` and
+    ``dataset.exclude_episodes`` - not from the ``total_episodes`` its header
+    declares (``lerobot.datasets.factory.make_train_eval_datasets``). A caller
+    who divides a requested holdout by the header count while lerobot multiplies
+    by the subset reserves fewer episodes than asked: 3 episodes of the 15 an
+    episode filter kept becomes ``ceil(15 * (3 - 0.5) / 30) == 2``.
+
+    The subset is resolved by lerobot's own ``resolve_episode_indices`` when the
+    installed version has it, so the arithmetic cannot drift from the resolver
+    the run will use - including its rule that an index outside the dataset is
+    dropped with a warning rather than refused, which SHRINKS the subset.
+    lerobot 0.6.1, the declared floor, has neither that resolver nor
+    ``DatasetConfig.exclude_episodes`` (both landed in one commit) and hands
+    ``dataset.episodes`` to ``LeRobotDataset`` verbatim, which is what the
+    fallback counts.
+
+    Args:
+        total_episodes: What the dataset's ``meta/info.json`` declares.
+        episodes: The allowlist as the caller wrote it in their passthrough - a
+            sequence of indices, the text form lerobot's CLI decoder accepts, or
+            ``None`` for every episode.
+        exclude_episodes: The exclusion list, same accepted spellings.
+
+    Returns:
+        The size of the subset the run will carry, or ``total_episodes`` when no
+        usable restriction was asked for.
+    """
+    chosen = _episode_indices(episodes)
+    excluded = _episode_indices(exclude_episodes)
+    if chosen is None and not excluded:
+        return total_episodes
+    try:
+        from lerobot.datasets.utils import resolve_episode_indices
+    except ImportError:
+        return total_episodes if chosen is None else len(chosen)
+    resolved = resolve_episode_indices(chosen, total_episodes, excluded)
+    return total_episodes if resolved is None else len(resolved)
+
+
+def episode_subset_budget_error(
+    val_episodes: int,
+    total_episodes: int,
+    effective_episodes: int,
+    context: str,
+    *,
+    passthrough_param: str,
+) -> str | None:
+    """Error text when a holdout does not fit the SUBSET a passthrough left.
+
+    The holdout is bounded by the episodes the run actually loads, which an
+    episode allowlist or exclusion list narrows below the header count. Comparing
+    against the header instead let ``val_episodes=5`` past a bound check on a
+    30-episode dataset whose passthrough selected 4, and the fraction that was
+    then emitted held out 1 - a run that logs an eval loss over the wrong number
+    of episodes looks correct.
+
+    Args:
+        val_episodes: The requested held-out episode count.
+        total_episodes: What the dataset's ``meta/info.json`` declares.
+        effective_episodes: What :func:`effective_episode_count` measured.
+        context: Caller label the message is prefixed with.
+        passthrough_param: Name of the caller's own raw passthrough parameter,
+            interpolated into the remedy. Required rather than defaulted for the
+            reason :func:`validation_split_error` carries: the surfaces disagree
+            (``extra_flags`` on the tool, ``extra`` on :class:`TrainSpec`), so a
+            default would name a keyword one of them does not accept.
+
+    Returns:
+        The error text, or ``None`` when the holdout fits - and when no subset
+        narrowed the dataset, which is the caller's own whole-dataset refusal to
+        report because it already names the header count.
+    """
+    if effective_episodes >= total_episodes or val_episodes < effective_episodes:
+        return None
+    return (
+        f"{context}: val_episodes={val_episodes} cannot be reserved from the "
+        f"{effective_episodes} episode(s) {passthrough_param}['dataset.episodes'/"
+        f"'dataset.exclude_episodes'] selects, out of {total_episodes} in the dataset. "
+        "lerobot sizes the validation split against the episodes the dataset was built "
+        "from, not against the header count, so the subset is the budget. Either reserve "
+        f"fewer than {effective_episodes}, widen the subset, or pass the fraction directly, "
+        f"e.g. {passthrough_param}={{'dataset.eval_split': 0.1, 'eval_steps': 1000}}."
+    )
 
 
 def validation_split_fraction(val_episodes: int, total_episodes: int) -> float:
