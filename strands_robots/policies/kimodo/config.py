@@ -311,8 +311,7 @@ class KimodoConfig:
 
         Only recognised keys are consumed; unknown keys are ignored for forward
         compatibility, and no warning is emitted for a dropped key - the policy
-        :mod:`strands_robots.policies.motionbricks.config` and
-        :mod:`strands_robots.policies.wbc.config` state for their own
+        :mod:`strands_robots.policies.wbc.config` states for its own
         ``from_dict``.
 
         Args:
@@ -332,12 +331,11 @@ class KimodoConfig:
 
         A file that cannot supply fields is reported by name rather than
         reaching :meth:`from_dict`, which is the reporting the sibling
-        policy-config file loaders in
-        :mod:`strands_robots.policies.motionbricks.config` and
-        :mod:`strands_robots.policies.wbc.config` already give. ``~`` in
+        policy-config file loader in
+        :mod:`strands_robots.policies.wbc.config` already gives. ``~`` in
         ``path`` is expanded.
 
-        The extension is deliberately not checked, unlike those two loaders: a
+        The extension is deliberately not checked, unlike that loader: a
         JSON object stored under any name loads here today, and refusing one
         would stop a payload that currently works. Every refusal below names an
         input that already fails.
