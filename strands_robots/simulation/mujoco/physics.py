@@ -1887,13 +1887,46 @@ class PhysicsMixin:
             return err
 
         with self._lock:
+            # Finite is not enough. MuJoCo's own mj_checkVel / mj_checkAcc treat a
+            # huge qvel, or the qacc it produces, as "Nan, Inf or huge value ...
+            # The simulation is unstable" and RESET the whole state - every joint,
+            # every object - with only a stderr warning. Measured: velocities=
+            # {"Rotation": 1e300} returned success and the world was back at qpos 0
+            # five steps later. So write, run one forward pass under a checkpoint
+            # and apply mj_step's own test (finite and below mjMAXVAL, on qvel and
+            # on the qacc it produces); if it would trip, put the state back.
+            spec = mj.mjtState.mjSTATE_INTEGRATION
+            checkpoint = np.empty(mj.mj_stateSize(model, spec))
+            mj.mj_getState(model, data, checkpoint, spec)
+            for jnt_name, value in velocities.items():
+                data.qvel[model.jnt_dofadr[joint_ids[jnt_name]]] = float(value)
+            mj.mj_forward(model, data)
+            unstable = any(
+                not np.all(np.isfinite(vec)) or np.any(np.abs(vec) >= mj.mjMAXVAL) for vec in (data.qvel, data.qacc)
+            )
+            if unstable:
+                mj.mj_setState(model, data, checkpoint, spec)
+                mj.mj_forward(model, data)
+                sample = ", ".join(f"{n}={float(v):.3g}" for n, v in list(velocities.items())[:3])
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_velocities: MuJoCo flags the simulation unstable with these "
+                                f"'velocities' ({sample}) - the next step would reset every joint and object "
+                                f"to its initial state. Nothing was written; the state is unchanged. "
+                                f"MuJoCo's ceiling is mjMAXVAL={mj.mjMAXVAL:.0e} on qvel and on the "
+                                "acceleration it produces."
+                            )
+                        }
+                    ],
+                }
+
             rate_drives = joint_rate_drive_map(model, mj)
             stale: list[str] = []
             for jnt_name, value in velocities.items():
                 jnt_id = joint_ids[jnt_name]
-                dof_adr = model.jnt_dofadr[jnt_id]
-                data.qvel[dof_adr] = float(value)
-
                 act_id = rate_drives.get(jnt_id)
                 if act_id is None:
                     continue
