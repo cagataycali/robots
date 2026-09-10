@@ -1608,6 +1608,53 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+#: Isaac-GR00T releases :class:`~strands_robots.policies.groot.Gr00tPolicy` loads.
+#:
+#: The domain of its ``groot_version=``, which selects a loader rather than
+#: naming a package version: each spelling has a branch in
+#: ``Gr00tPolicy._load_local_policy`` that imports that release's own entry
+#: point. The tuple is the loaders the policy has, not the releases NVIDIA
+#: ships, which is why it is stated once here and graded against the dispatch.
+SUPPORTED_GROOT_VERSIONS = ("n1.5", "n1.6", "n1.7")
+
+
+def groot_version_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` names no Isaac-GR00T release with a loader.
+
+    ``groot_version=`` overrides Isaac-GR00T auto-detection and is read as a
+    loader selector, so only the spellings in :data:`SUPPORTED_GROOT_VERSIONS`
+    name anything. A value outside that set used to match no dispatch branch and
+    fall through to the same ``ImportError`` a missing package raises, reporting
+    the environment as lacking Isaac-GR00T even when the release was installed
+    and auto-detected - so a misspelling was answered with an install
+    instruction for a package the caller already had, and the parameter that
+    caused it was not named. Grading the value here names the typo instead.
+
+    ``None`` is the not-supplied sentinel, as it is for every other optional
+    parameter on that policy: it means "auto-detect the installed release", and
+    passes. Every other value is a claim about which loader to run, so a blank
+    or mis-cased one (``""``, ``"N1.7"``) is a claim that cannot be honoured
+    rather than an absent one - and ``""`` in particular is what an unset
+    environment variable interpolates to.
+
+    Args:
+        value: The caller-supplied release selector.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it,
+            usually the class name for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if value is None or value in SUPPORTED_GROOT_VERSIONS:
+        return None
+    return (
+        f"{context}: invalid {param}: {_refusal_repr(value)} names no Isaac-GR00T release "
+        f"this policy has a loader for (expected one of {list(SUPPORTED_GROOT_VERSIONS)}, "
+        "or None to auto-detect the installed release)"
+    )
+
+
 MAX_ZMQ_TIMEOUT_MS = 2**31 - 1
 
 
