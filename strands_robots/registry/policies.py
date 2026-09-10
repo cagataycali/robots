@@ -403,7 +403,7 @@ def import_policy_class(provider: str) -> type:
         class_name = f"{provider.capitalize()}Policy"
         if hasattr(mod, class_name):
             return getattr(mod, class_name)
-        from strands_robots.policies import Policy
+        from strands_robots.policies.base import Policy
 
         for attr_name in dir(mod):
             attr = getattr(mod, attr_name)

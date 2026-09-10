@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
     from strands.types.tools import ToolSpec, ToolUse
 
-    from strands_robots.policies import Policy
+    from strands_robots.policies.base import Policy
 
 
 @runtime_checkable

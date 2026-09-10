@@ -69,11 +69,11 @@ def reseed_client_rngs(seed: int | None) -> None:
     if seed is None:
         return
 
-    # Deferred import: strands_robots.simulation.base imports policy_runner at
-    # module level and policy_runner imports policies.base, so reaching the
-    # shared seed domain from module scope here would close that ring. Both
-    # callers of this helper import it the same way, for the same reason.
-    from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
+    # The seed domain lives in the leaf strands_robots.simulation._seed so this
+    # module never imports simulation.base (which imports policy_runner, which
+    # imports policies). Deferred only so ``import strands_robots.policies``
+    # does not run the simulation package's __init__.
+    from strands_robots.simulation._seed import MAX_EVAL_SEED, randomization_seed_error
 
     # ``None`` returned above, so a seed is required past this line;
     # ``allow_none=False`` keeps the reason from offering ``None`` as a remedy
