@@ -729,7 +729,10 @@ def unrecordable_action_columns_error(
         action: The frame's action dict, keyed as the dataset schema spells it.
         declared: Action column names declared by the dataset schema.
         required: Column names this frame must supply, or ``None`` to skip the
-            check entirely (the historical behaviour).
+            check. :meth:`DatasetRecorder.add_frame` no longer passes ``None``
+            for a frame that carries an action - unscoped, every declared
+            column is required - so ``None`` reaches here only from a caller
+            that deliberately makes no claim about who owes what.
 
     Returns:
         An actionable message naming the missing columns, or ``None`` when every
