@@ -1029,7 +1029,7 @@ frame and yields from a reservoir buffer. Capture order is therefore
 `buffer_size=1` (a reservoir of one cannot reorder) plus `max_num_shards=1`
 (a single shard has nothing to interleave), as above.
 
-Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
+Useful kwargs (all forwarded to `StreamingLeRobotDataset`):
 `episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
 `return_uint8=True` (default; halves frame bandwidth), and
 `drop_videos=True` (proprio-only — skips video decode entirely, so it works on
@@ -1066,16 +1066,17 @@ pointing at a remedy that lands on the silent proprio-only stream. Falsy
 non-booleans took the other branch just as silently: `validate_deltas=0` skipped
 the delta-grid check, so an off-grid `delta_timestamps` that `validate_deltas=True`
 refuses opened and streamed; `return_uint8=None` streamed float32 at ~4x the
-bandwidth with the warning about that cost suppressed by the same truthiness; and
+bandwidth of the uint8 it spells; and
 `streaming=0` failed inside LeRobot on `num_shards`. `reader.dataloader(shuffle=...)`
 needs no such check - it discards the key whatever it held.
 
-One kwarg is **not** tolerant-forwarded because its absence changes semantics:
-`repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
-floors — so a resolver-conformant install always has it. On an environment
-carrying an older lerobot, `open()` raises `RuntimeError` naming the upgrade
-instead of silently streaming from the versioned dataset namespace (a different
-storage system).
+Every kwarg is forwarded unconditionally: each lerobot-bearing extra floors
+lerobot at `0.6.1`, whose `StreamingLeRobotDataset` accepts all of them —
+`repo_type` included. `open()` therefore never drops a keyword to suit an older
+constructor, which for `repo_type` would have streamed the versioned dataset
+namespace instead of the requested bucket, a different storage system. An
+environment carrying a below-floor lerobot gets lerobot's own `TypeError`
+naming the keyword.
 
 For **training**, the upstream trainer uses the same engine:
 

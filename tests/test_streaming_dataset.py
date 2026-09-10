@@ -2,12 +2,11 @@
 and ``DatasetRecorder.sync_to_bucket``.
 
 Mirrors test_dataset_recorder.py: inject fakes so tests run WITHOUT lerobot or
-the ``hf`` CLI installed. Covers version-tolerant kwarg forwarding, the
-proprio-only ``drop_videos`` path, delta-grid validation, and the bucket-sync
-CLI construction + meta/ guard.
+the ``hf`` CLI installed. Covers kwarg forwarding, the proprio-only
+``drop_videos`` path, delta-grid validation, and the bucket-sync CLI
+construction + meta/ guard.
 """
 
-import logging
 import os
 import subprocess
 
@@ -31,55 +30,38 @@ class _FakeStreaming:
         yield {"observation.state": [0.0], "action": [0.0], "task": "t"}
 
 
-def test_open_forwards_supported_kwargs(monkeypatch):
+def test_open_forwards_every_knob_to_the_constructor(monkeypatch):
+    """Every knob reaches StreamingLeRobotDataset, none of them conditionally.
+
+    ``repo_type`` is the one that decides WHICH storage system is read, so a
+    dropped one would silently stream the versioned dataset namespace instead of
+    the requested bucket.
+    """
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
     r = sd.StreamingDatasetReader.open(
         "org/ds",
         buffer_size=256,
         shuffle=False,
         max_num_shards=8,
+        seed=7,
+        tolerance_s=0.5,
+        return_uint8=True,
+        repo_type="bucket",
         validate_deltas=False,
     )
     assert r.dataset.repo_id == "org/ds"
-    assert r.dataset.kw["buffer_size"] == 256
-    assert r.dataset.kw["shuffle"] is False
-    assert r.dataset.kw["max_num_shards"] == 8
+    assert r.dataset.kw == {
+        "buffer_size": 256,
+        "shuffle": False,
+        "max_num_shards": 8,
+        "seed": 7,
+        "tolerance_s": 0.5,
+        "return_uint8": True,
+        "repo_type": "bucket",
+        "streaming": True,
+    }
     assert r.num_episodes == 10
     assert r.fps == 30
-
-
-def test_repo_type_forwarded_when_supported(monkeypatch):
-    """repo_type reaches a StreamingLeRobotDataset that declares the parameter."""
-
-    class _WithRepoType:
-        def __init__(self, repo_id, repo_type="dataset", **kw):
-            self.repo_id = repo_id
-            self.repo_type = repo_type
-            self.num_frames = self.num_episodes = self.fps = 0
-
-        def __iter__(self):
-            yield {}
-
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _WithRepoType, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert r.dataset.repo_type == "bucket"
-
-
-def test_repo_type_bucket_forwarded_via_var_kwargs(monkeypatch):
-    """A constructor with **kwargs accepts repo_type; the guard must not fire."""
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert r.dataset.kw["repo_type"] == "bucket"
-
-
-def test_return_uint8_no_warn_when_supported(monkeypatch, caplog):
-    """No bandwidth warning when the constructor accepts return_uint8 (**kwargs
-    here): the kwarg is forwarded and honored, so nothing is dropped."""
-    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
-    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
-        r = sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
-    assert r.dataset.kw["return_uint8"] is True
-    assert not any("return_uint8=True dropped" in rec.message for rec in caplog.records)
 
 
 def _two_frame_dataset_with_a_video_feature(root):

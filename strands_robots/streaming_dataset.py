@@ -146,10 +146,13 @@ class StreamingDatasetReader:
             tolerance_s: Half-width of the grid-match window (``>= 0``).
             revision: Hub revision (branch, tag or commit).
             streaming: ``False`` materializes the dataset instead.
-            buffer_size: Shuffle buffer, in frames (``> 0``).
-            max_num_shards: Parquet shards read concurrently (``> 0``).
+            buffer_size: Reservoir the reader yields from, in frames
+                (``> 0``); ``1`` is half of capture order - see Ordering.
+            max_num_shards: Parquet shards interleaved (``> 0``); ``1`` is the
+                other half of capture order - see Ordering.
             seed: Shuffle seed (``>= 0``).
-            shuffle: Shuffle frames inside the buffer.
+            shuffle: Whether the reorder is reproducible ACROSS exhaustions -
+                NOT whether it happens - see Ordering.
             return_uint8: Stream images as uint8 (a quarter of float32's
                 bandwidth); policies normalize either.
             validate_deltas: Refuse ``delta_timestamps`` off the fps grid.
@@ -158,6 +161,19 @@ class StreamingDatasetReader:
                 least one non-video key; camera keys in it are dropped.
             repo_type: ``"dataset"`` (the versioned Hub namespace) or
                 ``"bucket"`` (Hub storage buckets).
+
+        Ordering:
+            ``shuffle=False`` alone still reads shuffled frames.
+            ``StreamingLeRobotDataset`` reorders at two levels either way - it
+            samples a shard at random per frame, then yields from a reservoir of
+            ``buffer_size`` - and ``shuffle`` selects only which generator drives
+            that reorder (one reseeded from ``seed`` on every exhaustion, versus
+            the dataset's own advancing one), i.e. reproducibility ACROSS
+            epochs. Capture order therefore needs ``buffer_size=1`` (a reservoir
+            of one has nothing to reorder) together with ``max_num_shards=1`` (a
+            single shard has nothing to interleave). Nothing reports a shuffled
+            read, so an eval or replay loop that asked for order with ``shuffle``
+            alone silently consumes frames out of order.
 
         Raises:
             ValueError: A flag that is not a boolean, a numeric knob outside
@@ -239,7 +255,16 @@ class StreamingDatasetReader:
         return cls(ds)
 
     def dataloader(self, batch_size: int = 64, num_workers: int = 0, **kw: Any) -> Any:
-        """Wrap the stream in a ``torch.utils.data.DataLoader`` (streaming shuffles internally)."""
+        """Wrap the stream in a ``torch.utils.data.DataLoader``.
+
+        ``shuffle`` is ignored: the stream shuffles internally (see
+        :meth:`open`'s Ordering note). With ``num_workers > 0`` video decode
+        parallelizes across the worker processes and must not ALSO run in the
+        main process - lerobot documents a segfault when a second
+        ``num_workers=0`` loader touches the same video reader. lerobot's own
+        ``make_dataset`` couples ``max_num_shards = num_workers``; to match it,
+        pass the same N to :meth:`open`'s ``max_num_shards`` and here.
+        """
         import torch
 
         if kw.pop("shuffle", None):
