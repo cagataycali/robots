@@ -1178,7 +1178,12 @@ class TestEmergencyStop:
         with patch.object(m, "broadcast", return_value=[{"stopped": True}]):
             responses = m.emergency_stop()
 
-        assert responses == [{"stopped": True}]
+        # The issuer's own robot answers first, shaped like a peer response;
+        # the broadcast replies follow.
+        assert responses == [
+            {"type": "response", "responder_id": "estop-1", "result": {"stopped": True}},
+            {"stopped": True},
+        ]
         # Check safety topic was published
         safety_puts = [(k, d) for k, d in mock_put if "safety/estop" in k]
         assert len(safety_puts) == 1

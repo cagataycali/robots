@@ -2187,7 +2187,10 @@ class Mesh(SensorLoopsMixin):
         # response topic and recording an audit entry. The wire response is
         # intentionally generic so a remote caller cannot use it to map the
         # lockout window.
-        if self._estop_lockout.is_set() and action not in ("status", "resume"):
+        # ``stop`` is admitted too: it only ever de-energizes, and a second
+        # e-stop arriving while the lockout is already engaged must still halt
+        # a rollout the first one missed rather than be "rejected".
+        if self._estop_lockout.is_set() and action not in ("status", "resume", "stop"):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
@@ -3805,7 +3808,21 @@ class Mesh(SensorLoopsMixin):
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
-        responses = self.broadcast({"action": "stop"}, timeout=3.0)
+        # The issuer's own robot first. ``broadcast`` never reaches this
+        # process (``_on_cmd`` drops envelopes whose sender_id is ours), so
+        # before this line an e-stop halted every robot on the mesh EXCEPT the
+        # one next to the operator who pressed it, and waited the full
+        # broadcast timeout before returning. Same dispatch path the remote
+        # peers run, so the answer is shaped like theirs and counts in
+        # ``peers_not_stopped``.
+        responses: list[dict[str, Any]] = []
+        if self.robot is not None:
+            try:
+                local_result = self._dispatch({"action": "stop"})
+            except Exception as exc:  # noqa: BLE001 - a stop must answer, not raise
+                local_result = {"ok": False, "error": f"stop_task failed: {exc}"}
+            responses.append({"type": "response", "responder_id": self.peer_id, "result": local_result})
+        responses += self.broadcast({"action": "stop"}, timeout=3.0)
         not_stopped = _peers_that_did_not_stop(responses)
         if not_stopped:
             logger.critical(
