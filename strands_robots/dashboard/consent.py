@@ -26,12 +26,12 @@ from strands_robots.dashboard.agent_motion import MOTION_ENV as _AGENT_MOTION_EN
 
 #: Same charset the mesh allowlist validator accepts for one ENTRY (``<org>`` or
 #: ``<org>/<repo>``). Validates what would be written to the allowlist, not a sentence.
-_HF_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?$")
+_HF_ENTRY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}(/[A-Za-z0-9][A-Za-z0-9._-]{0,95})?\Z")
 #: A provider, policy type or peer name as it may be shown and granted.
-_PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_PROVIDER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 #: The SDK's own charset for an ENTRY in the host allowlist (security._POLICY_HOST_ENTRY_RE),
 #: copied rather than imported so this module stays free of the mesh at import time.
-_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-]{1,253}$")
+_POLICY_HOST_ENTRY_RE = re.compile(r"^[A-Za-z0-9.:/_\-]{1,253}\Z")
 
 #: The teleop slew bound has no refusal code yet, so it is never classified; it is written
 #: alongside the value bound because the degrees preset is one envelope with two edges.
