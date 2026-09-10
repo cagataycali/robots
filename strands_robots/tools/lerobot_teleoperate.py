@@ -44,8 +44,6 @@ from strands_robots.utils import (
     positive_whole_number_error,
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Session storage directory
@@ -902,16 +900,14 @@ def lerobot_teleoperate(
             replay_episode=5
         )
 
-    Calibration Management:
-        For calibration management (list, view, backup, etc.), use the separate
-        lerobot_calibrate tool:
-
-        # List available calibrations
-        lerobot_calibrate(action="list")
-
-        # View specific calibration
-        lerobot_calibrate(action="view", device_type="robots",
-                         device_model="so101_follower", device_id="orange_arm")
+    Calibration:
+        Calibrating an arm is LeRobot's own procedure, run from the shell -
+        ``lerobot-find-port`` to identify the bus, ``lerobot-setup-motors`` to
+        assign motor IDs, then ``lerobot-calibrate`` to record the homing
+        offsets and travel limits. The resulting JSON lives under
+        ``HF_LEROBOT_CALIBRATION`` and a session here reads it through LeRobot;
+        the interactive prompt LeRobot shows when a device has none is answered
+        by ``auto_accept_calibration`` below.
 
     Args:
         action: Action to perform (start, stop, list, status, replay)

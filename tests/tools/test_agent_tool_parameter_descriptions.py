@@ -74,7 +74,6 @@ _EXPECTED_TOOLS = frozenset(
         "download_assets",
         "gr00t_inference",
         "harness_memory",
-        "lerobot_calibrate",
         "lerobot_camera",
         "lerobot_teleoperate",
         "lerobot_train",

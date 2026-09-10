@@ -33,7 +33,6 @@ strands_robots/
 ├── registry/              # JSON registry for policy discovery
 ├── tools/                 # Strands @tool functions
 │   ├── gr00t_inference.py # GR00T inference tool
-│   ├── lerobot_calibrate.py
 │   ├── lerobot_camera.py
 │   ├── lerobot_teleoperate.py
 │   ├── pose_tool.py
@@ -2075,13 +2074,6 @@ which side the enum is on.
   after the deletion it was refusing. Pinned by
   `tests/test_dataset_recorder_posture_flag_domain.py`, which also records why
   the neighbouring surfaces are out of scope.
-  A calibration restore is the same shape with no recovery path: neither
-  `LeRobotCalibrationManager.restore_calibrations` nor the `lerobot_calibrate` facade
-  checked the `overwrite` they share, so `overwrite="false"` wrote the backup over every
-  existing calibration - a physical measurement of one arm's homing offset and travel
-  limits, recoverable only by re-calibrating the hardware - while the tool reported
-  ``Overwrite mode: `false` `` beside a restored count of 1. Pinned by
-  `tests/tools/test_calibration_restore_overwrite_flag_domain.py`.
   The asset cache is the third one, and the only one whose deletion takes a file the
   package never authored: `download_robots(force=)` and the `download_assets` facade both
   read it, and a re-fetch removes the cached directory for a robot whose assets are

@@ -138,8 +138,8 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 
 ```python
 from strands_robots.tools import (
-    download_assets, gr00t_inference, lerobot_calibrate, lerobot_camera,
-    lerobot_teleoperate, lerobot_train, pose_tool, robot_mesh, run_policy,
+    download_assets, gr00t_inference, lerobot_camera, lerobot_teleoperate,
+    lerobot_train, pose_tool, robot_mesh, run_policy,
     serial_tool, train_policy, use_lerobot, use_ros, use_rtps,
 )
 # Every tool is also re-exported at the package root, e.g.

@@ -42,10 +42,10 @@ description: Error → fix table for the most common gotchas across install, sim
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `PermissionError: /dev/ttyUSB0` | Not in `dialout` group | `sudo usermod -aG dialout $USER` + re-login |
-| Arm twitches at startup | Stale calibration | Re-run `lerobot_calibrate` |
+| Arm twitches at startup | Stale calibration | Re-run `lerobot-calibrate` |
 | Camera frames black | Wrong `index_or_path` | `lerobot_camera(action="list")` |
 | Servo error mid-rollout | Velocity limit | Bump `control_frequency` or relax calibration limits |
-| `Robot("so100", mode="real")` raises | Calibration missing | Run `lerobot_calibrate` first |
+| `Robot("so100", mode="real")` raises | Calibration missing | Run `lerobot-calibrate` first |
 | Real robot moves wrong way | Joint mapping mismatch | Verify `data_config` matches recording |
 
 ## Policies

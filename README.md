@@ -527,7 +527,6 @@ AgentTool returning `{"status", "content"}`.
 | `use_rtps` | Join a ROS 2 graph as a DDS participant - publish/echo topics, act as a robot (pure cyclonedds, no rclpy, all ROS 2 distros) |
 | `gr00t_inference` | Manage NVIDIA GR00T inference services (Docker lifecycle) |
 | `lerobot_camera` | OpenCV / RealSense camera discovery, capture, record |
-| `lerobot_calibrate` | List, view, back up, restore LeRobot calibrations |
 | `lerobot_teleoperate` | Record demonstrations, replay episodes |
 | `pose_tool` | Store, recall, and execute named robot poses |
 | `harness_memory` | Persist task solution traces + global success rules / failure models across agent sessions (Harness-VLA-style memory) |

@@ -6,7 +6,7 @@ description: Strands @tool helpers for hardware bring-up - calibrate, camera, te
 
 ```python
 from strands_robots.tools import (
-    lerobot_calibrate, lerobot_camera, lerobot_teleoperate, lerobot_train,
+    lerobot_camera, lerobot_teleoperate, lerobot_train,
     pose_tool, serial_tool, download_assets,
     gr00t_inference,   # see GR00T page
     robot_mesh,        # see multi-robot page
@@ -20,7 +20,6 @@ from strands_robots.tools import (
 
 | Tool | Key actions | What |
 |------|-------------|------|
-| `lerobot_calibrate` | `"list"`, `"view"`, `"search"`, `"backup"`, `"restore"` | Manage existing calibration JSONs under `~/.cache/huggingface/lerobot/calibration/` (this tool inspects/organizes - actual calibration is run via the LeRobot CLI) |
 | `lerobot_camera` | `"list"`, `"test"`, `"capture"`, `"record"` | Enumerate, test, capture from, and record connected cameras |
 | `lerobot_teleoperate` | `"start"`, `"stop"`, `"status"`, `"replay"`, `"dagger"` | Leader-follower teleop session, episode replay, and DAgger correction collection |
 | `lerobot_train` | `"start"`, `"status"`, `"stop"`, `"list"` | Fine-tune a policy on a local dataset via `lerobot-train` |
@@ -227,57 +226,6 @@ exactly as it was, with no temp file beside it, and the tool answers
 unchanged - rather than reporting a named posture that no later `load_pose` can
 find.
 
-### A calibration survives a write that could not finish
-
-A calibration is the one file these tools handle that is not derived data: its
-homing offsets and joint travel limits are recorded by disabling torque and moving
-*one physical arm* by hand, so a stored one that is lost costs the procedure, not a
-re-run. Both writers of that store - `save_calibration` and the `"restore"` action -
-therefore commit through a temp sibling plus `os.replace` instead of writing over
-the stored file.
-
-`"restore"` is the sharper of the two, because it is the path a lost calibration is
-recovered on. With `overwrite=True` a write that could not finish used to destroy
-the calibration it was replacing *and* fail to install the backup, so restoring a
-backup over a working arm could leave neither. Now a refused write leaves the
-stored measurement byte-identical and still loadable, and the action reports
-`status="error"` with the count it did restore.
-
-This matters more than the report, because nothing downstream flags the loss: a
-truncated calibration still `exists()`, `load_calibration` reads it as `None`, and
-`action="view"` renders its path, size and timestamp under `status="success"` with
-no motors in it.
-
-Committing the write covers a write that *fails*. It does not cover a write the tool
-was told to make, which is the next section.
-
-### `overwrite` is checked, so a word for "no" cannot arm the write
-
-`overwrite` is the confirmation gate in front of that same write - the only one in
-this tool that replaces a measurement - and it is checked against the shared boolean
-domain rather than read by truthiness. `not "false"` is `False`, so read by
-truthiness the words a caller reaches for when opting out selected the overwrite they
-spell the refusal of:
-
-```python
-lerobot_calibrate(action="restore", backup_dir=..., overwrite="false")
-```
-
-used to answer `status="success"`, and rendered the posture back as supplied
-(`Overwrite mode: false`) beside a count of the calibrations it had just replaced - the report agreeing with the caller about a
-posture the code had not taken. `"no"`, `"off"`, `"0"` and any non-zero number read
-the same way; `None`, `0` and `""` took the skip branch without being a declared
-spelling of it. Neither the atomic commit above nor the backup helps, because this
-write succeeds and nothing in a backup reconstructs the measurement it replaced.
-
-Both surfaces that read the flag now refuse a non-boolean:
-`LeRobotCalibrationManager.restore_calibrations` raises `ValueError` ahead of reading
-the backup directory, so a refusal cannot arrive after the file it was protecting is
-gone, and the `lerobot_calibrate` facade refuses ahead of that so the message names
-the parameter instead of surfacing as `Tool execution failed`. Only `action="restore"`
-consults the flag, so no other action is refused for it, and the two postures it is
-declared over are unchanged - `True` restores over the existing file, `False` keeps it.
-
 ### `smooth` is checked, so a word for "no" cannot change the trajectory
 
 `pose_tool`'s `smooth` selects one of two ways to reach the same joint targets,
@@ -327,13 +275,32 @@ The same scoping rule applies: `timeout` is read by `tell` / `send` / `rpc` /
 for either. `emergency_stop` fans out on a fixed internal budget, so the
 caller's `timeout` is not effective there.
 
+## Calibration
+
+No tool here calibrates. Recording a calibration means disabling torque and
+moving one physical arm by hand, and LeRobot ships that procedure as its own
+console scripts:
+
+```bash
+lerobot-find-port                                       # which bus is the arm on
+lerobot-setup-motors --robot.type=so101_follower --robot.port=/dev/ttyACM0
+lerobot-calibrate    --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
+                     --robot.id=my_arm
+```
+
+The result is JSON under `HF_LEROBOT_CALIBRATION` (by default
+`~/.cache/huggingface/lerobot/calibration/`). `lerobot_teleoperate` and
+`lerobot_train` read it through LeRobot, so nothing here needs to parse it; code
+that does should import `lerobot.motors.MotorCalibration` rather than restate
+the schema. `lerobot-find-joint-limits` reports the travel a recorded
+calibration allows.
+
 ## Examples
 
 ```python
 result = serial_tool(action="list_ports")
 print(result["content"][0]["text"])
 
-result = lerobot_calibrate(action="list", device_type="robots")
 result = lerobot_camera(action="list", camera_type="opencv")
 result = pose_tool(action="read_all", robot_id="so101_follower", port="/dev/ttyACM0")
 
@@ -356,11 +323,11 @@ result = lerobot_teleoperate(
 ```python
 from strands import Agent
 from strands_robots import Robot
-from strands_robots.tools import lerobot_calibrate, lerobot_camera, pose_tool, serial_tool
+from strands_robots.tools import lerobot_camera, pose_tool, serial_tool
 
 agent = Agent(tools=[
     Robot("so100"),
-    lerobot_calibrate, lerobot_camera, pose_tool, serial_tool,
+    lerobot_camera, pose_tool, serial_tool,
 ])
 agent("Find a connected so100, calibrate it, then stream the wrist camera for 10 seconds")
 ```

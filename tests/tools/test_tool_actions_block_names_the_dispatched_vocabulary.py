@@ -250,14 +250,15 @@ class TestPoseToolDescribesItselfConsistently:
             f"pose_tool's refusal lists {sorted(advertised)} but dispatches {sorted(dispatched)}"
         )
 
-    def test_calibration_is_pointed_at_the_tools_that_own_it(self) -> None:
+    def test_calibration_is_pointed_at_the_procedure_that_owns_it(self) -> None:
         """Dropping the entry must not leave calibration unfindable.
 
-        ``lerobot_teleoperate`` sets the convention: a tool that does not own
-        calibration names the one that does.
+        No tool here calibrates; the procedure is LeRobot's own CLI. A tool
+        that drives a motor through a calibration it did not record names the
+        command that records one, so the reader is one step from it.
         """
         doc = tool_docstring("pose_tool.py", "pose_tool")
-        assert "lerobot_calibrate" in doc, "pose_tool no longer says where stored calibrations are managed"
+        assert "lerobot-calibrate" in doc, "pose_tool no longer says how a calibration is recorded"
 
 
 class TestTheParserIsCalibratedAgainstTheShippedStyles:

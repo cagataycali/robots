@@ -80,8 +80,6 @@ REALSENSE_SDK_ABSENT = (
     "cameras cannot be opened. Install with: pip install 'lerobot[intelrealsense]'"
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -200,8 +198,8 @@ def _posture_flag_error(action: str, *, async_mode: Any, warmup: Any, save_confi
     the three, so a value neither consults is not refused. The domain itself
     belongs to neither surface, so it delegates to
     :func:`~strands_robots.utils.boolean_flag_error` - the one owner the sibling
-    ``lerobot_train`` and ``lerobot_calibrate`` builders already consult - exactly
-    as the numeric rows delegate their spans and counts. What stays here is the
+    ``lerobot_train`` builder already consults - exactly as the numeric rows
+    delegate their spans and counts. What stays here is the
     roster and the report order, which puts ``save_config`` ahead of ``warmup``
     so the flag that writes a file is named before the one that only opens a
     camera.

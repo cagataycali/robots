@@ -54,7 +54,6 @@ from strands_robots.utils import (
     validation_split_fraction,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Reuse the teleoperate session store so all robot sessions live together.

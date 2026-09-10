@@ -1041,11 +1041,12 @@ def pose_tool(
 
     Calibration:
         This tool performs no calibration - every action above drives or reads a
-        motor through the calibration already on disk. Stored calibrations are
-        managed by the separate lerobot_calibrate tool (list, view, backup,
-        restore), and the interactive prompt LeRobot shows when a device has
-        none is answered by a lerobot_teleoperate session's
-        ``auto_accept_calibration``.
+        motor through the calibration already on disk. Recording one is
+        LeRobot's own procedure, run from the shell with ``lerobot-calibrate``
+        (after ``lerobot-find-port`` and ``lerobot-setup-motors``), which writes
+        the JSON under ``HF_LEROBOT_CALIBRATION``; the interactive prompt
+        LeRobot shows when a device has none is answered by a
+        ``lerobot_teleoperate`` session's ``auto_accept_calibration``.
 
     Args:
         action: Action to perform

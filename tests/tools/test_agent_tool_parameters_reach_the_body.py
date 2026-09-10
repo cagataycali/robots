@@ -10,18 +10,19 @@ That third case is the one that costs the model most. An undescribed parameter
 is visibly opaque, and an entry naming nothing is invisible to the model
 entirely; a described parameter the body discards reads as a working knob. The
 model is told which values it accepts, spends a decision choosing one, reports
-having set it, and the value reaches nothing. ``lerobot_calibrate`` carried
+having set it, and the value reaches nothing. The tool this guard was added
+for - a calibration-file manager since dropped from the package - carried
 ``format_output: str = "rich"`` described as ``"Output format (rich, simple,
 json)"``: the name was declared, the description was specific, and the function
 body never mentioned it. Both sibling directions passed it
 (``TestTheSiblingDirectionsPassADeadParameter`` below pins that they do).
 
 Such a parameter is also not merely unimplemented. An agent tool returns a
-fixed envelope - a ``content`` list of typed blocks, and every
-``lerobot_calibrate`` success path already emits both a ``text`` rendering and
-a ``json`` one - so the caller selects a rendering by reading the block it
-wants. There was no format axis for the parameter to switch, which is why the
-remedy is to drop it rather than to implement three formats.
+fixed envelope - a ``content`` list of typed blocks, and every success path of
+that tool already emitted both a ``text`` rendering and a ``json`` one - so the
+caller selects a rendering by reading the block it wants. There was no format
+axis for the parameter to switch, which is why the remedy is to drop it rather
+than to implement three formats.
 
 Scope
 -----
@@ -178,7 +179,7 @@ class TestTheSiblingDirectionsPassADeadParameter:
 
     SOURCE = (
         "@tool\n"
-        "def lerobot_calibrate(action='list', format_output='rich'):\n"
+        "def manage_calibrations(action='list', format_output='rich'):\n"
         '    """Manage calibrations.\n'
         "\n"
         "    Args:\n"

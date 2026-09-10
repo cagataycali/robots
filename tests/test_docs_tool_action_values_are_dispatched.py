@@ -15,8 +15,6 @@ keywords and is still refused, and nothing graded the value.
 What the refusal looks like varies, and the quieter shapes are the reason this
 is worth pinning rather than left to review:
 
-* ``lerobot_calibrate(action="info")`` answers ``Unknown action: info`` and then
-  lists all eight real ones, so the reader recovers in one step.
 * ``lerobot_camera(action="stream")`` answers ``Unknown action: stream`` and
   names no valid action at all.
 * ``serial_tool(action="list")`` does not report an unknown action - it answers

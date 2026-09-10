@@ -17,7 +17,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "gr00t_inference": (".gr00t_inference", "gr00t_inference"),
     "harness_memory": (".harness_memory", "harness_memory"),
     "load_episode": (".episode_judge", "load_episode"),
-    "lerobot_calibrate": (".lerobot_calibrate", "lerobot_calibrate"),
     "lerobot_camera": (".lerobot_camera", "lerobot_camera"),
     "lerobot_teleoperate": (".lerobot_teleoperate", "lerobot_teleoperate"),
     "lerobot_train": (".lerobot_train", "lerobot_train"),
