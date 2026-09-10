@@ -71,7 +71,10 @@ class MockPolicy(Policy):
                     except (KeyError, AttributeError, TypeError):
                         continue
                     lo, hi = (float(v) for v in act.ctrlrange)
-                    if int(act.ctrllimited) and math.isfinite(lo) and math.isfinite(hi) and hi > lo:
+                    limited = act.ctrllimited  # MjModel hands back a shape-(1,) array
+                    if hasattr(limited, "__len__"):
+                        limited = limited[0]
+                    if int(limited) and math.isfinite(lo) and math.isfinite(hi) and hi > lo:
                         self._ranges[key] = (lo, hi)
         return self._ranges
 
