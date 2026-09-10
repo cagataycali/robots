@@ -74,6 +74,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import (
+    decode_motor_state,
     telemetry_float,
     telemetry_float_list,
     telemetry_int,
@@ -1272,20 +1273,8 @@ class Go2Driver:
                 "current": telemetry_float(getattr(bms, "current", None)),
                 "cycle": telemetry_int(getattr(bms, "cycle", None)),
             }
-        motors = getattr(msg, "motor_state", None)
-        if motors is not None:
-            joints: dict[str, Any] = {}
-            for name, slot in GO2_JOINT_INDEX.items():
-                try:
-                    motor = motors[slot]
-                except (IndexError, KeyError, TypeError):
-                    continue
-                joints[name] = {
-                    "q": telemetry_float(getattr(motor, "q", None)),
-                    "dq": telemetry_float(getattr(motor, "dq", None)),
-                    "tau_est": telemetry_float(getattr(motor, "tau_est", None)),
-                    "temperature": telemetry_int(getattr(motor, "temperature", None)),
-                }
+        joints = decode_motor_state(getattr(msg, "motor_state", None), GO2_JOINT_INDEX)
+        if joints is not None:
             self._joints = joints
 
     def _on_sportmode(self, msg: Any) -> None:

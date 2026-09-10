@@ -49,9 +49,8 @@ from typing import Any, Final, Literal
 from strands_robots.drivers.feetech.protocol import (
     MAX_GOAL_POSITION,
     SIGN_BIT,
-    Instruction,
+    STATUS_OVERHEAD,
     Register,
-    build_packet,
     decode_sign_magnitude,
     decode_word,
     encode_word,
@@ -59,6 +58,7 @@ from strands_robots.drivers.feetech.protocol import (
     sync_read_packet,
     sync_read_reply_size,
     sync_write_packet,
+    write_packet,
 )
 from strands_robots.utils import positive_count_error, positive_finite_number_error, require_optional
 
@@ -298,6 +298,11 @@ READABLE_REGISTERS: Final[dict[str, Register]] = {
 
 #: Bytes each readable register carries.
 _REGISTER_WIDTH: Final[int] = 2
+
+#: Param bytes a servo's answer to a ``WRITE`` carries: none. The frame is the
+#: whole reply, which is why the ack read asks the port for
+#: :data:`~strands_robots.drivers.feetech.protocol.STATUS_OVERHEAD` bytes.
+_ACK_PARAM_COUNT: Final[int] = 0
 
 #: Seconds a read waits for a servo's reply. Named rather than spelled
 #: twice: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`
@@ -679,6 +684,31 @@ class FeetechBus:
     def set_torque(self, enabled: bool) -> list[str]:
         """Energize or release every motor, returning the ones that failed.
 
+        A unicast ``WRITE`` is answered - the servo returns the empty status
+        packet :func:`~strands_robots.drivers.feetech.protocol.write_packet`
+        documents - and that reply is read back here, for two reasons.
+
+        It is the only evidence the motor took the command. Without it the sole
+        failure this could report is an ``OSError`` from the host's own port, so
+        a servo that is unplugged, mute, or answering garbage is reported as
+        released; the refusal
+        :meth:`~strands_robots.drivers.feetech.driver.FeetechDriver._set_torque_envelope`
+        raises on a non-empty return names those motors as possibly still
+        driven, and a claim about a joint that may still be moving is worth
+        measuring rather than assuming.
+
+        And the acks are frames the *next* reader would otherwise find in front
+        of its own: six unread ones sit 36 bytes ahead of the following
+        ``SYNC_READ`` stream, so a healthy arm reads back as one joint and five
+        servos that did not answer.
+
+        The reply's error byte is not graded: a servo raising a flag still
+        answered and still took the write, and what is being distinguished here
+        is silence. A mute servo costs one read window, which is what measuring
+        silence costs; the settle is paid per servo because the writes are per
+        servo, and a torque sweep is a one-shot verb rather than the 30 Hz state
+        path :meth:`sync_read` keeps one settle for.
+
         Every motor is attempted even after one fails: a release that gave up
         part-way would report the arm safe while some joints are still driven.
 
@@ -686,9 +716,9 @@ class FeetechBus:
             enabled: ``True`` to energize, ``False`` to release.
 
         Returns:
-            Names of motors whose write failed; empty when all succeeded. A
-            non-empty list after ``enabled=False`` means the arm is NOT fully
-            de-energized.
+            Names of motors that did not acknowledge the write; empty when all
+            six answered. A non-empty list after ``enabled=False`` means the arm
+            is NOT fully de-energized.
 
         Raises:
             RuntimeError: When the bus is not open.
@@ -696,14 +726,27 @@ class FeetechBus:
         conn = self._require_open("setting torque")
         failed: list[str] = []
         for name, spec in self.motors.items():
-            packet = build_packet(
-                spec.motor_id,
-                Instruction.WRITE,
-                bytes([Register.TORQUE_ENABLE, 1 if enabled else 0]),
-            )
+            packet = write_packet(spec.motor_id, Register.TORQUE_ENABLE, bytes([1 if enabled else 0]))
             try:
                 conn.write(packet)
+                time.sleep(_REPLY_SETTLE_S)
+                raw = bytes(conn.read(STATUS_OVERHEAD))
+                echoed = int(getattr(conn, "in_waiting", 0) or 0)
+                if echoed:
+                    raw += bytes(conn.read(echoed))
             except OSError as e:
                 logger.error("failed to set torque on %s (id %d): %s", name, spec.motor_id, e)
+                failed.append(name)
+                continue
+            # The stream framer rather than a lone packet parse, for the reason
+            # :meth:`_sync_read_once` uses it: it skips the host's own echo,
+            # which `parse_status_packet` refuses as bytes in front of a frame.
+            if spec.motor_id not in parse_sync_read_replies(raw, [spec.motor_id], _ACK_PARAM_COUNT):
+                logger.error(
+                    "no verified torque ack from %s (id %d); discarding %s",
+                    name,
+                    spec.motor_id,
+                    raw.hex(" ") if raw else "an empty read",
+                )
                 failed.append(name)
         return failed

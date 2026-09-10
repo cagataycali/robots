@@ -130,28 +130,135 @@ _FORWARDABLE_KWARGS = (
 # ---------------------------------------------------------------------------
 #
 # ``Robot(..., cameras={"front": {...}})`` describes each camera with a
-# free-form dict whose keys are the fields of lerobot's camera config
-# dataclass. The accepted vocabulary is therefore derived from
-# ``dataclasses.fields()`` rather than hand-picked: a hand-picked list leaves
-# every field it forgets unreachable (no caller can set it at all) and silently
-# discards every key it does not recognise, so a typo like ``heigth=1080``
-# reports success having configured the default resolution.
+# free-form dict. That dict is a serialized lerobot ``CameraConfig``: ``type``
+# is draccus' own choice discriminator (``CameraConfig.type`` returns
+# ``get_choice_name(cls)``) and every other key is a field of the dataclass that
+# discriminator selects. So both halves of the vocabulary are derived, never
+# hand-picked:
+#
+#   - the set of accepted ``type`` values is ``CameraConfig.get_known_choices()``
+#     -- the same draccus ``ChoiceRegistry`` lookup ``_create_minimal_config``
+#     already uses for ``robot_type``, and the one ``make_cameras_from_configs``
+#     dispatches on. A camera backend lerobot ships or a vendor plugin registers
+#     is therefore attachable the day it lands, with no mapping to maintain here.
+#   - the set of accepted option keys is ``dataclasses.fields()`` of the
+#     resolved class. A hand-picked list leaves every field it forgets
+#     unreachable (no caller can set it at all) and silently discards every key
+#     it does not recognise, so a typo like ``heigth=1080`` reports success
+#     having configured the default resolution.
 #
 # ``strands_robots`` supplies its own defaults for the three fields lerobot
 # leaves as ``None`` (meaning "whatever the device negotiates") so an
-# unconfigured camera has a predictable, documented stream. Every other field
-# keeps lerobot's own default.
+# unconfigured camera has a predictable, documented stream. Those three are
+# declared on the ``CameraConfig`` base, so they are fields of every registered
+# choice and the defaults apply to a RealSense exactly as they do to a webcam.
+# Every other field keeps lerobot's own default.
 #
 # Invariant: every key here must be a field lerobot still declares. If one is
-# renamed upstream the stale key reaches ``OpenCVCameraConfig(**options)`` and
-# fails loudly for every camera rather than being silently dropped -- and the
-# test suite asserts the containment directly, so the drift is caught before a
+# renamed upstream the stale key reaches the config constructor and fails
+# loudly for every camera rather than being silently dropped -- and the test
+# suite asserts the containment directly, so the drift is caught before a
 # release rather than at an operator's ``Robot()`` call.
-_OPENCV_CAMERA_DEFAULTS: dict[str, Any] = {"fps": 30, "width": 640, "height": 480}
+_CAMERA_STREAM_DEFAULTS: dict[str, Any] = {"fps": 30, "width": 640, "height": 480}
 
 # ``type`` selects which camera backend to build. It is consumed by the
-# dispatch below, not forwarded to the config dataclass.
+# registry lookup below, not forwarded to the config dataclass.
 _CAMERA_TYPE_KEY = "type"
+
+
+@functools.cache
+def _ensure_lerobot_cameras_registered() -> None:
+    """Import every camera backend subpackage so CameraConfig is populated.
+
+    The mirror of :func:`_ensure_lerobot_robots_registered`, and for the same
+    reason: each backend registers its config via
+    ``@CameraConfig.register_subclass`` at module-import time, but
+    ``lerobot.cameras.__init__`` deliberately does not import them -- it says so
+    in a comment, to avoid pulling backend-specific dependencies into every
+    ``import lerobot``. Until they are imported ``CameraConfig`` has *no*
+    registered choices at all, so a registry lookup that skips this step reports
+    every camera type as unknown.
+
+    Walks ``lerobot.cameras`` with ``pkgutil`` so a backend lerobot adds in a
+    future release needs no change here, then registers third-party
+    ``lerobot_camera_*`` distributions through lerobot's own plugin loader.
+
+    Idempotent via ``@functools.cache`` -- the first call walks the tree,
+    subsequent calls are dict lookups.
+    """
+    try:
+        import lerobot.cameras as _lr_cameras
+    except ImportError as exc:
+        # Mirrors the robot walk: lerobot wholly absent is expected on
+        # sim-only hosts (debug), while lerobot present but
+        # ``lerobot.cameras`` unimportable is a partial install worth a
+        # warning. Either way the caller gets a clean "Unsupported camera
+        # type" naming the choices that did register.
+        try:
+            import lerobot  # noqa: F401  (probe-only)
+        except ImportError:
+            logger.debug("lerobot not installed: %s", exc)
+        else:
+            logger.warning(
+                "lerobot is installed but lerobot.cameras is not importable (partial install?): %s",
+                exc,
+            )
+        return
+
+    for _, sub_name, is_pkg in pkgutil.iter_modules(_lr_cameras.__path__):
+        if not is_pkg:
+            continue
+        full_name = f"{_lr_cameras.__name__}.{sub_name}"
+        try:
+            importlib.import_module(full_name)
+        except (ImportError, OSError) as exc:
+            # A backend whose SDK is absent (``pyrealsense2``, ``reachy2_sdk``)
+            # or whose ``__init__`` probes the OS. It simply does not appear in
+            # the choice registry, which is the correct outcome: naming it later
+            # raises "Unsupported camera type" listing what is available.
+            # ``(ImportError, OSError)`` is the canonical narrow pair for a
+            # hardware-probing import per AGENTS.md > Review Learnings (#86).
+            logger.debug("[hardware_robot] skip %s: %s", full_name, exc)
+
+    _ensure_lerobot_plugins_registered()
+
+
+def _resolve_camera_config_class(camera_name: str, cam_type: Any) -> type:
+    """Resolve a camera ``type`` to the lerobot config class it names.
+
+    Args:
+        camera_name: The key this camera was registered under, named in the
+            refusal so a multi-camera rig reports which entry is at fault.
+        cam_type: The requested ``type`` value, as the caller spelled it.
+
+    Returns:
+        The registered ``CameraConfig`` subclass for ``cam_type``.
+
+    Raises:
+        ValueError: If ``cam_type`` is not a registered choice. The refusal
+            lists every choice that did register and, when the spelling is
+            close to one of them, names it -- lerobot registers Intel RealSense
+            as ``intelrealsense``, so the obvious guess ``realsense`` is a
+            dead end without the suggestion.
+    """
+    from lerobot.cameras.configs import CameraConfig
+
+    _ensure_lerobot_cameras_registered()
+    try:
+        return cast(type, CameraConfig.get_choice_class(cam_type))
+    except (KeyError, TypeError):
+        # KeyError: not a registered choice. TypeError: an unhashable value
+        # (a list, a dict) can never be a registry key, so it is the same
+        # refusal rather than a traceback out of the registry's dict lookup.
+        known = sorted(CameraConfig.get_known_choices())
+        close = difflib.get_close_matches(str(cam_type), known, n=1, cutoff=0.7)
+        hint = f" Did you mean {close[0]!r}?" if close else ""
+        # ``from None`` -- the registry's KeyError is an internal detail of
+        # draccus; suppress the chained traceback for a cleaner error.
+        raise ValueError(
+            f"Unsupported camera type for camera {camera_name!r}: {cam_type!r}.{hint} "
+            f"Known lerobot camera types: {known}."
+        ) from None
 
 
 def _build_camera_config(camera_name: str, config: Any) -> Any:
@@ -160,34 +267,34 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
     Args:
         camera_name: The key this camera was registered under. Named in every
             error so a multi-camera rig reports which entry is at fault.
-        config: The per-camera options. Accepted keys are the declared fields
-            of lerobot's ``OpenCVCameraConfig`` plus ``type``, which selects
-            the camera backend (``opencv`` is the only one implemented).
+        config: The per-camera options. ``type`` selects the camera backend
+            from lerobot's ``CameraConfig`` choice registry (default
+            ``opencv``); every other accepted key is a declared field of the
+            config class that choice resolves to.
 
     Returns:
-        The constructed ``OpenCVCameraConfig``.
+        An instance of the ``CameraConfig`` subclass the requested ``type``
+        names, ready for ``lerobot.cameras.make_cameras_from_configs``.
 
     Raises:
-        ValueError: If ``config`` is not a mapping, names an unimplemented
-            camera ``type``, carries a key that is not a declared field, omits
-            a field that has no default, or holds a value lerobot's own config
-            validation refuses. An unknown key is refused rather than dropped
-            per AGENTS.md > Review Learnings (#86): a silently discarded option
-            reports success while the camera streams at the default.
+        ValueError: If ``config`` is not a mapping, names a camera ``type``
+            lerobot does not register, carries a key that is not a declared
+            field of the resolved class, omits a field that has no default, or
+            holds a value lerobot's own config validation refuses. An unknown
+            key is refused rather than dropped per AGENTS.md > Review Learnings
+            (#86): a silently discarded option reports success while the camera
+            streams at the default.
     """
-    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
-
     if not isinstance(config, Mapping):
         raise ValueError(
             f"Camera {camera_name!r} config must be a mapping of option name to value, "
             f"got {type(config).__name__}: {config!r}."
         )
 
-    cam_type = config.get(_CAMERA_TYPE_KEY, "opencv")
-    if cam_type != "opencv":
-        raise ValueError(f"Unsupported camera type: {cam_type}")
+    ConfigClass = _resolve_camera_config_class(camera_name, config.get(_CAMERA_TYPE_KEY, "opencv"))
+    class_name = ConfigClass.__name__
 
-    fields = {f.name: f for f in dataclasses.fields(OpenCVCameraConfig)}
+    fields = {f.name: f for f in dataclasses.fields(ConfigClass)}
     accepted = sorted(set(fields) | {_CAMERA_TYPE_KEY})
 
     unknown = sorted(set(config) - set(fields) - {_CAMERA_TYPE_KEY}, key=repr)
@@ -198,9 +305,12 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
             if close:
                 hints.append(f"{key!r} -> {close[0]!r}")
         hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
+        # The suggestion is drawn from the resolved class's own fields: an
+        # ``index_or_path`` sent to a RealSense is a real mistake, and pointing
+        # at ``serial_number_or_name`` is what makes it fixable.
         raise ValueError(
             f"Unknown option(s) for camera {camera_name!r}: {unknown}.{hint} "
-            f"OpenCVCameraConfig accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
+            f"{class_name} accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
             f"the camera backend). (If this is a typo, fix it.)"
         )
 
@@ -208,25 +318,25 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
         name
         for name, field in fields.items()
         if name not in config
-        and name not in _OPENCV_CAMERA_DEFAULTS
+        and name not in _CAMERA_STREAM_DEFAULTS
         and field.default is dataclasses.MISSING
         and field.default_factory is dataclasses.MISSING
     )
     if missing:
         raise ValueError(
-            f"Camera {camera_name!r} is missing required option(s): {missing}. OpenCVCameraConfig accepts: {accepted}."
+            f"Camera {camera_name!r} is missing required option(s): {missing}. {class_name} accepts: {accepted}."
         )
 
     # strands defaults first so an explicitly configured value always wins.
-    options = {**_OPENCV_CAMERA_DEFAULTS, **{name: config[name] for name in fields if name in config}}
+    options = {**_CAMERA_STREAM_DEFAULTS, **{name: config[name] for name in fields if name in config}}
     try:
-        return OpenCVCameraConfig(**options)
+        return ConfigClass(**options)
     except (TypeError, ValueError) as exc:
         # Names the camera, which lerobot's own message cannot: its
         # ``__post_init__`` validation (e.g. a 3-character ``fourcc``) raises
         # with no idea which entry of the ``cameras`` dict it came from.
         raise ValueError(
-            f"Failed to construct OpenCVCameraConfig for camera {camera_name!r}: {exc}. Options: {options}"
+            f"Failed to construct {class_name} for camera {camera_name!r}: {exc}. Options: {options}"
         ) from exc
 
 
@@ -375,9 +485,24 @@ def _ensure_lerobot_robots_registered() -> None:
             # genuine bugs in driver registration code.
             logger.debug("[hardware_robot] skip %s: %s", full_name, exc)
 
-    # Pick up third-party plugins (``lerobot_robot_*`` distributions) via
-    # lerobot's own loader if available -- lets external robot vendors
-    # expose drivers without any strands_robots involvement.
+    _ensure_lerobot_plugins_registered()
+
+
+@functools.cache
+def _ensure_lerobot_plugins_registered() -> None:
+    """Import every installed third-party lerobot plugin distribution.
+
+    lerobot's own loader imports every distribution whose name starts with one
+    of its plugin prefixes (``lerobot_robot_``, ``lerobot_camera_``,
+    ``lerobot_teleoperator_``, ...), and each of those registers itself into the
+    matching :class:`draccus.ChoiceRegistry` as an import side effect. One call
+    therefore populates every registry at once, which is why this is a single
+    cached helper rather than a per-kind step: a vendor camera and a vendor
+    robot arrive from the same import, so registering one kind while the caller
+    happens to be resolving the other would leave the second unreachable.
+
+    Idempotent via ``@functools.cache``.
+    """
     try:
         from lerobot.utils.import_utils import register_third_party_plugins
     except ImportError:
@@ -1044,9 +1169,10 @@ class Robot(TeleopMixin, AgentTool):
         missing ``remote_ip`` would point a network robot's caller at the wrong
         bus entirely.
 
-        Each entry of ``cameras`` follows the same contract, resolved against
-        the fields of lerobot's ``OpenCVCameraConfig`` -- see
-        :func:`_build_camera_config`.
+        Each entry of ``cameras`` follows the same contract twice over: its
+        ``type`` is resolved against lerobot's ``CameraConfig`` choice registry
+        and its remaining keys against the fields of the class that resolves to
+        -- see :func:`_build_camera_config`.
 
         Forwarded values are otherwise passed through as given, because their
         accepted domains are robot-specific. ``max_relative_target`` is the

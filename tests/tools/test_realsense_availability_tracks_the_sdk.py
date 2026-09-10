@@ -102,3 +102,39 @@ def test_both_surfaces_report_the_absent_sdk_with_one_install(
     with pytest.raises(ImportError) as excinfo:
         cam_mod._create_camera("realsense", "0", 640, 480, 30, "RGB", "NO_ROTATION")
     assert str(excinfo.value) == cam_mod.REALSENSE_SDK_ABSENT
+
+
+def test_the_robot_factory_reports_the_absent_sdk_and_not_an_unsupported_type() -> None:
+    """The mirror of the creator's refusal, on the surface that attaches a camera.
+
+    ``Robot(..., cameras={"top": {"type": "intelrealsense", ...}})`` used to be
+    refused with ``Unsupported camera type`` because the factory built
+    ``OpenCVCameraConfig`` unconditionally - so this package could *list* a
+    RealSense through the tool above while refusing to attach the same device to
+    a robot, and the refusal named a spelling problem rather than the install.
+
+    The factory now resolves the type through lerobot's ``CameraConfig``
+    registry, so an absent SDK is reported by lerobot itself where the device is
+    opened - naming ``pyrealsense2`` and the same extra the tool names. The
+    config is built either way: a config is not a device, and refusing to
+    describe a camera the operator has not connected yet would make the SDK a
+    build-time dependency of a robot definition.
+    """
+    pytest.importorskip("lerobot")
+    from lerobot.cameras.utils import make_cameras_from_configs
+
+    from strands_robots.hardware_robot import _build_camera_config
+
+    config = _build_camera_config("top", {"type": "intelrealsense", "serial_number_or_name": "123"})
+    assert type(config).__name__ == "RealSenseCameraConfig"
+
+    if _sdk_present():
+        pytest.skip("the SDK is installed, so opening the device is not refused")
+
+    with pytest.raises(ImportError) as excinfo:
+        make_cameras_from_configs({"top": config})
+
+    message = str(excinfo.value)
+    assert "pyrealsense2" in message
+    assert _EXTRA_INSTALL in message
+    assert "Unsupported camera type" not in message

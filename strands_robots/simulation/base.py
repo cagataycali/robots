@@ -460,6 +460,24 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
 # ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
 # side reaches it through the function-local import it already uses for
 # ``randomization_seed_error``, so neither module gains a module-level edge.
+LIST_POLICIES_RUNNING_DESCRIBE_ENTRY = (
+    "() -> dict  # name the robots a rollout is driving right now, read from "
+    "the same in-flight population stop_policy derives its verdict from, so "
+    "the two never report opposite facts about one robot at one instant. "
+    "Counts a rollout in either launch shape - one submitted by start_policy "
+    "and one being driven right now by a blocking run_policy - and answers "
+    "status='error' on a backend that keeps no rollout registry, because "
+    "reporting none would be an affirmative claim about robots it cannot see"
+)
+"""The ``describe()`` entry for :meth:`SimEngine.list_policies_running`.
+
+One owner, because the surface is assembled twice: a backend that builds on
+``super().describe()`` inherits this entry, and a backend that writes its own
+``methods`` mapping imports it. A second copy of the text is what let the
+verb's promotion to this ABC reach the implementation and not the
+advertisement.
+"""
+
 MAX_EVAL_SEED = 2**32 - 1
 
 
@@ -5327,6 +5345,7 @@ class SimEngine(ABC):
                     "in flight; the json block reports was_running, and "
                     "robot_name is required (never defaulted to the sole robot)"
                 ),
+                "list_policies_running": LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
                 "eval_policy": (
                     "(robot_name: str, policy_provider='mock', n_episodes=1, "
                     "max_steps=300, success_fn=None, ...) -> dict  # multi-episode "

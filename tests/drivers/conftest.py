@@ -31,6 +31,12 @@ class FakeServoPort:
     frame, so the stream a reader has to survive is exactly the one a mute servo
     produces - the frames of its neighbours, back to back, with a gap.
 
+    A unicast ``WRITE`` is answered too, with the empty status frame the servo
+    sends to acknowledge it - the vendor SDK's ``txRxPacket`` sets a six-byte
+    packet timeout after every one of them. A fake that answered only reads
+    would let a write-and-forget path pass while the acks it left behind piled
+    up in front of the next reader's frame.
+
     Args:
         counts: Motor ID -> the raw register value that motor answers with.
             A motor absent from this map answers nothing, which is how a
@@ -75,6 +81,10 @@ class FakeServoPort:
             motor_id = data[2]
             if motor_id in self.counts:
                 self._pending += self.leading_noise + self._status_frame(motor_id, self.counts[motor_id])
+        elif instruction == 0x03:  # WRITE: the addressed servo acks with an empty frame
+            motor_id = data[2]
+            if motor_id in self.counts:
+                self._pending += self.leading_noise + self._frame(motor_id, b"")
         elif instruction == 0x82:  # SYNC_READ: every addressed servo answers, in order
             replies = b"".join(
                 self._status_frame(motor_id, self.counts[motor_id])
@@ -98,11 +108,20 @@ class FakeServoPort:
     # -- frame construction ------------------------------------------------ #
 
     @staticmethod
-    def _status_frame(motor_id: int, value: int) -> bytes:
-        """Build the reply a servo sends for a two-byte register read."""
-        params = bytes([value & 0xFF, (value >> 8) & 0xFF])
+    def _frame(motor_id: int, params: bytes) -> bytes:
+        """Build one status frame from ``motor_id`` carrying ``params``.
+
+        Empty params is the acknowledgement of a ``WRITE``; two bytes is the
+        answer to a register read. One builder for both, so the ack and the
+        reading cannot drift into two spellings of the same layout.
+        """
         body = bytes([motor_id, len(params) + 2, 0x00]) + params
         return b"\xff\xff" + body + bytes([(~sum(body)) & 0xFF])
+
+    @classmethod
+    def _status_frame(cls, motor_id: int, value: int) -> bytes:
+        """Build the reply a servo sends for a two-byte register read."""
+        return cls._frame(motor_id, bytes([value & 0xFF, (value >> 8) & 0xFF]))
 
 
 def open_bus(port: FakeServoPort, **kwargs: object) -> FeetechBus:
