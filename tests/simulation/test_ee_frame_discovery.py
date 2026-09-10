@@ -1,8 +1,11 @@
-"""End-effector frame auto-discovery regression for VERA eef-delta IK.
+"""End-effector frame auto-discovery: the full first-match-wins ladder.
 
-Exercises :func:`strands_robots.policies.vera.ee_frame.discover_ee_frame`, the
+Exercises :func:`strands_robots.simulation.ik.discover_ee_frame`, the
 namespace-aware heuristic that resolves an IK target frame from a compiled
-``mujoco.MjModel`` so eef-delta / cartesian-delta embodiments stay zero-config.
+``mujoco.MjModel`` so a caller that names no frame stays zero-config. Its
+consumers are ``move_to`` (the MuJoCo motion primitive, which reports the
+discovered frame in its payload and measures convergence at it) and the
+Cosmos 3 IK bridge.
 
 The heuristic is a first-match-wins ladder:
   1. a *site* named for the tool point (``attachment_site`` / ``grasp`` /
@@ -32,7 +35,7 @@ pytest.importorskip("mujoco")
 
 import mujoco  # noqa: E402
 
-from strands_robots.policies.vera.ee_frame import discover_ee_frame  # noqa: E402
+from strands_robots.simulation.ik import discover_ee_frame  # noqa: E402
 
 
 def _model(xml: str) -> "mujoco.MjModel":

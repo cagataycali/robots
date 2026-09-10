@@ -53,15 +53,7 @@ FINITENESS_GUARDS = frozenset({"isfinite", "finite_number_error"})
 #: Sites that read a float out of the environment but are not the place its
 #: domain is decided, each with the reason. Kept as small as the tree allows: an
 #: exemption is a promise that some *other* named surface refuses the value.
-NOT_A_RESOLVER_DOMAIN = {
-    # Returns the raw value to a single caller, ``VeraConfig.__post_init__``,
-    # which refuses a non-finite ``motion_plan_scale`` on the *effective* value
-    # through utils.positive_finite_number_error - deliberately there, because
-    # that funnel is also the only place a keyword-supplied value can be
-    # refused. Pinned behaviourally by
-    # tests/policies/vera/test_vera_motion_plan_scale_domain.py.
-    "policies/vera/config.py::_env_float": "checked on the effective value at the VeraConfig funnel",
-}
+NOT_A_RESOLVER_DOMAIN: dict[str, str] = {}
 
 #: Resolvers the sweep must keep finding, one per top-level area, so a scan that
 #: silently stopped matching - or one rooted at a single package again - fails

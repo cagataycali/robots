@@ -7,8 +7,8 @@ maps each Cartesian target to joint angles.
 
 The generic damped-least-squares solver wrapper is the shared
 :class:`strands_robots.simulation.ik.MinkIKBridge` (one home for the mink
-``FrameTask`` + ``PostureTask`` solve loop; the VERA provider and the
-simulation motion primitives use the same class). This module subclasses it
+``FrameTask`` + ``PostureTask`` solve loop, which the simulation motion
+primitives use as well). This module subclasses it
 only to brand the install errors with the ``cosmos3-sim`` extra, and keeps the
 Cosmos-specific decode glue (:func:`decode_cosmos_chunk_to_targets`) local so a
 change to another model's action semantics can never silently break Cosmos.

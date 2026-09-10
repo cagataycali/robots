@@ -593,9 +593,8 @@ A mapping is refused for the mirror-image reason (it iterates over its keys, so
 its values would be dropped), as is a non-string entry, a blank entry, and a
 repeated one - a duplicate collapses in the feature dict, declaring fewer
 features than asked for. `None` and `[]` keep their meaning of "not supplied",
-so the list is derived from the embodiment as usual. The same rule applies to the
-VERA provider's `image_keys`, which names observation cameras rather than model
-features, and the refusal happens before the weight download or server handshake.
+so the list is derived from the embodiment as usual. The refusal happens before
+the weight download.
 
 ### Single camera with no embodiment
 

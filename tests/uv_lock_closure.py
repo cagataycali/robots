@@ -29,8 +29,8 @@ def locked_packages() -> dict[str, list[dict]]:
     """Every ``[[package]]`` entry in the lock, grouped by distribution name.
 
     A name can carry several entries - uv records one per resolution fork (the
-    ``[vera-sim]`` conflict declaration produces two ``gymnasium`` entries) - so
-    the value is a list and the walk reads all of them.
+    platform markers on ``torchcodec`` produce two entries) - so the value is a
+    list and the walk reads all of them.
     """
     with _LOCK.open("rb") as handle:
         locked = tomllib.load(handle)["package"]

@@ -17,7 +17,7 @@ shaped exactly like a reachable pose. Three consumers then inherit it:
   motion-primitive backends use - comes back ``nan``, and ``nan <= threshold``
   is ``False``, so a convergence test never fires;
 * ``tracking_error`` reported ``{"mean_mm": nan, "max_mm": nan}``;
-* the closed loop in ``policies/cosmos3/sim_ik.py`` and ``policies/vera/sim_ik.py``
+* the closed loop in ``policies/cosmos3/sim_ik.py``
   composes a delta onto this pose and solves for it, so ``solve``'s own guard
   refused one step later naming ``target_pose`` - an argument the caller never
   supplied. The caller supplied ``q0``.

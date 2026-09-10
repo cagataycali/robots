@@ -23,8 +23,7 @@ The sibling teardown in the same package already refuses to do this:
 ``gr00t_inference._stop_service`` rescans the port after the escalation and
 returns an error when anything still holds it, because "reporting success there
 would tell the caller the port is free when the next bind is about to fail".
-``policies.vera.server_runner.stop`` likewise waits after each signal. These
-tests hold the two session verbs to the same standard, on both modules, and
+These tests hold the two session verbs to the same standard, on both modules, and
 additionally pin the identity half: the escalation is aimed at the process that
 was captured before the first signal, so a PID recycled during the grace period
 is not signalled a second time.

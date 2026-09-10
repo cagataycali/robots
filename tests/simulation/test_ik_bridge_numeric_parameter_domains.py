@@ -2,7 +2,7 @@
 
 :class:`~strands_robots.simulation.ik.MinkIKBridge` is the one home for the mink
 differential-IK solve, re-exported as the public ``MinkIKBridge`` of the
-``cosmos3`` and ``vera`` providers and documented as a constructor a caller
+``cosmos3`` provider and documented as a constructor a caller
 builds directly (``docs/policies/cosmos3.md``). It validated two of its
 arguments thoroughly - ``commanded_dofs`` per element, with ``bool`` rejected by
 name and every index range-checked, and ``solver`` through
@@ -416,8 +416,8 @@ class TestKnobsDeliberatelyLeftToTheirConsumer:
     def test_the_thresholds_are_held_to_finiteness_rather_than_to_a_floor(self) -> None:
         """An unreachable threshold is a documented way to force the full budget.
 
-        ``tests/policies/cosmos3/test_sim_ik_bridge_solve_loop.py`` and its
-        ``vera`` twin both pass ``pos_threshold=-1.0`` to assert the loop burns
+        ``tests/policies/cosmos3/test_sim_ik_bridge_solve_loop.py`` passes
+        ``pos_threshold=-1.0`` to assert the loop burns
         its whole ``max_iters`` budget when the break never fires. A positive
         floor here would refuse that, and would refuse it for a value that
         cannot produce a wrong answer.

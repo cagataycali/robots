@@ -16,8 +16,8 @@ The package had already decided that, twice, for the *same* bytes:
 * the MuJoCo GL probe in ``simulation.mujoco.backend`` captures the child as
   bytes and calls ``.decode(errors="replace")`` on both streams.
 
-The 25 sites that read a child through a *pipe* in text mode did not, and two
-of them lose something a caller was promised:
+The sites that read a child through a *pipe* in text mode did not, and one of
+them loses something a caller was promised:
 
 * :func:`~strands_robots.dataset_recorder.sync_dataset_to_bucket` documents
   "Never raises on ``hf`` failure; errors are surfaced in the result dict", and
@@ -25,11 +25,6 @@ of them lose something a caller was promised:
   after ``hf sync`` has already run, so an undecodable byte in the CLI's own
   message raised past a completed upload and took the episode/frame report with
   it.
-* ``VeraServerRunner``'s log pump iterates the server's stdout on a daemon
-  thread. The byte killed that thread, silently, and the readiness error that
-  follows tells an operator to "Check the [vera.server] log lines above" - lines
-  that stopped arriving at the byte.
-
 Two boundaries are deliberate. ``encoding=`` is *not* stated: a child inherits
 this process's locale and encodes with it, which is the one case
 tests/test_on_disk_text_io_states_utf8.py excludes for that reason. And a pipe
@@ -40,7 +35,6 @@ mangle a command instead of refusing to send it.
 from __future__ import annotations
 
 import ast
-import logging
 import pathlib
 import subprocess
 import sys
@@ -50,8 +44,6 @@ import pytest
 
 import strands_robots
 from strands_robots import dataset_recorder as recorder_mod
-from strands_robots.policies.vera import VeraConfig
-from strands_robots.policies.vera import server_runner as sr
 
 PACKAGE = pathlib.Path(strands_robots.__file__).parent
 
@@ -131,7 +123,7 @@ class TestEveryChildStreamReadSubstitutes:
         # Without this a matcher that silently stops matching passes the rule
         # above by finding nothing to grade.
         _, reads = _scan()
-        assert len(reads) >= 20, f"only {len(reads)} child-stream reads found; the matcher is broken"
+        assert len(reads) >= 19, f"only {len(reads)} child-stream reads found; the matcher is broken"
 
 
 class TestBucketSyncKeepsItsVerdict:
@@ -209,32 +201,3 @@ class TestBucketSyncKeepsItsVerdict:
         result = recorder_mod.sync_dataset_to_bucket(finalized, "acme/robotdata", run_id="run1", create=False)
         assert result["message"] == "quota exceeded for acme/robotdata"
         assert REPLACEMENT not in result["message"]
-
-
-class TestTheServerLogPumpOutlivesTheByte:
-    """The VERA log pump keeps streaming past a byte it cannot decode.
-
-    The readiness failure tells an operator to read these lines, so a pump that
-    dies at the byte takes the diagnosis with it.
-    """
-
-    def test_lines_after_an_undecodable_byte_still_reach_the_log(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        server_output = b"loading checkpoint /ckpt/caf\xff.pt\nserver ready\n"
-        monkeypatch.setattr(sr, "_require_vera_installed", lambda _executable: None)
-        monkeypatch.setattr(sr.VeraServerRunner, "_build_command", lambda self: _child_argv(stdout=server_output))
-        monkeypatch.setattr(sr.VeraServerRunner, "_wait_until_ready", lambda self: None)
-
-        runner = sr.VeraServerRunner(VeraConfig(server_port=8820))
-        with caplog.at_level(logging.INFO, logger=sr.__name__):
-            runner.start()
-            assert runner._log_thread is not None
-            runner._log_thread.join(timeout=30)
-            assert not runner._log_thread.is_alive(), "the log pump did not finish"
-        runner.stop()
-
-        pumped = [record.getMessage() for record in caplog.records if "[vera.server]" in record.getMessage()]
-        assert any(REPLACEMENT in line for line in pumped), pumped
-        # The line after the byte is the one a dead pump loses.
-        assert any("server ready" in line for line in pumped), pumped

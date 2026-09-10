@@ -2,10 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """One report for a policy server that answered the connect and nothing else.
 
-The two WebSocket policy clients in this package -
-:class:`~strands_robots.policies.vera.client.VeraWebsocketClient` and
-:class:`~strands_robots.policies.cosmos3.client.Cosmos3WebsocketClient` - each
-carry an actionable "could not reach the server" hint, raised from
+The WebSocket policy client in this package -
+:class:`~strands_robots.policies.cosmos3.client.Cosmos3WebsocketClient` -
+carries an actionable "could not reach the server" hint, raised from
 ``except OSError`` around the connect. That report is written for a server that
 is *absent*, and it is the wrong report for a server that is *present and
 silent*: one whose listener accepted the connection while the checkpoint is
@@ -36,8 +35,8 @@ def silent_server_error(*, server: str, uri: str, what: str, timeout: float, bud
     """Return the report for a peer that accepted the connection and went quiet.
 
     Args:
-        server: Human name of the service being dialled (e.g. ``"VERA policy
-            server"``), used to name what is silent rather than what is absent.
+        server: Human name of the service being dialled (e.g. ``"Cosmos 3
+            policy server"``), used to name what is silent rather than what is absent.
         uri: The WebSocket URI the client dialled, so the message names the
             endpoint actually in use rather than the one the caller meant.
         what: The reply that did not arrive (e.g. ``"metadata handshake"``,

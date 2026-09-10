@@ -55,7 +55,6 @@ import pytest
 import strands_robots.utils as utils_module
 from strands_robots.inference.client import RemotePolicy
 from strands_robots.policies.cosmos3.policy import Cosmos3Policy
-from strands_robots.policies.vera import VeraConfig
 
 if TYPE_CHECKING:
     # Reaches nothing but the `cast` below, which is a string, so the name needs
@@ -121,15 +120,6 @@ def _cosmos3_refusal(host: Any) -> str | None:
     return None
 
 
-def _vera_refusal(host: Any) -> str | None:
-    """Refusal :class:`~strands_robots.policies.vera.VeraConfig` gives ``host``."""
-    try:
-        VeraConfig(embodiment="pusht", host=host)
-    except ValueError as exc:
-        return str(exc)
-    return None
-
-
 def _reachy_mini_refusal(host: Any) -> str | None:
     """Refusal ``ReachyMiniDriver`` gives ``host``.
 
@@ -155,7 +145,6 @@ def _reachy_mini_refusal(host: Any) -> str | None:
 WEBSOCKET_SURFACES: dict[str, Any] = {
     "RemotePolicy": _remote_policy_refusal,
     "Cosmos3Policy": _cosmos3_refusal,
-    "VeraConfig": _vera_refusal,
     "ReachyMiniDriver": _reachy_mini_refusal,
 }
 
@@ -280,7 +269,6 @@ def test_the_domain_has_one_owner_and_no_consumer_restates_it() -> None:
     for module_name, source in (
         ("cosmos3.policy", inspect.getsource(Cosmos3Policy.__init__)),
         ("inference.client", inspect.getsource(RemotePolicy.__init__)),
-        ("vera.config", inspect.getsource(type(VeraConfig(embodiment="pusht")).__post_init__)),
         ("device_connect.reachy_mini_driver", _reachy_mini_driver_init_source()),
     ):
         called = _domains_called(source)
@@ -457,7 +445,6 @@ def _reachy_mini_both_halves(host: Any) -> None:
 BOTH_HALVES_UNUSABLE: dict[str, Any] = {
     "RemotePolicy": lambda host: RemotePolicy(host=host, port=65536),
     "Cosmos3Policy": lambda host: Cosmos3Policy(embodiment="droid", host=host, port=65536),
-    "VeraConfig": lambda host: VeraConfig(embodiment="pusht", host=host, server_port=65536),
     "ReachyMiniDriver": _reachy_mini_both_halves,
 }
 

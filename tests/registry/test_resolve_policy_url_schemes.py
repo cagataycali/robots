@@ -3,7 +3,7 @@
 ``strands_robots.registry.policies.resolve_policy`` documents a five-step
 resolution order (URL patterns -> shorthands -> HF model IDs -> registered
 provider name -> lerobot_local fallback). The shipped ``policies.json`` declares
-five URL patterns - ``^zmq://``, ``^grpc://``, ``^cosmos3://``, ``^vera://`` and
+four URL patterns - ``^zmq://``, ``^grpc://``, ``^cosmos3://`` and
 ``^wss?://`` - so only the generic scheme-less ``host:port`` branch, part of the
 public resolution contract and reachable by a provider that declares a
 scheme-less pattern, has no exercising input from the shipped registry.
@@ -167,7 +167,6 @@ _SCHEME_URLS = (
     "ws://gpu-box:8765",
     "wss://gpu-box:8765",
     "cosmos3://prod-server:9000",
-    "vera://gpu-box:9000",
     "grpc://10.0.0.5:50051",
 )
 

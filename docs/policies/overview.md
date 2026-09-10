@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
 ---
 
 # Policy providers
@@ -9,7 +9,7 @@ truth - list the providers with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'vera', 'wbc', 'wbc_gait']
+# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'wbc', 'wbc_gait']
 ```
 
 `create_policy` also accepts each provider's declared aliases and shorthands,
@@ -57,9 +57,7 @@ Every row below is a registered provider (`create_policy("<name>")`). The
 provider column is kept in sync with `list_providers()` by a regression test
 (`tests/test_docs_policy_coverage.py`), and the install-extra column with
 `[project.optional-dependencies]` by `tests/test_dependency_audit.py`,
-so neither can silently drift. VERA is the one provider with no extra to name:
-its client needs only core deps plus the git-installed `vera` package, so
-[its page](vera.md) carries the install rather than a bracket.
+so neither can silently drift.
 
 | Provider | Class | Install extra | When to use |
 |----------|-------|---------------|-------------|
@@ -68,7 +66,6 @@ its client needs only core deps plus the git-installed `vera` package, so
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
-| [`vera`](vera.md) | `VeraPolicy` | _(none - git-only)_ | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
 | [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
 | [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
@@ -139,7 +136,6 @@ structured error naming the parameter, before any policy is created.
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action/observation contract for the SO-arm checkpoints.
 - [Persistent worker](persistent-worker.md) - load once, reuse across rollouts; cache controls + telemetry.
 - [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.
-- [VERA](vera.md) - MIT video-to-action planner + Jacobian IDM over a GPU server.
 - [Remote](remote.md) - forward observations to a remote `PolicyServer` over WebSocket (edge offload).
 - [cuRobo](curobo.md) - in-process collision-aware motion planning (non-VLA, GPU).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA, no in-venv ROS 2).

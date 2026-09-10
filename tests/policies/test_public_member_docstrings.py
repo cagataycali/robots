@@ -4,11 +4,11 @@
 
 :mod:`tests.policies.test_provider_policy_docstrings` already pins the docstring
 contract for the backend *provider* Policy classes (GR00T, cuRobo, cosmos3, the
-two lerobot providers, MotionBricks, MoveIt2, VERA, the two WBC controllers) and
+two lerobot providers, MotionBricks, MoveIt2, the two WBC controllers) and
 :mod:`tests.policies.test_builtin_policy_docstrings` pins the dependency-free
 built-ins. Neither reaches the *ancillary* public classes the providers lean on:
-the ZMQ ``MsgSerializer`` wire codecs, the VERA websocket client / config /
-server runners, and the LeRobot :class:`ProcessorStep` subclasses that pack and
+the ZMQ ``MsgSerializer`` wire codecs and the LeRobot
+:class:`ProcessorStep` subclasses that pack and
 normalize observations. An agent reading the tree to drive a provider blind
 still lands on those helpers, so each of their public methods and properties
 needs its own docstring rather than leaning silently on an inherited one (a
@@ -16,7 +16,7 @@ needs its own docstring rather than leaning silently on an inherited one (a
 
 This guard walks every module across the policies tree by AST (no import, so it
 needs none of the optional policy backends -- ``[groot]`` / ``[cosmos3]`` /
-``[vera]`` / ``[moveit2]`` / ``[wbc]`` / ``[lerobot]`` -- installed) and fails
+``[moveit2]`` / ``[wbc]`` / ``[lerobot]`` -- installed) and fails
 if any public method or property of a public class defines no docstring. It
 mirrors the tools-package guard (``tests/tools/test_public_member_docstrings.py``).
 Property setters and deleters are exempt: a ``@x.setter`` mirrors its documented
@@ -78,8 +78,7 @@ def test_policies_tree_has_ancillary_public_classes() -> None:
     found = set(_public_classes())
     for expected in (
         "groot/client.py::MsgSerializer",
-        "vera/client.py::VeraWebsocketClient",
-        "vera/server_runner.py::VeraServerRunner",
+        "cosmos3/client.py::Cosmos3WebsocketClient",
     ):
         assert expected in found, (expected, found)
 

@@ -2,43 +2,32 @@
 # SPDX-License-Identifier: Apache-2.0
 """A single camera key passed as a bare string must not be read one key per character.
 
-``image_keys`` names an ordered list of key names on two providers: the LeRobot
-local provider declares model VISUAL feature keys with it
-(:func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`), and
-the VERA provider names the observation cameras to width-concat with it
-(``VeraPolicy._resolve_view_keys``). Neither validated the shape, and both reduced
-the value with ``list(...)``.
+``image_keys`` names an ordered list of key names on the LeRobot local provider,
+which declares model VISUAL feature keys with it
+(:func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`). It
+did not validate the shape, and reduced the value with ``list(...)``.
 
 ``str`` is iterable, so ``list("wrist")`` is ``['w', 'r', 'i', 's', 't']`` - five
 names the caller never wrote. Nothing downstream can tell that apart from a
 deliberate five-entry list, so it was accepted and the consequence surfaced far
-from the call:
-
-* LeRobot, with no embodiment configured (``preflight`` returned early in that
-  case): a model built declaring one bogus VISUAL feature per character;
-* VERA: ``KeyError: 'w'`` raised from ``_extract_frame`` mid-rollout, after the
-  policy server had been launched and the model loaded.
+from the call: with no embodiment configured (``preflight`` returned early in
+that case), a model built declaring one bogus VISUAL feature per character.
 
 Two neighbouring shapes failed the same way: a non-``str`` entry became a key,
-and a repeated entry could not be honored as written - the LeRobot side builds a
-feature dict, where a duplicate collapses and declares fewer features than asked
-for, and the VERA side concatenates one panel per entry, where a duplicate
-doubles the width of the frame the model sees.
+and a repeated entry could not be honored as written - this side builds a feature
+dict, where a duplicate collapses and declares fewer features than asked for.
 
 These tests pin the shared domain
-(:func:`strands_robots.utils.name_list_error`), that all four surfaces that
+(:func:`strands_robots.utils.name_list_error`), that all three surfaces that
 receive the value agree on the SHAPE, and that each refusal precedes the
 expensive work it guards.
 
-The emptiness verdict is deliberately not part of that agreement, because the
-two providers do not name the same kind of thing with this parameter. The
-LeRobot side DECLARES the model's visual features, and absence derives them from
-the embodiment, so an empty list there keeps its "not supplied" meaning. The
-VERA side SELECTS a subset of the observation it was handed, so an empty
-selection asks for no view and cannot be a spelling of "every view" - it is
-refused, which is the verdict the shared domain reserves for the caller.
-:class:`TestTheEmptinessVerdictIsPerSurface` states that divergence rather than
-leaving it to be read out of a parity table.
+The emptiness verdict is deliberately not part of that agreement: the shared
+domain returns no verdict for an empty sequence, leaving it to the receiving
+surface. This parameter DECLARES the model's visual features, and absence derives
+them from the embodiment, so an empty list here keeps its "not supplied" meaning.
+:class:`TestTheEmptinessVerdictIsTheSurfaces` states that rather than leaving it
+to be read out of a parity table.
 """
 
 from __future__ import annotations
@@ -46,12 +35,10 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
-import numpy as np
 import pytest
 
 from strands_robots.policies.lerobot_local import molmoact2
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
-from strands_robots.policies.vera import VeraPolicy
 from strands_robots.utils import name_list_error
 
 # Shapes that cannot be honored, with the reason each is refused for. Kept as a
@@ -79,45 +66,8 @@ ABSENT_VALUES: list[tuple[str, Any]] = [("None", None)]
 
 # An empty list is a usable SHAPE whose meaning is the receiving surface's to
 # decide, so it is tabled separately from ``None``: it is "not supplied" to the
-# LeRobot declaration and an empty SELECTION - refused - to VERA. It used to sit
-# in ``ABSENT_VALUES``, which is what let the VERA cell below assert that a
-# selection naming no camera view falls back to every one of them.
+# LeRobot declaration.
 EMPTY_SELECTION: list[tuple[str, Any]] = [("an empty list", [])]
-
-
-class _FakeVeraClient:
-    """In-memory stand-in for the VERA websocket client (no server, no GPU)."""
-
-    def __init__(self) -> None:
-        self.handshakes = 0
-
-    def get_server_metadata(self) -> dict[str, Any]:
-        self.handshakes += 1
-        return {"view_keys": ["front"], "needs_prompt": False}
-
-    def infer(self, req: dict[str, Any]) -> dict[str, Any]:
-        return {"action": np.zeros((1, 6), np.float32)}
-
-    def close(self) -> None:
-        pass
-
-
-def _vera(image_keys: Any, client: _FakeVeraClient | None = None) -> VeraPolicy:
-    return VeraPolicy(
-        embodiment="pusht",
-        image_keys=image_keys,
-        # Structural stub: get_server_metadata / infer / close is the whole
-        # surface VeraPolicy uses, and the guard under test runs before any of it.
-        client=client or _FakeVeraClient(),  # type: ignore[arg-type]
-        auto_launch_server=False,
-    )
-
-
-def _observation() -> dict[str, np.ndarray]:
-    return {
-        "front": np.zeros((64, 64, 3), np.uint8),
-        "wrist": np.full((64, 64, 3), 200, np.uint8),
-    }
 
 
 # --------------------------------------------------------------------------- #
@@ -144,7 +94,7 @@ class TestNameListDomain:
         list of one name; quoting what it would have been read as is what makes
         the per-character split self-evident.
         """
-        err = name_list_error("wrist", "image_keys", "VeraPolicy")
+        err = name_list_error("wrist", "image_keys", "LerobotLocalPolicy")
         assert err is not None
         assert "['w', 'r', 'i', 's', 't']" in err
         assert "5 name(s)" in err
@@ -222,56 +172,6 @@ class TestPreflight:
 
 
 # --------------------------------------------------------------------------- #
-# The defect, on the VERA camera-key path
-# --------------------------------------------------------------------------- #
-class TestVeraViewKeys:
-    def test_a_bare_string_is_refused_instead_of_raising_keyerror_mid_rollout(self) -> None:
-        with pytest.raises(ValueError, match="not a single string"):
-            _vera("front")
-
-    def test_the_refusal_precedes_the_server_handshake(self) -> None:
-        client = _FakeVeraClient()
-        with pytest.raises(ValueError, match="not a single string"):
-            _vera("front", client=client)
-        assert client.handshakes == 0
-
-    def test_a_usable_list_still_selects_one_panel_per_named_view(self) -> None:
-        policy = _vera(["front"])
-        frame = policy._extract_frame(_observation(), {"view_keys": ["front"]})
-        one_panel_width = frame.shape[1]
-
-        policy = _vera(["front", "wrist"])
-        frame = policy._extract_frame(_observation(), {"view_keys": ["front"]})
-        assert frame.shape[1] == 2 * one_panel_width
-
-    def test_a_repeated_view_is_refused_rather_than_doubling_the_frame_width(self) -> None:
-        """A duplicate silently widened the frame the model sees, which is a
-        different input from the single view the caller named."""
-        with pytest.raises(ValueError, match="must not repeat a name"):
-            _vera(["front", "front"])
-
-    @pytest.mark.parametrize(("label", "value"), ABSENT_VALUES, ids=[c[0] for c in ABSENT_VALUES])
-    def test_an_absent_value_still_falls_back_to_the_server_views(self, label: str, value: Any) -> None:
-        policy = _vera(value)
-        assert policy.image_keys is None
-        assert policy._resolve_view_keys(_observation(), {"view_keys": ["front"]}) == ["front"]
-
-    @pytest.mark.parametrize(("label", "value"), EMPTY_SELECTION, ids=[c[0] for c in EMPTY_SELECTION])
-    def test_an_empty_selection_is_refused_rather_than_falling_back(self, label: str, value: Any) -> None:
-        """This row used to be one of the ``ABSENT_VALUES`` above.
-
-        It is retargeted rather than dropped, because the assertion it made was
-        the defect: ``image_keys`` selects a subset of the observation's cameras,
-        so an empty selection asks for no view, and falling back served every one
-        of them - the opposite answer, under a success result. The full domain,
-        with the frame it produces, is pinned by
-        ``tests/policies/vera/test_vera_image_keys_selection_domain.py``.
-        """
-        with pytest.raises(ValueError, match="selects no camera view"):
-            _vera(value)
-
-
-# --------------------------------------------------------------------------- #
 # The surfaces must not diverge
 # --------------------------------------------------------------------------- #
 def _verdict(call: Any) -> str:
@@ -282,16 +182,15 @@ def _verdict(call: Any) -> str:
     return "accepted"
 
 
-class TestCrossProviderParity:
+class TestCrossSurfaceParity:
     """One option name, one shape contract.
 
-    The two providers name different vocabularies with ``image_keys`` - model
-    feature keys against observation camera keys - but a value either is a list
-    of distinct names or is not, so a shape refused by one surface cannot be
-    accepted by another.
+    Three surfaces receive this value - the constructor, the pre-flight check and
+    the feature derivation - and a value either is a list of distinct names or is
+    not, so a shape refused by one of them cannot be accepted by another.
 
     The empty list is not a shape question and is therefore not in this table;
-    :class:`TestTheEmptinessVerdictIsPerSurface` covers it.
+    :class:`TestTheEmptinessVerdictIsTheSurfaces` covers it.
     """
 
     @pytest.mark.parametrize(
@@ -310,7 +209,6 @@ class TestCrossProviderParity:
                 "LerobotLocalPolicy": _verdict(lambda: LerobotLocalPolicy(image_keys=fresh())),
                 "preflight": _verdict(lambda: LerobotLocalPolicy.preflight({"front"}, image_keys=fresh())),
                 "derive_image_keys": _verdict(lambda: molmoact2.derive_image_keys(fresh(), None)),
-                "VeraPolicy": _verdict(lambda: _vera(fresh())),
             }
         assert len(set(verdicts.values())) == 1, f"surfaces disagree for {label}: {verdicts}"
 
@@ -318,14 +216,15 @@ class TestCrossProviderParity:
 # --------------------------------------------------------------------------- #
 # The one value whose verdict is the surface's own
 # --------------------------------------------------------------------------- #
-class TestTheEmptinessVerdictIsPerSurface:
+class TestTheEmptinessVerdictIsTheSurfaces:
     """An empty list is a usable shape, so the shared domain returns nothing.
 
     ``name_list_error([])`` is ``None`` on purpose - "a surface where an absent
-    value IS an error keeps that verdict its own" - and the two surfaces reach
-    opposite verdicts because they name different contracts with the one option
-    name. Asserted here so the divergence is deliberate and stays visible: a
-    later sweep that made either side match the other would have to delete this.
+    value IS an error keeps that verdict its own". This parameter DECLARES the
+    model's features rather than selecting from a collection the call owns, so
+    absence derives them and an empty list is that same absence. Asserted here so
+    the reading is deliberate and stays visible: a sweep that made the shared
+    domain refuse an empty sequence would have to delete this.
     """
 
     def test_the_shared_domain_returns_no_verdict(self) -> None:
@@ -334,7 +233,3 @@ class TestTheEmptinessVerdictIsPerSurface:
     def test_the_declaration_reads_it_as_not_supplied(self) -> None:
         assert molmoact2.derive_image_keys([], None) == list(molmoact2.DEFAULT_IMAGE_KEYS)
         LerobotLocalPolicy.preflight({"front"}, image_keys=[])
-
-    def test_the_selection_refuses_it(self) -> None:
-        with pytest.raises(ValueError, match="selects no camera view"):
-            _vera([])

@@ -50,7 +50,7 @@ def unpack_array(obj):
         # bytes is read-only and does not own its data, so normalizing it in place
         # or handing it to ``torch.from_numpy`` (zero-copy) crashes or hits the
         # "not writable -> undefined behavior" hazard. Copy to a writable, owning
-        # array - matching the sibling VERA packer and the inference protocol.
+        # array - matching the inference protocol.
         return np.frombuffer(obj[b"data"], dtype=np.dtype(obj[b"dtype"])).reshape(tuple(obj[b"shape"])).copy()
 
     if b"__npgeneric__" in obj:

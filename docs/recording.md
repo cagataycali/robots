@@ -531,8 +531,7 @@ and installing the encoder and calling again writes them.
 
 "No encoder" covers two modules, not one: `imageio` declares the plugin that
 actually writes MP4 -- `imageio_ffmpeg` -- as an optional extra of its own, so an
-install can have `imageio` and still no MP4 writer (`[vera-sim]` declares
-`imageio` alone). The flush requires both, and quotes whichever is missing, so
+install can have `imageio` and still no MP4 writer. The flush requires both, and quotes whichever is missing, so
 the remedy it prints is the one that works:
 
 ```

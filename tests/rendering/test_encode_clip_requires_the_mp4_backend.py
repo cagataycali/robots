@@ -7,8 +7,8 @@ writes, and ``imageio`` is not one dependency but two: the package itself, and
 the plugin that actually encodes the container. ``imageio`` declares that plugin
 -- ``imageio_ffmpeg`` -- as an optional extra of its own, so an install can
 supply the module ``encode_clip`` imports and still have no MP4 writer behind
-it. This package's ``[vera-sim]`` extra is exactly that install: it declares
-``imageio>=2.28.0,<3.0.0`` and no ``imageio-ffmpeg``.
+it. Every extra here declares both, but nothing stops a caller installing
+``imageio`` on its own - and an extra that declared it alone once shipped.
 
 With the plugin absent ``imageio`` does not refuse the ``.mp4`` request. It
 falls through to whatever other plugin claims the container, and the libx264
@@ -32,8 +32,7 @@ callers handle:
 The rollout recorder is the third writer with the same shape:
 ``_RolloutVideoWriter.open`` probed ``imageio`` and then handed
 ``imageio.get_writer`` the same libx264 knobs, which is the path
-``run_policy(video=...)`` takes -- and the ``[vera-sim]`` MimicGen example
-records through it with an ``.mp4`` default.
+``run_policy(video=...)`` takes, with an ``.mp4`` default.
 
 So the container decides which modules have to be present, one place decides it
 (:func:`~strands_robots.rendering.require_clip_encoder`), and every writer routes

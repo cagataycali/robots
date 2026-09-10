@@ -1139,7 +1139,7 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     reach a service over TCP (``use_rosbridge``'s WebSocket,
     ``gr00t_inference``'s inference service), the mesh bridges that construct
     one, the policy providers that dial one (``groot``, ``moveit2``,
-    ``cosmos3``, ``lerobot_async``, ``vera``), the Device Connect drivers
+    ``cosmos3``, ``lerobot_async``), the Device Connect drivers
     that address a device daemon
     (:class:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver`'s
     ``api_port``), and the simulation backends that bind one
@@ -1781,8 +1781,7 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
 
     Shared domain for every parameter that carries an ordered list of KEY
     NAMES: the LeRobot ``image_keys`` (model VISUAL feature keys to declare on
-    the config), the VERA ``image_keys`` (observation camera keys to
-    width-concat into one frame), the simulation ``cameras`` subset accepted
+    the config), the simulation ``cameras`` subset accepted
     by ``render_all``, the two plain-MP4 recorders and every backend's
     ``start_recording``, and the ``robot_state_keys`` accepted by every
     provider's :meth:`~strands_robots.policies.base.Policy.set_robot_state_keys`
@@ -1821,8 +1820,7 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     name keys a dict - the LeRobot feature map, or a dataset schema, which then
     declares fewer columns than asked for (two ``camera_keys`` entries naming one
     camera declare a single camera column) - and doubles where each entry drives
-    its own unit of work: VERA concatenates one panel per entry, so the frame
-    the model sees is twice as wide; ``render_all`` renders the same view twice;
+    its own unit of work: ``render_all`` renders the same view twice;
     and a plain-MP4 recorder opens a second encoder on the one output path, so
     the same camera is rendered and appended twice per capture tick while the
     artifact ledger reports two files where one exists.
@@ -1838,14 +1836,12 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     An empty sequence is not rejected here, and ``None`` is the caller's to skip
     rather than this function's to accept - a surface where an absent value IS an
     error keeps that verdict its own. Which verdict that is depends on what the
-    parameter names, and the two ``image_keys`` differ on exactly this. The
-    LeRobot one DECLARES the model's visual features, and absence derives them
-    from the embodiment instead, so a falsy value there genuinely means "not
-    supplied" and that caller gates this check on truthiness. The VERA one
-    SELECTS a subset of the observation it was handed, so an empty selection asks
-    for no view and is the opposite of the documented "every view" default;
-    ``VeraPolicy`` reads it ``is not None`` and supplies the refusal beside this
-    check.
+    parameter names: the LeRobot ``image_keys`` DECLARES the model's visual
+    features, and absence derives them from the embodiment instead, so a falsy
+    value there genuinely means "not supplied" and that caller gates this check
+    on truthiness. A parameter that instead SELECTS a subset of a collection the
+    call already owns would reach the opposite verdict, and supplies that refusal
+    beside this check rather than here.
 
     Args:
         value: The caller-supplied value.

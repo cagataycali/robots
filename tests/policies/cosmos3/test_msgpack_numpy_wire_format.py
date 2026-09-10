@@ -128,8 +128,8 @@ def test_decoded_array_is_writable_and_owns_its_data():
     # read-only and non-owning, so normalizing a decoded observation in place or
     # handing a decoded action chunk to ``torch.from_numpy`` (zero-copy) crashes
     # or hits torch's "not writable -> undefined behavior" hazard. The decode
-    # must yield a writable, owning array (parity with the VERA packer and the
-    # inference protocol). Fails before the copy fix.
+    # must yield a writable, owning array (parity with the inference protocol).
+    # Fails before the copy fix.
     action = np.arange(8 * 10, dtype=np.float32).reshape(8, 10)
     out = mnp.unpackb(mnp.packb({"action": action}))["action"]
     assert out.flags.writeable, "decoded array must be writable"

@@ -2,22 +2,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """A policy client's wire read is bounded, and a missed read is not a wrong one.
 
-The two WebSocket policy clients in this package -
-:class:`~strands_robots.policies.vera.client.VeraWebsocketClient` and
-:class:`~strands_robots.policies.cosmos3.client.Cosmos3WebsocketClient` - read
-their server's metadata handshake and every action chunk with
-``websockets.sync``'s ``recv()``, which has no deadline of its own. ``VERA``
-passed ``open_timeout=600`` to ``connect``, and that covers the TCP connect plus
-the HTTP upgrade only: a server whose listener accepted the connection and then
-went quiet - a checkpoint still loading onto the GPU, a wedged forward pass -
-held the calling thread with no way back to the caller.
+The WebSocket policy client in this package -
+:class:`~strands_robots.policies.cosmos3.client.Cosmos3WebsocketClient` - reads
+its server's metadata handshake and every action chunk with
+``websockets.sync``'s ``recv()``, which has no deadline of its own. A
+``connect``-level ``open_timeout`` covers the TCP connect plus the HTTP upgrade
+only: a server whose listener accepted the connection and then went quiet - a
+checkpoint still loading onto the GPU, a wedged forward pass - held the calling
+thread with no way back to the caller.
 
-Two documented contracts fail on that. Each client converts ``OSError`` around
-its connect into an actionable ``ConnectionError`` ("could not reach the server -
+A documented contract fails on that. The client converts ``OSError`` around its
+connect into an actionable ``ConnectionError`` ("could not reach the server -
 start it first"), and that report is unreachable for a listening server, because
-no ``TimeoutError`` (an ``OSError``) is ever raised. And ``VeraServerRunner``
-judges readiness with a TCP port probe, so ``start()`` returns as soon as the
-listener is up - which is exactly the state that hangs the first read.
+no ``TimeoutError`` (an ``OSError``) is ever raised. A server runner that judges
+readiness with a TCP port probe returns as soon as the listener is up - which is
+exactly the state that hangs the first read.
 
 Bounding the read alone would trade the hang for a *wrong* answer, so both
 halves are pinned here. A reply that was not read is still produced and still
@@ -25,10 +24,10 @@ queued on the socket, so the next request reads the previous request's chunk -
 well-formed, and computed for an observation the robot has already moved past.
 ``RemotePolicy`` states that rule for the same wire (see
 ``tests/inference/test_a_failed_exchange_does_not_leave_the_connection_cached.py``);
-these two clients now state it too, and the handshake gets it as well - assigned
+this client now states it too, and the handshake gets it as well - assigned
 before the metadata frame was read, a failed handshake left a live connection
-cached behind the refusal it had just raised, and ``get_server_metadata``
-answered ``{}`` for a server it had never spoken to.
+cached behind the refusal it had just raised, so the next request would have read
+that unconsumed metadata blob as its action chunk.
 
 No network access and no GPU: every server here is a loopback listener, and the
 one read that has to miss its reply is parked by the server rather than raced.
@@ -50,9 +49,8 @@ pytest.importorskip("websockets", reason="the raw websocket transports need webs
 
 from websockets.sync.server import serve  # noqa: E402
 
+from strands_robots.policies.cosmos3 import _msgpack_numpy as mnp  # noqa: E402
 from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient  # noqa: E402
-from strands_robots.policies.vera import _msgpack_numpy as mnp  # noqa: E402
-from strands_robots.policies.vera.client import VeraWebsocketClient  # noqa: E402
 
 #: Budget handed to the client for a read that must miss its reply. Waited out in
 #: full on every run, so it is the one value here worth keeping small.
@@ -82,8 +80,8 @@ def _serve(handler: Any) -> int:
 def silent_server() -> int:
     """A server that accepts the connection and then sends nothing at all.
 
-    The listening-but-silent state: the port probe that ``VeraServerRunner``
-    calls readiness answers yes, and the metadata frame never comes.
+    The listening-but-silent state: a port probe that calls readiness answers
+    yes, and the metadata frame never comes.
     """
     return _serve(lambda conn: time.sleep(JOIN_S * 4))
 
@@ -108,7 +106,6 @@ def _call_on_a_thread(call: Any) -> tuple[threading.Thread, list[BaseException]]
 #: the wording its own "the server is absent" hint uses - which is the report a
 #: silent server must NOT receive.
 CLIENTS = [
-    pytest.param(VeraWebsocketClient, "get_server_metadata", "Could not reach the VERA policy server", id="vera"),
     pytest.param(Cosmos3WebsocketClient, "get_server_metadata", "Start it first", id="cosmos3"),
 ]
 
@@ -181,7 +178,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
         return _serve(handler)
 
     def test_the_next_request_gets_its_own_chunk_not_the_previous_one(self) -> None:
-        client = VeraWebsocketClient(host="127.0.0.1", port=self._parking_server(), read_timeout=READ_TIMEOUT_S)
+        client = Cosmos3WebsocketClient(host="127.0.0.1", port=self._parking_server(), read_timeout=READ_TIMEOUT_S)
         with pytest.raises(ConnectionError):
             client.infer({"marker": 1})
         time.sleep(PARK_S + 0.5)  # the parked reply has now landed on the socket
@@ -193,16 +190,16 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
     def test_a_handshake_that_did_not_complete_is_not_answered_with_empty_metadata(self) -> None:
         """A dead connection must not report a server contract nobody sent.
 
-        The refusal's own *type* is the transport's to choose - a server that
-        closes mid-handshake raises ``ConnectionClosed``, which is not what this
-        rule is about. What it is about is that both attempts refuse: the second
-        one answering at all means the connection was cached behind the first
-        refusal, and ``{}`` then stood in for a server contract nobody sent -
-        empty geometry that ``VeraPolicy._ensure_started`` would have accepted as
-        the handshake, marking itself started.
+                The refusal's own *type* is the transport's to choose - a server that
+                closes mid-handshake raises ``ConnectionClosed``, which is not what this
+                rule is about. What it is about is that both attempts refuse: the second
+                one answering at all means the connection was cached behind the first
+                refusal, and ``{}`` then stood in for a server contract nobody sent -
+        an unconsumed metadata frame that the next request would have read as
+                its action chunk.
         """
         port = _serve(lambda conn: conn.close())
-        client = VeraWebsocketClient(host="127.0.0.1", port=port, read_timeout=READ_TIMEOUT_S)
+        client = Cosmos3WebsocketClient(host="127.0.0.1", port=port, read_timeout=READ_TIMEOUT_S)
         for attempt in (1, 2):
             try:
                 metadata = client.get_server_metadata()
@@ -225,7 +222,7 @@ class TestAFailedExchangeDoesNotLeaveTheConnectionCached:
             except Exception:  # noqa: BLE001
                 return
 
-        client = VeraWebsocketClient(host="127.0.0.1", port=_serve(handler), read_timeout=JOIN_S)
+        client = Cosmos3WebsocketClient(host="127.0.0.1", port=_serve(handler), read_timeout=JOIN_S)
         assert client.infer({"marker": 1})["marker"] == 1
         assert client.infer({"marker": 2})["marker"] == 2
         assert len(connections) == 1, f"one connection served both requests, got {len(connections)}"
@@ -248,10 +245,10 @@ class TestTheReadBudgetIsGraded:
 
 
 class TestEveryReadOffTheseWiresStatesADeadline:
-    """No read in either client module is left on ``recv()``'s absent default."""
+    """No read in the client module is left on ``recv()``'s absent default."""
 
     #: The client modules this rule covers, relative to the package root.
-    MODULES = ("policies/vera/client.py", "policies/cosmos3/client.py")
+    MODULES = ("policies/cosmos3/client.py",)
 
     def test_no_recv_call_omits_its_timeout(self) -> None:
         package = Path(__file__).resolve().parents[2] / "strands_robots"
@@ -267,7 +264,7 @@ class TestEveryReadOffTheseWiresStatesADeadline:
                 found += 1
                 if not any(keyword.arg == "timeout" for keyword in node.keywords):
                     unbounded.append(f"{relative}:{node.lineno} {ast.unparse(node)}")
-        assert found >= 4, f"the scan found only {found} recv() calls; the client modules have moved"
+        assert found >= 2, f"the scan found only {found} recv() calls; the client module has moved"
         assert not unbounded, (
             "websockets' recv() has no default deadline, so each of these blocks indefinitely on a "
             "server that accepted the connection and then went quiet:\n" + "\n".join(unbounded)

@@ -2737,10 +2737,11 @@ class MuJoCoSimEngine(
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
 
-        Enables zero-config IK for eef/cartesian-delta policies (e.g.
-        ``VeraPolicy``): the policy auto-discovers its end-effector frame from
-        the model scoped to this robot's namespace. No-op for policies without
-        ``set_sim_context``; never fails a rollout on a binding error.
+        Enables zero-config IK for an eef/cartesian-delta policy: the policy
+        auto-discovers its end-effector frame from the model scoped to this
+        robot's namespace. No-op for policies without ``set_sim_context``, which
+        is every shipped provider today; never fails a rollout on a binding
+        error.
         """
         ctx = getattr(policy, "set_sim_context", None)
         if not callable(ctx):

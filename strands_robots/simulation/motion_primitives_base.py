@@ -32,8 +32,8 @@ from strands_robots.utils import coerce_orientation_quaternion, coerce_pose_vect
 
 # Name hints (lowercased substring match on the gripper DOF's name) used to
 # resolve the gripper when the robot registry carries no gripper metadata for
-# the robot's ``data_config``. Matches the existing runtime precedent (vera
-# provider / cosmos3 policy use gripper|finger; SO-100's gripper joint is the
+# the robot's ``data_config``. Matches the existing runtime precedent (the
+# cosmos3 policy uses gripper|finger; SO-100's gripper joint is the
 # "Jaw"). Registry metadata (``robots.json`` -> ``<robot>.gripper``, GH #1658)
 # is authoritative when present; the heuristic is the zero-config fallback for
 # user URDFs / injected MJCF, and an unresolvable gripper returns a structured
