@@ -20,6 +20,7 @@ from __future__ import annotations
 import sys
 import types
 from importlib.metadata import PackageNotFoundError
+from pathlib import Path
 
 import pytest
 
@@ -290,6 +291,43 @@ class TestMeshPosture:
         assert "  PASS  " in result
         assert "mtls + ACL /etc/mesh/acl.json5" in result
 
+    @pytest.mark.parametrize("spelling", ["on", "ON", "enabled", "y", "garbage", "2"])
+    def test_a_spelling_the_gate_refuses_is_refused_here_too(
+        self, spelling: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The acknowledgement vocabulary is the runtime's, not a boolean parser's.
+
+        Measured: ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=on`` printed ``PASS ...
+        (acknowledged)`` while ``Mesh.start`` logged "Mesh did NOT start" -
+        ``_zenoh_config._bool_env`` reads ``on`` and the gate does not. Every
+        value here is one the gate refuses, so the row must refuse it with the
+        gate's own text, and never raise into the generic error row.
+        """
+        from strands_robots.mesh import _acl_config
+
+        monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", spelling)
+        for name in ("STRANDS_MESH_TLS_CA", "STRANDS_MESH_TLS_CERT", "STRANDS_MESH_TLS_KEY"):
+            monkeypatch.setenv(name, f"/etc/mesh/{name}.pem")
+        assert _acl_config.permissive_acl_acknowledged() is False
+        result = doctor.check_mesh()
+        assert "  PASS  " not in result
+        assert "acknowledged" not in result
+        assert "mesh=True would not start" in result and "Pick one" in result
+
+    @pytest.mark.parametrize("spelling", ["1", "true", "yes", "TRUE", " Yes "])
+    def test_a_spelling_the_gate_accepts_is_accepted_here_too(
+        self, spelling: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from strands_robots.mesh import _acl_config
+
+        monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", spelling)
+        for name in ("STRANDS_MESH_TLS_CA", "STRANDS_MESH_TLS_CERT", "STRANDS_MESH_TLS_KEY"):
+            monkeypatch.setenv(name, f"/etc/mesh/{name}.pem")
+        assert _acl_config.permissive_acl_acknowledged() is True
+        result = doctor.check_mesh()
+        assert "  PASS  " in result
+        assert "built-in permissive ACL (acknowledged)" in result
+
     def test_mtls_without_certificates_names_the_missing_variables(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "1")
         monkeypatch.setenv("STRANDS_MESH_TLS_CA", "/etc/mesh/ca.pem")
@@ -398,3 +436,43 @@ class TestTheRuntimeUsesTheSameText:
         source = inspect.getsource(core.Mesh._refuse_under_permissive_default_acl)
         assert "PERMISSIVE_ACL_REFUSAL" in source
         assert "Pick one" not in source, "the text lives in the constant, not retyped in the method"
+
+    def test_the_acknowledgement_has_one_reader(self) -> None:
+        """Exactly one site in the package reads ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL``.
+
+        Four readers spelled the accepted values themselves and one of them
+        drifted (the doctor row borrowed ``_bool_env``, which also takes
+        ``on``). A second spelling anywhere is how the next drift starts, so
+        the tree is graded: every ``os.getenv`` / ``os.environ`` / ``_bool_env``
+        read of the variable must be inside ``permissive_acl_acknowledged``.
+        The refusal text and log lines may still *name* the variable.
+        """
+        import ast
+
+        import strands_robots
+
+        package_root = Path(strands_robots.__file__).parent
+        readers: list[str] = []
+        for path in sorted(package_root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call | ast.Subscript):
+                    continue
+                target = node.args[0] if isinstance(node, ast.Call) and node.args else None
+                if isinstance(node, ast.Subscript):
+                    target = node.slice
+                if isinstance(target, ast.Constant) and target.value == "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL":
+                    readers.append(f"{path.relative_to(package_root)}:{node.lineno}")
+        owner_line = _def_line(package_root / "mesh" / "_acl_config.py")
+        assert readers == [f"mesh/_acl_config.py:{owner_line}"], readers
+
+
+def _def_line(path: Path) -> int:
+    """Line of the one ``os.getenv`` inside ``permissive_acl_acknowledged``."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "permissive_acl_acknowledged":
+            return next(n.lineno for n in ast.walk(node) if isinstance(n, ast.Call))
+    raise AssertionError("permissive_acl_acknowledged is not defined in _acl_config")

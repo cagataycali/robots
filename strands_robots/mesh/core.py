@@ -718,12 +718,7 @@ class Mesh(SensorLoopsMixin):
         if not is_permissive:
             return False
 
-        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        if accept_permissive:
+        if _acl_config.permissive_acl_acknowledged():
             logger.info(
                 "[mesh] %s: permissive default ACL active under mtls "
                 "(STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 acknowledged) -- "

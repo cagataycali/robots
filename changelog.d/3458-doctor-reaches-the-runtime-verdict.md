@@ -16,3 +16,11 @@ gate as `Mesh.start`, prints its "Pick one" text on refusal (now one shared
 `PERMISSIVE_ACL_REFUSAL` constant, so the two cannot name different env vars),
 and reports the hub port `open_session` would really bind, each `ZENOH_CONNECT`
 endpoint's reachability, and multicast scouting - without opening a session.
+
+The `Mesh` row also reads `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL` through the
+gate's own predicate. The three runtime gates (`Mesh.start`, the ACL loader,
+the per-session warning) each spelled the accepted values `1`/`true`/`yes`
+themselves; they now call one `_acl_config.permissive_acl_acknowledged`, and so
+does the doctor - which had borrowed a boolean parser that also accepts `on`,
+and printed `PASS ... (acknowledged)` for a value `Mesh.start` refused. A
+grader now holds the package to one reader of that variable.

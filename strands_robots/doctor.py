@@ -971,7 +971,7 @@ def check_mesh() -> str:
         return refuse(f"mesh=True would not start: {e}")
     if auth_mode == "none":
         lines.append("local-dev (plaintext, localhost only)")
-    elif is_permissive and not _zenoh_config._bool_env("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", default=False):
+    elif is_permissive and not _acl_config.permissive_acl_acknowledged():
         why, pick_one = PERMISSIVE_ACL_REFUSAL.split("\n", 1)
         return refuse(
             f"mesh=True would not start: {why.split(': ', 1)[1]}", pick_one.strip().replace("\n  ", "\n        ")
