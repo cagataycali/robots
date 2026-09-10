@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -82,7 +83,7 @@ def opened(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[_FakeSerial]
     return ports
 
 
-MOTIONS: dict[str, dict[str, object]] = {
+MOTIONS: dict[str, dict[str, Any]] = {
     "move_motor": {"motor_name": "shoulder_pan", "position": 10.0},
     "move_multiple": {"positions": {"shoulder_pan": 10.0, "elbow_flex": 5.0}, "smooth": False},
     "incremental_move": {"motor_name": "shoulder_pan", "delta": 1.0},
@@ -252,7 +253,7 @@ class TestTheDashboardHookIsNotAskedTwice:
 
         real_import = builtins.__import__
 
-        def _no_dashboard(name: str, *args: object, **kwargs: object) -> object:
+        def _no_dashboard(name: str, *args: Any, **kwargs: Any) -> object:
             if name.startswith("strands_robots.dashboard"):
                 raise ImportError("No module named 'strands_robots.dashboard'")
             return real_import(name, *args, **kwargs)
@@ -280,7 +281,7 @@ class TestStopReadsAndTheLibraryAreNeverGated:
         ],
     )
     def test_a_bus_action_that_moves_nothing_needs_no_approval(
-        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, object]
+        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, Any]
     ) -> None:
         ctx = _ctx("n")
         res = pose_mod.pose_tool(action=action, port=PORT, tool_context=ctx, **kwargs)
@@ -295,7 +296,7 @@ class TestStopReadsAndTheLibraryAreNeverGated:
         [("list_poses", {}), ("show_pose", {"pose_name": "rest"}), ("delete_pose", {"pose_name": "rest"})],
     )
     def test_the_pose_library_needs_no_port_and_no_approval(
-        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, object]
+        self, opened: list[_FakeSerial], action: str, kwargs: dict[str, Any]
     ) -> None:
         ctx = _ctx("n")
         res = pose_mod.pose_tool(action=action, port=None, tool_context=ctx, **kwargs)
