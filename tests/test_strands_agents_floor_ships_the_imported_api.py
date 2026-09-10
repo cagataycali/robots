@@ -100,6 +100,10 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.types.tools", "ToolUse"): "1.0.0",
     ("strands.types.tools", "ToolContext"): "1.5.0",
     ("strands.types._events", "ToolResultEvent"): "1.7.0",
+    # The interrupt machinery arrives whole in 1.13.0: ``strands/interrupt.py``
+    # and ``ToolInterruptEvent`` are both absent from the 1.12.0 wheel.
+    ("strands.interrupt", "InterruptException"): "1.13.0",
+    ("strands.types._events", "ToolInterruptEvent"): "1.13.0",
     ("strands.hooks", "HookProvider"): "1.0.0",
     ("strands.hooks", "HookRegistry"): "1.0.0",
     ("strands.hooks", "BeforeToolCallEvent"): "1.13.0",

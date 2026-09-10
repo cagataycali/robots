@@ -1,4 +1,4 @@
-"""GR00T policy - N1.5/N1.6 service and local inference.
+"""GR00T policy - Isaac-GR00T service and in-process inference.
 
 Implements :class:`~strands_robots.policies.base.Policy` for NVIDIA GR00T models.
 
@@ -28,7 +28,12 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, tcp_port_error
+from strands_robots.utils import (
+    SUPPORTED_GROOT_VERSIONS,
+    groot_version_error,
+    name_list_error,
+    tcp_port_error,
+)
 
 from .client import Gr00tInferenceClient
 from .data_config import Gr00tDataConfig, load_data_config
@@ -38,6 +43,27 @@ logger = logging.getLogger(__name__)
 # Isaac-GR00T version detection
 
 _GROOT_VERSION: str | None = None  # "n1.5", "n1.6", "n1.7", or None
+
+#: The routes to a GR00T model that stay open when in-process loading cannot run.
+#:
+#: Named in every refusal of an in-process load, because "Isaac-GR00T not
+#: installed" on its own is a dead end here. No extra declares the ``gr00t``
+#: distribution - it installs from ``github.com/NVIDIA/Isaac-GR00T`` - and it
+#: cannot simply be added to an install that already has lerobot: gr00t pins
+#: ``transformers==4.57.3`` while lerobot needs ``transformers>=5`` for its
+#: Qwen3-VL backbone, and lerobot's own GR00T parity notes state the consequence
+#: outright, that the two "cannot be imported in the same Python process". So an
+#: install instruction is the one thing the caller of ``strands-robots[all]``
+#: cannot act on, and the refusal names the two routes that ARE reachable from a
+#: declared extra instead.
+_LOCAL_ALTERNATIVES = (
+    "Two routes reach a GR00T model from a declared extra: "
+    'create_policy("groot", host=..., port=...) dials an Isaac-GR00T inference '
+    "container (strands-robots[groot-service]), and "
+    'create_policy("lerobot_local", policy_type="groot", '
+    'pretrained_name_or_path="nvidia/GR00T-N1.7-3B") runs lerobot\'s own GR00T '
+    "N1.7 in-process (strands-robots[lerobot])."
+)
 
 
 def _detect_groot_version(*, force: bool = False) -> str | None:
@@ -519,7 +545,7 @@ def _action_chunk_horizon(chunk: dict[str, np.ndarray]) -> int:
 
 
 class Gr00tPolicy(Policy):
-    """GR00T policy - service mode and local inference (N1.5/N1.6).
+    """GR00T policy - service mode and in-process inference.
 
     For **local mode**, loads the model directly and talks its native nested-dict
     format.  Robot↔model key translation is done by explicit mappings.
@@ -536,7 +562,12 @@ class Gr00tPolicy(Policy):
         model_path: HF model ID or local path (triggers local mode).
         embodiment_tag: Embodiment tag string.
         device: ``"cuda"`` or ``"cpu"``.
-        groot_version: Force ``"n1.5"`` or ``"n1.6"``.
+        groot_version: Force one of
+            :data:`~strands_robots.utils.SUPPORTED_GROOT_VERSIONS` (``"n1.5"``,
+            ``"n1.6"``, ``"n1.7"``) instead of auto-detecting the installed
+            release. Only read in local mode, so it is validated only on the
+            branch that reads it, as ``port`` is. A value naming no release is
+            refused by name rather than reported as Isaac-GR00T being absent.
         strict: Strict input validation.
         api_token: ZMQ auth token. Falls back to ``GROOT_API_TOKEN`` env var if not provided.
         observation_mapping: ``{robot_key: "video.X" | "state.X"}``. Honoured in
@@ -622,6 +653,27 @@ class Gr00tPolicy(Policy):
 
         if model_path is not None:
             self._mode = "local"
+            # ``groot_version`` selects which loader runs, so a value naming no
+            # release is refused here rather than dispatched. Service mode loads
+            # no checkpoint and never reads it, so it is validated only on the
+            # branch that reads it - the same scoping the ``port`` check below
+            # is given for the mirror-image reason.
+            if (version_error := groot_version_error(groot_version, "groot_version", type(self).__name__)) is not None:
+                raise ValueError(version_error)
+            # Detection answers whether ANY loader can succeed, so it gates the
+            # load for both spellings of the request. Forcing a release used to
+            # skip this: ``groot_version="n1.7"`` with no gr00t installed
+            # reached ``_load_n17``'s own ``from gr00t...`` line and raised
+            # ``ModuleNotFoundError: No module named 'gr00t'``, while leaving it
+            # unset answered the identical missing package with the actionable
+            # message below. The caller who supplied more information got the
+            # worse error.
+            if _detect_groot_version() is None:
+                raise ImportError(
+                    "Gr00tPolicy: model_path= loads a GR00T checkpoint in-process, which "
+                    "needs NVIDIA's Isaac-GR00T; no gr00t entry point is importable. " + _LOCAL_ALTERNATIVES,
+                    name="gr00t",
+                )
             logger.info("GR00T local mode, model=%s", model_path)
             self._load_local_policy(model_path, embodiment_tag, device)
         else:
@@ -834,6 +886,20 @@ class Gr00tPolicy(Policy):
     # Model loading
 
     def _load_local_policy(self, model_path: str, embodiment_tag: str, device: str):
+        """Load a checkpoint in-process through the resolved release's loader.
+
+        The branches are the domain of
+        :data:`~strands_robots.utils.SUPPORTED_GROOT_VERSIONS`, which
+        ``groot_version=`` is graded against in :meth:`__init__`, so a caller's
+        value reaches here only if some branch matches it.
+
+        Falling off the end therefore means detection ran and identified nothing,
+        which is a different fact from the package being absent - the constructor
+        has already refused that case by name. It used to report both as
+        "Isaac-GR00T not installed", which was false for a gr00t install whose
+        layout none of the three probes recognise: the release, not the package,
+        is what could not be found, and ``groot_version=`` is what resolves it.
+        """
         if self._groot_version == "n1.7":
             self._load_n17(model_path, embodiment_tag, device)
         elif self._groot_version == "n1.6":
@@ -841,7 +907,11 @@ class Gr00tPolicy(Policy):
         elif self._groot_version == "n1.5":
             self._load_n15(model_path, embodiment_tag, device)
         else:
-            raise ImportError("Isaac-GR00T not installed. Use service mode (host/port).")
+            raise ImportError(
+                "Gr00tPolicy: gr00t is importable but declares none of the entry points a "
+                f"loader is written against, so its release could not be identified; pass "
+                f"groot_version= to select one of {list(SUPPORTED_GROOT_VERSIONS)}. " + _LOCAL_ALTERNATIVES
+            )
 
     def _load_n15(self, model_path: str, embodiment_tag: str, device: str):
         from gr00t.experiment.data_config import DATA_CONFIG_MAP as N15_CONFIGS

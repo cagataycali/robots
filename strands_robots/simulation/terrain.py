@@ -273,9 +273,8 @@ def generate_heightfield(
 
     ``seed`` names the value-noise stream the ``"rough"`` field is drawn from, so
     it is measured against
-    :func:`~strands_robots.utils.non_negative_whole_number_error` - the same
-    shared domain :func:`~strands_robots.transforms.base.derive_variant_seed`
-    applies to the other seed in this package that is spread into a stream key.
+    :func:`~strands_robots.utils.non_negative_whole_number_error`, the shared
+    domain for a seed that is spread into a stream key.
     Unchecked, the documented triple ``(kind, resolution, seed)`` was neither
     injective nor total, because :class:`random.Random` does not seed from the
     value it is handed: it seeds an int from ``abs(value)`` and anything else

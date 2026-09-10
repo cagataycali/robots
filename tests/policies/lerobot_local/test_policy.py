@@ -1954,6 +1954,7 @@ def _load_model_with_mocks(policy, *, param_device="cpu", has_postprocessor=True
         bridge = MagicMock()
         bridge.is_active = True
         bridge.has_postprocessor = has_postprocessor
+        bridge.mismatched_normalization_widths.return_value = []
 
     with (
         patch.object(

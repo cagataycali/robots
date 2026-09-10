@@ -424,12 +424,12 @@ without the extra selects a backend whose client is not importable.
 
 | Value | Transport | Extra needed | Notes |
 |-------|-----------|--------------|-------|
-| `zenoh` (default) | Local Zenoh peer discovery over UDP multicast. | none - ships with `strands-robots`. | What every unset value resolves to. |
+| `zenoh` (default) | Zenoh. The first process on a host listens on `tcp/127.0.0.1:7447` (`STRANDS_MESH_PORT`) and later ones dial it; cross-host peers need `ZENOH_CONNECT=tcp/<host>:7447`. Multicast scouting is off by default. | none - ships with `strands-robots`. | `STRANDS_MESH_MULTICAST=true` opts into LAN scouting on `224.0.0.224:7446` - a group shared with every other Zenoh application on the LAN, not just this fleet, so any of them sees this peer's presence. |
 | `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security.md). |
 | `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `strands-robots[mesh-iot]`. | A peer speaks Zenoh to its lab neighbours and IoT to the cloud on the same publish. |
 
 ```bash
-# Local dev, nothing to set - the mesh joins a Zenoh peer group.
+# Local dev, nothing to set - peers on this host find each other through the local hub port.
 export STRANDS_MESH_BACKEND=zenoh   # or leave unset
 
 # AWS IoT Core - the peers are on different networks.

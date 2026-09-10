@@ -68,6 +68,7 @@ from strands_robots.utils import (
     boolean_flag_error,
     positive_finite_number_error,
     positive_whole_number_error,
+    refusal_container_repr,
 )
 
 # The one remedy for an absent RealSense SDK, so every surface that reports it
@@ -442,12 +443,12 @@ def _camera_ids_error(camera_ids: Any) -> str | None:
     )
     if isinstance(camera_ids, str):
         return (
-            f"{prefix} must be {accepted}, not a single string ({camera_ids!r}). A "
-            f"string is read one camera per character, so pass [{camera_ids!r}] to "
+            f"{prefix} must be {accepted}, not a single string ({refusal_container_repr(camera_ids)}). A "
+            f"string is read one camera per character, so pass [{refusal_container_repr(camera_ids)}] to "
             f"name one camera."
         )
     if isinstance(camera_ids, bytes):
-        return f"{prefix} must be {accepted}, not bytes ({camera_ids!r})."
+        return f"{prefix} must be {accepted}, not bytes ({refusal_container_repr(camera_ids)})."
     if isinstance(camera_ids, Mapping):
         return f"{prefix} must be {accepted}, not a mapping - its values would be discarded."
     if not isinstance(camera_ids, Sequence):

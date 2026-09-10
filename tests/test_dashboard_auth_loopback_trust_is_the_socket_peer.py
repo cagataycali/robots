@@ -85,8 +85,8 @@ class TestAForwardedHeaderCannotForgeLocality:
 
 
 class TestThePersonAtTheMachineIsStillLetIn:
-    """The guard exists so the owner can recover; a hostile header on a
-    genuinely local connection must not cost them that."""
+    """The guard exists so the owner can recover: a browser on the machine
+    sends no forwarding header, and is let in."""
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
     def test_a_local_peer_can_recover(self, tmp_path: Path, peer: str) -> None:
@@ -94,11 +94,20 @@ class TestThePersonAtTheMachineIsStillLetIn:
         opts = auth.begin_registration(FakeRequest(client_host=peer), label="recovery")
         assert opts.get("challenge_id")
 
-    def test_a_local_peer_is_not_locked_out_by_a_hostile_header(self, tmp_path: Path) -> None:
+    def test_a_local_peer_behind_a_proxy_is_refused_and_told_the_remedy(self, tmp_path: Path) -> None:
+        """Reversal of the earlier pin ``a local peer is not locked out by a
+        hostile header`` (F-007). A loopback peer that carries a forwarding
+        header is what a same-host proxy or tunnel makes of EVERY remote
+        visitor when uvicorn runs without ``--proxy-headers``, so the header's
+        presence - never its value - is what refuses it. The owner at the
+        machine is not locked out: their browser sends no such header, and
+        the message names the bootstrap token as the other way in."""
         _corrupt_store(tmp_path)
         request = FakeRequest({"cf-connecting-ip": "203.0.113.9"}, client_host="127.0.0.1")
-        opts = auth.begin_registration(request, label="recovery")
-        assert opts.get("challenge_id")
+        with pytest.raises(HTTPException) as raised:
+            auth.begin_registration(request, label="recovery")
+        assert raised.value.status_code == 403
+        assert "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN" in raised.value.detail
 
 
 class TestTheTwoReadersAreDeliberatelyDifferent:
