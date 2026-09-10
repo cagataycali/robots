@@ -42,6 +42,9 @@ Safety rails:
       are flagged loudly in every response envelope - including the error
       envelope, where the flag is what says whether an unanswered command
       may still be executing.
+    * Private SDK names (``_Call``, ``_CallNoReply``, ...) are refused rather
+      than gated: they reach the same RPC as the typed methods without
+      naming what they command, so no operator could approve one knowingly.
     * Every mutative or high-danger op stops for operator approval BEFORE
       the SDK RPC is dispatched, through the same decision path the ROS
       transports use (:func:`~strands_robots.tools._command_gate.gate_motion`):
@@ -164,9 +167,34 @@ def _is_readonly(operation_name: str) -> bool:
     return operation_name.startswith("Get") or operation_name.startswith("Check")
 
 
+def _is_private(operation_name: str) -> bool:
+    """Whether *operation_name* is SDK plumbing rather than an operation of this tool.
+
+    ``unitree_sdk2py.rpc.client.Client`` - the base class of every client in
+    :data:`SERVICES` - carries the raw transport underneath the typed methods
+    (``_Call(apiId, parameter)``, ``_CallNoReply``, ``_CallBinary``), and each
+    typed method is a thin wrapper over it, so ``_Call(7105, ...)`` is the wire
+    form of ``LocoClient.SetVelocity`` and walks the robot exactly as far.
+
+    The one owner of that question, because three surfaces have to answer it the
+    same way: :func:`use_unitree` refuses such a name before dispatch,
+    :func:`describe_operation` declines to describe it, and :func:`_is_mutative`
+    fails closed on it.
+    """
+    return operation_name.startswith("_")
+
+
 def _is_mutative(operation_name: str) -> bool:
     if _is_readonly(operation_name):
         return False
+    if _is_private(operation_name):
+        # Nothing in a raw name says whether it writes - the command is in the
+        # opaque ``apiId``. :func:`_is_readonly` already declines to call such a
+        # name a read; this is the other half of that, so the classification
+        # fails closed. ``use_unitree`` refuses these before consulting it, and
+        # this is what the surface falls back to if that refusal is ever
+        # removed: gated, rather than dispatched with no prompt at all.
+        return True
     return any(operation_name.startswith(p) for p in MUTATIVE_PREFIXES)
 
 
@@ -328,6 +356,15 @@ def describe_operation(service_name: str, operation_name: str) -> dict[str, Any]
     """
     if service_name not in SERVICES:
         return {"error": f"unknown service: {service_name}"}
+    if _is_private(operation_name):
+        # The inspect reader resolves these on the base class and would answer
+        # ``is_mutative: False, high_danger: False`` for a raw RPC that can walk
+        # the robot - telling a caller the surface is harmless, moments before
+        # use_unitree refuses it. Decline, as list_operations already does.
+        return {
+            "error": f"unknown operation: {service_name}.{operation_name} (private SDK plumbing)",
+            "available": list_operations(service_name),
+        }
 
     qualname, _t = SERVICES[service_name]
 
@@ -506,7 +543,11 @@ def use_unitree(
     for a human before the RPC is sent. Pre-approve with
     STRANDS_UNITREE_COMMAND_ALLOW=loco.SetVelocity,audio.TtsMaker (or '*');
     BYPASS_TOOL_CONSENT=true lifts the gate. Reads, meta ops and
-    loco.StopMove are never gated.
+    loco.StopMove are never gated. The SDK's private plumbing (_Call,
+    _CallNoReply, ...) is refused outright rather than gated - it reaches
+    the same RPC as the typed methods without naming what it commands, so
+    neither an operator nor the danger table can judge it. Name the typed
+    operation instead.
 
     EXAMPLES:
       use_unitree('audio', 'TtsMaker', {'text': 'Hello', 'speaker_id': 0})
@@ -589,7 +630,7 @@ def use_unitree(
     # base rpc.client.Client bypasses the prefix-based classifier, so refuse
     # it before the classifier runs.  list_operations already filters these
     # names, so they are undiscoverable; this makes them undispatchable too.
-    if operation_name.startswith("_"):
+    if _is_private(operation_name):
         return {
             "status": "error",
             "message": (
@@ -598,6 +639,16 @@ def use_unitree(
                 f"Use list_operations to discover the public surface."
             ),
             "dispatched": False,
+            "service": service_name,
+            "operation": operation_name,
+            "label": label,
+            # Classified like every other envelope this tool returns - see the
+            # Returns section: an absent flag cannot be told apart from False,
+            # so dropping these would read a refused raw RPC exactly like a
+            # refused GetFsmId. The name cannot say what the call was, so the
+            # answer is the most dangerous thing it could be.
+            "mutative": True,
+            "high_danger": True,
         }
 
     high_danger = (service_name, operation_name) in HIGH_DANGER_OPS

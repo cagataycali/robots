@@ -18,3 +18,18 @@ envelope says `dispatched: false`. Reads, the `meta` operations and
 `loco.StopMove` are never gated. The gate's transport-agnostic half now lives in
 `_command_gate.gate_motion`, which `gate_command` fronts with its ROS blocklist,
 so a Unitree RPC and a ROS publish share one interrupt site and one audit row.
+
+The same finding reached the SDK's raw transport, which a name-keyed gate cannot
+see. Every client inherits `_Call(apiId, parameter)` from
+`unitree_sdk2py.rpc.client.Client` and each typed method is a thin wrapper over
+it, so `_Call(7105, ...)` is the wire form of `loco.SetVelocity`. An underscore
+name matched no mutative prefix and no danger pair, so it fell past the gate and
+`_execute` dispatched it - the same walk, with no prompt and no audit row.
+Private names are now refused before dispatch rather than gated, because a raw
+call carries its command in an opaque `apiId` that no operator prompt and no
+name-keyed table can judge; an approval, `BYPASS_TOOL_CONSENT` and a `*`
+allowlist all leave the refusal standing. The refusal still carries `mutative`
+and `high_danger`, so it cannot be read as a harmless call, the classification
+fails closed so the fallback is a gate rather than a dispatch, and
+`describe_operation` declines a private name instead of answering off the base
+class that it is neither mutative nor high-danger.
