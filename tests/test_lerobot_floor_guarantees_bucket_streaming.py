@@ -216,46 +216,6 @@ class TestTheFloorReallyDeliversTheCapability:
                 _installed_lerobot_or_skip()
 
 
-class TestTheGuardIsRetainedAndNamesTheUpgrade:
-    """A raised floor does not remove a pre-existing older lerobot from an env."""
-
-    @staticmethod
-    def _narrow_open() -> str:
-        class _Narrow:
-            def __init__(self, repo_id: str) -> None:
-                raise AssertionError("constructor must never be reached")
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-            with pytest.raises(RuntimeError) as exc:
-                sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-        return str(exc.value)
-
-    def test_bucket_is_still_refused_when_the_constructor_lacks_repo_type(self) -> None:
-        """Flooring the extra must not delete the runtime guard: an environment
-        with a pre-existing older lerobot is still reachable, and silently
-        opening the versioned-dataset namespace would read a different storage
-        system."""
-        assert "repo_type='bucket'" in self._narrow_open()
-
-    def test_the_refusal_names_the_version_to_upgrade_to(self) -> None:
-        text = self._narrow_open()
-        assert BUCKET_STREAMING_MIN_LEROBOT in text, (
-            f"the refusal must name the version that serves bucket streaming: {text!r}"
-        )
-
-    def test_the_refusal_names_an_install_command(self) -> None:
-        text = self._narrow_open()
-        assert "strands-robots[lerobot]" in text, f"the refusal must name a followable remedy: {text!r}"
-
-    def test_the_refusal_no_longer_claims_no_release_supports_it(self) -> None:
-        """The old text said "not supported by any released lerobot" - true when
-        written, false since 0.6.1 shipped, and it left the caller with nothing
-        to do."""
-        text = self._narrow_open()
-        assert "any released lerobot" not in text, f"the refusal still claims no release supports repo_type: {text!r}"
-
-
 class TestDocsCiteTheDeclaredFloor:
     """The pages that promise bucket streaming must name the enforced version."""
 

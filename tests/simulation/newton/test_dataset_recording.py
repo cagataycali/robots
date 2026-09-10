@@ -20,9 +20,9 @@ import pytest
 pytest.importorskip("lerobot")
 pytest.importorskip("pyarrow")
 
-from strands_robots.dataset_recorder import read_dataset_episode_indices
 from strands_robots.simulation.models import SimCamera, SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from strands_robots.verify_dataset import read_dataset_episode_indices
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 

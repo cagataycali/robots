@@ -7,6 +7,13 @@ modules now need them, and importing a fixture across test modules re-binds
 the name in the importing module (ruff F811) as well as making the owning
 module an implicit dependency of the other.
 
+The doubles stand in for ``serial.Serial``, so the fixtures take pyserial at
+fixture time rather than importing it here: pyserial reaches the tree only
+through ``strands-robots[lerobot]``, and a conftest is loaded before anything in
+its directory is collected, so one module-scope import of it would cost the
+whole directory (``ImportError while loading conftest``, exit 4) on an install
+without that extra.
+
 ``pose_tool``'s ``port`` defaults to ``/dev/ttyACM0`` and several actions --
 ``emergency_stop`` above all -- write to the bus, so every test that reaches
 the motor path must both take ``fake_serial`` and pass an explicit fake
@@ -17,7 +24,6 @@ running it.
 from __future__ import annotations
 
 import pytest
-import serial
 
 
 class FakeSerial:
@@ -78,6 +84,7 @@ class ReadingSerial(FakeSerial):
 @pytest.fixture
 def reading_serial(monkeypatch):
     """Patch ``serial.Serial`` with an always-answering position source."""
+    serial = pytest.importorskip("serial")
     instances: list[ReadingSerial] = []
 
     def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> ReadingSerial:
@@ -92,6 +99,7 @@ def reading_serial(monkeypatch):
 @pytest.fixture
 def fake_serial(monkeypatch):
     """Patch ``serial.Serial`` to return a single shared FakeSerial instance."""
+    serial = pytest.importorskip("serial")
     instances: list[FakeSerial] = []
 
     def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> FakeSerial:

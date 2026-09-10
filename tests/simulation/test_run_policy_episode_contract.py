@@ -30,8 +30,8 @@ pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 pytest.importorskip("pyarrow")
 
-from strands_robots.dataset_recorder import read_dataset_episode_indices
 from strands_robots.simulation.mujoco.simulation import Simulation
+from strands_robots.verify_dataset import read_dataset_episode_indices
 
 
 @pytest.fixture

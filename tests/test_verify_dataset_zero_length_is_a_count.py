@@ -1,6 +1,6 @@
 """A recorded length of zero is a frame count, not a missing ``length`` column.
 
-:func:`~strands_robots.dataset_recorder.read_dataset_episode_indices` reports
+:func:`~strands_robots.verify_dataset.read_dataset_episode_indices` reports
 per-episode frame counts, and an empty ``frames_per_episode`` is documented to
 mean the ``length`` column is unavailable. It scored that availability as
 ``any(f > 0 for f in frames_per_episode)``, so the one dataset whose every
@@ -40,10 +40,9 @@ import pytest
 
 pytest.importorskip("pyarrow")
 
-from strands_robots.dataset_recorder import read_dataset_episode_indices
 from strands_robots.simulation.base import SimEngine
 from strands_robots.verify_dataset import main as verify_main
-from strands_robots.verify_dataset import verify_dataset
+from strands_robots.verify_dataset import read_dataset_episode_indices, verify_dataset
 
 from .test_verify_dataset import _write_dataset
 
