@@ -1,7 +1,7 @@
 """The episode count a dataset's ``meta/info.json`` declares has ONE verdict.
 
 Five surfaces read ``meta/info.json``'s ``total_episodes`` header: the parquet
-cross-check in :func:`~strands_robots.dataset_recorder.read_dataset_episode_indices`,
+cross-check in :func:`~strands_robots.verify_dataset.read_dataset_episode_indices`,
 the drift check in :func:`~strands_robots.verify_dataset.verify_dataset`, the
 validation-split denominator in ``strands_robots.training.lerobot``, the
 episode count ``strands_robots.tools.lerobot_train`` splits, and the parquet-truth
@@ -53,11 +53,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import strands_robots.tools.lerobot_train as lerobot_train_tool
-from strands_robots.dataset_recorder import read_dataset_episode_indices
 from strands_robots.tools.run_policy import run_policy as run_policy_tool
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.utils import declared_count
-from strands_robots.verify_dataset import verify_dataset
+from strands_robots.verify_dataset import read_dataset_episode_indices, verify_dataset
 
 #: Every spelling a two-episode dataset's header could carry that is not a
 #: count. ``2.0`` and ``"2"`` are the "right number, wrong type" pair; ``2.5``

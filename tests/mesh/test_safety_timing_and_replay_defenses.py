@@ -296,7 +296,6 @@ class TestEstopLockoutEngagesAtCap:
 
     def test_lockout_engages_when_issuer_at_cap(self):
         """A legitimate operator at per-issuer cache cap still engages lockout."""
-        import inspect
         import threading
 
         m = core.Mesh.__new__(core.Mesh)
@@ -307,20 +306,26 @@ class TestEstopLockoutEngagesAtCap:
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
 
-        # Verify the early return is absent from the source.
-        source = inspect.getsource(core.Mesh._on_safety_estop)
+        import json
+        import time
+        from types import SimpleNamespace
 
-        # The problematic pattern: a second `issuer_slots >= per_issuer_cap`
-        # check followed by `return` that prevented lockout engagement.
-        # Count occurrences of "issuer_slots >= per_issuer_cap" -- there should
-        # be exactly ONE (the cache-slot gating), not TWO (cache + lockout).
-        occurrences = source.count("issuer_slots >= per_issuer_cap")
-        assert occurrences == 1, (
-            f"Expected exactly 1 occurrence of 'issuer_slots >= per_issuer_cap' "
-            f"(the cache-slot gate), found {occurrences}. "
-            f"A second occurrence that early-returns before lockout engagement "
-            f"is the safety regression this test pins against."
-        )
+        # The issuer already holds every slot the per-issuer cap allows.
+        cap = max(1, core._resume_replay_cache_max() // 4)
+        now_mono = time.monotonic()
+        for i in range(cap):
+            m._estop_replay_cache[1.0 + i] = ("op-at-cap", now_mono, None)
+        events: list[str] = []
+        m.publish_safety_event = lambda event_type, severity="warning", payload=None: events.append(event_type)
+
+        raw = json.dumps({"peer_id": "op-at-cap", "t": time.time()}).encode()
+        m._on_safety_estop(SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda r=raw: r)))
+
+        # The slot is refused and audited, and the lockout STILL engages.
+        assert "estop_per_issuer_cap_exceeded" in events
+        assert m._estop_lockout.is_set(), "an over-cap estop must still engage the lockout"
+        assert "remote_estop_engaged" in events
+        assert len(m._estop_replay_cache) == cap, "no slot may be taken over the cap"
 
     def test_no_early_return_between_cache_and_lockout(self):
         """Structural: no bare `return` between cache logic and lockout block."""

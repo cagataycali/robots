@@ -1549,7 +1549,17 @@ def _atexit_cleanup() -> None:
             _SESSION_REFS = 0
 
 
-atexit.register(_atexit_cleanup)
+# ``atexit`` hooks run AFTER ``threading._shutdown()`` has joined every
+# non-daemon thread. zenoh-python serves each subscriber callback from a
+# non-daemon ``pyo3-closure`` thread that only ends when its session closes,
+# so a plain ``atexit`` registration can never reach ``_SESSION.close()`` while
+# any peer still holds the session: the interpreter waits on the callback
+# threads, which wait on the close. ``threading._register_atexit`` is the hook
+# ``concurrent.futures`` uses for exactly this - it runs before the join - and
+# it is what lets the ``docs/mesh.md`` example (a ``Robot(..., mesh=True)``
+# whose child SimRobot peer is never stopped) exit instead of hanging.
+_register_shutdown_hook = getattr(threading, "_register_atexit", atexit.register)
+_register_shutdown_hook(_atexit_cleanup)
 
 
 def _session_alive_directly() -> bool:
