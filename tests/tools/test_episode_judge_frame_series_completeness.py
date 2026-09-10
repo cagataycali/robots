@@ -9,7 +9,7 @@ computed over consecutive rows of the episode's frame series.
 The reader behind them, ``_episode_frame_rows``, walked ``data/**/*.parquet``
 and skipped any shard it could not read, with a comment saying the skip
 "mirrors read_dataset_episode_indices". It does not.
-:func:`strands_robots.dataset_recorder.read_dataset_episode_indices` tolerates
+:func:`strands_robots.verify_dataset.read_dataset_episode_indices` tolerates
 an unreadable shard *and reports it* - it returns every damaged file in
 ``unreadable_files`` and its docstring states that "any non-empty
 ``unreadable_files`` means the totals are a lower bound and the dataset must
@@ -277,7 +277,7 @@ class TestTheSiblingReaderStillTolerates:
     """The scope line: the reader whose product *is* the damage report is untouched."""
 
     def test_the_sibling_reports_an_unreadable_metadata_shard_rather_than_refusing(self, dataset):
-        from strands_robots.dataset_recorder import read_dataset_episode_indices
+        from strands_robots.verify_dataset import read_dataset_episode_indices
 
         root, _ = dataset
         chunk = root / "meta" / "episodes" / "chunk-000"

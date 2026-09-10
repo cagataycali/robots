@@ -312,7 +312,7 @@ def test_verify_dataset_episodes_missing_parquet_reports_json_diagnostics(monkey
     into a ``status=error`` dict carrying the machine-readable ``json`` block
     (expected/actual/root) rather than letting the exception escape.
     """
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.verify_dataset as vd
 
     class RootedSim(FakeSim):
         def _active_dataset_root(self) -> str:
@@ -321,7 +321,7 @@ def test_verify_dataset_episodes_missing_parquet_reports_json_diagnostics(monkey
     def _raise(root):
         raise FileNotFoundError("meta/info.json not found")
 
-    monkeypatch.setattr(dr, "read_dataset_episode_indices", _raise)
+    monkeypatch.setattr(vd, "read_dataset_episode_indices", _raise)
 
     result = RootedSim().verify_dataset_episodes(3)
     assert result["status"] == "error"
@@ -390,7 +390,7 @@ def test_verify_dataset_episodes_rejects_matching_count_with_unreadable_shard(tm
 
 def test_verify_dataset_episodes_import_error_is_structured_error(monkeypatch):
     """A missing optional dep behind the reader degrades to a structured error."""
-    import strands_robots.dataset_recorder as dr
+    import strands_robots.verify_dataset as vd
 
     class RootedSim(FakeSim):
         def _active_dataset_root(self) -> str:
@@ -399,7 +399,7 @@ def test_verify_dataset_episodes_import_error_is_structured_error(monkeypatch):
     def _raise(root):
         raise ImportError("pandas is required to read dataset episodes")
 
-    monkeypatch.setattr(dr, "read_dataset_episode_indices", _raise)
+    monkeypatch.setattr(vd, "read_dataset_episode_indices", _raise)
 
     result = RootedSim().verify_dataset_episodes(1)
     assert result["status"] == "error"

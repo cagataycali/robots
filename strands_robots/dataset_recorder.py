@@ -23,7 +23,6 @@ Usage:
 
 import difflib
 import importlib.util
-import json
 import logging
 import re
 import sys
@@ -36,7 +35,6 @@ import numpy as np
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
-    declared_count,
     lerobot_version,
     name_list_error,
     non_negative_whole_number_error,
@@ -729,7 +727,10 @@ def unrecordable_action_columns_error(
         action: The frame's action dict, keyed as the dataset schema spells it.
         declared: Action column names declared by the dataset schema.
         required: Column names this frame must supply, or ``None`` to skip the
-            check entirely (the historical behaviour).
+            check. :meth:`DatasetRecorder.add_frame` no longer passes ``None``
+            for a frame that carries an action - unscoped, every declared
+            column is required - so ``None`` reaches here only from a caller
+            that deliberately makes no claim about who owes what.
 
     Returns:
         An actionable message naming the missing columns, or ``None`` when every
@@ -750,6 +751,39 @@ def unrecordable_action_columns_error(
         "injective). Record with a policy that produces a value for every declared action column "
         "- an action vector narrower than the actuator list is reported by diagnose_action_dim - "
         "or record a schema covering only the actuators it drives."
+    )
+
+
+def unrecordable_state_columns_error(
+    observation: Mapping[str, Any],
+    declared: Sequence[str],
+) -> str | None:
+    """Reject a frame whose observation omits a declared state column.
+
+    The state sibling of :func:`unrecordable_action_columns_error`. A joint the
+    observation does not carry has no measured position at this step, and
+    ``0.0`` is a real position - the recorded column would say the joint sat at
+    zero for the whole episode, ``verify-dataset`` would pass it (a constant
+    column is a valid column), and a policy would train on it. LeRobot's own
+    ``build_dataset_frame`` raises ``KeyError`` here; so does this recorder.
+
+    Args:
+        observation: The frame's observation dict, keyed as the schema spells it.
+        declared: State column names (or vector source keys) the schema declares.
+
+    Returns:
+        An actionable message naming the missing columns, or ``None`` when every
+        declared column has a value.
+    """
+    missing = [key for key in declared if observation.get(key) is None]
+    if not missing:
+        return None
+    return (
+        f"Recorded state column(s) {missing} have no value in this frame's observation, so the "
+        "recording would persist a joint position that was never measured (0.0 is a position, "
+        "not 'unknown'). Declare joint_names that match the observation keys - for a sim "
+        "Robot that is list(sim.get_observation()[<robot>].keys()) - or record with the "
+        "backend's start_recording(), which derives the schema from the robot."
     )
 
 
@@ -782,7 +816,7 @@ def _frame_shape_error(
       quiet one: nothing is logged, the dataset is created, and the mismatch
       surfaces later against ``add_frame``.
     * A component that is not a positive integer is written into the feature
-      as given - ``(3, 480, nan)``, ``(3, 480, '640')`` - so the schema
+      as given - ``(480, nan, 3)``, ``(480, '640', 3)`` - so the schema
       declares a shape no frame can match.
     * A value that is not a two-element sequence unpacks as a bare
       ``TypeError`` / ``ValueError``, and a non-mapping ``camera_dims`` as a
@@ -1411,30 +1445,36 @@ class DatasetRecorder:
 
         LeRobot v3 features format:
         {
-            "observation.images.camera_name": {"dtype": "video", "shape": (C, H, W), "names": [...]},
+            "observation.images.camera_name": {"dtype": "video", "shape": (H, W, C), "names": [...]},
             "observation.state": {"dtype": "float32", "shape": (N,), "names": [...]},
             "action": {"dtype": "float32", "shape": (N,), "names": [...]},
         }
 
         Note: "names" must be a flat list of strings, NOT a dict like {"motors": [...]}.
+
+        The camera block delegates to lerobot's ``hw_to_dataset_features``, so a
+        call that declares any camera needs lerobot importable. Every production
+        caller reaches this through :meth:`create`, which resolves
+        ``LeRobotDataset`` first and so answers an absent extra with
+        :func:`_describe_lerobot_import_failure`'s diagnosis rather than a raw
+        import error.
         """
         features = {}
 
-        # Observation: cameras → video/image features
+        # Observation: cameras -> video/image features. The declaration is
+        # lerobot's own (``hw_to_dataset_features``): HWC shape ``(H, W, 3)``
+        # with names ``[height, width, channels]``, the layout of lerobot's
+        # record path and of every published v3 dataset. Training transposes
+        # by names, so datasets this recorder wrote as CHW keep loading.
         if camera_keys:
+            from lerobot.utils.feature_utils import hw_to_dataset_features
+
             camera_dims = camera_dims or {}
-            for cam_name in camera_keys:
-                key = f"observation.images.{cam_name}"
-                dtype = "video" if use_videos else "image"
-                # Per-camera (height, width). Falls back to the global
-                # video_height/width when a camera has no explicit dims, so
-                # callers that don't pass camera_dims keep the old behaviour.
-                cam_h, cam_w = camera_dims.get(cam_name, (video_height, video_width))
-                features[key] = {
-                    "dtype": dtype,
-                    "shape": (3, cam_h, cam_w),
-                    "names": ["channels", "height", "width"],
-                }
+            # Per-camera (height, width). Falls back to the global
+            # video_height/width when a camera has no explicit dims, so
+            # callers that don't pass camera_dims keep the old behaviour.
+            hw = {cam: (*camera_dims.get(cam, (video_height, video_width)), 3) for cam in camera_keys}
+            features.update(hw_to_dataset_features(hw, "observation", use_video=use_videos))
 
         # Observation: state (joint positions)
         state_dim = 0
@@ -1540,12 +1580,17 @@ class DatasetRecorder:
                 being driven. A declared column in this set that ``action``
                 omits raises ``ValueError`` rather than being written as a
                 fabricated command; see
-                :func:`unrecordable_action_columns_error`. ``None`` skips
-                the check.
+                :func:`unrecordable_action_columns_error`. ``None`` (the
+                default) requires every declared column - a recorder fed
+                directly has no other robot to leave columns for.
 
         Raises:
-            ValueError: A column in ``required_action_keys`` is declared by
-                the dataset schema but absent from ``action``.
+            ValueError: With ``required_action_keys=None`` (the direct-API
+                default), a declared state column is absent from
+                ``observation`` or a declared action column is absent from
+                ``action`` - nothing is written as 0.0 in place of a value
+                the frame did not carry. With an explicit scope, a scoped
+                action column absent from ``action``.
             RecordingFrameError: The dataset write failed and this recorder is
                 ``strict`` (the default). With ``strict=False`` the frame is
                 counted in ``dropped_frame_count`` and a warning is logged
@@ -1585,6 +1630,16 @@ class DatasetRecorder:
                     state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
                     self._cached_state_keys = state_names if state_names else sorted(state_keys)
 
+            if required_action_keys is None:
+                # Direct API: no scope was given, so every declared column is
+                # this frame's to supply and a missing one is refused. The
+                # backends' hooks always pass a scope; for them a bystander
+                # robot whose state read failed degrades to the fill below
+                # (see simulation/recording.py::undriven_robot_state) rather
+                # than ending the driven robot's episode.
+                gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
+                if gap is not None:
+                    raise ValueError(gap)
             for k in self._cached_state_keys:
                 v = observation.get(k)
                 if v is None:
@@ -1615,7 +1670,13 @@ class DatasetRecorder:
             elif action:
                 self._cached_action_keys = sorted(action.keys())
 
-        gap = unrecordable_action_columns_error(action, self._cached_action_keys or [], required_action_keys)
+        # ``None`` (the direct-API default) means every declared column is this
+        # frame's to supply: a single recorder fed by hand has no other robot to
+        # leave columns for. The backends' recording hooks pass the scoped set.
+        declared_action_keys = self._cached_action_keys or []
+        if required_action_keys is None and action:
+            required_action_keys = declared_action_keys
+        gap = unrecordable_action_columns_error(action, declared_action_keys, required_action_keys)
         if gap is not None:
             raise ValueError(gap)
 
@@ -1624,6 +1685,10 @@ class DatasetRecorder:
             for k in self._cached_action_keys or []:
                 v = action.get(k)
                 if v is None:
+                    # Only reachable for a column OUTSIDE an explicitly scoped
+                    # ``required_action_keys`` (a shared scene: the robots this
+                    # rollout does not drive). Every column this frame must
+                    # supply was checked above.
                     action_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     action_vals.append(float(v))
@@ -2076,166 +2141,3 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
         raise ValueError(f"Episode {episode} has no frames")
 
     return ds, episode_start, episode_length
-
-
-def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
-    """Read episode-level ground truth from a LeRobot v3 dataset on disk.
-
-    Parses every ``meta/episodes/**/*.parquet`` file under ``root`` and returns
-    the recorded episode index set plus per-episode frame counts. This is the
-    parquet source of truth used by :meth:`SimEngine.verify_dataset_episodes`
-    to confirm a recording session produced the number of distinct episodes the
-    caller intended (rather than one merged ``episode_index=0`` mega-episode).
-
-    Pure ``pyarrow`` read - it does NOT import ``lerobot`` or instantiate a
-    ``LeRobotDataset`` (which would re-validate/scan the whole dataset). Reads
-    only the lightweight episode metadata parquet.
-
-    Args:
-        root: Dataset root directory (the dir that contains ``meta/``).
-
-    Returns:
-        Dict with:
-          - ``episode_indices``: sorted list of distinct ``episode_index`` values.
-          - ``total_episodes``: number of distinct episodes (``len`` of above).
-          - ``total_frames``: sum of per-episode ``length`` (0 if unavailable).
-            A dataset whose episodes all recorded 0 frames also sums to 0, so
-            read ``frames_per_episode`` to tell "no lengths" from "no frames".
-          - ``frames_per_episode``: per-episode frame counts aligned to
-            ``episode_indices``. Empty when no episode carried a usable
-            ``length`` (the column is absent, or every value is null); a
-            recorded ``0`` is a frame count and is reported as one.
-          - ``info_total_episodes``: the ``total_episodes`` recorded in
-            ``meta/info.json`` (``None`` if that file is absent or unreadable, or
-            if it declares no usable count - see ``info_problems``). Returned
-            alongside the parquet truth so callers can cross-check the two
-            metadata sources for agreement - a healthy dataset has
-            ``info_total_episodes == total_episodes``.
-          - ``info_problems``: one message per ``meta/info.json`` declaration
-            that is present but is not a count (empty list for a healthy
-            dataset). A cross-check must fail on these rather than read the
-            ``None`` count as an absent header, which is agreement.
-          - ``unreadable_files``: ``"<path relative to root>: <error>"`` for
-            every ``meta/episodes`` parquet that could not be read (empty list
-            for a healthy dataset). A partially-corrupt dataset - one truncated
-            file out of twenty, the usual outcome of an interrupted sync or hub
-            download - still yields the episode truth of the readable files, so
-            callers can localise the damage instead of seeing zero episodes.
-            The episode counts above cover ONLY the readable files, so any
-            non-empty ``unreadable_files`` means the totals are a lower bound
-            and the dataset must not be certified as complete.
-
-    Raises:
-        ImportError: If ``pyarrow`` is not installed.
-        FileNotFoundError: If no ``meta/episodes`` parquet exists under ``root``
-            (no episode was ever flushed - the dataset is empty/unfinalized).
-        ValueError: If every ``meta/episodes`` parquet is unreadable, so there
-            is no episode ground truth at all. The message lists each file and
-            its read error.
-    """
-    try:
-        import pyarrow.parquet as pq
-    except ImportError as e:  # pragma: no cover - pyarrow ships with lerobot
-        raise ImportError("read_dataset_episode_indices requires pyarrow (installed with the lerobot extra).") from e
-
-    root_path = Path(root)
-    parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
-    if not parquet_files:
-        raise FileNotFoundError(
-            f"No meta/episodes parquet under {root_path}. The dataset is empty or was "
-            "never finalized (episodes are flushed to parquet at stop_recording/finalize)."
-        )
-
-    pairs: list[tuple[int, int]] = []
-    seen: set[int] = set()
-    unreadable_files: list[str] = []
-    readable_files = 0
-    saw_length = False
-    for pf in parquet_files:
-        # A corrupt / truncated / foreign parquet raises ArrowInvalid (a
-        # ValueError subclass); an unreadable one raises OSError. Damage is
-        # usually confined to a few files (interrupted rsync, partial hub
-        # download), so record which file failed and keep reading the rest -
-        # aborting the whole read here would report zero episodes for a dataset
-        # that is mostly intact and hide which file is actually broken.
-        try:
-            table = pq.read_table(pf)
-        except (ValueError, OSError) as e:
-            unreadable_files.append(f"{pf.relative_to(root_path)}: {e}")
-            continue
-        readable_files += 1
-        cols = table.column_names
-        if "episode_index" not in cols:
-            continue
-        data = table.to_pydict()
-        ep_indices = data["episode_index"]
-        lengths = data.get("length")
-        for i, ep in enumerate(ep_indices):
-            ep_int = int(ep)
-            if ep_int in seen:
-                continue
-            seen.add(ep_int)
-            recorded = lengths[i] if lengths is not None else None
-            saw_length = saw_length or recorded is not None
-            length = int(recorded) if recorded is not None else 0
-            pairs.append((ep_int, length))
-
-    if unreadable_files and readable_files == 0:
-        # Nothing readable at all: there is no ground truth to return, so this
-        # is a hard read failure rather than a partial one.
-        detail = "; ".join(unreadable_files)
-        raise ValueError(f"No readable meta/episodes parquet under {root_path}: {detail}")
-
-    pairs.sort(key=lambda p: p[0])
-    episode_indices = [p[0] for p in pairs]
-    frames_per_episode = [p[1] for p in pairs]
-    # Availability is whether a length was READ, not whether one was positive.
-    # A recorded 0 is a frame count - it is the zero-length episode
-    # verify_dataset's check 2 exists to flag - so scoring availability as
-    # ``any(f > 0 ...)`` reported the dataset whose every episode is empty as
-    # the dataset that carries no lengths at all, and that check reads an empty
-    # list as "nothing to compare" and does not run. The report was therefore
-    # non-monotonic in the damage: ``[5, 0, 0]`` named its two empty episodes
-    # while ``[0, 0, 0]`` passed. A column that is present but wholly null
-    # stays unavailable - a null length is unknown, not zero.
-
-    # Read meta/info.json total_episodes as a second, independent metadata
-    # source. A healthy LeRobot dataset has info.json.total_episodes equal to
-    # the distinct episode count in the parquet; a mismatch means the dataset
-    # is internally inconsistent (e.g. an interrupted finalize), which
-    # verify_dataset_episodes surfaces. Absent/corrupt info.json -> None (the
-    # parquet remains the ground truth and is still reported).
-    # The declared count is graded by its one owner (``declared_count``) rather
-    # than coerced here. A header that declares something which is NOT a count is
-    # a third outcome, distinct from both a matching count and an absent header,
-    # so it is reported in ``info_problems`` instead of collapsing into the
-    # absent case - which a cross-check reads as agreement, the parquet being the
-    # sole truth then. Coercing instead was silently destructive both ways:
-    # ``int(2.5)`` is ``2``, the very count a two-episode parquet holds, and
-    # ``int(1e400)`` raises ``OverflowError`` out of this documented "unknown".
-    info_total_episodes: int | None = None
-    info_problems: list[str] = []
-    info_path = root_path / "meta" / "info.json"
-    if info_path.is_file():
-        try:
-            with info_path.open(encoding="utf-8") as f:
-                raw_total = json.load(f)["total_episodes"]
-        except (OSError, ValueError, KeyError, TypeError):
-            # Absent key, or a file no reader can parse: the documented unknown,
-            # indistinguishable from an absent header, and reported by
-            # verify_dataset's own meta/info.json check.
-            pass
-        else:
-            info_total_episodes = declared_count(raw_total)
-            if info_total_episodes is None:
-                info_problems.append(f"meta/info.json total_episodes={raw_total!r} is not an episode count")
-
-    return {
-        "episode_indices": episode_indices,
-        "total_episodes": len(episode_indices),
-        "total_frames": sum(frames_per_episode) if saw_length else 0,
-        "frames_per_episode": frames_per_episode if saw_length else [],
-        "info_total_episodes": info_total_episodes,
-        "info_problems": info_problems,
-        "unreadable_files": unreadable_files,
-    }

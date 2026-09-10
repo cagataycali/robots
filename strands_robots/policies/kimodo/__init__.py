@@ -6,7 +6,7 @@ kinematic motion generator*: given a natural-language prompt (e.g.
 ``"a person walking forward with confident strides"``) it synthesises per-frame
 full-body ``qpos`` sequences for the Unitree G1 via a diffusion sampler.
 
-Where it sits (the same seat as :class:`~strands_robots.policies.motionbricks.MotionBricksPolicy`):
+Where it sits:
 
 * ``requires_images = False`` - text prompt drives synthesis, never cameras.
 * ``get_actions`` reads the goal from the well-known ``**kwargs`` keys
@@ -19,11 +19,9 @@ Where it sits (the same seat as :class:`~strands_robots.policies.motionbricks.Mo
   class merges disjoint joint groups. Standalone in sim the targets are applied
   directly, which is the faithful kinematic reference.
 
-Kimodo differs from MotionBricks in ONE dimension: Kimodo is **prompt-driven
-generative** (any English motion description, one-shot diffusion sample),
-MotionBricks is **style-driven** (a fixed vocabulary of walk/stealth/boxing
-clip modes plus a heading command). They both emit the same ``qpos`` contract
-so downstream trackers see the same signal.
+Kimodo is **prompt-driven generative**: any English motion description is a
+goal, sampled one-shot by the diffusion pass, rather than selected from a fixed
+clip vocabulary.
 
 Requires the ``[kimodo]`` extra:
 

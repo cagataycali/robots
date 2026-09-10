@@ -68,9 +68,9 @@ class TestIsaacDatasetRecording:
         recording-forces-images override on a real RTX stream), then reopens
         the dataset from disk and asserts parquet truth + per-camera MP4s.
         """
-        from strands_robots.dataset_recorder import read_dataset_episode_indices
         from strands_robots.policies.mock import MockPolicy
         from strands_robots.simulation.isaac import IsaacConfig, IsaacSimulation
+        from strands_robots.verify_dataset import read_dataset_episode_indices
 
         _skip_if_isaac_unavailable()
         assets_root = _assets_root_path()
@@ -181,7 +181,7 @@ class TestIsaacDatasetRecording:
         Franka-USD form and file a follow-up for so100-on-Isaac resolution.
         """
         from strands_robots import MockPolicy, Robot
-        from strands_robots.dataset_recorder import read_dataset_episode_indices
+        from strands_robots.verify_dataset import read_dataset_episode_indices
 
         _skip_if_isaac_unavailable()
         root = str(tmp_path / "isaac_factory_ds")

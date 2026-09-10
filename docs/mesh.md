@@ -51,14 +51,18 @@ sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 
 ## What a fleet e-stop reaches
 
-`emergency_stop()` broadcasts `{"action": "stop"}` with no `robot_name`, so each
-peer decides which of its own robots that reaches. A hardware peer stops its
-task. A simulation peer asks every rollout it could be running: the rollouts its
-backend reports as in flight where it keeps such a registry (MuJoCo prunes
-finished ones), and otherwise every robot the engine lists. `stop_policy` is
-idempotent and reports `was_running` itself, so asking an idle robot costs
-nothing and the verdict is read rather than guessed - `stopped` names only the
-robots whose answer did not say they were idle.
+`emergency_stop()` stops the robot registered in the issuing process first, then
+broadcasts `{"action": "stop"}` with no `robot_name`, so each peer decides which
+of its own robots that reaches. The local stop is not an optimisation: a
+broadcast never returns to its sender, so without it the robot the operator is
+standing next to is the only one an e-stop never halts. Its answer leads the
+returned `responses` list under this peer's own id and is graded like any other.
+A hardware peer stops its task. A simulation peer asks every rollout it could be
+running: the rollouts its backend reports as in flight where it keeps such a
+registry (MuJoCo prunes finished ones), and otherwise every robot the engine
+lists. `stop_policy` is idempotent and reports `was_running` itself, so asking
+an idle robot costs nothing and the verdict is read rather than guessed -
+`stopped` names only the robots whose answer did not say they were idle.
 
 The peer's `ok` is derived from those per-robot answers, never assumed:
 
@@ -80,9 +84,11 @@ it as soon as the world reaches a state.
 ## Recovering from an emergency stop
 
 `emergency_stop()` latches a **lockout** on every peer that receives it. While a
-peer is locked out it refuses every command except `status` and `resume`, and
-nothing clears it on a timer - an e-stop that expired by itself would not be an
-e-stop. Recovery is always an explicit `resume`:
+peer is locked out it refuses every command except `status`, `resume` and
+`stop`; a second e-stop must still halt a rollout the first one missed, and a
+stop only ever de-energizes. Nothing clears the lockout on a timer - an e-stop
+that expired by itself would not be an e-stop. Recovery is always an explicit
+`resume`:
 
 ```python
 sim_a.mesh.send(peer_id, {"action": "resume", "override_code": OPERATOR_CODE})
@@ -424,12 +430,12 @@ without the extra selects a backend whose client is not importable.
 
 | Value | Transport | Extra needed | Notes |
 |-------|-----------|--------------|-------|
-| `zenoh` (default) | Local Zenoh peer discovery over UDP multicast. | none - ships with `strands-robots`. | What every unset value resolves to. |
+| `zenoh` (default) | Zenoh. The first process on a host listens on `tcp/127.0.0.1:7447` (`STRANDS_MESH_PORT`) and later ones dial it; cross-host peers need `ZENOH_CONNECT=tcp/<host>:7447`. Multicast scouting is off by default. | none - ships with `strands-robots`. | `STRANDS_MESH_MULTICAST=true` opts into LAN scouting on `224.0.0.224:7446` - a group shared with every other Zenoh application on the LAN, not just this fleet, so any of them sees this peer's presence. |
 | `iot` | AWS IoT Core MQTT with X.509 mutual TLS. | `strands-robots[mesh-iot]` (adds `awsiotsdk`). | Requires `STRANDS_IOT_ENDPOINT`, `STRANDS_IOT_THING_NAME`, `STRANDS_IOT_CERT_DIR`. See [Security](security.md). |
 | `bridge` | Zenoh locally, mirrored to AWS IoT for fleet-wide fan-out. | `strands-robots[mesh-iot]`. | A peer speaks Zenoh to its lab neighbours and IoT to the cloud on the same publish. |
 
 ```bash
-# Local dev, nothing to set - the mesh joins a Zenoh peer group.
+# Local dev, nothing to set - peers on this host find each other through the local hub port.
 export STRANDS_MESH_BACKEND=zenoh   # or leave unset
 
 # AWS IoT Core - the peers are on different networks.

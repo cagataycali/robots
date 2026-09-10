@@ -28,7 +28,11 @@ from typing import Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
-from strands_robots.utils import coerce_orientation_quaternion, coerce_pose_vector
+from strands_robots.utils import (
+    coerce_orientation_quaternion,
+    coerce_pose_vector,
+    refusal_repr,
+)
 
 # Name hints (lowercased substring match on the gripper DOF's name) used to
 # resolve the gripper when the robot registry carries no gripper metadata for
@@ -182,7 +186,13 @@ class MotionPrimitivesCore:
         if quat_err is not None:
             return None, None, 0, None, _err(quat_err)
         if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return None, None, 0, None, _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
+            return (
+                None,
+                None,
+                0,
+                None,
+                _err(f"move_to: 'tol' must be a positive number of meters, got {refusal_repr(tol)}."),
+            )
         if orientation_tol is not None and orientation is None:
             return (
                 None,
@@ -201,7 +211,9 @@ class MotionPrimitivesCore:
                 None,
                 0,
                 None,
-                _err(f"move_to: 'orientation_tol' must be a positive number of radians, got {orientation_tol!r}."),
+                _err(
+                    f"move_to: 'orientation_tol' must be a positive number of radians, got {refusal_repr(orientation_tol)}."
+                ),
             )
         err = self._validate_step_budget("move_to", "max_steps", max_steps)
         if err is not None:
@@ -218,7 +230,7 @@ class MotionPrimitivesCore:
     def _validate_set_gripper_args(self, state: Any, steps: Any) -> tuple[int, dict[str, Any] | None]:
         """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``."""
         if state not in ("open", "close"):
-            return 0, _err(f'set_gripper: \'state\' must be "open" or "close", got {state!r}.')
+            return 0, _err(f'set_gripper: \'state\' must be "open" or "close", got {refusal_repr(state)}.')
         err = self._validate_step_budget("set_gripper", "steps", steps)
         if err is not None:
             return 0, err
@@ -231,9 +243,13 @@ class MotionPrimitivesCore:
         if target_yaw is None:
             return 0.0, 0, _err("rotate_wrist requires 'target_yaw' (wrist joint set-point in radians).")
         if not _is_finite_real(target_yaw):
-            return 0.0, 0, _err(f"rotate_wrist: 'target_yaw' must be a finite number of radians, got {target_yaw!r}.")
+            return (
+                0.0,
+                0,
+                _err(f"rotate_wrist: 'target_yaw' must be a finite number of radians, got {refusal_repr(target_yaw)}."),
+            )
         if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return 0.0, 0, _err(f"rotate_wrist: 'tol' must be a positive number of radians, got {tol!r}.")
+            return 0.0, 0, _err(f"rotate_wrist: 'tol' must be a positive number of radians, got {refusal_repr(tol)}.")
         err = self._validate_step_budget("rotate_wrist", "max_steps", max_steps)
         if err is not None:
             return 0.0, 0, err
@@ -447,15 +463,16 @@ class MotionPrimitivesCore:
                 f"{len(uncommanded_joints)} degree(s) of freedom move_to does not command are "
                 f"free too ({', '.join(uncommanded_joints)}), so the point is not outside the "
                 "robot's workspace: reaching it needs motion this primitive cannot produce. "
-                "move_to drives the arm's position servos only, so move those degrees of "
-                "freedom first (a mobile base has to drive there), then call move_to."
+                f"move_to drives the {frame_type} '{frame_name}' with position servos only, so "
+                "move those degrees of freedom first (a mobile base has to drive there), then "
+                "call move_to."
             )
 
         if orientation_tol is None:
             text = (
-                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' within "
-                f"tol={float(tol)} m - the best solve over the joints move_to commands leaves a "
-                f"residual of {ik_residual:.4f} m."
+                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' EE "
+                f"({frame_type} '{frame_name}') within tol={float(tol)} m - the best solve over "
+                f"the joints move_to commands leaves a residual of {ik_residual:.4f} m."
             )
             text += borrowed_dof_text if borrowed_dofs_would_reach else " Choose a closer target or loosen tol."
             return _err(text, payload)
@@ -469,8 +486,8 @@ class MotionPrimitivesCore:
             )
         missed_text = " and ".join(missed) if missed else "the requested pose"
         text = (
-            f"move_to: the requested POSE is not achievable for '{robot_name}' - the best IK "
-            f"solution misses {missed_text}."
+            f"move_to: the requested POSE is not achievable for '{robot_name}' EE "
+            f"({frame_type} '{frame_name}') - the best IK solution misses {missed_text}."
         )
         if position_only_residual is not None and position_only_residual <= float(tol):
             text += (
@@ -558,7 +575,8 @@ class MotionPrimitivesCore:
         if orientation_error is not None and orientation_tol is not None:
             residuals += f", orientation residual {orientation_error:.4f} rad (tol {float(orientation_tol)} rad)"
         return _err(
-            f"move_to: '{robot_name}' did not reach {target.tolist()} within tol={float(tol)} m "
+            f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') did not reach "
+            f"{target.tolist()} within tol={float(tol)} m "
             f"after max_steps={max_steps} ({residuals}; IK residual was "
             f"{ik_residual:.4f} m). The servo may need more steps, or the pose fights joint "
             "limits/contacts.",

@@ -43,6 +43,14 @@ from strands_robots.utils import positive_count_error, positive_finite_number_er
 
 from .conftest import FakeSerial, ReadingSerial
 
+
+@pytest.fixture(autouse=True)
+def _pre_approve_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade what a motion does once admitted; the operator gate (F-010) is graded in
+    ``test_pose_tool_gates_bus_writes.py``, so it is pre-approved here."""
+    monkeypatch.setenv("STRANDS_POSE_COMMAND_ALLOW", "*")
+
+
 # Actions that build an interpolated trajectory, and how each one gets there.
 # ``reset_to_home`` passes ``smooth=True`` itself, so it interpolates whatever
 # the caller's flag says.

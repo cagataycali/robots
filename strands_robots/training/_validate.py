@@ -51,6 +51,7 @@ from strands_robots.utils import (
     non_negative_count_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
     step_cadence_error,
     torch_device_error,
 )
@@ -251,7 +252,7 @@ def _closed_unit_interval_error(value: Any, param: str, context: str) -> str | N
     if error is not None:
         return error
     if not 0.0 <= float(value) <= 1.0:
-        return f"{context}: {param} must be in [0, 1], got {value!r}."
+        return f"{context}: {param} must be in [0, 1], got {refusal_repr(value)}."
     return None
 
 
@@ -408,7 +409,7 @@ def _half_open_unit_interval_error(value: Any, param: str, context: str) -> str 
     if error is not None:
         return error
     if not 0.0 < float(value) <= 1.0:
-        return f"{context}: {param} must be in (0, 1], got {value!r}."
+        return f"{context}: {param} must be in (0, 1], got {refusal_repr(value)}."
     return None
 
 

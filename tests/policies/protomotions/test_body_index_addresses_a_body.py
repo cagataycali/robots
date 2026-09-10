@@ -29,9 +29,9 @@ dimension"; the module docstring promises such an error "surfaces at policy buil
 time with a clean message". Both indices are checked here so those hold for the
 two dimensions that were unchecked.
 
-The domain runs BEFORE the ``int()`` normalisation, which is what the three
-sibling policy configs (``kimodo``, ``motionbricks``, ``wbc``) already
-do - ``MotionBricksConfig.__post_init__`` states the reason in as many words.
+The domain runs BEFORE the ``int()`` normalisation, which is what the two
+sibling policy configs (``kimodo``, ``wbc``) already do -
+``WBCConfig.__post_init__`` states the reason in as many words.
 Coercing first laundered a yaml ``anchor_body_index: true`` into row 1 (``head``)
 and a ``2.7`` into row 2 (``left_hip_pitch_link``).
 """

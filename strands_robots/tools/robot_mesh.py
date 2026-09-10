@@ -713,8 +713,17 @@ def _stop_gateway_mesh() -> None:
     stop it: every other one is closed by the ``Robot`` or ``Simulation`` that
     built it. So it held an open session plus its heartbeat and state threads,
     and stayed advertised to the fleet as a live peer, until the interpreter
-    died. Registered with :mod:`atexit`, matching the session singleton's own
-    teardown.
+    died.
+
+    Registered with :mod:`atexit`, which runs after the interpreter has joined
+    every non-daemon thread. That is late enough only because this hook does
+    not own the session: the gateway rides the
+    :func:`~strands_robots.mesh.session.get_session` singleton, and it is that
+    singleton's teardown -- registered on the *pre-join* hook for exactly this
+    reason -- which closes the transport and so ends the non-daemon threads
+    zenoh serves subscriber callbacks from. Every thread this hook's own
+    ``Mesh.stop`` ends is a daemon, so dropping the cached gateway here is
+    bookkeeping the interpreter does not wait on.
     """
     with _GATEWAY_LOCK:
         gateway = _GATEWAY.pop("mesh", None)

@@ -282,7 +282,7 @@ pq = pytest.importorskip("pyarrow.parquet")
 
 from pathlib import Path  # noqa: E402
 
-from strands_robots.dataset_recorder import read_dataset_episode_indices  # noqa: E402
+from strands_robots.verify_dataset import read_dataset_episode_indices  # noqa: E402
 
 
 def test_three_episode_rollout_parquet_correctness(tmp_path) -> None:

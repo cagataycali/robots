@@ -127,6 +127,28 @@ cloudflared tunnel route dns robots robots.example.com
 cloudflared tunnel run robots
 ```
 
+**Before `cloudflared tunnel run`, close the first-enrollment window.** With no
+credential enrolled and no `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` set, the first
+passkey may be enrolled only from the machine itself, and the dashboard decides
+"the machine" from the connection's peer address. A same-host tunnel makes every
+remote visitor's peer `127.0.0.1`, so whoever reached the tunnel first would be
+"the machine". Two defences, use at least one:
+
+- **Enroll the owner passkey locally first**, from a browser on the machine
+  (`http://localhost:8090`), then start the tunnel. Or set
+  `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` and pass it from the phone.
+- The dashboard also refuses a first enrollment whose request carries any proxy
+  forwarding header (`x-forwarded-for`, `x-forwarded-proto`, `x-forwarded-host`,
+  `x-real-ip`, `cf-connecting-ip`, `cf-ray`, `forwarded`) even when the peer is
+  loopback - a request that came through a proxy is not the machine, whatever
+  the socket says. The header values are never read, only their presence.
+
+If you run uvicorn yourself behind a same-host proxy, start it with
+`--proxy-headers --forwarded-allow-ips=127.0.0.1` so the peer address the
+dashboard sees is the real client's, not the proxy's. Do not widen
+`--forwarded-allow-ips` beyond the proxy's own address: that is the list of
+peers whose forwarding headers are believed.
+
 Order of operations, and the reason for it:
 
 1. Configure a credential (Path A token, or a passkey once you can enroll one).

@@ -26,11 +26,6 @@ from strands_robots.training.factory import (
     list_trainers,
     register_trainer,
 )
-from strands_robots.training.reward import (
-    compute_rabc_weights,
-    load_reward_model,
-    reward_progress,
-)
 
 __all__ = [
     "Trainer",
@@ -40,9 +35,6 @@ __all__ = [
     "register_trainer",
     "list_trainers",
     "import_trainer_class",
-    "compute_rabc_weights",
-    "load_reward_model",
-    "reward_progress",
 ]
 
 

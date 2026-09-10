@@ -39,7 +39,14 @@ from strands_robots.simulation.mujoco.scene_ops import (
     refresh_body_inertial_from_geometry,
 )
 from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
-from strands_robots.utils import BOOLEAN_VECTOR_REASON, boolean_flag_error, coerce_rgba, is_boolean
+from strands_robots.utils import (
+    BOOLEAN_VECTOR_REASON,
+    boolean_flag_error,
+    coerce_rgba,
+    is_boolean,
+    refusal_container_repr,
+    refusal_repr,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +117,9 @@ def _coerce_finite_vector(
     except TypeError:
         return None, {
             "status": "error",
-            "content": [{"text": f"{method}: '{name}' must be a sequence of numbers, got {values!r}"}],
+            "content": [
+                {"text": f"{method}: '{name}' must be a sequence of numbers, got {refusal_container_repr(values)}"}
+            ],
         }
     out: list[float] = []
     for elem in seq:
@@ -126,7 +135,7 @@ def _coerce_finite_vector(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {refusal_container_repr(values)}). {BOOLEAN_VECTOR_REASON}"
                     }
                 ],
             }
@@ -135,18 +144,28 @@ def _coerce_finite_vector(
         except (TypeError, ValueError):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' elements must be numbers, got {values!r}"}],
+                "content": [
+                    {"text": f"{method}: '{name}' elements must be numbers, got {refusal_container_repr(values)}"}
+                ],
             }
         if not math.isfinite(f):
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         if min_value is not None and ((f <= min_value) if strict_min else (f < min_value)):
             rel = ">" if strict_min else ">="
             return None, {
                 "status": "error",
-                "content": [{"text": f"{method}: '{name}' values must be {rel} {min_value}, got {values!r}"}],
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' values must be {rel} {min_value}, got {refusal_container_repr(values)}"
+                    }
+                ],
             }
         out.append(f)
     if accepted_lengths is not None and len(out) not in accepted_lengths:
@@ -238,7 +257,7 @@ def _coerce_ray_batch(directions: Any, method: str) -> tuple[list[Any] | None, d
                 {
                     "text": (
                         f"{method}: 'directions' must be a sequence of direction vectors, "
-                        f"got {directions!r}. {_RAY_BATCH_HINT}"
+                        f"got {refusal_container_repr(directions)}. {_RAY_BATCH_HINT}"
                     )
                 }
             ],
@@ -287,7 +306,7 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
             {
                 "text": (
                     f"{method}: 'exclude_body' must be -1 (exclude nothing) or a body id "
-                    f"in [0, {nbody}), got {value!r}. Read an id from list_bodies()."
+                    f"in [0, {nbody}), got {refusal_repr(value)}. Read an id from list_bodies()."
                 )
             }
         ],
@@ -1676,6 +1695,34 @@ class PhysicsMixin:
         if err:
             return err
 
+        # Refuse a pose outside a limited joint's range before any qpos write.
+        # mj_forward does not clamp qpos, so an out-of-range value used to land
+        # in the state and be reported as "Set n/n joint positions" while the
+        # next step drove the joint back through its limit at whatever velocity
+        # the constraint solver produced (99 rad on a [-1.92, 1.92] joint left
+        # it at -9.4 rad moving 23.8 rad/s after 100 steps).
+        out_of_range: list[str] = []
+        for jnt_name, value in positions.items():
+            jnt_id = joint_ids[jnt_name]
+            if not model.jnt_limited[jnt_id]:
+                continue
+            lo, hi = (float(x) for x in model.jnt_range[jnt_id])
+            if not lo <= float(value) <= hi:
+                out_of_range.append(f"{jnt_name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]")
+        if out_of_range:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "set_joint_positions: position outside the joint's range, nothing written: "
+                            + "; ".join(out_of_range)
+                            + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                        )
+                    }
+                ],
+            }
+
         with self._lock:
             servos, other_drives = joint_drive_map(model, mj)
             moved: list[str] = []
@@ -1736,6 +1783,21 @@ class PhysicsMixin:
         ``nan`` / ``inf``, a boolean or a non-numeric value returns a structured
         ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
         the integrator on the next step or raising past the tool-dispatch contract.
+
+        Finite is not enough. MuJoCo's own ``mj_step`` reads a huge ``qvel``, or
+        the ``qacc`` that ``qvel`` produces, as ``"Nan, Inf or huge value in
+        QVEL ... The simulation is unstable"`` and answers it by resetting every
+        joint and object to its initial state, with only a warning on stderr --
+        so a value past that ceiling used to be reported as a successful write
+        and then wipe the world on the next step. The write therefore applies
+        that same test, ``mjMAXVAL`` (1e10) on ``qvel`` and on the ``qacc`` one
+        forward pass produces from it, under a state checkpoint: a value that
+        would trip it returns ``status="error"`` naming the values and ``qvel``
+        is put back exactly as it was. The ceiling is not the ceiling on the
+        number the caller passes: on a hinge held by a position servo ``1e9``
+        already trips through ``qacc`` alone. Accepting the write costs that one
+        forward pass, which also refreshes the derived state (``qacc``,
+        velocity sensors) the new ``qvel`` implies.
 
         The write is all-or-nothing on the same terms as
         :meth:`set_joint_positions`: an unresolvable joint name (or an empty
@@ -1840,13 +1902,46 @@ class PhysicsMixin:
             return err
 
         with self._lock:
+            # Finite is not enough. MuJoCo's own mj_checkVel / mj_checkAcc treat a
+            # huge qvel, or the qacc it produces, as "Nan, Inf or huge value ...
+            # The simulation is unstable" and RESET the whole state - every joint,
+            # every object - with only a stderr warning. Measured: velocities=
+            # {"Rotation": 1e300} returned success and the world was back at qpos 0
+            # five steps later. So write, run one forward pass under a checkpoint
+            # and apply mj_step's own test (finite and below mjMAXVAL, on qvel and
+            # on the qacc it produces); if it would trip, put the state back.
+            spec = mj.mjtState.mjSTATE_INTEGRATION
+            checkpoint = np.empty(mj.mj_stateSize(model, spec))
+            mj.mj_getState(model, data, checkpoint, spec)
+            for jnt_name, value in velocities.items():
+                data.qvel[model.jnt_dofadr[joint_ids[jnt_name]]] = float(value)
+            mj.mj_forward(model, data)
+            unstable = any(
+                not np.all(np.isfinite(vec)) or np.any(np.abs(vec) >= mj.mjMAXVAL) for vec in (data.qvel, data.qacc)
+            )
+            if unstable:
+                mj.mj_setState(model, data, checkpoint, spec)
+                mj.mj_forward(model, data)
+                sample = ", ".join(f"{n}={float(v):.3g}" for n, v in list(velocities.items())[:3])
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_velocities: MuJoCo flags the simulation unstable with these "
+                                f"'velocities' ({sample}) - the next step would reset every joint and object "
+                                f"to its initial state. Nothing was written; the state is unchanged. "
+                                f"MuJoCo's ceiling is mjMAXVAL={mj.mjMAXVAL:.0e} on qvel and on the "
+                                "acceleration it produces."
+                            )
+                        }
+                    ],
+                }
+
             rate_drives = joint_rate_drive_map(model, mj)
             stale: list[str] = []
             for jnt_name, value in velocities.items():
                 jnt_id = joint_ids[jnt_name]
-                dof_adr = model.jnt_dofadr[jnt_id]
-                data.qvel[dof_adr] = float(value)
-
                 act_id = rate_drives.get(jnt_id)
                 if act_id is None:
                     continue

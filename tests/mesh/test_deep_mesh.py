@@ -524,10 +524,11 @@ class TestRPCRobustness:
         assert all(r == {"status": "timeout"} for r in results)
         m.stop()
 
-    def test_broadcast_returns_empty_when_stopped(self, mock_session):
-        """broadcast() on a stopped mesh returns []."""
+    def test_broadcast_raises_when_stopped(self, mock_session):
+        """broadcast() on a stopped mesh raises instead of returning []."""
         m = Mesh(FakeRobot(), peer_id="bc-stopped")
-        assert m.broadcast({"action": "status"}) == []
+        with pytest.raises(RuntimeError, match="mesh not running"):
+            m.broadcast({"action": "status"})
 
     def test_send_returns_error_when_stopped(self, mock_session):
         """send() on a stopped mesh returns error dict."""
@@ -1178,7 +1179,12 @@ class TestEmergencyStop:
         with patch.object(m, "broadcast", return_value=[{"stopped": True}]):
             responses = m.emergency_stop()
 
-        assert responses == [{"stopped": True}]
+        # The issuer's own robot answers first, shaped like a peer response;
+        # the broadcast replies follow.
+        assert responses == [
+            {"type": "response", "responder_id": "estop-1", "result": {"stopped": True}},
+            {"stopped": True},
+        ]
         # Check safety topic was published
         safety_puts = [(k, d) for k, d in mock_put if "safety/estop" in k]
         assert len(safety_puts) == 1

@@ -88,7 +88,7 @@ class _ReaderThatFindsOnlyWhereItLooks:
     kwargs: dict[str, Any] = {}
     num_frames = 45
 
-    def __init__(self, repo_id: str, root: str | None = None) -> None:
+    def __init__(self, repo_id: str, root: str | None = None, **_forwarded: Any) -> None:
         type(self).kwargs = {"repo_id": repo_id, "root": root}
         looked_in = Path(root) if root else type(self).home / repo_id
         if not (looked_in / "meta" / "info.json").exists():

@@ -62,6 +62,8 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     process_rss_mb,
+    refusal_container_repr,
+    refusal_repr,
     sequence_length,
 )
 
@@ -344,7 +346,11 @@ def _boolean_world_error(method: str, param: str, value: Any) -> dict[str, Any]:
     return {
         "status": "error",
         "content": [
-            {"text": (f"{method}: '{param}' must be a number, not a bool (got {value!r}). {_BOOLEAN_WORLD_REASON}")}
+            {
+                "text": (
+                    f"{method}: '{param}' must be a number, not a bool (got {refusal_repr(value)}). {_BOOLEAN_WORLD_REASON}"
+                )
+            }
         ],
     }
 
@@ -375,7 +381,7 @@ def randomization_range_error(value: Any, param: str, *, allow_zero: bool = True
     """
     # The unpack and the coercion are separate steps so the boolean check can sit
     # between them; both report the same thing to the caller.
-    not_a_pair = f"{param} must be a (lo, hi) pair of numbers, got {value!r}"
+    not_a_pair = f"{param} must be a (lo, hi) pair of numbers, got {refusal_container_repr(value)}"
     try:
         lo, hi = value
     except (TypeError, ValueError):
@@ -384,25 +390,27 @@ def randomization_range_error(value: Any, param: str, *, allow_zero: bool = True
     # (erases the quantity it multiplies), and the sampler cannot tell either
     # from a deliberate one once coerced.
     if is_boolean(lo) or is_boolean(hi):
-        return f"{param} bounds must be numbers, not bools (got {value!r}). {_BOOLEAN_WORLD_REASON}"
+        return (
+            f"{param} bounds must be numbers, not bools (got {refusal_container_repr(value)}). {_BOOLEAN_WORLD_REASON}"
+        )
     try:
         lo, hi = float(lo), float(hi)
     except (TypeError, ValueError):
         return not_a_pair
     if not (math.isfinite(lo) and math.isfinite(hi)):
-        return f"{param} bounds must be finite, got {value!r}"
+        return f"{param} bounds must be finite, got {refusal_container_repr(value)}"
     if lo > hi:
         return f"{param} lower bound {lo} exceeds upper bound {hi}"
     if allow_zero:
         if lo < 0:
-            return f"{param} bounds must be non-negative, got {value!r}"
+            return f"{param} bounds must be non-negative, got {refusal_container_repr(value)}"
     elif lo <= 0:
         detail = (
             "a zero scale erases the quantity it multiplies"
             if lo == 0
             else "a negative scale flips the sign of the quantity it multiplies"
         )
-        return f"{param} bounds must be positive, got {value!r} ({detail})"
+        return f"{param} bounds must be positive, got {refusal_container_repr(value)} ({detail})"
     return None
 
 
@@ -432,13 +440,13 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
     # not a flag disabling the noise, which is what a caller passing True
     # would most plausibly have meant.
     if is_boolean(value):
-        return f"{context}: {param} must be a number, not a bool (got {value!r}). {_BOOLEAN_WORLD_REASON}"
+        return f"{context}: {param} must be a number, not a bool (got {refusal_repr(value)}). {_BOOLEAN_WORLD_REASON}"
     try:
         fvalue = float(value)
     except (TypeError, ValueError):
-        return f"{context}: {param} must be a number, got {value!r}"
+        return f"{context}: {param} must be a number, got {refusal_repr(value)}"
     if not math.isfinite(fvalue) or fvalue < 0:
-        return f"{context}: {param} must be a finite non-negative number, got {value!r}"
+        return f"{context}: {param} must be a finite non-negative number, got {refusal_repr(value)}"
     return None
 
 
@@ -460,6 +468,24 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
 # ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
 # side reaches it through the function-local import it already uses for
 # ``randomization_seed_error``, so neither module gains a module-level edge.
+LIST_POLICIES_RUNNING_DESCRIBE_ENTRY = (
+    "() -> dict  # name the robots a rollout is driving right now, read from "
+    "the same in-flight population stop_policy derives its verdict from, so "
+    "the two never report opposite facts about one robot at one instant. "
+    "Counts a rollout in either launch shape - one submitted by start_policy "
+    "and one being driven right now by a blocking run_policy - and answers "
+    "status='error' on a backend that keeps no rollout registry, because "
+    "reporting none would be an affirmative claim about robots it cannot see"
+)
+"""The ``describe()`` entry for :meth:`SimEngine.list_policies_running`.
+
+One owner, because the surface is assembled twice: a backend that builds on
+``super().describe()`` inherits this entry, and a backend that writes its own
+``methods`` mapping imports it. A second copy of the text is what let the
+verb's promotion to this ABC reach the implementation and not the
+advertisement.
+"""
+
 MAX_EVAL_SEED = 2**32 - 1
 
 
@@ -530,12 +556,12 @@ def randomization_seed_error(
             "is a global side effect an unseeded rollout must not acquire."
         )
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        return f"{context}: seed must be a non-negative integer{none_clause}, got {value!r}{entropy_hint}"
+        return f"{context}: seed must be a non-negative integer{none_clause}, got {refusal_repr(value)}{entropy_hint}"
     if int(value) < 0:
-        return f"{context}: seed must be a non-negative integer{none_clause}, got {value!r}{entropy_hint}"
+        return f"{context}: seed must be a non-negative integer{none_clause}, got {refusal_repr(value)}{entropy_hint}"
     if max_seed is not None and int(value) > max_seed:
         return (
-            f"{context}: seed must be an integer in [0, {max_seed}]{none_clause}, got {value!r} "
+            f"{context}: seed must be an integer in [0, {max_seed}]{none_clause}, got {refusal_repr(value)} "
             "(a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)"
         )
     return None
@@ -576,7 +602,11 @@ def _non_finite_action_error(label: str, value: Any) -> dict[str, Any] | None:
     return {
         "status": "error",
         "content": [
-            {"text": (f"send_action: {label} must be finite (no nan/inf), got {value!r}. {_NON_FINITE_ACTION_REASON}")}
+            {
+                "text": (
+                    f"send_action: {label} must be finite (no nan/inf), got {refusal_repr(value)}. {_NON_FINITE_ACTION_REASON}"
+                )
+            }
         ],
     }
 
@@ -645,7 +675,11 @@ def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
     return {
         "status": "error",
         "content": [
-            {"text": (f"send_action: {label} must be a number, not a bool (got {value!r}). {_BOOLEAN_ACTION_REASON}")}
+            {
+                "text": (
+                    f"send_action: {label} must be a number, not a bool (got {refusal_repr(value)}). {_BOOLEAN_ACTION_REASON}"
+                )
+            }
         ],
     }
 
@@ -2024,7 +2058,7 @@ class SimEngine(ABC):
             A structured ``{"status": "error", ...}`` dict to surface, or
             ``None`` when the value is usable.
         """
-        message = f"{method}: {param} must be a finite positive number, got {timestep!r}."
+        message = f"{method}: {param} must be a finite positive number, got {refusal_repr(timestep)}."
         # is_boolean, not isinstance(timestep, bool): numpy.bool_ is not a bool
         # subclass, so the narrower check refused a hand-typed True and admitted
         # the np.True_ a comparison produces - a 1-second dt under success.
@@ -2076,7 +2110,7 @@ class SimEngine(ABC):
         except (TypeError, ValueError):
             return {
                 "status": "error",
-                "content": [{"text": f"{method}: '{param}' must be a positive number, got {mass!r}"}],
+                "content": [{"text": f"{method}: '{param}' must be a positive number, got {refusal_repr(mass)}"}],
             }
         if not math.isfinite(value) or value <= 0:
             return {
@@ -2835,11 +2869,17 @@ class SimEngine(ABC):
             rebuilt the policy instead of reusing ``policy_object=``) and
             ``policy_resident_rss_mb``.
 
-            Async-RTC telemetry, so latency masking is provable from the
-            payload instead of from logs: ``rtc_async_enabled``,
-            ``rtc_chunks_acquired``, ``rtc_prefetch_hits``,
-            ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
-            ``rtc_max_inference_ms``.
+            Chunk-prefetch telemetry, so latency masking is provable from the
+            payload instead of from logs: ``chunk_prefetch_enabled`` (the
+            background chunk pipeline was on - this is NOT the policy's RTC
+            algorithm, which ``policy_rtc_enabled`` reports),
+            ``chunk_prefetch_chunks_acquired``, ``chunk_prefetch_hits``,
+            ``chunk_prefetch_blocks``, ``avg_inference_ms`` and
+            ``max_inference_ms``. The pre-rename spellings
+            ``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``,
+            ``rtc_avg_inference_ms`` and ``rtc_max_inference_ms`` are kept for
+            one release with the same values.
 
             Across episodes (``n_episodes > 1``): the aggregate payload adds
             ``total_steps``, the per-episode ``episodes`` records,
@@ -3799,7 +3839,7 @@ class SimEngine(ABC):
                 ],
             }
 
-        from strands_robots.dataset_recorder import read_dataset_episode_indices
+        from strands_robots.verify_dataset import read_dataset_episode_indices
 
         try:
             info = read_dataset_episode_indices(root)
@@ -4411,10 +4451,15 @@ class SimEngine(ABC):
             Policy load: ``policy_load_time_s``, ``policy_load_cache_hit`` and
             ``policy_resident_rss_mb``.
 
-            Async-RTC telemetry: ``rtc_async_enabled``,
-            ``rtc_chunks_acquired``, ``rtc_prefetch_hits``,
-            ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
-            ``rtc_max_inference_ms``.
+            Chunk-prefetch telemetry: ``chunk_prefetch_enabled`` (the
+            background chunk pipeline, not the policy's RTC algorithm, which
+            ``policy_rtc_enabled`` reports), ``chunk_prefetch_chunks_acquired``,
+            ``chunk_prefetch_hits``, ``chunk_prefetch_blocks``,
+            ``avg_inference_ms`` and ``max_inference_ms``; the pre-rename
+            ``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``,
+            ``rtc_avg_inference_ms`` and ``rtc_max_inference_ms`` are kept for
+            one release with the same values.
         """
         # Same posture-flag rule as run_policy, ahead of robot resolution: an
         # evaluation is the one place a misread here would be trusted as a
@@ -5327,6 +5372,7 @@ class SimEngine(ABC):
                     "in flight; the json block reports was_running, and "
                     "robot_name is required (never defaulted to the sole robot)"
                 ),
+                "list_policies_running": LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
                 "eval_policy": (
                     "(robot_name: str, policy_provider='mock', n_episodes=1, "
                     "max_steps=300, success_fn=None, ...) -> dict  # multi-episode "
