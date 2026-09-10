@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +39,30 @@ _DEADLINE_S = 30.0
 # tests/conftest.py exports STRANDS_MESH=false for the suite; these subprocesses
 # opt in the way the docs tell the reader to.
 _MESH_ENV = {"STRANDS_MESH": "true", "STRANDS_MESH_LOCAL_DEV": "true"}
+
+
+def _child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    """The environment a mesh subprocess under test runs in.
+
+    The child inherits ``os.environ``, so without a redirect it resolves the
+    audit log to the host's own ``~/.strands_robots/mesh_audit.jsonl`` - and a
+    real mesh writes there: the gateway's ``peers`` records an
+    ``llm_tool_action`` row, and a joining peer emits event-driven rows. That
+    log is append-only and tamper-evident, so a suite-written record cannot be
+    removed afterwards, and every unsigned one reads as forgery the moment an
+    operator sets a PSK (AGENTS.md rule 16). Redirecting to a per-test root is
+    what the rest of ``tests/mesh/`` does, and rule 15 is why it is derived
+    from ``tmp_path`` rather than spelled as a fixed path.
+
+    Args:
+        tmp_path: The test's own scratch directory.
+        **extra: Further variables for this one child.
+
+    Returns:
+        The overlay to apply on top of the current environment.
+    """
+    return {**_MESH_ENV, "STRANDS_MESH_AUDIT_DIR": str(tmp_path / "audit"), **extra}
+
 
 _DOC_EXAMPLE = """
 from strands_robots import Robot
@@ -121,13 +146,13 @@ def test_the_session_teardown_uses_the_pre_join_hook():
 
 
 @pytest.mark.parametrize("tail", ["", "sim_a.mesh.stop()"])
-def test_documented_example_exits(tail: str):
-    assert _seconds_to_exit(_DOC_EXAMPLE + tail, _MESH_ENV) < _DEADLINE_S
+def test_documented_example_exits(tail: str, tmp_path: Path):
+    assert _seconds_to_exit(_DOC_EXAMPLE + tail, _child_env(tmp_path)) < _DEADLINE_S
 
 
-def test_a_robot_less_gateway_process_exits():
+def test_a_robot_less_gateway_process_exits(tmp_path: Path):
     """The second exit hook's process, which the session close is what frees."""
     # The gateway waits one heartbeat period for presence on first bring-up;
     # this asks about exiting, not about discovery, so skip the wait.
-    env = {**_MESH_ENV, "STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S": "0"}
+    env = _child_env(tmp_path, STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S="0")
     assert _seconds_to_exit(_GATEWAY_EXAMPLE, env) < _DEADLINE_S
