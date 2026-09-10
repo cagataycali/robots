@@ -104,7 +104,7 @@ spec = TrainSpec(
     base_model="nvidia/GR00T-N1.7-3B",
     output_dir="/tmp/g1_finetuned",
     steps=1000,
-    extra={"embodiment": "unitree_g1", "data_config": "unitree_g1"},
+    embodiment="unitree_g1",  # a TrainSpec field, not an extra: it becomes --embodiment_tag
 )
 result = trainer.train(spec)
 checkpoint = trainer.export(spec, result.checkpoint_dir)
