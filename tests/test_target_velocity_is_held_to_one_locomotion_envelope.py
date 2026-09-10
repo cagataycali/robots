@@ -58,7 +58,7 @@ def test_component_two_is_angular_and_the_rest_linear() -> None:
     assert env.component_bound(0) == (2.0, "m/s")
     assert env.component_bound(1) == (2.0, "m/s")
     assert env.component_bound(2) == (2.0, "rad/s")
-    assert env.component_bound(3) == (2.0, "m/s"), "a fourth component (MotionBricks vz) takes the linear bound"
+    assert env.component_bound(3) == (2.0, "m/s"), "any component past the third takes the linear bound"
 
 
 def test_the_bound_is_inclusive_and_signed() -> None:

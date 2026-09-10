@@ -22,8 +22,10 @@ environment; the resolver re-reads it on every call so a change takes effect
 without a restart, the pattern ``STRANDS_MESH_INPUT_VALUE_ABS`` already uses.
 
 Component layout follows the receivers' own convention: index 0 and 1 are
-linear (``vx``, ``vy`` in m/s), index 2 is angular (``omega`` in rad/s). Any
-further component (MotionBricks reads a ``vz``) is held to the linear bound.
+linear (``vx``, ``vy`` in m/s), index 2 is angular (``omega`` in rad/s). The
+arity verdict belongs to the receiving policy, not to the wire
+(:data:`strands_robots.mesh.security.MAX_TARGET_VELOCITY_COMPONENTS` admits
+more than three), so any further component is held to the linear bound.
 """
 
 from __future__ import annotations
