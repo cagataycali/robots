@@ -1036,11 +1036,20 @@ class Mesh(SensorLoopsMixin):
     def peers(self) -> list[dict[str, Any]]:
         """Presence dicts for every *other* peer currently on the mesh.
 
-        Excludes this peer itself. Discovery is asynchronous, so the list
-        grows as presence beacons arrive. Use :attr:`peers_by_id` for O(1)
-        lookup by ``peer_id`` or :meth:`get_peer` for a ``None``-safe fetch.
+        Excludes this peer itself and the child peers it spawned for its own
+        robots (``<self.peer_id>__<robot_name>``, see
+        ``Simulation._attach_robot_to_mesh``) -- those are the same process,
+        so listing them made a lone sim look like it had discovered someone.
+        Discovery is asynchronous, so the list grows as presence beacons
+        arrive. Use :attr:`peers_by_id` for O(1) lookup by ``peer_id`` or
+        :meth:`get_peer` for a ``None``-safe fetch.
         """
-        return [p for p in _session_get_peers() if p.get("peer_id") != self.peer_id]
+        own_child_prefix = f"{self.peer_id}__"
+        return [
+            p
+            for p in _session_get_peers()
+            if p.get("peer_id") != self.peer_id and not str(p.get("peer_id", "")).startswith(own_child_prefix)
+        ]
 
     @property
     def peers_by_id(self) -> dict[str, dict[str, Any]]:

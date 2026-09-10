@@ -1427,6 +1427,11 @@ def robot_mesh(
 
     # ── action: peers ─────────────────────────────────────────────────────
     if action == "peers":
+        # The presence table also holds this process's own peers (zenoh
+        # delivers local publications to local subscribers), so "remote"
+        # must be what is left after the local ones are taken out -- else a
+        # single sim with one robot reports "2 local, 2 remote".
+        peers = [p for p in peers if p.get("peer_id") not in locals_]
         lines = [f"[mesh] {len(locals_)} local, {len(peers)} remote"]
         if locals_:
             lines.append("")
