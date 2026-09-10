@@ -38,6 +38,14 @@ class _Arm:
 
 
 def _quiet(mesh: Mesh, monkeypatch: pytest.MonkeyPatch, remote: list[dict[str, Any]]) -> None:
+    """Give *mesh* a running wire that answers with *remote* and publishes nothing.
+
+    ``emergency_stop`` refuses outright on a mesh that never started (an e-stop
+    that reached no peer must not read as "asked, nobody answered"); that
+    contract is pinned in ``tests/mesh/test_mesh_rpc.py``. Here the wire is up
+    and the question is what the ISSUER's own robot does.
+    """
+    mesh._running = True
     monkeypatch.setattr(mesh, "broadcast", lambda cmd, timeout=5.0: list(remote))
     monkeypatch.setattr(mesh, "_publish_safety_envelope", lambda *a, **k: None)
     monkeypatch.setattr(mesh, "publish_safety_event", lambda *a, **k: None)
@@ -67,6 +75,27 @@ def test_a_local_stop_that_raises_is_counted_not_hidden(monkeypatch: pytest.Monk
 
     assert arm.stop_calls == 1
     assert _peers_that_did_not_stop(responses) == {"issuer-1"}
+
+
+def test_a_local_dispatch_that_raises_answers_instead_of_propagating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stop must answer, not raise -- including the issuer's own.
+
+    ``_dispatch`` catches a failing ``stop_task`` itself, so this drives the
+    outer guard: whatever else the local stop path raises must become an
+    ``ok=False`` answer the accounting can read, never an exception that
+    abandons the broadcast and the lockout envelope.
+    """
+    arm = _Arm()
+    mesh = Mesh(arm, peer_id="issuer-1")
+    _quiet(mesh, monkeypatch, [])
+    monkeypatch.setattr(mesh, "_dispatch", lambda cmd: (_ for _ in ()).throw(RuntimeError("engine gone")))
+
+    responses = mesh.emergency_stop()
+
+    assert _peers_that_did_not_stop(responses) == {"issuer-1"}
+    assert "engine gone" in responses[0]["result"]["error"]
 
 
 def test_a_peer_without_a_robot_adds_no_local_answer(monkeypatch: pytest.MonkeyPatch) -> None:

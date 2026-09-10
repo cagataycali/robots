@@ -3790,17 +3790,28 @@ class Mesh(SensorLoopsMixin):
 
     # Safety - emergency stop
     def emergency_stop(self) -> list[dict[str, Any]]:
-        """Broadcast a stop command to every peer and engage the local lockout.
+        """Stop the local robot, broadcast a stop, and engage the local lockout.
 
-        After this call the local mesh refuses every non-status, non-resume
-        action until :meth:`_resume_lockout` is invoked with the operator
-        override code (``STRANDS_MESH_OVERRIDE_CODE``). The event is also
-        published on ``strands/safety/estop`` and recorded in the audit log
-        (see :func:`strands_robots.mesh.audit.log_safety_event`).
+        The robot registered in this process is stopped first, through the same
+        :meth:`_dispatch` path a remote peer runs. ``broadcast`` never comes
+        back to the sender -- ``_on_cmd`` drops envelopes carrying our own
+        ``sender_id`` -- so the one robot an operator is standing next to is the
+        one robot the fanout cannot reach.
 
-        Returns the list of responses received from peers within the broadcast
-        timeout -- useful for telemetry (which peers acknowledged before the
-        stop fanned out).
+        After this call the local mesh refuses every action but ``status``,
+        ``resume`` and ``stop`` until :meth:`_resume_lockout` is invoked with
+        the operator override code (``STRANDS_MESH_OVERRIDE_CODE``). ``stop``
+        stays admitted because it only ever de-energizes: a second e-stop
+        reaching an already locked-out peer must halt a rollout the first one
+        missed rather than be rejected. The event is also published on
+        ``strands/safety/estop`` and recorded in the audit log (see
+        :func:`strands_robots.mesh.audit.log_safety_event`).
+
+        Returns the responses collected within the broadcast timeout, the local
+        robot's own answer first (shaped like a peer's, with this peer's id) --
+        useful for telemetry, and counted in ``peers_not_stopped`` exactly as a
+        remote answer is. A peer with no robot registered contributes no local
+        answer: it has nothing to halt.
 
         A response is only an acknowledgement that the peer STOPPED if it says
         so. A peer whose registered robot exposes no ``stop_task`` answers
@@ -3832,7 +3843,7 @@ class Mesh(SensorLoopsMixin):
             try:
                 local_result = self._dispatch({"action": "stop"})
             except Exception as exc:  # noqa: BLE001 - a stop must answer, not raise
-                local_result = {"ok": False, "error": f"stop_task failed: {exc}"}
+                local_result = {"ok": False, "error": f"local stop failed: {exc}"}
             responses.append({"type": "response", "responder_id": self.peer_id, "result": local_result})
         responses += self.broadcast({"action": "stop"}, timeout=3.0)
         not_stopped = _peers_that_did_not_stop(responses)

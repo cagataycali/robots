@@ -51,8 +51,13 @@ sim_a.mesh.emergency_stop()   # STRANDS_MESH_AUDIT_DIR overrides log location
 
 ## What a fleet e-stop reaches
 
-`emergency_stop()` broadcasts `{"action": "stop"}` with no `robot_name`, so each
-peer decides which of its own robots that reaches. A hardware peer stops its
+`emergency_stop()` stops the robot registered in the issuing process first, then
+broadcasts `{"action": "stop"}` with no `robot_name`, so each peer decides which
+of its own robots that reaches. The local stop is not an optimisation: a
+broadcast never returns to its sender, so without it the robot the operator is
+standing next to is the only one an e-stop never halts. Its answer leads the
+returned `responses` list under this peer's own id and is graded like any
+other. A hardware peer stops its
 task. A simulation peer asks every rollout it could be running: the rollouts its
 backend reports as in flight where it keeps such a registry (MuJoCo prunes
 finished ones), and otherwise every robot the engine lists. `stop_policy` is
@@ -80,8 +85,9 @@ it as soon as the world reaches a state.
 ## Recovering from an emergency stop
 
 `emergency_stop()` latches a **lockout** on every peer that receives it. While a
-peer is locked out it refuses every command except `status` and `resume`, and
-nothing clears it on a timer - an e-stop that expired by itself would not be an
+peer is locked out it refuses every command except `status`, `resume` and
+`stop` - a second e-stop must still halt a rollout the first one missed, and a
+stop only ever de-energizes - and nothing clears it on a timer - an e-stop that expired by itself would not be an
 e-stop. Recovery is always an explicit `resume`:
 
 ```python
