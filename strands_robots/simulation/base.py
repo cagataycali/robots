@@ -2853,11 +2853,17 @@ class SimEngine(ABC):
             rebuilt the policy instead of reusing ``policy_object=``) and
             ``policy_resident_rss_mb``.
 
-            Async-RTC telemetry, so latency masking is provable from the
-            payload instead of from logs: ``rtc_async_enabled``,
-            ``rtc_chunks_acquired``, ``rtc_prefetch_hits``,
-            ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
-            ``rtc_max_inference_ms``.
+            Chunk-prefetch telemetry, so latency masking is provable from the
+            payload instead of from logs: ``chunk_prefetch_enabled`` (the
+            background chunk pipeline was on - this is NOT the policy's RTC
+            algorithm, which ``policy_rtc_enabled`` reports),
+            ``chunk_prefetch_chunks_acquired``, ``chunk_prefetch_hits``,
+            ``chunk_prefetch_blocks``, ``avg_inference_ms`` and
+            ``max_inference_ms``. The pre-rename spellings
+            ``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``,
+            ``rtc_avg_inference_ms`` and ``rtc_max_inference_ms`` are kept for
+            one release with the same values.
 
             Across episodes (``n_episodes > 1``): the aggregate payload adds
             ``total_steps``, the per-episode ``episodes`` records,
@@ -4429,10 +4435,15 @@ class SimEngine(ABC):
             Policy load: ``policy_load_time_s``, ``policy_load_cache_hit`` and
             ``policy_resident_rss_mb``.
 
-            Async-RTC telemetry: ``rtc_async_enabled``,
-            ``rtc_chunks_acquired``, ``rtc_prefetch_hits``,
-            ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms`` and
-            ``rtc_max_inference_ms``.
+            Chunk-prefetch telemetry: ``chunk_prefetch_enabled`` (the
+            background chunk pipeline, not the policy's RTC algorithm, which
+            ``policy_rtc_enabled`` reports), ``chunk_prefetch_chunks_acquired``,
+            ``chunk_prefetch_hits``, ``chunk_prefetch_blocks``,
+            ``avg_inference_ms`` and ``max_inference_ms``; the pre-rename
+            ``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``,
+            ``rtc_avg_inference_ms`` and ``rtc_max_inference_ms`` are kept for
+            one release with the same values.
         """
         # Same posture-flag rule as run_policy, ahead of robot resolution: an
         # evaluation is the one place a misread here would be trusted as a
