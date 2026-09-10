@@ -1,9 +1,13 @@
 """``strands-robots doctor`` - diagnose common setup issues in one command.
 
-Checks: Python version, extras availability, GPU/CUDA, serial permissions,
-MuJoCo GL backend, HuggingFace auth, and a sim smoke test. Prints a colored
-pass/fail table so first-time users can fix problems before they hit cryptic
-errors at runtime.
+Every row of :data:`CHECKS` is one probe: read-only, sub-second, no network
+and no hardware, and it returns the same verdict the runtime would reach on
+the same configuration (a PASS here must never precede a refusal there). The
+probe's remedy is the runtime's own env-name text where the runtime has one.
+Rows cover the interpreter and package, the sim extra and its GL backend,
+lerobot and the torch/torchcodec ABI, the GPU and the torch/warp builds for it,
+serial permissions, the Hub token, the device-connect and mesh postures, and a
+sim smoke test.
 
 Usage:
     python -m strands_robots doctor
@@ -16,6 +20,7 @@ import importlib
 import logging
 import os
 import platform
+import re
 import sys
 import warnings
 from pathlib import Path
@@ -303,6 +308,66 @@ def check_lerobot() -> str:
             "lerobot not installed (needed for real hardware + dataset recording)",
             note='uv pip install "strands-robots[lerobot]"',
         )
+
+
+#: The dynamic loader's own line inside a torchcodec load failure - what is
+#: actually missing - as against the wrapper's "Likely causes:" preamble.
+_LOADER_REASON = re.compile(
+    r"(?:Symbol not found|Library not loaded|image not found|undefined symbol|cannot open shared object)[^\n]{0,80}"
+)
+
+
+def check_torchcodec_abi() -> str:
+    """torchcodec loads against the installed torch and ffmpeg.
+
+    ``import lerobot`` succeeds with a torchcodec that cannot load - the first
+    ``LeRobotDataset(...)`` then prints the ~100-line loader traceback and falls
+    back to pyav (or, with ``drop_videos=True``, has no fallback and raises). The
+    probe imports torchcodec's native ops with stderr captured and reports the
+    first line of the refusal, telling an ffmpeg-not-found apart from a
+    torch/torchcodec ABI mismatch because the two have different remedies.
+    Skips when either wheel is absent: the pair can be installed without lerobot,
+    so the row is not gated on it.
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    pair: dict[str, str] = {}
+    for dist in ("torch", "torchcodec"):
+        try:
+            pair[dist] = version(dist)
+        except PackageNotFoundError:
+            return _skip(f"{dist} not installed (torchcodec ABI check needs torch + torchcodec)")
+    label = f"torchcodec {pair['torchcodec']} / torch {pair['torch']}"
+
+    import contextlib
+    import io
+
+    try:
+        with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            importlib.import_module("torchcodec._core.ops")
+    except (ImportError, OSError, RuntimeError) as e:
+        text = str(e)
+        # The loader's own reason, not torchcodec's "Likely causes:" preamble.
+        match = _LOADER_REASON.search(text)
+        first = (
+            match.group(0) if match else next((ln.strip() for ln in text.splitlines() if ln.strip()), type(e).__name__)
+        )
+        if "libav" in text:
+            from strands_robots import _dyld
+
+            ffmpeg_dir = _dyld._find_ffmpeg_lib_dir() if sys.platform == "darwin" else None
+            if ffmpeg_dir:
+                fix = f"export {_dyld._DYLD_VAR}={ffmpeg_dir} (ffmpeg is installed; dyld cannot see it from this shell)"
+            else:
+                fix = "brew install ffmpeg (macOS) / apt install ffmpeg (Linux); torchcodec supports ffmpeg 4-8"
+            return _fail(f"{label}: ffmpeg shared libraries not found ({first})", fix=fix)
+        return _fail(
+            f"{label}: torchcodec was built for a different torch ({first})",
+            fix="install the torchcodec that matches this torch - "
+            "https://github.com/pytorch/torchcodec#installing-torchcodec",
+        )
+    return _pass(f"{label} loads")
 
 
 def cuda_devices_per_driver() -> int | None:
@@ -766,42 +831,218 @@ def check_strands_agents() -> str:
     return _pass(f"strands-agents {_resolve_version('strands', 'strands-agents')}")
 
 
+def check_device_connect() -> str:
+    """The posture ``Robot(...).run()`` would take when it brings the device online.
+
+    ``run()`` decides at start between four outcomes and this row names the one
+    the current environment selects, through the runtime's own decision functions
+    (``resolve_allow_insecure`` and, once shipped, ``transport_is_authenticated``)
+    so the verdict cannot drift from the decision: the extra is missing (SKIP,
+    with the install line), TLS is configured (PASS), no TLS and no opt-in
+    (WARN - ``run()`` refuses), or the insecure opt-in (WARN - plaintext on the
+    LAN; FAIL when ``DEVICE_CONNECT_RPC_ALLOW`` is also empty, because then any
+    peer may call ``execute``/``stop``). Never opens a session and never reads a
+    credentials file.
+    """
+    from strands_robots.device_connect import _authz
+
+    try:
+        impl = importlib.import_module("strands_robots.device_connect._impl")
+    except ImportError as e:
+        return _skip(
+            f'device-connect extra not installed ({e.name or e}); uv pip install "strands-robots[device-connect]"'
+        )
+
+    is_authenticated = getattr(impl, "transport_is_authenticated", None)
+    if is_authenticated is None:
+        return _skip(
+            "device-connect posture: this build decides TLS inside run() only (transport_is_authenticated absent)"
+        )
+
+    backend = os.environ.get("MESSAGING_BACKEND", "zenoh")
+    allow_insecure = impl.resolve_allow_insecure(None, os.environ.get(_authz._INSECURE_ENV))
+    if is_authenticated(backend, None):
+        configured = [name for name in getattr(impl, "_TLS_ENV", ()) if os.environ.get(name)]
+        how = f"credentials via {configured[0]}" if configured else "a TLS endpoint scheme"
+        return _pass(f"device-connect ({backend}): authenticated transport, {how}")
+    if not allow_insecure:
+        return _warn(
+            f"device-connect ({backend}): run() will refuse - no TLS configured and no opt-in",
+            note=f"MESSAGING_CREDENTIALS_FILE=<bundle>.creds.json, or {_authz._INSECURE_ENV}=true on an isolated network",
+        )
+    if not os.environ.get(_authz._RPC_ALLOW_ENV, "").strip():
+        return _fail(
+            f"device-connect ({backend}): run() will be online UNENCRYPTED and any peer may call execute/stop",
+            fix=f"{_authz._RPC_ALLOW_ENV}=<caller-id,...> restricts callers; unset {_authz._INSECURE_ENV} to require TLS",
+        )
+    return _warn(
+        f"device-connect ({backend}): run() will be online UNENCRYPTED on the LAN ({_authz._INSECURE_ENV} set)",
+        note=f"callers restricted by {_authz._RPC_ALLOW_ENV}",
+    )
+
+
+def _mesh_port() -> int:
+    raw = os.environ.get("STRANDS_MESH_PORT", "7447").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 7447
+
+
+def _tcp_reachable(host: str, port: int, timeout_s: float) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def _listener_owner(port: int) -> str:
+    """``pid/command`` of the process listening on ``127.0.0.1:port``, or ``""``."""
+    import shutil
+    import subprocess
+
+    lsof = shutil.which("lsof")
+    if not lsof:
+        return ""
+    try:
+        out = subprocess.run(
+            [lsof, "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1.0,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    pid = cmd = ""
+    for line in out.splitlines():
+        if line.startswith("p") and not pid:
+            pid = line[1:]
+        elif line.startswith("c") and not cmd:
+            cmd = line[1:]
+    return f"{pid}/{cmd}" if pid else ""
+
+
 def check_mesh() -> str:
-    """Zenoh mesh availability."""
+    """Whether ``Robot(..., mesh=True)`` would start, and what it would join.
+
+    ``import zenoh`` succeeding is not a mesh: with the default mTLS mode and
+    the built-in permissive ACL, ``Mesh.start`` logs an ERROR and hands back a
+    session that never opens, so ``emergency_stop()`` reaches nobody. This row
+    runs the same gate (``resolve_auth_mode`` + ``snapshot_acl``) without
+    opening zenoh and prints the runtime's own "Pick one" text on refusal; then
+    it reports the hub port (free: this process becomes the local router;
+    bound: who owns it - 7447 is zenoh's default, so a foreign ``zenohd``
+    becomes the hub silently), each ``ZENOH_CONNECT`` endpoint's reachability
+    with a one-second deadline, and whether LAN multicast scouting is on. The
+    mesh is opt-in (``STRANDS_MESH`` / ``mesh=True``), so a refusal is a WARN
+    unless the operator has turned it on, when it is the FAIL ``run()`` would hit.
+    """
     try:
         import zenoh  # noqa: F401
-
-        return _pass("zenoh available (mesh networking)")
     except ImportError:
         return _warn("zenoh not installed (mesh disabled)", note='uv pip install "strands-robots[mesh]"')
 
+    from strands_robots.mesh import _acl_config, _zenoh_config
+    from strands_robots.mesh.core import PERMISSIVE_ACL_REFUSAL
+
+    mesh_requested = os.environ.get("STRANDS_MESH", "").strip().lower() in ("1", "true", "yes")
+    refuse = _fail if mesh_requested else _warn
+    lines: list[str] = []
+
+    # (1) the same gate Mesh.start runs, in the same order.
+    try:
+        auth_mode = _zenoh_config.resolve_auth_mode()
+        is_permissive, _resolved = _acl_config.snapshot_acl(_zenoh_config.resolve_namespace())
+    except ValueError as e:
+        return refuse(f"mesh=True would not start: {e}")
+    if auth_mode == "none":
+        lines.append("local-dev (plaintext, localhost only)")
+    elif is_permissive and not _zenoh_config._bool_env("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", default=False):
+        why, pick_one = PERMISSIVE_ACL_REFUSAL.split("\n", 1)
+        return refuse(
+            f"mesh=True would not start: {why.split(': ', 1)[1]}", pick_one.strip().replace("\n  ", "\n        ")
+        )
+    else:
+        missing = [
+            name
+            for name in ("STRANDS_MESH_TLS_CA", "STRANDS_MESH_TLS_CERT", "STRANDS_MESH_TLS_KEY")
+            if not os.environ.get(name, "").strip()
+        ]
+        if missing:
+            return refuse(
+                "mesh=True would not start: STRANDS_MESH_AUTH_MODE=mtls needs certificates",
+                f"set {', '.join(missing)}",
+            )
+        acl = os.environ.get("STRANDS_MESH_ACL_FILE", "").strip() or "built-in permissive ACL (acknowledged)"
+        lines.append(f"mtls + ACL {acl}")
+
+    # (2) hub port.
+    port = _mesh_port()
+    owner = _listener_owner(port) if _tcp_reachable("127.0.0.1", port, 0.2) else ""
+    if owner:
+        lines.append(f"hub 127.0.0.1:{port} owned by {owner} (this process would join it as a client)")
+    elif _tcp_reachable("127.0.0.1", port, 0.2):
+        lines.append(f"hub 127.0.0.1:{port} bound by another process")
+    else:
+        lines.append(f"hub 127.0.0.1:{port} free (this process would be the local router)")
+
+    # (3) explicit endpoints, one second each.
+    unreachable: list[str] = []
+    for endpoint in (e.strip() for e in os.environ.get("ZENOH_CONNECT", "").split(",") if e.strip()):
+        hostport = endpoint.split("/", 1)[-1]
+        host, _, port_s = hostport.rpartition(":")
+        if not host or not port_s.isdigit() or not _tcp_reachable(host.strip("[]"), int(port_s), 1.0):
+            unreachable.append(endpoint)
+
+    # (4) scouting.
+    multicast = _zenoh_config._bool_env("STRANDS_MESH_MULTICAST", default=False)
+    lines.append("LAN multicast scouting 224.0.0.224:7446 ON" if multicast else "gossip-only")
+
+    summary = "; ".join(lines)
+    if unreachable:
+        return _warn(f"mesh: {summary}", note=f"ZENOH_CONNECT unreachable: {', '.join(unreachable)}")
+    if multicast:
+        return _warn(f"mesh: {summary}", note="every zenoh app on the LAN sees this peer (STRANDS_MESH_MULTICAST=true)")
+    return _pass(f"mesh: {summary}")
+
+
+#: The doctor's table: one ``(label, probe)`` row per check, in print order.
+#: Probes are looked up by name at run time so a test (or an operator's
+#: ``python -c``) can replace one without rebuilding the table.
+CHECKS: tuple[tuple[str, str], ...] = (
+    ("Python", "check_python_version"),
+    ("Package", "check_strands_robots_version"),
+    ("Strands SDK", "check_strands_agents"),
+    ("MuJoCo", "check_mujoco"),
+    ("MuJoCo GL", "check_mujoco_gl"),
+    ("LeRobot", "check_lerobot"),
+    ("Torchcodec", "check_torchcodec_abi"),
+    ("CUDA/GPU", "check_cuda"),
+    ("Torch Arch", "check_torch_arch"),
+    ("Warp Arch", "check_warp_arch"),
+    ("Serial", "check_serial_permissions"),
+    ("HF Auth", "check_hf_auth"),
+    ("Device Connect", "check_device_connect"),
+    ("Mesh", "check_mesh"),
+    ("Sim Test", "check_sim_smoke"),
+)
+
 
 def run_doctor() -> int:
-    """Run all checks. Returns 0 if all pass, 1 if any fail."""
+    """Run every row of :data:`CHECKS`. Returns 0 if all pass, 1 if any fail."""
     print(_bold("\nstrands-robots doctor"))
     print(_bold("=" * 50))
     print()
 
-    checks = [
-        ("Python", check_python_version),
-        ("Package", check_strands_robots_version),
-        ("Strands SDK", check_strands_agents),
-        ("MuJoCo", check_mujoco),
-        ("MuJoCo GL", check_mujoco_gl),
-        ("LeRobot", check_lerobot),
-        ("CUDA/GPU", check_cuda),
-        ("Torch Arch", check_torch_arch),
-        ("Warp Arch", check_warp_arch),
-        ("Serial", check_serial_permissions),
-        ("HF Auth", check_hf_auth),
-        ("Mesh", check_mesh),
-        ("Sim Test", check_sim_smoke),
-    ]
-
     has_fail = False
-    for name, check_fn in checks:
+    for name, probe in CHECKS:
         try:
-            result = check_fn()
+            result = globals()[probe]()
         except Exception as e:
             result = _fail(f"{name}: unexpected error: {e}")
         # Detect failures via the stable text marker, not the ANSI color code:
