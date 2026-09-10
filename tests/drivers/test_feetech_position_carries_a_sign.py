@@ -159,24 +159,23 @@ class TestAJointPastItsZeroIsReportedWhereItIs:
 
     @pytest.mark.parametrize(("word", "counts"), SIGNED_WORDS)
     def test_the_reported_counts_are_the_ones_the_servo_sent(self, word: int, counts: int) -> None:
-        spec = SO_ARM_MOTORS["shoulder_lift"]
-        expected = spec.to_value(counts)
+        expected = FeetechBus(port="/dev/fake").to_value("shoulder_lift", counts)
 
         assert _read_one("Present_Position", word) == pytest.approx(expected)
 
     def test_a_negative_reading_is_below_the_joints_own_range(self) -> None:
         """The consequence in the caller's unit, stated without a magic float.
 
-        Before, the same word read as a value *above* ``high`` by more than the
-        joint's whole span - a position the joint cannot hold, reported as one
-        it does.
+        Before, the same word read as a value *above* the top of the servo's
+        rotation by more than a whole turn - a position the joint cannot hold,
+        reported as one it does.
         """
-        spec = SO_ARM_MOTORS["shoulder_lift"]
+        bus = FeetechBus(port="/dev/fake")
 
         reported = _read_one("Present_Position", 0x8064)
 
-        assert reported < spec.low
-        assert reported == pytest.approx(-94.40, abs=0.01)
+        assert reported < bus.to_value("shoulder_lift", 0)
+        assert reported == pytest.approx(-188.79, abs=0.01)
 
     def test_an_unsigned_reading_is_untouched(self) -> None:
         """The other half of the field must not move: bit 15 clear reads as before."""

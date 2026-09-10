@@ -207,6 +207,28 @@ rover.send_action({"linear": 0.4, "angular": -0.2})    # each axis normalised to
 rover.cleanup()                                        # sends a parting zero twist
 ```
 
+The driver *is* the agent's tool, so an agent gets the rover's whole surface by holding it:
+
+```python
+from strands import Agent
+
+Agent(tools=[rover])("drive forward for two seconds, then show me the front camera")
+```
+
+| `action` | Parameters | Does |
+|---|---|---|
+| `sensors` | - | Telemetry snapshot: a one-line summary block plus the whole `/data` JSON. Refuses when the SDK has never answered, rather than reporting an empty rover. |
+| `status` | - | Connection state, the SDK URL and the last commanded twist. |
+| `camera` | `camera` (`front`/`rear`) | One frame, as an image block the model can see. |
+| `move` | `linear`, `angular`, `duration_s` | One twist. With `duration_s` (at most 30 s) the twist is held and a zero twist follows; the answer reports both halves, so a lost trailing stop is an error and not a completed move. |
+| `lamp` | `on` | Switches the headlamp - and stops, because the SDK carries `lamp` inside the one `/control` twist frame. |
+| `speak` | `text` | Says `text` through the rover's speaker. |
+| `stop` | - | A zero twist, and the envelope says whether it reached the SDK. |
+
+An `action` outside that enum is refused naming the declared verbs, never dispatched onto
+the halt. Writes are judged on the driver's own write path, so `move` and `send_action` are
+refused by the same sentence.
+
 Both axes are a fraction of full speed, so `1.0` is already the fastest value there is and
 a magnitude above it is **refused by name**, never clamped - the same disposition as the
 Crazyflie envelope above, for the reason the rover makes sharper: it is velocity-commanded,

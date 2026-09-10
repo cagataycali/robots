@@ -1798,10 +1798,10 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     above, reached twice over: the emitted action dict is keyed by these names,
     so a three-entry list with one repeat emits two commands, and the
     ``lerobot_async`` hardware-feature map declares fewer columns than the
-    action aligner is handed. Note that the two providers resolving these names
-    by membership rather than by position (WBC, MotionBricks) deliberately
-    tolerate a repeat - it resolves to its first occurrence - so they are not
-    callers of this function.
+    action aligner is handed. Note that the provider resolving these names by
+    membership rather than by position (WBC) deliberately tolerates a repeat -
+    it resolves to its first occurrence - so it is not a caller of this
+    function.
 
     The mistake this exists for is a single name passed as a bare string.
     ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``

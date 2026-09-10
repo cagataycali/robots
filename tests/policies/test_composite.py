@@ -212,7 +212,7 @@ class TestErrorPaths:
 class TestWholeBodyGeneratorIsNotComposable:
     """A whole-body generator and a whole-body controller cannot be composed.
 
-    ``KimodoPolicy`` / ``MotionBricksPolicy`` emit joint targets for ALL 29 G1
+    ``KimodoPolicy`` emits joint targets for ALL 29 G1
     leg+waist+arm joints, and ``WBCPolicy`` drives 15 of those same joints. The
     two therefore claim overlapping joints rather than disjoint groups, so a
     composite of the pair is one child alone - the generator's reference is never

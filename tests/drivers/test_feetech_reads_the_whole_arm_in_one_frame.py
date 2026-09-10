@@ -180,10 +180,12 @@ class TestTheArmIsAskedOnce:
 
         reading = bus.sync_read("Present_Position")
 
+        # Degrees from the middle of the servo's full rotation - the fallback
+        # calibration of a bus given none - so a quarter turn of counts is 90.
         assert reading["shoulder_pan"] == pytest.approx(-180.0, abs=0.1)  # id 1, count 0
-        assert reading["shoulder_lift"] == pytest.approx(-45.0, abs=0.1)  # id 2, count 1024
+        assert reading["shoulder_lift"] == pytest.approx(-90.0, abs=0.1)  # id 2, count 1024
         assert reading["elbow_flex"] == pytest.approx(0.0, abs=0.1)  # id 3, count 2048
-        assert reading["wrist_flex"] == pytest.approx(45.0, abs=0.1)  # id 4, count 3072
+        assert reading["wrist_flex"] == pytest.approx(90.0, abs=0.1)  # id 4, count 3072
         assert reading["wrist_roll"] == pytest.approx(180.0, abs=0.1)  # id 5, count 4095
         assert reading["gripper"] == pytest.approx(50.0, abs=0.1)  # id 6, count 2048
 
@@ -256,7 +258,7 @@ class TestAServoThatDoesNotAnswerCostsOnlyItself:
         port.write = wake_id_four  # type: ignore[method-assign]
         reading = bus.sync_read("Present_Position", num_retry=1)
 
-        assert reading["wrist_flex"] == pytest.approx(90.0, abs=0.1)
+        assert reading["wrist_flex"] == pytest.approx(180.0, abs=0.1)  # count 4095, the far end
         assert len(reading) == 6
 
     def test_an_arm_that_says_nothing_reads_as_no_joints(self) -> None:
@@ -272,7 +274,7 @@ class TestABusNamingOneServoTwiceAsksForItOnce:
 
     def test_both_names_report_the_one_servo_the_frame_asked_for(self) -> None:
         port = FakeServoPort({1: 2048})
-        bus = open_bus(port, motors={"pan": MotorSpec(1, -180, 180), "pan_alias": MotorSpec(1, -180, 180)})
+        bus = open_bus(port, motors={"pan": MotorSpec(1), "pan_alias": MotorSpec(1)})
 
         reading = bus.sync_read("Present_Position")
 
