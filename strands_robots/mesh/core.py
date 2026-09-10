@@ -2681,6 +2681,133 @@ class Mesh(SensorLoopsMixin):
         except self._AUDIT_FAILURES as audit_exc:
             logger.debug("[mesh] %s: audit log unavailable: %s", self.peer_id, audit_exc)
 
+    def _decode_bound_safety_envelope(self, sample: Any, kind: str) -> tuple[dict[str, Any], str | None] | None:
+        """Decode a safety envelope and bind it to the session that carried it.
+
+        Shared by the estop and resume subscribers: the body must be a JSON
+        object, and its ``source_zid`` must agree with the TLS-bound wire
+        source (``_extract_sample_source_zid``) in all three states - both
+        present and equal, or both absent. A body zid with no wire zid is a
+        stripped-SourceInfo or misconfigured publisher; a wire zid with no
+        body zid is a publisher that predates the binding. Either way the
+        envelope is refused, because the whole point of the binding is that a
+        captured body cannot be replayed from another session. Returns
+        ``(data, wire_zid)`` or ``None`` after logging the refusal; ``kind`` is
+        only spliced into the warning text.
+        """
+        try:
+            raw = sample.payload.to_bytes().decode()
+            data = json.loads(raw)
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        wire_zid = _extract_sample_source_zid(sample)
+        body_zid = data.get("source_zid")
+        if wire_zid is not None and body_zid is not None:
+            if not isinstance(body_zid, str) or wire_zid != body_zid:
+                logger.warning(
+                    f"[safety] %s: refusing remote {kind} -- body source_zid does not "
+                    "match TLS-bound wire source_zid (cross-session forgery rejected)",
+                    self.peer_id,
+                )
+                return None
+        elif wire_zid is None and body_zid is not None:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- body source_zid present but wire "
+                "source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
+                self.peer_id,
+            )
+            return None
+        elif wire_zid is not None and body_zid is None:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- wire source_zid present but body "
+                "source_zid absent (publisher predates source_zid binding; upgrade required)",
+                self.peer_id,
+            )
+            return None
+        return data, wire_zid
+
+    def _check_safety_envelope_timing(self, data: dict[str, Any], kind: str) -> tuple[float, str, float, float] | None:
+        """Check a safety envelope's ``t`` and ``peer_id`` against the local clock.
+
+        ``t`` must be a wire timestamp no further ahead than the forward skew
+        and no older than the freshness window (both operator-tunable, read
+        once here so a mid-handler env change cannot split one envelope's
+        checks); ``peer_id`` must be a non-empty string, because the replay
+        caches are keyed per issuer. Returns
+        ``(envelope_t, issuer_id, forward_skew_s, freshness_window_s)`` or
+        ``None`` after logging the refusal.
+        """
+        forward_skew_s = _resume_forward_skew_s()
+        freshness_window_s = _resume_freshness_window_s()
+        envelope_t = _security.as_wire_timestamp(data.get("t"))
+        now = time.time()
+        if envelope_t is None:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- envelope missing/invalid ``t``",
+                self.peer_id,
+            )
+            return None
+        if envelope_t > now + forward_skew_s:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                forward_skew_s,
+                now,
+            )
+            return None
+        if (now - envelope_t) > freshness_window_s:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
+                self.peer_id,
+                envelope_t,
+                freshness_window_s,
+                now,
+            )
+            return None
+        issuer_id = data.get("peer_id")
+        if not isinstance(issuer_id, str) or not issuer_id:
+            logger.warning(
+                f"[safety] %s: refusing remote {kind} -- envelope missing/invalid ``peer_id``",
+                self.peer_id,
+            )
+            return None
+        return envelope_t, issuer_id, forward_skew_s, freshness_window_s
+
+    def _per_issuer_cap_exceeded(
+        self,
+        kind: str,
+        issuer: Any,
+        issuer_slots: int,
+        per_issuer_cap: int,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Per-issuer fairness bound on the two safety replay caches.
+
+        One issuer may hold at most a quarter of the cache, so a flooding peer
+        cannot evict every other issuer's replay protection. Over the cap: warn,
+        audit ``<kind>_per_issuer_cap_exceeded`` and return True; the caller
+        decides what refusing the slot means (an estop still engages the
+        lockout, a resume is refused).
+        """
+        if issuer_slots < per_issuer_cap:
+            return False
+        logger.warning(
+            f"[safety] %s: REFUSED {kind} cache slot -- issuer %r already at cap %d "
+            "(per-issuer fairness bound; flood suspected)",
+            self.peer_id,
+            issuer,
+            per_issuer_cap,
+        )
+        self._audit(
+            event_type=f"{kind}_per_issuer_cap_exceeded",
+            severity="warning",
+            payload={**payload, "cap": per_issuer_cap},
+        )
+        return True
+
     def _on_safety_estop(self, sample: Any) -> None:
         """Engage the local emergency-stop lockout in response to a fleet-
         wide ``strands/safety/estop`` broadcast.
@@ -2713,113 +2840,19 @@ class Mesh(SensorLoopsMixin):
         ``peer_id`` is rejected as malformed (the canonical
         :meth:`emergency_stop` issuer always sets both).
         """
-        try:
-            raw = sample.payload.to_bytes().decode()
-            data = json.loads(raw)
-        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
+        bound = self._decode_bound_safety_envelope(sample, "estop")
+        if bound is None:
             return
-        if not isinstance(data, dict):
-            return
-        # Cache operator-tunable freshness/skew knobs once at handler entry
-        # (issue #265). Reading them per-use parsed os.getenv plus a regex
-        # validation on every reference (5-6 times per envelope) and could
-        # observe a mid-handler env mutation, creating an internal
-        # inconsistency window. The 0.2s estop corroboration window is
-        # timing-sensitive, so we also keep these reads out of the
-        # _estop_replay_lock critical section. The next envelope picks up a
-        # changed env value, preserving the operator-tunable contract.
-        forward_skew_s = _resume_forward_skew_s()
-        freshness_window_s = _resume_freshness_window_s()
-
-        # Wire-level publisher attribution (cross-session forgery defence).
-        # When the sample carries a ``source_info.source_id.zid`` set by
-        # Zenoh during the mTLS-bootstrapped session handshake AND the
-        # body advertises a ``source_zid`` field, the two MUST agree.
-        # An attacker on a different mTLS session cannot make
-        # ``sample.source_info.source_id.zid`` point at a peer's session
-        # because zenoh-python exposes no public ``ZenohId`` constructor;
-        # the value is forced to whatever the publishing session bootstrapped
-        # to under ``connect.tls``. Bridge/IoT transports do not propagate
-        # ``source_info`` -- in that case both fields are absent and we
-        # fall back to the body-level HMAC-bind defences below.
-        wire_zid = _extract_sample_source_zid(sample)
-        body_zid = data.get("source_zid")
-        if wire_zid is not None and body_zid is not None:
-            if not isinstance(body_zid, str) or wire_zid != body_zid:
-                logger.warning(
-                    "[safety] %s: refusing remote estop -- body source_zid does not "
-                    "match TLS-bound wire source_zid (cross-session forgery rejected)",
-                    self.peer_id,
-                )
-                return
-        elif wire_zid is None and body_zid is not None:
-            # Body advertises a zid but the wire does not -- a mTLS
-            # peer that forgot to attach SourceInfo, or a transport
-            # that dropped it. Treat as malformed and reject; the
-            # canonical issuer always pairs the two.
-            logger.warning(
-                "[safety] %s: refusing remote estop -- body source_zid present but wire "
-                "source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
-                self.peer_id,
-            )
-            return
-        elif wire_zid is not None and body_zid is None:
-            # Wire carries a zid but the body does not -- a publisher
-            # from a pre-binding mesh version. Reject so we never
-            # downgrade silently to the body-only HMAC binding when
-            # the wire-level binding is available. Operators upgrade
-            # all peers together.
-            logger.warning(
-                "[safety] %s: refusing remote estop -- wire source_zid present but body "
-                "source_zid absent (publisher predates source_zid binding; upgrade required)",
-                self.peer_id,
-            )
-            return
+        data, wire_zid = bound
 
         # Freshness + replay defences. An estop envelope without ``t`` is
         # not from a canonical issuer -- reject (also closes the trivial
         # replay surface where an attacker strips ``t`` to bypass the
         # freshness check).
-        envelope_t = _security.as_wire_timestamp(data.get("t"))
-        now = time.time()
-        if envelope_t is None:
-            logger.warning(
-                "[safety] %s: refusing remote estop -- envelope missing/invalid ``t``",
-                self.peer_id,
-            )
+        timed = self._check_safety_envelope_timing(data, "estop")
+        if timed is None:
             return
-        if envelope_t > now + forward_skew_s:
-            logger.warning(
-                "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
-                self.peer_id,
-                envelope_t,
-                forward_skew_s,
-                now,
-            )
-            return
-        if (now - envelope_t) > freshness_window_s:
-            logger.warning(
-                "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
-                self.peer_id,
-                envelope_t,
-                freshness_window_s,
-                now,
-            )
-            return
-
-        # reject envelopes with missing/empty ``peer_id`` outright
-        # rather than coalescing to ``<unknown>``. The canonical
-        # :meth:`emergency_stop` issuer always sets ``peer_id``; a
-        # malformed envelope is either a programming bug or an attacker
-        # probing the cache. Coalescing to a shared bucket let one
-        # attacker poison the slot for legitimate operators.
-        issuer_id = data.get("peer_id")
-        if not isinstance(issuer_id, str) or not issuer_id:
-            logger.warning(
-                "[safety] %s: refusing remote estop -- envelope missing/invalid ``peer_id``",
-                self.peer_id,
-            )
-            return
+        envelope_t, issuer_id, forward_skew_s, freshness_window_s = timed
 
         # cache key is keyed on ``float(envelope_t)`` ALONE -- not
         # ``(issuer_id, t)``. The previous (issuer, t) key let an
@@ -2950,28 +2983,16 @@ class Mesh(SensorLoopsMixin):
             # of the global cache, so legitimate operators always have
             # ``_resume_replay_cache_max() - per_issuer_cap`` slots available.
             issuer_slots = sum(1 for issuer, _mono, _zid in self._estop_replay_cache.values() if issuer == issuer_id)
-            if issuer_slots >= per_issuer_cap:
-                logger.warning(
-                    "[safety] %s: REFUSED estop cache slot -- issuer %r already at cap %d "
-                    "(per-issuer fairness bound; flood suspected)",
-                    self.peer_id,
-                    issuer_id,
-                    per_issuer_cap,
-                )
-                # Audit the over-cap rejection so an operator dashboard
-                # can alert on this. The replay-cache slot is NOT added,
-                # but the lockout below still engages -- a legitimate
-                # safety event is preserved even if the cache itself
-                # cannot hold it.
-                self._audit(
-                    event_type="estop_per_issuer_cap_exceeded",
-                    severity="warning",
-                    payload={
-                        "issuer": issuer_id,
-                        "issuer_t": envelope_t,
-                        "cap": per_issuer_cap,
-                    },
-                )
+            if self._per_issuer_cap_exceeded(
+                "estop",
+                issuer_id,
+                issuer_slots,
+                per_issuer_cap,
+                {"issuer": issuer_id, "issuer_t": envelope_t},
+            ):
+                # The slot is not taken, but the lockout below still engages: a
+                # legitimate stop is preserved even when the cache cannot hold it.
+                pass
             else:
                 self._estop_replay_cache[cache_key] = (issuer_id, now_mono, wire_zid)
 
@@ -2991,7 +3012,7 @@ class Mesh(SensorLoopsMixin):
                 self._last_estop_mono = time.monotonic()
             lockout_engaged_since = self._last_estop_ts
 
-        sender = data.get("peer_id", "<remote>")
+        sender = issuer_id
         if not lockout_was_engaged:
             logger.critical(
                 "[safety] %s: lockout engaged via remote estop from %s",
@@ -3004,7 +3025,7 @@ class Mesh(SensorLoopsMixin):
                 payload={
                     "trigger": "remote",
                     "issuer": sender,
-                    "issuer_t": data.get("t"),
+                    "issuer_t": envelope_t,
                 },
             )
         else:
@@ -3018,7 +3039,7 @@ class Mesh(SensorLoopsMixin):
                 event_type="remote_estop_redundant",
                 severity="info",
                 payload={
-                    "issuer": data.get("peer_id"),
+                    "issuer": issuer_id,
                     "issuer_t": envelope_t,
                     "lockout_engaged_since": lockout_engaged_since,
                 },
@@ -3042,68 +3063,10 @@ class Mesh(SensorLoopsMixin):
         FAIL CLOSED -- operators must distribute the code to every peer
         for fleet-wide remote resume to work.
         """
-        try:
-            raw = sample.payload.to_bytes().decode()
-            data = json.loads(raw)
-        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
-            # Narrow exception tuple matches ``_on_safety_estop``:
-            # AttributeError -> sample.payload is None or not bytes-like
-            # UnicodeDecodeError -> payload not valid UTF-8
-            # json.JSONDecodeError -> payload is not valid JSON
-            # Wider exceptions (e.g. RuntimeError) bubble up and surface in logs
-            # rather than silently leaving the fleet in a half-state.
+        bound = self._decode_bound_safety_envelope(sample, "resume")
+        if bound is None:
             return
-        if not isinstance(data, dict):
-            return
-        # Cache operator-tunable freshness/skew knobs once at handler entry
-        # (issue #265). Reading them per-use parsed os.getenv plus a regex
-        # validation on every reference (5-6 times per envelope) and could
-        # observe a mid-handler env mutation, creating an internal
-        # inconsistency window. The 0.2s estop corroboration window is
-        # timing-sensitive, so we also keep these reads out of the
-        # _estop_replay_lock critical section. The next envelope picks up a
-        # changed env value, preserving the operator-tunable contract.
-        forward_skew_s = _resume_forward_skew_s()
-        freshness_window_s = _resume_freshness_window_s()
-
-        # Wire-level publisher attribution (cross-session forgery defence).
-        # Mirrors the parallel block in ``_on_safety_estop``: extract the
-        # TLS-bound zid from ``sample.source_info.source_id.zid`` and the
-        # body's advertised ``source_zid`` field. When both are present
-        # they MUST agree; when one is present but the other is not we
-        # reject (operator must upgrade all peers together so the binding
-        # is never silently downgraded). The wire-level zid is bound into
-        # the HMAC input below, so even a body mutation that flips
-        # ``peer_id`` and recomputes the MAC under the attacker's own
-        # session key cannot satisfy the compare unless the attacker can
-        # also forge ``sample.source_info.source_id.zid`` -- which they
-        # cannot, because ``ZenohId`` has no public Python constructor
-        # and the value is bootstrapped from the mTLS-authenticated
-        # session's identity.
-        wire_zid = _extract_sample_source_zid(sample)
-        body_zid = data.get("source_zid")
-        if wire_zid is not None and body_zid is not None:
-            if not isinstance(body_zid, str) or wire_zid != body_zid:
-                logger.warning(
-                    "[safety] %s: refusing remote resume -- body source_zid does not "
-                    "match TLS-bound wire source_zid (cross-session forgery rejected)",
-                    self.peer_id,
-                )
-                return
-        elif wire_zid is None and body_zid is not None:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- body source_zid present but wire "
-                "source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
-                self.peer_id,
-            )
-            return
-        elif wire_zid is not None and body_zid is None:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- wire source_zid present but body "
-                "source_zid absent (publisher predates source_zid binding; upgrade required)",
-                self.peer_id,
-            )
-            return
+        data, wire_zid = bound
 
         local_code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
         if not local_code:
@@ -3141,48 +3104,10 @@ class Mesh(SensorLoopsMixin):
         # 2. Per-receiver replay cache: refuse a (issuer, proof_nonce)
         #  tuple we have already accepted within the freshness
         #  window. Bounded at _resume_replay_cache_max() entries.
-        envelope_t = _security.as_wire_timestamp(data.get("t"))
-        now = time.time()
-        if envelope_t is None:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- envelope missing/invalid ``t``",
-                self.peer_id,
-            )
+        timed = self._check_safety_envelope_timing(data, "resume")
+        if timed is None:
             return
-        if envelope_t > now + forward_skew_s:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
-                self.peer_id,
-                envelope_t,
-                forward_skew_s,
-                now,
-            )
-            return
-        if (now - envelope_t) > freshness_window_s:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
-                self.peer_id,
-                envelope_t,
-                freshness_window_s,
-                now,
-            )
-            return
-
-        # Mirror the prior estop strict-reject: an envelope without a
-        # valid issuer peer_id would coalesce every "<unknown>"-issued
-        # resume into a shared cache slot, polluting the bounded
-        # ``_resume_replay_cache_max()`` allowance and giving any peer
-        # who omits ``peer_id`` a free way to evict legitimate entries.
-        # The canonical ``Mesh.emergency_stop`` issuer always sets
-        # ``peer_id``; a malformed envelope is either a programming
-        # bug or an attacker probing the cache.
-        issuer_id = data.get("peer_id")
-        if not isinstance(issuer_id, str) or not issuer_id:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- envelope missing/invalid ``peer_id``",
-                self.peer_id,
-            )
-            return
+        envelope_t, issuer_id, forward_skew_s, freshness_window_s = timed
 
         # the envelope ``lockout_elapsed_s``
         # must be an int/float to participate in the bound MAC input.
@@ -3295,32 +3220,19 @@ class Mesh(SensorLoopsMixin):
             # the two replay-cache defenses stay symmetric.
             per_issuer_cap = max(1, replay_cache_max // 4)
             issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
-            if issuer_slots >= per_issuer_cap:
-                logger.warning(
-                    "[safety] %s: REFUSED resume cache slot -- issuer %r already at cap %d "
-                    "(per-issuer fairness bound; flood suspected)",
-                    self.peer_id,
-                    issuer_key,
-                    per_issuer_cap,
-                )
-                # Audit the over-cap rejection so an operator dashboard
-                # can alert. The cache slot is NOT added; the resume
-                # itself is refused (unlike estop, which still engages
-                # lockout, a refused resume must NOT clear lockout --
-                # returning here is the safe direction).
-                self._audit(
-                    event_type="resume_per_issuer_cap_exceeded",
-                    severity="warning",
-                    payload={
-                        "issuer": issuer_id,
-                        "proof_nonce_prefix": proof_nonce[:16],
-                        "cap": per_issuer_cap,
-                    },
-                )
+            if self._per_issuer_cap_exceeded(
+                "resume",
+                issuer_key,
+                issuer_slots,
+                per_issuer_cap,
+                {"issuer": issuer_id, "proof_nonce_prefix": proof_nonce[:16]},
+            ):
+                # Unlike estop, an over-cap resume is refused outright: a refused
+                # resume must never clear the lockout, so returning is the safe direction.
                 return
             self._resume_replay_cache[cache_key] = now_mono
 
-        sender = data.get("peer_id", "<remote>")
+        sender = issuer_id
         if self._estop_lockout.is_set():
             self._estop_lockout.clear()
             logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
@@ -3334,7 +3246,7 @@ class Mesh(SensorLoopsMixin):
                 payload={
                     "trigger": "remote",
                     "issuer": sender,
-                    "issuer_t": data.get("t"),
+                    "issuer_t": envelope_t,
                 },
             )
         else:
@@ -3351,7 +3263,7 @@ class Mesh(SensorLoopsMixin):
                 payload={
                     "trigger": "remote",
                     "issuer": sender,
-                    "issuer_t": data.get("t"),
+                    "issuer_t": envelope_t,
                 },
             )
 
