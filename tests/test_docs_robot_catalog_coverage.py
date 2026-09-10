@@ -144,34 +144,6 @@ def _count_claims() -> list[tuple[Path, int, str, int]]:
     return claims
 
 
-def test_every_registered_robot_appears_in_a_catalog_table() -> None:
-    """Every name ``Robot()`` accepts is discoverable from the catalog pages."""
-    missing = sorted(set(_registry()) - set(_catalog_rows()))
-    assert not missing, (
-        f"registered but absent from every docs/robots/ catalog table: {missing}. "
-        "A robot missing from the catalog cannot be discovered by a reader."
-    )
-
-
-def test_no_catalog_row_for_an_unregistered_robot() -> None:
-    """The catalog does not advertise a name the registry cannot resolve."""
-    rows = _catalog_rows()
-    unknown = sorted(set(rows) - set(_registry()))
-    assert not unknown, f"catalogued but not in robots.json: {[(n, rows[n]) for n in unknown]}"
-
-
-def test_each_robot_is_catalogued_on_the_page_for_its_category() -> None:
-    """A robot appears on the page documenting its registry category."""
-    registry, rows = _registry(), _catalog_rows()
-    page_for = {cat: page for page, cats in CATALOG_PAGES.items() for cat in cats}
-    misfiled = [
-        (name, rows[name], page_for[registry[name]["category"]])
-        for name in sorted(rows)
-        if name in registry and rows[name] != page_for.get(registry[name].get("category", ""))
-    ]
-    assert not misfiled, f"listed on the wrong catalog page (name, listed_on, expected): {misfiled}"
-
-
 def test_approximate_robot_count_claims_match_the_current_decade() -> None:
     """Documents rounding the registry size round it down to the current ten.
 
@@ -236,24 +208,4 @@ def test_no_robot_count_claim_outside_the_known_sites() -> None:
     assert not stale, (
         f"robot counts that no registry number supports (allowed: {sorted(allowed)}): {stale}. "
         "Update the claim, or add it to EXEMPT_CLAIMS if it counts something else."
-    )
-
-
-def test_the_alias_column_lists_every_alias_the_registry_accepts() -> None:
-    """Each catalog row advertises exactly the aliases its registry entry declares.
-
-    ``resolve_name()`` accepts every alias in ``robots.json``, so an alias the
-    row omits is a working name no reader can find, and an alias the row invents
-    is a name that does not resolve. Both are failures of the same projection,
-    so the whole cell is compared and the expected text is quoted verbatim -
-    fixing a row is a copy-paste, not a merge.
-    """
-    registry, cells = _registry(), _catalog_alias_cells()
-    wrong = [
-        (name, cells[name], _expected_alias_cell(registry[name]))
-        for name in sorted(cells)
-        if name in registry and cells[name] != _expected_alias_cell(registry[name])
-    ]
-    assert not wrong, "docs/robots/ alias cells that do not match robots.json:\n" + "\n".join(
-        f"  {name}\n    is:     {actual}\n    should: {expected}" for name, actual, expected in wrong
     )
