@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import logging
 import os
@@ -1061,8 +1062,32 @@ def run_doctor() -> int:
     return 0
 
 
-def main() -> None:
-    """Console-script entry point: run every check and exit with its status code."""
+def _parser() -> argparse.ArgumentParser:
+    """The ``strands-robots doctor`` argument parser: ``--list`` or nothing."""
+    parser = argparse.ArgumentParser(
+        prog="strands-robots doctor",
+        description="Check this machine for a working strands-robots install.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="print the check names and exit without probing anything",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Console-script entry point: run every check and exit with its status code.
+
+    ``--help`` and ``--list`` exit before any probe runs, and an argument the
+    parser does not know exits 2 with the usage line instead of being ignored
+    while the full check runs under it.
+    """
+    args = _parser().parse_args(argv)
+    if args.list:
+        for name, _probe in CHECKS:
+            print(name)
+        sys.exit(0)
     sys.exit(run_doctor())
 
 
