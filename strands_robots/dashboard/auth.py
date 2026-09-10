@@ -774,6 +774,45 @@ def _socket_peer(request_or_ws: Any) -> str | None:
         return None
 
 
+#: Request headers a reverse proxy or tunnel adds on the way in. A request that
+#: carries one of them arrived THROUGH something, whatever the socket peer says;
+#: their values are never read (a caller can spell them anything), only their
+#: presence is. Lower-case, matched case-insensitively.
+_PROXY_EVIDENCE_HEADERS: tuple[str, ...] = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-real-ip",
+    "cf-connecting-ip",
+    "cf-ray",
+    "forwarded",
+)
+
+
+def _arrived_through_a_proxy(request_or_ws: Any) -> str | None:
+    """The first proxy-forwarding header the request carries, or ``None``.
+
+    Evidence of a hop, not an address. The same-host reverse-proxy or tunnel
+    the docs describe (``cloudflared`` pointed at ``http://localhost:8090``)
+    makes every remote visitor's socket peer ``127.0.0.1`` unless uvicorn was
+    started with ``--proxy-headers`` / ``--forwarded-allow-ips``, so a loopback
+    peer alone cannot prove the request came from the machine. The proxy does,
+    however, add its forwarding headers to every request it relays, and a
+    browser on the machine itself sends none of them - so their presence is the
+    fact that separates the two cases. Their VALUES stay untrusted; this reads
+    only whether a header is there (F-007, CWE-290 / CWE-348).
+    """
+    try:
+        headers = getattr(request_or_ws, "headers", None) or {}
+        present = {str(k).lower() for k in headers}
+    except Exception:
+        return None
+    for name in _PROXY_EVIDENCE_HEADERS:
+        if name in present:
+            return name
+    return None
+
+
 def _pop_challenge(cid: str, kind: str) -> dict[str, Any]:
     with _chal_lock:
         rec = _challenges.pop(cid, None)
@@ -978,6 +1017,23 @@ def begin_registration(request: Any, label: str = "passkey", bootstrap: str = ""
     # peer is NOT the machine.
     damage = store_corruption()
     if first_time and not required:
+        # A loopback socket peer is necessary but not sufficient: behind a
+        # same-host proxy or tunnel started without --proxy-headers, every
+        # remote visitor's peer is 127.0.0.1. The proxy's own forwarding
+        # headers are the evidence that the request came through one, so a
+        # loopback peer that carries any of them is refused too - the values
+        # are never read (see _arrived_through_a_proxy).
+        proxied_by = _arrived_through_a_proxy(request)
+        if proxied_by is not None:
+            raise HTTPException(
+                403,
+                "the first passkey enrolled becomes the owner of this dashboard, and this request "
+                f"arrived through a proxy or tunnel (it carries {proxied_by!r}), so it cannot be taken "
+                "as the machine itself even though the connection came from loopback. Enroll from a "
+                "browser on the machine with no proxy in between, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN "
+                "and pass it. If the dashboard sits behind a same-host proxy, start uvicorn with "
+                "--proxy-headers and --forwarded-allow-ips so the peer address is the real client's.",
+            )
         if not client_is_loopback(_socket_peer(request)):
             if damage:
                 raise HTTPException(
