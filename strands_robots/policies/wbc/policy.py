@@ -62,6 +62,7 @@ from typing import Any
 
 import numpy as np
 
+from strands_robots.locomotion_envelope import target_velocity_component_error
 from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy
 from strands_robots.utils import finite_number_error, require_optional, sequence_length
@@ -1065,7 +1066,16 @@ class WBCPolicy(Policy):
 
     @staticmethod
     def _validate_velocity(tv: Any) -> np.ndarray:
-        """Validate a ``[vx, vy, omega]`` locomotion command (finite, len>=3)."""
+        """Validate a ``[vx, vy, omega]`` locomotion command (finite, len>=3, in envelope).
+
+        Every component is held to :mod:`strands_robots.locomotion_envelope`
+        - the bound the mesh applies before dispatch - so a caller that reaches
+        this policy without the mesh (a local script, a future hardware
+        dispatch that forwards ``policy_kwargs``) meets the same refusal
+        (F-005). Refused, not clamped: the value is multiplied by
+        ``cmd_scale`` straight into the observation, and a clamped sprint is
+        still a command the caller did not make.
+        """
         try:
             arr = np.asarray(tv, dtype=np.float64).ravel()
         except (TypeError, ValueError) as e:
@@ -1075,6 +1085,8 @@ class WBCPolicy(Policy):
         for i, v in enumerate(arr):
             if math.isnan(v) or math.isinf(v):
                 raise ValueError(f"target_velocity[{i}]={v!r} must be finite")
+            if error := target_velocity_component_error(i, float(v), "WBCPolicy"):
+                raise ValueError(error)
         return arr
 
     @staticmethod

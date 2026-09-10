@@ -143,9 +143,7 @@ def labels_path(root: str | Path) -> Path:
 #: ``success_opinion``) are carried through untouched: no reader branches on
 #: them, so a surprising value there is a record to read, not a verdict to
 #: refuse. That is the same split :func:`record_deterministic_verdicts` and
-#: :func:`annotate_episode` already make on the way IN, and the one
-#: :mod:`strands_robots.transforms.provenance` - the other per-episode sidecar,
-#: which cites this module for it - makes at both ends.
+#: :func:`annotate_episode` already make on the way IN.
 _DETERMINISTIC_VERDICT_KEYS = {"success": boolean_flag_error, "failure": boolean_flag_error}
 
 #: Keys a block must carry to state the thing it exists to state. A

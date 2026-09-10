@@ -58,6 +58,14 @@ from strands_robots.utils import boolean_flag_error
 
 from .conftest import FakeSerial, ReadingSerial
 
+
+@pytest.fixture(autouse=True)
+def _pre_approve_motion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests grade what a motion does once admitted; the operator gate (F-010) is graded in
+    ``test_pose_tool_gates_bus_writes.py``, so it is pre-approved here."""
+    monkeypatch.setenv("STRANDS_POSE_COMMAND_ALLOW", "*")
+
+
 # The two actions that consult the caller's flag. ``reset_to_home`` interpolates
 # unconditionally and passes its own ``smooth=True``; every other action moves in
 # one shot. Neither reads this flag, so neither may be refused for it.

@@ -220,10 +220,8 @@ class TestReadLabelsRefusesAnUnreadableRecord:
     ``success`` spelled ``"false"`` is truthy, so a deterministically FAILED
     episode cleared ``require_success=True``.
 
-    The split is the one :mod:`strands_robots.transforms.provenance` - the
-    other per-episode sidecar - already makes at both ends, citing this
-    module's writers for it: the keys a reader turns into a verdict are held
-    to their domains, and the descriptive keys are carried through untouched
+    The split: the keys a reader turns into a verdict are held to their
+    domains, and the descriptive keys are carried through untouched
     (:class:`TestAnUnreadableRecordIsOnlyAVerdictField`).
     """
 
