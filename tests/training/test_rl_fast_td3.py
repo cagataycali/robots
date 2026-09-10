@@ -22,7 +22,7 @@ from strands_robots.training.base import TrainSpec
 torch = pytest.importorskip("torch")
 
 from strands_robots.training.rl import RLTrainSpec, SimEnv, VecSimEnv  # noqa: E402
-from strands_robots.training.rl.fast_td3 import FastTd3Trainer, _build_actor_critic  # noqa: E402
+from strands_robots.training.rl.fast_td3 import FastTd3Trainer, build_actor_critic  # noqa: E402
 
 
 class _FakeEngine:
@@ -163,8 +163,7 @@ def test_train_rejects_non_rl_spec() -> None:
 
 def test_td3_actor_action_bounded_and_finite_under_saturation() -> None:
     """The tanh-bounded deterministic action stays inside [-1, 1] at the extremes."""
-    spec = RLTrainSpec(hidden_dims=(16,))
-    ac = _build_actor_critic(num_actor_obs=3, num_critic_obs=3, num_actions=2, spec=spec)
+    ac = build_actor_critic(num_actor_obs=3, num_critic_obs=3, num_actions=2, hidden_dims=(16,))
     obs = torch.full((8, 3), 50.0)  # drive the pre-tanh output far out
     action = ac.act_inference(obs)
     assert action.shape == (8, 2)
@@ -177,8 +176,7 @@ def test_td3_actor_action_bounded_and_finite_under_saturation() -> None:
 
 def test_targets_start_as_copies_and_do_not_require_grad() -> None:
     """Every target network initializes as a copy of its live network, frozen."""
-    spec = RLTrainSpec(hidden_dims=(8,))
-    ac = _build_actor_critic(num_actor_obs=2, num_critic_obs=2, num_actions=1, spec=spec)
+    ac = build_actor_critic(num_actor_obs=2, num_critic_obs=2, num_actions=1, hidden_dims=(8,))
     for live, target in ((ac.actor, ac.actor_target), (ac.q1, ac.q1_target), (ac.q2, ac.q2_target)):
         for p, tp in zip(live.parameters(), target.parameters()):
             assert torch.equal(p, tp)

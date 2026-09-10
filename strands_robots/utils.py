@@ -444,7 +444,7 @@ def sequence_length(value: Any) -> int | None:
         return None
 
 
-def _refusal_repr(value: Any) -> str:
+def refusal_repr(value: Any) -> str:
     """``repr(value)`` for a refusal message, or a description when it cannot be built.
 
     Every scalar guard below renders the value it refuses through this, and none
@@ -482,10 +482,10 @@ def _refusal_repr(value: Any) -> str:
         return _describe_unrenderable(value)
 
 
-def _refusal_str(value: Any) -> str:
+def refusal_str(value: Any) -> str:
     """``str(value)`` for a refusal message, or a description when it cannot be built.
 
-    The :func:`_refusal_repr` counterpart for the two messages that report a
+    The :func:`refusal_repr` counterpart for the two messages that report a
     value plainly rather than quoted, where ``repr`` is not interchangeable:
     NumPy 2 reprs a scalar with its type, so rendering an ``np.float32`` fov
     through ``repr`` would silently turn ``got 200.0`` into
@@ -512,7 +512,7 @@ def _refusal_str(value: Any) -> str:
 def _describe_unrenderable(value: Any) -> str:
     """Describe a value whose own rendering raised.
 
-    Shared by :func:`_refusal_repr` and :func:`_refusal_str` so the two render
+    Shared by :func:`refusal_repr` and :func:`refusal_str` so the two render
     forms cannot describe the same unrenderable value differently.
 
     ``int.bit_length`` needs no decimal conversion, so the value most likely to
@@ -545,7 +545,7 @@ def _describe_failed_read(exc: Exception) -> str:
     refusal degraded on one path must not describe the same failure differently
     from another.
 
-    ``exc`` goes through :func:`_refusal_str` rather than being interpolated: a
+    ``exc`` goes through :func:`refusal_str` rather than being interpolated: a
     value hostile enough to raise from its own read is not one whose exception is
     assumed to have a working ``__str__``, which would be the #1873 escape
     reintroduced inside a message built to avoid it.
@@ -556,7 +556,7 @@ def _describe_failed_read(exc: Exception) -> str:
     Returns:
         Its type name and text, which cannot itself raise.
     """
-    return f"{type(exc).__name__}: {_refusal_str(exc)}"
+    return f"{type(exc).__name__}: {refusal_str(exc)}"
 
 
 def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
@@ -586,13 +586,13 @@ def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
         return None, _describe_failed_read(exc)
 
 
-def _refusal_container_repr(value: Any) -> str:
+def refusal_container_repr(value: Any) -> str:
     """``repr(value)`` for a refusal that reports a whole container, elementwise if it must.
 
-    The container counterpart to :func:`_refusal_repr`, and the reason the two
+    The container counterpart to :func:`refusal_repr`, and the reason the two
     cannot be one function. ``repr`` of a list recurses into its elements, so a
     container is unrenderable whenever any *one* of its elements is, and
-    :func:`_refusal_repr`'s whole-value fallback would answer that with
+    :func:`refusal_repr`'s whole-value fallback would answer that with
     ``<unrepresentable list>`` - erasing every element that rendered perfectly
     well, and the element count with them. That count is frequently the entire
     reason for the refusal (``must be a 3-element vector, got 4``), so a
@@ -636,7 +636,7 @@ def _refusal_container_repr(value: Any) -> str:
     Returns:
         Its ``repr``; an elementwise rendering when that raises; or a bracketed
         description when ``value`` cannot be iterated either, which is
-        :func:`_refusal_repr`'s answer for a value that is not a container at
+        :func:`refusal_repr`'s answer for a value that is not a container at
         all - every one of these guards accepts ``Any``, so a scalar reaches
         them too.
     """
@@ -649,12 +649,12 @@ def _refusal_container_repr(value: Any) -> str:
             items = list(value.items())
         except Exception:
             return _describe_unrenderable(value)
-        return "{" + ", ".join(f"{_refusal_repr(key)}: {_refusal_repr(val)}" for key, val in items) + "}"
+        return "{" + ", ".join(f"{refusal_repr(key)}: {refusal_repr(val)}" for key, val in items) + "}"
     try:
         elements = list(value)
     except Exception:
         return _describe_unrenderable(value)
-    return "[" + ", ".join(_refusal_repr(element) for element in elements) + "]"
+    return "[" + ", ".join(refusal_repr(element) for element in elements) + "]"
 
 
 def _beyond_float_range(value: Any) -> bool:
@@ -732,13 +732,13 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return f"{context}: {param} must be > 0, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
     if _beyond_float_range(value):
         # A real past the float64 range is positive-or-negative and finite, so
         # neither of this guard's own reasons is true of it - hence its own text.
         # Refusing stays right: the value is a divisor (``1 / hz``) or a
         # multiplier evaluated in float64, and no float64 stands for it.
-        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be within the range of a 64-bit float, got {refusal_repr(value)}."
     try:
         # ``isfinite`` before the sign test: ``nan`` is never ``<= 0``, so
         # ordering these the other way lets it through.
@@ -749,7 +749,7 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
         # the same reason a non-real one is - the message it already had.
         unusable = True
     if unusable:
-        return f"{context}: {param} must be > 0, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be > 0, got {refusal_repr(value)}."
     return None
 
 
@@ -794,19 +794,19 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return f"{context}: {param} must be a finite number, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a finite number, got {refusal_repr(value)}."
     if _beyond_float_range(value):
         # ``10**400`` *is* a finite number, so this guard's own reason would be
         # a false statement about it. Refusing stays right: the docstring above
         # is explicit that an accepted value is serialized onto the wire as an
         # IEEE-754 float64, and this one has no float64 form to serialize.
-        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be within the range of a 64-bit float, got {refusal_repr(value)}."
     try:
         unusable = not math.isfinite(float(value))
     except Exception:
         unusable = True
     if unusable:
-        return f"{context}: {param} must be a finite number, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a finite number, got {refusal_repr(value)}."
     return None
 
 
@@ -889,7 +889,7 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
         # ``repr`` raised on an outsized ``int`` ahead of every verdict - the
         # guard failing while preparing a refusal it had not decided to return,
         # and doing it on the accept path too.
-        return f"{context}: {param} must be a positive whole number, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a positive whole number, got {refusal_repr(value)}."
 
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message()
@@ -897,7 +897,7 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
         # ``10**400`` is a positive whole number, so ``message()`` would state
         # something false about it. It is refused rather than accepted, and
         # deliberately unlike its ``non_negative`` sibling - see the docstring.
-        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be within the range of a 64-bit float, got {refusal_repr(value)}."
     try:
         numeric = float(value)
     except Exception:
@@ -993,7 +993,7 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
         # ``sys.get_int_max_str_digits()`` is accepted here, and building the
         # text eagerly made ``repr`` raise on it - the guard failing on the
         # accept path, doing work only the refuse path needs.
-        return f"{context}: {param} must be a non-negative whole number, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a non-negative whole number, got {refusal_repr(value)}."
 
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message()
@@ -1128,7 +1128,7 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return f"{context}: {param} must be a positive integer, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a positive integer, got {refusal_repr(value)}."
     return None
 
 
@@ -1178,7 +1178,7 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 1-65535)"
+        return f"{context}: invalid {param}: {refusal_repr(value)} (expected 1-65535)"
     return None
 
 
@@ -1276,7 +1276,7 @@ def dial_host_error(value: Any, param: str, context: str) -> str | None:
     Returns:
         An error message, or ``None`` when the value can address a host.
     """
-    shown = _refusal_repr(value)
+    shown = refusal_repr(value)
     if not isinstance(value, str):
         return (
             f"{context}: {param} must be a string hostname or IP literal, got {shown} "
@@ -1293,7 +1293,7 @@ def dial_host_error(value: Any, param: str, context: str) -> str | None:
             "Pass a plain hostname or IP literal, e.g. '127.0.0.1'."
         )
     spelling, body, bad = read
-    would_be = _refusal_repr(f"ws://{spelling}:<port>")
+    would_be = refusal_repr(f"ws://{spelling}:<port>")
     if not body:
         return (
             f"{context}: {param} must name a host to dial, got {shown}; "
@@ -1304,7 +1304,7 @@ def dial_host_error(value: Any, param: str, context: str) -> str | None:
         hint = " Pass a bracketed literal for IPv6 (e.g. '[::1]')." if ":" in bad else ""
         return (
             f"{context}: {param} must be a bare hostname or IP literal, got {shown}; "
-            f"{_refusal_container_repr(bad)} cannot appear in the host half of the websocket URI it "
+            f"{refusal_container_repr(bad)} cannot appear in the host half of the websocket URI it "
             f"is interpolated into (ws://<host>:<port>), so {would_be} names a different URI rather "
             "than a host - a '/' puts the validated port in the path and the client dials :80 "
             f"instead.{hint}"
@@ -1362,7 +1362,7 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return f"{context}: {param} must be a non-negative integer, got {_refusal_repr(value)}."
+        return f"{context}: {param} must be a non-negative integer, got {refusal_repr(value)}."
     return None
 
 
@@ -1464,7 +1464,7 @@ def step_cadence_error(value: Any, param: str, context: str) -> str | None:
     """
     if isinstance(value, bool) or not isinstance(value, int):
         return (
-            f"{context}: {param} must be an integer number of steps, got {_refusal_repr(value)}. "
+            f"{context}: {param} must be an integer number of steps, got {refusal_repr(value)}. "
             "A fractional, non-finite, boolean or non-numeric cadence cannot be honored - it is "
             "used as the modulus of a step % cadence test; pass a whole number of steps, or a "
             "non-positive one to disable periodic saving."
@@ -1514,7 +1514,7 @@ def torch_device_error(value: Any, param: str, context: str) -> str | None:
     through unguarded, which is the posture every live-sourced domain in this
     module takes when its source cannot be read.
 
-    The refused value is rendered through :func:`_refusal_repr`, as every scalar
+    The refused value is rendered through :func:`refusal_repr`, as every scalar
     guard here is: ``repr`` can itself raise - on an ``int`` wider than
     :func:`sys.get_int_max_str_digits`, or from any third-party ``__repr__`` - and
     a guard that raises while building a refusal fails on exactly the path that
@@ -1542,7 +1542,7 @@ def torch_device_error(value: Any, param: str, context: str) -> str | None:
         torch.device(value)
     except (RuntimeError, ValueError) as e:
         return (
-            f"{context}: {param}={_refusal_repr(value)} is not a torch device string ({e}). "
+            f"{context}: {param}={refusal_repr(value)} is not a torch device string ({e}). "
             "Pass a device type, optionally with an index (e.g. 'cuda', 'cuda:0', 'cpu', 'mps')."
         )
     return None
@@ -1604,7 +1604,7 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
-        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
+        return f"{context}: invalid {param}: {refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
     return None
 
 
@@ -1697,7 +1697,7 @@ def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int
     if timeout_ms > MAX_ZMQ_TIMEOUT_MS:
         return None, (
             f"{method}: {param_name} must be at most {MAX_ZMQ_TIMEOUT_MS} ms "
-            f"(the largest send/receive timeout ZMQ can store), got {_refusal_repr(value)}."
+            f"(the largest send/receive timeout ZMQ can store), got {refusal_repr(value)}."
         )
     return timeout_ms, None
 
@@ -1753,7 +1753,7 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
     except Exception as exc:
         return [], (
             f"{context}: {param} could not be iterated: "
-            f"{_describe_failed_read(exc)} (got {_refusal_container_repr(value)}). "
+            f"{_describe_failed_read(exc)} (got {refusal_container_repr(value)}). "
             f"Pass a list or tuple of names."
         )
     entries: list[Any] = []
@@ -1770,7 +1770,7 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
         except Exception as exc:
             return entries, (
                 f"{context}: {param}[{len(entries)}] could not be read: "
-                f"{_describe_failed_read(exc)} (got {_refusal_container_repr(value)}). "
+                f"{_describe_failed_read(exc)} (got {refusal_container_repr(value)}). "
                 f"Pass a list or tuple of names."
             )
         entries.append(entry)
@@ -1798,10 +1798,10 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     above, reached twice over: the emitted action dict is keyed by these names,
     so a three-entry list with one repeat emits two commands, and the
     ``lerobot_async`` hardware-feature map declares fewer columns than the
-    action aligner is handed. Note that the two providers resolving these names
-    by membership rather than by position (WBC, MotionBricks) deliberately
-    tolerate a repeat - it resolves to its first occurrence - so they are not
-    callers of this function.
+    action aligner is handed. Note that the provider resolving these names by
+    membership rather than by position (WBC) deliberately tolerates a repeat -
+    it resolves to its first occurrence - so it is not a caller of this
+    function.
 
     The mistake this exists for is a single name passed as a bare string.
     ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``
@@ -1876,13 +1876,13 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         else:
             consequence = (
                 f"A string is iterable per character, so this would be read as "
-                f"{_refusal_container_repr(characters[:6])}{' ...' if len(characters) > 6 else ''} "
+                f"{refusal_container_repr(characters[:6])}{' ...' if len(characters) > 6 else ''} "
                 f"({len(characters)} name(s))."
             )
         return (
             f"{context}: {param} must be a list of names, not a single string, "
-            f"got {_refusal_container_repr(value)}. {consequence} "
-            f"Wrap it in a list: [{_refusal_repr(shown)}]."
+            f"got {refusal_container_repr(value)}. {consequence} "
+            f"Wrap it in a list: [{refusal_repr(shown)}]."
         )
     if isinstance(value, Mapping):
         # The verdict is not in doubt on this branch, so a key read that fails
@@ -1891,17 +1891,17 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         remedy = (
             f"pass the names as a list; its own keys could not be read to quote them here ({unquotable})."
             if names is None
-            else f"pass the names as a list: {_refusal_container_repr(names)}."
+            else f"pass the names as a list: {refusal_container_repr(names)}."
         )
         return (
             f"{context}: {param} must be a list of names, not a mapping, "
-            f"got {_refusal_container_repr(value)}. "
+            f"got {refusal_container_repr(value)}. "
             f"A mapping is iterable over its keys, so its values would be discarded - {remedy}"
         )
     if not isinstance(value, Sequence):
         return (
             f"{context}: {param} must be a list of names, got {type(value).__name__} "
-            f"({_refusal_container_repr(value)}). Pass a list or tuple; a one-shot iterator cannot be used "
+            f"({refusal_container_repr(value)}). Pass a list or tuple; a one-shot iterator cannot be used "
             f"because the value is read more than once."
         )
     # One read, and every verdict below is about the list it produced. A
@@ -1913,9 +1913,9 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         return unread
     for i, entry in enumerate(entries):
         if not isinstance(entry, str):
-            return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({_refusal_repr(entry)})."
+            return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({refusal_repr(entry)})."
         if not entry.strip():
-            return f"{context}: {param}[{i}] must be a non-blank name, got {_refusal_repr(entry)}."
+            return f"{context}: {param}[{i}] must be a non-blank name, got {refusal_repr(entry)}."
     seen: set[str] = set()
     repeated: set[str] = set()
     for entry in entries:
@@ -1924,8 +1924,8 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         seen.add(entry)
     if repeated:
         return (
-            f"{context}: {param} must not repeat a name, got {_refusal_container_repr(entries)} "
-            f"({_refusal_container_repr(sorted(repeated))} appears more than once)."
+            f"{context}: {param} must not repeat a name, got {refusal_container_repr(entries)} "
+            f"({refusal_container_repr(sorted(repeated))} appears more than once)."
         )
     return None
 
@@ -2039,18 +2039,18 @@ def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[fl
     # for a stronger reason than the memory it holds: it raises before any element
     # has been examined, so its verdict could not say how far the read got - the
     # one thing that distinguishes a part-way failure from an outright refusal.
-    # ``exc`` is rendered through ``_refusal_str`` rather than interpolated: a
+    # ``exc`` is rendered through ``refusal_str`` rather than interpolated: a
     # value hostile enough to raise a non-``TypeError`` from ``__iter__`` is not
     # a value whose exception is assumed to have a working ``__str__``, and that
     # is the #1873 escape reintroduced inside the fix for this one.
     try:
         elements = iter(vec)
     except TypeError:
-        return floats, f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(vec)}"
+        return floats, f"{method}: '{param_name}' must be a list/tuple of numbers, got {refusal_container_repr(vec)}"
     except Exception as exc:
         return floats, (
             f"{method}: '{param_name}' could not be iterated: "
-            f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(vec)}). "
+            f"{type(exc).__name__}: {refusal_str(exc)} (got {refusal_container_repr(vec)}). "
             f"Pass a list or tuple of numbers."
         )
     while True:
@@ -2070,7 +2070,7 @@ def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[fl
         except Exception as exc:
             return floats, (
                 f"{method}: '{param_name}[{len(floats)}]' could not be read: "
-                f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(vec)}). "
+                f"{type(exc).__name__}: {refusal_str(exc)} (got {refusal_container_repr(vec)}). "
                 f"Pass a list or tuple of numbers."
             )
         # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
@@ -2082,10 +2082,10 @@ def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[fl
         if is_boolean(_elem):
             return floats, (
                 f"{method}: '{param_name}' elements must be numbers, not a bool "
-                f"(got {_refusal_container_repr(vec)}). {BOOLEAN_VECTOR_REASON}"
+                f"(got {refusal_container_repr(vec)}). {BOOLEAN_VECTOR_REASON}"
             )
         if not isinstance(_elem, numbers.Real):
-            return floats, f"{method}: '{param_name}' elements must be numbers, got {_refusal_container_repr(vec)}"
+            return floats, f"{method}: '{param_name}' elements must be numbers, got {refusal_container_repr(vec)}"
         # An element past the float64 range is a *magnitude* complaint and gets
         # its own reason, exactly as the scalar guards give one (#1874). The
         # order matters: ``_beyond_float_range`` answers only ``OverflowError``,
@@ -2095,15 +2095,15 @@ def _read_finite_vector(method: str, param_name: str, vec: Any) -> tuple[list[fl
         if _beyond_float_range(_elem):
             return floats, (
                 f"{method}: '{param_name}' must contain numbers within the range of a 64-bit float, "
-                f"got {_refusal_container_repr(vec)}"
+                f"got {refusal_container_repr(vec)}"
             )
         try:
             numeric = float(_elem)
         except Exception:
-            return floats, f"{method}: '{param_name}' elements must be numbers, got {_refusal_container_repr(vec)}"
+            return floats, f"{method}: '{param_name}' elements must be numbers, got {refusal_container_repr(vec)}"
         if not math.isfinite(numeric):
             return floats, (
-                f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {_refusal_container_repr(vec)}"
+                f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {refusal_container_repr(vec)}"
             )
         floats.append(numeric)
     return floats, None
@@ -2178,7 +2178,7 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
         # The components were read and were finite; what the value cannot supply
         # is a length for the caller to count. Same words as the sibling
         # coercions, because it is the same verdict about the same value.
-        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(vec)}"
+        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {refusal_container_repr(vec)}"
     return None
 
 
@@ -2244,7 +2244,7 @@ def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int)
     if isinstance(vec, str | bytes):
         return [], (
             f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, "
-            f"got {type(vec).__name__} {_refusal_container_repr(vec)}. A string carries a "
+            f"got {type(vec).__name__} {refusal_container_repr(vec)}. A string carries a "
             f"length, but it counts characters rather than components, so it cannot be read "
             f"as a pose - pass the {expected_len} numbers themselves."
         )
@@ -2252,12 +2252,12 @@ def _read_pose_vector(method: str, param_name: str, vec: Any, expected_len: int)
     if length is None:
         return [], (
             f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, "
-            f"got {_refusal_container_repr(vec)}"
+            f"got {refusal_container_repr(vec)}"
         )
     if length != expected_len:
         return [], (
             f"{method}: '{param_name}' must be a {expected_len}-element vector, "
-            f"got {length} ({_refusal_container_repr(vec)})"
+            f"got {length} ({refusal_container_repr(vec)})"
         )
     floats, err = _read_finite_vector(method, param_name, vec)
     if err is not None:
@@ -2518,7 +2518,7 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
     # whose components a read would consume before anything could count them. The
     # component count is not taken from it - see below.
     if sequence_length(color) is None:
-        return None, f"{method}: '{param_name}' must be a sequence of numbers, got {_refusal_container_repr(color)}"
+        return None, f"{method}: '{param_name}' must be a sequence of numbers, got {refusal_container_repr(color)}"
     # One read: the floats quoted by the component-count refusal below are the ones
     # the domain checks examined. They used to come from a second, unguarded read,
     # so a colour that answered the checked read and refused this one raised out of
@@ -2610,7 +2610,7 @@ def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[fl
     if sequence_length(size) is None:
         # Reachable only for something iterable but unsized - a generator, which
         # the check above has now consumed, so there is nothing left to store.
-        return None, f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(size)}"
+        return None, f"{method}: '{param_name}' must be a list/tuple of numbers, got {refusal_container_repr(size)}"
     # Empty means the read produced no component, not that ``__len__`` reported
     # zero: the two are independent reads (#1909), and it is the absence of an
     # extent to write that makes the value unusable. A value whose length reports
@@ -2619,7 +2619,7 @@ def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[fl
     if not floats:
         return None, (
             f"{method}: '{param_name}' must have at least one component, got an empty "
-            f"vector ({_refusal_container_repr(size)}). An empty '{param_name}' is a component count, not an "
+            f"vector ({refusal_container_repr(size)}). An empty '{param_name}' is a component count, not an "
             f"omission - omit '{param_name}' to take the default extent."
         )
     # The floats the component checks above examined, not a second read of the
@@ -2696,7 +2696,7 @@ def reserved_camera_name_error(method: str, param_name: str, name: Any) -> str |
     # one has narrowed to ``str`` and could interpolate safely: a ``str``
     # subclass owes its ``__repr__`` nothing, and the rule that no guard renders
     # a caller value directly is worth more than the exception would save.
-    rendered = _refusal_repr(name)
+    rendered = refusal_repr(name)
     return (
         f"{method}: {rendered} is reserved; pick a distinct camera name. "
         f"render/get_frame resolve {param_name}={rendered} to the free camera by an "
@@ -2740,10 +2740,10 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     """
 
     def not_a_number() -> str:
-        return f"{method}: '{param_name}' must be a finite number in degrees, got {_refusal_repr(value)}."
+        return f"{method}: '{param_name}' must be a finite number in degrees, got {refusal_repr(value)}."
 
     def outside_interval() -> str:
-        return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {_refusal_str(value)}."
+        return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {refusal_str(value)}."
 
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return not_a_number()
@@ -2833,7 +2833,7 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     """
     if not isinstance(name, str):
         return (
-            f"{method}: '{param_name}' must be a non-empty string, got {_refusal_repr(name)} "
+            f"{method}: '{param_name}' must be a non-empty string, got {refusal_repr(name)} "
             f"({type(name).__name__}); an entity is addressed by name and every "
             "agent-tool call carries that name as a string."
         )
@@ -2845,7 +2845,7 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
         )
     if "\x00" in name:
         return (
-            f"{method}: '{param_name}' must not contain a NUL character, got {_refusal_repr(name)}; "
+            f"{method}: '{param_name}' must not contain a NUL character, got {refusal_repr(name)}; "
             "the compiled model reads a name only up to the first NUL, so the registry "
             "and the model would disagree about the entity's name."
         )
@@ -2899,7 +2899,7 @@ def published_string_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, str):
         return None
     return (
-        f"{context}: '{param}' must be a string, got {_refusal_repr(value)} "
+        f"{context}: '{param}' must be a string, got {refusal_repr(value)} "
         f"({type(value).__name__}); this tool publishes '{param}' as a string and "
         "every agent-tool call carries it as one."
     )
@@ -3010,7 +3010,7 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
     if declared is None:
         return (
             f"{context}: val_episodes={val_episodes} cannot be checked against a dataset whose "
-            f"meta/info.json declares total_tasks={_refusal_repr(total_tasks)}, which is not a "
+            f"meta/info.json declares total_tasks={refusal_repr(total_tasks)}, which is not a "
             "task count. Whether one global count is expressible depends on how many tasks the "
             "dataset holds - lerobot holds out ceil(episodes_in_task * eval_split) from every "
             "task - so a header declaring no usable count is neither single-task nor multi-task, "
@@ -3022,7 +3022,7 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str, *,
         return None
     return (
         f"{context}: val_episodes={val_episodes} cannot be reserved exactly on a "
-        f"dataset with {_refusal_str(declared)} tasks. A validation split is a per-task "
+        f"dataset with {refusal_str(declared)} tasks. A validation split is a per-task "
         "fraction in lerobot (it holds out ceil(episodes_in_task * eval_split) "
         "from every task), so a single global count is not expressible: the "
         "ceiling would be applied once per task. Pass the fraction directly, "
@@ -3050,7 +3050,7 @@ def optional_callable_error(value: Any, param: str, context: str) -> str | None:
     """
     if value is None or callable(value):
         return None
-    return f"{context}: {param} must be callable or None, got {_refusal_repr(value)}."
+    return f"{context}: {param} must be callable or None, got {refusal_repr(value)}."
 
 
 def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
@@ -3105,7 +3105,7 @@ def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
     if is_boolean(value):
         return None
     return (
-        f"{context}: {param} must be a boolean, got {_refusal_repr(value)}. "
+        f"{context}: {param} must be a boolean, got {refusal_repr(value)}. "
         "It selects a posture rather than scaling a quantity, so it is checked "
         "rather than parsed - a truthy spelling of off, such as 'false', would "
         "otherwise select the opposite posture from the one it reads as."

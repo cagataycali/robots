@@ -70,6 +70,13 @@ _REFUSALS: tuple[tuple[str, tuple[Any, ...], type[BaseException]], ...] = (
     ("sync_write_packet", (0x2A, 2, [("1", b"\x01\x02")]), TypeError),
     ("sync_write_packet", (0x2A, 2, []), ValueError),
     ("sync_write_packet", (0x2A, 2, [(1, b"\x01")]), ValueError),
+    ("sync_read_packet", (0x38, 2, ["1"]), TypeError),
+    ("sync_read_packet", (0x38, 2, []), ValueError),
+    ("sync_read_packet", (0x38, 2, [1, 1]), ValueError),
+    ("sync_read_reply_size", (0, 2), ValueError),
+    ("sync_read_reply_size", (6, 0), ValueError),
+    ("parse_sync_read_replies", ("notbytes", [1], 2), TypeError),
+    ("parse_sync_read_replies", (b"", [1], 0x1FF), ValueError),
     ("parse_status_packet", ("notbytes", 1, 0), TypeError),
     ("parse_status_packet", (_WELL_FORMED, 0x1FF, 0), ValueError),
     ("parse_status_packet", (b"\x00\x00", 1, 0), protocol.ProtocolError),
@@ -83,6 +90,8 @@ _REFUSALS: tuple[tuple[str, tuple[Any, ...], type[BaseException]], ...] = (
     ("decode_sign_magnitude", ("0x8064", 15), TypeError),
     ("decode_sign_magnitude", (0x10000, 15), ValueError),
     ("decode_sign_magnitude", (0x8064, 16), ValueError),
+    ("load_calibration", (__file__,), ValueError),
+    ("lerobot_calibration_path", ("../../etc", "arm"), ValueError),
 )
 
 

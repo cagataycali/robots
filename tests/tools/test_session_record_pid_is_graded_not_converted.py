@@ -82,8 +82,7 @@ def _isolate_both_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     """Point both tools' session stores at a temp dir, never the tree."""
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", session_dir)
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -162,52 +161,38 @@ def test_a_live_integer_pid_still_reads_as_running() -> None:
 # both stores degrade rather than aborting the action that asked              #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_the_teleop_store_drops_an_unusable_record_without_raising(
+def test_the_store_keeps_an_unusable_record_without_raising(
     _isolate_both_stores: Path, _label: str, pid: Any, _why: str
 ) -> None:
-    """A record naming no process is pruned like any other with none live.
+    """A record naming no process is kept, and read the same way by both tools.
 
-    That store prunes on every read and writes the prune back, so the classifying
-    question has to be answerable for every spelling. It was not: four of these
-    aborted the read.
-    """
-    _write_store(_isolate_both_stores, "arm", pid)
-
-    assert tele_mod.SessionManager().list_sessions() == {}
-
-
-@pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_the_training_store_keeps_an_unusable_record_without_raising(
-    _isolate_both_stores: Path, _label: str, pid: Any, _why: str
-) -> None:
-    """The training store drops nothing, so it must read every spelling too.
-
-    Its retention is the point: the record is the only place a detached run's pid
-    is written down. Before the fix ``psutil.pid_exists`` was handed the raw
-    value and raised ``TypeError`` for a ``str``, a ``float`` and a ``list`` -
-    including two spellings the teleop store accepted as live, so one record read
-    as a running session in one tool and as an aborted read in the other.
+    Retention is the point: the record is the only place a detached run's pid is
+    written down. Before the fix ``psutil.pid_exists`` was handed the raw value
+    and raised ``TypeError`` for a ``str``, a ``float`` and a ``list``. Both
+    tools read one store through one manager, so a spelling cannot read as a
+    live session in one and as an aborted read in the other.
     """
     _write_store(_isolate_both_stores, "run", pid)
 
+    assert list(tele_mod.SessionManager().list_sessions()) == ["run"]
     assert list(train_mod.SessionManager().list_sessions()) == ["run"]
 
 
-def test_a_store_whose_pid_field_is_undecodable_degrades_to_no_sessions(_isolate_both_stores: Path) -> None:
+def test_a_store_whose_pid_field_is_undecodable_still_names_the_record(_isolate_both_stores: Path) -> None:
     """The bytes the decode policy was chosen for reach the pid, and still degrade.
 
-    Both stores are read with ``errors="replace"`` precisely so a damaged file
-    degrades instead of raising, and both document that. The substitute lands in
+    The store is read with ``errors="replace"`` precisely so a damaged file
+    degrades instead of raising, and documents that. The substitute lands in
     whichever field carried the damaged byte, and when that field is the pid,
-    ``int()`` of the result raised ``ValueError`` - which neither read handles.
+    ``int()`` of the result raised ``ValueError`` - which the read does not
+    handle. The record survives the read either tool takes, because a damaged
+    pid is the case where the record is the only thing left naming the process.
     """
     store = _isolate_both_stores / "active_sessions.json"
     store.write_bytes(b'{"arm": {"pid": "12\xff34", "action": "teleoperate", "start_time": 0.0}}')
 
-    # The training store first: the teleop read below prunes the record and
-    # writes the pruned map back over the same file.
     assert list(train_mod.SessionManager().list_sessions()) == ["arm"]
-    assert tele_mod.SessionManager().list_sessions() == {}
+    assert list(tele_mod.SessionManager().list_sessions()) == ["arm"]
 
 
 # --------------------------------------------------------------------------- #

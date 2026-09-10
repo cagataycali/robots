@@ -33,13 +33,14 @@ from strands_robots.tools._process_stop import (
     PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,
     SIGTERM_GRACE_S,
+    SessionManager,
     confirm_exit,
     process_started_since_boot,
     recorded_pid,
     reused_pid_result,
     session_is_running,
+    session_log_path,
     session_uptime,
-    store_sessions,
     unstopped_result,
     unusable_pid_result,
 )
@@ -55,10 +56,6 @@ from strands_robots.utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Reuse the teleoperate session store so all robot sessions live together.
-SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 # Policy families that train an action expert on top of a frozen VLM. Only these
 # accept ``--policy.train_expert_only``; emitting it on any other policy is a hard
@@ -319,191 +316,6 @@ def _gate_extra_flags(
 
     logger.info("blocked extra_flags %s approved via operator interrupt", flag_names)
     return None
-
-
-class SessionManager:
-    """Track detached training sessions with on-disk persistence.
-
-    Sessions are keyed by name and stored as JSON. The load step classifies a
-    record as running or finished but never deletes one: :meth:`remove_session`
-    is the only thing that drops a record, because this store is the only place
-    a detached training process's pid is written down.
-    """
-
-    def __init__(self) -> None:
-        self.sessions_file = SESSION_DIR / "active_sessions.json"
-
-    def _load_sessions(self) -> dict[str, Any]:
-        """Load every stored session record, reporting any it could not inspect.
-
-        No record is dropped here, and that is what keeps a detached session
-        stoppable. :meth:`add_session` and :meth:`remove_session` are
-        load-modify-write, so a record this method leaves out is erased from disk
-        by the next session started or stopped - and this store is the only place
-        a detached training process's pid is written down, so the erased process
-        goes on holding the GPU with no supported way left to stop it.
-
-        Leaving a record out is not needed to avoid over-reporting it either:
-        presence here is not the running claim. ``list`` and ``status`` each
-        derive that from :func:`~strands_robots.tools._process_stop.session_is_running`
-        at the moment they are asked, so a retained record reads as running only
-        while its pid still holds the process the record was written for.
-
-        Returns:
-            Every stored session record, keyed by session name. A store that
-            cannot be read degrades to empty rather than raising - including one
-            carrying bytes this store's encoding does not describe, which is
-            read as U+FFFD so a record damaged outside its pid still stops.
-        """
-        if not self.sessions_file.exists():
-            return {}
-        try:
-            # Read with a decode policy that cannot raise. The handler below
-            # names the two failures this store was expected to have - it is
-            # gone, or it is not JSON - and an undecodable byte is neither:
-            # ``UnicodeDecodeError`` is a ``ValueError``, so it passes both
-            # clauses and aborts the tool action that asked. Substituting
-            # U+FFFD keeps the damage local to the field that carries it, and
-            # a pid is ASCII, so the record still names the process it named.
-            with open(self.sessions_file, encoding="utf-8", errors="replace") as f:
-                sessions: dict[str, Any] = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Error loading sessions: {e}")
-            return {}
-
-        self._report_uninspectable(sessions)
-        return sessions
-
-    def _report_uninspectable(self, sessions: dict[str, Any]) -> None:
-        """Warn for each session this store holds but cannot inspect.
-
-        Two records read that way. One names a pid that exists and may not be
-        read; the other names no pid at all - its ``pid`` field holds something
-        that is not a process id, which
-        :func:`~strands_robots.tools._process_stop.recorded_pid` answers rather
-        than converting, because ``psutil.pid_exists`` raises a ``TypeError`` on a
-        ``str`` or a ``float`` and aborts the action that asked.
-
-        ``psutil.pid_exists`` answers existence with a signal; reading the process
-        reads ``/proc``, which can be refused. When it raises
-        :class:`psutil.AccessDenied` the process is there and this user may not
-        look at it - a session started under ``sudo`` and later listed as the
-        invoking user reads this way. That denial is the operator's only clue that
-        ``status`` is reporting on a process it cannot see into, and that its
-        identity could not be checked either, so it is said out loud.
-
-        :class:`psutil.NoSuchProcess` needs no report: it means the run was
-        reaped between the two probes, which is the same finished run as a pid
-        that was already gone, and those are retained for their log tail.
-
-        Args:
-            sessions: The loaded records. Inspected only; never modified.
-        """
-        for name, info in sessions.items():
-            pid = recorded_pid(info)
-            if pid is None:
-                if info.get("pid") is not None:
-                    # A pid field that is not a process id. Nothing can inspect
-                    # it, and converting it would inspect a different process, so
-                    # it is reported for the same reason a denial is: ``list`` and
-                    # ``status`` will read this record as not running, and this is
-                    # the operator's only clue that the run may still be holding
-                    # the GPU under a pid this store no longer names.
-                    logger.warning(
-                        "Training session '%s' records a %s as its PID, which is not a process id; "
-                        "its record is kept, but the run can only be stopped by hand",
-                        name,
-                        type(info.get("pid")).__name__,
-                    )
-                continue
-            if not psutil.pid_exists(pid):
-                continue
-            try:
-                # Called for what it raises, not for what it returns: the
-                # running/finished line is re-derived by ``list`` and ``status``,
-                # so this probe exists only to surface a denial - the same denial
-                # their identity check would meet, since both have to read the
-                # process rather than only signal its number.
-                psutil.Process(pid).is_running()
-            except psutil.NoSuchProcess:
-                # Reaped between the two probes: the same finished run as a pid
-                # that was already gone, and those are retained for their log
-                # tail. Nothing to report, so the denial below stays the only
-                # thing this loop says out loud.
-                pass
-            except psutil.AccessDenied:
-                logger.warning(
-                    "Training session '%s' (PID %s) exists but cannot be inspected; "
-                    "keeping its record so the session stays stoppable",
-                    name,
-                    pid,
-                )
-
-    def _save_sessions(self, sessions: dict[str, Any]) -> None:
-        """Store the session map in full, or leave the stored one untouched.
-
-        :func:`~strands_robots.tools._process_stop.store_sessions` owns the
-        sequence, because losing this store is what makes a live session
-        unstoppable and both session tools write the same file.
-        """
-        try:
-            store_sessions(self.sessions_file, sessions)
-        except OSError as e:
-            logger.error(f"Error saving sessions: {e}")
-
-    def add_session(self, name: str, info: dict[str, Any]) -> None:
-        """Persist a training session record under ``name``.
-
-        Loads the current on-disk sessions, upserts ``name`` -> ``info``
-        (an existing entry with the same name is overwritten), and writes the
-        map back to disk.
-
-        Args:
-            name: session key (e.g. the run/job name) to store the record under.
-            info: session metadata to persist (typically ``pid``, ``log_file``,
-                ``dataset``, and start timestamp).
-        """
-        sessions = self._load_sessions()
-        sessions[name] = info
-        self._save_sessions(sessions)
-
-    def remove_session(self, name: str) -> None:
-        """Delete the session stored under ``name`` if one exists.
-
-        A no-op when ``name`` is not tracked, so callers need not check first.
-
-        Args:
-            name: session key to remove.
-        """
-        sessions = self._load_sessions()
-        if name in sessions:
-            del sessions[name]
-            self._save_sessions(sessions)
-
-    def get_session(self, name: str) -> dict[str, Any] | None:
-        """Return the stored metadata for a single session.
-
-        Args:
-            name: session key to look up.
-
-        Returns:
-            The session's info dict, or ``None`` if no session is tracked under
-            ``name``. A record is returned whether its process is running or
-            finished; ``status`` derives that from the pid when asked.
-        """
-        return self._load_sessions().get(name)
-
-    def list_sessions(self) -> dict[str, Any]:
-        """Return every currently-tracked session keyed by name.
-
-        Returns:
-            A ``name -> info`` map holding every tracked session. Sessions
-            whose PID is no longer a running process are not dropped -- they are
-            retained so ``status`` can still report the final log tail -- and
-            being listed is not a claim of running: the caller derives that from
-            the pid, so this never reports a stale PID as running.
-        """
-        return self._load_sessions()
 
 
 def _read_total_tasks(dataset_root: str) -> Any:
@@ -1212,7 +1024,7 @@ def lerobot_train(
             env["PYTHONUNBUFFERED"] = "1"
             env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-            log_file = SESSION_DIR / f"{session_name}.log"
+            log_file = session_log_path(session_name)
             with open(log_file, "w", encoding="utf-8") as f:
                 proc = subprocess.Popen(
                     cmd,
