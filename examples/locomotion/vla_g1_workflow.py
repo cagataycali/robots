@@ -24,7 +24,7 @@ Upstream reference:
 
 Dependencies:
     pip install "strands-robots[sim-mujoco,lerobot,wbc]"
-    # For stage 2 (fine-tuning): Docker + GPU + pip install "strands-robots[groot-service]"
+    # For stage 2 (fine-tuning): a GPU + pip install "strands-robots[lerobot]"
 
 Usage:
     # Quick demo (record + deploy with mock policy, ~10s):
@@ -150,10 +150,10 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int, che
 def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: int) -> str:
     """Post-train Isaac-GR00T N1.7 on the recorded G1 locomotion data.
 
-    Uses the ``Trainer`` abstraction (``create_trainer("groot")``) which wraps
-    the ``gr00t_inference`` Docker tool's training pipeline under the hood.
-    This is the same interface ``07_post_tune_any_policy.py`` uses for any
-    provider - just with ``"groot"`` and a G1 dataset.
+    Uses the ``Trainer`` abstraction over LeRobot, which trains the ``groot``
+    policy type natively in-process. This is the same interface
+    ``07_post_tune_any_policy.py`` uses for any provider - just with a
+    ``groot`` policy type and a G1 dataset.
 
     Returns the fine-tuned checkpoint directory.
     """
@@ -165,17 +165,15 @@ def stage_finetune(dataset_root: str, base_model: str, output_dir: str, steps: i
     print(f"  Output:      {output_dir}")
     print(f"  Steps:       {steps}")
 
-    trainer = create_trainer("groot")
+    trainer = create_trainer("lerobot_local")
     spec = TrainSpec(
         dataset_root=dataset_root,
         base_model=base_model,
         output_dir=output_dir,
         steps=steps,
         save_freq=max(1, steps // 4),
-        extra={
-            "embodiment": "unitree_g1",
-            "data_config": "unitree_g1",
-        },
+        embodiment="unitree_g1",
+        extra={"policy_type": "groot"},
     )
 
     problems = trainer.validate(spec)

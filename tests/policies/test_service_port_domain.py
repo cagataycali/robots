@@ -223,7 +223,7 @@ class TestTransportDoesNotRefuseItself:
         refused anywhere - it becomes an endpoint that can never connect and
         surfaces as an inference timeout blamed on the server.
         """
-        zmq = pytest.importorskip("zmq", reason="zmq not installed - pip install 'strands-robots[groot-service]'")
+        zmq = pytest.importorskip("zmq", reason="zmq not installed - pip install 'strands-robots[moveit2]'")
         context = zmq.Context()
         socket = context.socket(zmq.REQ)
         socket.setsockopt(zmq.LINGER, 0)

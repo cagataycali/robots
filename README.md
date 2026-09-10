@@ -165,7 +165,6 @@ extras you need:
 | `sim-gs` | gsplat, plyfile, torch | 3D Gaussian Splatting hybrid rendering (`strands_robots.rendering`): composite any sim backend's robot over a captured photoreal 3DGS scene. `gsplat` ships as a source dist that JIT-compiles CUDA kernels via `nvcc` on first use - probe with `strands_robots.rendering.gsplat_rasterizer_available()`; the zero-GPU `PanoramaBackground` works without this extra. (CUDA GPU; GPU-only, not in `[all]`.) |
 | `lerobot` | LeRobot | Real hardware, local VLA inference, dataset recording |
 | `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (resolves from PyPI via lerobot >= 0.6) |
-| `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |
 | `cosmos3-service` | websockets, msgpack | NVIDIA Cosmos 3 policy-server client |
 | `curobo` | _(empty; install cuRobo from source)_ | In-process collision-aware motion planning (CUDA GPU) |
 | `wbc` | onnxruntime | GR00T Whole-Body-Control (SONIC) humanoid locomotion - in-process ONNX, no GPU |

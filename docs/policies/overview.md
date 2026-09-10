@@ -64,7 +64,6 @@ its client needs only core deps plus the git-installed `vera` package, so
 | Provider | Class | Install extra | When to use |
 |----------|-------|---------------|-------------|
 | [`mock`](custom-policies.md) | `MockPolicy` | _(core)_ | Tests, smoke checks; sinusoidal joints, no GPU. Reference minimal `Policy` (documented inline + custom-policies) |
-| [`groot`](groot.md) | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |

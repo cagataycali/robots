@@ -154,7 +154,7 @@ python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 
 | Stage | Install | External |
 |-------|---------|----------|
 | Record | `pip install "strands-robots[sim-mujoco,lerobot]"` | None (sim) |
-| Fine-tune | `pip install "strands-robots[groot-service]"` | Docker + GPU |
+| Fine-tune | `pip install "strands-robots[lerobot]"` | GPU |
 | Deploy | `pip install "strands-robots[wbc,sim-mujoco]"` | None (CPU ONNX) |
 
 ## Upstream references
@@ -169,4 +169,3 @@ python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 
 
 - [`07_post_tune_any_policy.py`](https://github.com/strands-labs/robots/blob/main/examples/07_post_tune_any_policy.py)  - the same record->train->deploy loop for arm manipulation (SO-100 + LeRobot ACT)
 - [WBC provider](../policies/wbc.md)  - the deploy-stage policy (observation layout, command kwargs, torque harness)
-- [GR00T provider](../policies/groot.md)  - the inference-stage policy (ZMQ + Docker)
