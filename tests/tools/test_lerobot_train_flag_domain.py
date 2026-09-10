@@ -49,9 +49,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
-from strands_robots.tools.lerobot_train import build_train_command
+pytest.importorskip("psutil")
+
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
+from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
 
 lerobot_train = train_mod.lerobot_train
 

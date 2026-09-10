@@ -24,11 +24,18 @@ import math
 import os
 import tempfile
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.mujoco.simulation import Simulation
-from strands_robots.simulation.predicates import _reset_resolution_warnings, make_predicate, predicate_kind
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.predicates import (  # noqa: E402
+    _reset_resolution_warnings,
+    make_predicate,
+    predicate_kind,
+)
 
 # Floating base with a NAMED free joint plus one actuated hinge; get_observation
 # surfaces base_pos/base_quat/base_lin_vel/base_ang_vel for this robot.

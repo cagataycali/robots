@@ -41,7 +41,7 @@ from strands_robots.mesh import audit as _audit_module
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "audit.py"
 _PAGE = _ROOT / "docs" / "security.md"
-_README = _ROOT / "README.md"
+_README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _PREFIX = "STRANDS_MESH_AUDIT_"
 _KNOWN = frozenset(

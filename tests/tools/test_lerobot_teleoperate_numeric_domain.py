@@ -34,8 +34,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod
-from strands_robots.tools import _process_stop
+pytest.importorskip("psutil")
+
+import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
 
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate

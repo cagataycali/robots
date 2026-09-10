@@ -49,9 +49,11 @@ from typing import Any
 
 import pytest
 
-from strands_robots.training.base import Trainer
-from strands_robots.training.sagemaker import _FORWARDED_FIELDS
-from tests.training._spec_field_reads import reads_spec_field
+pytest.importorskip("psutil")
+
+from strands_robots.training.base import Trainer  # noqa: E402
+from strands_robots.training.sagemaker import _FORWARDED_FIELDS  # noqa: E402
+from tests.training._spec_field_reads import reads_spec_field  # noqa: E402
 
 # The gates whose scope is a field rather than every backend, mapped to the
 # TrainSpec fields each owns. The learning-rate gate is deliberately absent: no

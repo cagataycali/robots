@@ -288,7 +288,8 @@ class TeleopMixin:
 
         if isinstance(device_or_spec, str):
             # Build lazily via the factory. Import here to avoid a hard import
-            # cycle (teleoperator.py imports lerobot; mixin stays light).
+            # cycle (``strands_robots.teleoperator`` imports lerobot; mixin
+            # stays light).
             from strands_robots.teleoperator import Teleoperator
 
             device = Teleoperator(device_or_spec, **kwargs)

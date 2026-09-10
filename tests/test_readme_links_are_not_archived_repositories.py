@@ -175,8 +175,9 @@ def test_the_sweep_reads_the_readmes_real_links() -> None:
     found = _readme_repositories()
 
     # A floor rather than the exact count, so removing a link is not a failure.
-    # The README names 9 repositories across 14 github.com URLs as of #3192.
-    assert len(found) >= 8, f"the sweep lost most of the README's links, found {len(found)}: {sorted(found)}"
+    # The 120-line README names 5 repositories (badges, hero links, the harness
+    # SDK and this repo); the detailed link lists moved to the docs pages.
+    assert len(found) >= 4, f"the sweep lost most of the README's links, found {len(found)}: {sorted(found)}"
     for expected in ("strands-labs/robots", "huggingface/lerobot", "google-deepmind/mujoco"):
         assert expected in found, f"the sweep lost a known README link: {expected}"
 

@@ -8,8 +8,8 @@ function that never existed - the pointer is a silent dead end: Sphinx renders a
 plain-text token, IDEs cannot jump to it, and the reader chases a path that
 does not import.
 
-The sibling filename guards (for example
-:mod:`tests.mesh.test_docstring_module_xrefs`) already forbid citing a source
+The sibling filename guard
+(:mod:`tests.test_docstring_module_xrefs`) already forbids citing a source
 *file* by name; this guard closes the complementary gap for the *recommended*
 form - the ``:mod:`` / ``:class:`` / ``:func:`` / ``:meth:`` roles that name a
 dotted API path - by verifying that every fully-qualified ``strands_robots.*``

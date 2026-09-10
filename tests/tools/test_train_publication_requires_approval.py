@@ -42,8 +42,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
+pytest.importorskip("psutil")
+
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
 
 lerobot_train = train_mod.lerobot_train
 

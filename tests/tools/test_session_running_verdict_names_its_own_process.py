@@ -47,13 +47,16 @@ import sys
 import time
 from typing import Any
 
-import psutil
 import pytest
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod
-import strands_robots.tools.lerobot_train as train_mod
-from strands_robots.tools import _process_stop
-from strands_robots.tools._process_stop import (
+pytest.importorskip("psutil")
+
+import psutil  # noqa: E402
+
+import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+from strands_robots.tools import _process_stop  # noqa: E402
+from strands_robots.tools._process_stop import (  # noqa: E402
     _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
