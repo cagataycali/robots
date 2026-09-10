@@ -1,14 +1,14 @@
-"""MuJoCo GL backend selection - stdlib only, imported by ``strands_robots/__init__``.
+"""MuJoCo GL backend selection - stdlib only, imported by the ``strands_robots`` package.
 
 MuJoCo reads ``MUJOCO_GL`` once, on ``import mujoco``, so the package
 configures it at import time. These helpers used to live in
-``strands_robots.simulation.mujoco.backend``; reaching that module runs
-``strands_robots/simulation/__init__.py`` and its eager imports, which loaded
+``strands_robots.simulation.mujoco.backend``; reaching that module initialises
+``strands_robots.simulation`` and its eager imports, which loaded
 14 simulation modules on every ``import strands_robots`` with mujoco
 installed. This leaf module has no parent package initialiser to pay for, and
 ``backend`` re-exports every name from it, so callers and tests that patch
 ``backend._library_loads`` etc. keep working - but patch THIS module when the
-behaviour under test runs from ``strands_robots/__init__`` or ``doctor``.
+behaviour under test runs from the package initialiser or ``doctor``.
 """
 
 import ctypes
