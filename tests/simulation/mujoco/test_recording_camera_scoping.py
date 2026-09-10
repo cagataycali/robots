@@ -17,7 +17,6 @@ Covers:
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 
 import numpy as np
@@ -25,8 +24,6 @@ import pytest
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 _ROBOT_XML = """
 <mujoco model="test_arm">

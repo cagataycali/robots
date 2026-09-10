@@ -282,8 +282,11 @@ def test_scan_reaches_the_module_scope_defaults():
     Without this a path/glob regression, or a walker that descended into nothing,
     would make the rule above pass by reaching no source at all.
     """
+    # tests/ carries exactly one default now (tests/conftest.py, set for the whole
+    # session before any test module is imported); the rest live in examples/
+    # (11) and tests_integ/ (5), which have no shared conftest to lean on.
     total = sum(len(_module_scope_gl_defaults(p.read_text(encoding="utf-8"))) for p in _tracked_py())
-    assert total >= 20, (
+    assert total >= 10, (
         f"the AST scan found only {total} module-scope MUJOCO_GL defaults across {_tracked_py()[:1]}...; "
         "the tree has far more, so the scan is not reaching the sources."
     )
