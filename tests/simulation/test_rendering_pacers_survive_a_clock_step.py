@@ -433,6 +433,56 @@ def test_recorder_capture_rate_without_a_step_is_the_nominal_rate(
     assert intervals.max() == pytest.approx(nominal_ms, abs=2.0)
 
 
+def test_recorder_publishes_its_state_before_the_capture_thread_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every frame the capture thread renders finds ``_cams_rec_state`` set.
+
+    The tests above stamp a frame only when the state they read off the
+    instance says the thread is past its warmup. When the state was published
+    *after* ``Thread.start()``, a main thread that lost the GIL right there let
+    the recorder run whole capture cycles that no reader could attribute to a
+    recording - on a loaded L40S that read as "premise: only 5 frames captured".
+    The stall is made deterministic here, so the ordering is pinned rather than
+    the scheduler's mood.
+    """
+    import threading
+
+    real_start = threading.Thread.start
+
+    def start_then_stall(thread: threading.Thread) -> None:
+        real_start(thread)
+        time.sleep(0.05)  # the main thread loses the race, as it does under load
+
+    monkeypatch.setattr(threading.Thread, "start", start_then_stall)
+    state_seen: list[bool] = []
+    sim = Simulation()
+    sim.create_world()
+    sim.add_camera("cam_a", position=[-0.3, -0.3, 0.4], target=[0.0, 0.0, 0.1])
+    payload = _png_bytes(_gradient())
+
+    def _fake_render(camera_name: str, width: int | None = None, height: int | None = None, **_kw: Any):
+        state_seen.append(getattr(sim, "_cams_rec_state", None) is not None)
+        return {
+            "status": "success",
+            "content": [{"text": "32x24"}, {"image": {"format": "png", "source": {"bytes": payload}}}],
+        }
+
+    sim.render = _fake_render  # type: ignore[assignment,method-assign]
+    try:
+        started = sim.start_cameras_recording(
+            cameras=["cam_a"], output_dir=str(tmp_path), fps=RECORDER_FPS, width=32, height=24, max_frames_per_camera=4
+        )
+        assert started["status"] == "success", started
+        stopped = sim.stop_cameras_recording()
+    finally:
+        sim.cleanup()
+
+    assert stopped["status"] == "success", stopped
+    assert state_seen, "premise: the capture thread never rendered"
+    assert all(state_seen), f"{state_seen.count(False)} of {len(state_seen)} renders ran before the state was published"
+
+
 # --------------------------------------------------------------------------- #
 # 3. The duration each recorder reports
 # --------------------------------------------------------------------------- #
