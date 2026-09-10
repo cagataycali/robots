@@ -26,6 +26,7 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from device_connect_edge import DeviceRuntime
@@ -123,23 +124,38 @@ _TLS_ENV = (
 )
 _TLS_SCHEMES = ("tls", "quic", "zenoh+tls", "mqtts", "ssl")
 
+#: The endpoint variables ``device_connect_edge`` itself reads for a non-NATS
+#: backend, so a TLS endpoint configured through the environment counts here
+#: exactly where it counts there. ``NATS_URL`` / ``NATS_URLS`` are absent
+#: deliberately: that backend short-circuits below.
+_ENDPOINT_ENV = ("ZENOH_CONNECT", "ZENOH_LISTEN", "MESSAGING_URLS")
 
-def transport_is_authenticated(backend: str, urls: list[str] | None, env: Any = os.environ) -> bool:
-    """Whether the edge runtime will actually authenticate and encrypt this transport.
 
-    ``device_connect_edge`` validates only the NATS backend (its ``_validate_config``
-    returns early for every other backend), so on the default ``zenoh`` backend
-    ``allow_insecure=False`` reaches the network unchecked: measured, a device came
-    online over plaintext LAN multicast and an anonymous peer ran ``execute`` and
-    ``stop`` on it while the INSECURE warning stayed silent. TLS is configured either
-    through a credentials/TLS file variable or a TLS endpoint scheme; NATS is left to
-    the edge's own check.
+def transport_is_authenticated(backend: str, urls: list[str] | None, env: Mapping[str, str] = os.environ) -> bool:
+    """Whether anything will authenticate and encrypt this transport.
+
+    ``device_connect_edge`` checks that only for NATS: its
+    ``DeviceRuntime._validate_startup_config`` returns before every check when
+    ``self._messaging_backend not in (None, "nats")`` (``device.py:810`` in
+    0.2.5), and its Zenoh adapter never reads ``allow_insecure`` at all. So on
+    the default ``zenoh`` backend nothing stands between ``allow_insecure=False``
+    and the network, and a device with no credentials comes online in plaintext
+    while believing it is secure.
+
+    Args:
+        backend: The resolved messaging backend, e.g. ``"zenoh"`` or ``"nats"``.
+        urls: The endpoints passed to the runtime, or ``None`` for D2D
+            discovery, in which case only the environment can carry one.
+        env: The environment to read, defaulting to the process's own.
+
+    Returns:
+        ``True`` when the backend validates itself (NATS), when credentials or
+        TLS material are configured, or when an endpoint asks for a TLS scheme;
+        ``False`` when the transport would be plaintext.
     """
     if backend == "nats" or any(env.get(name) for name in _TLS_ENV):
         return True
-    endpoints = list(urls or []) + [
-        u for name in ("ZENOH_CONNECT", "MESSAGING_URLS") for u in (env.get(name) or "").split(",")
-    ]
+    endpoints = list(urls or []) + [u for name in _ENDPOINT_ENV for u in (env.get(name) or "").split(",")]
     return any(e.strip().split("://")[0].split("/")[0].lower() in _TLS_SCHEMES for e in endpoints if e.strip())
 
 

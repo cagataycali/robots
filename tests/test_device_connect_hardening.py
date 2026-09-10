@@ -666,8 +666,8 @@ def test_allow_insecure_resolution_precedence():
 def test_init_device_connect_uses_secure_default(monkeypatch):
     """The production entrypoint constructs the runtime secure-by-default when
     TLS is configured and neither the arg nor the env var opt into insecure
-    transport. (Without TLS it refuses to start instead - see
-    tests/device_connect/test_plaintext_transport_is_refused_by_default.py.)"""
+    transport. Without TLS it refuses to start instead, which is what
+    ``test_a_fresh_install_does_not_come_online_in_plaintext`` below pins."""
     from unittest.mock import patch
 
     monkeypatch.setenv("MESSAGING_CREDENTIALS_FILE", "/etc/dc/test.creds.json")
@@ -718,7 +718,7 @@ def _d074_init(monkeypatch, env: dict, **kwargs):
     import strands_robots.device_connect._impl as impl
     from strands_robots.device_connect import init_device_connect
 
-    for name in (*impl._TLS_ENV, *_D074_VARS, "ZENOH_CONNECT", "MESSAGING_URLS", "MESSAGING_BACKEND"):
+    for name in (*impl._TLS_ENV, *impl._ENDPOINT_ENV, *_D074_VARS, "MESSAGING_BACKEND"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -778,6 +778,8 @@ def test_a_tls_endpoint_is_accepted_without_the_opt_in(monkeypatch):
         ("zenoh", None, {"MESSAGING_CREDENTIALS_FILE": "/etc/dc/robot.creds.json"}, True),
         ("zenoh", None, {"MESSAGING_TLS_CA_FILE": "/etc/dc/ca.pem"}, True),
         ("zenoh", None, {"ZENOH_CONNECT": "tls/router.local:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tls/0.0.0.0:7447"}, True),
+        ("zenoh", None, {"ZENOH_LISTEN": "tcp/0.0.0.0:7447"}, False),
         ("zenoh", ["zenoh+tls://router.local:7447"], {}, True),
         ("zenoh", ["quic/router.local:7447"], {}, True),
         ("mqtt", ["mqtt://broker.local:1883"], {}, False),
