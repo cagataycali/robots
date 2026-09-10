@@ -1,0 +1,92 @@
+{
+  "label": "after",
+  "tree": "/home/cagatay/actions-runner-harness-3/_work/_temp/robots-src",
+  "rows": [
+    {
+      "step": "operator says no to a walk command",
+      "target": "loco.SetVelocity",
+      "operator": "n",
+      "status": "error",
+      "dispatched_flag": false,
+      "sdk_calls": [],
+      "reached_robot": false,
+      "accepts_operator_context": true,
+      "message": "loco.SetVelocity refused: SetVelocity to 'loco.SetVelocity' was declined by the operator."
+    },
+    {
+      "step": "operator says no to dropping torque",
+      "target": "loco.ZeroTorque",
+      "operator": "n",
+      "status": "error",
+      "dispatched_flag": false,
+      "sdk_calls": [],
+      "reached_robot": false,
+      "accepts_operator_context": true,
+      "message": "loco.ZeroTorque refused: ZeroTorque to 'loco.ZeroTorque' was declined by the operator."
+    },
+    {
+      "step": "no operator reachable (headless)",
+      "target": "motion_switcher.ReleaseMode",
+      "operator": null,
+      "status": "error",
+      "dispatched_flag": false,
+      "sdk_calls": [],
+      "reached_robot": false,
+      "accepts_operator_context": true,
+      "message": "motion_switcher.ReleaseMode refused: 'motion_switcher.ReleaseMode' can drop or walk the robot; it needs operator approval before it is sent. No tool_context available for operator approval. Set STRAND"
+    },
+    {
+      "step": "operator says yes to a walk command",
+      "target": "loco.SetVelocity",
+      "operator": "y",
+      "status": "success",
+      "dispatched_flag": null,
+      "sdk_calls": [
+        [
+          "SetVelocity",
+          {
+            "vx": 0.3,
+            "vy": 0.0,
+            "vyaw": 0.0,
+            "duration": 1.0
+          }
+        ]
+      ],
+      "reached_robot": true,
+      "accepts_operator_context": true,
+      "message": "loco.SetVelocity ok"
+    },
+    {
+      "step": "a read, operator would have said no",
+      "target": "loco.GetFsmId",
+      "operator": "n",
+      "status": "success",
+      "dispatched_flag": null,
+      "sdk_calls": [
+        [
+          "GetFsmId",
+          {}
+        ]
+      ],
+      "reached_robot": true,
+      "accepts_operator_context": true,
+      "message": "loco.GetFsmId ok"
+    },
+    {
+      "step": "the emergency stop, operator says no",
+      "target": "loco.StopMove",
+      "operator": "n",
+      "status": "success",
+      "dispatched_flag": null,
+      "sdk_calls": [
+        [
+          "StopMove",
+          {}
+        ]
+      ],
+      "reached_robot": true,
+      "accepts_operator_context": true,
+      "message": "loco.StopMove ok"
+    }
+  ]
+}
