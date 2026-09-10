@@ -194,8 +194,8 @@ class CuroboPolicy(Policy):
         action_horizon: Number of waypoints to yield per call to
             :meth:`get_actions`. Matches the chunked-action contract used
             by the 50Hz execution loop in :class:`~strands_robots.robot.Robot`.
-            Default 16 - same as :class:`~strands_robots.policies.groot.policy.Gr00tPolicy`'s
-            inner-loop horizon. Must be a positive ``int``: it is consumed as
+            Default 16 - the inner-loop horizon the chunked providers share.
+            Must be a positive ``int``: it is consumed as
             a slice bound over the cached trajectory, and it shares
             :func:`~strands_robots.policies.base.chunk_count_error` with the
             ``actions_per_step`` of every other provider, so the same chunk

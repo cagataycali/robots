@@ -402,8 +402,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "mock",
         "random",
         "test",
-        # Gr00tPolicy
-        "groot",
         # LerobotLocalPolicy
         "lerobot_local",
         "lerobot",
@@ -697,8 +695,8 @@ def _hf_repo_allowlist_cached(raw: str) -> tuple[str, ...]:
 def _hf_repo_allowlist() -> list[str]:
     """Return operator-extensible HF repo prefix allowlist.
 
-    Defaults to ``["nvidia", "huggingface", "lerobot"]`` covering GR00T
-    and LeRobot models. Operators extend via
+    Defaults to ``["nvidia", "huggingface", "lerobot"]`` covering the
+    NVIDIA and LeRobot model orgs. Operators extend via
     ``STRANDS_MESH_HF_REPO_ALLOW`` (comma-separated ``<org>`` or
     ``<org>/<repo>`` prefixes; charset enforced via
     :data:`_HF_REPO_ENTRY_RE`).

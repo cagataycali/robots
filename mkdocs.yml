@@ -35,7 +35,6 @@ nav:
 - Pure-RTPS ROS 2: rtps-integration.md
 - Policy Providers:
   - Overview: policies/overview.md
-  - GR00T: policies/groot.md
   - Cosmos 3: policies/cosmos3.md
   - VERA: policies/vera.md
   - cuRobo: policies/curobo.md

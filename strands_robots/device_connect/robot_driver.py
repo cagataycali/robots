@@ -172,7 +172,7 @@ class RobotDeviceDriver(DeviceDriver):
 
         Args:
             instruction: Natural language task instruction
-            policy_provider: Policy backend (groot, mock, lerobot_local, ...)
+            policy_provider: Policy backend (mock, lerobot_local, remote, ...)
             duration: Maximum task duration in seconds
             policy_port: Policy server port (0 for default)
         """

@@ -272,7 +272,7 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     Accepts either a provider name or a smart string:
 
-    - Provider name: ``create_policy("groot", port=5555)``
+    - Provider name: ``create_policy("remote", port=5555)``
     - ZMQ URL: ``create_policy("zmq://localhost:5555")``
     - Shorthand: ``create_policy("mock")``
 

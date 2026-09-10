@@ -56,7 +56,7 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     """Get policy provider config by name or alias.
 
     Args:
-        name: Provider name or alias (e.g. "groot", "lerobot", "cosmos").
+        name: Provider name or alias (e.g. "lerobot", "cosmos", "remote").
 
     Returns:
         Provider dict with module, class, config_keys, defaults, etc.
@@ -74,8 +74,8 @@ def provider_reads_a_port(name: str | None) -> bool | None:
     one of them unanswerable:
 
     - ``requires`` lists the keywords a caller MUST supply, so it is the oracle
-      for refusing a *missing* port. Only ``groot`` and ``moveit2`` name it -
-      ``cosmos3`` dials a server too but defaults its port, so a caller may
+      for refusing a *missing* port. Only ``moveit2`` names it - ``cosmos3``
+      and ``remote`` dial a server too but default their port, so a caller may
       legally omit it.
     - ``config_keys`` lists the keywords the provider UNDERSTANDS, so it is the
       oracle for refusing a *supplied* port. A provider outside this set is
@@ -181,7 +181,7 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
     Resolution order:
         1. URL patterns declared in ``policies.json`` (ws://, wss://, zmq://,
            grpc://, cosmos3://, vera://)
-        2. Shorthand names (mock, groot, lerobot_local, ...)
+        2. Shorthand names (mock, lerobot_local, remote, ...)
         3. HuggingFace model IDs (org/model)
         4. Registered provider name
         5. Fallback to lerobot_local
@@ -450,14 +450,14 @@ def build_policy_kwargs(
 
     Args:
         provider: Policy provider name.
-        policy_port: Port number (groot, cosmos3, moveit2, remote).
+        policy_port: Port number (cosmos3, moveit2, remote).
         policy_host: Hostname.  ``None`` leaves the key unset so the
             provider's registry default -- or, failing that, its own
             constructor default -- applies.
         model_path: Local model path or HF ID.
         server_address: Full server address host:port (grpc:// URLs, remote providers).
         policy_type: Sub-type (pi0, act, smolvla, ...).
-        data_config: Data configuration for groot.
+        data_config: Provider-specific data configuration.
         **extra: Any additional provider-specific kwargs.  A key declared in
             the provider's ``config_keys`` is forwarded; any other key is
             dropped, which is what ``config_keys`` exists to decide.

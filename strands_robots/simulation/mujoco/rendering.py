@@ -2717,7 +2717,7 @@ class RenderingMixin:
                     benchmark_name=task,
                     n_episodes=5,
                     seed=42,
-                    policy_provider="groot",
+                    policy_provider="lerobot_local",
                     policy_config={...},
                     on_frame=on_frame,
                 )

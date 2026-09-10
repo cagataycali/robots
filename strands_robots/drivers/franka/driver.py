@@ -794,7 +794,7 @@ class FrankaDriver:
         instruction: str,
         policy_port: int | None = None,
         policy_host: str = "localhost",
-        policy_provider: str = "groot",
+        policy_provider: str = "mock",
         duration: float = 30.0,
         **policy_kwargs: Any,
     ) -> dict[str, Any]:

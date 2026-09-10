@@ -14,12 +14,10 @@ API object, so the reference is checkable and survives refactors.
 This guard walks every module/class/function docstring in the top-level
 :mod:`strands_robots.tools` modules and fails if any embeds a
 ``<something>.py`` filename token *that names a real internal module*. Unlike
-the sibling guards, it is deliberately scoped to internal stems: the
-:mod:`strands_robots.tools.gr00t_inference` tool documents the upstream
-Isaac-GR00T launcher scripts it shells out to (``inference_service.py``,
-``embodiment_tags.py``) by filename. Those name real files in another
-repository - not internal siblings - so a checkable module xref does not
-exist for them and they are correctly left untouched.
+the sibling guards, it is deliberately scoped to internal stems: a tool that
+documents an upstream project's launcher scripts by filename names real files
+in another repository - not internal siblings - so a checkable module xref
+does not exist for them and they are correctly left untouched.
 
 It would have failed while ``tools/robot_mesh.py`` still cited the mesh
 command handler as ``core.py:_on_cmd`` instead of
@@ -74,7 +72,7 @@ def _docstrings_with_offenders(internal_stems: set[str]) -> dict[str, list[str]]
 def test_tool_modules_scanned() -> None:
     """Guard the guard: the scan walked the top-level tool modules."""
     scanned = {p.name for p in _TOOLS_DIR.glob("*.py")}
-    assert {"robot_mesh.py", "gr00t_inference.py", "run_policy.py"} <= scanned
+    assert {"robot_mesh.py", "run_policy.py"} <= scanned
 
 
 def test_internal_stem_set_is_populated() -> None:

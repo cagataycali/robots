@@ -36,7 +36,6 @@ import pytest
 from strands_robots.training._validate import run_size_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
@@ -59,7 +58,7 @@ UNUSABLE = NON_POSITIVE + WRONG_TYPE + NOT_COMPARABLE
 
 # Every backend that reads the run size. The RL trainers are deliberately
 # absent - see TestTheRLTrainersIgnoreAFieldTheyDoNotRead.
-SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, Gr00tTrainer, LerobotTrainer, SagemakerTrainer)
+SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, SagemakerTrainer)
 
 
 @pytest.fixture

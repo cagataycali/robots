@@ -30,7 +30,7 @@ def require_optional(
     Args:
         module_name: Dotted module name to import (e.g. ``"zmq"``).
         pip_install: Explicit pip package name if it differs from *module_name*.
-        extra: ``pyproject.toml`` extras group (e.g. ``"groot-service"``).
+        extra: ``pyproject.toml`` extras group (e.g. ``"moveit2"``).
         purpose: Human-readable description shown in the error message.
         system_install: Remedy for a module that arrives with a system package
             rather than from an index - the ROS 2 client libraries are the case
@@ -1137,8 +1137,8 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
 
     Shared domain for every caller-supplied port number: the agent tools that
     reach a service over TCP (``use_rosbridge``'s WebSocket,
-    ``gr00t_inference``'s inference service), the mesh bridges that construct
-    one, the policy providers that dial one (``groot``, ``moveit2``,
+    an inference service), the mesh bridges that construct
+    one, the policy providers that dial one (``moveit2``,
     ``cosmos3``, ``lerobot_async``, ``vera``), the Device Connect drivers
     that address a device daemon
     (:class:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver`'s
@@ -1614,11 +1614,10 @@ MAX_ZMQ_TIMEOUT_MS = 2**31 - 1
 def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int | None, str | None]:
     """Read ``value`` as a ZMQ send/receive timeout in milliseconds.
 
-    Shared domain for the ``timeout_ms`` of both ZMQ REQ inference clients -
-    :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient` and
+    Shared domain for the ``timeout_ms`` of the ZMQ REQ inference client -
     :class:`~strands_robots.policies.moveit2.client.MoveIt2InferenceClient` -
-    which each hand it to ``setsockopt(RCVTIMEO)`` and ``setsockopt(SNDTIMEO)``
-    on the socket they dial their sidecar with. It is the third remote-inference
+    which hands it to ``setsockopt(RCVTIMEO)`` and ``setsockopt(SNDTIMEO)``
+    on the socket it dials its sidecar with. It is the third remote-inference
     transport, and it is spelled differently from the WebSocket and gRPC pair's
     ``connect_timeout`` / ``request_timeout`` (#1984), which is why it was
     missed when those were settled: same concern, different parameter name.
