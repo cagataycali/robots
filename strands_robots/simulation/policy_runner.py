@@ -769,6 +769,71 @@ class CooperativeStop(BaseException):
     """
 
 
+def query_policy_chunk(
+    policy: Policy,
+    observation: dict[str, Any],
+    observed_delay: int = 0,
+    *,
+    instruction: str,
+    policy_kwargs: dict[str, Any],
+    action_horizon: int,
+    inference_ms: list[float] | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve ONE action chunk from ``policy`` for ``observation``.
+
+    The single chunk-acquisition seam for every rollout loop in this module -
+    :meth:`PolicyRunner.run`, :meth:`PolicyRunner.evaluate`,
+    :meth:`PolicyRunner._evaluate_with_spec` and :class:`_ChunkPipeline`. Three
+    hand-rolled copies of this body existed before, so a fix applied to one
+    silently missed the others.
+
+    Never truncates below the policy's own intended chunk size: a model trained
+    for N-step open-loop replay (``policy.actions_per_step == N``) must have its
+    full chunk consumed, because clamping to a smaller ``action_horizon`` drops
+    the tail of every chunk and forces an out-of-distribution re-query.
+    :func:`~strands_robots.policies.base.resolve_chunk_length` is the single
+    source of truth for that re-query interval.
+
+    ``observed_delay`` tells latency-sensitive (RTC) providers how many control
+    steps elapse between ``observation`` being captured and the FIRST action of
+    the returned chunk being applied, so they slice the chunk seam by an exact
+    integer instead of a non-reproducible wall-clock estimate. A synchronous
+    loop pauses the world during inference, so the delay is 0; the async
+    pipeline supplies the count of still-pending steps of the chunk currently
+    executing. The ``set_rtc_observed_delay`` call and the ``get_actions`` call
+    happen on the SAME thread (the prefetch worker, or the consumer) and at most
+    one inference is ever in flight, so this never races.
+
+    Args:
+        policy: Policy to query.
+        observation: Observation the chunk is inferred from.
+        observed_delay: Control steps between ``observation`` being captured and
+            the first action of the returned chunk being applied. 0 whenever the
+            world is paused across inference.
+        instruction: Natural-language instruction forwarded to the policy.
+        policy_kwargs: Per-call goal payload forwarded verbatim to
+            ``get_actions``.
+        action_horizon: Caller's requested re-query interval, raised to the
+            policy's own chunk size by ``resolve_chunk_length``.
+        inference_ms: When supplied, the inference wall-time in milliseconds is
+            appended. ``list.append`` is atomic under the GIL, so a prefetch
+            worker appending never races a consumer reading the list after
+            ``shutdown(wait=True)``. ``None`` records no timing.
+
+    Returns:
+        The chunk truncated to the resolved length. May be EMPTY - each caller
+        decides whether that is fatal, because the answer differs by entry
+        point (a rollout cannot proceed without actions, while a benchmark
+        episode advances one physics step and re-queries).
+    """
+    policy.set_rtc_observed_delay(observed_delay)
+    _t_infer = time.perf_counter()
+    actions = _resolve_coroutine(policy.get_actions(observation, instruction, **policy_kwargs))
+    if inference_ms is not None:
+        inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
+    return list(actions[: resolve_chunk_length(policy, action_horizon)])
+
+
 class _ChunkPipeline:
     """Yield ``(observation, action)`` pairs for a policy rollout.
 
@@ -821,6 +886,16 @@ class _ChunkPipeline:
         self.chunks_acquired = 0
         self.prefetch_hits = 0
         self.prefetch_blocks = 0
+        #: Index of the just-yielded action within its chunk. ``> 0`` means the
+        #: yielded observation was already used for an earlier action of the
+        #: same chunk, which is what "reused" means to a consumer's telemetry.
+        self.chunk_index = 0
+        #: Control steps between the yielded observation being captured and the
+        #: just-yielded action being applied. ``0`` means the observation IS the
+        #: live pre-action state, so a recording consumer needs no refresh.
+        #: Distinct from ``chunk_index``: the first action of a PREFETCHED chunk
+        #: is not reused, yet its observation is already several steps old.
+        self.observation_age_steps = 0
         self._executor: Any = None
 
     def __enter__(self) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
@@ -843,7 +918,12 @@ class _ChunkPipeline:
             self.chunks_acquired += 1
             if not chunk:
                 raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
-            for action in chunk:
+            for index, action in enumerate(chunk):
+                self.chunk_index = index
+                # The chunk-start observation is the live pre-action state for
+                # the FIRST action only; action ``index`` is applied that many
+                # control steps after the observation was captured.
+                self.observation_age_steps = index
                 yield observation, action
 
     def _iter_async(self) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
@@ -880,9 +960,15 @@ class _ChunkPipeline:
         if not cur_chunk:
             raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
         idx = 0
+        # Age the CURRENT chunk's observation already carried when the chunk
+        # arrived: 0 for a synchronously queried chunk (the world was paused
+        # across inference), and the prefetch's observed_delay for a chunk that
+        # was inferred mid-execution of its predecessor.
+        cur_obs_base_age = 0
         prefetch_trigger = max(1, len(cur_chunk) // 2)
         prefetch: Future[list[dict[str, Any]]] | None = None
         prefetch_obs: dict[str, Any] | None = None
+        prefetch_obs_base_age = 0
 
         while True:
             if idx >= len(cur_chunk):
@@ -890,14 +976,17 @@ class _ChunkPipeline:
                     cur_chunk = _swap_in(prefetch)
                     if prefetch_obs is not None:
                         cur_obs = prefetch_obs
+                        cur_obs_base_age = prefetch_obs_base_age
                     prefetch = None
                     prefetch_obs = None
+                    prefetch_obs_base_age = 0
                     self.chunks_acquired += 1
                 else:
                     # Chunk too short to have triggered a prefetch -> one
                     # synchronous re-query.
                     cur_obs = self._observation_fn()
                     cur_chunk = self._query_chunk(cur_obs, 0)
+                    cur_obs_base_age = 0
                     self.chunks_acquired += 1
                 if not cur_chunk:
                     # Drop-and-requery: a prefetched chunk arriving empty (a
@@ -907,6 +996,7 @@ class _ChunkPipeline:
                     logger.warning("async-RTC chunk arrived empty; falling back to one synchronous re-query.")
                     cur_obs = self._observation_fn()
                     cur_chunk = self._query_chunk(cur_obs, 0)
+                    cur_obs_base_age = 0
                     self.chunks_acquired += 1
                     if not cur_chunk:
                         raise RuntimeError(
@@ -919,12 +1009,19 @@ class _ChunkPipeline:
 
             if prefetch is None and idx >= prefetch_trigger:
                 prefetch_obs = self._observation_fn()
-                # The prefetched chunk first applies after the remaining steps of
-                # the current chunk drain - a known integer independent of how
-                # long inference actually takes in wall-clock time.
-                observed_delay = max(0, len(cur_chunk) - prefetch_trigger)
+                # The prefetched chunk first applies once the REMAINING steps of
+                # the current chunk drain - a known integer, independent of how
+                # long inference actually takes in wall-clock time (a slow
+                # inference just stalls the loop; the robot does not advance past
+                # the chunk end while waiting). Expressed against ``idx`` rather
+                # than ``prefetch_trigger`` so it stays the remaining-step count
+                # by construction, not only on the step the trigger fires.
+                observed_delay = max(0, len(cur_chunk) - idx)
+                prefetch_obs_base_age = observed_delay
                 prefetch = self._executor.submit(self._query_chunk, prefetch_obs, observed_delay)
 
+            self.chunk_index = idx
+            self.observation_age_steps = cur_obs_base_age + idx
             yield cur_obs, cur_chunk[idx]
             idx += 1
 
@@ -1722,27 +1819,30 @@ class PolicyRunner:
 
         # RTC telemetry, reported in the result json so latency masking is
         # provable without grepping logs. inference_ms collects every
-        # get_actions wall-time (both paths); the prefetch hit/block counters and
-        # chunks_acquired are async-only (0 on the synchronous path). list.append
-        # is atomic under the GIL, so the worker thread appending an inference
-        # time never races the main thread reading the list after shutdown(wait).
+        # get_actions wall-time (both paths); the prefetch hit/block counters are
+        # async-only. list.append is atomic under the GIL, so the worker thread
+        # appending an inference time never races the main thread reading the
+        # list after shutdown(wait).
         inference_ms: list[float] = []
-        rtc_chunks_acquired = 0
-        rtc_prefetch_hits = 0
-        rtc_prefetch_blocks = 0
+        # The chunk pipeline owns the acquisition counters. It is constructed
+        # with the rollout loop below and read back through this binding, so one
+        # source of truth serves both the success and the error payload and a
+        # rollout that dies mid-flight still reports the chunks it acquired.
+        # ``None`` means the loop was never reached (a pre-flight refusal).
+        _pipeline: _ChunkPipeline | None = None
 
         def _rtc_telemetry() -> dict[str, Any]:
             # The async-RTC telemetry block, merged into every result json
             # (success and error) so latency masking is provable from the
-            # structured payload without grepping logs. On the synchronous path
-            # the prefetch counters stay 0 and only the inference timings carry
-            # information.
+            # structured payload without grepping logs. A chunk is acquired on
+            # BOTH paths, so ``rtc_chunks_acquired`` counts on both; only the
+            # prefetch hit/block counters are async-exclusive.
             _n = len(inference_ms)
             return {
                 "rtc_async_enabled": bool(async_rtc),
-                "rtc_chunks_acquired": rtc_chunks_acquired,
-                "rtc_prefetch_hits": rtc_prefetch_hits,
-                "rtc_prefetch_blocks": rtc_prefetch_blocks,
+                "rtc_chunks_acquired": _pipeline.chunks_acquired if _pipeline is not None else 0,
+                "rtc_prefetch_hits": _pipeline.prefetch_hits if _pipeline is not None else 0,
+                "rtc_prefetch_blocks": _pipeline.prefetch_blocks if _pipeline is not None else 0,
                 "rtc_avg_inference_ms": round(sum(inference_ms) / _n, 3) if _n else 0.0,
                 "rtc_max_inference_ms": round(max(inference_ms), 3) if _n else 0.0,
             }
@@ -2351,221 +2451,86 @@ class PolicyRunner:
                         logger.info("stop_when fired at step %d; ending rollout early", step_count)
                     return fired
 
-                def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
-                    # Resolve ONE action chunk from the policy. Never truncate below
-                    # the policy's own intended chunk size: a model trained for
-                    # N-step open-loop replay (policy.actions_per_step == N) must
-                    # have its full chunk consumed; clamping to a smaller
-                    # action_horizon drops the tail of every chunk and forces an
-                    # out-of-distribution re-query (see LerobotLocalPolicy
-                    # auto-detect of config.n_action_steps).
-                    #
-                    # Tell the policy how many control steps elapse between this
-                    # observation and the first application of the returned chunk so
-                    # latency-sensitive providers (RTC) slice the chunk-seam by an
-                    # EXACT integer instead of a non-reproducible wall-clock
-                    # estimate. The synchronous loop pauses the world during
-                    # inference (delay 0); the async pipeline supplies the count of
-                    # still-pending steps of the chunk currently executing. The set
-                    # and the get_actions call happen on the SAME thread (the worker
-                    # for a prefetch, the main thread otherwise), and at most one
-                    # inference is ever in flight, so this never races.
-                    policy.set_rtc_observed_delay(observed_delay)
-                    _t_infer = time.perf_counter()
-                    coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
-                    actions = _resolve_coroutine(coro_or_result)
-                    # Record inference wall-time (ms) for both the sync and async
-                    # paths. Under async this runs on the prefetch worker; list
-                    # append is atomic under the GIL so the read after
-                    # shutdown(wait=True) sees every entry.
-                    inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
-                    _chunk = resolve_chunk_length(policy, action_horizon)
-                    return list(actions[:_chunk])
+                # ONE chunk-acquisition seam for the whole module, so a fix to
+                # chunk resolution or to the RTC delay contract lands on every
+                # rollout entry point at once.
+                _acquire_chunk = functools.partial(
+                    query_policy_chunk,
+                    policy,
+                    instruction=instruction,
+                    policy_kwargs=_policy_kwargs,
+                    action_horizon=action_horizon,
+                    inference_ms=inference_ms,
+                )
 
-                if async_rtc:
-                    # Async chunk pipeline: overlap inference for chunk N+1 with the
-                    # EXECUTION of chunk N. While the current chunk drains we fire
-                    # the next get_actions() on a single background worker using a
-                    # mid-execution ("horizon-shifted") observation, then atomically
-                    # swap it in when the current chunk runs out. A policy whose
-                    # inference latency is <= the chunk's execution time pays
-                    # (almost) zero visible stall at the seam - exactly how an async
-                    # real-time controller hides latency on real hardware. RTC
-                    # policies blend the seam internally via their own prev-chunk
-                    # state, so the runner only schedules the overlap (it never
-                    # touches the policy's RTC machinery). The policy is invoked from
-                    # AT MOST one thread at a time (a new prefetch is only submitted
-                    # after the previous one has been consumed), and the sim is only
-                    # ever touched from THIS thread, so there is no MuJoCo data race.
-                    from concurrent.futures import Future, ThreadPoolExecutor
-                    from concurrent.futures import TimeoutError as FuturesTimeout
-
-                    def _swap_in(fut: Future[list[dict[str, Any]]]) -> list[dict[str, Any]]:
-                        # Block on the prefetched chunk at the seam. A prefetch HIT
-                        # means inference already finished (the seam is invisible); a
-                        # BLOCK means we still have to wait because inference ran
-                        # slower than the chunk's execution - the seam was starved,
-                        # which is the actionable "tune prefetch_trigger / shorten
-                        # the chunk" signal, so log it. A hard timeout turns a stuck
-                        # model into a structured error instead of an unbounded sim
-                        # hang.
-                        nonlocal rtc_prefetch_hits, rtc_prefetch_blocks
-                        if fut.done():
-                            rtc_prefetch_hits += 1
-                        else:
-                            rtc_prefetch_blocks += 1
-                            logger.warning(
-                                "async-RTC seam starvation: prefetched chunk was not ready at the "
-                                "swap point (inference slower than chunk execution). Blocking on it; "
-                                "consider a shorter chunk or an earlier prefetch_trigger."
-                            )
-                        try:
-                            return fut.result(timeout=rtc_inference_timeout_s)
-                        except FuturesTimeout as e:
-                            raise RuntimeError(
-                                f"async-RTC prefetch exceeded rtc_inference_timeout_s="
-                                f"{rtc_inference_timeout_s}s; policy inference is stuck. Raise the "
-                                f"timeout or check the policy/server."
-                            ) from e
-
-                    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtc-prefetch")
-                    try:
-                        cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                        cur_obs_base_age = 0
-                        cur_chunk = _query_chunk(cur_obs)
-                        rtc_chunks_acquired += 1
-                        if not cur_chunk:
-                            raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
-                        idx = 0
-                        prefetch_trigger = max(1, len(cur_chunk) // 2)
-                        prefetch: Future[list[dict[str, Any]]] | None = None
-                        prefetch_obs: dict[str, Any] | None = None
-                        prefetch_obs_base_age = 0
-
-                        while step_count < total_steps:
-                            if idx >= len(cur_chunk):
-                                # Current chunk drained -> swap in the next chunk.
-                                if prefetch is not None:
-                                    cur_chunk = _swap_in(prefetch)
-                                    if prefetch_obs is not None:
-                                        cur_obs = prefetch_obs
-                                        cur_obs_base_age = prefetch_obs_base_age
-                                    prefetch = None
-                                    prefetch_obs = None
-                                    prefetch_obs_base_age = 0
-                                else:
-                                    # Chunk was too short to trigger a prefetch;
-                                    # fall back to a synchronous re-query.
-                                    cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                                    cur_obs_base_age = 0
-                                    cur_chunk = _query_chunk(cur_obs)
-                                rtc_chunks_acquired += 1
-                                if not cur_chunk:
-                                    # Drop-and-requery: a prefetched chunk arriving
-                                    # empty (a transient policy hiccup) degrades to
-                                    # ONE synchronous re-query before we give up,
-                                    # rather than killing an otherwise-healthy
-                                    # rollout on a single empty result.
-                                    logger.warning(
-                                        "async-RTC chunk arrived empty; falling back to one "
-                                        "synchronous re-query before erroring."
-                                    )
-                                    cur_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                                    cur_obs_base_age = 0
-                                    cur_chunk = _query_chunk(cur_obs)
-                                    rtc_chunks_acquired += 1
-                                    if not cur_chunk:
-                                        raise RuntimeError(
-                                            "policy returned an empty action chunk twice (prefetch + "
-                                            "synchronous re-query); cannot continue rollout"
-                                        )
-                                idx = 0
-                                prefetch_trigger = max(1, len(cur_chunk) // 2)
-                                continue
-
-                            # Fire the next inference once we are ~50% through the
-                            # current chunk, on a fresh mid-chunk observation.
-                            if prefetch is None and idx >= prefetch_trigger:
-                                prefetch_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                                # The prefetched chunk first applies after the
-                                # remaining steps of the current chunk drain - a
-                                # known integer, independent of how long inference
-                                # actually takes in wall-clock time (a slow inference
-                                # just stalls the loop; the robot does not advance
-                                # past the chunk end while waiting).
-                                observed_delay = max(0, len(cur_chunk) - idx)
-                                prefetch_obs_base_age = observed_delay
-                                prefetch = executor.submit(_query_chunk, prefetch_obs, observed_delay)
-
-                            # When recording, the chunk observation (the initial
-                            # query obs, or a horizon-shifted prefetch obs after a
-                            # swap) is stale for the step being applied; refresh it
-                            # so the recorded frame is time-aligned (see the
-                            # _record_per_step_obs note above). Inference is
-                            # unaffected - it already consumed cur_obs to produce
-                            # this chunk.
-                            if _record_per_step_obs:
-                                step_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                            else:
-                                step_obs = cur_obs
-                            # ``idx > 0`` means this action is replayed from the chunk
-                            # while ``cur_obs`` still holds the snapshot the chunk was
-                            # inferred from, so the observation is stale for it. A
-                            # recording refresh above makes it fresh again.
-                            _apply(
-                                step_obs,
-                                cur_chunk[idx],
-                                observation_is_chunk_reused=idx > 0 and not _record_per_step_obs,
-                                observation_age_steps=0 if _record_per_step_obs else cur_obs_base_age + idx,
-                            )
-                            idx += 1
-                            # Semantic early return: checked after EVERY applied
-                            # action, so the stop lands within one control step of
-                            # the world reaching the condition - the rest of the
-                            # in-flight chunk (and any prefetched chunk) is
-                            # dropped; the executor shutdown below joins the
-                            # in-flight prefetch worker. The None guard is hoisted
-                            # so the no-clause hot path pays no per-step call.
-                            if stop_when is not None and _stop_when_fired():
-                                break
-                    finally:
-                        # Wait for any in-flight inference so no background thread
-                        # touches the policy/sim after run() returns (the caller may
-                        # immediately reset() or destroy() the world).
-                        executor.shutdown(wait=True)
-                else:
+                # ONE chunk pipeline for both acquisition strategies, shared with
+                # evaluate(). Synchronous: query, fully drain the chunk, re-query.
+                # Async-RTC: while the current chunk drains, fire the next
+                # get_actions() on a single background worker from a mid-chunk
+                # ("horizon-shifted") observation and swap it in at the seam, so a
+                # policy whose inference latency is <= the chunk's execution time
+                # pays almost no visible stall - exactly how an async real-time
+                # controller hides latency on real hardware. RTC policies blend
+                # the seam internally, so the runner only schedules the overlap.
+                # Only ACQUISITION differs between the two: sending, recording,
+                # counting, pacing and the stop clause below are shared, because
+                # both drive the same ``_apply``. The policy is invoked from at
+                # most one thread at a time and the sim is only ever touched from
+                # THIS thread, so there is no MuJoCo data race. The pipeline is an
+                # unbounded iterator, so the step budget is enforced here and the
+                # context manager joins any in-flight prefetch on the way out -
+                # including when the stop clause breaks mid-chunk.
+                _pipeline = _ChunkPipeline(
+                    _acquire_chunk,
+                    lambda: self._observe(robot_name, skip_images=_skip_images, bodies=_bodies),
+                    async_rtc=bool(async_rtc),
+                    rtc_inference_timeout_s=rtc_inference_timeout_s,
+                )
+                with _pipeline as chunks:
                     while step_count < total_steps:
-                        observation = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                        chunk = _query_chunk(observation)
-                        for chunk_idx, action_dict in enumerate(chunk):
-                            if step_count >= total_steps:
-                                break
-                            # The chunk-start observation is the correct pre-action
-                            # state for the first action only. When recording,
-                            # refresh it before each SUBSEQUENT action so the
-                            # recorded frame is time-aligned (see the
-                            # _record_per_step_obs note above). chunk_idx == 0 reuses
-                            # the freshly-queried observation (no re-render, sim has
-                            # not stepped yet). Inference is unaffected.
-                            if _record_per_step_obs and chunk_idx > 0:
-                                step_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
-                            else:
-                                step_obs = observation
-                            _apply(
-                                step_obs,
-                                action_dict,
-                                observation_is_chunk_reused=chunk_idx > 0 and not _record_per_step_obs,
-                                observation_age_steps=0 if _record_per_step_obs else chunk_idx,
-                            )
-                            # Semantic early return: checked after EVERY applied
-                            # action (same cadence as the benchmark eval loop), so
-                            # the remaining actions of the chunk are dropped as
-                            # soon as the condition holds. The None guard is
-                            # hoisted so the no-clause hot path pays no per-step
-                            # call.
-                            if stop_when is not None and _stop_when_fired():
-                                break
-                        if stop_predicate_fired:
+                        # Pull only when the budget still has room for the action.
+                        # A ``for`` loop over the iterator would advance it first
+                        # and so pay one WHOLE extra inference at the end of every
+                        # rollout whose budget ends on a chunk boundary - a real
+                        # GPU forward pass for an action that can never be applied.
+                        # Both hand-rolled loops this replaces tested the budget
+                        # before re-querying; keeping that is what makes the
+                        # collapse behaviour-preserving.
+                        try:
+                            chunk_obs, action_dict = next(chunks)
+                        except StopIteration:  # pragma: no cover - unbounded iterator
+                            break
+                        # An observation OLDER than the action being applied would
+                        # write a time-misaligned recorded frame, so refresh it.
+                        # ``observation_age_steps == 0`` means the yielded
+                        # observation is still the live pre-action state (the
+                        # first action after a synchronous query, when the sim has
+                        # not stepped since), so no re-render is needed. Inference
+                        # is unaffected either way - it already consumed the chunk
+                        # observation to produce this action.
+                        _age = _pipeline.observation_age_steps
+                        if _record_per_step_obs and _age > 0:
+                            step_obs = self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
+                        else:
+                            step_obs = chunk_obs
+                        _apply(
+                            step_obs,
+                            action_dict,
+                            # "Reused" is about the OBSERVATION having already
+                            # driven an earlier action of this chunk, which is
+                            # ``chunk_index``; a prefetched chunk's first action
+                            # is not reused even though its observation is
+                            # already ``_age`` steps old.
+                            observation_is_chunk_reused=_pipeline.chunk_index > 0 and not _record_per_step_obs,
+                            observation_age_steps=0 if _record_per_step_obs else _age,
+                        )
+                        # Semantic early return: checked after EVERY applied
+                        # action, so the stop lands within one control step of the
+                        # world reaching the condition - the rest of the in-flight
+                        # chunk (and any prefetched chunk) is dropped. The None
+                        # guard is hoisted so the no-clause hot path pays no
+                        # per-step call.
+                        if stop_when is not None and _stop_when_fired():
                             break
 
             except CooperativeStop:
@@ -3439,23 +3404,15 @@ class PolicyRunner:
         def _observation_fn() -> dict[str, Any]:
             return self._observe(robot_name, skip_images=_skip_images, bodies=_bodies)
 
-        def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
-            # Tell latency-sensitive (RTC) policies how many control steps
-            # elapse between this observation and the first application of the
-            # returned chunk so they slice the chunk-seam by an EXACT integer
-            # instead of a wall-clock estimate. The synchronous path pauses the
-            # world during inference (delay 0); the async pipeline supplies the
-            # count of still-pending steps of the chunk currently executing.
-            policy.set_rtc_observed_delay(observed_delay)
-            _t_infer = time.perf_counter()
-            actions = _resolve_coroutine(policy.get_actions(observation, instruction, **_policy_kwargs))
-            inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
-            # resolve_chunk_length is the single source of truth for the
-            # re-query interval (respects RTC + execution_horizon). Consuming the
-            # FULL chunk before re-querying matches run() and _evaluate_with_spec
-            # (#168); truncating to a smaller horizon would force an
-            # out-of-distribution re-query of chunk-predicting VLAs.
-            return list(actions[: resolve_chunk_length(policy, action_horizon)])
+        # One chunk-acquisition seam, shared with run() and _evaluate_with_spec.
+        _acquire_chunk = functools.partial(
+            query_policy_chunk,
+            policy,
+            instruction=instruction,
+            policy_kwargs=_policy_kwargs,
+            action_horizon=action_horizon,
+            inference_ms=inference_ms,
+        )
 
         results: list[dict[str, Any]] = []
         # #191 - monotonic global step index handed to ``on_frame`` so a
@@ -3543,7 +3500,7 @@ class PolicyRunner:
                     # data race. The context manager joins the worker on exit even
                     # when we break mid-chunk on success.
                     pipeline = _ChunkPipeline(
-                        _query_chunk,
+                        _acquire_chunk,
                         _observation_fn,
                         async_rtc=True,
                         rtc_inference_timeout_s=rtc_inference_timeout_s,
@@ -3568,7 +3525,7 @@ class PolicyRunner:
                 else:
                     while steps < max_steps:
                         observation = _observation_fn()
-                        chunk = _query_chunk(observation, 0)
+                        chunk = _acquire_chunk(observation, 0)
                         rtc_chunks_acquired += 1
 
                         if not chunk:
@@ -3939,8 +3896,19 @@ class PolicyRunner:
                             "status": "error",
                             "content": [{"text": f"augment_observation failed in {spec_name}: {e}"}],
                         }
-                    coro_or_result = policy.get_actions(observation, effective_instruction, **(policy_kwargs or {}))
-                    actions = _resolve_coroutine(coro_or_result)
+                    # The same chunk-acquisition seam run()/evaluate() use. A
+                    # spec eval is always synchronous (async_rtc is refused
+                    # alongside a spec, for reproducibility), so the policy is
+                    # TOLD the delay is exactly 0 instead of being left to infer
+                    # a seam offset from wall clock.
+                    actions = query_policy_chunk(
+                        policy,
+                        observation,
+                        0,
+                        instruction=effective_instruction,
+                        policy_kwargs=policy_kwargs or {},
+                        action_horizon=action_horizon,
+                    )
 
                     # #168: consume up to ``action_horizon`` actions
                     # per inference. Default ``action_horizon=8`` matches NVIDIA's
@@ -3960,8 +3928,7 @@ class PolicyRunner:
                         # Degenerate policy - advance physics so loop terminates.
                         self.sim.step(n_steps=1)
                     else:
-                        _chunk = resolve_chunk_length(policy, action_horizon)
-                        for action_in_chunk in actions[:_chunk]:
+                        for action_in_chunk in actions:
                             if steps >= max_steps:
                                 break
                             action_applied = dict(action_in_chunk)
