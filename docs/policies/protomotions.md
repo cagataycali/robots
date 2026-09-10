@@ -6,9 +6,8 @@ for the Unitree G1's 29 actuators, tracking that clip while keeping the robot
 upright.
 
 It is the tracking half of a two-stage pipeline. A *kinematic* generator such as
-[`KimodoPolicy`](./kimodo.md) (text-to-motion diffusion) or
-[`MotionBricksPolicy`](./motionbricks.md) produces a `qpos` sequence with no
-notion of balance; the tracker turns that sequence into physics. Compare
+[`KimodoPolicy`](./kimodo.md) (text-to-motion diffusion) produces a `qpos`
+sequence with no notion of balance; the tracker turns that sequence into physics. Compare
 [`WBC`](./wbc.md), which takes a velocity/height *command* rather than a
 reference clip and so cannot follow a whole-body pose trajectory.
 

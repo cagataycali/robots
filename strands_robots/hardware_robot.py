@@ -46,6 +46,7 @@ from strands_robots.utils import (
     dds_domain_id_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
     require_optional,
     tcp_port_error,
 )
@@ -2149,7 +2150,7 @@ class Robot(TeleopMixin, AgentTool):
                     {
                         "text": (
                             f"{method}: policy_provider={policy_provider!r} declares no policy_port, "
-                            f"so policy_port={policy_port!r} would not be read. Drop the port, or name "
+                            f"so policy_port={refusal_repr(policy_port)} would not be read. Drop the port, or name "
                             f"a provider that reads one ({', '.join(port_reading_providers())})."
                         )
                     }

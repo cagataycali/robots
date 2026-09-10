@@ -75,6 +75,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import (
     decode_motor_state,
+    policy_step,
     telemetry_float,
     telemetry_float_list,
     telemetry_int,
@@ -1113,17 +1114,21 @@ class Go2Driver:
         last commanded posture.
 
         ``policy_object`` is either a built
-        :class:`~strands_robots.policies.Policy` or a bare callable - the
-        admission check accepts a ``.step()`` attribute *or* a callable object,
-        so the annotation admits the same set the refusal enforces. It is called
-        each step with :attr:`state` and must return a joint-name-keyed action
-        dict of the shape :meth:`send_action` accepts. A policy returning
-        ``None`` or an unusable action is refused inside the loop, and the
-        refusal count surfaces through :meth:`get_task_status`.
+        :class:`~strands_robots.policies.Policy` or a bare callable, resolved by
+        :func:`~strands_robots.drivers.base.policy_step` - so the admission
+        accepts exactly the set :meth:`~strands_robots.drivers.base.HardwareDriver.run_policy` types plus the
+        two untyped shapes (``step``, bare callable) this loop has always run. It
+        is called each step with :attr:`state` and must return a joint-name-keyed
+        action dict of the shape :meth:`send_action` accepts, or a chunk of them
+        whose first action is commanded. A policy returning ``None`` or an
+        unusable action is refused inside the loop, and the refusal count
+        surfaces through :meth:`get_task_status`.
 
         Args:
             policy_object: The policy to roll out.
-            instruction: Ignored; policies own their own conditioning.
+            instruction: Handed to the policy each step, as the second argument
+                of ``get_actions_sync``. The untyped shapes take no instruction,
+                so it does not reach those.
             duration: Wall-clock budget in seconds. Must be positive and finite -
                 ``nan`` poisons the deadline comparison so the loop would
                 actuate with no budget, and ``inf`` never expires.
@@ -1136,22 +1141,26 @@ class Go2Driver:
             A success envelope naming the running task's budgets, or an error
             envelope naming the gate or the argument that refused it.
         """
-        del instruction  # policies own their own conditioning
         if err := positive_finite_number_error(duration, "duration", "run_policy"):
             return _refuse(err)
         if n_steps is not None and (err := positive_count_error(n_steps, "n_steps", "run_policy")):
             return _refuse(err)
         if policy_object is None:
             return _refuse("run_policy: policy_object is required")
-        step_fn = getattr(policy_object, "step", None)
-        if not callable(step_fn) and not callable(policy_object):
-            return _refuse("run_policy: policy_object must be callable or expose a .step() method")
+        if policy_step(policy_object, instruction) is None:
+            return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         refusal = self._check_motion_gates("run_policy")
         if refusal is not None:
             return refusal
         if self._pubs is None:
             return _refuse("publisher not initialised - call connect_eagerly() first")
-        loop = _ControlLoop(driver=self, policy=policy_object, duration=float(duration), n_steps=n_steps)
+        loop = _ControlLoop(
+            driver=self,
+            policy=policy_object,
+            duration=float(duration),
+            n_steps=n_steps,
+            instruction=instruction,
+        )
         # Admission held across the ``is_running`` check, the reference
         # assignment and ``start()`` so a second caller cannot pass the check
         # before either assigns ``self._loop`` - two rollouts on one wire.
@@ -1317,17 +1326,26 @@ class _ControlLoop:
         policy: Any,
         duration: float,
         n_steps: int | None,
+        instruction: str = "",
     ) -> None:
         """Record the rollout's budgets. :meth:`start` spawns the thread.
 
         Args:
             driver: The driver whose gates, publisher and caches the loop uses.
-            policy: A callable, or an object exposing ``.step()``.
+            policy: A built :class:`~strands_robots.policies.Policy`, an object
+                exposing ``.step()``, or a bare callable.
             duration: Wall-clock budget in seconds.
             n_steps: Optional step cap.
+            instruction: Handed to the policy each step when it takes one.
         """
         self._driver = driver
         self._policy = policy
+        # Resolved once, here, rather than per step: the resolution reads
+        # attributes off the policy, and this loop calls it at 500 Hz. It is the
+        # same resolver ``run_policy``'s admission consulted, so a policy
+        # admitted at the door cannot fail to resolve on the thread.
+        self._step_fn = policy_step(policy, instruction)
+        self._instruction = instruction
         self._duration = float(duration)
         self._n_steps = n_steps
         self._stop_event = threading.Event()
@@ -1430,11 +1448,14 @@ class _ControlLoop:
                 self._exit_detail = detail
 
     def _call_policy(self) -> Any:
-        """Invoke the policy for one step with the driver's cached state."""
-        step_fn = getattr(self._policy, "step", None)
-        if callable(step_fn):
-            return step_fn(self._driver.state)
-        return self._policy(self._driver.state)
+        """Invoke the policy for one step with the driver's cached state.
+
+        Returns:
+            The action dict the policy commanded for this step, or ``None`` when
+            it yielded none - which the caller refuses as ``policy``.
+        """
+        assert self._step_fn is not None, "run_policy admits only a resolvable policy"
+        return self._step_fn(self._driver.state)
 
     def _emit_zero_torque(self) -> None:
         """Publish the soft-stop frame. Best effort, and never raises.

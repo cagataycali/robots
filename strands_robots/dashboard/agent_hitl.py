@@ -28,11 +28,16 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
     # (tool_context.interrupt in strands_robots/tools/robot_mesh.py) on every
     # physical action, so listing it here would ask the operator twice for one
     # command. This dict gates only the dashboard's bespoke tools.
-    # The bus-guarded direct-serial tools (dashboard/direct_serial.py) raise NO
-    # interrupt of their own (grep tool_context.interrupt in the SDK tools = 0),
-    # so this layer is their ONLY human gate. Reads, emergency_stop and
-    # delete_pose stay out: stopping is never gated. serial "monitor" only ever
-    # calls ser.read (serial_tool.py) so it is a read too.
+    # The direct-serial tools live in strands_robots/tools/serial_tool.py and
+    # strands_robots/tools/pose_tool.py. serial_tool now gates its own four write
+    # actions through the shared command gate (F-009), so for an agent built
+    # without this hook it is no longer unguarded; it stays listed here because
+    # this hook shows the operator the dashboard's richer detail line and
+    # deposits a grant that serial_tool spends (consume_grant) instead of asking
+    # a second time. pose_tool raises no interrupt of its own, so this layer is
+    # still its ONLY human gate. Reads, emergency_stop and delete_pose stay out:
+    # stopping is never gated. serial "monitor" only ever calls ser.read
+    # (serial_tool.py) so it is a read too.
     "pose_tool": frozenset({"load_pose", "move_motor", "move_multiple", "incremental_move", "reset_to_home"}),
     "serial_tool": frozenset({"send", "send_read", "feetech_position", "feetech_velocity"}),
 }
