@@ -18,6 +18,7 @@ remaining tests apply
 from __future__ import annotations
 
 import ast
+import importlib
 import threading
 from pathlib import Path
 
@@ -25,6 +26,7 @@ import pytest
 
 import strands_robots
 from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.tools import _process_stop
 from tests.tool_result_contract import (
     VALID_TOP_LEVEL_KEYS,
     assert_strands_tool_result,
@@ -174,10 +176,10 @@ def test_dispatch_action_results_contract(sim):
 def test_teleoperate_status_keeps_telemetry_in_json_block(tmp_path, monkeypatch):
     import os
 
-    import strands_robots.tools.lerobot_teleoperate as tele_mod
+    tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 
-    pid = os.getpid()  # a real, running pid so the session is not pruned as dead
-    monkeypatch.setattr(tele_mod, "SESSION_DIR", tmp_path)
+    pid = os.getpid()  # a real, running pid, so the status verb reports it running
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path)
     tele_mod.SessionManager().add_session(
         "live",
         {"pid": pid, "action": "record", "start_time": 0.0, "robot_type": "so101_follower"},
@@ -196,10 +198,10 @@ def test_teleoperate_status_keeps_telemetry_in_json_block(tmp_path, monkeypatch)
 def test_train_status_keeps_telemetry_in_json_block(tmp_path, monkeypatch):
     import os
 
-    import strands_robots.tools.lerobot_train as train_mod
+    train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
-    pid = os.getpid()  # a real, running pid so the session is not pruned as dead
-    monkeypatch.setattr(train_mod, "SESSION_DIR", tmp_path)
+    pid = os.getpid()  # a real, running pid, so the status verb reports it running
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path)
     train_mod.SessionManager().add_session(
         "live",
         {"pid": pid, "action": "train", "start_time": 0.0, "policy_type": "act"},

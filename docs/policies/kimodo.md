@@ -5,21 +5,20 @@ motion diffusion model. Given a natural-language prompt it samples per-frame
 full-body `qpos` sequences for the Unitree G1 in a single diffusion pass, then
 streams them one frame per tick as G1 joint targets.
 
-Kimodo sits in the same seat as [`MotionBricksPolicy`](./motionbricks.md) — it
-is a *kinematic motion generator* that emits motion targets, not torques — a
-whole-body reference over all 29 leg + waist + arm joints. Applying that
+Kimodo is a *kinematic motion generator*: it emits motion targets, not torques
+— a whole-body reference over all 29 leg + waist + arm joints. Applying that
 reference under physics needs a controller that *tracks* it; see
 [Tracking the reference under physics](#tracking-the-reference-under-physics).
 
 ## When to use
 
-| | Kimodo | MotionBricks |
-|---|---|---|
-| Control input | free-form text prompt | style token + heading |
-| Prompt vocabulary | anything English | fixed clip modes |
-| Sampler | diffusion (multi-step) | autoregressive one-shot |
-| Wall clock (Jetson AGX-class, 100 steps, 120 frames) | ~8 s | ~1 s |
-| Best for | novel motions, prompt engineering | known styles, low latency |
+| | Kimodo |
+|---|---|
+| Control input | free-form text prompt |
+| Prompt vocabulary | anything English |
+| Sampler | diffusion (multi-step) |
+| Wall clock (Jetson AGX-class, 100 steps, 120 frames) | ~8 s |
+| Best for | novel motions, prompt engineering |
 
 ## Install
 
@@ -164,8 +163,8 @@ A misspelled knob is refused by the two keyword forms and dropped by the dict
 form. Neither `KimodoPolicy` nor `KimodoConfig` takes `**kwargs`, so
 `KimodoPolicy(diffusion_stpes=25)` raises `TypeError` at construction. A
 `config` dict is read by `KimodoConfig.from_dict`, which drops keys that are not
-fields for forward compatibility - the policy the MotionBricks and WBC configs
-state for their own `from_dict` - so `KimodoPolicy(config={"diffusion_stpes":
+fields for forward compatibility - the policy the WBC config states for its own
+`from_dict` - so `KimodoPolicy(config={"diffusion_stpes":
 25})` builds with the default 100 and emits no warning. Pass the knob as a
 keyword, or build a `KimodoConfig` first, if a typo should be refused.
 
@@ -441,4 +440,3 @@ Inject a `KimodoMotionAgent` stub — no torch/diffusers/CUDA needed. See
 ## References
 
 * Kimodo: <https://huggingface.co/nvidia/Kimodo-G1-RP-v1>
-* Sibling policy: [`motionbricks`](./motionbricks.md)

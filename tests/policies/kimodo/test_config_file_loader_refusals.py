@@ -9,9 +9,8 @@ that could not supply fields. A file that was not JSON at all escaped as a bare
 ``json.JSONDecodeError``, and ``~`` in the path was never expanded, so a config
 at ``~/kimodo.json`` was reported missing while it existed.
 
-The two sibling policy-config file loaders
-(:mod:`strands_robots.policies.motionbricks.config` and
-:mod:`strands_robots.policies.wbc.config`) already refuse a non-object payload
+The sibling policy-config file loader
+(:mod:`strands_robots.policies.wbc.config`) already refuses a non-object payload
 with a message naming the class, the resolved path and the JSON type they got,
 already expand ``~``, and already wrap a decode failure. So the rule graded here
 is not new: it is the reporting two of the three loaders shipped, applied to the
@@ -52,13 +51,12 @@ import pytest
 _POLICY_CONFIG_ROOT = Path(__file__).resolve().parents[3] / "strands_robots" / "policies"
 _DOCS_ROOT = Path(__file__).resolve().parents[3] / "docs"
 
-# A minimal payload each loader accepts. Two of the three configs require an
+# A minimal payload each loader accepts. One of the two configs requires an
 # entry, so a shared "this builds" fixture cannot be derived from the class
 # alone; the non-vacuity test below fails if a newly discovered loader has no
 # entry here, rather than skipping it.
 _MINIMAL_PAYLOAD: dict[str, dict[str, Any]] = {
     "KimodoConfig": {"diffusion_steps": 50},
-    "MotionBricksConfig": {"result_dir": "results"},
     "WBCConfig": {"policy_path": "policy.onnx"},
 }
 
@@ -144,14 +142,12 @@ class TestTheSurveyReachesEveryPolicyConfigLoader:
     def test_the_three_shipped_file_loaders_are_discovered(self) -> None:
         assert _ids(_path_loaders()) == [
             "KimodoConfig.from_json",
-            "MotionBricksConfig.from_file",
             "WBCConfig.from_file",
         ]
 
     def test_the_three_shipped_dict_loaders_are_discovered(self) -> None:
         assert _ids(_dict_loaders()) == [
             "KimodoConfig.from_dict",
-            "MotionBricksConfig.from_dict",
             "WBCConfig.from_dict",
         ]
 

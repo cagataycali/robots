@@ -13,6 +13,13 @@ rover over WebRTC/RTM, and exposes four endpoints this driver speaks:
   ``{camera}_frame`` field.
 * ``POST /speak`` - text out of the rover's speaker.
 
+The whole of that is the *agent's* surface too: :attr:`EarthRoverDriver.tool_spec`
+declares one verb per capability (``sensors``, ``status``, ``camera``, ``move``,
+``lamp``, ``speak``, ``stop``) and :meth:`EarthRoverDriver.stream` dispatches
+each to the method that owns its judgement. A ``Robot("earthrover",
+mode="real", driver="strands")`` handle therefore goes straight into
+``Agent(tools=[rover])`` and the model can drive the rover it can see.
+
 ``requests`` is the transport, declared by the ``[earthrover]`` extra
 (``pip install 'strands-robots[earthrover]'``, a member of ``[all]``). It is
 imported lazily so the module loads and registers without it; a real connection
@@ -38,14 +45,16 @@ needed it.
 from __future__ import annotations
 
 import logging
+import math
 import threading
+import time
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, telemetry_float, undeclared_verb_error
 from strands_robots.utils import boolean_flag_error, finite_number_error, positive_finite_number_error
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Mapping
 
     from strands.types.tools import ToolSpec, ToolUse
 
@@ -66,6 +75,18 @@ DRIVE_AXIS_LIMIT: float = 1.0
 
 #: The camera views the SDK serves under ``/v2/<view>``.
 CAMERA_VIEWS: tuple[str, ...] = ("front", "rear")
+
+#: The longest twist one :meth:`EarthRoverDriver.move` call may hold before
+#: the forced stop. An agent tool call is a conversation turn, not a control
+#: loop: a longer run belongs to repeated calls, where telemetry is read
+#: between legs rather than committing a velocity-commanded base to half a
+#: minute blind.
+MAX_MOVE_DURATION_S: float = 30.0
+
+#: The latitude the SDK reports when the rover has no GPS fix. It is a real
+#: number on the wire, so a summary that printed it would read as a position
+#: off the coast of Antarctica rather than as no fix.
+NO_FIX_LATITUDE: float = 1000.0
 
 #: Where the vendor's SDK listens when started as documented.
 DEFAULT_SDK_URL = "http://localhost:8001"
@@ -214,6 +235,44 @@ def base_url_error(value: object, param: str, context: str) -> str | None:
     return None
 
 
+def telemetry_summary(data: Mapping[str, Any]) -> str:
+    """One line naming what the rover just said, for a reader who wants no JSON.
+
+    The ``sensors`` verb answers with this *and* the whole snapshot, so a
+    caller selects a rendering by reading the block it wants rather than by
+    passing a format flag.
+
+    Coordinates go through :func:`~strands_robots.drivers.base.telemetry_float`
+    rather than straight into the format string, because an agent verb must not
+    raise past its dispatcher: a latitude the SDK reported as a string formats
+    with ``ValueError`` under ``:.6f``, which would lose the battery and signal
+    readings in the same snapshot. A coordinate that is no reading is reported
+    as no fix, which is what it means - including a non-finite one, which
+    :func:`~strands_robots.drivers.base.telemetry_float` passes through because a
+    ``NaN`` on a *published* telemetry field is a reading the consumer must see
+    for what it is, while ``f"{float('nan'):.6f}"`` renders here as the position
+    ``nan`` rather than as no position at all.
+
+    Args:
+        data: A ``/data`` snapshot, as :meth:`EarthRoverDriver.read_state`
+            returns it.
+
+    Returns:
+        The summary line. Every field the snapshot does not carry reads
+        ``?`` rather than being invented.
+    """
+    latitude = telemetry_float(data.get("latitude"))
+    longitude = telemetry_float(data.get("longitude"))
+    plotted = all(value is not None and math.isfinite(value) for value in (latitude, longitude))
+    has_fix = bool(data.get("gps_signal")) and plotted and latitude != NO_FIX_LATITUDE
+    gps = f"{latitude:.6f}, {longitude:.6f}" if has_fix else "no fix"
+    return (
+        f"battery {data.get('battery', '?')}% | signal {data.get('signal_level', '?')}/4 | "
+        f"heading {data.get('orientation', '?')} deg | speed {data.get('speed', '?')} | "
+        f"lamp {'on' if data.get('lamp') else 'off'} | GPS {gps}"
+    )
+
+
 def detect_image_format(data: bytes) -> str:
     """Name the image format from magic bytes; the SDK may emit png/jpeg/webp."""
     if data[:3] == b"\xff\xd8\xff":
@@ -325,20 +384,38 @@ class EarthRoverDriver:
 
     @property
     def tool_spec(self) -> ToolSpec:
-        """The universal read-only trio plus a controlled stop.
+        """Everything an agent may ask of the rover: three reads, three writes, a halt.
 
-        Motion verbs are deliberately absent from the *agent* surface, matching
-        every shipped driver: the write path is :meth:`send_action`, opened by
-        a caller who has read its contract, not by a model choosing an enum.
+        This object *is* the agent's tool - ``Robot("earthrover", mode="real",
+        driver="strands")`` returns it and a caller passes it straight to
+        ``Agent(tools=[rover])`` - so the verbs an agent has are the ones this
+        enum declares and no others. Every capability the SDK exposes is
+        therefore declared here rather than left to a wrapper: a rover an agent
+        can read telemetry from but not drive, light, look through or speak
+        with is not the robot the vendor shipped.
+
+        Declaring the write verbs follows
+        :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`, which
+        declares ``move_to`` and ``set_torque``, and
+        :class:`~strands_robots.drivers.robotiq.driver.RobotiqDriver`, which
+        declares ``open`` and ``close``. What keeps that safe is not withholding
+        the verb but the driver's own judgement on the write path: an axis
+        outside the normalised envelope is refused by name rather than clamped
+        onto full speed (:func:`drive_axis_error`), ``lamp`` is read as a
+        boolean rather than for truthiness, and a held twist is bounded by
+        :data:`MAX_MOVE_DURATION_S` with the trailing stop reported.
         """
         return cast(
             "ToolSpec",
             {
                 "name": self._tool_name,
                 "description": (
-                    "EarthRover Mini+ native driver: reads the SDK's /data telemetry "
-                    "(battery, GPS, orientation, IMU, wheel RPMs); twist writes go "
-                    "through send_action, a halt through stop."
+                    "EarthRover Mini+ native driver, over the vendor's local SDK. Drives the "
+                    "base with a normalised twist, switches the headlamp, grabs a front or rear "
+                    "camera frame, speaks, reads telemetry (battery, GPS, orientation, IMU, "
+                    "wheel RPMs) and halts. It is a velocity-commanded base: it keeps the last "
+                    "twist until another arrives, so a leg either carries duration_s or ends "
+                    "with stop."
                 ),
                 "inputSchema": {
                     "json": {
@@ -347,12 +424,54 @@ class EarthRoverDriver:
                             "action": {
                                 "type": "string",
                                 "description": (
-                                    "sensors: return the latest telemetry snapshot; "
-                                    "status: report connection and the last commanded twist; "
+                                    "sensors: the latest telemetry snapshot, summarised; "
+                                    "status: connection and the last commanded twist; "
+                                    "camera: one frame from the front or rear view; "
+                                    "move: drive one twist (linear, angular), optionally held for duration_s; "
+                                    "lamp: switch the headlamp (on) - the rover stops, because the "
+                                    "lamp rides the twist frame; "
+                                    "speak: say text through the rover's speaker; "
                                     "stop: command a zero twist"
                                 ),
-                                "enum": ["sensors", "status", "stop"],
+                                "enum": ["sensors", "status", "camera", "move", "lamp", "speak", "stop"],
                                 "default": "sensors",
+                            },
+                            "linear": {
+                                "type": "number",
+                                "description": (
+                                    f"move only: forward speed, -{DRIVE_AXIS_LIMIT} to {DRIVE_AXIS_LIMIT} as a "
+                                    "fraction of full speed; negative is reverse. A magnitude past that is "
+                                    "refused by name, never clamped."
+                                ),
+                            },
+                            "angular": {
+                                "type": "number",
+                                "description": (
+                                    f"move only: turn rate, -{DRIVE_AXIS_LIMIT} to {DRIVE_AXIS_LIMIT}; positive "
+                                    "is left. Refused past that, as linear is."
+                                ),
+                            },
+                            "duration_s": {
+                                "type": "number",
+                                "description": (
+                                    f"move only: hold the twist this long, at most {MAX_MOVE_DURATION_S}s, then "
+                                    "stop; the answer reports both halves. Omitted, the twist is sent and the "
+                                    "rover keeps rolling until the next command."
+                                ),
+                            },
+                            "on": {
+                                "type": "boolean",
+                                "description": "lamp only: true switches the headlamp on, false off.",
+                            },
+                            "camera": {
+                                "type": "string",
+                                "description": "camera only: which view to grab.",
+                                "enum": list(CAMERA_VIEWS),
+                                "default": CAMERA_VIEWS[0],
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "speak only: what to say; must be non-empty.",
                             },
                         },
                         "required": ["action"],
@@ -367,19 +486,89 @@ class EarthRoverDriver:
         invocation_state: dict[str, Any],
         **kwargs: Any,
     ) -> AsyncGenerator[Any, None]:
-        """Handle one agent invocation and yield exactly one tool result."""
+        """Handle one agent invocation and yield exactly one tool result.
+
+        Each branch delegates to the method that already owns the judgement, so
+        the agent path and a Python caller are refused by the same sentence.
+        """
         del kwargs, invocation_state  # forward-compat only
         tool_use_id = tool_use.get("toolUseId", "")
-        action = (tool_use.get("input") or {}).get("action", "sensors")
+        request = tool_use.get("input") or {}
+        action = request.get("action", "sensors")
+        envelope: dict[str, Any]
         if action == "sensors":
-            envelope = {"status": "success", "content": [{"json": self.read_state()}]}
+            envelope = self._state_envelope()
         elif action == "status":
             envelope = await self.get_status()
+        elif action == "camera":
+            envelope = self._frame_envelope(request.get("camera", CAMERA_VIEWS[0]))
+        elif action == "move":
+            envelope = self.move(
+                request.get("linear", 0.0),
+                request.get("angular", 0.0),
+                duration_s=request.get("duration_s"),
+            )
+        elif action == "lamp":
+            envelope = self.set_lamp(request.get("on", True))
+        elif action == "speak":
+            envelope = self.speak(request.get("text", ""))
         elif action == "stop":
             envelope = self.stop_task()
         else:
             envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
+
+    def _state_envelope(self) -> dict[str, Any]:
+        """The ``sensors`` verb: the freshest snapshot, summarised, or a refusal.
+
+        An empty snapshot is refused rather than published as an empty object.
+        ``{}`` is what :meth:`read_state` returns before the rover has ever
+        answered, and answering ``status="success"`` with it reads as a rover
+        that reported nothing rather than one that was never heard from - so a
+        caller retries the drive instead of starting the SDK.
+
+        Returns:
+            The summary line and the whole snapshot, or a refusal naming the
+            remedy.
+        """
+        data = self.read_state()
+        if not data:
+            return _refuse(
+                f"sensors: no telemetry yet - nothing has answered GET {self._base}/data. "
+                "Is the earth-rovers-sdk running, with the rover connected to it?"
+            )
+        return {"status": "success", "content": [{"text": telemetry_summary(data)}, {"json": data}]}
+
+    def _frame_envelope(self, camera: Any) -> dict[str, Any]:
+        """The ``camera`` verb: one frame as a block the model can see.
+
+        :meth:`capture_frame` answers with the frame base64-encoded, because
+        the mesh publishes that envelope as JSON. A model cannot see a base64
+        string, so the agent surface decodes it into an image block - the one
+        place the two consumers of a frame differ.
+
+        Args:
+            camera: Which view, quoted back verbatim by
+                :meth:`capture_frame` when it is not one of
+                :data:`CAMERA_VIEWS`.
+
+        Returns:
+            A success envelope carrying the view name and the image, or
+            :meth:`capture_frame`'s refusal unreshaped.
+        """
+        result = self.capture_frame(camera)
+        if result["status"] != "success":
+            return result
+        import base64  # noqa: PLC0415 - stdlib, used only on this path
+
+        payload = result["content"][0]["json"]
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"[{payload['camera']}]"},
+                {"image": {"format": payload["format"], "source": {"bytes": base64.b64decode(payload["b64"])}}},
+            ],
+        }
 
     # ------------------------------------------------------------------ #
     # Lifecycle.                                                         #
@@ -554,18 +743,80 @@ class EarthRoverDriver:
             ],
         }
 
-    def move(self, linear: float = 0.0, angular: float = 0.0) -> dict[str, Any]:
-        """Command a twist by axis - sugar over :meth:`send_action`.
+    def move(self, linear: float = 0.0, angular: float = 0.0, duration_s: float | None = None) -> dict[str, Any]:
+        """Command a twist by axis, optionally held for a bounded time then stopped.
+
+        With ``duration_s`` unset this is sugar over :meth:`send_action`: one
+        twist goes out and the rover keeps rolling until the next command, which
+        is the SDK's own contract. With it set the twist is held for that long
+        and a zero twist follows, and the answer reports **both** halves - a
+        move whose trailing stop did not reach the SDK is not a completed move,
+        because the rover is still rolling, so that outcome is an error naming
+        the stop.
 
         Args:
             linear: Forward speed, inside ``[-1, 1]``; outside it is refused.
             angular: Turn rate, inside ``[-1, 1]``, positive left; outside it is
                 refused.
+            duration_s: How long to hold the twist before the forced stop, in
+                seconds - at most :data:`MAX_MOVE_DURATION_S`. ``None`` sends
+                the twist and returns immediately.
 
         Returns:
-            :meth:`send_action`'s envelope.
+            :meth:`send_action`'s envelope for an untimed twist; for a timed
+            move, an envelope reporting the twist, the time held and whether
+            the trailing stop landed.
         """
-        return self.send_action({"linear": linear, "angular": angular})
+        if duration_s is not None:
+            if reason := positive_finite_number_error(duration_s, "duration_s", "move"):
+                return _refuse(reason)
+            if float(duration_s) > MAX_MOVE_DURATION_S:
+                return _refuse(
+                    f"move: duration_s is at most {MAX_MOVE_DURATION_S}s, got {duration_s}. A longer "
+                    "run belongs to repeated calls, where telemetry is read between legs."
+                )
+        moved = self.send_action({"linear": linear, "angular": angular})
+        if duration_s is None or moved["status"] != "success":
+            return moved
+        time.sleep(float(duration_s))
+        stopped = self.stop_task()
+        outcome = {
+            "commanded": moved["content"][0]["json"].get("commanded"),
+            "held_s": float(duration_s),
+            "stopped": stopped["status"] == "success",
+        }
+        if stopped["status"] != "success":
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "move: the twist was sent but the trailing stop did not reach the SDK - "
+                            "the rover may still be rolling"
+                        )
+                    },
+                    {"json": outcome},
+                ],
+            }
+        return {"status": "success", "content": [{"json": outcome}]}
+
+    def set_lamp(self, on: bool) -> dict[str, Any]:
+        """Switch the headlamp - and stop, because the lamp rides the twist frame.
+
+        The SDK carries ``lamp`` inside the one ``/control`` command, so a lamp
+        write *is* a twist write: this sends ``{linear: 0, angular: 0, lamp}``.
+        A rover that must keep moving with the lamp on is driven with
+        :meth:`move` afterwards.
+
+        Args:
+            on: ``True`` for lamp on, ``False`` for off. Read as a boolean by
+                :meth:`send_action` rather than for truthiness, so ``"off"``
+                cannot switch the headlamp on.
+
+        Returns:
+            :meth:`send_action`'s envelope for the zero-twist-plus-lamp command.
+        """
+        return self.send_action({"linear": 0.0, "angular": 0.0, "lamp": on})
 
     def speak(self, text: str) -> dict[str, Any]:
         """Say ``text`` through the rover's speaker.

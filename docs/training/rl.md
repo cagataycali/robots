@@ -123,6 +123,31 @@ the Newton backend's floating base is a joint with no commandable scalar. `SimEn
 sizes `num_actions` from the same list, so `len(action_keys) == num_actions`
 always holds. Pass `action_dim` to `SimEnv` to override the width.
 
+### Deploying the checkpoint
+
+The pair is deployable through the policy factory: `create_policy("rl",
+checkpoint_dir=...)` loads it and presents the trained actor as an ordinary
+[`Policy`](../policies/rl.md), so it drives a robot through the same
+`run_policy` / `eval_policy` path as every other provider.
+
+```python
+result = create_trainer("ppo").train(spec)
+
+sim.run_policy(
+    robot_name="so101",
+    policy_provider="rl",
+    policy_config={"checkpoint_dir": result.checkpoint_dir},
+    duration=10.0,
+)
+```
+
+The provider reads `provider` to rebuild the right architecture (the three
+backends' actors differ in output width and squash), binds `actor_obs_keys` by
+name in the trained order, and restores the observation normalizer frozen. To
+read the actor without the policy wrapper - for a custom control loop -
+`strands_robots.training.rl.load_deployable_actor(checkpoint_dir)` returns a
+`DeployableActor` whose `act(obs)` is the deterministic command.
+
 `PpoTrainer` trains fine on CPU (its `hardware_floor` declares no GPU
 requirement); MuJoCo stepping dominates, not the network.
 
