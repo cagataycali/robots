@@ -68,7 +68,7 @@ from typing import Any, cast
 import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from strands_robots.utils import FREE_CAMERA_TOKENS, reserved_camera_name_error
+from strands_robots.utils import FREE_CAMERA_TOKENS, camera_name_error, reserved_camera_name_error
 
 #: The tokens that are also *addressable* strings, so only the reserved-name rule
 #: can refuse them. ``None`` and ``""`` are refused earlier by
@@ -248,7 +248,7 @@ def _newton_stub() -> types.SimpleNamespace:
     )
 
 
-def _newton_add_camera(stub: types.SimpleNamespace, name: Any) -> dict[str, Any]:
+def _newton_add_camera(stub: types.SimpleNamespace, name: Any, **kwargs: Any) -> dict[str, Any]:
     """Call the unbound ``add_camera`` with the stand-in for ``self``.
 
     The stand-in is deliberately not a ``NewtonSimEngine``: the point is to reach
@@ -263,9 +263,9 @@ def _newton_add_camera(stub: types.SimpleNamespace, name: Any) -> dict[str, Any]
     # ``add_camera`` up on the namespace, which does not carry it. The ``cast`` is
     # a no-op at runtime and only tells the checker what the argument stands in
     # for, which keeps the boundary explicit without suppressing the check.
-    return NewtonSimEngine.add_camera(
-        cast(NewtonSimEngine, stub), name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0]
-    )
+    request: dict[str, Any] = {"position": [1.0, 1.0, 1.0], "target": [0.0, 0.0, 0.0]}
+    request.update(kwargs)
+    return NewtonSimEngine.add_camera(cast(NewtonSimEngine, stub), name, **request)
 
 
 class TestSameVerdictAsTheNewtonSibling:
@@ -450,3 +450,133 @@ class TestTheTokenSetHasOneDefinition:
             blob = "\n".join(p.read_text(encoding="utf-8") for p in files)
             assert "FREE_CAMERA_TOKENS" in blob, f"{backend} no longer routes the tokens"
             assert "reserved_camera_name_error" in blob, f"{backend} routes the tokens but does not refuse them"
+
+
+# --------------------------------------------------------------------------- #
+# The rule's ORDER, which is what a second copy of the rule diverged on        #
+# --------------------------------------------------------------------------- #
+#: Requests that carry a second fault beside the reserved name. Each value is
+#: independently refused by both backends, so a single-fault probe cannot tell
+#: which rule a body reaches first - and that is what the earlier parity test
+#: (status only, one fault at a time) missed.
+def _request(**kwargs: Any) -> dict[str, Any]:
+    """A valid camera request with *kwargs* overriding a field, not repeating it."""
+    request: dict[str, Any] = {"position": [1.0, 1.0, 1.0], "target": [0.0, 0.0, 0.0]}
+    request.update(kwargs)
+    return request
+
+
+_SECOND_FAULTS: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("fov", {"fov": 0.0}),
+    ("non_finite_position", {"position": [float("nan"), 1.0, 1.0]}),
+    ("non_finite_target", {"target": [float("inf"), 0.0, 0.0]}),
+    ("short_position", {"position": [1.0, 1.0]}),
+    ("width", {"width": 0}),
+    ("height", {"height": -5}),
+)
+
+
+class TestTheNameRuleIsJudgedBeforeAnyValue:
+    """A reserved name is the fault no change of value can clear, so it is named.
+
+    Both backends refused every request below before this fix, which is all the
+    cross-backend pins compared - and they named different causes. MuJoCo applied
+    the name rule first; Newton applied it after the pose, ``fov`` and
+    pixel-dimension rules, so ``add_camera("default", fov=0.0)`` was reported as
+    a ``fov`` problem there and as a reserved-name problem here. A caller fixing
+    what the message named learned the name was unusable one round trip later,
+    and only on one of the two engines.
+
+    :func:`~strands_robots.utils.camera_name_error` now owns both halves of the
+    name rule, so its position relative to the value rules is a property of the
+    rule rather than of whichever body a caller reached.
+    """
+
+    @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
+    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
+    def test_mujoco_names_the_reserved_name(self, sim, name: str, second: tuple[str, dict[str, Any]]) -> None:
+        result = sim.add_camera(name, **_request(**second[1]))
+        assert result["status"] == "error"
+        assert "reserved" in result["content"][0]["text"], result
+
+    @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
+    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
+    def test_newton_names_the_reserved_name_too(self, name: str, second: tuple[str, dict[str, Any]]) -> None:
+        stub = _newton_stub()
+        result = _newton_add_camera(stub, name, **second[1])
+        assert result["status"] == "error"
+        assert "reserved" in result["content"][0]["text"], result
+        assert stub._world.cameras == {}
+
+    @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
+    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
+    def test_the_two_backends_name_the_same_cause(self, sim, name: str, second: tuple[str, dict[str, Any]]) -> None:
+        """The whole point: one request, one diagnosis, whichever engine is held."""
+        newton = _newton_add_camera(_newton_stub(), name, **second[1])
+        mujoco_result = sim.add_camera(name, **_request(**second[1]))
+        assert newton["status"] == mujoco_result["status"] == "error"
+        assert newton["content"][0]["text"] == mujoco_result["content"][0]["text"]
+
+    @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
+    def test_a_value_fault_under_a_good_name_still_names_the_value(
+        self, sim, second: tuple[str, dict[str, Any]]
+    ) -> None:
+        """The control: promoting the name rule must not swallow the value rules.
+
+        Each backend keeps its own dimension bound (MuJoCo caps at the offscreen
+        framebuffer, Newton ray-traces and has no cap), so this asserts the
+        refusal is about the value rather than comparing the two sentences.
+        """
+        for result in (
+            sim.add_camera("wrist", **_request(**second[1])),
+            _newton_add_camera(_newton_stub(), "wrist", **second[1]),
+        ):
+            assert result["status"] == "error", (second, result)
+            assert "reserved" not in result["content"][0]["text"], (second, result)
+
+
+class TestTheComposedRuleIsTheOnlyNameGuard:
+    """One owner for the rule, so no site can re-spell it in another order."""
+
+    def test_the_unaddressable_half_still_wins_over_the_routing_half(self) -> None:
+        """``None`` is not a name at all, so the addressability message is right.
+
+        Both halves match it (``None`` is in :data:`FREE_CAMERA_TOKENS` too), and
+        the composed order is what decides which one a caller reads.
+        """
+        message = camera_name_error("add_camera", "name", None, routes_free_camera_tokens=True)
+        assert message is not None
+        assert "reserved" not in message
+
+    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
+    def test_a_backend_that_does_not_route_does_not_refuse(self, name: str) -> None:
+        assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=False) is None
+        assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True) is not None
+
+    def test_every_add_camera_reads_the_composed_rule_and_none_re_spells_it(self) -> None:
+        """Structural pin: the two halves are not applied separately any more.
+
+        Applying them separately is exactly how the order came to differ, so a
+        site that calls either half directly is the defect returning, not a style
+        preference. Scoped to ``add_camera`` bodies: ``remove_camera`` legitimately
+        applies the routing half alone (removing a token is a lookup, not a claim).
+        """
+        readers, offenders = [], []
+        for path in sorted(_package_root().rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.FunctionDef) and node.name == "add_camera"):
+                    continue
+                called = {
+                    call.func.id
+                    for call in ast.walk(node)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                }
+                where = f"{path.relative_to(_package_root())}:{node.lineno}"
+                if "camera_name_error" in called:
+                    readers.append(where)
+                for half in ("entity_name_error", "reserved_camera_name_error"):
+                    if half in called:
+                        offenders.append(f"{where} calls {half} directly")
+        assert len(readers) >= 3, f"expected every backend add_camera to read the rule, found {readers}"
+        assert offenders == [], offenders
