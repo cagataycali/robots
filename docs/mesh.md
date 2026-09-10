@@ -56,14 +56,13 @@ broadcasts `{"action": "stop"}` with no `robot_name`, so each peer decides which
 of its own robots that reaches. The local stop is not an optimisation: a
 broadcast never returns to its sender, so without it the robot the operator is
 standing next to is the only one an e-stop never halts. Its answer leads the
-returned `responses` list under this peer's own id and is graded like any
-other. A hardware peer stops its
-task. A simulation peer asks every rollout it could be running: the rollouts its
-backend reports as in flight where it keeps such a registry (MuJoCo prunes
-finished ones), and otherwise every robot the engine lists. `stop_policy` is
-idempotent and reports `was_running` itself, so asking an idle robot costs
-nothing and the verdict is read rather than guessed - `stopped` names only the
-robots whose answer did not say they were idle.
+returned `responses` list under this peer's own id and is graded like any other.
+A hardware peer stops its task. A simulation peer asks every rollout it could be
+running: the rollouts its backend reports as in flight where it keeps such a
+registry (MuJoCo prunes finished ones), and otherwise every robot the engine
+lists. `stop_policy` is idempotent and reports `was_running` itself, so asking
+an idle robot costs nothing and the verdict is read rather than guessed -
+`stopped` names only the robots whose answer did not say they were idle.
 
 The peer's `ok` is derived from those per-robot answers, never assumed:
 
@@ -86,9 +85,10 @@ it as soon as the world reaches a state.
 
 `emergency_stop()` latches a **lockout** on every peer that receives it. While a
 peer is locked out it refuses every command except `status`, `resume` and
-`stop` - a second e-stop must still halt a rollout the first one missed, and a
-stop only ever de-energizes - and nothing clears it on a timer - an e-stop that expired by itself would not be an
-e-stop. Recovery is always an explicit `resume`:
+`stop`; a second e-stop must still halt a rollout the first one missed, and a
+stop only ever de-energizes. Nothing clears the lockout on a timer - an e-stop
+that expired by itself would not be an e-stop. Recovery is always an explicit
+`resume`:
 
 ```python
 sim_a.mesh.send(peer_id, {"action": "resume", "override_code": OPERATOR_CODE})
