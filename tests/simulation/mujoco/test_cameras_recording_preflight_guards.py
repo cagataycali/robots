@@ -36,15 +36,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tempfile
 import time
 
 import pytest
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 # Inline MJCF avoids a network-dependent model download and keeps the world
 # deterministic: three hinge joints, matching the fixtures used by the other
