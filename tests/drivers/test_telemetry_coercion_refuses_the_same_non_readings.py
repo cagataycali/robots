@@ -72,7 +72,18 @@ _RULE: list[tuple[Any, float | None, int | None, list[float] | None, list[int] |
 ]
 
 
-@pytest.mark.parametrize(("value", "as_float", "as_int", "as_floats", "as_ints"), _RULE, ids=repr)
+def _id(value: Any) -> str:
+    """A parametrize id that is the same in every process.
+
+    ``repr`` of a ``memoryview`` or a bare ``object()`` carries the address, so
+    under ``pytest -n`` each worker collected a different id and xdist refused
+    the run ("Different tests were collected").
+    """
+    text = repr(value)
+    return type(value).__name__ if " at 0x" in text else text
+
+
+@pytest.mark.parametrize(("value", "as_float", "as_int", "as_floats", "as_ints"), _RULE, ids=_id)
 def test_one_rule_decides_what_counts_as_a_reading(
     value: Any,
     as_float: float | None,
