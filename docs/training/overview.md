@@ -167,45 +167,18 @@ TrainSpec(..., method="lora", lora_r=16, extra={"policy_type": "pi05"})
 # -> lerobot_train --peft.method_type=LORA --peft.r=16 --policy.type=pi05
 ```
 
-#### Passing lerobot's own flags through `extra`
+lerobot owns the training knobs - what each policy freezes, RA-BC sample
+weighting, relative actions, quantile normalization, dataset streaming, format
+versions - and documents them at
+[huggingface.co/docs/lerobot](https://huggingface.co/docs/lerobot). strands adds
+four things on top.
 
-Any key in `extra` that names a real field of lerobot's config tree is applied to
-it, dotted for a sub-config (`policy.*`, `dataset.*`, `wandb.*`). A key that
-matches no field is ignored with a warning, so a typo can never become an
-arbitrary flag.
-
-A value may be written either as the field's own Python type or as text. Text is
-read with lerobot's own draccus decoder - the same one behind `--key=value` - so
-one spec means one run whether the backend builds the config in-process or shells
-out:
-
-```python
-# these two are the same request
-extra={"policy.freeze_vision_encoder": False}
-extra={"policy.freeze_vision_encoder": "false"}
-```
-
-For a boolean field that decoder accepts `false`/`no`/`off` and
-`true`/`yes`/`on` in any case. `0` and `1` are integers to it, not booleans, and
-are refused - as they are on the command line. Text that does not decode to the
-field's declared type is refused naming the field and its type, rather than
-stored as-is: a stored string is truthy, so `"false"` would otherwise read as
-"true" and silently invert the flag.
-
-`None` clears an optional field, and the shelled-out command renders it as the
-YAML null literal so it decodes back to `None` rather than to the *text*
-`"None"`. That is how you ask a policy not to load a pretrained asset - ACT, for
-instance, defaults its resnet18 backbone to ImageNet weights, which is a
-download the from-scratch path does not need:
-
-```python
-extra={"policy_type": "act", "policy.pretrained_backbone_weights": None}
-```
-
-Some policies freeze most of themselves by default, which `method="full"` does
-not override - it selects strands' tuning strategy, not lerobot's per-policy
-defaults. SmolVLA, for instance, ships `freeze_vision_encoder=True` and
-`train_expert_only=True`, so full-model finetuning means asking for both:
+**`extra` reaches any field of lerobot's config tree.** Dotted keys address
+sub-configs (`policy.*`, `dataset.*`, `wandb.*`); values may be Python-typed or
+text (decoded by lerobot's own draccus decoder, so `"false"` is a boolean, not a
+truthy string); `None` clears an optional field; a key that names no field is
+ignored with a warning. `method="full"` selects strands' tuning strategy, not
+lerobot's per-policy freeze defaults, so full-tuning SmolVLA means saying so:
 
 ```python
 TrainSpec(
@@ -220,286 +193,22 @@ TrainSpec(
 )
 ```
 
-Check what a policy freezes by default before assuming `method="full"` trains
-all of it: `dataclasses.fields()` on its lerobot config class lists every knob
-and its default.
+**A fresh start clears an empty leftover `output_dir`** and nothing else; a
+directory with contents is left for lerobot to refuse by name, and
+`resume=True` continues in place.
 
-#### `output_dir` on a fresh start
+**`validate()` refuses before launch** what lerobot would fail on inside the
+run: a `policy_type` whose stats want quantiles (`molmoact2`, `pi05`) on a
+dataset without `q01..q99`; a `codebase_version` older than the installed
+lerobot reads (names the converter); `val_episodes` on a streamed, multi-task,
+or count-less dataset (lerobot splits by fraction per task); `use_relative_actions`
+on any policy other than `pi0` / `pi05` / `pi0_fast`.
 
-lerobot refuses a pre-existing `output_dir` unless it is resuming:
-
-```
-FileExistsError: Output directory /tmp/ft_out already exists and resume is
-False. Please change your output directory so that /tmp/ft_out is not
-overwritten.
-```
-
-So a fresh (`resume=False`) start clears a leftover `output_dir` first - but
-**only when it is empty**. A directory holding anything at all is left for
-lerobot to refuse by name, because the removal is a recursive
-`shutil.rmtree(..., ignore_errors=True)` that reports neither what it took nor a
-partial failure. Both entry points - `train_policy` / `LerobotTrainer.train()`
-and the `lerobot_train` tool - ask
-`strands_robots.utils.stale_output_dir_is_clearable()`, so they cannot disagree
-about it.
-
-Emptiness rather than "holds no resumable checkpoint" is the bound because a
-checkpoint is not always visible to a resume probe: lerobot's `save_checkpoint`
-writes `model.safetensors` before `train_config.json`, so a run interrupted
-between the two leaves the trained weights under a checkpoint that answers "not
-resumable". Point a fresh run at a new `output_dir`, or pass `resume=True` to
-continue in place.
-
-#### RA-BC sample weighting (reward-aligned behavior cloning)
-
-Reward-Aligned Behavior Cloning reweights the per-sample loss so high-progress
-demonstration frames dominate - the technique behind the strongest
-behavior-cloning ablations on long-horizon manipulation. lerobot >= 0.5.2 drives
-it from a nested `SampleWeightingConfig` on `TrainPipelineConfig`
-(`cfg.sample_weighting`, with fields `type` / `progress_path` / `head_mode` /
-`kappa` / `epsilon`). Surface it through `extra` with a friendly dict whose keys
-match those fields 1:1:
-
-```python
-TrainSpec(
-    dataset_root="/data/folding_v3",
-    base_model="lerobot/pi05_base",
-    output_dir="/tmp/ft_out",
-    extra={
-        "policy_type": "pi05",
-        "sample_weighting": {
-            "type": "rabc",          # scheme: "rabc" or "uniform"
-            "kappa": 0.01,           # high-progress threshold
-            "head_mode": "sparse",   # SARM progress head ("sparse"/"dense")
-            "progress_path": "/tmp/ft_out/sarm_progress.parquet",
-        },
-    },
-)
-# -> lerobot_train --sample_weighting.type=rabc --sample_weighting.kappa=0.01 \
-#                  --sample_weighting.head_mode=sparse \
-#                  --sample_weighting.progress_path=/tmp/ft_out/sarm_progress.parquet ...
-```
-
-The friendly keys are forwarded verbatim into `SampleWeightingConfig`. An
-unknown key, an unsupported `type` (lerobot ships `rabc` and `uniform`), or a
-lerobot too old to expose `cfg.sample_weighting` each raise an actionable error.
-Omit `sample_weighting` entirely for standard (uniform) behavior cloning.
-
-The `progress_path` parquet is produced from a trained SARM reward model - see
-the SARM production loop below.
-
-#### SARM reward model + the RA-BC production loop
-
-RA-BC needs a per-frame *progress* signal (`sarm_progress.parquet`). SARM
-(Stage-Aware Reward Model) learns that signal from demonstrations; lerobot
->= 0.5.2 trains it through the SAME `train(cfg)` entry point as a policy, but on
-`cfg.reward_model` instead of `cfg.policy`. The full producing loop is three
-strands calls:
-
-```python
-from strands_robots.training import (
-    create_trainer, TrainSpec, compute_rabc_weights,
-)
-
-trainer = create_trainer("lerobot_local")
-
-# 1. TRAIN a SARM reward model (single_stage needs no annotations).
-trainer.train(TrainSpec(
-    dataset_root="/data/folding_v3",
-    output_dir="/tmp/sarm_out",
-    steps=5000,
-    extra={"reward_model": {
-        "type": "sarm",
-        "annotation_mode": "single_stage",
-        "image_key": "observation.images.base",
-    }},
-))
-
-# 2. COMPUTE per-frame RA-BC progress weights from the trained SARM.
-progress = compute_rabc_weights(
-    reward_model_path=trainer.latest_checkpoint("/tmp/sarm_out"),
-    dataset_root="/data/folding_v3",
-)
-
-# 3. TRAIN the policy with RA-BC pointed at the produced parquet.
-trainer.train(TrainSpec(
-    dataset_root="/data/folding_v3",
-    base_model="lerobot/pi05_base",
-    output_dir="/tmp/ft_out",
-    steps=20000,
-    extra={"policy_type": "pi05",
-           "sample_weighting": {"type": "rabc", "progress_path": progress}},
-))
-```
-
-`extra["reward_model"]` works for every reward model lerobot registers on its
-`RewardModelConfig` choice registry - `sarm` (default), `robometer`, `topreward`,
-and `reward_classifier` today, plus any new type a future lerobot or a plugin
-adds, with no strands change needed. Besides `type`, the dict accepts that
-type's OWN config fields: e.g. SARM's `annotation_mode`
-(`single_stage` / `dense_only` / `dual`), `image_key`, `state_key`; robometer /
-topreward's `default_task`, `success_threshold`, `max_frames`; the classifier's
-`num_classes`, `hidden_dim`. Fields that do not belong to the chosen type (e.g.
-SARM's `annotation_mode` on `robometer`) are rejected with the list of that
-type's configurable fields. The policy-only knobs (`sample_weighting`,
-`relative_actions`, non-`full` `method`) are rejected on a reward-model run
-rather than silently ignored.
-
-A trained SARM can also be queried for a dense task-progress score in `[0, 1]`
-(e.g. as an eval-time signal):
-
-```python
-from strands_robots.training import load_reward_model, reward_progress
-
-model = load_reward_model("/tmp/sarm_out/checkpoints/last/pretrained_model")
-scores = reward_progress(model, batch)   # list[float], one per batch element
-```
-
-#### Relative (delta) actions
-
-Predicting actions as deltas from the current robot state - rather than
-absolute targets - is part of the strongest manipulation ablations. lerobot
-implements it as a matched processor pair built from
-`config.use_relative_actions`: a `RelativeActionsProcessorStep` encodes
-target->delta at train time, and the inverse `AbsoluteActionsProcessorStep`
-decodes delta->target at inference. Both are saved into the checkpoint's
-pre/post processors, so deployment via `lerobot_local` (which loads the saved
-processor pipeline) restores the inverse decode automatically - no separate
-inference-side wiring is needed.
-
-```python
-TrainSpec(
-    dataset_root="/data/folding_v3",
-    base_model="lerobot/pi05_base",
-    output_dir="/tmp/ft_out",
-    extra={"policy_type": "pi05", "relative_actions": True},
-)
-# -> lerobot_train --policy.type=pi05 --policy.use_relative_actions=true ...
-```
-
-Only `pi0` / `pi05` / `pi0_fast` expose `use_relative_actions`; the flag is
-rejected (not silently ignored) for any other policy type.
-
-#### Quantile normalization (molmoact2, pi05)
-
-Some policies normalize `STATE`/`ACTION` with `NormalizationMode.QUANTILES`
-(currently `molmoact2` and `pi05`) rather than mean/std or min/max. Quantile
-normalization reads the dataset stats' quantile keys (`q01`..`q99`); a dataset
-recorded *before* quantile stats existed carries only mean/std/min/max, so
-lerobot either raises or silently mis-normalizes deep inside its stats plumbing
-at train time. `validate()` catches this at spec time: when the resolved policy
-normalizes with quantiles and a local `meta/stats.json` lacks the quantile keys,
-it returns an actionable problem naming lerobot's remedy:
-
-```bash
-python -m lerobot.scripts.augment_dataset_quantile_stats \
-    --repo-id=<your-dataset-repo-id> --root=/data/my_v3_dataset
-```
-
-Datasets recorded by `Robot.start_recording()` / `DatasetRecorder` on current
-lerobot already include quantile stats (lerobot's `compute_episode_stats`
-computes them by default), so they train `molmoact2` / `pi05` with no manual
-stats surgery. The check is conservative: a Hub dataset with no local cache is
-left unflagged (its quantiles are verified by lerobot when the shards load).
-
-#### Dataset format version (`codebase_version`)
-
-Every LeRobotDataset declares the format version it was written in as
-`codebase_version` in `meta/info.json`. lerobot compares it against its own
-`CODEBASE_VERSION` and refuses a dataset whose MAJOR is older - an older *minor*
-loads with a warning. Only a `v2.1` root gets a message naming the dataset and
-the converter; for any other older major lerobot raises
-`NotImplementedError: Contact the maintainer on [Discord](...)` from inside the
-exception constructor, naming neither the dataset nor the version.
-
-The version sits in the same `meta/info.json` the trainer already reads for the
-episode count, so `validate()` decides this offline and returns an actionable
-problem instead:
-
-```
-dataset_root '/data/old_dataset' declares codebase_version 'v2.1' in
-meta/info.json, which lerobot 0.6.2 cannot read (it loads 'v3.0' and refuses an
-older major). Convert it with lerobot's own converter: python -m
-lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<your-dataset-repo-id>
-```
-
-lerobot ships exactly one conversion (`v2.1` -> `v3.0`), so a root older than
-`v2.1` is told so plainly rather than handed a command that would fail. Datasets
-recorded by `Robot.start_recording()` / `DatasetRecorder` are written in the
-installed lerobot's own format, so they pass cleanly.
-
-Like the quantile-stats check, this one is conservative: it flags only a
-definite mismatch. A Hub dataset with no local cache is left unflagged -
-`validate()` does not reach the network, so Hub-side metadata (the format
-version, and the git tag lerobot resolves the revision from) is verified by
-lerobot when the dataset loads.
-
-#### Streaming a large Hub dataset (no full download)
-
-Real datasets (BitRobot / HIW-500, ~50-500 GB) do not fit on a single edge node.
-Point the trainer at a Hub dataset id and stream it - lerobot pulls shards on
-the fly via `StreamingLeRobotDataset`, so disk stays bounded and the first
-forward pass starts without waiting for a full download:
-
-```python
-TrainSpec(
-    dataset_repo_id="org/hiw_500",   # train from the Hub, not a local root
-    streaming=True,                  # -> --dataset.streaming=true
-    base_model="lerobot/act_aloha_sim",
-    output_dir="/tmp/ft_out",
-    extra={"policy_type": "act"},
-)
-# -> lerobot_train --dataset.repo_id=org/hiw_500 --dataset.streaming=true ...
-```
-
-`dataset_root` is optional here - if given it is used as a local cache root.
-`streaming=True` also works with a local `dataset_root` (streams from disk with
-bounded RAM).
-
-Held-out `val_episodes` splitting needs a local `meta/info.json` to count
-episodes, because lerobot's split is a FRACTION and the count is what turns an
-episode number into one. `validate()` therefore refuses `val_episodes` whenever
-that count is unreadable - a Hub source with no `dataset_root`, or a
-`dataset_root` cache directory nothing has been downloaded into yet - rather
-than launch a run that trains on every episode and logs no validation loss. The
-refusal names the two ways to get the split: point `dataset_root` at a populated
-local copy of the dataset, or pass lerobot's own knobs directly with
-`extra={"dataset.eval_split": 0.1, "eval_steps": 1000}`.
-
-The same `meta/info.json` decides whether the request is expressible at all.
-lerobot holds out `ceil(episodes_in_task * eval_split)` from **every task
-independently**, so one fraction reproduces a global episode count only on a
-single-task dataset: reserving 2 episodes of a three-task dataset would hold out
-3. `validate()` therefore refuses `val_episodes` when `total_tasks` declares more
-than one task, and points at the fraction instead. `total_tasks: 0`, `1`, or no
-such header mean the dataset records no task count - lerobot's own field defaults
-to 0 - and are honored as single-task. A header that declares something which is
-*not* a count (`3.0`, `"3"`, `true`, `-3`, `NaN`) is refused on its own terms and
-names the value it read: the count is what decides expressibility, so an unusable
-declaration is neither single-task nor multi-task, and reading it as the former
-is what let a multi-task dataset reach the per-task ceiling. Repair the header,
-or pass the fraction directly.
-
-`streaming` and `val_episodes` cannot both be honored, so `validate()` refuses
-the pair. lerobot holds out a validation split only on a **map-style** dataset:
-`make_train_eval_datasets` rebuilds both halves as `LeRobotDataset` objects,
-which is what makes the split addressable by episode index. A streamed dataset
-is not one, and which way the pair fails depends on the installed lerobot: a
-`DatasetConfig` that guards `eval_split` against `streaming` refuses the
-combination when the run starts, and without that guard it constructs and the
-factory discards the streaming dataset it had opened first. Either way the pair
-delivers at most one of the two fields: it fails inside a launched run, or it
-materializes the whole dataset - exactly what `streaming` exists to avoid -
-while reporting nothing, because an annulled stream is indistinguishable from
-`streaming=False`. Set `streaming=False` to keep the validation split, or
-`val_episodes=None` to keep the stream.
-
-The refusal is decided from the two fields alone, so it does not depend on the
-dataset's episode count. That matters because the count is only readable from a
-local `meta/info.json`, and streaming a Hub dataset is the case with no local
-copy - the download `streaming` exists to avoid. On that source `streaming=False`
-alone is not enough to deliver the split either, so the refusal names the local
-copy that configuration also needs.
+**Reward models train through the same trainer.** `extra["reward_model"]`
+selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
+`reward_classifier`) with that type's own fields; `compute_rabc_weights`,
+`load_reward_model` and `reward_progress` in `strands_robots.training` turn a
+trained SARM into the `sample_weighting.progress_path` parquet RA-BC reads.
 
 ### GR00T (`groot`)
 
