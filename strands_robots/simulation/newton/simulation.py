@@ -41,6 +41,7 @@ from strands_robots.registry.discovery import discover_urdf_path, list_urdf_disc
 from strands_robots.simulation.base import (
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
+    camera_pose_error,
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
@@ -73,7 +74,6 @@ from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
-    camera_fov_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
@@ -1441,33 +1441,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # ``_look_at_quat`` then divides the view vector by a ``nan`` norm, so
         # ``render``/``get_frame`` return a frame from an all-NaN camera
         # quaternion under a success result.
-        position, _perr = coerce_pose_vector("add_camera", "position", position, 3)
-        if _perr is not None:
-            return {"status": "error", "content": [{"text": _perr}]}
-        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
-        if _terr is not None:
-            return {"status": "error", "content": [{"text": _terr}]}
-        pos = [1.0, 1.0, 1.0] if position is None else position
-        tgt = [0.0, 0.0, 0.0] if target is None else target
-        if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
-                    }
-                ],
-            }
-        # Validate the field of view at config time, on the same shared domain
-        # the MuJoCo backend uses. It was previously coerced by a bare
-        # ``float(fov)`` inside the lock below, so a non-numeric value raised a
-        # ``ValueError`` straight through the structured tool-result contract,
-        # and ``nan``/``inf``/``0``/``>=180`` registered a degenerate camera
-        # under a success result: :meth:`get_camera_params` derives the pinhole
-        # intrinsics ``0.5 * h / tan(radians(fov) / 2)``, which is ``nan`` for a
-        # ``nan`` fov and raises ``ZeroDivisionError`` for ``0``.
-        if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
-            return {"status": "error", "content": [{"text": e}]}
+        pos, tgt, pose_err = camera_pose_error(position, target, fov)
+        if pose_err is not None:
+            return pose_err
         # Validate the pixel dimensions on the shared floor the MuJoCo backend's
         # ``_validate_render_dims`` already applies, so a resolution one backend
         # refuses is refused by all of them. They were previously coerced by a
@@ -2151,22 +2127,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # get_observation's base_quat / base_ang_vel and the MuJoCo backend.
         base = self._free_base_pose(robot_name, joint_q, joint_qd)
 
-        text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
-        for jnt, vals in state.items():
-            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
-        if base is not None:
-            p_, q_ = base["position"], base["quaternion"]
-            lv_, av_ = base["linear_velocity"], base["angular_velocity"]
-            text += (
-                f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
-                f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
-                f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
-                f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
-            )
-        json_payload: dict[str, Any] = {"state": state}
-        if base is not None:
-            json_payload["base"] = base
-        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
+        return self._robot_state_result(robot_name, state, base, self._world.sim_time)
 
     def list_robots_info(self) -> dict[str, Any]:
         """Pretty-printed robot listing (dict-shaped, for agent display).

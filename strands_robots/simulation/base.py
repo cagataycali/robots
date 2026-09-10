@@ -55,6 +55,8 @@ from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     boolean_flag_error,
+    camera_fov_error,
+    coerce_pose_vector,
     dds_domain_id_error,
     is_boolean,
     non_negative_count_error,
@@ -681,6 +683,46 @@ _BOOLEAN_STATE_REASON = (
     "1 N depending on the surface, and the call would report success. Pass the "
     "quantity in the surface's own units."
 )
+
+
+def camera_pose_error(position: Any, target: Any, fov: Any) -> tuple[list[float], list[float], dict[str, Any] | None]:
+    """Coerce and check an ``add_camera`` pose, or refuse it.
+
+    Position and target go through :func:`coerce_pose_vector` (membership,
+    not truthiness: a NumPy pose is accepted, an empty vector is refused
+    rather than read as "omitted"); ``None`` takes the ``[1, 1, 1]`` /
+    ``[0, 0, 0]`` defaults; a coincident pair has no look direction; and
+    the field of view is checked by the shared :func:`camera_fov_error`
+    domain, so no backend's camera can drift from another's.
+
+    Returns:
+        ``(pos, tgt, None)`` with two validated 3-vectors of plain floats,
+        or ``(pos, tgt, error_result)``.
+    """
+    position, _perr = coerce_pose_vector("add_camera", "position", position, 3)
+    if _perr is not None:
+        return [], [], {"status": "error", "content": [{"text": _perr}]}
+    target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
+    if _terr is not None:
+        return [], [], {"status": "error", "content": [{"text": _terr}]}
+    pos = [1.0, 1.0, 1.0] if position is None else position
+    tgt = [0.0, 0.0, 0.0] if target is None else target
+    if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
+        return (
+            pos,
+            tgt,
+            {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
+                    }
+                ],
+            },
+        )
+    if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
+        return pos, tgt, {"status": "error", "content": [{"text": e}]}
+    return pos, tgt, None
 
 
 class SimEngine(ABC):
@@ -2012,6 +2054,30 @@ class SimEngine(ABC):
         if error:
             return {"status": "error", "content": [{"text": error}]}
         return None
+
+    @staticmethod
+    def _robot_state_result(
+        robot_name: str, state: dict[str, Any], base: dict[str, list[float]] | None, sim_time: float
+    ) -> dict[str, Any]:
+        """Render a ``get_robot_state`` success: one text line per joint, a
+        base line when the robot has a free base, and the same facts as JSON."""
+        text = f"'{robot_name}' state (t={sim_time:.3f}s):\n"
+        for jnt, vals in state.items():
+            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+        if base is not None:
+            p_, q_ = base["position"], base["quaternion"]
+            lv_, av_ = base["linear_velocity"], base["angular_velocity"]
+            text += (
+                f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
+                f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
+                f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
+                f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
+            )
+
+        json_payload: dict[str, Any] = {"state": state}
+        if base is not None:
+            json_payload["base"] = base
+        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     @staticmethod
     def _validate_timestep(timestep: Any, method: str, param: str = "timestep") -> dict[str, Any] | None:

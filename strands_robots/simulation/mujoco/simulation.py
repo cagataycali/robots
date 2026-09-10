@@ -79,6 +79,7 @@ from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import (
     SimEngine,
+    camera_pose_error,
     close_match_hint,
     own_keyword_names,
     reject_misspelled_kwargs,
@@ -138,7 +139,6 @@ from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
-    camera_fov_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
     entity_name_error,
@@ -3467,23 +3467,7 @@ class MuJoCoSimEngine(
                 "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
             }
 
-        text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
-        for jnt, vals in state.items():
-            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
-        if base is not None:
-            p_, q_ = base["position"], base["quaternion"]
-            lv_, av_ = base["linear_velocity"], base["angular_velocity"]
-            text += (
-                f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
-                f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
-                f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
-                f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
-            )
-
-        json_payload: dict[str, Any] = {"state": state}
-        if base is not None:
-            json_payload["base"] = base
-        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
+        return self._robot_state_result(robot_name, state, base, self._world.sim_time)
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
         """List MuJoCo body names available as camera/sensor mount points.
@@ -4230,38 +4214,9 @@ class MuJoCoSimEngine(
         # ValueError on a NumPy pose (what the docstring above advertises as
         # accepted) and read an empty vector as "omitted", quietly placing the
         # camera at the default [1, 1, 1] under a success result.
-        position, _perr = coerce_pose_vector("add_camera", "position", position, 3)
-        if _perr is not None:
-            return {"status": "error", "content": [{"text": _perr}]}
-        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
-        if _terr is not None:
-            return {"status": "error", "content": [{"text": _terr}]}
-        # ``coerce_pose_vector`` above owns the pose rule for both parameters:
-        # anything reaching here is either a validated 3-vector of plain floats or
-        # ``None``, so the defaults below - and the element-wise comparison after
-        # them - operate on numbers that are already known to be finite.
-        pos = [1.0, 1.0, 1.0] if position is None else position
-        tgt = [0.0, 0.0, 0.0] if target is None else target
-        # Degenerate orientation: position == target means no well-defined look direction.
-        if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
-                    }
-                ],
-            }
-
-        # Validate the field of view up front. MuJoCo's ``fovy`` must be a
-        # finite angle in the open interval (0, 180) degrees; otherwise the
-        # spec recompile aborts deep inside ``inject_camera_into_scene`` with a
-        # cryptic "spec recompile refused", or - for fov <= 0 - silently
-        # registers a degenerate camera that renders nothing useful. The domain
-        # lives in the shared ``camera_fov_error`` so the Newton backend's
-        # ``add_camera`` cannot drift from this one.
-        if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
-            return {"status": "error", "content": [{"text": e}]}
+        pos, tgt, pose_err = camera_pose_error(position, target, fov)
+        if pose_err is not None:
+            return pose_err
 
         # Validate the render resolution baked into this camera the same way
         # ``render`` validates its dims, so a bad size fails at config time with

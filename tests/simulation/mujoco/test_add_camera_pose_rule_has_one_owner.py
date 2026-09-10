@@ -52,6 +52,7 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
+from strands_robots.simulation import base as base_mod  # noqa: E402
 from strands_robots.simulation.mujoco import simulation as sim_mod  # noqa: E402
 from strands_robots.utils import coerce_pose_vector, pose_vector_error  # noqa: E402
 
@@ -127,6 +128,17 @@ def _backend_source() -> str:
     return pathlib.Path(inspect.getfile(sim_mod)).read_text(encoding="utf-8")
 
 
+def _base_source() -> str:
+    """The shared ``SimEngine`` source - where ``add_camera``'s pose rule now lives."""
+    return pathlib.Path(inspect.getfile(base_mod)).read_text(encoding="utf-8")
+
+
+def _add_camera_rule_source() -> str:
+    """``add_camera`` delegates its pose rule to ``simulation.base.camera_pose_error``,
+    shared with the Newton backend; the rule is scanned where it is applied."""
+    return _base_source()
+
+
 def _text(result: dict[str, Any]) -> str:
     return next(c["text"] for c in result["content"] if "text" in c)
 
@@ -141,28 +153,33 @@ class TestThePoseRuleHasOneOwner:
         tgt))`` re-running ``pose_vector_error`` on values ``coerce_pose_vector``
         had already returned.
         """
-        assert _pose_rule_calls(_backend_source(), "add_camera") == [
+        assert _pose_rule_calls(_add_camera_rule_source(), "camera_pose_error") == [
             "coerce_pose_vector",
             "coerce_pose_vector",
         ]
+        # ...and the backend does not apply it a third time around the delegate.
+        assert _pose_rule_calls(_backend_source(), "add_camera") == []
 
     @pytest.mark.parametrize("method", POSE_TAKING_METHODS)
     def test_no_scene_method_re_checks_an_already_coerced_pose(self, method: str) -> None:
         """Whoever coerces a pose owns it; nothing re-reports on the result."""
-        calls = _pose_rule_calls(_backend_source(), method)
+        if method == "add_camera":
+            calls = _pose_rule_calls(_add_camera_rule_source(), "camera_pose_error")
+        else:
+            calls = _pose_rule_calls(_backend_source(), method)
         assert calls, f"{method} takes a pose but calls no pose-rule helper"
         assert set(calls) == {"coerce_pose_vector"}, f"{method} re-checks a coerced pose: {calls}"
 
     def test_a_second_application_would_be_detected(self) -> None:
         """The scanner is not vacuous: a planted re-check is reported."""
-        planted = _backend_source().replace(
-            '        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)\n',
-            '        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)\n'
-            '        _ = pose_vector_error("add_camera", "target", target, 3)\n',
+        planted = _add_camera_rule_source().replace(
+            '    target, _terr = coerce_pose_vector("add_camera", "target", target, 3)\n',
+            '    target, _terr = coerce_pose_vector("add_camera", "target", target, 3)\n'
+            '    _ = pose_vector_error("add_camera", "target", target, 3)\n',
             1,
         )
-        baseline = _pose_rule_calls(_backend_source(), "add_camera")
-        assert _pose_rule_calls(planted, "add_camera") == [*baseline, "pose_vector_error"]
+        baseline = _pose_rule_calls(_add_camera_rule_source(), "camera_pose_error")
+        assert _pose_rule_calls(planted, "camera_pose_error") == [*baseline, "pose_vector_error"]
 
 
 class TestTheCoercingGuardIsTotal:

@@ -676,7 +676,10 @@ def _scan_placement_methods(root: pathlib.Path) -> tuple[set[tuple[str, str]], l
                     routed = any(
                         isinstance(node, ast.Call)
                         and (
-                            (isinstance(node.func, ast.Name) and node.func.id == "coerce_pose_vector")
+                            (
+                                isinstance(node.func, ast.Name)
+                                and node.func.id in ("coerce_pose_vector", "camera_pose_error")
+                            )
                             # Routing through the backend-agnostic core counts:
                             # MotionPrimitivesCore._validate_move_to_args wraps
                             # coerce_pose_vector (pinned non-vacuously by
