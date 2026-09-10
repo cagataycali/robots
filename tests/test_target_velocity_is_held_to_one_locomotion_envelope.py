@@ -45,7 +45,7 @@ def _default_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_envelope_module_is_standard_library_only() -> None:
     """Both readers sit in layers that must not import each other; the shared module stays light."""
     tree = ast.parse((ROOT / "strands_robots" / "locomotion_envelope.py").read_text())
-    imported = set()
+    imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name.split(".")[0] for alias in node.names)
