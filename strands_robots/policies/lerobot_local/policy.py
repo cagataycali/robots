@@ -1221,6 +1221,15 @@ class LerobotLocalPolicy(Policy):
                 # reaches the model raw and actions reach the robot un-unnormalized
                 # while has_postprocessor stays True. Detect and warn, matching the
                 # no-silent-passthrough intent of the missing-postprocessor case.
+                # Supplying those stats is only half the remedy: they are in the
+                # units the dataset was recorded in (SO-arm = servo degrees,
+                # gripper RANGE_0_100), so a caller packing a MuJoCo state in
+                # RADIANS also needs the embodiment's state_units/action_units.
+                # Measured on lerobot/smolvla_base's so100 stats (std
+                # [26.4, 52.4, 49.9, 37.0, 59.4, 19.0]): the full so101 joint
+                # range spans 0.07-0.15 sigma packed as radians and 3.8-8.3 sigma
+                # packed as degrees, so the stats-only remedy leaves
+                # observation.state a near-constant. The warning names both.
                 inert = bridge.inert_normalization_features()
                 if inert:
                     logger.warning(
@@ -1237,7 +1246,14 @@ class LerobotLocalPolicy(Policy):
                         "state normalization lives in the preprocessor's "
                         "'normalizer_processor' step and action unnormalization in the "
                         "postprocessor's 'unnormalizer_processor' step, so naming only one "
-                        "leaves the other inert. If the arm reaches an out-of-distribution "
+                        "leaves the other inert. Stats also carry the UNITS the dataset was "
+                        "recorded in -- an SO-arm dataset is servo degrees with the gripper in "
+                        "0..100, a MuJoCo state is radians -- so a caller whose state speaks "
+                        "other units owes the unit half too, via the embodiment's "
+                        "state_units/action_units ('degrees') and joint_mids (mid-centering); "
+                        "with stats alone the robot's whole joint range normalizes into a "
+                        "fraction of one sigma and observation.state reaches the model as a "
+                        "near-constant. If the arm reaches an out-of-distribution "
                         "pose or ignores proprioception, this is why.",
                         self.pretrained_name_or_path or "<model>",
                         inert,

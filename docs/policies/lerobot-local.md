@@ -358,6 +358,42 @@ Naming only one leaves the other inert, and the diagnostic keeps reporting
 whichever half is still unnormalized. Fine-tuning the checkpoint writes stats
 under the canonical keys and needs no override at all.
 
+Stats also carry the *units* the dataset was recorded in, and that is a second
+half a sim caller owes. An SO-arm dataset is recorded through the driver's
+`MotorNormMode`: arm joints in servo **degrees**, gripper in `RANGE_0_100`
+(`smolvla_base`'s `so100.buffer.action.std` is
+`[26.4, 52.4, 49.9, 37.0, 59.4, 19.0]`). A MuJoCo state is **radians**. Feeding
+radians to degree stats is not a small error -- it is a change of scale:
+
+| `state_units` | full so101 joint range, in sigma |
+| --- | --- |
+| `"native"` (radians) | 0.07 -- 0.15 |
+| `"degrees"` | 3.8 -- 8.3 |
+
+At 0.1 sigma the arm's entire travel is indistinguishable from noise, so
+`observation.state` reaches the model as a near-constant and the policy ignores
+proprioception. Declare both halves together:
+
+```python
+policy = create_policy(
+    "lerobot_local",
+    pretrained_name_or_path="lerobot/smolvla_base",
+    policy_type="smolvla",
+    embodiment="so101",                                      # units: rad -> deg, gripper -> 0..100
+    processor_overrides={
+        "normalizer_processor": {"stats": dataset_stats},    # observation.state
+        "unnormalizer_processor": {"stats": dataset_stats},  # action
+    },
+)
+```
+
+The built-in `so100` / `so101` maps declare `state_units`/`action_units`
+`"degrees"`; every other map defaults to `"native"` (no conversion), which is
+right for real hardware -- an SO follower already reports driver units -- and
+wrong for a sim packing radians. `joint_mids` is the companion knob: LeRobot's
+`DEGREES` mode is mid-point centered, so without it sim `qpos=0` is taken to be
+the calibration mid.
+
 Supplied stats have to be as WIDE as the features the checkpoint declares. Width
 is what differs between embodiments -- a 6-DOF SO-101, a 7-DOF arm and a 14-DOF
 bimanual all have `observation.state` and `action` -- so reaching for the wrong
