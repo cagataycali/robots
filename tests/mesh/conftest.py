@@ -100,8 +100,10 @@ def _clear_acl_thread_snapshot():
     ``Mesh._refuse_under_permissive_default_acl()`` directly never reaches that
     ``finally`` and leaves ``auth_mode="mtls"`` behind; every later
     ``session._build_config()`` on the thread then reads mTLS whatever the env
-    says. Measured at 4e73dc0f3: test_default_acl_warning.py and
-    test_docs_mesh_accept_permissive_acl_env_var_reference.py both leak.
+    says. Two files leak that way -- test_default_acl_warning.py and
+    test_docs_mesh_accept_permissive_acl_env_var_reference.py, both of which
+    call the gate directly -- and test_acl_thread_snapshot_isolation.py pins
+    that this fixture clears up after them.
     """
     from strands_robots.mesh import _acl_config
 
