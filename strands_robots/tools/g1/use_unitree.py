@@ -42,6 +42,18 @@ Safety rails:
       are flagged loudly in every response envelope - including the error
       envelope, where the flag is what says whether an unanswered command
       may still be executing.
+    * Every mutative or high-danger op stops for operator approval BEFORE
+      the SDK RPC is dispatched, through the same decision path the ROS
+      transports use (:func:`~strands_robots.tools._command_gate.gate_motion`):
+      ``STRANDS_UNITREE_COMMAND_ALLOW`` (comma-separated ``service.operation``
+      entries, or ``*``) pre-approves; ``BYPASS_TOOL_CONSENT=true`` lifts the
+      gate with a WARNING; otherwise the operator is prompted through the
+      tool context, and with no context reachable the call is refused and
+      nothing is sent. A log line is not an authorization control: before
+      this gate an agent steered by untrusted content could walk the robot
+      or drop its torque with only a warning in the log (F-001, CWE-862).
+      Meta and read-only ops are never gated, and neither is
+      ``loco.StopMove`` - stopping must never get harder.
     * Prefer the FSM-gated verbs (``g1_send_action``, ``g1_run_policy``,
       ``g1_set_stand_height``, ...) for routine motion - they route
       through :meth:`~strands_robots.drivers.g1.G1Driver._check_motion_gates`.
@@ -57,7 +69,9 @@ import threading
 from typing import Any
 
 from strands import tool
+from strands.types.tools import ToolContext
 
+from strands_robots.tools._command_gate import gate_motion
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds
 
 logger = logging.getLogger(__name__)
@@ -132,6 +146,14 @@ HIGH_DANGER_OPS = {
     ("loco", "ShakeHand"),
     ("motion_switcher", "ReleaseMode"),  # robot uncontrolled
 }
+
+# Pre-approve ``service.operation`` pairs (comma-separated, ``*`` for all) for
+# headless runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
+COMMAND_ALLOW_ENV = "STRANDS_UNITREE_COMMAND_ALLOW"
+
+# Mutative by prefix (``Stop``) but never gated: it is the tool's own emergency
+# stop, and an approval prompt in front of a halt makes the robot less safe.
+_UNGATED_STOP_OPS = frozenset({("loco", "StopMove")})
 
 
 def _is_readonly(operation_name: str) -> bool:
@@ -396,13 +418,39 @@ def _execute(
     return {"ok": True, "result": _normalize_response(raw)}
 
 
-@tool
+def _gate(service_name: str, operation_name: str, high_danger: bool, tool_context: ToolContext | None) -> str | None:
+    """Operator approval for one mutative RPC, before it is dispatched.
+
+    Args:
+        service_name: A key of :data:`SERVICES`.
+        operation_name: The client method about to be called.
+        high_danger: Whether the pair is in :data:`HIGH_DANGER_OPS`; only
+            changes the wording the operator sees.
+        tool_context: The agent tool context supplying ``interrupt()``.
+
+    Returns:
+        A refusal message, or None to let the RPC proceed.
+    """
+    target = f"{service_name}.{operation_name}"
+    what = "can drop or walk the robot" if high_danger else "commands the robot"
+    return gate_motion(
+        "use_unitree",
+        operation_name,
+        target,
+        f"{target!r} {what}; it needs operator approval before it is sent.",
+        tool_context,
+        allow_env=COMMAND_ALLOW_ENV,
+    )
+
+
+@tool(context=True)
 def use_unitree(
     service_name: str,
     operation_name: str,
     parameters: dict[str, Any] | None = None,
     label: str = "",
     network_interface: str = "eth0",
+    tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Universal interface to every Unitree SDK2 client method.
 
@@ -425,6 +473,12 @@ def use_unitree(
     Prefer the FSM-gated driver verbs (g1_send_action, g1_run_policy) for
     routine motion; use_unitree is the raw escape hatch.
 
+    OPERATOR APPROVAL: every mutative op (and every high-danger op) stops
+    for a human before the RPC is sent. Pre-approve with
+    STRANDS_UNITREE_COMMAND_ALLOW=loco.SetVelocity,audio.TtsMaker (or '*');
+    BYPASS_TOOL_CONSENT=true lifts the gate. Reads, meta ops and
+    loco.StopMove are never gated.
+
     EXAMPLES:
       use_unitree('audio', 'TtsMaker', {'text': 'Hello', 'speaker_id': 0})
       use_unitree('audio', 'LedControl', {'R': 255, 'G': 0, 'B': 0})
@@ -442,6 +496,10 @@ def use_unitree(
             lookup target (e.g. {'service_name': 'loco'}).
         label: Optional human-readable description, echoed in the response.
         network_interface: DDS interface. Default 'eth0'.
+        tool_context: Supplied by the agent runtime; carries the operator
+            interrupt the mutative ops are approved through. Without it a
+            mutative op is refused unless pre-approved via
+            STRANDS_UNITREE_COMMAND_ALLOW or BYPASS_TOOL_CONSENT=true.
 
     Returns:
         Dict with status/message plus service, operation, label, result,
@@ -520,6 +578,18 @@ def use_unitree(
         "mutative": mutative,
         "high_danger": high_danger,
     }
+
+    if (high_danger or mutative) and (service_name, operation_name) not in _UNGATED_STOP_OPS:
+        refusal = _gate(service_name, operation_name, high_danger, tool_context)
+        if refusal is not None:
+            # Nothing was dispatched: the gate runs before ``_execute`` touches
+            # the bus, so a refused ZeroTorque is exactly as inert as a read.
+            return {
+                "status": "error",
+                "message": f"{service_name}.{operation_name} refused: {refusal}",
+                "dispatched": False,
+                **classification,
+            }
 
     res = _execute(service_name, operation_name, params, network_interface=network_interface)
 

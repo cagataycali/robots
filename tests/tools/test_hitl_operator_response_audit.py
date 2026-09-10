@@ -38,6 +38,7 @@ import pytest
 import strands_robots
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod
 import strands_robots.tools._command_gate as gate_mod
+import strands_robots.tools.g1.use_unitree as unitree_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
 import strands_robots.tools.use_ros as ros_mod
@@ -62,6 +63,23 @@ def _ctx(response: object) -> MagicMock:
 def _drive_use_ros(response: object) -> dict[str, Any] | None:
     """A publish aimed at a blocklisted drive topic."""
     return ros_mod._gate_command("publish", "/cmd_vel", _ctx(response))
+
+
+def _drive_use_unitree(response: object, monkeypatch: pytest.MonkeyPatch | None = None) -> dict[str, Any] | None:
+    """A ``loco.SetVelocity`` through the raw Unitree escape hatch.
+
+    The tool answers a ``{"status", "message"}`` envelope rather than content
+    blocks, so this drive performs the same translation the dashboard drive does,
+    and the shared cells grade one shape. ``_execute`` is stood in for so an
+    approval does not try to reach a DDS bus.
+    """
+    with patch.object(unitree_mod, "_execute", return_value={"ok": True, "result": 0}):
+        res = unitree_mod.use_unitree(
+            "loco", "SetVelocity", {"vx": 0.1, "vy": 0.0, "vyaw": 0.0}, tool_context=_ctx(response)
+        )
+    if res["status"] != "error":
+        return None
+    return {"status": "error", "content": [{"text": res["message"]}]}
 
 
 def _drive_lerobot_train(response: object) -> dict[str, Any] | None:
@@ -151,12 +169,24 @@ class _Gate:
 # The module/function columns name where the interrupt is raised, which for the
 # ROS 2 command gate is the owner shared by all three graph transports rather
 # than any one tool - one interrupt site, one audit row, whichever tool asked.
+# ``use_unitree`` asks through the same site (``gate_motion``, the transport-
+# agnostic path ``gate_command`` fronts with its blocklist), so its row here
+# grades that a Unitree RPC and a ROS publish leave the same shape of row.
 # The target each drive above aims at. ``emergency_stop`` is fleet-wide, so no
 # single peer is named and its row's target is legitimately empty - the verb is
 # what identifies it. Pinning the expected value per gate keeps that deliberate
 # rather than letting an empty target pass everywhere.
 _GATES: tuple[_Gate, ...] = (
-    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_command"),
+    _Gate("use_ros", "use_ros_tool", "publish", "/cmd_vel", _drive_use_ros, gate_mod, "gate_motion"),
+    _Gate(
+        "use_unitree",
+        "use_unitree_tool",
+        "SetVelocity",
+        "loco.SetVelocity",
+        _drive_use_unitree,
+        gate_mod,
+        "gate_motion",
+    ),
     _Gate(
         "lerobot_train",
         "lerobot_train_tool",
@@ -188,6 +218,7 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "BYPASS_TOOL_CONSENT",
         "STRANDS_ROS2_COMMAND_ALLOW",
+        unitree_mod.COMMAND_ALLOW_ENV,
         "STRANDS_TRAIN_EXTRA_FLAGS_ALLOW",
         dash_hitl_mod.MOTION_ENV,
     ):

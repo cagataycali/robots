@@ -109,6 +109,10 @@ def bus(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(uu, "ensure_dds", lambda _iface: None)
     monkeypatch.setattr(uu, "_CLIENTS", {"loco": _Loco(), "motion_switcher": _MotionSwitcher()})
     monkeypatch.setattr(uu, "_import_client_class", lambda qualname: STAND_INS[qualname])
+    # Every mutative op now stops for operator approval before the RPC (F-001).
+    # This file grades the envelope of the RPC outcomes, so it pre-approves the
+    # whole surface; the gate has its own file, test_use_unitree_gates_mutative_ops.py.
+    monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, "*")
 
 
 def _failure_rows() -> list[tuple[str, dict[str, Any]]]:
