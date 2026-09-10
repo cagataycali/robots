@@ -17,6 +17,14 @@ import pytest
 from strands_robots.policies.base import Policy
 from strands_robots.policies.cosmos3 import Cosmos3DiffusersBackend, Cosmos3Policy
 from strands_robots.policies.cosmos3.embodiments import get_embodiment
+from tests.mocks.torch_mock import real_torch_installed
+
+# ``_resolve_torch_dtype`` reads ``torch.bfloat16`` through ``getattr(..., None)``,
+# which swallows the stand-in's "attribute not covered" skip and turns it into
+# the unknown-dtype ValueError, so these three must not run against the stand-in.
+needs_real_torch_dtypes = pytest.mark.skipif(
+    not real_torch_installed(), reason="reads torch dtype attributes the numpy stand-in does not carry"
+)
 
 
 class FakeCondition:
@@ -329,6 +337,7 @@ def test_to_numpy_upcasts_float16_action_chunk():
     np.testing.assert_allclose(arr, [1.5, -2.0])
 
 
+@needs_real_torch_dtypes
 def test_load_pipeline_disables_safety_checker_by_default(monkeypatch):
     """``Cosmos3OmniPipeline.__init__`` builds a ``CosmosSafetyChecker`` that
     hard-raises ``ImportError: cosmos_guardrail is not installed`` unless the
@@ -361,6 +370,7 @@ def test_load_pipeline_disables_safety_checker_by_default(monkeypatch):
     assert captured["kwargs"].get("enable_safety_checker") is False
 
 
+@needs_real_torch_dtypes
 def test_load_pipeline_enables_safety_checker_when_requested(monkeypatch):
     """With ``enable_safety_checker=True`` the flag is NOT forced off, so a
     caller that installed ``cosmos_guardrail`` keeps the checker."""
@@ -451,6 +461,7 @@ def test_as_action_tensor_coerces_tensor_and_array_to_float32():
     np.testing.assert_allclose(from_array.numpy(), [[3.0, 4.0]])
 
 
+@needs_real_torch_dtypes
 def test_resolve_torch_dtype_unknown_raises_actionable_error():
     """An unknown dtype string is a caller misconfiguration; it must raise a
     ``ValueError`` naming the offending value rather than falling through to a
