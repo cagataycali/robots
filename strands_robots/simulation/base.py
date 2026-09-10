@@ -2810,6 +2810,12 @@ class SimEngine(ABC):
             only 1 of 6). A coarse backend error is excluded from both rate
             denominators instead of being counted as a physical miss; it remains
             visible in ``action_errors`` and the human-readable diagnostic.
+            ``ctrl_clamped`` (``{actuator_name: steps}``) counts the steps on
+            which a command fell outside a ctrl-limited actuator's
+            ``ctrlrange`` and MuJoCo clamped it - the robot did NOT follow the
+            policy there even though ``status`` is ``"success"`` and
+            ``action_errors`` is ``0``; an empty map means every command was
+            in range.
 
             Video: ``video_path`` (``None`` when no MP4 was written),
             ``video_frames`` and ``video_fps`` (the rate the MP4 plays at -
