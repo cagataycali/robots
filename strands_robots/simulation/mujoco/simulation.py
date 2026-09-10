@@ -5383,7 +5383,12 @@ class MuJoCoSimEngine(
         try:
             return super().run_policy(robot_name, **kwargs)
         finally:
-            self._rollout_driver_threads.pop(robot_name, None)
+            # Mirror the guard above: ``dict.pop`` hashes its key whenever the
+            # dict is non-empty, so an unguarded pop raises for the same name
+            # the write refused, and a raise in a ``finally`` discards the
+            # error dict the rollout was returning.
+            if isinstance(robot_name, str):
+                self._rollout_driver_threads.pop(robot_name, None)
             if self._world is not None and registered(self._world.robots, robot_name):
                 robot = self._world.robots[robot_name]
                 robot.policy_running = False

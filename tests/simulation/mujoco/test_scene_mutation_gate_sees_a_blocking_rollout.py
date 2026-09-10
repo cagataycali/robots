@@ -230,3 +230,24 @@ class TestBothRolloutShapesAgree:
             assert is_gate_refusal(sim.add_object(name="cube", shape="box", position=[0.4, 0.0, 0.05]))
         finally:
             sim.stop_policy("arm1")
+
+
+class TestTheDrivingThreadBookkeepingReportsABadName:
+    """A name the claim cannot key is still reported, not raised, on release.
+
+    ``_drive_rollout`` records the driving thread before ``run_policy`` has
+    judged the name, so the write is guarded against an unhashable one. The
+    release in its ``finally`` has to be guarded the same way: ``dict.pop``
+    hashes its key whenever the dict is non-empty, so with any other rollout in
+    flight an unguarded pop raised ``TypeError`` out of the ``finally`` - and a
+    raise there discards the unknown-robot error dict the rollout was returning.
+    """
+
+    def test_an_unhashable_name_is_reported_while_another_rollout_drives(self, sim):
+        sim._rollout_driver_threads["arm1"] = threading.get_ident()
+        try:
+            result = sim.run_policy(robot_name=["arm1"], policy_provider="mock", duration=1.0)
+        finally:
+            sim._rollout_driver_threads.clear()
+        assert result["status"] == "error", result
+        assert "not found" in result["content"][0]["text"], result
