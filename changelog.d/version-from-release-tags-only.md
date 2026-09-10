@@ -1,0 +1,2 @@
+### Fixed:
+- The package version is derived from release tags (`v*`) only. A clone of `main` used to build as `34233699346.dev309+gXXXX` because `git describe --tags` picked the nearest CI artifact tag (`artifact-dataset-target-34233699345`) instead of `v0.5.1`; that version sorts above every future release, so it satisfied any `>=` pin and blocked `pip install -U`. Same tree now builds as `0.5.2.devNNNN+gXXXX`.

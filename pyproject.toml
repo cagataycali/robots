@@ -692,6 +692,15 @@ Changelog = "https://github.com/strands-labs/robots/releases"
 [tool.hatch.version]
 source = "vcs"
 
+# Only release tags name a version. The repository also carries CI artifact
+# tags (artifact-dataset-target-34233699345, assets-resume-append-…), and
+# `git describe --tags` picks whichever tag is nearest in history - so a clone
+# of main built as 34233699346.dev309+g0fa5ded90 instead of 0.5.2.dev1141: a
+# version that sorts above every release strands-robots will ever cut, which
+# satisfies any `>=` pin and blocks every `pip install -U`.
+[tool.hatch.version.raw-options]
+git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
 
