@@ -56,11 +56,13 @@ import shutil
 import time
 import types
 import typing
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 from strands_robots.utils import (
+    boolean_flag_error,
     declared_count,
     lerobot_version,
     stale_output_dir_is_clearable,
@@ -147,6 +149,41 @@ _RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "
 # :func:`_policy_supports_expert_only`); the static set is the offline FALLBACK.
 # Currently pi0, pi05, and smolvla expose the field (pi0_fast does NOT).
 _EXPERT_ONLY_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
+
+# ``TrainSpec.tune`` component -> the lerobot policy-config field that freezes or
+# unfreezes it. A tune dict is a request to train PART of a model: GR00T spells
+# the four components as its own ``tune_*`` fields, and the expert-only freeze the
+# pi0 family and smolvla expose as ``train_expert_only`` is the same request for
+# one component, so it is mapped here rather than being a second spelling of the
+# same idea. A component the resolved policy config does not declare is REFUSED
+# (see :meth:`LerobotTrainer._tune_problems`), never dropped: silently leaving a
+# backbone frozen that the caller asked to train - or training one it asked to
+# freeze - reports success for a run that optimized the wrong weights.
+_TUNE_POLICY_FIELDS: dict[str, str] = {
+    "llm": "tune_llm",
+    "visual": "tune_visual",
+    "projector": "tune_projector",
+    "diffusion": "tune_diffusion_model",
+    "expert_only": "train_expert_only",
+}
+
+# Offline FALLBACK for :func:`_policy_supports_tune_component`, used only when
+# lerobot's registry is unavailable. Currently groot declares the four tune_*
+# fields; train_expert_only's set is the one above.
+# LeRobot policy types whose config names its own base model
+# (``base_model_path``) and its own embodiment (``embodiment_tag``) instead of
+# inheriting ``pretrained_path`` alone. Discovered live off the config class; the
+# static sets are the offline FALLBACK. Currently only groot declares them.
+_BASE_MODEL_SOURCE_POLICY_TYPES_FALLBACK = frozenset({"groot"})
+_EMBODIMENT_POLICY_TYPES_FALLBACK = frozenset({"groot"})
+
+_TUNE_POLICY_TYPES_FALLBACK: dict[str, frozenset[str]] = {
+    "llm": frozenset({"groot"}),
+    "visual": frozenset({"groot"}),
+    "projector": frozenset({"groot"}),
+    "diffusion": frozenset({"groot"}),
+    "expert_only": _EXPERT_ONLY_POLICY_TYPES_FALLBACK,
+}
 
 # LeRobot policy types whose config normalizes STATE/ACTION with QUANTILES
 # (``NormalizationMode.QUANTILES``). Such a policy needs the dataset's stats to
@@ -256,19 +293,41 @@ def _lerobot_policy_types() -> set[str]:
     return set(reg)
 
 
-def _policy_supports_relative_actions(ptype: str) -> bool:
-    """Whether ``ptype``'s lerobot config exposes ``use_relative_actions``.
+def _policy_config_declares(ptype: str, field: str, fallback: Collection[str]) -> bool:
+    """Whether ``ptype``'s lerobot config class declares ``field``.
 
+    The one probe behind every per-policy capability question in this module, so
+    a new one cannot answer "does this policy expose that knob" a second way.
     Probed live off the registry's config *class* (a dataclass field lookup, no
     instantiation - so no device warnings or construction cost), so any policy
-    lerobot adds with relative-action support is recognized with zero per-type
-    maintenance. Falls back to the documented static set when lerobot's registry
-    is unavailable offline.
+    lerobot adds is recognized with zero per-type maintenance.
+
+    Args:
+        ptype: LeRobot ``policy.type`` name.
+        field: Config field name the capability is spelled as.
+        fallback: The documented static set of policy types that declare the
+            field, consulted ONLY when lerobot's registry is unavailable offline
+            (or does not know ``ptype``), where training cannot run anyway but
+            ``validate()`` should still produce a useful message.
+
+    Returns:
+        True when that policy's config declares the field.
     """
     reg = _policy_registry()
     if reg is not None and ptype in reg:
-        return any(f.name == "use_relative_actions" for f in dataclasses.fields(reg[ptype]))
-    return ptype in _RELATIVE_ACTION_POLICY_TYPES_FALLBACK
+        return any(f.name == field for f in dataclasses.fields(reg[ptype]))
+    return ptype in fallback
+
+
+def _policy_supports_relative_actions(ptype: str) -> bool:
+    """Whether ``ptype``'s lerobot config exposes ``use_relative_actions``.
+
+    Asked through :func:`_policy_config_declares`, so any policy lerobot adds
+    with relative-action support is recognized with zero per-type maintenance.
+    Falls back to the documented static set when lerobot's registry is
+    unavailable offline.
+    """
+    return _policy_config_declares(ptype, "use_relative_actions", _RELATIVE_ACTION_POLICY_TYPES_FALLBACK)
 
 
 def _policy_supports_expert_only(ptype: str) -> bool:
@@ -287,10 +346,90 @@ def _policy_supports_expert_only(ptype: str) -> bool:
     recognized with zero per-type maintenance. Falls back to the documented
     static set when lerobot's registry is unavailable offline.
     """
-    reg = _policy_registry()
-    if reg is not None and ptype in reg:
-        return any(f.name == "train_expert_only" for f in dataclasses.fields(reg[ptype]))
-    return ptype in _EXPERT_ONLY_POLICY_TYPES_FALLBACK
+    return _policy_config_declares(ptype, "train_expert_only", _EXPERT_ONLY_POLICY_TYPES_FALLBACK)
+
+
+def _policy_supports_tune_component(ptype: str, component: str) -> bool:
+    """Whether ``ptype``'s lerobot config exposes the field ``component`` toggles.
+
+    The per-component peer of :func:`_policy_supports_expert_only`, which is the
+    ``expert_only`` row of :data:`_TUNE_POLICY_FIELDS` asked through
+    ``method`` instead of ``tune``. Probed live off the registry's config *class*
+    (a dataclass field lookup, no instantiation), so a policy lerobot adds with
+    component-level tuning is recognized with no per-type maintenance. Falls back
+    to the documented static sets when lerobot's registry is unavailable offline.
+
+    Args:
+        ptype: LeRobot ``policy.type`` name.
+        component: A key of :data:`_TUNE_POLICY_FIELDS`.
+
+    Returns:
+        True when that policy's config declares the mapped field.
+    """
+    return _policy_config_declares(ptype, _TUNE_POLICY_FIELDS[component], _TUNE_POLICY_TYPES_FALLBACK[component])
+
+
+def _policy_takes_base_model_source(ptype: str) -> bool:
+    """Whether ``ptype``'s config names its base model in its own field.
+
+    lerobot keeps a GR00T base model in ``GrootConfig.base_model_path``,
+    "intentionally distinct from the inherited ``pretrained_path``": a raw NVIDIA
+    GR00T checkpoint carries no ``config.json`` with a ``type`` field, so
+    ``PreTrainedConfig.from_pretrained`` cannot read one and the weights are
+    reachable only through ``--policy.base_model_path``. A policy whose config
+    declares that field therefore takes :attr:`TrainSpec.base_model` there.
+
+    Args:
+        ptype: LeRobot ``policy.type`` name.
+
+    Returns:
+        True when that policy's config declares ``base_model_path``.
+    """
+    return _policy_config_declares(ptype, "base_model_path", _BASE_MODEL_SOURCE_POLICY_TYPES_FALLBACK)
+
+
+def _policy_names_an_embodiment(ptype: str) -> bool:
+    """Whether ``ptype``'s config declares ``embodiment_tag``.
+
+    GR00T selects its action/state projections by embodiment tag, so the tag is
+    part of the model's configuration; the policies that infer their embodiment
+    from the dataset's features declare no such field. This is what decides
+    whether :attr:`TrainSpec.embodiment` has somewhere to land, which is the
+    documented split in that field's own contract.
+
+    Args:
+        ptype: LeRobot ``policy.type`` name.
+
+    Returns:
+        True when that policy's config declares ``embodiment_tag``.
+    """
+    return _policy_config_declares(ptype, "embodiment_tag", _EMBODIMENT_POLICY_TYPES_FALLBACK)
+
+
+def _is_lerobot_checkpoint(base_model: str) -> bool:
+    """Whether ``base_model`` is a saved LeRobot checkpoint directory.
+
+    lerobot's own distinction, quoted in ``GrootConfig.base_model_path``: a saved
+    LeRobot checkpoint directory carries a ``config.json`` with a ``type`` field
+    (what ``PreTrainedConfig.from_pretrained`` reads), whereas a raw vendor
+    checkpoint has no such field. Asked of the local filesystem only - a Hub id
+    is answered False, which routes it to the policy's own base-model field
+    rather than to a network read this preflight-adjacent probe must not make.
+
+    Args:
+        base_model: :attr:`TrainSpec.base_model` - a local path or a Hub id.
+
+    Returns:
+        True when a readable local ``config.json`` names a policy type.
+    """
+    config_file = os.path.join(base_model, "config.json")
+    if not os.path.isfile(config_file):
+        return False
+    try:
+        with open(config_file, encoding="utf-8") as fh:
+            return isinstance(json.load(fh).get("type"), str)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
 
 
 def _policy_uses_quantile_norm(ptype: str) -> bool:
@@ -1065,6 +1204,8 @@ class LerobotTrainer(Trainer):
                 "drop extra['relative_actions'] or pick a supporting policy"
             )
 
+        problems.extend(self._tune_problems(spec, ptype))
+
         if spec.method == "expert_only" and not _policy_supports_expert_only(ptype):
             supported = sorted(t for t in _lerobot_policy_types() if _policy_supports_expert_only(t))
             problems.append(
@@ -1217,6 +1358,11 @@ class LerobotTrainer(Trainer):
             )
         if self._relative_actions(spec):
             problems.append("relative_actions applies to policy training, not reward-model training")
+        if spec.tune:
+            problems.append(
+                f"tune {sorted(spec.tune)} names POLICY components; a reward-model run trains "
+                "one model with no such components. Drop tune, or train a policy."
+            )
         if spec.method != "full":
             problems.append(
                 f"method '{spec.method}' applies to policy training; reward-model training uses method='full'"
@@ -1273,7 +1419,19 @@ class LerobotTrainer(Trainer):
             cmd.append(f"--eval_steps={spec.save_freq if spec.save_freq > 0 else spec.steps}")
         if rm is None:
             if spec.base_model:
-                cmd.append(f"--policy.pretrained_path={spec.base_model}")
+                # Same split build_config makes: a policy that names its own base
+                # model source takes it there, because --policy.path cannot read a
+                # raw vendor checkpoint (no config.json naming a type).
+                if _policy_takes_base_model_source(ptype) and not _is_lerobot_checkpoint(spec.base_model):
+                    cmd.append(f"--policy.base_model_path={spec.base_model}")
+                else:
+                    cmd.append(f"--policy.pretrained_path={spec.base_model}")
+            if spec.embodiment and _policy_names_an_embodiment(ptype):
+                cmd.append(f"--policy.embodiment_tag={spec.embodiment}")
+            for component, requested in spec.tune.items():
+                field_name = _TUNE_POLICY_FIELDS.get(component)
+                if field_name is not None:
+                    cmd.append(f"--policy.{field_name}={'true' if requested else 'false'}")
             if spec.method == "lora":
                 cmd.append("--peft.method_type=LORA")
                 if spec.lora_r is not None:
@@ -1567,6 +1725,70 @@ class LerobotTrainer(Trainer):
         self._apply_extra_passthrough(cfg, spec)
         return cfg
 
+    def _tune_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
+        """Report ``spec.tune``: a known component, a ``bool``, and this policy's field.
+
+        Not a shared :mod:`~strands_robots.training._validate` domain, because two
+        of the three answers depend on the resolved policy type, which only this
+        backend knows: ``tune`` names model components, and which components exist
+        is a property of the policy's own config class
+        (:func:`_policy_supports_tune_component`).
+
+        Args:
+            spec: The spec being graded.
+            ptype: The resolved LeRobot policy type, whose config declares which
+                components can be toggled.
+
+        Returns:
+            One problem per unmapped component name, non-``bool`` value, or
+            component this policy type does not expose. Empty when every entry
+            will reach a field on ``cfg.policy``.
+        """
+        problems: list[str] = []
+        for component, requested in spec.tune.items():
+            if component not in _TUNE_POLICY_FIELDS:
+                problems.append(
+                    f"tune['{component}'] is not a component this trainer maps "
+                    f"(accepted: {sorted(_TUNE_POLICY_FIELDS)})"
+                )
+                continue
+            error = boolean_flag_error(requested, f"tune['{component}']", "lerobot training")
+            if error is not None:
+                problems.append(error)
+                continue
+            if not _policy_supports_tune_component(ptype, component):
+                supported = sorted(t for t in _lerobot_policy_types() if _policy_supports_tune_component(t, component))
+                problems.append(
+                    f"tune['{component}'] is not supported by policy_type '{ptype}' "
+                    f"(only {supported} expose {_TUNE_POLICY_FIELDS[component]}); "
+                    "drop the component or pick a supporting policy"
+                )
+        return problems
+
+    def _apply_tune(self, policy_cfg: Any, spec: TrainSpec, ptype: str) -> None:
+        """Write ``spec.tune`` onto the policy config, refusing what cannot land.
+
+        Fails closed on the same problems :meth:`_tune_problems` reports, so a
+        component that cannot reach a field is a raised error rather than a run
+        that trains the wrong weights and reports success - the harm
+        :func:`_policy_supports_expert_only` already documents for the
+        ``expert_only`` component asked through ``method``.
+
+        Args:
+            policy_cfg: The ``cfg.policy`` object being built.
+            spec: The spec whose ``tune`` dict is being applied.
+            ptype: The resolved LeRobot policy type (for the message).
+
+        Raises:
+            ValueError: Any component is unmapped, not a ``bool``, or absent from
+                this policy's config.
+        """
+        problems = self._tune_problems(spec, ptype)
+        if problems:
+            raise ValueError("; ".join(problems))
+        for component, requested in spec.tune.items():
+            setattr(policy_cfg, _TUNE_POLICY_FIELDS[component], requested)
+
     def _build_policy_config(self, spec: TrainSpec) -> TrainPipelineConfig:
         """Build a policy ``TrainPipelineConfig`` (``cfg.policy`` set)."""
         import dataclasses
@@ -1578,7 +1800,17 @@ class LerobotTrainer(Trainer):
 
         ptype = self._resolve_policy_type(spec)
 
-        if spec.base_model:
+        if spec.base_model and _policy_takes_base_model_source(ptype) and not _is_lerobot_checkpoint(spec.base_model):
+            # The base model is the policy's OWN field, not a lerobot checkpoint:
+            # GrootConfig.base_model_path is "intentionally distinct from the
+            # inherited pretrained_path" because a raw NVIDIA GR00T checkpoint
+            # carries no config.json naming a type, so from_pretrained cannot read
+            # one. Route it there and keep make_policy_config's defaults for the
+            # rest of the architecture, which is what --policy.base_model_path
+            # does on lerobot's own CLI.
+            policy_cfg = make_policy_config(ptype)
+            policy_cfg.base_model_path = spec.base_model
+        elif spec.base_model:
             # Warm start: load the checkpoint's OWN saved config (architecture
             # hyperparameters - chunk_size, vision backbone, hidden dims, ...)
             # rather than make_policy_config's all-defaults. lerobot's make_policy
@@ -1616,6 +1848,14 @@ class LerobotTrainer(Trainer):
                     f"use_relative_actions field (supported: {rel_supported})"
                 )
             policy_cfg.use_relative_actions = True
+
+        # A policy that names its own embodiment takes the spec's tag; one that
+        # does not is left alone, which is the documented contract for
+        # TrainSpec.embodiment ("Required by GR00T; LeRobot infers it from dataset
+        # features") - lerobot derives the rest from the dataset's features.
+        if spec.embodiment and hasattr(policy_cfg, "embodiment_tag"):
+            policy_cfg.embodiment_tag = spec.embodiment
+        self._apply_tune(policy_cfg, spec, ptype)
 
         peft_cfg = None
         if spec.method == "lora":

@@ -18,6 +18,23 @@ so a single provider name owns BOTH the inference class
 (``create_policy("lerobot_local")``) and the training class
 (``create_trainer("lerobot_local")``).
 
+A ``trainer`` block may also declare ``defaults`` - constructor kwargs that make
+a shared trainer class serve one provider::
+
+    "groot": {
+        ...
+        "trainer": {
+            "module": "strands_robots.training.lerobot",
+            "class": "LerobotTrainer",
+            "defaults": {"policy_type": "groot"}
+        }
+    }
+
+which is how ``create_trainer("groot")`` post-trains GR00T through lerobot's
+native ``GrootConfig`` without a provider-specific trainer class. A caller's own
+kwarg always wins over a default, exactly as ``build_policy_kwargs`` resolves the
+inference side.
+
 A provider can also be declared at runtime with :func:`register_trainer`, which
 is how the ``training.rl`` backends (``ppo``, ``fast_sac``, ``fast_td3``) and the
 ``sagemaker`` transport are wired without a paired inference provider to hang a
@@ -69,6 +86,27 @@ def register_trainer(
     if aliases:
         for alias in aliases:
             _runtime_aliases[alias] = name
+
+
+def trainer_defaults(provider: str) -> dict[str, Any]:
+    """Constructor kwargs declared by a provider's JSON ``trainer.defaults`` block.
+
+    These pin a shared trainer class to one provider (``"groot"`` ->
+    ``LerobotTrainer(policy_type="groot")``), so the training side needs no
+    subclass whose only content is a preset. Runtime-registered trainers carry
+    their preset in their own loader instead, so they have no entry here.
+
+    Args:
+        provider: Provider name as declared in policies.json.
+
+    Returns:
+        A fresh dict of kwargs, empty when the provider declares none. The copy
+        matters: :func:`create_trainer` merges the caller's kwargs on top and must
+        not mutate the registry.
+    """
+    cfg = get_policy_provider(provider) or {}
+    trainer_cfg = cfg.get("trainer", {})
+    return dict(trainer_cfg.get("defaults", {}))
 
 
 def list_trainers() -> list[str]:
@@ -166,7 +204,10 @@ def create_trainer(provider: str, **kwargs: Any) -> Trainer:
     Args:
         provider: Provider name or alias (``"lerobot_local"``, ``"groot"``,
             ``"cosmos3"``, or a runtime-registered name).
-        **kwargs: Forwarded to the trainer constructor.
+        **kwargs: Forwarded to the trainer constructor, on top of the provider's
+            :func:`trainer_defaults` - so a caller who names a kwarg the registry
+            also defaults wins, and a caller who names none gets the provider its
+            name asked for rather than the trainer class's own default.
 
     Returns:
         A ready :class:`Trainer` instance.
@@ -175,4 +216,4 @@ def create_trainer(provider: str, **kwargs: Any) -> Trainer:
         ValueError: If no trainer is registered for the provider.
     """
     TrainerClass = import_trainer_class(provider)
-    return TrainerClass(**kwargs)
+    return TrainerClass(**{**trainer_defaults(provider), **kwargs})

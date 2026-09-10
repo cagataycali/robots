@@ -1,12 +1,12 @@
 ---
-description: Post-tune any policy natively with the Trainer abstraction - one interface over LeRobot, Isaac-GR00T, and Cosmos3 pipelines.
+description: Post-tune any policy natively with the Trainer abstraction - one interface over the LeRobot and Cosmos3 pipelines.
 ---
 
 # Training
 
 `strands-robots` post-tunes policies **natively** through the `Trainer`
 abstraction - the training-side peer of [`Policy`](../policies/overview.md)
-(inference). One interface wraps three genuinely different upstream pipelines,
+(inference). One interface wraps the genuinely different upstream pipelines,
 selected by the **same provider name** you use for inference:
 
 ```python
@@ -31,7 +31,7 @@ and a single `--policy.type` flag can't express them:
 | Provider | Upstream entry point | Config surface | Launcher | HW floor |
 |----------|---------------------|----------------|----------|----------|
 | `lerobot_local` | `lerobot.scripts.lerobot_train` | draccus `--dotted.flags` | `python` / `accelerate launch` | CPU for a toy run; 1 consumer GPU in practice |
-| `groot` | Isaac-GR00T `launch_finetune.py` | `FinetuneConfig` (tyro) + `tune_*` flags | `python` / `torchrun` | 1 modern GPU |
+| `groot` | `lerobot.scripts.lerobot_train` (policy type `groot`) | `GrootConfig`: `base_model_path`, `embodiment_tag`, `tune_*` | `python` / `accelerate launch` | 1 modern GPU |
 | `cosmos3` | `cosmos_framework.scripts.train` | TOML recipe + Hydra overrides; **DCP convert** + **safetensors export** | `torchrun` (HSDP) | 8×H100 80GB |
 | `sagemaker` | none - the container image's own trainer | the same `TrainSpec`, as job hyperparameters | `CreateTrainingJob` (managed) | none locally; the job brings its own |
 
@@ -49,8 +49,8 @@ The `Trainer` ABC hides all of that behind one lifecycle:
 ```
 validate()  ->  prepare()  ->  train()  ->  export()
                    ▲                           ▲
-            (cosmos: DCP convert,        (cosmos: DCP -> safetensors;
-             groot: modality cfg)         lerobot/groot: passthrough)
+            (cosmos: DCP convert)        (cosmos: DCP -> safetensors;
+                                          lerobot/groot: passthrough)
 ```
 
 plus `status()` for a "RUNNING ≠ learning" verdict on an in-flight job.
@@ -102,16 +102,15 @@ supports and **ignores the rest** (the same tolerance rule as
 | `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
 | `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes`. A posture flag, so `validate()` requires a boolean rather than reading it by truthiness: `"false"` is truthy and would stream, and beside `val_episodes` it was refused with "set streaming=False" at a caller who had spelled exactly that |
-| `resume` | continue from the last checkpoint under `output_dir` | lerobot, GR00T, SageMaker. A posture flag, checked like `streaming`: on lerobot a truthy `resume` swaps the spec-built config for the checkpoint's own, so `"false"` would silently drop `steps`, `global_batch_size` and `save_freq` from the run it was meant to start fresh |
-| `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
+| `resume` | continue from the last checkpoint under `output_dir` | lerobot, SageMaker. A posture flag, checked like `streaming`: on lerobot a truthy `resume` swaps the spec-built config for the checkpoint's own, so `"false"` would silently drop `steps`, `global_batch_size` and `save_freq` from the run it was meant to start fresh |
+| `base_model` | HF id / local ckpt to tune from | required for Cosmos. A policy that declares its own base-model field (GR00T's `base_model_path`) takes it there, because `--policy.path` can only read a directory whose `config.json` names a policy type |
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
-| `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
+| `tune` | `{llm,visual,projector,diffusion,expert_only} -> bool` | each component is written to the policy config field lerobot declares for it (`tune_llm`, `tune_visual`, `tune_projector`, `tune_diffusion_model`, `train_expert_only`). A component the resolved policy does NOT declare is refused by `validate()` - training the weights the caller asked to freeze is not something to report success for |
 | `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); refused on a dataset whose `total_tasks` declares more than one task, or declares something that is not a task count, since lerobot's split is a per-task fraction; mutually exclusive with `streaming` |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher; each must be a positive integer. `validate()` refuses `0`, a negative, a `bool` and a non-finite value (none of them read as greater than one, so the selector would route them to the single-process path and the run would proceed on a topology nobody asked for) and a fractional or integral float (`2.7`, `2.0` - greater than one, so they reach the launcher as the worker count) |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
-| `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
 | `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `cfg.sample_weighting` (`--sample_weighting.*`) |
@@ -489,11 +488,15 @@ copy that configuration also needs.
 ### GR00T (`groot`)
 
 ```python
-TrainSpec(..., embodiment="GR1",
-          tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
-          extra={"groot_root": "/path/to/Isaac-GR00T"})
-# -> launch_finetune.py --embodiment_tag=GR1 --tune_projector=true ...
+TrainSpec(..., base_model="nvidia/GR00T-N1.7-3B", embodiment="GR1",
+          tune={"llm": False, "visual": False, "projector": True, "diffusion": True})
+# -> lerobot_train --policy.type=groot --policy.base_model_path=nvidia/GR00T-N1.7-3B
+#                  --policy.embodiment_tag=GR1 --policy.tune_projector=true ...
 ```
+
+GR00T N1.7 is a lerobot-native policy, so `create_trainer("groot")` is
+`LerobotTrainer(policy_type="groot")`: the same resume, LoRA, sample-weighting and
+validation path as every other policy, and a checkpoint `make_policy` loads back.
 
 ### Cosmos3 (`cosmos3`)
 
@@ -539,7 +542,7 @@ on an L40S GPU:
 | `lerobot_local` + ACT / diffusion | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | `[lerobot]` supplies torch + torchcodec + datasets; it does **not** supply `accelerate` |
 | `lerobot_local` + `smolvla` | `pip install 'strands-robots[smolvla]' 'lerobot[training]'` | `[smolvla]` layers lerobot's own `[smolvla]` extra (`transformers>=5.4.0,<5.6.0` + num2words) on top of `[lerobot]`. Do **not** pin `transformers==5.3.0` - it conflicts with lerobot 0.6's transformers floor. |
 | `lerobot_local` + `pi0` / `pi05` | `pip install 'strands-robots[lerobot]' 'lerobot[training]' 'lerobot[pi]'` | lerobot 0.6's `[pi]` extra (same `transformers>=5.4.0,<5.6.0` range + scipy) |
-| `groot` | Isaac-GR00T checkout, installed with `pip install -e` into the **same** environment as `strands_robots` (it pulls `omegaconf`, `tyro`, …); point `extra["groot_root"]` / `GR00T_ROOT` at the checkout | `gr00t` is imported in the calling interpreter, so it has to be importable there; `GR00T_ROOT` resolves relative configs, not the interpreter |
+| `groot` | `pip install 'strands-robots[lerobot]' 'lerobot[training]'` | GR00T N1.7 is a lerobot-native policy type; no second checkout and no `GR00T_ROOT` |
 | `cosmos3` | cosmos-framework checkout (`uv sync --group=cu130-train`), installed into the **same** environment as `strands_robots`; point `extra["cosmos_root"]` / `COSMOS_ROOT` at the checkout | `cosmos_framework` is imported in the calling interpreter; multi-GPU goes through torch's programmatic `elastic_launch`, not a `torchrun` binary |
 
 > **torchcodec / torch ABI:** the lerobot training dataloader decodes video via
@@ -550,15 +553,15 @@ on an L40S GPU:
 > training fails with a generic non-zero exit. Pin `torch` + `torchcodec`
 > together (verified-good combo: `torch==2.10.0+cu128` + `torchcodec==0.10.0`).
 
-> **One interpreter:** `LerobotTrainer` / `Gr00tTrainer` / `Cosmos3Trainer` call their
+> **One interpreter:** `LerobotTrainer` / `Cosmos3Trainer` call their
 > backend as a library in the **same** interpreter that imports `strands_robots`, so
 > there is no second interpreter to point them at. There is no `python_executable=`
 > argument either, and because each constructor absorbs unknown keywords, passing one
 > is silently a no-op rather than an error. Install the provider's deps into the
 > environment your agent process runs in; otherwise `train()` reports
 > `<package> is not importable from this interpreter` in `TrainResult.message`.
-> `GR00T_ROOT` / `COSMOS_ROOT` (and `extra["groot_root"]` / `extra["cosmos_root"]`)
-> resolve the checkout so relative configs load - they are not interpreter paths.
+> `COSMOS_ROOT` (and `extra["cosmos_root"]`) resolves the checkout so relative
+> configs load - it is not an interpreter path.
 
 ## See also
 

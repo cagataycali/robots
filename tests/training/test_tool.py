@@ -170,18 +170,36 @@ class TestProviderRouting:
         assert res["status"] == "error"
         assert "not LeRobot-native" in _text(res)
 
-    def test_groot_requires_embodiment(self, dataset_root, tmp_path):
+    def test_groot_routes_to_the_lerobot_trainer(self, dataset_root, tmp_path):
+        """provider='groot' post-trains GR00T through lerobot, needing no other checkout.
+
+        The embodiment tag is optional because lerobot's own ``GrootConfig``
+        defaults it to ``new_embodiment`` - the tag for fine-tuning onto a robot
+        the base model has not seen.
+        """
         res = train_policy(
             action="validate",
             provider="groot",
             dataset_root=dataset_root,
-            base_model="nvidia/GR00T-N1.5-3B",
+            base_model="",
             output_dir=str(tmp_path / "o"),
             steps=10,
-            extra={"groot_root": "/tmp"},  # missing launch script -> also errors, but embodiment first
+        )
+        assert res["status"] == "success", _text(res)
+
+    def test_groot_refuses_a_component_the_policy_cannot_tune(self, dataset_root, tmp_path):
+        """A tune component that reaches no field is refused, not dropped."""
+        res = train_policy(
+            action="validate",
+            provider="groot",
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "o"),
+            steps=10,
+            tune={"typo": True},
         )
         assert res["status"] == "error"
-        assert "embodiment is required" in _text(res)
+        assert "tune['typo'] is not a component this trainer maps" in _text(res)
 
 
 class TestInputSafety:

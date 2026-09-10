@@ -1,12 +1,12 @@
 ---
-description: End-to-end VLA workflow on the Unitree G1 - collect teleop data, fine-tune Isaac-GR00T N1.7, deploy with SONIC whole-body control.
+description: End-to-end VLA workflow on the Unitree G1 - collect teleop data, fine-tune GR00T N1.7, deploy with SONIC whole-body control.
 ---
 
 # VLA-on-G1 Workflow
 
 The full Vision-Language-Action (VLA) pipeline on the Unitree G1 humanoid:
-**collect teleop data** (LeRobot recording) -> **fine-tune Isaac-GR00T N1.7**
-(GR00T Trainer) -> **deploy with SONIC whole-body control** (WBC provider).
+**collect teleop data** (LeRobot recording) -> **fine-tune GR00T N1.7**
+(the `groot` trainer) -> **deploy with SONIC whole-body control** (WBC provider).
 
 Each piece ships individually in `strands-robots`; this page documents how they
 compose into one coherent pipeline. The companion example script runs the chain
@@ -90,7 +90,7 @@ or hardware - the quick-demo default). The dataset format is identical either wa
 To train a **language-conditioned (steerable)** policy, annotate the recorded
 dataset with language columns first - see [Steerable annotation](../data/annotation.md).
 
-### 2. Fine-tune  - post-train Isaac-GR00T N1.7
+### 2. Fine-tune  - post-train GR00T N1.7
 
 Use the [`Trainer` abstraction](overview.md) with the `"groot"` provider to
 post-train a GR00T N1.7 base model on the recorded G1 data:
@@ -104,15 +104,18 @@ spec = TrainSpec(
     base_model="nvidia/GR00T-N1.7-3B",
     output_dir="/tmp/g1_finetuned",
     steps=1000,
-    extra={"embodiment": "unitree_g1", "data_config": "unitree_g1"},
+    embodiment="unitree_g1",
+    tune={"llm": False, "visual": False, "projector": True, "diffusion": True},
 )
 result = trainer.train(spec)
 checkpoint = trainer.export(spec, result.checkpoint_dir)
 ```
 
-Under the hood, `Gr00tTrainer` orchestrates the `gr00t_inference` Docker tool's
-training pipeline. This stage requires Docker + a GPU and takes minutes to hours
-depending on dataset size and step count.
+Under the hood the `"groot"` provider is `LerobotTrainer(policy_type="groot")`:
+GR00T N1.7 is a lerobot-native policy, so this is `lerobot_train` in this
+interpreter - one install (`pip install 'strands-robots[lerobot]'
+'lerobot[training]'`), no separate checkout. It wants a GPU and takes minutes to
+hours depending on dataset size and step count.
 
 > **Note:** The `gr00t_inference` tool's `unitree_g1` embodiment is marked
 > `[posttrain]`  - meaning it requires a fine-tuned checkpoint, not the base
@@ -154,7 +157,7 @@ python examples/wbc/wbc_g1_torque_deploy.py --checkpoint /tmp/g1_finetuned --vx 
 | Stage | Install | External |
 |-------|---------|----------|
 | Record | `pip install "strands-robots[sim-mujoco,lerobot]"` | None (sim) |
-| Fine-tune | `pip install "strands-robots[groot-service]"` | Docker + GPU |
+| Fine-tune | `pip install "strands-robots[lerobot]" "lerobot[training]"` | GPU |
 | Deploy | `pip install "strands-robots[wbc,sim-mujoco]"` | None (CPU ONNX) |
 
 ## Upstream references

@@ -57,8 +57,10 @@ class TrainSpec:
             map-style datasets and drops the stream.
         base_model: HF model id or local checkpoint path to post-tune from.
         output_dir: Directory for checkpoints, logs and the final artifact.
-        embodiment: Embodiment tag / robot id. Required by GR00T; LeRobot
-            infers it from dataset features.
+        embodiment: Embodiment tag / robot id. Read by a backend whose model
+            config names its own embodiment (GR00T's ``embodiment_tag``); the
+            policies that infer it from dataset features declare no such field
+            and are left to lerobot.
         steps: Total optimizer steps. A positive ``int``.
         global_batch_size: Batch summed across GPUs before grad accumulation.
             A positive ``int``.
@@ -84,8 +86,14 @@ class TrainSpec:
             domain as ``lora_r``.
         lora_target_modules: Target modules, or ``None`` for the policy's
             built-in defaults.
-        tune: Component toggles for backends that expose them (GR00T:
-            ``{"llm", "visual", "projector", "diffusion"} -> bool``).
+        tune: Component toggles - which parts of the model this run trains.
+            ``{"llm", "visual", "projector", "diffusion", "expert_only"} ->
+            bool``, each mapping to the field the backend's model config
+            declares for it (GR00T's ``tune_*``, the pi0 family's
+            ``train_expert_only``). A backend MUST refuse a component the
+            resolved model does not declare rather than dropping it: a run that
+            trains the weights the caller asked to freeze, or freezes the ones it
+            asked to train, is not a run to report success for.
         val_episodes: Hold out the last N episodes as a validation set, or
             ``None`` to train on every episode. A positive ``int`` below the
             dataset's episode count, which comes from a local

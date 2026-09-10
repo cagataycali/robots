@@ -48,7 +48,6 @@ _MODULES = (
     "base.py",
     "cosmos3.py",
     "factory.py",
-    "groot.py",
     "lerobot.py",
     "mock.py",
     "reward.py",
@@ -71,7 +70,6 @@ _EXPECTED_CLASSES = {
     "base.py::TrainResult",
     "base.py::Trainer",
     "cosmos3.py::Cosmos3Trainer",
-    "groot.py::Gr00tTrainer",
     "lerobot.py::LerobotTrainer",
     "mock.py::MockTrainer",
     "rl/base_algo.py::RLTrainSpec",
@@ -88,6 +86,7 @@ _EXPECTED_CLASSES = {
 # Every public module-level function the package exposes.
 _EXPECTED_FUNCTIONS = {
     "factory.py::register_trainer",
+    "factory.py::trainer_defaults",
     "factory.py::list_trainers",
     "factory.py::import_trainer_class",
     "factory.py::create_trainer",

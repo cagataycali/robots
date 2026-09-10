@@ -119,7 +119,8 @@ def train_policy(
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
         provider: Training backend / policy family - ``"lerobot_local"`` (act,
-            diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T),
+            diffusion, smolvla, pi0, pi05, ...), ``"groot"`` (NVIDIA GR00T N1.7,
+            trained through lerobot),
             ``"cosmos3"`` (NVIDIA Cosmos3), or ``"mock"``. Same name as the
             inference provider in ``create_policy``.
         dataset_root: Path to a LeRobotDataset v3 root (has ``meta/info.json``) -
@@ -167,8 +168,11 @@ def train_policy(
         lora_target_modules: Comma-separated module names the LoRA adapters are
             attached to, read only when ``method="lora"``. Omit to keep the
             backend's default target set.
-        tune: Fine-grained component toggles for GR00T
-            (``{"llm","visual","projector","diffusion"}``).
+        tune: Which parts of the model this run trains
+            (``{"llm","visual","projector","diffusion","expert_only"}`` ->
+            bool). Each component is written to the field the policy's config
+            declares for it; a component the chosen policy does not declare is
+            refused by preflight rather than silently dropped.
         val_episodes: Hold out the LAST N episodes for validation; the run
             logs an eval loss over them at the checkpoint cadence. A positive
             integer below the dataset's episode count, or None for no held-out
@@ -180,9 +184,9 @@ def train_policy(
             without one.
         augmentation: Backend-specific augmentation dict.
         fps: Dataset control rate (when a backend needs it).
-        extra: Backend-specific passthrough. lerobot: ``policy_type``,
-            ``job_name``, any ``--key=value``. GR00T: ``groot_root``,
-            ``modality_config_path``. Cosmos: ``cosmos_root``, ``sft_toml``.
+        extra: Backend-specific passthrough. lerobot (and ``groot``, which is
+            a lerobot policy type): ``policy_type``, ``job_name``, any
+            ``--key=value``. Cosmos: ``cosmos_root``, ``sft_toml``.
         job_id: Job identifier for ``action="status"``.
 
     Returns:
@@ -201,11 +205,13 @@ def train_policy(
           ``transformers>=5.4.0,<5.6.0`` (plus num2words / scipy); do NOT pin
           ``transformers==5.3.0`` - it conflicts with lerobot 0.6's transformers
           floor.
-        - ``groot``/``cosmos3``: install the upstream package into THIS
-          interpreter (the trainer imports it and calls its library functions
-          in-process - no subprocess). Point ``extra['groot_root']``/``GR00T_ROOT``
-          or ``extra['cosmos_root']``/``COSMOS_ROOT`` at the checkout for runtime
-          config/recipe resolution.
+        - ``groot``: GR00T N1.7 is a lerobot-native policy type, so it needs
+          the same install as the other lerobot policies and no separate
+          checkout.
+        - ``cosmos3``: install the upstream package into THIS interpreter (the
+          trainer imports it and calls its library functions in-process - no
+          subprocess). Point ``extra['cosmos_root']``/``COSMOS_ROOT`` at the
+          checkout for runtime recipe resolution.
         - torchcodec's ``.so`` must match the installed torch build exactly; a
           torch nightly load-fails a stable torchcodec (``undefined symbol``)
           and lerobot silently yields zero frames. See docs/training/overview.md.

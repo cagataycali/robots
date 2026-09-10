@@ -47,8 +47,11 @@
         "nvidia/groot"
       ],
       "trainer": {
-        "module": "strands_robots.training.groot",
-        "class": "Gr00tTrainer"
+        "module": "strands_robots.training.lerobot",
+        "class": "LerobotTrainer",
+        "defaults": {
+          "policy_type": "groot"
+        }
       }
     },
     "lerobot_local": {
