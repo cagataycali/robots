@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _process_stop
 from tests.tool_result_contract import tool_json
 
 build_train_command = train_mod.build_train_command
@@ -57,7 +58,7 @@ def _write_dataset(root: Path, total_episodes: int = 10) -> Path:
 def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     session_dir = tmp_path / ".sessions"
     session_dir.mkdir()
-    monkeypatch.setattr(train_mod, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
     return session_dir
 
 
@@ -595,7 +596,7 @@ def test_session_whose_probe_raises_keeps_its_record(monkeypatch: pytest.MonkeyP
     "cannot be confirmed running" is not a reason to drop the record, because
     being in the store is not the running claim - ``list`` and ``status`` derive
     that from the PID when asked. The consequences are pinned in
-    ``tests.tools.test_train_session_store_keeps_a_live_pid``.
+    ``tests.tools.test_the_session_store_keeps_a_live_pid``.
     """
     mgr = SessionManager()
     mgr.add_session("racy", {"pid": 4242, "action": "train"})

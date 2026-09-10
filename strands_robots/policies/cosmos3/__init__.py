@@ -42,6 +42,8 @@ post-training on OpenArm episodes via the ``cosmos3`` trainer - it is not a
 released zero-shot checkpoint).
 """
 
+from typing import TYPE_CHECKING
+
 from .action_decode import decode_pose_trajectory, denormalize_quantile, load_action_stats
 from .client import Cosmos3WebsocketClient
 from .embodiments import (
@@ -55,7 +57,30 @@ from .embodiments import (
 )
 from .policy import Cosmos3Policy
 from .policy_diffusers import Cosmos3DiffusersBackend
-from .sim_ik import MinkIKBridge, decode_cosmos_chunk_to_targets
+
+if TYPE_CHECKING:
+    from .sim_ik import MinkIKBridge, decode_cosmos_chunk_to_targets
+
+# ``sim_ik`` is the Cosmos 3 -> MuJoCo bridge. It imports
+# ``strands_robots.simulation.ik`` (and through it the simulation package), which
+# nothing else in this package needs: ``Cosmos3Policy`` is a network/diffusers
+# client. Resolving the two bridge names on first access keeps
+# ``import strands_robots`` (which imports this package eagerly) from paying for
+# the simulation package on every process start.
+_LAZY_SIM_IK = frozenset({"MinkIKBridge", "decode_cosmos_chunk_to_targets"})
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_SIM_IK:
+        from . import sim_ik
+
+        resolved = getattr(sim_ik, name)
+        # Cache in the module dict so only the first access pays the lookup,
+        # matching the lazy export in ``strands_robots.simulation.newton``.
+        globals()[name] = resolved
+        return resolved
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "Cosmos3Policy",

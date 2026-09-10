@@ -84,9 +84,18 @@ def _model_chunk() -> torch.Tensor:
     return torch.arange(_CHUNK_LEN * _ACTION_DIM, dtype=torch.float32).reshape(1, _CHUNK_LEN, _ACTION_DIM)
 
 
+def _emitted_chunk() -> torch.Tensor:
+    """The chunk as the consumer receives it, which is what the policy keeps.
+
+    With a zero overlap nothing is dropped off the front, so this is the whole
+    chunk - LeRobot's ``ActionQueue.original_queue``.
+    """
+    return _model_chunk().squeeze(0)
+
+
 def _model_leftover() -> torch.Tensor:
     """The tail a consumer does not execute this step: ``chunk[exec_horizon:]``."""
-    return _model_chunk().squeeze(0)[_EXEC_HORIZON:]
+    return _emitted_chunk()[_EXEC_HORIZON:]
 
 
 def _make_rtc_policy(
@@ -214,7 +223,7 @@ class TestTheBenignFallbackStaysSilent:
 
         # The conversion succeeded, so there is a leftover to re-anchor with.
         assert policy._rtc_prev_chunk_abs is not None
-        assert torch.allclose(policy._rtc_prev_chunk_abs, _model_leftover() + state)
+        assert torch.allclose(policy._rtc_prev_chunk_abs, _emitted_chunk() + state)
         assert caplog.records == []
 
 

@@ -36,16 +36,16 @@ from typing import Any, Final
 from strands_robots.drivers.feetech.protocol import (
     MAX_GOAL_POSITION,
     SIGN_BIT,
-    Instruction,
-    ProtocolError,
+    STATUS_OVERHEAD,
     Register,
-    build_packet,
     decode_sign_magnitude,
     decode_word,
     encode_word,
-    parse_status_packet,
-    read_packet,
+    parse_sync_read_replies,
+    sync_read_packet,
+    sync_read_reply_size,
     sync_write_packet,
+    write_packet,
 )
 from strands_robots.utils import positive_count_error, positive_finite_number_error, require_optional
 
@@ -140,18 +140,21 @@ READABLE_REGISTERS: Final[dict[str, Register]] = {
 #: Bytes each readable register carries.
 _REGISTER_WIDTH: Final[int] = 2
 
-#: Longest reply frame a two-byte read produces (``FF FF ID LEN ERR P0 P1 CHK``)
-#: plus slack for bytes the half-duplex bus echoes in front of it, which
-#: :func:`~strands_robots.drivers.feetech.protocol.parse_status_packet` skips.
-_READ_BUFFER: Final[int] = 10
+#: Param bytes a servo's answer to a ``WRITE`` carries: none. The frame is the
+#: whole reply, which is why the ack read asks the port for
+#: :data:`~strands_robots.drivers.feetech.protocol.STATUS_OVERHEAD` bytes.
+_ACK_PARAM_COUNT: Final[int] = 0
 
 #: Seconds a read waits for a servo's reply. Named rather than spelled
 #: twice: :class:`~strands_robots.drivers.feetech.driver.FeetechDriver`
 #: forwards a caller's window to this bus and defaults to the same one.
 DEFAULT_TIMEOUT_S: Final[float] = 1.0
 
-#: Seconds to let a servo answer before reading. The vendor SDK polls; a fixed
-#: settle is enough at 1 Mbaud for a two-byte reply and keeps the read simple.
+#: Seconds to let the arm answer before reading. The vendor SDK polls; a fixed
+#: settle keeps the read simple and is ample at 1 Mbaud, where a whole six-servo
+#: ``SYNC_READ`` reply stream is 48 bytes - under half a millisecond on the wire.
+#: One settle covers the whole arm because one frame asks the whole arm; paying
+#: it per servo is what put a floor of ``motors * 10 ms`` under every state read.
 _REPLY_SETTLE_S: Final[float] = 0.01
 
 
@@ -193,8 +196,8 @@ class FeetechBus:
             :data:`DEFAULT_TIMEOUT_S` unless a caller knows the bus answers
             slower. Held to the same domain as ``baud_rate`` and for the same
             reason: pyserial accepts ``0``, ``nan``, ``inf`` and ``None`` as a
-            timeout, and every one of them makes :meth:`_read_one` see an empty
-            buffer it cannot tell from a servo that never answered - so a
+            timeout, and every one of them makes :meth:`_sync_read_once` see an
+            empty buffer it cannot tell from an arm that never answered - so a
             healthy arm reports as motors that did not reply, naming neither
             this bus nor the value that decided it. The two pyserial does
             refuse it refuses from inside :meth:`connect`, naming neither.
@@ -267,23 +270,38 @@ class FeetechBus:
     # ------------------------------------------------------------------ #
 
     def sync_read(self, register: str = "Present_Position", num_retry: int = 0) -> dict[str, float]:
-        """Read ``register`` from every motor.
+        """Read ``register`` from every motor, in one ``SYNC_READ`` frame.
 
         Named and shaped for :func:`strands_robots.bus_access.read_joints`,
         which calls ``bus.sync_read("Present_Position")`` and appends the
         ``.pos`` suffix itself - so exposing this method is what puts an
         SO-arm's joints on the mesh state topic.
 
-        The servos are read one at a time. The SCS SYNC_READ instruction is not
-        available on every servo in this family, and a per-motor READ is what
-        the arm is known to answer; a motor whose reply does not verify is
-        omitted rather than guessed at, exactly as
+        One frame for the whole arm rather than one per joint, for the reason
+        :meth:`write_goal_positions` gives on the write side: the servos answer
+        the same packet, so the six numbers are one pose taken at one instant
+        instead of six samples smeared across as many round trips. A per-motor
+        READ also pays the reply settle once per servo, which put a floor of
+        ``motors * 10 ms`` under every state read - 60 ms on a six-servo arm,
+        below the 30 Hz the joint consumers named in
+        :func:`~strands_robots.bus_access.read_joints` publish at.
+
+        Every servo this bus carries answers ``SYNC_READ``: the instruction is
+        unavailable on the SCS series, which is protocol 1 and which this codec
+        does not address at all (see
+        :mod:`~strands_robots.drivers.feetech.protocol`), and lerobot keys the
+        same refusal on the same per-model protocol number.
+
+        A motor whose reply does not verify is omitted rather than guessed at,
+        exactly as
         :meth:`strands_robots.tools.pose_tool.MotorController.read_all_positions`
         omits it.
 
         Args:
             register: A key of :data:`READABLE_REGISTERS`.
-            num_retry: Extra attempts per motor before giving up on it.
+            num_retry: Extra attempts before giving up. Each retry re-asks only
+                the motors still missing, so a mute servo costs the retries it
+                is given and the rest of the arm costs none.
 
         Returns:
             Motor name -> value. ``Present_Position`` is in the joint's own
@@ -301,9 +319,18 @@ class FeetechBus:
         conn = self._require_open(f"reading {register}")
         address = READABLE_REGISTERS[register]
         sign_bit = SIGN_BIT.get(address)
+        # Keyed by ID, so a bus that names one servo twice asks for it once.
+        wanted = list(dict.fromkeys(spec.motor_id for spec in self.motors.values()))
+        replies: dict[int, bytes] = {}
+        for _ in range(max(1, num_retry + 1)):
+            missing = [motor_id for motor_id in wanted if motor_id not in replies]
+            if not missing:
+                break
+            replies.update(self._sync_read_once(conn, address, missing))
+
         out: dict[str, float] = {}
         for name, spec in self.motors.items():
-            raw = self._read_one(conn, spec.motor_id, address, num_retry)
+            raw = replies.get(spec.motor_id)
             if raw is None:
                 logger.warning("no verified %s reply from %s (id %d)", register, name, spec.motor_id)
                 continue
@@ -311,22 +338,24 @@ class FeetechBus:
             out[name] = spec.to_value(value) if register == "Present_Position" else float(value)
         return out
 
-    def _read_one(self, conn: Any, motor_id: int, address: int, num_retry: int) -> bytes | None:
-        """Read one register from one motor, or ``None`` if it never verified."""
-        request = read_packet(motor_id, address, _REGISTER_WIDTH)
-        for _ in range(max(1, num_retry + 1)):
-            conn.write(request)
-            time.sleep(_REPLY_SETTLE_S)
-            reply = conn.read(_READ_BUFFER)
-            if not reply:
-                continue
-            try:
-                _error, params = parse_status_packet(reply, motor_id, _REGISTER_WIDTH)
-            except ProtocolError:
-                # A frame that did not verify is not a measurement. Retry.
-                continue
-            return params
-        return None
+    def _sync_read_once(self, conn: Any, address: int, motor_ids: list[int]) -> dict[int, bytes]:
+        """Ask ``motor_ids`` for ``address`` once, returning the replies that verified.
+
+        The port is asked for exactly the bytes the reply stream carries
+        (:func:`~strands_robots.drivers.feetech.protocol.sync_read_reply_size`).
+        Asking for more waits out the whole read window for bytes no servo is
+        going to send, which is how a healthy arm comes to read at the timeout
+        instead of at the wire. ``in_waiting`` is then drained so that echoed
+        bytes in front of the first frame do not push the last servo's frame
+        past the count - a port without that attribute simply skips the top-up.
+        """
+        conn.write(sync_read_packet(address, _REGISTER_WIDTH, motor_ids))
+        time.sleep(_REPLY_SETTLE_S)
+        raw = bytes(conn.read(sync_read_reply_size(len(motor_ids), _REGISTER_WIDTH)))
+        echoed = int(getattr(conn, "in_waiting", 0) or 0)
+        if echoed:
+            raw += bytes(conn.read(echoed))
+        return parse_sync_read_replies(raw, motor_ids, _REGISTER_WIDTH)
 
     # ------------------------------------------------------------------ #
     # Writes.                                                             #
@@ -369,6 +398,31 @@ class FeetechBus:
     def set_torque(self, enabled: bool) -> list[str]:
         """Energize or release every motor, returning the ones that failed.
 
+        A unicast ``WRITE`` is answered - the servo returns the empty status
+        packet :func:`~strands_robots.drivers.feetech.protocol.write_packet`
+        documents - and that reply is read back here, for two reasons.
+
+        It is the only evidence the motor took the command. Without it the sole
+        failure this could report is an ``OSError`` from the host's own port, so
+        a servo that is unplugged, mute, or answering garbage is reported as
+        released; the refusal
+        :meth:`~strands_robots.drivers.feetech.driver.FeetechDriver._set_torque_envelope`
+        raises on a non-empty return names those motors as possibly still
+        driven, and a claim about a joint that may still be moving is worth
+        measuring rather than assuming.
+
+        And the acks are frames the *next* reader would otherwise find in front
+        of its own: six unread ones sit 36 bytes ahead of the following
+        ``SYNC_READ`` stream, so a healthy arm reads back as one joint and five
+        servos that did not answer.
+
+        The reply's error byte is not graded: a servo raising a flag still
+        answered and still took the write, and what is being distinguished here
+        is silence. A mute servo costs one read window, which is what measuring
+        silence costs; the settle is paid per servo because the writes are per
+        servo, and a torque sweep is a one-shot verb rather than the 30 Hz state
+        path :meth:`sync_read` keeps one settle for.
+
         Every motor is attempted even after one fails: a release that gave up
         part-way would report the arm safe while some joints are still driven.
 
@@ -376,9 +430,9 @@ class FeetechBus:
             enabled: ``True`` to energize, ``False`` to release.
 
         Returns:
-            Names of motors whose write failed; empty when all succeeded. A
-            non-empty list after ``enabled=False`` means the arm is NOT fully
-            de-energized.
+            Names of motors that did not acknowledge the write; empty when all
+            six answered. A non-empty list after ``enabled=False`` means the arm
+            is NOT fully de-energized.
 
         Raises:
             RuntimeError: When the bus is not open.
@@ -386,14 +440,27 @@ class FeetechBus:
         conn = self._require_open("setting torque")
         failed: list[str] = []
         for name, spec in self.motors.items():
-            packet = build_packet(
-                spec.motor_id,
-                Instruction.WRITE,
-                bytes([Register.TORQUE_ENABLE, 1 if enabled else 0]),
-            )
+            packet = write_packet(spec.motor_id, Register.TORQUE_ENABLE, bytes([1 if enabled else 0]))
             try:
                 conn.write(packet)
+                time.sleep(_REPLY_SETTLE_S)
+                raw = bytes(conn.read(STATUS_OVERHEAD))
+                echoed = int(getattr(conn, "in_waiting", 0) or 0)
+                if echoed:
+                    raw += bytes(conn.read(echoed))
             except OSError as e:
                 logger.error("failed to set torque on %s (id %d): %s", name, spec.motor_id, e)
+                failed.append(name)
+                continue
+            # The stream framer rather than a lone packet parse, for the reason
+            # :meth:`_sync_read_once` uses it: it skips the host's own echo,
+            # which `parse_status_packet` refuses as bytes in front of a frame.
+            if spec.motor_id not in parse_sync_read_replies(raw, [spec.motor_id], _ACK_PARAM_COUNT):
+                logger.error(
+                    "no verified torque ack from %s (id %d); discarding %s",
+                    name,
+                    spec.motor_id,
+                    raw.hex(" ") if raw else "an empty read",
+                )
                 failed.append(name)
         return failed

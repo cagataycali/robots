@@ -317,6 +317,7 @@ def _fake_driver(publisher: _RecordingPublisher) -> Any:
             "_fsm_id",
             "_battery",
             "_imu",
+            "_joints",
             "_pubs",
             "_check_motion_gates",
             "_loop",
@@ -335,6 +336,7 @@ def _fake_driver(publisher: _RecordingPublisher) -> Any:
     driver._motion_switcher_lock = threading.Lock()
     driver._battery = {"pct": 80.0}
     driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+    driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
     driver._pubs = publisher
     driver._check_motion_gates = MagicMock(return_value=None)
     driver._loop = None

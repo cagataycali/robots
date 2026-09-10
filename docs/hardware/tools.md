@@ -63,15 +63,25 @@ scope, so it is a requirement of importing either tool rather than of some branc
 inside it - an install that omits it ships both tools and can load neither.
 
 Because the session runs detached, the on-disk session store is the only place
-its pid is recorded - `stop` and `status` both look the session up there. Both
-stores load, modify and write back, so a record a load leaves out is erased from
-disk by the next session started or stopped. What a load counts as "finished"
-therefore decides whether a session stays stoppable.
+its pid is recorded - `stop` and `status` both look the session up there. Every
+read loads, modifies and writes back, so a record a load leaves out is erased
+from disk by the next session started or stopped. A read therefore deletes
+nothing: `remove_session` is the only thing that drops a record, and being listed
+is not a claim of running - `list` and `status` each derive that from the pid at
+the moment they are asked, so a retained record reads as running only while its
+pid still holds the process the record was written for. A finished run keeps its
+record so `status` can still report the final log tail.
 
-Loading and writing back is also why the *write* has to land whole. Both tools
-write the same file, so a store that lands partially does not lose the session
-being changed - it loses every session the file held, in both tools at once, and
-both load paths report an unparseable store as *no sessions*. So the map is
+Both tools read and write one file, which is why they share one reader:
+`SessionManager`, in `strands_robots.tools._process_stop`. Two readers of one
+document could not hold two retention policies - whichever one deleted a record
+would delete it for the other - so the file has one class over it and one
+`SESSION_DIR` naming it.
+
+Loading and writing back is also why the *write* has to land whole. A store that
+lands partially does not lose the session being changed - it loses every session
+the file held, in both tools at once, and the load path reports an unparseable
+store as *no sessions*. So the map is
 serialized in full before the destination is opened and committed through a temp
 file plus an atomic rename: a full disk during a training run leaves the previous
 store intact rather than truncated, and a record holding a value JSON cannot
@@ -179,6 +189,15 @@ reply-expecting action is held to a single servo. The Protocol 1 codec applies
 the same rule to the frames it builds
 (`build_packet(..., allow_broadcast=False)`), so the tool and the driver cannot
 disagree about which address is a servo and which is the whole bus.
+
+A *unicast* write is not reply-less. The addressed servo answers it with a
+six-byte status packet - the frame a read is answered with, minus the parameters
+- and that reply is the only evidence the motor took the command. The native
+driver's bus reads it: `FeetechBus.set_torque` names a servo that did not
+acknowledge, which is what lets the `stop` verb report a joint that may still be
+driven instead of an arm that is safe to approach, and reading it is also what
+keeps six unread acks from sitting in front of the next state read's reply
+stream.
 
 | Option | Accepted | Why the bound is where it is |
 |--------|----------|------------------------------|

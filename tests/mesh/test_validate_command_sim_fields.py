@@ -118,7 +118,7 @@ class TestTargetJoints:
 
 # target_velocity
 class TestTargetVelocity:
-    """The locomotion goal: WBC / wbc_gait ``[vx, vy, omega]``, MotionBricks a direction.
+    """The locomotion goal: WBC / wbc_gait ``[vx, vy, omega]``, microduck 2 or 3.
 
     Its component domain is ``target_pose``'s - finite, in range, a bool
     refused by name. Its component COUNT is bounded only as DoS defence
@@ -166,7 +166,7 @@ class TestTargetVelocity:
     def test_the_arity_verdict_belongs_to_the_receiving_policy(self) -> None:
         """A two-component velocity crosses the wire and the policy refuses it.
 
-        MotionBricks reads ``[vx, vy]``, so refusing two components here
+        ``microduck`` reads ``[vx, vy]``, so refusing two components here
         would refuse a shape a shipped receiver accepts. WBC needs three and
         says so itself, naming the field and the count it got.
         """

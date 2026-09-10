@@ -169,3 +169,204 @@ def test_from_source_entries_are_documented() -> None:
     # Sanity: at least verify the expected entries are present
     assert "rebot_b601" in from_source
     assert "bi_rebot_b601" in from_source
+
+
+# ---------------------------------------------------------------------------
+# Motor family. ``test_every_strands_lerobot_type_is_real`` asks whether a
+# declared ``lerobot_type`` is a name lerobot registers, and that is all it can
+# ask: ``aloha`` ("2x ViperX 300s") declared ``bi_so_follower``, a real name, and
+# passed for the registry's whole history while building a Feetech bus for
+# Dynamixel servos. A servo family is a wire protocol - Feetech is a half-duplex
+# TTL bus, Dynamixel is Protocol 2.0 - so the two are not configurable into each
+# other. A description naming one while its lerobot_type drives the other
+# describes a robot the mapping cannot move, and both facts are already in the
+# tree, so the contradiction is readable without hardware.
+# ---------------------------------------------------------------------------
+
+_BUS_RE = re.compile(r"\b(FeetechMotorsBus|DynamixelMotorsBus)\b")
+
+#: A bimanual package composes single arms rather than holding a bus, so the
+#: scan follows ``from ..so_follower import`` to where the bus is built.
+_SIBLING_IMPORT_RE = re.compile(r"^from \.\.([a-z0-9_]+) import", re.MULTILINE)
+
+#: Words that name a motor family unambiguously: a bus, a protocol, or a servo
+#: part number. Vendor names are deliberately absent - Trossen sells ViperX and
+#: WidowX arms on Dynamixel *and* supplies the MuJoCo model this registry loads
+#: for the Feetech SO-ARM100 ("TrossenRobotics SO-ARM100 (6-DOF, Feetech
+#: servos)"), so "Trossen" names no family and grading on it would report that
+#: correct entry as a contradiction.
+_FAMILY_MARKERS: dict[str, tuple[str, ...]] = {
+    "DynamixelMotorsBus": ("dynamixel", "viperx", "widowx", "xm430", "xm540", "xl330", "xl430"),
+    "FeetechMotorsBus": ("feetech", "sts3215", "sts3032", "scs0009"),
+}
+
+
+def _buses_in_package(pkg: Path, seen: frozenset[Path] = frozenset()) -> set[str]:
+    """Report the motor-bus classes ``pkg`` builds, following sibling re-exports.
+
+    Args:
+        pkg: A lerobot robot package directory.
+        seen: Packages already visited, so a cyclic re-export terminates.
+
+    Returns:
+        The bus class names found, empty for a robot on neither bus (CAN,
+        DDS, ZMQ).
+    """
+    if pkg in seen:
+        return set()
+    seen = seen | {pkg}
+    found: set[str] = set()
+    for py in sorted(pkg.glob("*.py")):
+        source = py.read_text(encoding="utf-8", errors="ignore")
+        found |= set(_BUS_RE.findall(source))
+        for sibling in _SIBLING_IMPORT_RE.findall(source):
+            candidate = pkg.parent / sibling
+            if candidate.is_dir():
+                found |= _buses_in_package(candidate, seen)
+    return found
+
+
+@pytest.fixture(scope="module")
+def lerobot_bus_by_type() -> dict[str, str]:
+    """Map lerobot robot type -> the single motor bus its package builds.
+
+    A package building two buses is left out rather than guessed at: there is no
+    one family for such a type, so no description of it can contradict one.
+    """
+    robots_dir = _find_lerobot_robots_dir()
+    if robots_dir is None:
+        pytest.skip("LeRobot robots package not found (sim-only / no [lerobot] extra)")
+    by_type: dict[str, str] = {}
+    configs = sorted(robots_dir.rglob("config*.py")) + sorted(robots_dir.rglob("configuration*.py"))
+    for cfg in configs:
+        registered = _REGISTER_RE.findall(cfg.read_text(encoding="utf-8", errors="ignore"))
+        if not registered:
+            continue
+        buses = _buses_in_package(cfg.parent)
+        if len(buses) == 1:
+            for name in registered:
+                by_type[name] = next(iter(buses))
+    return by_type
+
+
+@pytest.fixture(scope="module")
+def strands_descriptions() -> dict[str, str]:
+    """Map strands robot name -> its registry description."""
+    data = json.loads(REGISTRY_PATH.read_text())
+    robots = data.get("robots", data)
+    return {name: str(info.get("description", "")) for name, info in robots.items()}
+
+
+def _family_contradictions(
+    hw_types: dict[str, str],
+    descriptions: dict[str, str],
+    bus_by_type: dict[str, str],
+) -> dict[str, str]:
+    """Report entries describing one servo family while declaring the other's type.
+
+    Args:
+        hw_types: Strands robot name -> declared ``hardware.lerobot_type``.
+        descriptions: Strands robot name -> registry description.
+        bus_by_type: lerobot type -> the motor bus its package builds.
+
+    Returns:
+        Offending robot name -> what it describes against what it drives. A type
+        whose bus is unknown is not graded: there is no family to contradict.
+    """
+    contradictions: dict[str, str] = {}
+    for name, lerobot_type in sorted(hw_types.items()):
+        bus = bus_by_type.get(lerobot_type)
+        if bus is None:
+            continue
+        description = descriptions.get(name, "").lower()
+        for family, markers in _FAMILY_MARKERS.items():
+            if family == bus:
+                continue
+            named = [marker for marker in markers if marker in description]
+            if named:
+                contradictions[name] = f"describes {named} but {lerobot_type} builds a {bus}"
+    return contradictions
+
+
+def test_a_declared_lerobot_type_drives_the_motor_family_the_description_names(
+    strands_hw_types_all: dict[str, str],
+    strands_descriptions: dict[str, str],
+    lerobot_bus_by_type: dict[str, str],
+) -> None:
+    """No entry may describe one servo family and declare a type driving the other.
+
+    The regression for ``aloha``, whose description named ViperX 300s (Dynamixel
+    XM540/XM430) while ``hardware.lerobot_type`` was ``bi_so_follower`` - two
+    SO-ARM followers on a Feetech STS3215 bus. ``Robot("aloha", mode="real")``
+    built that bus and would have written Feetech packets to Dynamixel servos.
+    """
+    contradictions = _family_contradictions(strands_hw_types_all, strands_descriptions, lerobot_bus_by_type)
+    assert not contradictions, (
+        "Registry entries whose description names one motor family while their "
+        "hardware.lerobot_type drives the other. A servo family is a wire "
+        "protocol, so mode='real' would speak the wrong one to the servos: "
+        f"{contradictions}"
+    )
+
+
+def test_the_motor_family_derivation_grades_something(
+    strands_hw_types_all: dict[str, str],
+    strands_descriptions: dict[str, str],
+    lerobot_bus_by_type: dict[str, str],
+) -> None:
+    """Non-vacuity: the rule above passes trivially if it derives nothing.
+
+    Three ways it could go quiet, each pinned: neither bus recognised, the
+    bimanual sibling hop lost (``bi_so_follower`` builds no bus of its own, so
+    without it every bimanual entry grades as unknown - which is the entry the
+    rule exists for), and no description naming a family at all.
+    """
+    assert set(lerobot_bus_by_type.values()) == set(_FAMILY_MARKERS), (
+        f"expected both motor families among lerobot's robots, got {sorted(set(lerobot_bus_by_type.values()))}"
+    )
+    assert lerobot_bus_by_type.get("bi_so_follower") == "FeetechMotorsBus", (
+        "bi_so_follower composes two so_follower arms, so its bus is only reachable through the sibling-import hop"
+    )
+    claiming = {
+        name
+        for name, lerobot_type in strands_hw_types_all.items()
+        if (bus := lerobot_bus_by_type.get(lerobot_type))
+        and any(marker in strands_descriptions.get(name, "").lower() for marker in _FAMILY_MARKERS[bus])
+    }
+    assert claiming, "no registry description names the motor family its lerobot_type drives"
+
+
+#: ``aloha`` exactly as it stood before this rule existed: a ViperX description
+#: declaring the lerobot type for two Feetech SO arms.
+_ALOHA_BEFORE = ("ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)", "bi_so_follower")
+
+
+def test_the_rule_reports_the_entry_that_motivated_it(lerobot_bus_by_type: dict[str, str]) -> None:
+    """Grade the rule, not the registry: a correct registry passes any rule.
+
+    The live-registry cell above goes quiet the moment the registry is right,
+    so on its own it pins nothing about which words the rule recognises. Here
+    the offending entry is supplied, so narrowing ``_FAMILY_MARKERS`` until it
+    no longer reads "ViperX" as Dynamixel fails.
+    """
+    description, lerobot_type = _ALOHA_BEFORE
+    reported = _family_contradictions({"aloha": lerobot_type}, {"aloha": description}, lerobot_bus_by_type)
+    assert "aloha" in reported, (
+        f"the rule must report {description!r} declaring {lerobot_type!r}; "
+        f"got {reported} - _FAMILY_MARKERS no longer recognises this description"
+    )
+
+
+def test_a_correctly_described_entry_is_not_reported(lerobot_bus_by_type: dict[str, str]) -> None:
+    """Over-reach: the vendor that supplies both families is not a family claim.
+
+    ``so100`` reads "TrossenRobotics SO-ARM100 (6-DOF, Feetech servos)" - Trossen
+    sells Dynamixel ViperX arms and supplies this Feetech arm's MuJoCo model, so
+    a rule counting the vendor as a Dynamixel marker reports a correct entry.
+    """
+    reported = _family_contradictions(
+        {"so100": "so100_follower"},
+        {"so100": "TrossenRobotics SO-ARM100 (6-DOF, Feetech servos)"},
+        lerobot_bus_by_type,
+    )
+    assert reported == {}, f"a correct entry was reported as contradictory: {reported}"

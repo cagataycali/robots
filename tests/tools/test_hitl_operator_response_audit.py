@@ -41,6 +41,7 @@ import strands_robots.tools._command_gate as gate_mod
 import strands_robots.tools.g1.use_unitree as unitree_mod
 import strands_robots.tools.lerobot_train as train_mod
 import strands_robots.tools.robot_mesh as mesh_mod
+import strands_robots.tools.serial_tool as serial_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots.mesh.audit import audit_log_path, read_audit_log
 
@@ -80,6 +81,19 @@ def _drive_use_unitree(response: object, monkeypatch: pytest.MonkeyPatch | None 
     if res["status"] != "error":
         return None
     return {"status": "error", "content": [{"text": res["message"]}]}
+
+
+def _drive_serial_tool(response: object) -> dict[str, Any] | None:
+    """A ``feetech_position`` write through the raw serial tool.
+
+    ``serial.Serial`` is stood in for so an approval opens no real port; the
+    gate runs before the constructor, so a decline never reaches it either.
+    """
+    with patch.object(serial_mod.serial, "Serial", return_value=MagicMock(name="Serial")):
+        res = serial_mod.serial_tool(
+            action="feetech_position", port="/dev/ttyFAKE", motor_id=1, position=2048, tool_context=_ctx(response)
+        )
+    return res if res["status"] == "error" else None
 
 
 def _drive_lerobot_train(response: object) -> dict[str, Any] | None:
@@ -169,9 +183,10 @@ class _Gate:
 # The module/function columns name where the interrupt is raised, which for the
 # ROS 2 command gate is the owner shared by all three graph transports rather
 # than any one tool - one interrupt site, one audit row, whichever tool asked.
-# ``use_unitree`` asks through the same site (``gate_motion``, the transport-
-# agnostic path ``gate_command`` fronts with its blocklist), so its row here
-# grades that a Unitree RPC and a ROS publish leave the same shape of row.
+# ``use_unitree`` and ``serial_tool`` ask through the same site (``gate_motion``,
+# the transport-agnostic path ``gate_command`` fronts with its blocklist), so
+# their rows here grade that a Unitree RPC, a bus write and a ROS publish all
+# leave the same shape of row.
 # The target each drive above aims at. ``emergency_stop`` is fleet-wide, so no
 # single peer is named and its row's target is legitimately empty - the verb is
 # what identifies it. Pinning the expected value per gate keeps that deliberate
@@ -184,6 +199,15 @@ _GATES: tuple[_Gate, ...] = (
         "SetVelocity",
         "loco.SetVelocity",
         _drive_use_unitree,
+        gate_mod,
+        "gate_motion",
+    ),
+    _Gate(
+        "serial_tool",
+        "serial_tool_tool",
+        "feetech_position",
+        "/dev/ttyFAKE",
+        _drive_serial_tool,
         gate_mod,
         "gate_motion",
     ),
@@ -219,6 +243,7 @@ def _quiet_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "BYPASS_TOOL_CONSENT",
         "STRANDS_ROS2_COMMAND_ALLOW",
         unitree_mod.COMMAND_ALLOW_ENV,
+        serial_mod.COMMAND_ALLOW_ENV,
         "STRANDS_TRAIN_EXTRA_FLAGS_ALLOW",
         dash_hitl_mod.MOTION_ENV,
     ):

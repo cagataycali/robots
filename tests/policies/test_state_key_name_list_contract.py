@@ -2,7 +2,7 @@
 
 ``robot_state_keys`` names the actuators a policy emits actions for - they are the
 keys ``send_action`` resolves - so the list decides which actuator each action
-value is sent to. Fifteen ``set_robot_state_keys`` surfaces accept it (thirteen
+value is sent to. Fourteen ``set_robot_state_keys`` surfaces accept it (twelve
 providers, the remote client, and the abstract declaration on ``Policy``) and
 none of them validated its shape.
 
@@ -47,9 +47,9 @@ rate the in-process API refuses"), so ``MSG_SET_STATE_KEYS`` now forwards
 verbatim too. ``RemotePolicy`` validates before its own ``list(...)`` for the
 same reason, on the outbound side.
 
-Four providers needed no guard and deliberately did not get one.
-``WBCPolicy``, ``MotionBricksPolicy``, ``KimodoPolicy`` and
-``ProtoMotionsPolicy`` resolve every G1 joint they drive BY NAME inside the
+Three providers needed no guard and deliberately did not get one.
+``WBCPolicy``, ``KimodoPolicy`` and ``ProtoMotionsPolicy`` resolve every G1
+joint they drive BY NAME inside the
 caller's list, so a bare string, a mapping, a one-shot iterator, and non-string
 or blank entries all fail that membership check already - measured, all five
 refused with a message naming the missing joints. They also tolerate a repeated
@@ -120,7 +120,6 @@ import strands_robots
 from strands_robots.inference.client import RemotePolicy
 from strands_robots.policies.composite import CompositePolicy
 from strands_robots.policies.mock import MockPolicy
-from strands_robots.policies.motionbricks.policy import MotionBricksPolicy
 from strands_robots.policies.wbc.policy import WBCConfig, WBCPolicy
 from strands_robots.utils import name_list_error
 
@@ -140,6 +139,7 @@ _MUST_VALIDATE = {
     "policies/mock.py::MockPolicy",
     "policies/microduck/policy.py::MicroduckPolicy",
     "policies/moveit2/policy.py::MoveIt2Policy",
+    "policies/rl.py::RLCheckpointPolicy",
 }
 
 # Already total without the shared domain: every joint they drive is resolved by
@@ -153,7 +153,6 @@ _MUST_VALIDATE = {
 # total_surface holds.
 _TOTAL_BY_MEMBERSHIP = {
     "policies/kimodo/policy.py::KimodoPolicy",
-    "policies/motionbricks/policy.py::MotionBricksPolicy",
     "policies/protomotions/policy.py::ProtoMotionsPolicy",
     "policies/wbc/policy.py::WBCPolicy",
 }
@@ -478,23 +477,6 @@ def _wbc_keys() -> list[str]:
     return ["floating_base_joint", *WBC_G1_ALL_JOINTS]
 
 
-def _motionbricks_policy() -> Any:
-    """A bare instance: ``set_robot_state_keys`` reads no constructor state.
-
-    It consults only the module-level joint list before it raises, so a bare
-    instance is enough - as the config resolution tests in ``tests/policies/wbc``
-    already do.
-    """
-    return object.__new__(MotionBricksPolicy)
-
-
-def _motionbricks_keys() -> list[str]:
-    """A key list MotionBricks accepts."""
-    from strands_robots.policies.motionbricks.policy import MOTIONBRICKS_G1_JOINTS
-
-    return ["floating_base_joint", *MOTIONBRICKS_G1_JOINTS]
-
-
 class _RampAgent:
     """A motion agent returning a per-joint ramp, so no sampler is needed.
 
@@ -599,6 +581,45 @@ def _protomotions_keys() -> list[str]:
     return ["floating_base_joint", *GTP_G1_JOINT_NAMES]
 
 
+def _rl() -> Any:
+    """An RL checkpoint policy needs a checkpoint, so write the smallest real one.
+
+    The provider loads ``policy.pt`` + ``policy_meta.json`` in its constructor,
+    so unlike the service-backed providers it cannot be built from arguments
+    alone. The pair is written through the PPO backend's own
+    ``build_actor_critic``, which is what the provider rebuilds it with.
+    """
+    import json
+    import tempfile
+
+    import torch
+
+    from strands_robots.policies.rl import RLCheckpointPolicy
+    from strands_robots.training.rl.ppo import build_actor_critic
+
+    directory = tempfile.mkdtemp(prefix="rl-state-keys-")
+    module = build_actor_critic(2, 2, 2, hidden_dims=(4,))
+    torch.save(
+        {"actor_critic": module.state_dict(), "iteration": 1, "provider": "ppo"}, pathlib.Path(directory) / "policy.pt"
+    )
+    (pathlib.Path(directory) / "policy_meta.json").write_text(
+        json.dumps(
+            {
+                "provider": "ppo",
+                "num_actor_obs": 2,
+                "num_critic_obs": 2,
+                "num_actions": 2,
+                "actor_obs_keys": ["a", "b"],
+                "action_keys": [],
+                "hidden_dims": [4],
+                "iteration": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return RLCheckpointPolicy(checkpoint_dir=directory)
+
+
 # (surface id as classified above, factory, the attribute the setter binds into,
 # a key list that surface accepts). Held against ``_TOTAL_BY_MEMBERSHIP`` by
 # ``test_the_membership_table_covers_every_already_total_surface``, so a provider
@@ -607,12 +628,6 @@ _Membership = tuple[str, Callable[[], Any], str, Callable[[], list[str]]]
 
 _MEMBERSHIP_SURFACES: list[_Membership] = [
     ("policies/kimodo/policy.py::KimodoPolicy", _kimodo_policy, "_robot_state_keys", _kimodo_keys),
-    (
-        "policies/motionbricks/policy.py::MotionBricksPolicy",
-        _motionbricks_policy,
-        "_robot_state_keys",
-        _motionbricks_keys,
-    ),
     (
         "policies/protomotions/policy.py::ProtoMotionsPolicy",
         _protomotions_policy,
@@ -837,6 +852,7 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
+    ("policies/rl.py::RLCheckpointPolicy", _rl, "robot_state_keys", "torch"),
 ]
 _OWNING_IDS = [surface.split("::")[1] for surface, *_ in _OWNING_SURFACES]
 

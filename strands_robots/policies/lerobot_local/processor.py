@@ -190,7 +190,7 @@ def _missing_config_errors() -> tuple[type[BaseException], ...]:
     when a checkpoint ships no ``policy_preprocessor.json`` /
     ``policy_postprocessor.json`` and instead carries legacy/normalization
     stats. Treating that as "no standard config" lets the bridge fall back to
-    the ``norm_stats.json`` path rather than crashing.
+    the in-model normalization path rather than crashing.
     """
     errors: tuple[type[BaseException], ...] = (FileNotFoundError, ValueError)
     try:
@@ -255,7 +255,6 @@ class ProcessorBridge:
         preprocessor: Any | None = None,
         postprocessor: Any | None = None,
         device: str | None = None,
-        inert_reason: str | None = None,
     ):
         """Initialize with optional pre/post processor pipelines.
 
@@ -263,14 +262,10 @@ class ProcessorBridge:
             preprocessor: LeRobot DataProcessorPipeline for observation preprocessing.
             postprocessor: LeRobot DataProcessorPipeline for action postprocessing.
             device: Target device for tensor operations (auto-detected if None).
-            inert_reason: Why this bridge carries no pipelines, when the cause is
-                a nameable caller error rather than a checkpoint that ships none.
-                ``None`` for every other bridge.
         """
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
-        self._inert_reason = inert_reason
         # The embodiment's obs_rename map ({runtime_key: model_feature}),
         # latched by apply_embodiment. Used to enrich the 'image_keys
         # missing' preprocessor failure with the expected camera source
@@ -286,7 +281,6 @@ class ProcessorBridge:
         postprocessor_config: str = POSTPROCESSOR_CONFIG,
         overrides: dict[str, Any] | None = None,
         policy_type: str | None = None,
-        norm_tag: str | None = None,
         policy_config: Any | None = None,
         revision: str | None = None,
     ) -> "ProcessorBridge":
@@ -304,14 +298,12 @@ class ProcessorBridge:
             overrides: Dict of step overrides (passed to both pipelines).
             policy_type: Policy type name, used to register policy-specific
                 processor steps before loading the standard pipeline configs.
-            norm_tag: Embodiment tag selecting which stats to apply from a
-                ``norm_stats.json`` fallback (auto-resolved when None).
             policy_config: The loaded policy's ``PreTrainedConfig``. Enables the
                 in-model-normalization fallback (see Notes) for OLD-FORMAT
                 checkpoints; when None that fallback is skipped.
             revision: Optional Hub branch/tag/commit SHA. Pins the processor
-                config JSONs, the ``norm_stats.json`` fallback, and the
-                single-file ``model.safetensors`` download to the SAME revision
+                config JSONs and the single-file ``model.safetensors`` download
+                to the SAME revision
                 as the policy weights. Without it a revision-pinned load would
                 silently run default-branch preprocessor/postprocessor pipelines
                 and normalization buffers against pinned weights. Degrades to an
@@ -322,15 +314,8 @@ class ProcessorBridge:
             ProcessorBridge instance with loaded pipelines.
 
         Notes:
-            When a checkpoint ships neither ``policy_preprocessor.json`` nor
-            ``policy_postprocessor.json`` but DOES ship a recognized
-            ``norm_stats.json`` (e.g. the MolmoAct2 SO-100/101 family), the
-            bridge falls back to building quantile/min-max/mean-std normalizers
-            from those stats instead of silently passing data through
-            un-normalized. See :mod:`.norm_stats`.
-
-            When a checkpoint ships no processor configs AND no
-            ``norm_stats.json`` but DOES carry OLD-FORMAT in-model normalization
+            When a checkpoint ships no processor configs but DOES carry
+            OLD-FORMAT in-model normalization
             buffers in its ``model.safetensors`` (``normalize_inputs.*`` /
             ``unnormalize_outputs.*`` -- the pre-processor-era lerobot format
             still used by the canonical zoo checkpoints, e.g.
@@ -392,32 +377,8 @@ class ProcessorBridge:
             revision=revision,
         )
 
-        # Fallback: a checkpoint may ship NEITHER standard pipeline config but a
-        # recognized norm_stats.json (e.g. MolmoAct2 SO-100/101). Without this,
-        # both pipelines are None and the bridge silently passes data through
-        # un-normalized -- the single biggest cause of off-policy arm motion on
-        # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
-        inert_reason: str | None = None
-        if preprocessor is None and postprocessor is None:
-            from .norm_stats import NormStatsFilenameError, UnknownNormTagError
-
-            try:
-                preprocessor, postprocessor = cls._load_norm_stats_fallback(
-                    pretrained_name_or_path, norm_tag=norm_tag, revision=revision
-                )
-            except (NormStatsFilenameError, UnknownNormTagError) as exc:
-                # Reachable stats the loader refused to apply: a tag the caller
-                # named that the file does not declare, or a stats filename the
-                # checkpoint's config.json points outside itself. Record the cause
-                # instead of propagating: the policy narrows on ValueError to treat
-                # an absent bridge as benign, so a raise here degrades to the same
-                # passthrough with its reason at debug, and the load report then
-                # blames a missing postprocessor the checkpoint was never going to
-                # ship.
-                inert_reason = str(exc)
-
-        # Third fallback: an OLD-FORMAT checkpoint ships no processor configs and
-        # no norm_stats.json, but carries in-model normalization buffers that
+        # Fallback: an OLD-FORMAT checkpoint ships no processor configs but
+        # carries in-model normalization buffers that
         # current lerobot drops on load (see the class-level Notes). Reconstruct
         # the pre/post pipelines from those buffers so the policy runs normalized
         # instead of flailing on raw MEAN_STD actions. Needs the policy config.
@@ -430,7 +391,6 @@ class ProcessorBridge:
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             device=device,
-            inert_reason=inert_reason,
         )
 
     @classmethod
@@ -596,45 +556,6 @@ class ProcessorBridge:
             # No config file found - model doesn't ship this pipeline. Normal.
             logger.debug("No %s found: %s", kind, exc)
             return None
-
-    @staticmethod
-    def _load_norm_stats_fallback(
-        pretrained_name_or_path: str,
-        norm_tag: str | None = None,
-        revision: str | None = None,
-    ) -> tuple[Any | None, Any | None]:
-        """Build pre/post pipelines from a ``norm_stats.json`` when present.
-
-        Returns ``(None, None)`` if no recognized norm-stats file is found, so
-        the bridge stays a passthrough only when there is genuinely nothing to
-        apply.
-
-        Args:
-            pretrained_name_or_path: HF model ID or local checkpoint path.
-            norm_tag: Explicit embodiment tag (auto-resolved when None).
-
-        Returns:
-            ``(preprocessor, postprocessor)`` pipelines or ``(None, None)``.
-
-        Raises:
-            UnknownNormTagError: If ``norm_tag`` names a tag the recognized stats
-                file does not declare - a caller error, not an absence, so it does
-                not share the ``(None, None)`` verdict.
-            NormStatsFilenameError: If the checkpoint's ``config.json`` declares a
-                ``norm_stats_filename`` that does not name a file inside the
-                checkpoint - likewise a malformed declaration, not an absence.
-        """
-        from . import norm_stats as _norm_stats
-
-        payload = _norm_stats.load_norm_stats(pretrained_name_or_path, revision=revision)
-        if not _norm_stats.is_norm_stats_payload(payload):
-            return None, None
-        assert payload is not None  # narrowed by is_norm_stats_payload
-        logger.info(
-            "No standard processor configs for %s; falling back to norm_stats.json",
-            pretrained_name_or_path,
-        )
-        return _norm_stats.build_norm_stats_processors(payload, norm_tag=norm_tag)
 
     @staticmethod
     def _load_in_model_normalization_fallback(
@@ -867,22 +788,6 @@ class ProcessorBridge:
         """Whether any processing pipeline is active."""
         return self.has_preprocessor or self.has_postprocessor
 
-    @property
-    def inert_reason(self) -> str | None:
-        """Why this bridge carries no pipelines, when the cause is a caller error.
-
-        A bridge with neither pipeline is normally benign - the checkpoint ships
-        no processor configs and no recognized stats file, so there is genuinely
-        nothing to apply. When instead the pipelines were WITHIN REACH and a
-        caller-supplied argument put them out of reach, that reason is recorded
-        here so the load report can name the actual cause rather than the generic
-        "this checkpoint ships no postprocessor" one, whose remedy (supply the
-        checkpoint's postprocessor) does not address it.
-
-        ``None`` whenever the bridge is active, or inert for a benign reason.
-        """
-        return self._inert_reason
-
     def inert_normalization_features(self) -> list[str]:
         """Declared normalization features that will silently pass through.
 
@@ -897,9 +802,9 @@ class ProcessorBridge:
         no bare ``action`` key, so a present, active pipeline normalizes
         NOTHING: ``observation.state`` reaches the model raw and the predicted
         ``action`` reaches the robot without unnormalization. This is the same
-        silent-passthrough hazard :mod:`.norm_stats` guards for the MolmoAct2
-        ``norm_stats.json`` path, but it slips past the standard-pipeline path
-        because the pipeline *is* present.
+        silent-passthrough hazard a checkpoint with no pipeline at all is
+        guarded against, but it slips past the standard-pipeline path because
+        the pipeline *is* present.
 
         Returns a list of ``"<key> (<type>/<mode>)"`` descriptors for every
         feature whose declared, non-IDENTITY normalization will be skipped.
@@ -1102,7 +1007,6 @@ class ProcessorBridge:
             "has_preprocessor": self.has_preprocessor,
             "has_postprocessor": self.has_postprocessor,
             "is_active": self.is_active,
-            "inert_reason": self.inert_reason,
             "repr": repr(self),
         }
 

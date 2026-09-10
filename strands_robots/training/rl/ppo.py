@@ -39,8 +39,35 @@ def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
     return nn.Sequential(*layers)
 
 
-def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: int, spec: RLTrainSpec) -> Any:
-    """Construct the Gaussian-MLP ``ActorCritic`` module (torch required)."""
+def build_actor_critic(
+    num_actor_obs: int,
+    num_critic_obs: int,
+    num_actions: int,
+    *,
+    hidden_dims: tuple[int, ...] = (128, 128),
+    init_noise_std: float = 1.0,
+) -> Any:
+    """Construct the Gaussian-MLP ``ActorCritic`` module (torch required).
+
+    Public because a checkpoint is only deployable if its architecture can be
+    rebuilt outside a training run: ``load_deployable_actor`` calls this to
+    reconstruct the graph ``policy.pt``'s ``state_dict`` was saved from, so the
+    trainer and the deployer cannot drift into two different networks.
+
+    Args:
+        num_actor_obs: Width of the actor observation vector.
+        num_critic_obs: Width of the critic observation vector (>= actor's under
+            an asymmetric actor-critic).
+        num_actions: Number of action outputs.
+        hidden_dims: Hidden layer widths, expanded for both actor and critic.
+        init_noise_std: Initial action standard deviation. Only the *initial*
+            value: ``log_std`` is a learned parameter, so loading a checkpoint
+            overwrites it and any positive value reconstructs the same graph.
+
+    Returns:
+        An ``ActorCritic`` ``nn.Module`` whose ``act_inference`` is the
+        deterministic (mean) action a deployed checkpoint commands.
+    """
     import torch
     import torch.nn as nn
     from torch.distributions import Normal
@@ -50,9 +77,9 @@ def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: in
 
         def __init__(self) -> None:
             super().__init__()
-            self.actor = _mlp(num_actor_obs, spec.hidden_dims, num_actions)
-            self.critic = _mlp(num_critic_obs, spec.hidden_dims, 1)
-            self.log_std = nn.Parameter(torch.ones(num_actions) * float(torch.log(torch.tensor(spec.init_noise_std))))
+            self.actor = _mlp(num_actor_obs, hidden_dims, num_actions)
+            self.critic = _mlp(num_critic_obs, hidden_dims, 1)
+            self.log_std = nn.Parameter(torch.ones(num_actions) * float(torch.log(torch.tensor(init_noise_std))))
 
         def _distribution(self, actor_obs: torch.Tensor) -> Normal:
             mean = self.actor(actor_obs)
@@ -275,8 +302,12 @@ class PpoTrainer(BaseRLAlgo):
             self.env.device = self.device
         self.steps_per_iter = spec.rollout_steps * spec.num_envs
 
-        self.actor_critic = _build_actor_critic(
-            self.env.num_actor_obs, self.env.num_critic_obs, self.env.num_actions, spec
+        self.actor_critic = build_actor_critic(
+            self.env.num_actor_obs,
+            self.env.num_critic_obs,
+            self.env.num_actions,
+            hidden_dims=tuple(spec.hidden_dims),
+            init_noise_std=spec.init_noise_std,
         ).to(self.device)
         self.optimizer = torch.optim.Adam(self.actor_critic.parameters(), lr=spec.learning_rate)
 

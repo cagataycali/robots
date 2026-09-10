@@ -22,15 +22,7 @@ from strands_robots.drivers.feetech.bus import (
     FeetechBus,
     MotorSpec,
 )
-from tests.drivers.conftest import FakeServoPort
-
-
-def _open_bus(port: FakeServoPort, **kwargs: object) -> FeetechBus:
-    """A bus already holding ``port``, skipping the real ``connect()``."""
-    bus = FeetechBus(port="/dev/fake", **kwargs)  # type: ignore[arg-type]
-    bus._conn = port
-    return bus
-
+from tests.drivers.conftest import FakeServoPort, open_bus
 
 # ============================================================================
 # Unit conversion.
@@ -95,7 +87,7 @@ class TestReads:
 
     def test_positions_come_back_in_the_joints_own_unit(self, servo_port: FakeServoPort) -> None:
         """Midpoint counts decode to the middle of every joint's range."""
-        bus = _open_bus(servo_port)
+        bus = open_bus(servo_port)
         reading = bus.sync_read("Present_Position")
         assert set(reading) == set(SO_ARM_MOTORS)
         for joint, value in reading.items():
@@ -111,13 +103,13 @@ class TestReads:
         measurement - so the frame is located instead.
         """
         port = FakeServoPort({1: 2048}, leading_noise=b"\x00\xfe")
-        bus = _open_bus(port, motors={"shoulder_pan": SO_ARM_MOTORS["shoulder_pan"]})
+        bus = open_bus(port, motors={"shoulder_pan": SO_ARM_MOTORS["shoulder_pan"]})
         assert bus.sync_read("Present_Position")["shoulder_pan"] == pytest.approx(0.0, abs=0.1)
 
     def test_a_motor_that_does_not_answer_is_absent_not_guessed(self) -> None:
         """A mute servo is omitted, so no caller reads a fabricated angle."""
         port = FakeServoPort({1: 2048})  # ids 2..6 answer nothing
-        bus = _open_bus(port)
+        bus = open_bus(port)
         assert list(bus.sync_read("Present_Position")) == ["shoulder_pan"]
 
     @pytest.mark.parametrize(
@@ -133,13 +125,13 @@ class TestReads:
         """Bit 15 is direction. Reading it as magnitude reports a stopped
         joint as moving at full speed, which is the defect this pins."""
         port = FakeServoPort({1: encoded})
-        bus = _open_bus(port, motors={"shoulder_pan": SO_ARM_MOTORS["shoulder_pan"]})
+        bus = open_bus(port, motors={"shoulder_pan": SO_ARM_MOTORS["shoulder_pan"]})
         assert bus.sync_read("Present_Velocity")["shoulder_pan"] == expected
 
     def test_an_unreadable_register_is_refused_by_name(self) -> None:
         """``Present_Current``'s sign encoding is not established here, so it
         is refused rather than decoded by guess."""
-        bus = _open_bus(FakeServoPort())
+        bus = open_bus(FakeServoPort())
         with pytest.raises(ValueError, match="Present_Current"):
             bus.sync_read("Present_Current")
         assert "Present_Current" not in READABLE_REGISTERS
@@ -159,7 +151,7 @@ class TestWrites:
         Six separate writes would start the joints at six different times,
         smearing a coordinated move over the bus latency.
         """
-        bus = _open_bus(servo_port)
+        bus = open_bus(servo_port)
         bus.write_goal_positions({name: 0.0 for name in ("shoulder_pan", "wrist_roll")})
         (frame,) = servo_port.writes
         assert frame[:2] == b"\xff\xff"
@@ -169,7 +161,7 @@ class TestWrites:
 
     def test_the_frame_carries_the_counts_each_motor_was_commanded(self, servo_port: FakeServoPort) -> None:
         """Decode the payload back into (id, counts) pairs."""
-        bus = _open_bus(servo_port)
+        bus = open_bus(servo_port)
         bus.write_goal_positions({"shoulder_pan": 180.0, "gripper": 0.0})
         (frame,) = servo_port.writes
         payload = frame[7:-1]  # after header/id/len/instr/address/width, before checksum
@@ -187,13 +179,13 @@ class TestWrites:
         ],
     )
     def test_a_write_the_arm_cannot_honour_is_refused(self, targets: dict[str, float], match: str) -> None:
-        bus = _open_bus(FakeServoPort())
+        bus = open_bus(FakeServoPort())
         with pytest.raises(ValueError, match=match):
             bus.write_goal_positions(targets)
 
     def test_torque_release_writes_every_motor(self, servo_port: FakeServoPort) -> None:
         """Every joint is attempted, so a partial release cannot read as done."""
-        bus = _open_bus(servo_port)
+        bus = open_bus(servo_port)
         assert bus.set_torque(False) == []
         assert len(servo_port.writes) == len(SO_ARM_MOTORS)
         for frame in servo_port.writes:
@@ -225,7 +217,7 @@ class TestLifecycle:
             getattr(bus, method)() if method == "sync_read" else getattr(bus, method)(argument)
 
     def test_disconnect_closes_the_port_and_is_idempotent(self, servo_port: FakeServoPort) -> None:
-        bus = _open_bus(servo_port)
+        bus = open_bus(servo_port)
         assert bus.is_connected
         bus.disconnect()
         assert not bus.is_connected
@@ -234,5 +226,5 @@ class TestLifecycle:
 
     def test_motors_may_be_narrowed_to_a_subset_of_the_arm(self) -> None:
         """A bus carrying two servos reads and writes only those two."""
-        bus = _open_bus(FakeServoPort({6: 4095}), motors={"gripper": MotorSpec(6, 0, 100)})
+        bus = open_bus(FakeServoPort({6: 4095}), motors={"gripper": MotorSpec(6, 0, 100)})
         assert bus.sync_read("Present_Position") == {"gripper": pytest.approx(100.0)}
