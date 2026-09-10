@@ -39,7 +39,7 @@ import os
 import sys
 
 os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")
-os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 import argparse
 import time
