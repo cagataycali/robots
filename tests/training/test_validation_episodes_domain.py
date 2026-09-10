@@ -41,15 +41,17 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.lerobot_train import build_train_command
-from strands_robots.training._validate import validation_episodes_problems
-from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.groot import Gr00tTrainer
-from strands_robots.training.lerobot import LerobotTrainer
-from strands_robots.training.mock import MockTrainer
-from strands_robots.utils import validation_split_fraction
-from tests.training._spec_field_reads import reads_spec_field
+pytest.importorskip("psutil")
+
+from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
+from strands_robots.training._validate import validation_episodes_problems  # noqa: E402
+from strands_robots.training.base import Trainer, TrainSpec  # noqa: E402
+from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
+from strands_robots.training.groot import Gr00tTrainer  # noqa: E402
+from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
+from strands_robots.training.mock import MockTrainer  # noqa: E402
+from strands_robots.utils import validation_split_fraction  # noqa: E402
+from tests.training._spec_field_reads import reads_spec_field  # noqa: E402
 
 TOTAL_EPISODES = 10
 

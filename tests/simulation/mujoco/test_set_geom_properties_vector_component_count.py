@@ -22,11 +22,14 @@ rejected with an actionable structured error, the model is left untouched, and t
 exact counts each type defines still apply.
 """
 
-import mujoco
-import numpy as np
 import pytest
 
-from strands_robots.simulation.mujoco import Simulation
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+import numpy as np  # noqa: E402
+
+from strands_robots.simulation.mujoco import Simulation  # noqa: E402
 
 # Inline scene with one geom per size-defined primitive plus a mesh geom whose
 # extent comes from asset data (vertices are inline, so no asset file is needed).

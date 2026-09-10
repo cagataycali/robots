@@ -53,11 +53,14 @@ import re
 from types import SimpleNamespace
 from typing import Any
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.mujoco import scene_ops
-from strands_robots.simulation.mujoco.simulation import Simulation
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.mujoco import scene_ops  # noqa: E402
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 # A two-joint arm. ``{acts}`` is the actuator block under test.
 _ARM = """
