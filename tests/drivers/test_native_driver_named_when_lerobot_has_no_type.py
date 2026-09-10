@@ -9,7 +9,7 @@ Mini has no lerobot robot type, so before this driver ``mode="real"`` raised
 
 The Reachy Mini also declares ``hardware.driver="strands"`` on its registry
 entry, so :func:`~strands_robots.drivers.resolve_driver` sends it to its driver
-and it never meets that refusal. Four robots the Dynamixel driver serves declare
+and it never meets that refusal. Five robots the Dynamixel driver serves declare
 nothing, so the default routes them to lerobot - which has no robot type for any
 of them. They reached the generic listing of lerobot's sixteen robot types, and
 that listing never mentioned that this package ships the driver that builds
@@ -31,10 +31,9 @@ asked for.
 
 What is deliberately unchanged: which driver *wins*. Resolution precedence is
 untouched, no registry entry gains a declaration, and a robot lerobot can build
-still goes to lerobot. Whether ``koch`` and ``aloha`` - which have both a
-working lerobot type and a native driver - should prefer the native one is a
-preference, and ``unitree_g1`` shows the registry is where such a preference is
-declared. This changes only what a caller is told when the driver they were
+still goes to lerobot. Whether ``koch`` - the one robot left with both a working
+lerobot type and a native driver - should prefer the native one is a preference,
+and ``unitree_g1`` shows the registry is where such a preference is declared. This changes only what a caller is told when the driver they were
 routed to cannot build the robot at all.
 """
 
@@ -60,6 +59,7 @@ from strands_robots.registry import get_robot, list_robots
 #: which is how the Franka arms and the UR arms arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
+    "aloha",
     "vx300s",
     "wx250s",
     "trossen_wxai",
@@ -345,9 +345,14 @@ class TestNothingElseChanged:
         robot: Any = Robot(name, mode="real", driver="strands", port="/dev/ttyUSB0")
         assert type(robot) is get_native_driver_class(name)
 
-    @pytest.mark.parametrize("name", ["koch", "aloha"])
+    @pytest.mark.parametrize("name", ["koch"])
     def test_a_robot_lerobot_can_resolve_is_not_diverted(self, name: str) -> None:
-        """These have both drivers, so the preference is the registry's to declare."""
+        """This has both drivers, so the preference is the registry's to declare.
+
+        ``koch`` alone: ``aloha`` held this position on the strength of a
+        ``lerobot_type`` naming two Feetech SO arms, and moved into
+        :data:`NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE` when that went away.
+        """
         assert _type_handed_to_lerobot(name) in _lerobot_robot_types()
         refusal = _refusal_for(name)
         assert "driver='strands'" not in refusal

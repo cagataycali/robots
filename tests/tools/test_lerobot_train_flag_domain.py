@@ -50,6 +50,7 @@ import numpy as np
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _process_stop
 from strands_robots.tools.lerobot_train import build_train_command
 
 lerobot_train = train_mod.lerobot_train
@@ -211,7 +212,7 @@ class TestTheToolRefusesBeforeItActs:
         """
         (tmp_path / "ds" / "meta").mkdir(parents=True)
         (tmp_path / "ds" / "meta" / "info.json").write_text('{"total_episodes": 3}', encoding="utf-8")
-        monkeypatch.setattr(train_mod, "SESSION_DIR", tmp_path / ".sessions")
+        monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
         (tmp_path / ".sessions").mkdir()
         return str(tmp_path / "ds")
 
@@ -240,7 +241,7 @@ class TestTheToolRefusesBeforeItActs:
     def test_an_action_that_reads_no_flag_is_not_refused_for_one(
         self, action: str, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        monkeypatch.setattr(train_mod, "SESSION_DIR", tmp_path / ".sessions")
+        monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
         (tmp_path / ".sessions").mkdir()
         envelope = _run_tool(action=action, session_name="absent", resume="false")
         assert "must be a boolean" not in _text(envelope)

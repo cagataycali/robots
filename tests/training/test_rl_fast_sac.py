@@ -169,11 +169,9 @@ def _make_reach_env():  # type: ignore[no-untyped-def]
 
 def test_sac_actor_log_prob_finite_under_saturation() -> None:
     """tanh-squash log-prob correction must stay finite even at the bounds."""
-    from strands_robots.training.rl import RLTrainSpec
-    from strands_robots.training.rl.fast_sac import _build_actor_critic
+    from strands_robots.training.rl.fast_sac import build_actor_critic
 
-    spec = RLTrainSpec(hidden_dims=(16,))
-    ac = _build_actor_critic(num_actor_obs=3, num_critic_obs=3, num_actions=2, spec=spec)
+    ac = build_actor_critic(num_actor_obs=3, num_critic_obs=3, num_actions=2, hidden_dims=(16,))
     obs = torch.full((8, 3), 50.0)  # drive the pre-squash mean far out -> tanh saturates
     action, log_prob = ac.sample(obs)
     assert action.shape == (8, 2)

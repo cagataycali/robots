@@ -52,6 +52,7 @@ import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
 import strands_robots.tools.lerobot_train as train_mod
+from strands_robots.tools import _process_stop
 from strands_robots.tools._process_stop import (
     _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
@@ -78,12 +79,11 @@ def _tool(module: Any) -> Any:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_session_dirs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Point both stores at a temp dir so no test touches a real session."""
-    for module in (train_mod, tele_mod):
-        session_dir = tmp_path / module.__name__.rsplit(".", 1)[-1]
-        session_dir.mkdir()
-        monkeypatch.setattr(module, "SESSION_DIR", session_dir)
+def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the store both tools share at a temp dir, never a real session."""
+    session_dir = tmp_path / ".sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(_process_stop, "SESSION_DIR", session_dir)
 
 
 #: The real ``os.kill``, bound before any test can replace it. A cell that pins
@@ -320,19 +320,27 @@ def test_stop_still_signals_the_process_the_record_does_name(
 
 
 # ---------------------------------------------------------------------------
-# The teleoperation store's prune, which exists to drop exactly this record.
+# The record whose pid was reused is kept, and reported as the finished run it is.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    ("gap", "survives"),
+    ("gap", "running"),
     [pytest.param(0.0, True, id="own-process"), pytest.param(STALE_GAP_S, False, id="reused-pid")],
 )
-def test_the_teleop_prune_drops_a_record_whose_pid_was_reused(stranger: Any, gap: float, survives: bool) -> None:
-    """A prune that keeps a record because the number exists prunes nothing."""
+def test_a_reused_pid_is_reported_finished_without_losing_the_record(stranger: Any, gap: float, running: bool) -> None:
+    """The distinction lives in the verdict, not in whether the record survives.
+
+    Deleting it was never how a reused pid was told apart from a live session -
+    a store read that deleted anything would delete it for the other tool
+    reading the same document. The identity comparison is what tells them apart,
+    and the record stays either way so ``status`` can still name the run.
+    """
     live = process_started_since_boot(stranger.pid)
     assert live is not None, "premise"
     mgr = _seed(tele_mod, "arm_teleop", _record(stranger.pid, "teleoperate", live - gap))
 
-    assert ("arm_teleop" in mgr.list_sessions()) is survives
+    record = mgr.get_session("arm_teleop")
+    assert record is not None, "the record is kept whether or not the pid is still the session's"
+    assert session_is_running(record) is running
 
 
 # ---------------------------------------------------------------------------

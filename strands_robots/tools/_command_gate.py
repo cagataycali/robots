@@ -24,12 +24,23 @@ its ``publish`` can command; ``use_rosbridge`` gates ``publish`` and
 is ``use_rtps``'s ``advertise``, which creates a publisher without writing a
 sample. The same reasoning keeps the per-action numeric-option tables beside
 their dispatch in :mod:`~strands_robots.tools._numeric_options`.
+
+The decision is not ROS-shaped, though. :func:`gate_motion` is the same
+allowlist -> bypass -> operator-interrupt -> audit-row path with the blocklist
+factored out, for a tool whose command surface is not a graph name at all: a
+serial write to a motor bus, where the target is a port and the verb is a wire
+instruction. Such a caller names its own allowlist variable and its own way of
+matching it; the interrupt, the
+fail-closed rule and the audit row are the one copy here, so an operator's "no"
+means the same thing whichever tool asked. :func:`gate_command` is now a thin
+blocklist front on that path.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from typing import Any
 
 from strands.types.tools import ToolContext
@@ -168,40 +179,107 @@ def gate_command(kind: str, name: str, tool_context: ToolContext | None, *, tool
     block_msg = command_block_message(kind, name)
     if block_msg is None:
         return None
+    return gate_motion(
+        tool,
+        kind,
+        name,
+        block_msg,
+        tool_context,
+        allow_env=COMMAND_ALLOW_ENV,
+        allow_match=lambda allowed: match_blocklist(name, allowed),
+    )
 
-    allow_raw = os.environ.get(COMMAND_ALLOW_ENV)
+
+def _allow_exact_or_star(target: str) -> Callable[[frozenset[str]], bool]:
+    """The default allowlist matcher: the exact target, or ``*`` for every one."""
+
+    def _match(allowed: frozenset[str]) -> bool:
+        return "*" in allowed or target in allowed
+
+    return _match
+
+
+def gate_motion(
+    tool: str,
+    action: str,
+    target: str,
+    warning: str,
+    tool_context: ToolContext | None,
+    *,
+    allow_env: str,
+    allow_match: Callable[[frozenset[str]], bool] | None = None,
+) -> str | None:
+    """Transport-agnostic operator gate for one command that can move a robot.
+
+    The caller has already decided the command is one that needs approval -
+    that is what ``warning`` states - so this is the decision path only:
+    the caller's allowlist variable, then ``BYPASS_TOOL_CONSENT``, then the
+    operator, failing closed when no interrupt is reachable. It is the one
+    copy of that path, shared by the ROS transports (through
+    :func:`gate_command`) and :mod:`~strands_robots.tools.serial_tool`, so the
+    interrupt id, the refusal wording and the audit row cannot differ between
+    two tools reaching the same robot.
+
+    Args:
+        tool: The calling tool's name, e.g. ``"serial_tool"``. Keys the
+            interrupt id ``<tool>-command-approval`` and the audit source
+            ``<tool>_tool``, so an incident audit says which tool asked.
+        action: The verb carrying the command, e.g. ``"publish"`` or
+            ``"feetech_position"``. Recorded on the audit row.
+        target: What the command is aimed at - a topic, a ``service.operation``
+            pair, a serial port. Recorded on the audit row and matched against
+            the allowlist.
+        warning: One sentence saying why this command needs approval, shown
+            to the operator and returned in the headless refusal.
+        tool_context: The agent tool context supplying ``interrupt()``. None
+            means no operator is reachable, and the command is refused.
+        allow_env: The environment variable naming pre-approved targets for
+            this tool, comma-separated. Named in the headless refusal so an
+            operator knows what to set.
+        allow_match: How the allowlist entries match ``target``. Default: the
+            exact target, or a ``*`` entry for every target of this tool.
+
+    Returns:
+        A refusal message for the caller to return through its own error
+        wrapper, or None to let the command proceed. In order: the allowlist
+        names the target -> allow silently; ``BYPASS_TOOL_CONSENT=true`` ->
+        allow with a WARNING log; no ``tool_context`` -> refuse, naming both
+        variables; otherwise prompt the operator and record the reply.
+    """
+    match = allow_match or _allow_exact_or_star(target)
+    allow_raw = os.environ.get(allow_env)
     if allow_raw is not None:
         allowed = frozenset(entry.strip() for entry in allow_raw.split(",") if entry.strip())
-        if match_blocklist(name, allowed):
-            logger.debug("%s to %s allowed via %s", kind, name, COMMAND_ALLOW_ENV)
+        if match(allowed):
+            logger.debug("%s to %s allowed via %s", action, target, allow_env)
             return None
 
     if os.environ.get(BYPASS_CONSENT_ENV, "").lower() == "true":
-        logger.warning("BYPASS_TOOL_CONSENT: allowing %s to blocked command surface %s", kind, name)
+        logger.warning("BYPASS_TOOL_CONSENT: allowing %s to blocked command surface %s", action, target)
         return None
 
     if tool_context is None:
         return (
-            f"{block_msg} No tool_context available for operator approval. "
-            f"Set {COMMAND_ALLOW_ENV} or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
+            f"{warning} No tool_context available for operator approval. "
+            f"Set {allow_env} or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
         )
 
     try:
         response: Any = tool_context.interrupt(
             f"{tool}-command-approval",
             reason={
-                "action": kind,
-                "target": name,
-                "warning": f"{block_msg} Reply 'y' to approve, anything else to deny.",
+                "action": action,
+                "target": target,
+                "warning": f"{warning} Reply 'y' to approve, anything else to deny.",
             },
         )
     except RuntimeError as exc:
-        return f"{kind} to {name!r} requires operator approval, but interrupts are not available: {exc}"
+        return f"{action} to {target!r} requires operator approval, but interrupts are not available: {exc}"
 
     approved = approve_response(response)
-    log_operator_response(f"{tool}_tool", kind, name, approved=approved, response=response)
+    log_operator_response(f"{tool}_tool", action, target, approved=approved, response=response)
     if not approved:
-        return f"{kind} to {name!r} was declined by the operator."
+        return f"{action} to {target!r} was declined by the operator."
 
-    logger.info("%s to %s approved via operator interrupt", kind, name)
+    logger.info("%s to %s approved via operator interrupt", action, target)
     return None

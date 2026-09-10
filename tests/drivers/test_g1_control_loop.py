@@ -87,12 +87,24 @@ class _StubCRC:
 
 @pytest.fixture(autouse=True)
 def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a ``unitree_sdk2py`` stub for the duration of one test.
+    """Install a ``unitree_sdk2py`` stub for the duration of one test."""
+    install_unitree_sdk_stub(monkeypatch)
 
-    Every submodule the driver imports is registered on :mod:`sys.modules`
-    so ``from unitree_sdk2py.idl.default import ...`` and its siblings
-    resolve here.  ``monkeypatch.setitem`` restores the previous value
-    (typically absent) on teardown.
+
+def install_unitree_sdk_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register a ``unitree_sdk2py`` stub on :mod:`sys.modules`.
+
+    Every submodule the driver imports is registered so
+    ``from unitree_sdk2py.idl.default import ...`` and its siblings resolve
+    here.  ``monkeypatch.setitem`` restores the previous value (typically
+    absent) on teardown.
+
+    A plain function rather than only a fixture, so a sibling suite grading the
+    same driver installs the same stub instead of keeping a second copy of it -
+    the shape :mod:`tests.drivers.test_go2_driver` already uses.
+
+    Args:
+        monkeypatch: The requesting test's patcher, which owns the teardown.
     """
     root = types.ModuleType("unitree_sdk2py")
     idl = types.ModuleType("unitree_sdk2py.idl")
@@ -174,6 +186,7 @@ def _fake_driver(
             "_fsm_id",
             "_battery",
             "_imu",
+            "_joints",
             "_pubs",
             "_check_motion_gates",
             "_loop",
@@ -197,6 +210,7 @@ def _fake_driver(
     driver._motion_switcher_lock = _threading.Lock()
     driver._battery = {"pct": 80.0}
     driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+    driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
     driver._pubs = publisher if publisher is not None else _RecordingPublisher()
     driver._check_motion_gates = MagicMock(return_value=gate_result)
     driver._loop = None
@@ -616,6 +630,7 @@ class TestCleanupJoinsLoopBeforeClosingPubs:
         driver._fsm_id = 500
         driver._battery = {"pct": 80.0}
         driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+        driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
         return driver
 
     def test_cleanup_stops_running_loop_first(self) -> None:
@@ -690,6 +705,7 @@ def _admission_driver() -> Any:
     driver._fsm_id = 500
     driver._battery = {"pct": 80.0}
     driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+    driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
     # Mirrors _fake_driver: a live stamp plus a refresher that keeps stamping
     # is the healthy wire, which is the case an admission test is about.
     driver._refresh_fsm_id = MagicMock(  # type: ignore[method-assign]
@@ -816,6 +832,7 @@ class TestRunPolicyValidatesBudgets:
         driver._fsm_id = 500
         driver._battery = {"pct": 80.0}
         driver._imu = {"rpy": [0.0, 0.0, 0.0]}
+        driver._joints = {"left_hip_pitch": {"q": 0.0, "dq": 0.0, "tau_est": 0.0, "temperature": 30}}
         return driver
 
     def test_duration_nan_refused(self) -> None:

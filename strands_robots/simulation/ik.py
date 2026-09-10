@@ -39,6 +39,7 @@ from ..utils import (
     pose_vector_error,
     positive_count_error,
     positive_finite_number_error,
+    refusal_repr,
 )
 
 if TYPE_CHECKING:
@@ -117,7 +118,7 @@ def _damping_error(value: Any, context: str) -> str | None:
     if float(value) < 0.0:
         return (
             f"{context}: damping must be >= 0 (0.0 is the undamped solve); a negative value makes the "
-            f"QP cost matrix indefinite, got {value!r}."
+            f"QP cost matrix indefinite, got {refusal_repr(value)}."
         )
     return None
 

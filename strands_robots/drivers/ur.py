@@ -70,7 +70,7 @@ import time
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.base import policy_step, undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry import resolve_name
 from strands_robots.utils import (
@@ -1164,7 +1164,7 @@ class URDriver:
             return _refuse(err)
         if policy_object is None:
             return _refuse("run_policy: policy_object is required")
-        if not _policy_step(policy_object, instruction):
+        if not policy_step(policy_object, instruction):
             return _refuse("run_policy: policy_object must be callable or expose get_actions_sync() or step()")
         if not self.is_connected:
             return _refuse("run_policy: not connected - call connect_eagerly() first")
@@ -1260,38 +1260,6 @@ class URDriver:
         }
 
 
-def _policy_step(
-    policy_object: Any,
-    instruction: str,
-) -> Callable[[dict[str, Any]], Any] | None:
-    """Return the one-step callable for ``policy_object``, or ``None``.
-
-    Three shapes reach this driver and all three are legitimate: a built
-    :class:`~strands_robots.policies.Policy` (``get_actions_sync``), a
-    control-loop policy of the shape :mod:`strands_robots.drivers.g1` accepts
-    (``step``), and a bare callable. Resolving them once, here, is what lets the
-    rollout loop hold a single call site.
-
-    Args:
-        policy_object: The candidate policy.
-        instruction: Instruction to bind into a ``get_actions_sync`` call, which
-            takes it as its second argument.
-
-    Returns:
-        A callable taking an observation dict, or ``None`` when the object is
-        none of the three shapes.
-    """
-    get_actions = getattr(policy_object, "get_actions_sync", None)
-    if callable(get_actions):
-        return lambda observation: get_actions(observation, instruction)
-    step = getattr(policy_object, "step", None)
-    if callable(step):
-        return cast("Callable[[dict[str, Any]], Any]", step)
-    if callable(policy_object):
-        return cast("Callable[[dict[str, Any]], Any]", policy_object)
-    return None
-
-
 class _Rollout:
     """One policy rollout on its own thread, paced by :class:`~strands_robots.mesh.pacing.Ticker`.
 
@@ -1315,7 +1283,7 @@ class _Rollout:
         Args:
             driver: The driver whose arm is commanded.
             policy: The policy object, resolved to a callable by
-                :func:`_policy_step`.
+                :func:`~strands_robots.drivers.base.policy_step`.
             instruction: Instruction handed to the policy each step.
             duration: Wall-clock budget in seconds.
             n_steps: Step budget; when given it wins over ``duration``.
@@ -1387,7 +1355,7 @@ class _Rollout:
 
     def _run(self) -> None:
         """Step the policy until the budget runs out, the arm refuses, or stop."""
-        step_fn = _policy_step(self._policy, self._instruction)
+        step_fn = policy_step(self._policy, self._instruction)
         if step_fn is None:  # pragma: no cover - admitted by run_policy
             self._finish("policy")
             return

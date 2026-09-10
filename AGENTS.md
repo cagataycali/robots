@@ -2176,8 +2176,8 @@ which side the enum is on.
   Where the selector is resolved into a dict rather than bound by position, a repeat
   resolves to its first occurrence and a mapping and a one-shot iterator are each read
   exactly once, so routing the shape through `name_list_error` would refuse calls that
-  are honored as written today - the same carve-out that keeps the WBC and MotionBricks
-  providers out of that domain. `download_robots(names=...)` is that case, and the
+  are honored as written today - the same carve-out that keeps the WBC provider out of
+  that domain. `download_robots(names=...)` is that case, and the
   membership read is still owed: read by truthiness, `names=[]` downloaded 56 robots on
   the shipped registry, and 13 - a whole category - when a `category` was also passed,
   reporting either count as the caller's own request. Nothing had to write `[]` to get
@@ -2197,9 +2197,10 @@ which side the enum is on.
 ### A model source is read by absence when absence selects another resolution path
 - **The selector rule above allows a scalar path to be read by truthiness "because empty
   and absent genuinely coincide there - the value is derived either way". That holds where
-  absence derives the SAME kind of value.** `examples/wbc/motionbricks_g1_mujoco.py`
-  declares `--scene-xml` with a `""` default and derives the scene from `--result-dir`, so
-  `""` IS its sentinel there and truthiness is correct. It does not hold where absence
+  absence derives the SAME kind of value.** A `--scene-xml` declared with a `""` default
+  whose empty value derives the scene path from an already-supplied `--result-dir` is that
+  case: `""` IS the sentinel there, both spellings land on a scene XML, and truthiness is
+  correct. It does not hold where absence
   selects a DIFFERENT RESOLUTION PATH: then the two spellings do not pick the same value
   by another route, they pick a different thing to blame when the call fails.
 - **`add_robot`'s model source is that case.** Absent means "resolve from `data_config`, or
