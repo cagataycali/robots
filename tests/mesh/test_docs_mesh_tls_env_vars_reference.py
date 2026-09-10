@@ -57,7 +57,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
 _SESSION = _ROOT / "strands_robots" / "mesh" / "session.py"
 _PAGE = _ROOT / "docs" / "security.md"
-_README = _ROOT / "README.md"
+_README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Transport credentials (mTLS material)"
 _PREFIX = "STRANDS_MESH_TLS_"

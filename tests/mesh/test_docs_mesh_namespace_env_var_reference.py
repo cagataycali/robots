@@ -61,7 +61,7 @@ from strands_robots.mesh import _zenoh_config
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
 _PAGE = _ROOT / "docs" / "security.md"
-_README = _ROOT / "README.md"
+_README = _ROOT / "docs" / "reference" / "configuration.md"  # env-var matrix (moved out of README)
 
 _HEADING = "### Fleet routing isolation (namespace)"
 _PREFIX = "STRANDS_MESH_NAMESPACE"
