@@ -322,6 +322,10 @@ def cuda_devices_per_driver() -> int | None:
         if lib.cuInit(0) == 0 and lib.cuDeviceGetCount(ctypes.byref(count)) == 0:
             return count.value
     except OSError:
+        # No libcuda.so.1 on the loader path. That is the expected shape of a
+        # machine without a driver (and of a container the driver is not
+        # mounted into), not an error to report: the /proc fallback below is
+        # the second opinion, and None is the honest answer when it is empty.
         pass
     gpus = Path("/proc/driver/nvidia/gpus")
     return len(list(gpus.iterdir())) if gpus.is_dir() else None
