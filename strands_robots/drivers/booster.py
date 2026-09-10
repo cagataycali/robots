@@ -53,7 +53,12 @@ import threading
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, telemetry_float_list, undeclared_verb_error
+from strands_robots.drivers.base import (
+    halt_failure_detail,
+    telemetry_float,
+    telemetry_float_list,
+    undeclared_verb_error,
+)
 from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
@@ -136,6 +141,26 @@ UPPER_BODY_KD: float = 3.0
 CMD_TYPE_STATE_FIELD: dict[str, str] = {
     "parallel": "motor_state_parallel",
     "serial": "motor_state_serial",
+}
+
+#: The snapshot key each ``MotorState`` field lands under. Named so the read is
+#: derivable rather than restated four times, and so a test can grade the whole
+#: set from the driver's own table instead of a copy of it.
+MOTOR_STATE_FIELDS: dict[str, str] = {
+    "joints": "q",
+    "velocities": "dq",
+    "torques": "tau_est",
+    "temperatures": "temperature",
+}
+
+#: The vectors an ``ImuState`` carries, in snapshot order.
+IMU_STATE_FIELDS: tuple[str, ...] = ("rpy", "gyro", "acc")
+
+#: The snapshot key each ``BatteryState`` field lands under.
+BATTERY_STATE_FIELDS: dict[str, str] = {
+    "pct": "soc",
+    "voltage": "voltage",
+    "current": "current",
 }
 
 #: The fall states the T1 publishes, by the SDK's ``FallDownStateType`` member
@@ -326,26 +351,27 @@ def parse_low_state(msg: Any, state_field: str) -> dict[str, Any]:
             :data:`CMD_TYPE_STATE_FIELD`.
 
     Returns:
-        ``{"joints", "velocities", "torques", "temperatures", "imu"}``. Each
-        IMU vector is read through
-        :func:`~strands_robots.drivers.base.telemetry_float_list`, so a field
-        the ``LowState`` does not carry lands ``None`` rather than a reading: a
-        snapshot that reports a zeroed IMU the robot never sent is worse than
-        one that reports none.
+        :data:`MOTOR_STATE_FIELDS`' keys, plus ``"imu"`` keyed by
+        :data:`IMU_STATE_FIELDS` when the frame carried an ``ImuState``. Every
+        vector is read through
+        :func:`~strands_robots.drivers.base.telemetry_float_list`, so a field the
+        ``LowState`` does not carry lands ``None`` rather than a reading: a
+        snapshot that reports a zeroed IMU the robot never sent is worse than one
+        that reports none. The positions matter most, because they are also a
+        *command* source - a firmware revision that renames ``q`` must cost them
+        rather than turn them into a full set of joints at exactly zero, which is
+        the pose :meth:`BoosterDriver.send_action` would then hold every
+        uncommanded upper-body slot at. The vectors are all-or-nothing for the
+        same reason: ``held_q`` is indexed by slot, so a vector short one element
+        would renumber every slot after the gap.
     """
     snapshot: dict[str, Any] = {}
-    motors = getattr(msg, state_field, None) or []
-    snapshot["joints"] = [float(getattr(m, "q", 0.0)) for m in motors]
-    snapshot["velocities"] = [float(getattr(m, "dq", 0.0)) for m in motors]
-    snapshot["torques"] = [float(getattr(m, "tau_est", 0.0)) for m in motors]
-    snapshot["temperatures"] = [float(getattr(m, "temperature", 0.0)) for m in motors]
+    motors = list(getattr(msg, state_field, None) or [])
+    for key, field in MOTOR_STATE_FIELDS.items():
+        snapshot[key] = telemetry_float_list([getattr(motor, field, None) for motor in motors])
     imu = getattr(msg, "imu_state", None)
     if imu is not None:
-        snapshot["imu"] = {
-            "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
-            "gyro": telemetry_float_list(getattr(imu, "gyro", None)),
-            "acc": telemetry_float_list(getattr(imu, "acc", None)),
-        }
+        snapshot["imu"] = {name: telemetry_float_list(getattr(imu, name, None)) for name in IMU_STATE_FIELDS}
     return snapshot
 
 
@@ -436,7 +462,7 @@ class BoosterDriver:
 
         self._cache_lock = threading.Lock()
         self._last_state: dict[str, Any] | None = None
-        self._battery: dict[str, float] | None = None
+        self._battery: dict[str, float | None] | None = None
         self._fall_state: str | None = None
 
     # ------------------------------------------------------------------ #
@@ -1005,15 +1031,26 @@ class BoosterDriver:
         *nothing* on it. A floor compared against an unverified scale is worse
         than no floor: on a 0..1 scale it refuses every frame, on a 0..100 scale
         it refuses none, and both look like a working safety check.
+
+        Each field is read per :data:`BATTERY_STATE_FIELDS` and coerced by
+        :func:`~strands_robots.drivers.base.telemetry_float`, so a field the
+        frame does not carry lands ``None`` rather than ``0.0``. That is what
+        makes :meth:`get_status`'s ``battery_pct`` reach a caller as ``None``
+        when the T1 reported no charge: a typed default would publish an empty
+        pack, and a ``soc`` that turned into a flag would publish a one-percent
+        one. Coercion is per field, so one unreadable field no longer discards
+        the two beside it. A frame in which *nothing* read is not cached, because
+        replacing a good record with three absences loses the last reading.
         """
+        reading: dict[str, float | None] = {}
         try:
-            reading = {
-                "pct": float(getattr(msg, "soc", 0.0)),
-                "voltage": float(getattr(msg, "voltage", 0.0)),
-                "current": float(getattr(msg, "current", 0.0)),
-            }
+            for key, field in BATTERY_STATE_FIELDS.items():
+                reading[key] = telemetry_float(getattr(msg, field, None))
         except (AttributeError, TypeError, ValueError):
             logger.debug("%s: unreadable BatteryState frame", self._tool_name, exc_info=True)
+            return
+        if all(value is None for value in reading.values()):
+            logger.debug("%s: BatteryState frame carried no readable field", self._tool_name)
             return
         with self._cache_lock:
             self._battery = reading

@@ -188,6 +188,22 @@ That matters when a gate reads the cache: `mode_machine` gates every G1 motion w
 reads "lowstate has not delivered yet", which one unreadable frame should not make true of a robot
 whose lowstate is arriving.
 
+The coercion has to be *per field* for that to hold at the frame level too. A decoder that builds its
+whole record inside one `try` loses every field a message carried because one of them stopped reading,
+and the staleness that leaves behind looks like a dropped wire rather than one renamed field. The
+record keeps the key either way and lets the value be `None`, so a consumer asking for a field always
+gets an answer and the answer can be "the robot did not report this"; a frame in which *nothing* read
+is simply not cached, for the same reason a refused scalar does not clear its own cache.
+
+The rule matters most where a reading is also a *command* source. `BoosterDriver.send_action` holds
+every uncommanded upper-body joint at its last observed position, so the T1's `joints` vector is what
+the next `LowCmd` writes. A defaulted `0.0` there is finite and full-width, clears the "is this a
+frame" guards, gets cached, and gets commanded -- eight arm joints driven to exactly zero from a frame
+that carried no positions at all. Reporting the absence instead reaches the refusal the driver already
+spells for a robot that has reported nothing yet. All-or-nothing matters for the same reason: `held_q`
+is indexed by slot, so a vector short one element would renumber every slot after the gap and hold the
+wrong joint at each of them.
+
 Asking for a driver that is not there is refused, never quietly substituted:
 
 ```python

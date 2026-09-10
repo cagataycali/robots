@@ -246,12 +246,22 @@ class _FakeSdk:
         return self.fall
 
 
-@pytest.fixture
-def sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeSdk:
-    """Install the SDK double under the name the driver imports."""
+def install_booster_sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeSdk:
+    """Install the SDK double under the name the driver imports.
+
+    The fixture body, as a plain function: a fixture cannot be imported into a
+    sibling module without shadowing it, so a suite that needs the same double
+    calls this from its own fixture.
+    """
     fake = _FakeSdk()
     monkeypatch.setitem(sys.modules, "booster_robotics_sdk_python", fake)
     return fake
+
+
+@pytest.fixture
+def sdk(monkeypatch: pytest.MonkeyPatch) -> _FakeSdk:
+    """Install the SDK double under the name the driver imports."""
+    return install_booster_sdk(monkeypatch)
 
 
 def _tool_use(action: str) -> ToolUse:
