@@ -67,6 +67,7 @@ so neither can silently drift.
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
+| [`rl`](rl.md) | `RLCheckpointPolicy` | _(core)_ | Roll out an actor trained by `create_trainer("ppo"|"fast_sac"|"fast_td3")`: loads the run's `policy.pt` + `policy_meta.json` and drives the robot deterministically (non-VLA) |
 | [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
 | [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
 | [`wbc`](wbc.md) | `WBCPolicy` | `wbc` | NVIDIA GR00T Whole-Body-Control (SONIC) Unitree G1 humanoid locomotion, in-process ONNX, no GPU (non-VLA) |

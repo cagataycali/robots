@@ -82,12 +82,20 @@ class TestCreateMinimalConfig:
         assert cam.width == 640
         assert cam.height == 480
 
-    def test_unsupported_camera_type_is_rejected(self):
+    def test_unregistered_camera_type_is_rejected(self):
+        """A ``type`` lerobot does not register is refused, listing the ones it does.
+
+        ``realsense`` used to be this test's example of an unsupported type. It
+        is not one: lerobot registers Intel RealSense as ``intelrealsense`` and
+        the factory builds it (see
+        ``tests/test_hardware_robot_camera_type_registry.py``). Only a type
+        absent from ``CameraConfig``'s choice registry is refused here.
+        """
         hw = _make_robot()
-        with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+        with pytest.raises(ValueError, match="Unsupported camera type for camera 'c': 'thermal'"):
             hw._create_minimal_config(
                 "so101_follower",
-                {"c": {"type": "realsense", "index_or_path": 0}},
+                {"c": {"type": "thermal", "index_or_path": 0}},
                 port="/dev/ttyACM0",
             )
 

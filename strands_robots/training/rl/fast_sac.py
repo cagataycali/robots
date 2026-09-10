@@ -58,8 +58,29 @@ def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
     return nn.Sequential(*layers)
 
 
-def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: int, spec: RLTrainSpec) -> Any:
-    """Construct the SAC ``ActorCritic`` module: tanh-Gaussian actor + twin Q critics."""
+def build_actor_critic(
+    num_actor_obs: int,
+    num_critic_obs: int,
+    num_actions: int,
+    *,
+    hidden_dims: tuple[int, ...] = (128, 128),
+) -> Any:
+    """Construct the SAC ``ActorCritic`` module: tanh-Gaussian actor + twin Q critics.
+
+    Public for the same reason as its PPO peer: ``load_deployable_actor``
+    rebuilds this graph to load a ``policy.pt`` saved from it, so the trainer
+    and the deployer cannot drift into two different networks.
+
+    Args:
+        num_actor_obs: Width of the actor observation vector.
+        num_critic_obs: Width of the critic observation vector.
+        num_actions: Number of action outputs.
+        hidden_dims: Hidden layer widths, expanded for every network built.
+
+    Returns:
+        An ``nn.Module`` whose ``act_inference`` is the deterministic action
+        a deployed checkpoint commands.
+    """
     import torch
     import torch.nn as nn
 
@@ -69,12 +90,12 @@ def _build_actor_critic(num_actor_obs: int, num_critic_obs: int, num_actions: in
         def __init__(self) -> None:
             super().__init__()
             # Actor outputs (mean, log_std) for the pre-squash Gaussian.
-            self.actor = _mlp(num_actor_obs, spec.hidden_dims, 2 * num_actions)
+            self.actor = _mlp(num_actor_obs, hidden_dims, 2 * num_actions)
             # Twin critics Q(critic_obs, action) -> scalar (clipped double-Q).
-            self.q1 = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
-            self.q2 = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
-            self.q1_target = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
-            self.q2_target = _mlp(num_critic_obs + num_actions, spec.hidden_dims, 1)
+            self.q1 = _mlp(num_critic_obs + num_actions, hidden_dims, 1)
+            self.q2 = _mlp(num_critic_obs + num_actions, hidden_dims, 1)
+            self.q1_target = _mlp(num_critic_obs + num_actions, hidden_dims, 1)
+            self.q2_target = _mlp(num_critic_obs + num_actions, hidden_dims, 1)
             self.q1_target.load_state_dict(self.q1.state_dict())
             self.q2_target.load_state_dict(self.q2.state_dict())
             for p in self.q1_target.parameters():
@@ -274,8 +295,11 @@ class FastSacTrainer(BaseRLAlgo):
             self.env.device = self.device
         self.steps_per_iter = spec.rollout_steps * spec.num_envs
 
-        self.actor_critic = _build_actor_critic(
-            self.env.num_actor_obs, self.env.num_critic_obs, self.env.num_actions, spec
+        self.actor_critic = build_actor_critic(
+            self.env.num_actor_obs,
+            self.env.num_critic_obs,
+            self.env.num_actions,
+            hidden_dims=tuple(spec.hidden_dims),
         ).to(self.device)
 
         actor_params = list(self.actor_critic.actor.parameters())

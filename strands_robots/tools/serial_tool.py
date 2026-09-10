@@ -64,6 +64,7 @@ from strands_robots.utils import (
     finite_number_error,
     non_negative_count_error,
     positive_count_error,
+    refusal_str,
 )
 
 # Bit index carrying the direction in the two STS/SMS registers this module
@@ -145,7 +146,7 @@ def _register_field_error(value: Any, param: str, action: str) -> str | None:
     if error := floor_error(value, param, action):
         return error
     if value > high:
-        return f"{action}: {param} must be at most {high} ({why}), got {value}."
+        return f"{action}: {param} must be at most {high} ({why}), got {refusal_str(value)}."
     return None
 
 
@@ -170,7 +171,7 @@ def _motor_id_error(value: Any, param: str, action: str) -> str | None:
         return (
             f"{action}: {param} {BROADCAST_ID:#x} is the broadcast, which every servo on the bus "
             f"answers at once, so no single reply can be read back; address one servo in "
-            f"[1, {MAX_UNICAST_ID}], got {value}."
+            f"[1, {MAX_UNICAST_ID}], got {refusal_str(value)}."
         )
     return None
 
@@ -197,7 +198,7 @@ def _read_timeout_error(value: Any, param: str, action: str) -> str | None:
     if error := finite_number_error(value, param, action):
         return error
     if value < 0:
-        return f"{action}: {param} must be at least 0 seconds, got {value}."
+        return f"{action}: {param} must be at least 0 seconds, got {refusal_str(value)}."
     return None
 
 

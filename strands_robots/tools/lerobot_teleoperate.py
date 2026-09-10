@@ -10,7 +10,6 @@ This tool integrates teleoperation and recording functionality from lerobot, all
 """
 
 import importlib.util
-import json
 import logging
 import os
 import signal
@@ -27,13 +26,14 @@ from strands_robots.tools._process_stop import (
     PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,
     SIGTERM_GRACE_S,
+    SessionManager,
     confirm_exit,
     process_started_since_boot,
     recorded_pid,
     reused_pid_result,
     session_is_running,
+    session_log_path,
     session_uptime,
-    store_sessions,
     unstopped_result,
     unusable_pid_result,
 )
@@ -45,11 +45,6 @@ from strands_robots.utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Session storage directory
-SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
-SESSION_DIR.mkdir(parents=True, exist_ok=True)
-
 
 # The numeric knobs each command mode actually puts on the lerobot argv. Every
 # one is interpolated with ``str()`` into the command line of a DETACHED
@@ -270,136 +265,6 @@ def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
         if error := boolean_flag_error(supplied[param], param, "lerobot_teleoperate"):
             return error
     return None
-
-
-class SessionManager:
-    """Manage teleoperation sessions with persistence."""
-
-    def __init__(self):
-        self.sessions_file = SESSION_DIR / "active_sessions.json"
-
-    def _load_sessions(self) -> dict[str, Any]:
-        """Load the session store, pruning records whose process is gone.
-
-        Gone is answered by :func:`~strands_robots.tools._process_stop.session_is_running`,
-        which is the PID existing *and* still holding the process the record was
-        written for. A ``Process(pid).is_running()`` here could not answer the
-        second half: psutil records the creation time when the object is
-        constructed, so an object constructed to ask the question carries whatever
-        the PID means now and agrees with it. A record that outlived its run then
-        survives a prune whose whole purpose is to drop it, and reads as a live
-        session.
-
-        A PID that exists but cannot be inspected is a third answer and not a
-        prune: a session started under ``sudo`` for serial-port access and then
-        listed as the invoking user reads this way. That is not death, so the
-        record is kept and the denial is logged - it is also the operator's only
-        clue that the identity could not be checked.
-
-        Keeping such a record matters because the prune below is *written back to
-        disk* and this store is the only place a detached session's PID is
-        recorded: a pruned record leaves the teleoperation process running with no
-        supported way to stop it.
-
-        The pid itself is read through
-        :func:`~strands_robots.tools._process_stop.recorded_pid` rather than
-        converted, so a record whose ``pid`` field is not a process id is dropped
-        like any other with no live process instead of aborting the read: this
-        method's decode policy exists so a damaged store still degrades, and
-        ``int()`` of a damaged pid raises a ``ValueError`` that neither handler
-        below answers.
-
-        Returns:
-            The surviving session records, keyed by session name.
-        """
-        if not self.sessions_file.exists():
-            return {}
-
-        try:
-            # Read with a decode policy that cannot raise, for the reason the
-            # training store carries: the handler below answers "gone" and "not
-            # JSON", and an undecodable byte is a ``ValueError`` that is neither,
-            # so it would abort the action instead of degrading. U+FFFD keeps a
-            # damaged record's ASCII pid readable, and a pid is what stops it.
-            with open(self.sessions_file, encoding="utf-8", errors="replace") as f:
-                sessions = json.load(f)
-
-            # Check if processes are still running and clean up dead sessions
-            active_sessions = {}
-            for name, info in sessions.items():
-                pid = recorded_pid(info)
-                if pid is None and info.get("pid") is not None:
-                    # The record carries a pid field that is not a process id, so
-                    # nothing here can name the process it was written for - and
-                    # converting it would name a different one. It is dropped like
-                    # any other record with no live process, and said out loud
-                    # because the drop is written back to disk below.
-                    logger.warning(
-                        "Teleop session '%s' records a %s as its PID, which is not a process id; "
-                        "dropping the record - read %s to recover the process it named",
-                        name,
-                        type(info.get("pid")).__name__,
-                        self.sessions_file,
-                    )
-                if not session_is_running(info):
-                    continue
-                active_sessions[name] = info
-                if pid is not None and PID_STARTED_SINCE_BOOT in info and process_started_since_boot(pid) is None:
-                    # A record that carries an identity was nonetheless kept on
-                    # existence alone, so the read was refused - a process that had
-                    # gone away would not have been kept. Said out loud, because
-                    # the store is written back below and silence here loses the
-                    # PID for good. A record carrying no identity is not reported:
-                    # existence is the only answer available for it either way.
-                    logger.warning(
-                        "Teleop session PID %s exists but cannot be inspected; "
-                        "keeping its record so the session stays stoppable",
-                        pid,
-                    )
-
-            # Update sessions file with only active sessions
-            if len(active_sessions) != len(sessions):
-                self._save_sessions(active_sessions)
-
-            return active_sessions
-
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Error loading sessions: {e}")
-            return {}
-
-    def _save_sessions(self, sessions: dict[str, Any]):
-        """Store the session map in full, or leave the stored one untouched.
-
-        :func:`~strands_robots.tools._process_stop.store_sessions` owns the
-        sequence, because losing this store is what makes a live session
-        unstoppable and both session tools write the same file.
-        """
-        try:
-            store_sessions(self.sessions_file, sessions)
-        except OSError as e:
-            logger.error(f"Error saving sessions: {e}")
-
-    def add_session(self, name: str, info: dict[str, Any]):
-        """Add a new session."""
-        sessions = self._load_sessions()
-        sessions[name] = info
-        self._save_sessions(sessions)
-
-    def remove_session(self, name: str):
-        """Remove a session."""
-        sessions = self._load_sessions()
-        if name in sessions:
-            del sessions[name]
-            self._save_sessions(sessions)
-
-    def get_session(self, name: str) -> dict[str, Any] | None:
-        """Get session info."""
-        sessions = self._load_sessions()
-        return sessions.get(name)
-
-    def list_sessions(self) -> dict[str, Any]:
-        """List all active sessions."""
-        return self._load_sessions()
 
 
 def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
@@ -1071,7 +936,7 @@ def lerobot_teleoperate(
 
             if background:
                 # Start in background
-                log_file = SESSION_DIR / f"{session_name}.log"
+                log_file = session_log_path(session_name)
 
                 if auto_accept_calibration:
                     # Start process with stdin for automatic calibration acceptance

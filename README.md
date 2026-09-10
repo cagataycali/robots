@@ -468,8 +468,8 @@ first use. List them at runtime with `from strands_robots import list_robots; li
 | **Mobile manip** | 1 | google_robot |
 
 **Hardware-capable** (drivable with `mode="real"` via LeRobot): `so100`,
-`so101`, `koch`, `omx`, `hope_jr`, `aloha`, `bi_openarm`, `reachy2`,
-`unitree_g1`, `lekiwi`, `earthrover`. All are simulatable.
+`so101`, `koch`, `omx`, `hope_jr`, `bi_so_follower`, `bi_openarm`, `reachy2`,
+`unitree_g1`, `lekiwi`, `earthrover`.
 
 ### Adding a robot
 

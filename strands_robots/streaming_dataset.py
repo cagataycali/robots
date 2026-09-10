@@ -30,6 +30,7 @@ from strands_robots.utils import (
     lerobot_version,
     non_negative_count_error,
     positive_count_error,
+    refusal_repr,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def _tolerance_error(value: Any) -> str | None:
         return error
     if float(value) < 0.0:
         return (
-            f"open: tolerance_s must be >= 0, got {value!r}. It is the half-width of the "
+            f"open: tolerance_s must be >= 0, got {refusal_repr(value)}. It is the half-width of the "
             "grid-match window, so a negative one is satisfied by no delta at all and "
             "refuses an on-grid delta_timestamps. Pass 0 to require an exact grid match."
         )

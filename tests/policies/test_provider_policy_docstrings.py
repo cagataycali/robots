@@ -50,6 +50,7 @@ _PROVIDER_POLICIES = {
     "kimodo/policy.py": "KimodoPolicy",
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
+    "rl.py": "RLCheckpointPolicy",
 }
 
 # Built-in policy classes documented by test_builtin_policy_docstrings; the
