@@ -30,7 +30,7 @@ from typing import Any
 
 from device_connect_edge import DeviceRuntime
 
-from strands_robots.device_connect._authz import INSECURE_TRUE, insecure_env_opts_in
+from strands_robots.device_connect._authz import INSECURE_TRUE, DeviceConnectRefused, insecure_env_opts_in
 from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 from strands_robots.utils import is_boolean
@@ -202,7 +202,7 @@ async def init_device_connect(
     # deployment is never silent.
     allow_insecure = resolve_allow_insecure(allow_insecure, os.environ.get("DEVICE_CONNECT_ALLOW_INSECURE"))
     if not allow_insecure and not transport_is_authenticated(messaging_backend, urls):
-        raise RuntimeError(
+        raise DeviceConnectRefused(
             f"Device Connect refused to start {device_id}: backend '{messaging_backend}' has no TLS configured, so "
             "the device would be online on the LAN unencrypted and any peer could call execute/stop on it. Either "
             "point it at credentials (MESSAGING_CREDENTIALS_FILE=<bundle>.creds.json, or a tls/ endpoint), or opt in "

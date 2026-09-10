@@ -820,9 +820,10 @@ def _run_device_connect_foreground(instance: Any) -> None:
 
     A bring-up that fails keeps the process alive - the operator asked for a
     server and a transient broker outage is not worth losing the process over -
-    but the status line reports what actually came up. The one failure that is
-    never transient is the ``[device-connect]`` extra being absent: that path
-    prints the remedy, releases the instance and exits 1 instead of parking. Claiming the device is
+    but the status line reports what actually came up. Two failures are never
+    transient: the ``[device-connect]`` extra being absent, and the runtime
+    refusing to come up unauthenticated (``DeviceConnectRefused``). Both print
+    the remedy, release the instance and exit 1 instead of parking. Claiming the device is
     online is only true of the path where the runtime started; on the other one
     the mesh has already been stopped for a replacement that never arrived, so
     the process serves no transport at all and the operator has to be told
@@ -849,8 +850,10 @@ def _run_device_connect_foreground(instance: Any) -> None:
         instance.mesh = None
 
     extra_missing = False
+    refused = False
     try:
         from strands_robots.device_connect import init_device_connect_sync
+        from strands_robots.device_connect._authz import DeviceConnectRefused
 
         instance._device_connect_runtime = init_device_connect_sync(
             instance,
@@ -862,6 +865,9 @@ def _run_device_connect_foreground(instance: Any) -> None:
         # remedy, so name it here: on its own the ImportError names the
         # distribution's internal module, not the extra that installs it.
         extra_missing = isinstance(e, ImportError)
+        # The refusal already names its remedy; a new process is the only way
+        # to pick up the credentials or the opt-in it asks for.
+        refused = not extra_missing and isinstance(e, DeviceConnectRefused)
         remedy = " Install it with: pip install 'strands-robots[device-connect]'." if extra_missing else ""
         logger.warning("Device Connect init failed: %s.%s", e, remedy)
 
@@ -871,14 +877,18 @@ def _run_device_connect_foreground(instance: Any) -> None:
             if mesh_was_stopped
             else "This process serves no transport."
         )
-        if extra_missing:
+        if extra_missing or refused:
             # Nothing this process can do brings the transport up: the install
-            # happens in a shell, and the next run is a new process. Parking
-            # here would only turn the README's first command into a hung
-            # terminal and hide the failure from the shell's exit code.
+            # or the credentials happen in a shell, and the next run is a new
+            # process. Parking here would only turn the README's first command
+            # into a hung terminal and hide the failure from the shell's exit code.
+            cause = (
+                "the Device Connect extra is not installed"
+                if extra_missing
+                else "Device Connect refused to start without an authenticated transport"
+            )
             print(
-                f"{peer_id} is NOT online: the Device Connect extra is not installed "
-                f"(see the warning above). {lost_transport} Exiting.",
+                f"{peer_id} is NOT online: {cause} (see the warning above). {lost_transport} Exiting.",
                 flush=True,
             )
             unreleased = _release_resources_on_interrupt(instance, peer_id)

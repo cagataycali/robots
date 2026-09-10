@@ -69,6 +69,18 @@ _INSECURE_ENV = "DEVICE_CONNECT_ALLOW_INSECURE"
 INSECURE_TRUE = ("true", "1", "yes")
 
 
+class DeviceConnectRefused(RuntimeError):
+    """Bring-up refused for a reason no amount of waiting changes.
+
+    Raised when the transport would come up unauthenticated and nobody opted in.
+    It is a ``RuntimeError`` so callers that catch the broad class keep working,
+    and a distinct name so ``Robot.run()`` can tell it from a broker outage: the
+    outage is worth parking for, this is not - the operator has to change the
+    environment and start a new process. Lives in this stdlib-only module so the
+    foreground loop can import it without the ``[device-connect]`` extra.
+    """
+
+
 def insecure_env_opts_in(env_value: str | None) -> bool:
     """Whether a raw ``DEVICE_CONNECT_ALLOW_INSECURE`` value opts in.
 
