@@ -276,6 +276,13 @@ class TestParityWithSiblingStateWriters:
     def test_the_two_writers_agree_on_the_value(self, sim, value):
         action = sim.send_action({"a_shoulder": value}, robot_name="alice", n_substeps=2)
         state = sim.set_joint_positions({"shoulder": value}, robot_name="alice")
+        if math.isfinite(value) and not (-1.5 <= value <= 1.5):
+            # Finite but outside the joint's range: a ctrl writer clamps to the
+            # ctrlrange (MuJoCo's own semantics), a qpos writer has nothing to
+            # clamp to and refuses ON RANGE - the finiteness verdict still agrees.
+            assert action["status"] == "success"
+            assert state["status"] == "error" and "outside" in state["content"][0]["text"]
+            return
         assert (action["status"] == "error") == (state["status"] == "error"), (
             f"verdicts differ for {value!r}: send_action={action['status']} set_joint_positions={state['status']}"
         )
