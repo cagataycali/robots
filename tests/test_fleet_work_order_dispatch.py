@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -311,3 +312,30 @@ def test_chooser_out_of_set_pick_still_dispatches_deterministically(example, tmp
     assert summary["completed"] == ["WO-1001", "WO-1002", "WO-1003"]
     dispatched_robots = {robot for robot, _ in sends}
     assert dispatched_robots <= set(example.ROBOT_EMBODIMENT)
+
+
+def test_the_default_events_queue_lands_outside_the_cwd(example, monkeypatch, tmp_path):
+    """With no ``--events`` and no operator, the run completes and leaves the CWD alone.
+
+    A reader who runs the example gets no ``work_order_events.jsonl`` beside
+    them, and a closed stdin is a decline the queue records rather than an
+    ``EOFError`` that kills the run before the summary.
+    """
+    cwd = tmp_path / "cwd"
+    spool = tmp_path / "spool"
+    cwd.mkdir()
+    spool.mkdir()
+
+    def _no_operator(_prompt: str = "") -> str:
+        raise EOFError("EOF when reading a line")
+
+    monkeypatch.setattr(tempfile, "tempdir", str(spool))
+    monkeypatch.setattr("builtins.input", _no_operator)
+    monkeypatch.delenv("STRANDS_MESH_HITL_ACTIONS", raising=False)
+    monkeypatch.chdir(cwd)
+
+    assert example.main(["--dry-run"]) == 0
+
+    assert list(cwd.iterdir()) == [], "the example wrote into the reader's current directory"
+    events = [json.loads(line) for line in (spool / "work_order_events.jsonl").read_text().splitlines()]
+    assert {e["reason"]["code"] for e in events if e["event"] == "work_order_failed"} == {"hitl_declined"}
