@@ -48,6 +48,56 @@ agent = Agent(tools=[robot])
 agent("Add a red cube and pick it up using the mock policy")
 ```
 
+## The whole loop
+
+Teleoperate a real arm to collect demos, post-tune a policy on them, run it in
+sim and on hardware, hand work to a fleet peer, expose it on ROS 2 - one
+library. Each step is a distinct capability; the pages linked cover the details.
+
+```python
+from strands import Agent
+from strands_robots import Robot
+from strands_robots.tools import train_policy
+
+# 1. TELEOPERATE a real SO-101 with its leader arm and RECORD demos.
+follower = Robot("so101", mode="real", port="/dev/ttyACM0",
+                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
+                 mesh=True)
+follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
+Agent(tools=[follower])(
+    "start_recording(repo_id='me/pick', root='/tmp/pick', fps=30, "
+    "task='pick up the cube'); teleoperate for 60s; stop_recording"
+)
+
+# 2. POST-TUNE a policy on those demos (LoRA fine-tune; GPU box).
+train_policy(action="train", provider="lerobot_local",
+             dataset_root="/tmp/pick", base_model="lerobot/smolvla_base",
+             output_dir="/tmp/pick_ckpt", method="lora", steps=20000)
+
+# 3. RUN the tuned checkpoint - same policy on a MuJoCo twin AND the real arm.
+twin = Robot("so101")
+twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
+                policy_config={"pretrained_name_or_path": "/tmp/pick_ckpt"}, duration=10.0)
+follower.start_task("pick up the cube", policy_provider="lerobot_local",
+                    policy_port=None, duration=10.0)
+
+# 4. COORDINATE a fleet - tell a mesh peer to assist, in natural language.
+follower.mesh.tell(follower.mesh.peers[0]["peer_id"], "hold the tray steady")
+
+# 5. EXPOSE the running sim on ROS 2 - rviz / nav2 / any ros2 node can subscribe.
+from strands_robots.simulation import Simulation
+sim = Simulation(ros2_bridge=True); sim.create_world(); sim.add_robot("so101")
+sim.step(100)
+```
+
+1. Teleop + recording - [Teleoperation](../hardware/teleoperation.md), [Recording](../recording.md).
+2. Post-tuning - [Training](../training/overview.md).
+3. Sim and hardware rollout - [Policies](../policies/overview.md), [Robot control](../hardware/robot-control.md).
+4. Fleet coordination - [Mesh](../mesh.md).
+5. ROS 2 interop - [ROS 2](../ros2-integration.md).
+
+Steps 1 and 3-real need hardware; step 2 needs a GPU. Everything else runs in sim.
+
 ## Next: the notebook series
 
 For a guided, click-and-run path, work through the
