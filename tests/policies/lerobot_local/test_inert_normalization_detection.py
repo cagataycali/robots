@@ -216,6 +216,15 @@ def test_visual_channel_stats_are_not_a_width_mismatch():
     assert bridge.mismatched_normalization_widths() == []
 
 
+def test_a_datasets_count_scalar_is_not_a_width_mismatch():
+    """``LeRobotDataset.meta.stats`` carries ``count`` as shape ``(1,)`` per
+    feature; the normalizer never reads it, so a 6-wide checkpoint fed its own
+    dataset's stats must load (the recorded->trained->loaded round trip)."""
+    with_count = {**dict(_MS), "count": [1]}
+    bridge = _bridge({"observation.state": with_count}, {"action": with_count})
+    assert bridge.mismatched_normalization_widths() == []
+
+
 def test_both_detectors_read_one_scoping_rule():
     """A preprocessor's ``action`` entry is never exercised, so neither flags it."""
     bridge = _bridge({"action": dict(_MS7)}, {"action": dict(_MS)})

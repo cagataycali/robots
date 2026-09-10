@@ -239,6 +239,19 @@ def _register_policy_processor_steps(policy_type: str | None) -> None:
             logger.debug("Could not import %s for processor-step registration: %s", mod, exc)
 
 
+# The per-dimension stats each NormalizationMode's arithmetic reads
+# (lerobot HEAD: processor/normalize_processor.py). A dataset's stats also
+# carry per-feature scalars such as ``count`` (shape (1,)), which never meet
+# the feature tensor, so they are not a width mismatch.
+_STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
+    "MEAN_STD": ("mean", "std"),
+    "MIN_MAX": ("min", "max"),
+    "QUANTILES": ("q01", "q99"),
+    "QUANTILE10": ("q10", "q90"),
+}
+_STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
+
+
 class ProcessorBridge:
     """Bridge between strands-robots observation/action format and LeRobot's processor pipeline.
 
@@ -926,7 +939,10 @@ class ProcessorBridge:
                 continue
             lookup = ACTION if ftype == FeatureType.ACTION else key
             stats = (getattr(step, "_tensor_stats", None) or {}).get(lookup) or {}
-            for stat_name, value in stats.items():
+            for stat_name in _STAT_NAMES_READ_BY_MODE.get(mode.value, _STAT_NAMES_READ_BY_ANY_MODE):
+                value = stats.get(stat_name)
+                if value is None:
+                    continue
                 width = tuple(getattr(value, "shape", None) or ())
                 if len(width) == 1 and width[0] != shape[0]:
                     descriptor = (
