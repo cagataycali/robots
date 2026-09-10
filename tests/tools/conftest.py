@@ -17,7 +17,6 @@ running it.
 from __future__ import annotations
 
 import pytest
-import serial
 
 
 class FakeSerial:
@@ -78,6 +77,7 @@ class ReadingSerial(FakeSerial):
 @pytest.fixture
 def reading_serial(monkeypatch):
     """Patch ``serial.Serial`` with an always-answering position source."""
+    serial = pytest.importorskip("serial")
     instances: list[ReadingSerial] = []
 
     def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> ReadingSerial:
@@ -92,6 +92,7 @@ def reading_serial(monkeypatch):
 @pytest.fixture
 def fake_serial(monkeypatch):
     """Patch ``serial.Serial`` to return a single shared FakeSerial instance."""
+    serial = pytest.importorskip("serial")
     instances: list[FakeSerial] = []
 
     def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> FakeSerial:
