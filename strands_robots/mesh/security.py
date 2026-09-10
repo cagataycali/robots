@@ -415,9 +415,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # MoveIt2Policy
         "moveit2",
         "moveit",
-        # CuroboPolicy
-        "curobo",
-        "cumotion",
         # WBCPolicy (GR00T Whole-Body-Control / SONIC locomotion)
         "wbc",
         "sonic",
@@ -1334,7 +1331,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # Issue #300 well-known per-call policy kwargs. Forwarded into
         # ``policy_kwargs`` by the dispatcher, which is what reaches
         # ``get_actions(obs, instruction, **policy_kwargs)``. Planner-style
-        # providers (cuRobo, MoveIt2) read a Cartesian or joint-space goal;
+        # providers (MoveIt2) read a Cartesian or joint-space goal;
         # locomotion providers (WBC, wbc_gait, MotionBricks) read
         # ``target_velocity``. VLA providers ignore all of them.
         #

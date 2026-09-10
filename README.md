@@ -167,7 +167,6 @@ extras you need:
 | `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (resolves from PyPI via lerobot >= 0.6) |
 | `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |
 | `cosmos3-service` | websockets, msgpack | NVIDIA Cosmos 3 policy-server client |
-| `curobo` | _(empty; install cuRobo from source)_ | In-process collision-aware motion planning (CUDA GPU) |
 | `wbc` | onnxruntime | GR00T Whole-Body-Control (SONIC) humanoid locomotion - in-process ONNX, no GPU |
 | `motionbricks` | torch + vector-quantize-pytorch, pytorch-lightning, hydra-core (install `motionbricks` from source) | NVIDIA MotionBricks generative kinematic motion for the G1 - in-process torch, composes with `wbc` |
 | `mesh` | eclipse-zenoh, json5 | Peer-to-peer robot mesh |
@@ -796,7 +795,7 @@ policy = create_policy("reach")
 ```
 
 <details>
-<summary><b>Reference non-VLA providers: MoveIt2, cuRobo, WBC/SONIC</b></summary>
+<summary><b>Reference non-VLA providers: MoveIt2, WBC/SONIC</b></summary>
 
 Three reference implementations of the goal-kwarg contract above. Each has a
 runnable example + full install/deploy notes in its linked doc:
@@ -804,15 +803,14 @@ runnable example + full install/deploy notes in its linked doc:
 | Provider | Alias | Runs | Goal kwarg | Needs | Docs |
 |----------|-------|------|-----------|-------|------|
 | `moveit2` | `moveit` | ZMQ sidecar (ROS 2 / `moveit_py`, out-of-process) | `target_pose` / `target_joints` | `[moveit2]` extra (`pyzmq`, `msgpack`); a running sidecar | [MoveIt2 docs](https://strands-labs.github.io/robots/policies/moveit2/) |
-| `curobo` | `cumotion` | in-process CUDA | `target_pose` / `target_joints` (+ `world_update`) | NVIDIA GPU; cuRobo from source (not on PyPI) | [cuRobo source](https://github.com/NVlabs/curobo) |
 | `wbc` | `sonic` | in-process ONNX (CPU) | `target_velocity` `[vx, vy, omega]` | `[wbc]` extra (`onnxruntime`); a SONIC checkpoint | [WBC docs](https://strands-labs.github.io/robots/policies/wbc/) |
 | `motionbricks` | `motion_bricks` | in-process torch (CPU/CUDA) | `style` / `mode`, `target_velocity`, `target_heading` | `[motionbricks]` extra + `motionbricks` from source + git-LFS checkpoints | [MotionBricks docs](https://strands-labs.github.io/robots/policies/motionbricks/) |
 
 ```python
 from strands_robots.policies import create_policy
 
-# Collision-aware planning (GPU, in-process); plan is cached, streamed per tick.
-policy = create_policy("curobo", robot_config="franka.yml", action_horizon=16)
+# Collision-aware planning in a ROS 2 sidecar; plan is streamed per tick.
+policy = create_policy("moveit2", port=5556, planning_group="panda_arm")
 actions = policy.get_actions_sync(
     {"observation.state": [0.0, -0.79, 0.0, -2.36, 0.0, 1.57, 0.79]},
     "reach for the red block",                  # ignored by planners
@@ -820,7 +818,7 @@ actions = policy.get_actions_sync(
 )
 ```
 
-`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` forwards
+`mesh.tell(peer, "...", policy_provider="moveit2", target_pose=[...])` forwards
 the same `target_pose` / `target_joints` / `world_update` vocabulary to a sim
 peer. In-process, the goal goes to `run_policy(policy_kwargs={...})`, which the
 runner hands to every `get_actions()` call - `run_policy` itself has no
@@ -1073,7 +1071,7 @@ the goal payload it needs:
 a.mesh.tell(
     b.peer_id,
     "reach for the red block",
-    policy_provider="curobo",
+    policy_provider="moveit2",
     target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
     robot_name="arm_left",      # disambiguate in multi-robot sims
     duration=10.0,

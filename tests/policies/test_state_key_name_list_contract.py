@@ -100,7 +100,7 @@ the shared domain. It cannot prove that any of them RAISES: a body keeping the
 Only ``MockPolicy`` and ``RemotePolicy`` were driven behaviourally, so on the
 others the refusal was asserted structurally and had never fired - measured
 with coverage over the suite, the ``raise ValueError(error)`` line was unexecuted
-in ``cosmos3``, ``curobo``, ``groot``, ``lerobot_async``, ``lerobot_local``
+in ``cosmos3``, ``groot``, ``lerobot_async``, ``lerobot_local``
 and ``moveit2``. Each is now constructed and driven directly, and the
 table that does so is derived from ``_MUST_VALIDATE`` so a provider added later
 cannot quietly join the structurally-only half.
@@ -133,7 +133,6 @@ _PACKAGE = pathlib.Path(strands_robots.__file__).parent
 _MUST_VALIDATE = {
     "inference/client.py::RemotePolicy",
     "policies/cosmos3/policy.py::Cosmos3Policy",
-    "policies/curobo/policy.py::CuroboPolicy",
     "policies/groot/policy.py::Gr00tPolicy",
     "policies/lerobot_async/policy.py::LerobotAsyncPolicy",
     "policies/lerobot_local/policy.py::LerobotLocalPolicy",
@@ -782,13 +781,6 @@ def _cosmos3() -> Any:
     return Cosmos3Policy(backend="service")
 
 
-def _curobo() -> Any:
-    """An injected planner keeps cuRobo itself out of the construction."""
-    from strands_robots.policies.curobo.policy import CuroboPolicy
-
-    return CuroboPolicy(motion_gen=object(), warmup=False)
-
-
 def _groot() -> Any:
     """Service mode: the ZMQ socket is opened on first inference, not here."""
     from strands_robots.policies.groot.policy import Gr00tPolicy
@@ -831,7 +823,6 @@ _Surface = tuple[str, Callable[[], Any], str | None, str | None]
 
 _OWNING_SURFACES: list[_Surface] = [
     ("policies/cosmos3/policy.py::Cosmos3Policy", _cosmos3, "robot_state_keys", None),
-    ("policies/curobo/policy.py::CuroboPolicy", _curobo, "_robot_state_keys", None),
     ("policies/groot/policy.py::Gr00tPolicy", _groot, None, "zmq"),
     ("policies/lerobot_async/policy.py::LerobotAsyncPolicy", _lerobot_async, "robot_state_keys", None),
     ("policies/lerobot_local/policy.py::LerobotLocalPolicy", _lerobot_local, "robot_state_keys", "torch"),

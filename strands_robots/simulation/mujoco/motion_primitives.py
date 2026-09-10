@@ -25,7 +25,7 @@ Contract notes (shared by all three):
 
 * **Not collision-aware.** ``move_to`` hides the solver backend (the paper's
   contract: "operational-space servo, Jacobian controller, or IK planner ...
-  exposed semantics identical"); a future collision-aware backend (curobo) can
+  exposed semantics identical"); a future collision-aware backend (cuRobo) can
   replace the solver without changing this surface.
 * **Errors are structured dicts** (``{"status": "error", ...}``), never raised
   through the tool surface. A target the IK cannot reach returns the residual.
@@ -552,7 +552,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         distinguishable from one that needs base motion.
 
         NOT collision-aware: the straight servo descent can sweep through
-        obstacles. Collision-aware transport is the curobo provider's job; this
+        obstacles. Collision-aware transport is the MoveIt2 provider's job; this
         primitive deliberately hides the solver backend so that upgrade cannot
         change the surface. Motion is NOT recorded into an active dataset
         recording session (see module docstring).

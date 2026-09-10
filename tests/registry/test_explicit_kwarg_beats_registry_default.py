@@ -108,7 +108,7 @@ class TestAnExplicitExtraValueBeatsTheRegistryDefault:
 
     def test_a_falsy_caller_value_is_not_read_as_absent(self):
         """0 / False / "" are values, not omissions."""
-        assert build_policy_kwargs("curobo", action_horizon=0)["action_horizon"] == 0
+        assert build_policy_kwargs("moveit2", timeout_ms=0)["timeout_ms"] == 0
         assert build_policy_kwargs("cosmos3", prompt="")["prompt"] == ""
 
 

@@ -43,7 +43,7 @@ class Policy(ABC):
 
     The interface is general enough to cover both **VLA-style** providers
     (consume images + instruction, output joint targets) and **non-VLA**
-    providers such as classical motion planners (cuRobo, MoveIt2),
+    providers such as classical motion planners (MoveIt2, cuRobo, OMPL),
     model-predictive controllers, and pure-IK / scripted trajectories.
     Non-VLA providers typically set :attr:`requires_images` to ``False``
     and read their goal from the well-known ``**kwargs`` keys documented

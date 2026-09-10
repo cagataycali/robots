@@ -751,5 +751,4 @@ part-way through a rollout.
 - [Policy providers](../policies/overview.md)
 - [Training](../training/overview.md)
 - [GR00T](groot.md)
-- [cuRobo](curobo.md)
 - [LeRobot project](https://github.com/huggingface/lerobot)

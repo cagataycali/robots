@@ -7,7 +7,7 @@ https://github.com/NVlabs/GR00T-WholeBodyControl
 (``decoupled_wbc/sim2mujoco/scripts/run_mujoco_gear_wbc.py``).
 
 This is the locomotion / lower-body member of the non-VLA policy family
-(alongside cuRobo and MoveIt2): ``requires_images = False`` and the goal arrives
+(alongside MoveIt2): ``requires_images = False`` and the goal arrives
 through the well-known ``**kwargs`` locomotion keys rather than a natural-
 language instruction. The controller drives the **15 leg+waist DOFs**; the arm
 joints (16..n) are held at their nominal defaults. Layer an upper-body
@@ -659,7 +659,7 @@ class WBCPolicy(Policy):
         * A flat ``observation.state`` / ``observation.velocity`` vector paired
           with ``self._robot_state_keys`` for the index lookup (each name's slot
           in the robot's key list, NOT a positional slice). Without keys, the
-          flat vector is consumed positionally (the cuRobo / MoveIt2 contract).
+          flat vector is consumed positionally (the MoveIt2 contract).
 
         Missing values default to zero (a still, nominal stance) - a
         *measured-state* default, distinct from the forbidden zero-*torque*
@@ -694,8 +694,8 @@ class WBCPolicy(Policy):
                         out[i] = arr[j]
                 return out
             # No key mapping (direct-API / replay caller). Treat the flat vector
-            # as already in `names` order - the same positional contract cuRobo /
-            # MoveIt2 use for observation.state - so a provided state is USED.
+            # as already in `names` order - the same positional contract MoveIt2
+            # uses for observation.state - so a provided state is USED.
             if arr.shape[0] >= m:
                 return arr[:m].copy()
             out = np.zeros(m, dtype=np.float64)

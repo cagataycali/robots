@@ -5,7 +5,7 @@
 :mod:`~strands_robots.policies.base.Policy` documents its runtime contract, and
 :mod:`tests.policies.test_builtin_policy_docstrings` already pins that guard for
 the dependency-free built-ins (``MockPolicy`` / ``CompositePolicy`` /
-``PersistentPolicy``). The backend providers - GR00T, cuRobo, cosmos3, the two
+``PersistentPolicy``). The backend providers - GR00T, cosmos3, the two
 lerobot providers, MotionBricks, Kimodo, MoveIt2 and the two WBC
 controllers - each override public members such as ``provider_name``,
 ``get_actions``, ``requires_images`` and ``config``. An agent picking a
@@ -43,7 +43,6 @@ _PROVIDER_POLICIES = {
     "lerobot_async/policy.py": "LerobotAsyncPolicy",
     "cosmos3/policy.py": "Cosmos3Policy",
     "moveit2/policy.py": "MoveIt2Policy",
-    "curobo/policy.py": "CuroboPolicy",
     "wbc/policy.py": "WBCPolicy",
     "wbc/gait.py": "WBCGaitPolicy",
     "motionbricks/policy.py": "MotionBricksPolicy",

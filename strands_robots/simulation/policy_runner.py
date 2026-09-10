@@ -1557,7 +1557,7 @@ class PolicyRunner:
                 #300 path: it carries the well-known goal keys
                 (``target_pose`` / ``target_joints`` / ``target_velocity`` /
                 ``world_update``) to non-VLA providers that read their goal
-                from kwargs rather than the instruction (cuRobo, MoveIt2, WBC).
+                from kwargs rather than the instruction (MoveIt2, WBC).
                 VLA providers ignore unknown kwargs per the #300 contract, so
                 this is safe to forward unconditionally. ``None`` forwards no
                 extra kwargs (identical to the historical behaviour).
@@ -3191,7 +3191,7 @@ class PolicyRunner:
                 ``policy.get_actions(obs, instruction, **policy_kwargs)`` call on
                 both eval paths (``success_fn`` and ``spec``). Empty/``None`` is
                 the historical no-kwargs behaviour. Goal-conditioned providers
-                (WBC ``target_velocity``; cuRobo/MoveIt2 ``target_pose`` /
+                (WBC ``target_velocity``; MoveIt2 ``target_pose`` /
                 ``target_joints`` / ``world_update`` - the issue #300 keys) need
                 this to be evaluated against a goal at all.
             video: Optional per-episode MP4 recording config (same dict schema
@@ -3306,7 +3306,7 @@ class PolicyRunner:
         # Per-call goal payload forwarded verbatim to every get_actions() call
         # on both eval paths (success_fn + spec). An empty dict is the historical
         # (no-kwargs) behaviour. Goal-conditioned providers (WBC target_velocity,
-        # cuRobo/MoveIt2 target_pose/target_joints, the issue #300 keys) need this
+        # MoveIt2 target_pose/target_joints, the issue #300 keys) need this
         # to be evaluated against a goal at all; without it eval ran them with an
         # empty goal and reported a meaningless success rate.
         _policy_kwargs = policy_kwargs or {}

@@ -21,7 +21,7 @@ DISJOINT joint groups) does not express it, and
 :class:`~strands_robots.policies.wbc.WBCPolicy` cannot serve as the tracker -
 its only command input is a target base velocity, with no reference-pose input.
 
-This is a non-VLA member of the policy family (like ``wbc`` / cuRobo / MoveIt2):
+This is a non-VLA member of the policy family (like ``wbc`` / MoveIt2):
 
 * ``requires_images = False`` - the generator is driven by a style + direction
   command, never camera frames.

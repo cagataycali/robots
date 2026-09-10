@@ -2651,7 +2651,7 @@ class SimEngine(ABC):
                 every ``policy.get_actions(obs, instruction, **policy_kwargs)``
                 call. Carries the well-known #300 goal keys
                 (``target_pose`` / ``target_joints`` / ``target_velocity`` /
-                ``world_update``) to non-VLA providers (cuRobo, MoveIt2, WBC)
+                ``world_update``) to non-VLA providers (MoveIt2, WBC)
                 that read their goal from kwargs rather than the instruction.
                 This is the local-sim analogue of the mesh ``tell()`` path,
                 which already forwards these keys. VLA providers ignore unknown
@@ -4359,7 +4359,7 @@ class SimEngine(ABC):
         exactly as on :meth:`run_policy`. Goal-conditioned providers read their
         target from these well-known keys (``target_velocity`` for WBC and other
         locomotion policies; ``target_pose`` / ``target_joints`` / ``world_update``
-        for cuRobo / MoveIt2 - the issue #300 contract). Without it the eval ran
+        for MoveIt2 - the issue #300 contract). Without it the eval ran
         such a policy with an empty goal and reported a meaningless success rate.
 
         ``success_fn`` defaults to ``None``. With no ``success_fn`` (and no

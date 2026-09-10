@@ -2480,7 +2480,7 @@ class Mesh(SensorLoopsMixin):
     # ``instruction``. Forwarded from the ``tell()`` payload into
     # ``policy_kwargs`` -- the run_policy/start_policy parameter that reaches
     # ``get_actions(obs, instruction, **policy_kwargs)`` -- so a
-    # ``policy_provider="curobo"`` peer sees the ``target_pose`` it needs and a
+    # ``policy_provider="moveit2"`` peer sees the ``target_pose`` it needs and a
     # ``policy_provider="wbc"`` peer sees the ``target_velocity`` it needs,
     # without the dispatch layer dropping either silently.
     #
@@ -2541,8 +2541,8 @@ class Mesh(SensorLoopsMixin):
         forwards verbatim to every
         ``get_actions(obs, instruction, **policy_kwargs)`` call. Sent as
         ``policy_config`` instead, a goal reaches the Policy constructor,
-        where no provider reads it as a per-call goal - cuRobo and MoveIt2
-        name no goal key there at all, and WBC's constructor
+        where no provider reads it as a per-call goal - MoveIt2
+        names no goal key there at all, and WBC's constructor
         ``target_velocity`` is a *static* default a per-call kwarg overrides -
         so the goal would be absorbed and the provider would then refuse the
         payload the caller supplied. Per #300

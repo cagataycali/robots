@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 r"""A value read out of a live observation cannot split the record that quotes it.
 
-Eight ``py/log-injection`` alerts are open across three policy providers and
-issue #2853 has the census. What the alerts agree on is the taint path: an
+Six ``py/log-injection`` alerts are open across two policy providers and
+issue #2853 has the census (two more lived in the cuRobo provider, and went
+with it). What the alerts agree on is the taint path: an
 observation dict's own key names, a camera key, a language instruction and a
 joint-state object all reach a logging sink. What they do not distinguish is
 whether the value can still carry a ``\r`` or ``\n`` *by the time it is
@@ -22,20 +23,18 @@ alert sink                              raw break in ``LogRecord.getMessage()``
 949   ``_resolve_state_order``          no - the keys arrive inside a list, and
                                         ``repr`` escapes a ``str`` element
 714   ``_collect_state_values``         no - same list interpolation
-710   ``_apply_world_update``           no - ``%r`` over a list of keys
-711   cuRobo ``_extract_joint_state``   no - ``tolist()`` runs before the sink, so
-                                        ``%r`` renders a list
-712   MoveIt2 ``_extract_joint_state``  no - same
+712   MoveIt2 ``_extract_joint_state``  no - ``tolist()`` runs before the sink,
+                                        so ``%r`` renders a list
 ===== ================================= ==============================================
 
-So three of the eight could forge a record and five could not. The five are not
+So three of the six could forge a record and three could not. The three are not
 safe *by construction* though - they are safe by the shape the value happens to
 arrive in. Interpolate the same keys as ``', '.join(scalar_keys)`` for
 readability, or hand ``%r`` a list holding one object with a multi-line
 ``__repr__`` instead of a list of strings, and the property is gone with nothing
 at the sink to notice. That last case is not hypothetical: it is what cells
-:func:`test_curobo_joint_state_object_with_a_multiline_repr_cannot_split_the_record`
-and its MoveIt2 sibling drive, and both fail on the pre-change tree.
+:func:`test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_record`
+drives, and it fails on the pre-change tree.
 
 Hence the grading here is split in three, and each cell says which kind it is:
 
@@ -45,7 +44,7 @@ Hence the grading here is split in three, and each cell says which kind it is:
   property directly so it is stated at the sink rather than inferred from the
   caller's formatting choice. These pass either way; what they defend is the
   next refactor of the message, not this change.
-* **The wiring cell** - hold the set of sanitized sinks to exactly the eight the
+* **The wiring cell** - hold the set of sanitized sinks to exactly the ones the
   census names, keyed by the function that owns each one because a line number is
   the part that goes stale. Removing a wrapper fails it. Finding a *new* sink is
   CodeQL's job, not this file's.
@@ -65,7 +64,6 @@ import pytest
 import strands_robots.policies as policies_pkg
 import strands_robots.policies._log_safety as log_safety
 from strands_robots.policies._log_safety import sanitize_log_value
-from strands_robots.policies.curobo.policy import CuroboPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.moveit2.policy import MoveIt2Policy
 from strands_robots.policies.wbc.policy import WBCPolicy
@@ -280,26 +278,12 @@ def test_an_unmatched_camera_name_cannot_split_the_record(caplog: pytest.LogCapt
     assert "wrist\\nWARNING:root:actuators disabled" in rendered
 
 
-def test_curobo_joint_state_object_with_a_multiline_repr_cannot_split_the_record(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Alert 711. ``%r`` over a list escapes ``str`` elements only, so one
-    element with a multi-line ``repr`` put the break back on the wire."""
-    policy = _stub()
-    with caplog.at_level(logging.WARNING):
-        result = CuroboPolicy._extract_joint_state(policy, {"observation.state": [MultilineRepr()]})
-
-    assert result is None, "the degraded-extraction path is the one under test"
-    rendered = _rendered(caplog)
-    assert not _has_raw_break(rendered), f"record still splits: {rendered!r}"
-    assert "JointState(\\nWARNING:root:actuators disabled)" in rendered
-
-
 def test_moveit2_joint_state_object_with_a_multiline_repr_cannot_split_the_record(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Alert 712. Same shape as the cuRobo sink, and the same fix, so a
-    provider that grows a third copy of this message is graded here too."""
+    """Alert 712. ``%r`` over a list escapes ``str`` elements only, so one
+    element with a multi-line ``repr`` put the break back on the wire. A
+    provider that grows a second copy of this message is graded here too."""
     policy = _stub()
     with caplog.at_level(logging.WARNING):
         result = MoveIt2Policy._extract_joint_state(policy, {"observation.state": [MultilineRepr()]})
@@ -374,17 +358,6 @@ def test_missing_state_keys_name_the_absent_keys_on_one_record(caplog: pytest.Lo
     assert "1 configured robot_state_keys are not present" in rendered
 
 
-def test_an_ignored_world_update_names_its_keys_on_one_record(caplog: pytest.LogCaptureFixture) -> None:
-    """Alert 710. The planner-shim warning quotes the caller's own scene keys."""
-    policy = _stub(_motion_planner=SimpleNamespace())
-    with caplog.at_level(logging.WARNING):
-        CuroboPolicy._apply_world_update(policy, {FORGED: {}})
-
-    rendered = _rendered(caplog)
-    assert not _has_raw_break(rendered), f"record still splits: {rendered!r}"
-    assert "world_update=" in rendered
-
-
 # --------------------------------------------------------------------------
 # The wiring cell.
 # --------------------------------------------------------------------------
@@ -401,10 +374,6 @@ _SANITIZED_SINKS: dict[str, dict[str, list[str]]] = {
         "LerobotLocalPolicy._to_lerobot_observation": ["feat", "k"],
         "LerobotLocalPolicy._build_observation_batch": ["instruction[:50]"],
         "LerobotLocalPolicy._resolve_camera_targets": ["cam", "feat"],
-    },
-    "curobo/policy.py": {
-        "CuroboPolicy._apply_world_update": ["repr(shown)"],
-        "CuroboPolicy._extract_joint_state": ["e", "repr(state)"],
     },
     "moveit2/policy.py": {
         "MoveIt2Policy._extract_joint_state": ["e", "repr(state)"],

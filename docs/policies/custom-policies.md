@@ -178,6 +178,6 @@ the canonical reference.
 ## See also
 
 - [Policy overview](overview.md) - factory, providers.
-- [cuRobo](curobo.md) - reference non-VLA goal-kwargs planner.
+- [MoveIt2](moveit2.md) - reference non-VLA goal-kwargs planner.
 - [Architecture](../architecture.md)
 - `strands_robots/policies/mock.py` - minimal reference implementation.

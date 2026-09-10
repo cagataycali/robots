@@ -8,9 +8,9 @@ description: NVIDIA GR00T Whole-Body-Control (SONIC) humanoid locomotion - in-pr
 wraps NVIDIA's
 [GR00T Whole-Body-Control](https://github.com/NVlabs/GR00T-WholeBodyControl)
 (SONIC / decoupled-WBC) ONNX controllers for deploy-grade humanoid locomotion
-on the Unitree G1. Like [cuRobo](curobo.md) it runs **in the same process**
-(via ONNX Runtime - no sidecar, no network round-trip), but unlike cuRobo it
-needs no GPU: the ONNX sessions run on CPU.
+on the Unitree G1. It runs **in the same process** (via ONNX Runtime - no
+sidecar, no network round-trip), unlike [MoveIt2](moveit2.md), which plans in a
+ROS 2 sidecar; and it needs no GPU: the ONNX sessions run on CPU.
 
 It is a non-VLA, locomotion controller: it reads its goal from the well-known
 locomotion `**kwargs` (`target_velocity`), ignores camera frames
@@ -396,7 +396,6 @@ implemented by `WBCGaitPolicy` (provider `wbc_gait`). See
 ## See also
 
 - [Policy overview](overview.md)
-- [cuRobo](curobo.md) - in-process CUDA collision-aware planning (non-VLA).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA).
 - [GR00T](groot.md) - ZMQ service VLA (manipulation upper body).
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.

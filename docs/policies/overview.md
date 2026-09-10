@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, remote, curobo, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, remote, moveit2, wbc, wbc_gait, motionbricks, kimodo, protomotions.
 ---
 
 # Policy providers
@@ -9,7 +9,7 @@ truth - list the providers with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'wbc', 'wbc_gait']
+# ['cosmos3', 'groot', 'kimodo', 'lerobot_async', 'lerobot_local', 'microduck', 'mock', 'motionbricks', 'moveit2', 'protomotions', 'remote', 'wbc', 'wbc_gait']
 ```
 
 `create_policy` also accepts each provider's declared aliases and shorthands,
@@ -20,7 +20,7 @@ entry, as described under [Beyond the registry](#beyond-the-registry) below.
 
 ```bash
 python -c 'from strands_robots.policies import list_aliases; print(list_aliases())'
-# {'lerobot': 'lerobot_local', 'sonic': 'wbc', 'moveit': 'moveit2', 'cumotion': 'curobo', ...}
+# {'lerobot': 'lerobot_local', 'sonic': 'wbc', 'moveit': 'moveit2', ...}
 ```
 
 ```python
@@ -67,7 +67,6 @@ so neither can silently drift.
 | [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
-| [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
 | [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
 | [`wbc`](wbc.md) | `WBCPolicy` | `wbc` | NVIDIA GR00T Whole-Body-Control (SONIC) Unitree G1 humanoid locomotion, in-process ONNX, no GPU (non-VLA) |
 | [`wbc_gait`](wbc_gait.md) | `WBCGaitPolicy` | `wbc` | WBC gait-clock variant: single ONNX policy, 95-dim obs + bipedal phase clock (non-VLA) |
@@ -137,7 +136,6 @@ structured error naming the parameter, before any policy is created.
 - [Persistent worker](persistent-worker.md) - load once, reuse across rollouts; cache controls + telemetry.
 - [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.
 - [Remote](remote.md) - forward observations to a remote `PolicyServer` over WebSocket (edge offload).
-- [cuRobo](curobo.md) - in-process collision-aware motion planning (non-VLA, GPU).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA, no in-venv ROS 2).
 - [WBC](wbc.md) - GR00T Whole-Body-Control (SONIC) G1 locomotion (non-VLA, in-process ONNX).
 - [WBC gait-clock variant](wbc_gait.md) - single-ONNX gait-clock G1 controller (non-VLA).

@@ -121,7 +121,7 @@ def test_execute_forwards_the_goal_payload_via_policy_kwargs() -> None:
         {
             "action": "execute",
             "instruction": "reach",
-            "policy_provider": "curobo",
+            "policy_provider": "moveit2",
             "target_pose": target_pose,
             "target_joints": target_joints,
             "world_update": world_update,
@@ -153,7 +153,7 @@ def test_start_forwards_the_goal_payload_via_policy_kwargs() -> None:
         {
             "action": "start",
             "instruction": "reach",
-            "policy_provider": "curobo",
+            "policy_provider": "moveit2",
             "target_pose": target_pose,
         }
     )
@@ -175,11 +175,10 @@ def test_planner_providers_read_the_goal_per_call_not_at_construction() -> None:
     of the chain: the runner forwards ``policy_kwargs`` verbatim to every
     ``get_actions`` call.
     """
-    from strands_robots.policies.curobo.policy import CuroboPolicy
     from strands_robots.policies.moveit2.policy import MoveIt2Policy
     from strands_robots.policies.wbc.policy import WBCPolicy
 
-    for policy_class in (CuroboPolicy, MoveIt2Policy):
+    for policy_class in (MoveIt2Policy,):
         constructor = inspect.signature(policy_class.__init__).parameters
         named_at_construction = [key for key in Mesh._SIM_WELL_KNOWN_POLICY_KWARGS if key in constructor]
         assert not named_at_construction, (
@@ -188,7 +187,7 @@ def test_planner_providers_read_the_goal_per_call_not_at_construction() -> None:
             "filled from a different payload"
         )
 
-    for goal_reader in (CuroboPolicy, MoveIt2Policy, WBCPolicy):
+    for goal_reader in (MoveIt2Policy, WBCPolicy):
         per_call = inspect.signature(goal_reader.get_actions).parameters
         assert any(p.kind is p.VAR_KEYWORD for p in per_call.values()), (
             f"{goal_reader.__name__}.get_actions takes no **kwargs, so it cannot receive the goal"

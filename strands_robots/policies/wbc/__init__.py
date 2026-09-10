@@ -2,9 +2,9 @@
 
 The :class:`WBCPolicy` wraps NVIDIA's
 `GR00T-WholeBodyControl <https://github.com/NVlabs/GR00T-WholeBodyControl>`_
-ONNX locomotion controllers. Like :class:`~strands_robots.policies.curobo.CuroboPolicy`
-it runs **in process** (ONNX Runtime, no sidecar), and like the rest of the
-non-VLA family:
+ONNX locomotion controllers. It runs **in process** (ONNX Runtime, no sidecar),
+unlike :class:`~strands_robots.policies.moveit2.MoveIt2Policy`, which plans in a
+ROS 2 sidecar; and like the rest of the non-VLA family:
 
 * ``requires_images = False`` - locomotion controls from joint state + base IMU,
   never camera frames.

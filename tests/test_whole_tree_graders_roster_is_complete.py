@@ -492,14 +492,13 @@ def test_a_root_bound_inside_the_function_resolves(label: str, grader: str) -> N
 def test_a_local_the_walk_cannot_see_lends_nothing(label: str, grader: str) -> None:
     """Reading locals must not lend a name across functions that do not share it.
 
-    The first case is the live shape this separation is measured against.
-    ``tests/policies/curobo/test_action_horizon_domain.py`` binds the repository
-    root in one test method - to *read* a file, not to walk one - and walks a
-    subpackage in another. Reading every assignment in the module would let the
-    first method's root stand in for the second method's receiver and select the
-    file; reading only the assignments the enclosing functions own leaves it
-    out, which is correct, because a path-scoped run over
-    ``tests/policies/`` does collect it.
+    The first case is the shape this separation is measured against: a module
+    that binds the repository root in one test method - to *read* a file, not to
+    walk one - and walks a subpackage in another. Reading every assignment in
+    the module would let the first method's root stand in for the second
+    method's receiver and select the file; reading only the assignments the
+    enclosing functions own leaves it out, which is correct, because a
+    path-scoped run over the mirroring test directory does collect it.
 
     The second case grades the same attribution one scope in: a nested function
     that rebinds the name resolves to its own value, as Python does.

@@ -6,13 +6,13 @@ description: MoveIt2 motion planning via a ROS 2 sidecar - ZMQ + msgpack client,
 
 [`MoveIt2Policy`](https://github.com/strands-labs/robots/blob/main/strands_robots/policies/moveit2/policy.py)
 is a thin ZMQ + msgpack client for a sidecar ROS 2 node running
-[`moveit_py`](https://github.com/moveit/moveit2). Like
-[cuRobo](curobo.md) it is a **non-VLA, collision-aware motion planner**: it
-reads its goal from `**kwargs` (`target_pose` / `target_joints`), ignores
-camera frames (`requires_images = False`), and never parses the instruction
-string for control.
+[`moveit_py`](https://github.com/moveit/moveit2). It is a **non-VLA,
+collision-aware motion planner**: it reads its goal from `**kwargs`
+(`target_pose` / `target_joints`), ignores camera frames
+(`requires_images = False`), and never parses the instruction string for
+control.
 
-Unlike cuRobo's in-process CUDA library, MoveIt2 runs **out-of-process**: the
+MoveIt2 runs **out-of-process**: the
 ROS 2 stack and `moveit_py` live entirely in a sidecar, so the Python venv
 running `strands_robots` stays free of ROS 2 deps. The only client-side
 requirements are `pyzmq` + `msgpack` (the `[moveit2]` extra).
@@ -90,7 +90,7 @@ keep the sidecar on loopback).
 ## Goal kwargs
 
 `MoveIt2Policy` shares the non-VLA goal vocabulary with the rest of the planner
-family (see [cuRobo](curobo.md)), so a goal can flow across providers without
+family (see [Policy overview](overview.md)), so a goal can flow across providers without
 coupling to a backend:
 
 | Key | Type | Meaning |
@@ -195,7 +195,6 @@ dispatch collects from the wire command.
 ## See also
 
 - [Policy overview](overview.md)
-- [cuRobo](curobo.md) - in-process collision-aware planning (non-VLA, GPU).
 - [GR00T](groot.md) - ZMQ service VLA.
 - [Cosmos 3](cosmos3.md) - WebSocket VLA.
 - [Custom policies](custom-policies.md) - implement the non-VLA goal-kwargs contract.

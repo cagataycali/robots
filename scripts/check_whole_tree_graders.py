@@ -132,13 +132,15 @@ re-exporting file would answer with the package root where the truth is the
 ``test_a_symbol_the_named_module_does_not_define_is_not_resolved`` is the pin
 that keeps it refused.
 
-Scoping is what keeps that from over-selecting, and there is a live measure of
-it: ``tests/policies/curobo/test_action_horizon_domain.py`` binds the
+Scoping is what keeps that from over-selecting: a module that binds the
 repository root in one test method - to *read* a file, not to walk one - and
-walks a subpackage in another. Reading every assignment in the module would let
-the first lend its root to the second and select the file; reading only the
-assignments the enclosing functions own leaves it out, which is correct,
-because a path-scoped run over ``tests/policies/`` collects it already.
+walks a subpackage in another must not be selected. Reading every assignment in
+the module would let the first lend its root to the second and select the file;
+reading only the assignments the enclosing functions own leaves it out, which is
+correct, because a path-scoped run over the mirroring test directory collects it
+already. ``test_a_local_the_walk_cannot_see_lends_nothing`` grades that
+separation on the shape directly, so it holds whether or not the tree currently
+contains a module spelled that way.
 
 A walk rooted *inside* a subpackage (``strands_robots/policies/``) is
 deliberately not selected: a path-scoped run over the mirroring test directory

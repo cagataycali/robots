@@ -17,7 +17,7 @@ MotionBricks is a **generative kinematic motion model**: given a high-level
 movement/facing command, it synthesises per-frame full-body `qpos` for the
 Unitree G1, faster than real time.
 
-Like the other non-VLA providers (`wbc`, cuRobo, MoveIt2) it runs **in the same
+Like the other non-VLA providers (`wbc`, MoveIt2) it runs **in the same
 process** (torch, no sidecar):
 
 - `requires_images = False` - driven by a style + direction command, never
