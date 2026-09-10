@@ -111,6 +111,10 @@ An operator ACL supplied via `STRANDS_MESH_ACL_FILE` can be written in one of tw
 
 Reference: `strands_robots.mesh._acl_config._load_acl_file`, `strands_robots.mesh._acl_config._parse_acl_bytes`, `strands_robots.mesh._acl_config.PermissiveACLError`, `strands_robots.mesh.core.Mesh._refuse_under_permissive_default_acl`, `strands_robots.mesh.session._build_config`.
 
+### Locomotion velocity envelope (target_velocity)
+
+`validate_command` holds every component of a mesh `execute` / `start` payload's `target_velocity` to one locomotion envelope: ±2.0 m/s for the linear components (`vx`, `vy`, and any component past the third) and ±2.0 rad/s for `omega`. The WBC policy applies the same bound again before the value is scaled into its observation, from the same definition (`strands_robots.locomotion_envelope`), so a caller that reaches the policy without the mesh meets the same refusal. Out of envelope is refused with a reason naming the component, value, bound and unit - never clamped, because a clamped `[1e6, 0, 0]` is still a sprint the caller did not command. Operators with a faster platform raise the bounds with `STRANDS_MAX_TARGET_LINEAR_VELOCITY_MPS` / `STRANDS_MAX_TARGET_ANGULAR_VELOCITY_RPS` (positive finite floats; anything else leaves the default in force; re-read on every call, no restart).
+
 ### Policy vocabulary allowlist (policy_type / policy_provider)
 
 `validate_command` gates every mesh `execute` / `start` payload's `policy_type` and `policy_provider` fields against a built-in allowlist. The two vocabularies share one allowlist by design: `policy_type` names a LeRobot policy *family* (`act`, `diffusion`, `pi0`, `smolvla`, ...) that some payloads carry, and `policy_provider` names a spelling this package's `create_policy` resolves (`groot`, `wbc`, `moveit`, `microduck`, ...). A provider or family that is not in the built-in list is refused on the mesh path -- the operator does not get the availability bug silently, they get a refusal naming the offending value.
@@ -176,6 +180,8 @@ except ValidationError as refusal:
 - **Codes are additive.** They were introduced without changing a single refusal message, and new codes may be added for refusals that become continuable later. Switch on the codes you know and fall through to the message for the rest.
 - **Every code you receive is in `REFUSAL_CODES`.** Nothing validates `code` at runtime - it is stored as given - so what backs the closed vocabulary is a static scan over every raise site in the package, reading the code in each spelling a site can use it (a `refusal_codes` attribute, a name imported from it, or the literal string). That means `REFUSAL_GRANTS[refusal.code]` is safe for any code you are handed: a code outside the vocabulary is a defect in this package, not a case for you to handle.
 
+The in-tree consumer of this contract is `strands_robots.dashboard.consent.classify_refusal`, which builds the dashboard's consent card from `code` and `subject` alone and carries the message only for display.
+
 Reference: `strands_robots.refusal_codes`; `strands_robots.mesh.security.SecurityError`; `strands_robots.policies.factory.UntrustedRemoteCodeError`.
 
 ## HuggingFace policy code execution (`trust_remote_code`)
@@ -215,6 +221,7 @@ Reference: `strands_robots.tools.gr00t_inference`.
 - **Physical safety is in scope.** A wrong or malicious command moves a real arm. Maintain a physical e-stop, keep humans clear of the workspace during autonomous runs, and prefer validating any new task in simulation (the safe default) before switching the one keyword to `mode="real"`.
 - **Calibration files** under `~/.cache/huggingface/lerobot/calibration/` define how joint commands map to the physical device. Protect them as integrity-sensitive configuration - corrupted or swapped calibration can produce unexpected motion.
 - **The `serial_tool` is broad.** It can enumerate and write to any serial port the process can see, not just the intended robot. Scope it out of agents that do not need raw device access (see [Tool scoping](#prompt-injection)).
+- **The `serial_tool` write actions ask an operator first.** `send`, `send_read`, `feetech_position` and `feetech_velocity` stop for an operator interrupt *before* the port is opened, through the same gate as the `use_ros` transports; a declined or headless call writes nothing. Pre-approve by action name with `STRANDS_SERIAL_COMMAND_ALLOW=feetech_position,feetech_velocity` (or `*`) or bypass with `BYPASS_TOOL_CONSENT=true`. Reads, `monitor` and `feetech_ping` are never gated. The dashboard's motion hook lists the same four actions and deposits a grant the tool spends, so a dashboard agent is asked once, not twice.
 
 ## Robot asset cache (`STRANDS_ASSETS_DIR`)
 

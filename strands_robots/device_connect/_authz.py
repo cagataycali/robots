@@ -10,13 +10,21 @@ Allowlists are sourced from environment variables so deployments opt in without
 code changes:
 
 * ``DEVICE_CONNECT_RPC_ALLOW`` - comma-separated device ids permitted to call
-  state-mutating RPCs. ``*`` (or unset) means "allow all" but logs a warning so
-  the permissive posture is visible. An empty value is treated as unset, and a
-  value is empty when it holds no non-blank entry after stripping - so ``""``,
-  ``" "`` and ``","`` are all unset.
+  state-mutating RPCs. **Unset means nobody**: with no allowlist every
+  state-mutating RPC is refused, and the refusal is logged once naming the
+  variable to set. ``*`` means "allow all" and logs a warning so the permissive
+  posture is visible - it is the development spelling, and it has to be typed.
+  An empty value is treated as unset, and a value is empty when it holds no
+  non-blank entry after stripping - so ``""``, ``" "`` and ``","`` are all
+  unset. (Before F-003 an unset allowlist meant "allow all": a device that was
+  simply never configured executed every peer's ``execute`` / ``stop`` /
+  ``step`` / ``reset``, and the warning was the only sign.)
 * ``DEVICE_CONNECT_ESTOP_ALLOW`` - comma-separated device ids permitted to
   trigger emergency-stop handling. Falls back to ``DEVICE_CONNECT_RPC_ALLOW``
-  when unset.
+  when unset. With neither set, a **named** caller may still stop the robot -
+  stopping must never get harder than moving - but an anonymous caller
+  (``caller=None``) is refused, so the fallback stays permissive for peers that
+  say who they are and the warning still fires.
 
 Matching supports trailing ``*`` glob prefixes (e.g. ``safety-*``).
 
@@ -59,6 +67,7 @@ _ESTOP_ALLOW_ENV = "DEVICE_CONNECT_ESTOP_ALLOW"
 
 _warned_permissive: set[str] = set()
 _warned_insecure_acl: set[str] = set()
+_warned_unconfigured: set[str] = set()
 
 _INSECURE_ENV = "DEVICE_CONNECT_ALLOW_INSECURE"
 
@@ -180,15 +189,37 @@ def _matches(caller: str, patterns: list[str]) -> bool:
 
 
 def _warn_permissive_once(scope: str) -> None:
+    """Warn (once per scope) that every named caller is being allowed.
+
+    Fires for an explicit ``*`` on either scope, and for the emergency-stop
+    scope when no allowlist is set at all (the one place an unset list still
+    allows anyone who carries an id).
+    """
     if scope not in _warned_permissive:
         _warned_permissive.add(scope)
         logger.warning(
-            "Device Connect %s authorization is permissive (no %s allowlist set). "
-            "Any device that can reach the network may invoke state-mutating "
-            "operations. Set the allowlist to restrict callers.",
+            "Device Connect %s authorization is permissive (the %s allowlist "
+            "allows every named caller). Any device that can reach the network "
+            "may invoke these operations. List specific device ids to restrict callers.",
             scope,
             _RPC_ALLOW_ENV if scope == "rpc" else _ESTOP_ALLOW_ENV,
         )
+
+
+def _warn_unconfigured_once(scope: str) -> None:
+    """Log (once per scope) that a call was refused because no allowlist exists."""
+    if scope in _warned_unconfigured:
+        return
+    _warned_unconfigured.add(scope)
+    logger.warning(
+        "Refused a Device Connect %s call: no %s allowlist is set, and an unset "
+        "allowlist authorizes nobody. Set %s to the comma-separated device ids "
+        "that may call state-mutating operations, or to '*' to allow every "
+        "caller during development.",
+        scope,
+        _RPC_ALLOW_ENV,
+        _RPC_ALLOW_ENV,
+    )
 
 
 def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any = None) -> bool:
@@ -211,6 +242,15 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any 
         *device*: an allowlist is enforced under either posture, and *device*
         only decides whether the advisory that the enforcement is advisory
         fires.
+
+        With no allowlist configured the answer depends on the scope. A
+        state-mutating RPC is refused - authorization that nobody configured
+        authorizes nobody (F-003, CWE-862) - and the refusal is logged once
+        naming ``DEVICE_CONNECT_RPC_ALLOW``. An emergency stop from a named
+        caller is still honoured, because a stop must never be harder to
+        deliver than the motion it ends, but an anonymous stop is refused: a
+        caller that carries no id cannot be told apart from one that forged
+        none.
     """
     if scope == "estop":
         # Fall back through the parser, not through the raw string's truthiness:
@@ -228,18 +268,31 @@ def is_authorized_caller(caller: str | None, *, scope: str = "rpc", device: Any 
         env_scope = "rpc"
 
     if patterns is None:
-        # No allowlist configured - preserve out-of-the-box dev usability but
-        # make the permissive posture loud so operators notice.
+        if env_scope != "estop":
+            # No allowlist configured: nobody is authorized to move the robot.
+            # Development opts in by spelling '*' rather than by forgetting.
+            _warn_unconfigured_once(env_scope)
+            return False
+        # Emergency stop with no allowlist anywhere: a named caller may still
+        # stop the robot (stopping must not get harder than moving), and the
+        # permissive posture stays loud. An anonymous caller is refused: no id
+        # means nothing to hold the stop against.
         _warn_permissive_once(env_scope)
-        return True
+        return bool(caller)
+
+    if "*" in patterns:
+        # An explicit '*' is the dev spelling of "allow all" - loud, like before.
+        _warn_permissive_once(env_scope)
 
     # An allowlist is configured. If the transport is insecure the caller id is
     # self-asserted, so the allowlist is advisory - say so once, loudly.
     if _insecure_transport_active(device):
         _warn_insecure_acl_once(env_scope)
 
-    # Allowlist configured: a missing caller identity cannot be authorized.
-    if not caller:
+    # Allowlist configured: a missing caller identity cannot be authorized, and
+    # neither can one that is not a name - the transport reports a device id as
+    # a string, so anything else is not an identity the allowlist can speak to.
+    if not caller or not isinstance(caller, str):
         return False
     return _matches(caller, patterns)
 

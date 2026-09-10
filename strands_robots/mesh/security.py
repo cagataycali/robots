@@ -58,6 +58,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from strands_robots import refusal_codes
+from strands_robots.locomotion_envelope import target_velocity_component_error
 
 logger = logging.getLogger(__name__)
 
@@ -338,8 +339,9 @@ MAX_TARGET_JOINTS: int = 256
 #: ``start`` payload's ``target_velocity`` list (issue #300 well-known
 #: kwarg). The wire cannot own the arity verdict: WBC and ``wbc_gait``
 #: require at least ``[vx, vy, omega]`` and read the first three, while
-#: MotionBricks reads ``[vx, vy]`` or ``[vx, vy, vz]`` - so a fixed
-#: length here would refuse a shape one of them accepts, and each names
+#: ``microduck`` accepts ``[vx, vy, omega]`` or ``[vx, vy]`` and refuses
+#: any other width - so a fixed length here would refuse a shape one of
+#: them accepts, and each names
 #: its own requirement when a caller gets it wrong. This cap is purely
 #: DoS defence, the same role :data:`MAX_TARGET_JOINTS` plays: 16 is well
 #: above any shipped receiver's read and keeps a malicious payload from
@@ -424,9 +426,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         # WBCGaitPolicy
         "wbc_gait",
         "sonic_gait",
-        # MotionBricksPolicy
-        "motionbricks",
-        "motion_bricks",
         # KimodoPolicy
         "kimodo",
         "kimodo_g1",
@@ -442,6 +441,8 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "microduck_stand",
         # RemotePolicy
         "remote",
+        # RLCheckpointPolicy
+        "rl",
     }
 )
 
@@ -1335,7 +1336,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         # ``policy_kwargs`` by the dispatcher, which is what reaches
         # ``get_actions(obs, instruction, **policy_kwargs)``. Planner-style
         # providers (cuRobo, MoveIt2) read a Cartesian or joint-space goal;
-        # locomotion providers (WBC, wbc_gait, MotionBricks) read
+        # locomotion providers (WBC, wbc_gait, microduck) read
         # ``target_velocity``. VLA providers ignore all of them.
         #
         # Every key ``SimEngine.run_policy`` documents as a #300 goal key is
@@ -1389,15 +1390,21 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     f"target_velocity has {len(value)} components > "
                     f"MAX_TARGET_VELOCITY_COMPONENTS ({MAX_TARGET_VELOCITY_COMPONENTS})."
                 )
-            # Per-component domain shared with ``target_pose``: finite, in
-            # range, and a bool is refused by name rather than read as 1.
+            # Per-component domain: finite and a bool refused by name (as for
+            # ``target_pose``), then the locomotion envelope from
+            # :mod:`strands_robots.locomotion_envelope` - the same bound the
+            # WBC policy re-applies at the sink, so wire and sink agree (F-005).
+            # The ``+/-1e6`` pose domain is a coordinate range, not a speed one;
+            # a ``[1e6, 0, 0]`` velocity is refused here, never clamped.
             # The component COUNT is not checked against any receiver's
             # arity here - see :data:`MAX_TARGET_VELOCITY_COMPONENTS`.
             coerced_velocity: list[float] = []
             for i, component in enumerate(value):
-                coerced_velocity.append(
-                    _coerce_float(f"target_velocity[{i}]", component, lo=-1e6, hi=1e6, default=None)
-                )
+                coerced = _coerce_float(f"target_velocity[{i}]", component, lo=-1e6, hi=1e6, default=None)
+                envelope_error = target_velocity_component_error(i, coerced, "validate_command")
+                if envelope_error is not None:
+                    raise ValidationError(envelope_error)
+                coerced_velocity.append(coerced)
             out["target_velocity"] = coerced_velocity
 
         if "world_update" in cmd:

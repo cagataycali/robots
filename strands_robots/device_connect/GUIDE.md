@@ -329,7 +329,11 @@ All the options above (A–B) work identically with full infrastructure - the on
 > Devices can restrict which callers may invoke state-mutating RPCs (`execute` /
 > `stop` / `step` / `reset`) and `emergencyStop`, matched against the RPC's
 > authenticated `source_device` (trailing-`*` globs allowed, e.g. `safety-*`).
-> Two things to know:
+> Three things to know:
+> - **Unset means nobody.** A device with no `DEVICE_CONNECT_RPC_ALLOW` refuses
+>   every `execute` / `stop` / `step` / `reset` and logs once which variable to
+>   set. Type `*` for the development "allow every named caller" posture (it
+>   warns). `emergencyStop` with no allowlist still honours a *named* caller.
 > - **Caller identity must be supplied.** A device-to-device caller carries its
 >   id automatically; an **agent** driving the robot via `robot_mesh` /
 >   `device-connect-agent-tools` is anonymous by default. Set

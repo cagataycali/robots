@@ -38,10 +38,15 @@ except ImportError:  # pragma: no cover - exercised only without the extra
     if not TYPE_CHECKING:
 
         def dataclass(cls=None, **kwargs):  # type: ignore[no-redef]
+            """Refuse a message definition: the pure-RTPS backend needs cyclonedds.
+
+            Raises:
+                ImportError: Always, naming the extra that installs cyclonedds.
+            """
             raise ImportError(_INSTALL_HINT, name="cyclonedds")
 
         class IdlStruct:  # type: ignore[no-redef]
-            pass
+            """Stand-in for cyclonedds' IdlStruct, so this module imports without it."""
 
 
 _INSTALL_HINT = (

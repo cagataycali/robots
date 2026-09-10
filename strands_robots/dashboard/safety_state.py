@@ -16,6 +16,7 @@ class Lockout:
     reason: str = "no e-stop or resume seen since this dashboard started"
 
     def as_fields(self) -> dict[str, Any]:
+        """The lockout as flat log fields, omitting the ones this dashboard was never told."""
         out: dict[str, Any] = {"state": self.state, "reason": self.reason}
         if self.since is not None:
             out["since"] = self.since

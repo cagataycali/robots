@@ -533,7 +533,6 @@ class LerobotLocalPolicy(Policy):
         # embodiment / image_keys were incompatible with the model's declared
         # features, so the bridge was discarded (see _load_processor_bridge).
         self._embodiment_config_failed = False
-        self._processor_inert_reason: str | None = None
         self._tokenizer: Any = None
         # Refused where the caller's value arrives, and before any checkpoint is
         # downloaded: the tokenizer reads this as a slice bound over the encoded
@@ -1116,7 +1115,6 @@ class LerobotLocalPolicy(Policy):
         caller error that should abort the load loudly.
         """
         self._embodiment_config_failed = False
-        self._processor_inert_reason = None
         if not (self.use_processor and self.pretrained_name_or_path):
             return
 
@@ -1128,7 +1126,6 @@ class LerobotLocalPolicy(Policy):
                 policy_type=self.policy_type,
                 policy_config=getattr(self._policy, "config", None),
                 revision=self.revision,
-                norm_tag=self._molmoact2_norm_tag,
             )
         except (FileNotFoundError, ValueError, ImportError) as exc:
             # Processor bridge is optional - models work without it via the raw
@@ -1171,12 +1168,8 @@ class LerobotLocalPolicy(Policy):
                     self._processor_bridge = None
                     self._embodiment_config_failed = True
             else:
-                # An inactive bridge is normally benign - the checkpoint ships no
-                # processor configs and no recognized stats file. When it instead
-                # carries a reason (a caller argument put reachable pipelines out
-                # of reach), keep that reason so the report below can name it; the
-                # bridge itself is still discarded, it applies nothing either way.
-                self._processor_inert_reason = self._processor_bridge.inert_reason
+                # An inactive bridge is benign: the checkpoint ships no processor
+                # configs, so there is genuinely nothing to apply.
                 self._processor_bridge = None
                 logger.debug("No processor configs found, using raw obs/action flow")
 
@@ -1191,23 +1184,21 @@ class LerobotLocalPolicy(Policy):
         # misleading "no policy_postprocessor.json" message for that case.
         if self.use_processor and not self._embodiment_config_failed:
             bridge = self._processor_bridge
-            inert_reason = self._processor_inert_reason
-            if inert_reason:
-                # The pipelines were within reach and a caller-supplied argument
-                # put them out of reach. Report THAT, not the generic missing-
-                # postprocessor message below, whose remedy (supply the
-                # checkpoint's postprocessor) does not address it - the same
-                # accurate-cause rule the embodiment-config failure follows.
-                logger.warning(
-                    "lerobot_local: %s loaded WITHOUT normalization: %s "
-                    "Until it is corrected, observation.state reaches the policy "
-                    "un-normalized and predicted actions reach the robot without "
-                    "unnormalization -- if the arm barely moves or reaches an "
-                    "out-of-distribution pose, this is why.",
-                    self.pretrained_name_or_path or "<model>",
-                    inert_reason,
+            # Stats present at the wrong width raise from inside LeRobot's
+            # broadcast on the FIRST inference - after the rollout started and
+            # the robot was commanded - naming neither the feature nor either
+            # width. Both widths are known here, so refuse now and name them.
+            mismatched = [] if bridge is None else bridge.mismatched_normalization_widths()
+            if mismatched:
+                raise ValueError(
+                    f"lerobot_local: {self.pretrained_name_or_path or '<model>'} was given "
+                    f"normalization stats that do not match the widths the checkpoint "
+                    f"declares: {mismatched}. LeRobot would raise from the tensor broadcast "
+                    f"on the first inference instead. Supply stats whose width matches the "
+                    f"checkpoint's declared features (they are usually the stats of the "
+                    f"dataset this checkpoint was trained on, for the same robot)."
                 )
-            elif bridge is None or not bridge.has_postprocessor:
+            if bridge is None or not bridge.has_postprocessor:
                 logger.warning(
                     "lerobot_local: %s loaded WITHOUT an action postprocessor "
                     "(no policy_postprocessor.json). Actions are emitted in the "
@@ -2295,9 +2286,9 @@ class LerobotLocalPolicy(Policy):
                 # A standard lerobot preprocessor pipeline ends in
                 # AddBatchDimension + Device steps that batch every tensor and
                 # move it to the policy device, so _fixup is a no-op there. But a
-                # MINIMAL pipeline does not: the norm_stats.json fallback builds
-                # ``DataProcessorPipeline(steps=[normalizer])`` only (no batch /
-                # device step), so without this the model receives an unbatched
+                # MINIMAL pipeline -- one carrying a normalizer but no batch /
+                # device step -- does not, so without this the model receives an
+                # unbatched
                 # ``observation.state`` (D,) alongside a (1, C, H, W) image -> a
                 # torch.stack rank mismatch inside select_action. _fixup is
                 # idempotent (it leaves already-batched, already-CHW, already-on-

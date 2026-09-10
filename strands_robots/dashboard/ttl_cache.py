@@ -45,6 +45,13 @@ class TTLCache[V]:
             return hit[1]
 
     def put(self, key: str, value: V) -> None:
+        """Store *value* under *key*, pruning what expired and evicting the oldest.
+
+        Args:
+            key: The cache key; re-writing one moves it to the end of the
+                eviction order, since it is the most recently useful.
+            value: The value to remember for this cache's TTL.
+        """
         with self._lock:
             now = self._clock()
             # a re-written key must move to the END of the eviction order: it is the
@@ -56,6 +63,7 @@ class TTLCache[V]:
             self._data[key] = (now, value)
 
     def clear(self) -> None:
+        """Forget every entry."""
         with self._lock:
             self._data.clear()
 

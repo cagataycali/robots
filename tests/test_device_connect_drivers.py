@@ -16,14 +16,25 @@ from dataclasses import dataclass
 from enum import Enum
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from strands_robots.simulation.models import SimRobot
 from tests._sim_stop_policy_stand_in import stop_policy_stand_in
+
+# The RPCs graded here run as an allowlisted operator: authorization fails
+# closed and is graded in test_device_connect_hardening.py, not here.
+pytestmark = pytest.mark.usefixtures("named_rpc_caller")
 
 # ── Mock heavy dependencies before importing ──────────────────────
 
 # Mock device_connect_edge
 mock_device_connect_edge = MagicMock()
 mock_drivers = MagicMock()
+# The drivers bind ``get_rpc_source_device`` from this mock at import time. It
+# reports the operator ``named_rpc_caller`` (tests/conftest.py) allowlists, so
+# the RPCs graded here are admitted; authorization fails closed and is graded
+# in test_device_connect_hardening.py.
+mock_drivers.get_rpc_source_device.return_value = "test-operator"
 
 
 class _FakeDeviceDriver:

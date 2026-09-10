@@ -45,7 +45,7 @@ _OTHER_MOTOR = "wrist_roll"
 
 # The placeholder form every prose declaration uses, e.g. ``{"<motor>.pos":
 # (min, max)}``. Matched only where the surrounding text names the parameter, so
-# an unrelated ``(min, max)`` pair (MotionBricks' ``speed_scale``) is not graded.
+# an unrelated ``(min, max)`` pair elsewhere in the package is not graded.
 _PLACEHOLDER_MAPPING = re.compile(r"\{\s*([^{}:]{1,48}?)\s*:\s*\(min, max\)\s*\}")
 
 # A runnable example's real mapping, e.g. ``joint_limits={"elbow.pos": (-1, 1)}``.
