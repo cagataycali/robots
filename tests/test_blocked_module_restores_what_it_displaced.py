@@ -62,6 +62,16 @@ class TestTheBlockBites:
             __import__(probe)
 
 
+def _raise_from_inside() -> None:
+    """Raise from inside a ``blocked`` body without ending the test's own flow.
+
+    A literal ``raise`` under ``pytest.raises`` reads as a terminal statement to a
+    control-flow reader that does not model the context manager, which makes the
+    assertion after it look unreachable. The behaviour under test is the same.
+    """
+    raise RuntimeError("from inside")
+
+
 class TestTheRoundTrip:
     """Every starting state comes back unchanged."""
 
@@ -69,7 +79,7 @@ class TestTheRoundTrip:
         "prepare",
         [
             pytest.param(lambda name: None, id="absent-from-both"),
-            pytest.param(lambda name: __import__(name), id="imported-not-memoised"),
+            pytest.param(__import__, id="imported-not-memoised"),
             pytest.param(require_optional, id="imported-and-memoised"),
         ],
     )
@@ -87,7 +97,7 @@ class TestTheRoundTrip:
         before = _state(probe)
 
         with pytest.raises(RuntimeError, match="from inside"), blocked(probe):
-            raise RuntimeError("from inside")
+            _raise_from_inside()
 
         assert _state(probe) == before
 
