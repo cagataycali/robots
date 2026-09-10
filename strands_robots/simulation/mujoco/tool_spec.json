@@ -3,7 +3,7 @@
   "properties": {
     "action": {
       "type": "string",
-      "description": "Action to perform",
+      "description": "The operation to run (one enum value). Every other parameter belongs to one or more actions and is named in its description",
       "enum": [
         "create_world",
         "load_scene",
@@ -89,10 +89,12 @@
       "description": "Path to MJCF/URDF scene file"
     },
     "timestep": {
-      "type": "number"
+      "type": "number",
+      "description": "Physics timestep in seconds (create_world default, set_timestep): a finite positive float, e.g. 0.002"
     },
     "gravity": {
       "type": "array",
+      "description": "Gravity vector [x, y, z] in m/s^2 (create_world, set_gravity); default [0, 0, -9.81]",
       "items": {
         "type": "number"
       },
@@ -100,7 +102,8 @@
       "maxItems": 3
     },
     "ground_plane": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "create_world: add a flat ground plane (default true); false for a free-floating scene"
     },
     "terrain": {
       "type": "string",
@@ -112,10 +115,11 @@
     },
     "urdf_path": {
       "type": "string",
-      "description": "Path to URDF/MJCF file"
+      "description": "Path to a URDF or MJCF file (add_robot for an unregistered robot, register_urdf)"
     },
     "robot_name": {
-      "type": "string"
+      "type": "string",
+      "description": "Which robot the action targets, as listed by list_robots; may be omitted when exactly one robot is loaded"
     },
     "data_config": {
       "type": "string",
@@ -131,6 +135,7 @@
     },
     "shape": {
       "type": "string",
+      "description": "add_object: \"box\", \"sphere\", \"cylinder\", \"capsule\", \"ellipsoid\", \"plane\" or \"mesh\" (default box)",
       "enum": [
         "box",
         "sphere",
@@ -143,6 +148,7 @@
     },
     "position": {
       "type": "array",
+      "description": "World-frame [x, y, z] in meters: where to place a robot/object/camera, or the move_to end-effector target",
       "items": {
         "type": "number"
       },
@@ -183,7 +189,8 @@
       "description": "Fix an add_object body in the world so physics cannot move it. Omit it to leave the choice to the shape: shape='plane' is then made static (a plane is infinite and cannot carry a dynamic mass) and every other shape is dynamic. Sending false for a plane is refused rather than overridden, so omit this rather than spelling out the non-plane default."
     },
     "mesh_path": {
-      "type": "string"
+      "type": "string",
+      "description": "add_object with shape=\"mesh\": path to the mesh asset (STL/OBJ); required for mesh, ignored otherwise"
     },
     "material": {
       "type": "object",
@@ -207,7 +214,7 @@
       },
       "minItems": 3,
       "maxItems": 3,
-      "description": "Camera target point"
+      "description": "add_camera: world point [x, y, z] the camera looks at"
     },
     "parent_body": {
       "type": "string",
@@ -215,32 +222,39 @@
     },
     "fov": {
       "type": "number",
-      "description": "Camera field of view"
+      "description": "add_camera: vertical field of view in degrees (default 60)"
     },
     "width": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Image width in pixels (add_camera default 640; render/render_depth/get_world_point default to the camera's own resolution)"
     },
     "height": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Image height in pixels (add_camera default 480; render/render_depth/get_world_point default to the camera's own resolution)"
     },
     "policy_provider": {
       "type": "string",
       "description": "Policy provider name (e.g. groot, lerobot_local, lerobot_async, cosmos3, mock). See list_providers()."
     },
     "instruction": {
-      "type": "string"
+      "type": "string",
+      "description": "Natural-language task text passed to the policy (run_policy, start_policy, eval_policy, evaluate_benchmark)"
     },
     "duration": {
-      "type": "number"
+      "type": "number",
+      "description": "run_policy/start_policy: wall-clock seconds to run the policy (default 10); n_steps takes precedence when given"
     },
     "action_horizon": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Policy actions consumed from each predicted chunk before re-querying the policy (default 8)"
     },
     "control_frequency": {
-      "type": "number"
+      "type": "number",
+      "description": "Policy control rate in Hz (default 50); sets the physics substeps executed per action"
     },
     "camera_name": {
-      "type": "string"
+      "type": "string",
+      "description": "Camera to render from (render, render_depth, get_world_point): one added via add_camera, or \"default\""
     },
     "pixels": {
       "type": "array",
@@ -253,7 +267,8 @@
       "description": "get_world_point: pixel coordinates [[u, v], ...] to ground to world xyz (u = column from the left, v = row from the top; integer-valued, within the rendered resolution). Pick pixels ON the visible surface of the target (avoid rims/edges/reflections/background) and sample several on the same surface - the returned 'point' is the median over the valid samples; pixels with no depth are dropped (see n_valid). Re-localize after any robot/camera/object motion."
     },
     "n_steps": {
-      "type": "integer"
+      "type": "integer",
+      "description": "Number of physics steps to advance (step, default 1; 0 is a no-op) or to run a policy for (run_policy/start_policy, overrides duration). set_gripper uses `steps` for its hold ticks"
     },
     "output_path": {
       "type": "string",
@@ -264,23 +279,28 @@
       "description": "Frames per second: video rate for run_policy record_video, dataset rate for start_recording. Must be a positive whole number."
     },
     "randomize_colors": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: re-sample every non-ground geom's color (default true)"
     },
     "randomize_lighting": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: jitter light positions (within 0.5 m of authored) and diffuse color (default true)"
     },
     "randomize_physics": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: scale geom friction and body mass/inertia (default false)"
     },
     "randomize_positions": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: add uniform xyz noise to dynamic objects, up to position_noise (default false)"
     },
     "position_noise": {
-      "type": "number"
+      "type": "number",
+      "description": "randomize: max +/- xyz offset in meters when randomize_positions is true (default 0.02)"
     },
     "seed": {
       "type": "integer",
-      "description": "Random seed"
+      "description": "Non-negative integer seed for a reproducible random stream (randomize, set_obs_noise, policy runs); omit for fresh entropy"
     },
     "joint_pos_std": {
       "type": "number",
@@ -324,7 +344,7 @@
     },
     "n_episodes": {
       "type": "integer",
-      "description": "Number of eval episodes"
+      "description": "Number of rollout episodes (run_policy, eval_policy, evaluate_benchmark; default 1, positive integer); episodes reset between runs"
     },
     "max_steps": {
       "type": "integer",
@@ -369,15 +389,15 @@
     },
     "body_name": {
       "type": "string",
-      "description": "Target body name"
+      "description": "Body to act on, as listed by list_bodies (apply_force, get_body_state, set_body_properties, get_jacobian, ...)"
     },
     "site_name": {
       "type": "string",
-      "description": "Site name for Jacobian"
+      "description": "get_jacobian: compute the Jacobian at this site instead of a body or geom (give exactly one of body_name/site_name/geom_name)"
     },
     "geom_name": {
       "type": "string",
-      "description": "Geom name"
+      "description": "Geom to act on (set_geom_properties; get_jacobian as an alternative to body_name/site_name). An add_object name is accepted as its geom"
     },
     "geom_id": {
       "type": "integer",
@@ -426,7 +446,7 @@
       },
       "minItems": 3,
       "maxItems": 3,
-      "description": "Ray origin [x, y, z]"
+      "description": "raycast/multi_raycast: ray start point [x, y, z] in the world frame, meters"
     },
     "direction": {
       "type": "array",
