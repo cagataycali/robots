@@ -77,6 +77,12 @@ _REFUSALS: tuple[tuple[str, tuple[Any, ...], type[BaseException]], ...] = (
     ("encode_word", (0x10000,), ValueError),
     ("decode_word", ([0xFF, 0x03],), TypeError),
     ("decode_word", (b"\x01",), ValueError),
+    ("max_magnitude", (True,), TypeError),
+    ("max_magnitude", (0,), ValueError),
+    ("max_magnitude", (16,), ValueError),
+    ("decode_sign_magnitude", ("0x8064", 15), TypeError),
+    ("decode_sign_magnitude", (0x10000, 15), ValueError),
+    ("decode_sign_magnitude", (0x8064, 16), ValueError),
 )
 
 

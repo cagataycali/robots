@@ -151,11 +151,12 @@ def encode_word(value: int) -> bytes:
 def decode_word(raw: bytes) -> int:
     """Read the two bytes an STS/SMS-series servo replied with.
 
-    The inverse of :func:`encode_word`, and the same protocol 0 order. Sign
-    handling is deliberately absent: which bit carries direction is a
-    per-register property (bit 15 on the goal and present pairs, bit 10 on
-    ``Present_Load``, and nothing at all on the SCS series), so it belongs to
-    the caller that knows which register it read.
+    The inverse of :func:`encode_word`, and the same protocol 0 order. The
+    result is the *unsigned* word. Which bit of it carries direction is a
+    per-register property, declared once in :data:`SIGN_BIT` and applied by
+    :func:`decode_sign_magnitude`, rather than left for each caller to
+    remember per register - a caller who has to supply it is a caller who can
+    omit it, and omitting it reads a signed register as a huge positive one.
 
     Args:
         raw: Exactly :data:`WORD_LENGTH` bytes, low byte first.
@@ -196,7 +197,9 @@ class Register(enum.IntEnum):
 
     Addresses match the STS3215 datasheet's control table (rev. 2024-02, pp.
     12-15). Registers below 0x28 are EEPROM (persist across power); 0x28 and
-    up are SRAM (volatile). The driver does not write EEPROM unless the
+    up are SRAM (volatile). Which of them carry a sign, and on which bit, is
+    :data:`SIGN_BIT` - a property of the value rather than of the address, and
+    one no member here restates. The driver does not write EEPROM unless the
     caller opts into it, so both regions are named here but the write-path
     validators refuse EEPROM addresses by default (bus PR scope, not codec).
     """
@@ -215,15 +218,107 @@ class Register(enum.IntEnum):
     ACCELERATION = 0x29
     GOAL_POSITION = 0x2A  # 2 bytes, 0..MAX_GOAL_POSITION on the STS/SMS series
     GOAL_TIME = 0x2C  # 2 bytes
-    GOAL_VELOCITY = 0x2E  # 2 bytes, sign-magnitude on bit 15
+    GOAL_VELOCITY = 0x2E  # 2 bytes
     LOCK = 0x37
     PRESENT_POSITION = 0x38  # 2 bytes, read-only
-    PRESENT_VELOCITY = 0x3A  # 2 bytes, sign-magnitude on bit 15
-    PRESENT_LOAD = 0x3C  # 2 bytes, sign-magnitude on bit 10
+    PRESENT_VELOCITY = 0x3A  # 2 bytes, read-only
+    PRESENT_LOAD = 0x3C  # 2 bytes, read-only
     PRESENT_VOLTAGE = 0x3E
     PRESENT_TEMPERATURE = 0x3F
     MOVING = 0x42
     PRESENT_CURRENT = 0x45  # 2 bytes
+
+
+# ---------------------------------------------------------------------------
+# The sign convention, declared once. Which bit of a register carries direction
+# is a property of the register, so it is a table here rather than an argument
+# each reader supplies - see :data:`SIGN_BIT`.
+# ---------------------------------------------------------------------------
+SIGN_BIT: Final[dict[Register, int]] = {
+    Register.GOAL_VELOCITY: 15,
+    Register.PRESENT_POSITION: 15,
+    Register.PRESENT_VELOCITY: 15,
+    Register.PRESENT_LOAD: 10,
+}
+"""Bit carrying direction, for each register whose value encodes one.
+
+The STS/SMS series encodes these as **sign-magnitude**, not two's complement:
+the named bit is the direction and the bits below it the magnitude. A register
+absent from this table is plain unsigned.
+
+Entry for entry, this is lerobot's ``STS_SMS_SERIES_ENCODINGS_TABLE`` - the
+reference an SO-arm is calibrated and read by - restricted to the registers this
+package reads or writes. Reading a register with a *different* sign than lerobot
+reads it with reports a different number for the same joint, so agreement here
+is not a style preference.
+
+It is a table, and not a parameter, because the omission is what goes wrong.
+``Present_Position`` was read as unsigned while its two siblings were not, so a
+servo reporting -100 counts - a joint just past its homing zero - was read as
+32868, a position 12-bit counts cannot express, and reported as degrees without
+an error. A reader that has to name the bit can leave it out; one that looks it
+up here cannot.
+"""
+
+
+def max_magnitude(sign_bit: int) -> int:
+    """Largest magnitude a sign-magnitude register holds with ``sign_bit`` clear.
+
+    Both the ceiling a caller-supplied value is bound to and the mask
+    :func:`decode_sign_magnitude` reads a reply through, so the two cannot
+    disagree about where the magnitude ends.
+
+    Args:
+        sign_bit: A value of :data:`SIGN_BIT`.
+
+    Returns:
+        ``(1 << sign_bit) - 1``.
+
+    Raises:
+        TypeError: If ``sign_bit`` is not an :class:`int`. A :class:`bool` is
+            refused with it, since ``True`` would silently name bit 1.
+        ValueError: If ``sign_bit`` is not a bit of the two-byte word below its
+            top - ``0`` leaves no magnitude at all, and a bit at or above the
+            word width is not in the value, so masking by it would return the
+            whole unsigned word and call it a magnitude.
+    """
+    if not isinstance(sign_bit, int) or isinstance(sign_bit, bool):
+        raise TypeError(f"sign_bit must be int, got {type(sign_bit).__name__}")
+    if not 1 <= sign_bit < 8 * WORD_LENGTH:
+        raise ValueError(f"sign_bit out of range 1..{8 * WORD_LENGTH - 1}: {sign_bit}")
+    return (1 << sign_bit) - 1
+
+
+def decode_sign_magnitude(value: int, sign_bit: int) -> int:
+    """Read an unsigned register word as the signed value the servo meant.
+
+    The other half of :func:`decode_word`: that one gives the two bytes their
+    order, this one gives the word its sign. lerobot's ``decode_sign_magnitude``
+    is the same identity, and :data:`SIGN_BIT` the same table, so a joint read
+    through this package and through lerobot reports the same number.
+
+    Args:
+        value: The word :func:`decode_word` returned.
+        sign_bit: The register's entry in :data:`SIGN_BIT`.
+
+    Returns:
+        The magnitude below ``sign_bit``, negated when that bit is set.
+
+    Raises:
+        TypeError: If ``value`` or ``sign_bit`` is not an :class:`int` (the
+            latter from :func:`max_magnitude`), a :class:`bool` included.
+        ValueError: If ``sign_bit`` is not a bit of the word (from
+            :func:`max_magnitude`), or if ``value`` does not fit two bytes.
+            Either one silently returns bits that are not the magnitude, which
+            is the unsigned reading this function exists to replace.
+    """
+    ceiling = max_magnitude(sign_bit)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"value must be int, got {type(value).__name__}")
+    if not 0 <= value <= _MAX_WORD:
+        raise ValueError(f"value out of range 0..{_MAX_WORD}: {value}")
+    magnitude = value & ceiling
+    return -magnitude if (value >> sign_bit) & 1 else magnitude
 
 
 # ---------------------------------------------------------------------------

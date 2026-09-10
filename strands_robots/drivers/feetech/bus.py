@@ -35,10 +35,12 @@ from typing import Any, Final
 
 from strands_robots.drivers.feetech.protocol import (
     MAX_GOAL_POSITION,
+    SIGN_BIT,
     Instruction,
     ProtocolError,
     Register,
     build_packet,
+    decode_sign_magnitude,
     decode_word,
     encode_word,
     parse_status_packet,
@@ -90,7 +92,14 @@ class MotorSpec:
         return round((value - self.low) / span * self.resolution)
 
     def to_value(self, counts: int) -> float:
-        """Decode encoder counts back into this joint's unit."""
+        """Decode encoder counts back into this joint's unit.
+
+        A reading is not bounded the way a target is. A servo whose homing
+        offset puts the joint just past its zero reports negative counts, and
+        the value they map to sits below :attr:`low` - reported as it is,
+        because that is where the joint actually is. Refusing or clamping it
+        would discard the arm's own state rather than a caller's mistake.
+        """
         span = self.high - self.low
         return self.low + counts / self.resolution * span
 
@@ -112,21 +121,20 @@ SO_ARM_MOTORS: Final[dict[str, MotorSpec]] = {
 
 #: Readable registers, keyed by the name a caller asks for.
 #:
-#: Each entry is ``(address, sign_bit)``. ``sign_bit`` is ``None`` for a plain
-#: unsigned value, otherwise the bit carrying direction - the STS/SMS series
-#: encodes these as sign-magnitude, not two's complement, and reading bit 15 as
-#: part of the magnitude reports a stopped joint as moving fast (see
-#: :mod:`strands_robots.tools.serial_tool`, which pins the same convention for
-#: the write direction).
+#: The value is the register and nothing else. Whether it carries a sign, and on
+#: which bit, is looked up in
+#: :data:`~strands_robots.drivers.feetech.protocol.SIGN_BIT` - not restated
+#: here, because restating it is how ``Present_Position`` came to be read as
+#: unsigned while the two registers either side of it were not.
 #:
-#: ``Present_Current`` (0x45) is deliberately absent: its sign encoding is not
-#: established anywhere in this package, and a register decoded by guess
-#: reports a number that looks like a measurement. A caller asking for it gets
-#: a refusal naming the readable set instead.
-READABLE_REGISTERS: Final[dict[str, tuple[int, int | None]]] = {
-    "Present_Position": (Register.PRESENT_POSITION, None),
-    "Present_Velocity": (Register.PRESENT_VELOCITY, 15),
-    "Present_Load": (Register.PRESENT_LOAD, 10),
+#: ``Present_Current`` (0x45) is absent because nothing in this package reads
+#: it, not because its encoding is unknown: lerobot's encodings table carries no
+#: entry for it, which is to say unsigned, so adding it is one line here and
+#: none there. A caller asking for it gets a refusal naming the readable set.
+READABLE_REGISTERS: Final[dict[str, Register]] = {
+    "Present_Position": Register.PRESENT_POSITION,
+    "Present_Velocity": Register.PRESENT_VELOCITY,
+    "Present_Load": Register.PRESENT_LOAD,
 }
 
 #: Bytes each readable register carries.
@@ -148,25 +156,25 @@ _REPLY_SETTLE_S: Final[float] = 0.01
 
 
 def _decode(raw: bytes, sign_bit: int | None) -> int:
-    """Turn a two-byte reply into a signed integer.
+    """Turn a two-byte reply into the number the servo meant.
 
-    The byte order comes from
-    :func:`~strands_robots.drivers.feetech.protocol.decode_word`; only the sign
-    convention is applied here, because which bit carries direction is a
-    per-register property the codec deliberately leaves to its caller.
+    Both halves come from the codec:
+    :func:`~strands_robots.drivers.feetech.protocol.decode_word` for the byte
+    order and
+    :func:`~strands_robots.drivers.feetech.protocol.decode_sign_magnitude` for
+    the sign, so this bus holds no copy of either convention.
 
     Args:
         raw: The register's parameter bytes, in the order the servo sent them.
-        sign_bit: Bit carrying direction, or ``None`` when unsigned.
+        sign_bit: The register's
+            :data:`~strands_robots.drivers.feetech.protocol.SIGN_BIT` entry, or
+            ``None`` when the register is unsigned.
 
     Returns:
-        The register value, negative when ``sign_bit`` is set.
+        The register value, negative when ``sign_bit`` is set in it.
     """
     value = decode_word(raw)
-    if sign_bit is None:
-        return value
-    magnitude = value & ((1 << sign_bit) - 1)
-    return -magnitude if (value >> sign_bit) & 1 else magnitude
+    return value if sign_bit is None else decode_sign_magnitude(value, sign_bit)
 
 
 class FeetechBus:
@@ -291,7 +299,8 @@ class FeetechBus:
                 f"FeetechBus: cannot read {register!r}; readable registers are {sorted(READABLE_REGISTERS)}"
             )
         conn = self._require_open(f"reading {register}")
-        address, sign_bit = READABLE_REGISTERS[register]
+        address = READABLE_REGISTERS[register]
+        sign_bit = SIGN_BIT.get(address)
         out: dict[str, float] = {}
         for name, spec in self.motors.items():
             raw = self._read_one(conn, spec.motor_id, address, num_retry)
