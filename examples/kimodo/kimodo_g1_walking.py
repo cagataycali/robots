@@ -53,7 +53,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # Headless GL is required on Jetson/Docker.
-    os.environ.setdefault("MUJOCO_GL", "egl")
+    os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
     from strands_robots import Robot
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 
 logger = logging.getLogger("so101_curobo.app")
 
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     if not args.no_images:
-        os.environ.setdefault("MUJOCO_GL", "egl")
+        os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
         os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
     from examples.so101_curobo.controller import SO101CuroboDemo

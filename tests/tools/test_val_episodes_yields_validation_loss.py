@@ -26,8 +26,10 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.lerobot_train import build_train_command
-from strands_robots.utils import (
+pytest.importorskip("psutil")
+
+from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
+from strands_robots.utils import (  # noqa: E402
     effective_episode_count,
     episode_subset_budget_error,
     validation_split_error,

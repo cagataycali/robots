@@ -209,7 +209,8 @@ _lock = threading.Lock()
 # is an invariant maintained by hand at every write - and the two can disagree,
 # at which point a stale hit is indistinguishable from a fresh one. Keyed this
 # way they cannot: the key is the dict's key, so a value is only reachable
-# through the identity it was read under. ``mesh/_acl_config.py`` keys its ACL
+# through the identity it was read under. ``strands_robots.mesh._acl_config``
+# keys its ACL
 # cache on a file identity tuple for the same reason. Holds at most one entry -
 # there is one store path per process - so an operator (or an attacker)
 # rewriting the store cannot grow it.

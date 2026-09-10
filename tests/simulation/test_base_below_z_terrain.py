@@ -22,12 +22,15 @@ guard the flat-ground backward-compatibility. They are GL-free
 import os
 import tempfile
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.mujoco.simulation import Simulation
-from strands_robots.simulation.predicates import make_predicate
-from strands_robots.simulation.terrain import terrain_elevation
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.predicates import make_predicate  # noqa: E402
+from strands_robots.simulation.terrain import terrain_elevation  # noqa: E402
 
 # A floating base (NAMED free joint) + one actuated hinge; get_observation
 # surfaces base_pos for it. No own ground plane: the strands world supplies the

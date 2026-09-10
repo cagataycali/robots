@@ -95,7 +95,7 @@ _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
 _MODULE = _PACKAGE / "mesh" / "_acl_config.py"
 _PAGE = _ROOT / "docs" / "security.md"
-_README = _ROOT / "README.md"
+_CONFIG_REFERENCE = _ROOT / "docs" / "reference" / "configuration.md"
 
 _HEADING = "### Blacklist ACL acknowledgement (`STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`)"
 _PREFIX = "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"
@@ -195,17 +195,17 @@ def test_the_derivation_finds_the_acknowledgement_variable_the_module_reads() ->
     assert reads, "the AST scan of _acl_config.py found no STRANDS_MESH_ACCEPT_PERMISSIVE_ACL* reads at all"
 
 
-def test_every_acknowledgement_variable_the_module_reads_has_a_readme_matrix_row() -> None:
-    """Every read is a row on the README env-var matrix.
+def test_every_acknowledgement_variable_the_module_reads_has_a_config_matrix_row() -> None:
+    """Every read is a row on the docs/reference/configuration.md env-var matrix.
 
     The matrix is the single index the module family's own code cites for
     fleet configuration, so a variable the ACL loader reads without a row is a
     knob with no discoverable entry.
     """
-    readme = _README.read_text(encoding="utf-8")
-    missing = [name for name in _accept_env_reads() if not re.search(rf"^\| `{re.escape(name)}`", readme, re.MULTILINE)]
+    matrix = _CONFIG_REFERENCE.read_text(encoding="utf-8")
+    missing = [name for name in _accept_env_reads() if not re.search(rf"^\| `{re.escape(name)}`", matrix, re.MULTILINE)]
     assert not missing, (
-        f"README env-var matrix is missing a row for {missing}; "
+        f"docs/reference/configuration.md env-var matrix is missing a row for {missing}; "
         f"add one beside the STRANDS_MESH_ACL_FILE row so the ACL-configuration "
         "family reads as a single index"
     )

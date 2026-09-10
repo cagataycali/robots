@@ -21,11 +21,14 @@ and a fixed-base arm (no free joint) is skipped. These tests are GL-free
 import os
 import tempfile
 
-import mujoco
 import pytest
 
-from strands_robots.simulation.mujoco.simulation import Simulation
-from strands_robots.simulation.terrain import terrain_elevation
+pytest.importorskip("mujoco")
+
+import mujoco  # noqa: E402
+
+from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.terrain import terrain_elevation  # noqa: E402
 
 # A LOW floating base (base at z=0.4, foot sphere bottom at z=0.02) -- like a
 # quadruped, its feet sit well below a raised heightfield peak at the flat

@@ -17,13 +17,9 @@ one callers MUST propagate, so it is pinned here explicitly.
 from __future__ import annotations
 
 import inspect
-import os
 import struct
-import sys
 
 import pytest
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 pytest.importorskip("mujoco")
 

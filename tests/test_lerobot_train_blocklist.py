@@ -9,7 +9,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands_robots.tools.lerobot_train import (
+pytest.importorskip("psutil")
+
+from strands_robots.tools.lerobot_train import (  # noqa: E402
     _BLOCKED_EXTRA_FLAGS,
     _approve_response,
     _gate_extra_flags,

@@ -59,8 +59,10 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools import _process_stop
-from strands_robots.tools._process_stop import PID_STARTED_SINCE_BOOT, process_started_since_boot
+pytest.importorskip("psutil")
+
+from strands_robots.tools import _process_stop  # noqa: E402
+from strands_robots.tools._process_stop import PID_STARTED_SINCE_BOOT, process_started_since_boot  # noqa: E402
 
 
 def session_uptime(info: Any) -> tuple[float | None, str]:

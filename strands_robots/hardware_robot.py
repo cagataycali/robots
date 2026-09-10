@@ -1839,7 +1839,7 @@ class Robot(TeleopMixin, AgentTool):
                 logger.info(f"Using policy: {policy_provider} on {policy_host}:{policy_port}")
 
             # Real-Time Chunking contract (mirror PolicyRunner._run_policy_rollout
-            # in strands_robots/simulation/policy_runner.py): tell the policy the
+            # in ``strands_robots.simulation.policy_runner``): tell the policy the
             # control rate ONCE before the rollout so RTC-capable providers
             # (pi0/pi0.5/SmolVLA/MolmoAct2) convert their inference latency into a
             # correct count of action steps and blend chunk seams identically to
@@ -1849,7 +1849,7 @@ class Robot(TeleopMixin, AgentTool):
 
             # Clear per-episode policy state before the rollout, mirroring the
             # per-episode reset PolicyRunner performs in
-            # strands_robots/simulation/policy_runner.py. A caller may drive one
+            # ``strands_robots.simulation.policy_runner``. A caller may drive one
             # policy object through several tasks (that is the documented
             # ``run_policy(policy_object=...)`` usage), and Policy.reset exists
             # to clear exactly the state that must not cross that boundary -
@@ -2703,7 +2703,8 @@ class Robot(TeleopMixin, AgentTool):
         """Stop the current task, including one that is still connecting.
 
         This is the interrupt an operator (or the fleet ``{"action": "stop"}``
-        dispatch, via ``mesh/core.py``) reaches for, so it has to hold for a
+        dispatch, via :class:`~strands_robots.mesh.core.Mesh`) reaches for, so
+        it has to hold for a
         task in ANY stage that can still command the arm - not only the one
         stage whose status happens to be ``RUNNING``.
 

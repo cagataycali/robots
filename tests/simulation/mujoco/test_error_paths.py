@@ -16,14 +16,11 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tempfile
 
 import pytest
 
 mj = pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 

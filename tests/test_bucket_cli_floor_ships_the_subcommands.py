@@ -39,7 +39,7 @@ from strands_robots import dataset_recorder
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_README = _REPO_ROOT / "README.md"
+_README = _REPO_ROOT / "docs" / "recording.md"  # the bucket / streamed-training guidance page (was README)
 _RECORDER_SRC = Path(dataset_recorder.__file__)
 
 _FLOOR = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))

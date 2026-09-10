@@ -23,8 +23,6 @@ implementations so the three surfaces cannot drift.
 from __future__ import annotations
 
 import ast
-import os
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -35,8 +33,6 @@ from strands_robots.simulation.recording import dataset_recording_option_error
 from strands_robots.tools.run_policy import run_policy as run_policy_tool
 
 pytest.importorskip("mujoco")
-
-os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
