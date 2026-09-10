@@ -180,6 +180,15 @@ the same rule to the frames it builds
 (`build_packet(..., allow_broadcast=False)`), so the tool and the driver cannot
 disagree about which address is a servo and which is the whole bus.
 
+A *unicast* write is not reply-less. The addressed servo answers it with a
+six-byte status packet - the frame a read is answered with, minus the parameters
+- and that reply is the only evidence the motor took the command. The native
+driver's bus reads it: `FeetechBus.set_torque` names a servo that did not
+acknowledge, which is what lets the `stop` verb report a joint that may still be
+driven instead of an arm that is safe to approach, and reading it is also what
+keeps six unread acks from sitting in front of the next state read's reply
+stream.
+
 | Option | Accepted | Why the bound is where it is |
 |--------|----------|------------------------------|
 | `motor_id` | integer in `[1, 254]`, or `[1, 253]` for an action that reads a reply | the frame carries the ID in one byte, of which `0xfd` is the highest a servo may hold and `0xfe` is the broadcast, while `0xff` is the header value |
