@@ -2,7 +2,9 @@
 
 These tests exercise the wrapper logic that does NOT require a real LeRobot
 dataset by injecting a fake dataset object, so they run on a minimal env
-(``lerobot`` not installed). They cover the partial-episode discard behaviour
+(``lerobot`` not installed) - except the camera cells of
+:class:`TestBuildFeaturesSchema`, which read the camera schema lerobot itself
+declares. They cover the partial-episode discard behaviour
 and the add_frame() control-loop transform (schema-ordered flattening, camera
 normalization, drop accounting), plus episode/finalize/push lifecycle.
 """
@@ -658,9 +660,10 @@ class TestBuildFeaturesSchema:
     keys appear, their ``dtype``/``shape``/``names``, and how the state and
     action dimensions are derived from the several mutually-exclusive input
     sources (explicit feature dicts, a flat ``joint_names`` list, or the
-    action-mirrors-state fallback). These are pure-logic assertions -- no
-    LeRobot install is required because ``_build_features`` is a classmethod
-    that only manipulates plain dicts.
+    action-mirrors-state fallback). These are pure-logic assertions on plain
+    dicts; the cells that declare a camera need lerobot installed, because the
+    camera block delegates the layout to lerobot's own
+    ``hw_to_dataset_features`` rather than restating it.
     """
 
     def test_camera_keys_emit_video_features_with_default_dims(self):

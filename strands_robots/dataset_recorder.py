@@ -1417,6 +1417,13 @@ class DatasetRecorder:
         }
 
         Note: "names" must be a flat list of strings, NOT a dict like {"motors": [...]}.
+
+        The camera block delegates to lerobot's ``hw_to_dataset_features``, so a
+        call that declares any camera needs lerobot importable. Every production
+        caller reaches this through :meth:`create`, which resolves
+        ``LeRobotDataset`` first and so answers an absent extra with
+        :func:`_describe_lerobot_import_failure`'s diagnosis rather than a raw
+        import error.
         """
         features = {}
 
