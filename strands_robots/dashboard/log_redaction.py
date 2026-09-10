@@ -162,6 +162,14 @@ class RedactingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        """Redact every credential this record can render before a handler renders it.
+
+        Args:
+            record: The record about to be emitted, redacted in place.
+
+        Returns:
+            True always: this filter cleans records, it never drops them.
+        """
         if getattr(record, _DONE, False):
             return True
         try:

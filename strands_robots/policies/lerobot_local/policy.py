@@ -1184,6 +1184,20 @@ class LerobotLocalPolicy(Policy):
         # misleading "no policy_postprocessor.json" message for that case.
         if self.use_processor and not self._embodiment_config_failed:
             bridge = self._processor_bridge
+            # Stats present at the wrong width raise from inside LeRobot's
+            # broadcast on the FIRST inference - after the rollout started and
+            # the robot was commanded - naming neither the feature nor either
+            # width. Both widths are known here, so refuse now and name them.
+            mismatched = [] if bridge is None else bridge.mismatched_normalization_widths()
+            if mismatched:
+                raise ValueError(
+                    f"lerobot_local: {self.pretrained_name_or_path or '<model>'} was given "
+                    f"normalization stats that do not match the widths the checkpoint "
+                    f"declares: {mismatched}. LeRobot would raise from the tensor broadcast "
+                    f"on the first inference instead. Supply stats whose width matches the "
+                    f"checkpoint's declared features (they are usually the stats of the "
+                    f"dataset this checkpoint was trained on, for the same robot)."
+                )
             if bridge is None or not bridge.has_postprocessor:
                 logger.warning(
                     "lerobot_local: %s loaded WITHOUT an action postprocessor "
