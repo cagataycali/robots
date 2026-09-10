@@ -34,7 +34,7 @@ _PACKAGE_DIR = Path(registry_pkg.__file__).parent
 
 # The public-API modules of the package (``__init__`` only re-exports). All are
 # scanned by AST, so the walk needs no optional dependency installed.
-_MODULES = ("discovery.py", "loader.py", "policies.py", "robots.py", "user_registry.py")
+_MODULES = ("_overlay.py", "discovery.py", "loader.py", "policies.py", "robots.py", "user_registry.py")
 
 # The registry package exposes no public classes -- it is a set of module-level
 # functions over JSON-backed state. Pinned empty so a future public class trips
@@ -67,6 +67,9 @@ _EXPECTED_FUNCTIONS = {
     "policies.py::resolve_policy",
     "robots.py::format_robot_table",
     "robots.py::get_driver",
+    "_overlay.py::parse_user_robots",
+    "_overlay.py::user_registry_path",
+    "_overlay.py::user_registry_source",
     "robots.py::get_hardware_type",
     "robots.py::get_robot",
     "robots.py::has_hardware",
@@ -76,11 +79,9 @@ _EXPECTED_FUNCTIONS = {
     "robots.py::list_robots_by_category",
     "robots.py::resolve_name",
     "user_registry.py::get_user_robots",
-    "user_registry.py::parse_user_robots",
     "user_registry.py::list_user_robots",
     "user_registry.py::register_robot",
     "user_registry.py::unregister_robot",
-    "user_registry.py::user_registry_source",
 }
 
 

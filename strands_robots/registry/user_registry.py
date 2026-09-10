@@ -46,56 +46,17 @@ import os
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import get_base_dir, resolve_asset_path, safe_join
+from strands_robots.utils import resolve_asset_path, safe_join
 
-from .loader import invalidate_cache, normalize_robot_name
+from ._overlay import parse_user_robots, user_registry_path, user_registry_source
+from .loader import _REGISTRY_DIR, _load, _validate_robots, invalidate_cache, normalize_robot_name
 
 logger = logging.getLogger(__name__)
 
 
 def _get_user_registry_path() -> Path:
     """Get path to the user-local robot registry file."""
-    return get_base_dir() / "user_robots.json"
-
-
-def user_registry_source() -> bytes | None:
-    """Contents of the user-local robot registry file.
-
-    Returns:
-        The file's bytes, or ``None`` when the overlay does not exist yet or
-        cannot be read. This is what the loader keys its hot-reload cache on, so
-        an external edit to ``user_robots.json`` (a second process or a manual
-        edit) invalidates the merged ``robots`` cache without requiring a manual
-        ``invalidate_cache`` - including an edit that lands inside one
-        filesystem timestamp tick, which a stat cannot distinguish.
-    """
-    try:
-        return _get_user_registry_path().read_bytes()
-    except OSError:
-        return None
-
-
-def parse_user_robots(source: bytes | None) -> dict[str, Any]:
-    """Robot definitions held in raw user-overlay bytes.
-
-    Args:
-        source: Contents of ``user_robots.json``, or None when the overlay is
-            absent. Taken as bytes so a caller that keys a cache on the file's
-            contents parses exactly what it keyed on.
-
-    Returns:
-        Dict mapping robot names to their definitions; empty when the overlay
-        is absent, unreadable, or does not declare ``"robots"``.
-    """
-    if source is None:
-        return {}
-    try:
-        data = json.loads(source)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.warning("Failed to load user registry %s: %s", _get_user_registry_path(), exc)
-        return {}
-    robots = data.get("robots") if isinstance(data, dict) else None
-    return robots if isinstance(robots, dict) else {}
+    return user_registry_path()
 
 
 def _load_user_registry() -> dict[str, Any]:
@@ -306,17 +267,14 @@ def register_robot(
     if not overwrite:
         if name in data.get("robots", {}):
             raise ValueError(f"Robot '{name}' already in user registry. Use overwrite=True to replace.")
-        # Also check package registry
-        try:
-            from .robots import get_robot as _pkg_get_robot
-
-            if _pkg_get_robot(name) is not None:
-                logger.info(
-                    "Robot '%s' exists in package registry - user registration will override it.",
-                    name,
-                )
-        except ImportError:
-            pass
+        # Also check package registry (the merged registry minus the user
+        # entries ruled out above, matched the way a lookup would: by canonical
+        # name or by alias).
+        if _is_registered_robot(name):
+            logger.info(
+                "Robot '%s' exists in package registry - user registration will override it.",
+                name,
+            )
 
     # Resolve asset_dir via shared utility (respects STRANDS_ASSETS_DIR)
     resolved_dir = resolve_asset_path(asset_dir, default_name=name)
@@ -464,8 +422,6 @@ def _assert_registry_still_loads(data: dict[str, Any]) -> None:
             constraint (e.g. an alias colliding with a canonical name or
             another robot's alias).
     """
-    from .loader import _REGISTRY_DIR, _validate_robots
-
     pkg_path = _REGISTRY_DIR / "robots.json"
     try:
         pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
@@ -475,6 +431,14 @@ def _assert_registry_still_loads(data: dict[str, Any]) -> None:
     merged = dict(pkg.get("robots", {}))
     merged.update(data.get("robots", {}))
     _validate_robots({"robots": merged})
+
+
+def _is_registered_robot(name: str) -> bool:
+    """Whether ``name`` (already normalized) is a canonical name or alias in the loaded registry."""
+    robots = _load("robots").get("robots", {})
+    if name in robots:
+        return True
+    return any(normalize_robot_name(alias) == name for info in robots.values() for alias in (info.get("aliases") or []))
 
 
 def _invalidate_cache() -> None:
