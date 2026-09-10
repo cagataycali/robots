@@ -44,7 +44,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+import pytest
+
+pytest.importorskip("lerobot")  # the fakes below mirror lerobot's own error types
+
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError  # noqa: E402
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
