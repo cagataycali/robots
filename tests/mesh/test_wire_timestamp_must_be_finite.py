@@ -258,8 +258,8 @@ class TestRemoteResumeRefusesANonFiniteEnvelopeTimestamp:
 _KNOWN_GATES = frozenset(
     {
         ("core.py", "_on_presence"),
-        ("core.py", "_on_safety_estop"),
-        ("core.py", "_on_safety_resume"),
+        # _on_safety_estop and _on_safety_resume read ``t`` through this one gate.
+        ("core.py", "_check_safety_envelope_timing"),
         ("input.py", "_on_input"),
     }
 )
@@ -321,7 +321,7 @@ def _wire_timestamp_gates() -> dict[tuple[str, str], bool]:
 class TestEveryWireTimestampGateReadsTheOneRule:
     """One rule, one owner, and a population the tree supplies."""
 
-    def test_the_finder_still_reaches_the_four_known_gates(self):
+    def test_the_finder_still_reaches_the_known_gates(self):
         found = set(_wire_timestamp_gates())
         assert _KNOWN_GATES <= found, f"the finder no longer reads: {sorted(_KNOWN_GATES - found)}"
 

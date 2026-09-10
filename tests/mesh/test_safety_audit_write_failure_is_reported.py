@@ -231,6 +231,65 @@ class TestWhatIsUnchanged:
         assert payload == {"issuer": "bob"}
 
 
+class TestTheSafetyPathAuditWrapper:
+    """:meth:`~strands_robots.mesh.core.Mesh._audit` swallows a lost record, not a bug.
+
+    The wrapper the safety subscribers route their refusal / redundancy /
+    corroboration records through. Its contract is the narrow tuple: a record
+    that cannot be written must not unwind the decision it describes, while a
+    programmer bug must still surface.
+    """
+
+    @pytest.mark.parametrize(
+        "failure",
+        [TypeError("not encodable"), ValueError("bad value"), _AuditUnwritable(28, "No space left on device")],
+        ids=["type", "value", "os"],
+    )
+    def test_a_record_that_cannot_be_written_does_not_unwind_the_handler(
+        self, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        mesh, _wire = _mesh(monkeypatch)
+
+        def refuse(**_kwargs: Any) -> None:
+            raise failure
+
+        monkeypatch.setattr(mesh, "publish_safety_event", refuse)
+        mesh._audit(event_type="estop_replay_rejected", severity="warning", payload={"issuer": "bob"})
+
+    def test_a_programmer_bug_still_surfaces(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The tuple is narrow on purpose: a RuntimeError is not a lost record."""
+        mesh, _wire = _mesh(monkeypatch)
+
+        def bug(**_kwargs: Any) -> None:
+            raise RuntimeError("a future transport API change")
+
+        monkeypatch.setattr(mesh, "publish_safety_event", bug)
+        with pytest.raises(RuntimeError):
+            mesh._audit(event_type="estop_replay_rejected", severity="warning", payload={})
+
+    def test_the_wrapper_is_a_backstop_because_the_publish_itself_absorbs_a_wire_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The premise the docstring states: the real seam is fire-and-forget.
+
+        A transport whose session has closed under us reaches
+        ``publish_safety_event`` through the module-level ``put``, which absorbs
+        it - so the four lockout transitions that publish directly are no more
+        exposed than the records that go through the wrapper.
+        """
+
+        class _ClosedSession:
+            def put(self, key: str, encoded: bytes) -> None:
+                raise _AuditUnwritable("session closed")
+
+        monkeypatch.setattr(session_mod, "_SESSION", _ClosedSession())
+        monkeypatch.setattr(session_mod, "_unencodable_topics_warned", set())
+        monkeypatch.setattr(sensors_mod, "log_safety_event", lambda **_kwargs: None)
+        mesh = core_mod.Mesh(object(), peer_id=_PEER)
+        mesh._running = True
+        mesh.publish_safety_event(event_type="remote_estop_engaged", severity="critical", payload={"issuer": "bob"})
+
+
 class TestThePremisesHold:
     """What the cells above depend on, asserted rather than assumed."""
 

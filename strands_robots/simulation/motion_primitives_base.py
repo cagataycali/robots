@@ -463,15 +463,16 @@ class MotionPrimitivesCore:
                 f"{len(uncommanded_joints)} degree(s) of freedom move_to does not command are "
                 f"free too ({', '.join(uncommanded_joints)}), so the point is not outside the "
                 "robot's workspace: reaching it needs motion this primitive cannot produce. "
-                "move_to drives the arm's position servos only, so move those degrees of "
-                "freedom first (a mobile base has to drive there), then call move_to."
+                f"move_to drives the {frame_type} '{frame_name}' with position servos only, so "
+                "move those degrees of freedom first (a mobile base has to drive there), then "
+                "call move_to."
             )
 
         if orientation_tol is None:
             text = (
-                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' within "
-                f"tol={float(tol)} m - the best solve over the joints move_to commands leaves a "
-                f"residual of {ik_residual:.4f} m."
+                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' EE "
+                f"({frame_type} '{frame_name}') within tol={float(tol)} m - the best solve over "
+                f"the joints move_to commands leaves a residual of {ik_residual:.4f} m."
             )
             text += borrowed_dof_text if borrowed_dofs_would_reach else " Choose a closer target or loosen tol."
             return _err(text, payload)
@@ -485,8 +486,8 @@ class MotionPrimitivesCore:
             )
         missed_text = " and ".join(missed) if missed else "the requested pose"
         text = (
-            f"move_to: the requested POSE is not achievable for '{robot_name}' - the best IK "
-            f"solution misses {missed_text}."
+            f"move_to: the requested POSE is not achievable for '{robot_name}' EE "
+            f"({frame_type} '{frame_name}') - the best IK solution misses {missed_text}."
         )
         if position_only_residual is not None and position_only_residual <= float(tol):
             text += (
@@ -574,7 +575,8 @@ class MotionPrimitivesCore:
         if orientation_error is not None and orientation_tol is not None:
             residuals += f", orientation residual {orientation_error:.4f} rad (tol {float(orientation_tol)} rad)"
         return _err(
-            f"move_to: '{robot_name}' did not reach {target.tolist()} within tol={float(tol)} m "
+            f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') did not reach "
+            f"{target.tolist()} within tol={float(tol)} m "
             f"after max_steps={max_steps} ({residuals}; IK residual was "
             f"{ik_residual:.4f} m). The servo may need more steps, or the pose fights joint "
             "limits/contacts.",

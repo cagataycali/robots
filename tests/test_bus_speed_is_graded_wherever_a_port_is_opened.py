@@ -176,18 +176,37 @@ class TestTheToolAndTheDriverAgree:
 
 
 class TestPyserialCoerces:
-    """The premise every docstring here rests on, measured against a real pty.
+    """The premise every docstring here rests on, measured against pyserial and a pty.
+
+    Two halves. ``baudrate`` is coerced with ``int()`` in pyserial's setter,
+    before any port is touched, so the conversion is measured on an unopened
+    ``Serial`` - on every OS. Whether the converted number is then *applied*
+    rather than refused is measured against a real pty, at a speed a pty on
+    every OS accepts: macOS sets a non-standard rate (1, 2, 1_000_000 baud) with
+    the ``IOSSIOSPEED`` ioctl, which a pty answers with ``ENOTTY``, so the
+    values from the first half cannot be the ones opened.
 
     If a future pyserial starts refusing these itself, this fails and the reason
     the domain gives for existing needs rewriting.
     """
 
     @pytest.mark.parametrize(
-        ("value", "applied"),
+        ("value", "coerced"),
         [(0, 0), (True, 1), (2.7, 2), ("1000000", 1_000_000)],
         ids=["0", "True", "2.7", "'1000000'"],
     )
-    def test_a_speed_that_is_not_a_count_is_applied_not_refused(self, value: Any, applied: int) -> None:
+    def test_a_speed_that_is_not_a_count_is_coerced_not_refused(self, value: Any, coerced: int) -> None:
+        serial = pytest.importorskip("serial")
+        conn = serial.Serial(None, value)
+        assert conn.is_open is False, "a port here would put the case back on the platform's ioctl"
+        assert conn.baudrate == coerced
+
+    @pytest.mark.parametrize(
+        ("value", "applied"),
+        [(9600.7, 9600), ("9600", 9600)],
+        ids=["9600.7", "'9600'"],
+    )
+    def test_the_coerced_speed_is_applied_to_the_port(self, value: Any, applied: int) -> None:
         serial = pytest.importorskip("serial")
         master, follower = os.openpty()
         try:
