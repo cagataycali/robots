@@ -149,10 +149,10 @@ class TestAPolicyWithoutTheFieldRefuses:
 
 # The spellings a YAML- or JSON-sourced config carries for "do not train this
 # component". Every one is truthy, so a truthiness read trains it.
-TRUTHY_SPELLINGS_OF_OFF = ["false", "no", "off", "0"]
+TRUTHY_SPELLINGS_OF_OFF: list[object] = ["false", "no", "off", "0"]
 # The rest of the non-boolean domain boolean_flag_error refuses: a number that
 # would pass as a silent 1 or 0, a sentinel, and a stringly true.
-OTHER_NON_BOOLEANS = [1, 0, None, "true"]
+OTHER_NON_BOOLEANS: list[object] = [1, 0, None, "true"]
 
 
 class TestATuneValueIsCheckedNotRead:
