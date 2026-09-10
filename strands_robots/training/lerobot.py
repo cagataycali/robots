@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 from strands_robots.utils import (
+    boolean_flag_error,
     declared_count,
     lerobot_version,
     stale_output_dir_is_clearable,
@@ -1175,12 +1176,22 @@ class LerobotTrainer(Trainer):
         ]
 
     def _tune_component_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
-        """Preflight ``tune``: first the spelling, then the policy's own toggles.
+        """Preflight ``tune``: the spelling, the policy's own toggles, the values.
 
         Two ways a component toggle goes quiet, and both end the same way - the
         run trains the config default and reports success. A key naming no
         component (``vision`` for ``visual``) matches nothing to forward, and a
         recognized component on a policy with no such field has nothing to set.
+
+        The third way is louder in effect and just as silent in signal: a value
+        read by truthiness. Each toggle selects whether a model component
+        trains, so it is a posture flag in the sense of
+        :func:`~strands_robots.utils.boolean_flag_error`, and ``"false"``,
+        ``"no"``, ``"off"`` and ``"0"`` - the spellings a YAML- or JSON-sourced
+        config carries - are all truthy, so a component the caller asked to
+        freeze would train. Graded here by the flag's own name, the way
+        ``resume`` and ``streaming`` are graded through
+        :meth:`_resume_problems` / :meth:`_streaming_problems`.
         """
         requested = {k for k in spec.tune if k != "expert_only"}
         if not requested:
@@ -1201,7 +1212,19 @@ class LerobotTrainer(Trainer):
                 f"(only {supported} expose per-component tune_* fields; every other lerobot "
                 "policy tunes as a whole); drop them from tune or pick a supporting policy"
             )
+        for component in sorted(requested & set(_TUNE_COMPONENT_FIELDS)):
+            error = self._tune_value_error(spec, component)
+            if error is not None:
+                problems.append(error)
         return problems
+
+    def _tune_value_error(self, spec: TrainSpec, component: str) -> str | None:
+        """The refusal for ``tune[component]`` unless it is a boolean, else None.
+
+        One owner for the domain, so :meth:`validate` and the two builders
+        cannot disagree about which spellings are honoured.
+        """
+        return boolean_flag_error(spec.tune[component], f"tune['{component}']", self.provider_name)
 
     def _tune_component_fields(self, spec: TrainSpec) -> dict[str, bool]:
         """The requested component toggles, keyed by lerobot policy-config field.
@@ -1210,12 +1233,26 @@ class LerobotTrainer(Trainer):
         order is the canonical one whatever order the caller's dict has - which
         is what makes :meth:`build_command`'s argv comparable run to run.
         ``expert_only`` is excluded: it is a ``method``, not a component.
+
+        The value is forwarded as checked, never coerced: ``bool("false")`` is
+        ``True``, so a coercion here would be the truthiness read
+        :meth:`_tune_component_problems` refuses. A builder reached without
+        :meth:`validate` gets the same refusal as a ``ValueError``, the shape
+        :meth:`_build_policy_config` already uses for a component the policy
+        lacks.
+
+        Raises:
+            ValueError: When a requested component's value is not a boolean.
         """
-        return {
-            field: bool(spec.tune[component])
-            for component, field in _TUNE_COMPONENT_FIELDS.items()
-            if component in spec.tune
-        }
+        toggles: dict[str, bool] = {}
+        for component, field in _TUNE_COMPONENT_FIELDS.items():
+            if component not in spec.tune:
+                continue
+            error = self._tune_value_error(spec, component)
+            if error is not None:
+                raise ValueError(error)
+            toggles[field] = spec.tune[component]
+        return toggles
 
     def _quantile_stats_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
         """Preflight the dataset's quantile stats for a QUANTILES-normalizing policy.

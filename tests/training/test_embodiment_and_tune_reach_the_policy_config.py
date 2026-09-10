@@ -147,6 +147,77 @@ class TestAPolicyWithoutTheFieldRefuses:
         assert "expert_only" not in _TUNE_COMPONENT_FIELDS
 
 
+# The spellings a YAML- or JSON-sourced config carries for "do not train this
+# component". Every one is truthy, so a truthiness read trains it.
+TRUTHY_SPELLINGS_OF_OFF = ["false", "no", "off", "0"]
+# The rest of the non-boolean domain boolean_flag_error refuses: a number that
+# would pass as a silent 1 or 0, a sentinel, and a stringly true.
+OTHER_NON_BOOLEANS = [1, 0, None, "true"]
+
+
+class TestATuneValueIsCheckedNotRead:
+    """A component toggle is a posture flag: ``"false"`` must not train the component.
+
+    The key axis is graded above; this is the value axis. ``bool("false")`` is
+    ``True``, so a coerced read builds ``tune_llm=True`` for a caller who asked
+    to freeze the language backbone, and nothing raises - the inverted recipe
+    this PR's headline fix names, reached through the value instead of the key.
+    """
+
+    @pytest.mark.parametrize("value", TRUTHY_SPELLINGS_OF_OFF + OTHER_NON_BOOLEANS)
+    def test_validate_refuses_it_by_the_flags_own_name(self, spec, value):
+        spec.tune = {"llm": value}
+        spec.extra["policy_type"] = TUNABLE
+        problems = LerobotTrainer().validate(spec)
+        assert any("tune['llm']" in p and "must be a boolean" in p for p in problems), problems
+
+    @pytest.mark.parametrize("value", TRUTHY_SPELLINGS_OF_OFF)
+    def test_argv_never_carries_a_truthy_spelling_of_off_as_true(self, spec, value):
+        spec.tune = {"llm": value}
+        spec.extra["policy_type"] = TUNABLE
+        with pytest.raises(ValueError, match=r"tune\['llm'\] must be a boolean"):
+            LerobotTrainer(device="cpu").build_command(spec)
+
+    @pytest.mark.parametrize("value", TRUTHY_SPELLINGS_OF_OFF)
+    def test_the_typed_config_refuses_the_same_value(self, spec, value):
+        spec.tune = {"llm": value}
+        with pytest.raises(ValueError, match=r"tune\['llm'\] must be a boolean"):
+            _policy(spec, TUNABLE)
+
+    def test_every_component_is_graded_not_only_the_first(self, spec):
+        """The grade walks every requested component, in canonical order."""
+        spec.tune = {component: "false" for component in _TUNE_COMPONENT_FIELDS}
+        spec.extra["policy_type"] = TUNABLE
+        problems = LerobotTrainer().validate(spec)
+        named = [c for c in _TUNE_COMPONENT_FIELDS if any(f"tune['{c}']" in p for p in problems)]
+        assert sorted(named) == sorted(_TUNE_COMPONENT_FIELDS)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_a_boolean_is_honoured_as_given(self, spec, value):
+        """The control: a checked flag is a gate, not a mute."""
+        spec.tune = {"llm": value}
+        spec.extra["policy_type"] = TUNABLE
+        assert not [p for p in LerobotTrainer().validate(spec) if "tune['llm']" in p]
+        argv = LerobotTrainer(device="cpu").build_command(spec)
+        assert f"--policy.tune_llm={'true' if value else 'false'}" in argv
+
+    def test_a_numpy_boolean_is_a_boolean(self, spec):
+        """``boolean_flag_error``'s domain includes ``numpy.bool_``; so does this one."""
+        np = pytest.importorskip("numpy")
+        spec.tune = {"llm": np.bool_(False)}
+        spec.extra["policy_type"] = TUNABLE
+        assert not [p for p in LerobotTrainer().validate(spec) if "tune['llm']" in p]
+        assert "--policy.tune_llm=false" in LerobotTrainer(device="cpu").build_command(spec)
+
+    def test_the_unknown_key_refusal_is_not_lost_to_the_value_grade(self, spec):
+        """Both axes are reported when both are wrong."""
+        spec.tune = {"vision": "false", "llm": "false"}
+        spec.extra["policy_type"] = TUNABLE
+        problems = LerobotTrainer().validate(spec)
+        assert any("no tunable component" in p for p in problems)
+        assert any("tune['llm']" in p for p in problems)
+
+
 class TestTheDocumentedCliSaysTheSameThing:
     """``build_command`` is the argv the typed config maps to, so it carries them too."""
 

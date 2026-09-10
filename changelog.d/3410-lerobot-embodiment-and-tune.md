@@ -20,4 +20,7 @@ off lerobot's registered config class (`_policy_supports_embodiment_tag`,
 adds with an embodiment tag or component toggles is honoured on arrival. A
 `tune` key naming no component (`vision` for `visual`) is refused rather than
 silently matching nothing, and `build_command`'s argv carries the same flags in
-a canonical order.
+a canonical order. Each toggle's value is checked as a boolean rather than read
+by truthiness: `tune={"llm": "false"}` - the spelling a YAML- or JSON-sourced
+config carries - is refused by name instead of training the component the
+caller asked to freeze.
