@@ -105,7 +105,7 @@ duck.emergency_stop()                  # robot.stop
 
 `robotd` owns the walking/skill ONNX on-device, so `run_policy`/`start_task`
 refuse and point back at the intent path; use `mode="sim"` for a host-driven
-`MicroduckPolicy` rollout. For a remote robot, forward its socket to a local
+[`MicroduckPolicy` rollout](../policies/microduck.md#walking-in-mujoco). For a remote robot, forward its socket to a local
 path (`ssh -L`/`socat`) and pass that path as `port=`.
 
 ## Mounting a camera on a humanoid
