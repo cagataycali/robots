@@ -41,6 +41,29 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+#: The spellings of ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` that count as the
+#: operator's acknowledgement of a permissive ACL. One tuple, one reader
+#: (:func:`permissive_acl_acknowledged`): ``Mesh.start`` decides on it,
+#: ``session`` warns on it, the ACL loader gates on it and ``strands-robots
+#: doctor`` prints on it, so no row can PASS a spelling the gate refuses.
+#: ``on`` is deliberately absent - ``_zenoh_config._bool_env`` reads it, and a
+#: doctor row that borrowed that parser printed PASS for a value the runtime
+#: refused. Any other spelling is not an acknowledgement; nothing raises.
+PERMISSIVE_ACL_ACK_SPELLINGS: tuple[str, ...] = ("1", "true", "yes")
+
+
+def permissive_acl_acknowledged() -> bool:
+    """Whether the operator has acknowledged a permissive ACL posture.
+
+    Reads ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` against
+    :data:`PERMISSIVE_ACL_ACK_SPELLINGS` (case-insensitive, whitespace
+    stripped). This is the only place in the package that reads the variable:
+    every gate and every report on this posture calls it, so they cannot
+    disagree about which values acknowledge.
+    """
+    return os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in PERMISSIVE_ACL_ACK_SPELLINGS
+
+
 class PermissiveACLError(RuntimeError):
     """Raised when an operator-supplied ACL uses the blacklist footgun
     (``default_permission='allow'`` with explicit rules) without opting
@@ -298,12 +321,7 @@ def _parse_acl_bytes(raw_bytes: bytes, path: Path) -> dict[str, Any]:
             # via STRANDS_MESH_ACCEPT_PERMISSIVE_ACL. The built-in default
             # (allow + EMPTY rules) does not reach this branch and stays
             # gated by Mesh.start's refuse-to-start path.
-            accept = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-            )
-            if not accept:
+            if not permissive_acl_acknowledged():
                 raise PermissiveACLError(
                     f"ACL file {path} uses default_permission='allow' with "
                     f"{len(data['rules'])} rule(s) -- a blacklist policy where any "

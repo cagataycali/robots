@@ -6,7 +6,8 @@ aliases, shorthands, and URL patterns on every reload.
 
 The ``robots`` registry is not a single file: its effective contents are the
 package ``robots.json`` merged with the user-local overlay
-(``$STRANDS_BASE_DIR/user_robots.json`` - see :func:`_merge_user_robots`).  The
+(``$STRANDS_BASE_DIR/user_robots.json``, read through :mod:`._overlay` - see
+:func:`_merge_user_robots`).  The
 hot-reload signature therefore covers *both* files, so an edit to the user
 overlay made outside this process (a second process, a manual edit, or any
 writer that does not call :func:`invalidate_cache`) is picked up on the next
@@ -25,6 +26,8 @@ is what licenses the hit; the parse and validation are the work it saves.
 import json
 import logging
 from pathlib import Path
+
+from ._overlay import parse_user_robots, user_registry_source
 
 logger = logging.getLogger(__name__)
 
@@ -60,20 +63,6 @@ def normalize_robot_name(name: str) -> str:
     return name.lower().strip().replace("-", "_")
 
 
-def _user_registry_source() -> bytes | None:
-    """Contents of the user-local robot overlay, or None if absent.
-
-    Kept in :mod:`user_registry` so the overlay path has a single source of
-    truth; imported lazily to avoid an import cycle (``user_registry`` imports
-    :func:`invalidate_cache` from this module).
-    """
-    try:
-        from .user_registry import user_registry_source
-    except ImportError:
-        return None
-    return user_registry_source()
-
-
 def _registry_signature(name: str, package_source: bytes) -> tuple:
     """Cache-validity signature for a registry: the bytes it is parsed from.
 
@@ -83,7 +72,7 @@ def _registry_signature(name: str, package_source: bytes) -> tuple:
     """
     if name != "robots":
         return (package_source,)
-    return (package_source, _user_registry_source())
+    return (package_source, user_registry_source())
 
 
 def _load(name: str) -> dict:
@@ -132,11 +121,6 @@ def _merge_user_robots(data: dict, overlay_source: bytes | None) -> dict:
             overlay is absent.  Taken from the caller rather than re-read so
             the merged value and the cache signature describe the same bytes.
     """
-    try:
-        from .user_registry import parse_user_robots
-    except ImportError:
-        return data
-
     user_robots = parse_user_robots(overlay_source)
     if not user_robots:
         return data
@@ -170,9 +154,9 @@ def _validate_robots(data: dict) -> None:
             robot name, or a ``hardware.driver`` outside
             :data:`~strands_robots.drivers.base.DRIVER_CHOICES`.
     """
-    # Imported lazily for the same reason as :func:`_user_registry_source` above:
-    # the driver seam reads the registry, so importing it at module scope would
-    # close an import cycle. A driver name is validated here rather than where it
+    # Imported lazily because the driver seam reads the registry, so importing
+    # it at module scope would close an import cycle across the two packages. A
+    # driver name is validated here rather than where it
     # is read, because every reader - the factory, a tool, a driver package -
     # would otherwise have to re-check it, and the one that forgets accepts a
     # typo as "no preference" and quietly builds the default driver.

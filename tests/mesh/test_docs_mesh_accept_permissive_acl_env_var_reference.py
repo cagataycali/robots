@@ -1,8 +1,9 @@
 """Grade the ACL-acknowledgement environment reference against the module's env surface.
 
 ``STRANDS_MESH_ACCEPT_PERMISSIVE_ACL`` is the acknowledgement token for a
-permissive mesh ACL posture. It has one spelling and three readers, and setting
-it takes all three effects:
+permissive mesh ACL posture. It has one spelling, one reader of the environment
+(``_acl_config.permissive_acl_acknowledged``, whose tuple is the vocabulary), and
+three gates that call it, so setting it takes all three effects:
 
 1. ``_acl_config._load_acl_file`` raises ``PermissiveACLError`` when
    ``STRANDS_MESH_ACL_FILE`` points at a blacklist-shaped ACL
@@ -15,6 +16,10 @@ it takes all three effects:
    ``Mesh.start`` refuses to bring the wire up at all.
 3. ``session._build_config`` skips the per-session-open ``PERMISSIVE built-in
    default ACL`` WARNING while it is set.
+
+``doctor.check_mesh`` consults the same predicate to report which of the three
+the current environment would take, so it cannot print PASS for a spelling the
+gates refuse - it did, for ``on``, while it borrowed ``_zenoh_config._bool_env``.
 
 Until this file's companion change, ``docs/security.md`` named the variable only
 as a silencer for that session warning and said nothing about the loader
@@ -127,14 +132,38 @@ def _accept_env_reads() -> frozenset[str]:
     return frozenset(names)
 
 
+_OWNER = "permissive_acl_acknowledged"
+
+
+def _reads_the_token(node: ast.AST) -> bool:
+    """Whether ``node`` consults the token: a call to the owner predicate, or a raw env read."""
+    if isinstance(node, ast.Call):
+        func = ast.unparse(node.func)
+        if func == _OWNER or func.endswith(f".{_OWNER}"):
+            return True
+        if func in ("os.getenv", "os.environ.get") and node.args and isinstance(node.args[0], ast.Constant):
+            return isinstance(node.args[0].value, str) and node.args[0].value.startswith(_PREFIX)
+    if isinstance(node, ast.Subscript) and ast.unparse(node.value) == "os.environ":
+        return isinstance(node.slice, ast.Constant) and str(node.slice.value).startswith(_PREFIX)
+    return False
+
+
 def _reader_sites() -> dict[str, str]:
-    """Map every function that reads the token to the module it lives in.
+    """Map every function that consults the token to the module it lives in.
 
     Scans the whole ``strands_robots`` package rather than one module: the
     documented blast radius of this token is the set of code paths that consult
     it, and the first correction to this page was wrong precisely because two of
-    the three readers live outside ``_acl_config``. Keys are the enclosing
-    function names, values are POSIX-style module paths relative to the package.
+    the three gates live outside ``_acl_config``. The token has exactly one
+    reader of the environment, ``_acl_config.permissive_acl_acknowledged`` -
+    the gates call it rather than spelling the accepted values themselves, which
+    is what let ``doctor`` borrow a boolean parser that also took ``on`` and
+    print PASS for a value ``Mesh.start`` refused. So a site here is a
+    *caller* of that predicate (or a raw read, which the one-reader rule in
+    ``tests/test_doctor_reaches_the_runtime_verdict.py`` refuses outside the
+    owner). Keys are the enclosing function names, values are POSIX-style
+    module paths relative to the package. The owner is excluded: it decides
+    nothing, and the section documents effects.
     """
     sites: dict[str, str] = {}
     for path in sorted(_PACKAGE.rglob("*.py")):
@@ -143,21 +172,10 @@ def _reader_sites() -> dict[str, str]:
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
             continue
         for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or node.name == _OWNER:
                 continue
-            for inner in ast.walk(node):
-                literal = None
-                if isinstance(inner, ast.Call) and ast.unparse(inner.func) in (
-                    "os.getenv",
-                    "os.environ.get",
-                ):
-                    if inner.args and isinstance(inner.args[0], ast.Constant):
-                        literal = inner.args[0].value
-                elif isinstance(inner, ast.Subscript) and ast.unparse(inner.value) == "os.environ":
-                    if isinstance(inner.slice, ast.Constant):
-                        literal = inner.slice.value
-                if isinstance(literal, str) and literal.startswith(_PREFIX):
-                    sites[node.name] = path.relative_to(_PACKAGE).as_posix()
+            if any(_reads_the_token(inner) for inner in ast.walk(node)):
+                sites[node.name] = path.relative_to(_PACKAGE).as_posix()
     return sites
 
 

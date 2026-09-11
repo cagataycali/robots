@@ -109,6 +109,16 @@ from strands_robots import Robot
 
 ## Verify
 
+`doctor` checks this machine the way the runtime will read it - the interpreter
+and package, each extra, the GL backend, the torch/torchcodec pair, the GPU, the
+serial and Hub credentials, and the device-connect and mesh postures - and exits
+non-zero if any row fails:
+
+```bash
+python -m strands_robots doctor           # run every check
+python -m strands_robots doctor --list    # print the check names, probe nothing
+```
+
 ```python
 from strands_robots import Robot
 

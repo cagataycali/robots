@@ -906,12 +906,7 @@ def _build_config() -> Any:
         # the opt-in context; emitting both fires two log lines about
         # the same thing on every session open AND has the WARNING
         # contradict the operator's explicit acknowledgement.
-        accept_permissive = os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        if is_permissive and not accept_permissive:
+        if is_permissive and not _acl_config.permissive_acl_acknowledged():
             logger.warning(
                 "STRANDS_MESH_ACL_FILE unset -- using PERMISSIVE built-in "
                 "default ACL. Any CA-signed peer can publish/subscribe "

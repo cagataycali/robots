@@ -109,7 +109,9 @@ An operator ACL supplied via `STRANDS_MESH_ACL_FILE` can be written in one of tw
 - The `PermissiveACLError` message names the path, the rule count, and both remediations: rewrite as `deny` + `allow` rules, or set the acknowledgement token. An operator reading the refusal sees the two-choice fork rather than being pushed toward the token by omission.
 - Do not set this variable on a production fleet. The acknowledgement does not narrow the ACL; it records that an operator has accepted a posture where an unenumerated key expression is open on the wire. The variable exists for closed-lab and CI postures where the fleet operator has separately established that the LAN is trusted.
 
-Reference: `strands_robots.mesh._acl_config._load_acl_file`, `strands_robots.mesh._acl_config._parse_acl_bytes`, `strands_robots.mesh._acl_config.PermissiveACLError`, `strands_robots.mesh.core.Mesh._refuse_under_permissive_default_acl`, `strands_robots.mesh.session._build_config`.
+- The accepted spellings live in one place: `_acl_config.permissive_acl_acknowledged` is the only reader of the variable, and all three gates call it. `strands-robots doctor`'s `check_mesh` row consults the same predicate to say which of the three effects the current environment would take, so the row cannot print `PASS ... (acknowledged)` for a spelling the gates refuse. It did, for `on`: `_zenoh_config._bool_env` accepts `on` and the gates never have, so `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=on` passed doctor while `Mesh.start` logged "Mesh did NOT start". Any spelling other than `1`/`true`/`yes` is not an acknowledgement; nothing raises.
+
+Reference: `strands_robots.mesh._acl_config.permissive_acl_acknowledged`, `strands_robots.mesh._acl_config._load_acl_file`, `strands_robots.mesh._acl_config._parse_acl_bytes`, `strands_robots.mesh._acl_config.PermissiveACLError`, `strands_robots.mesh.core.Mesh._refuse_under_permissive_default_acl`, `strands_robots.mesh.session._build_config`, `strands_robots.doctor.check_mesh`.
 
 ### Locomotion velocity envelope (target_velocity)
 
