@@ -99,7 +99,7 @@ launching.
 | `num_gpus` / `num_nodes` | `int` | `1` | zero, negative, fractional, `bool` |
 | `resume` / `streaming` | `bool` | `False` | a non-`bool`; `streaming` together with `val_episodes` |
 | `seed` | `int \| None` | `None` | negative |
-| `method` | `str` | `"full"` | anything but `full` / `lora` / `expert_only` / `frozen_backbone` |
+| `method` | `str` | `"full"` | anything the selected backend cannot forward - LeRobot takes `full` / `lora` / `expert_only`, GR00T `full` / `frozen_backbone` / `expert_only`, Cosmos3 `full` only |
 | `lora_r` / `lora_alpha` | `int \| None` | `None` | non-positive |
 | `tune` | `dict[str, bool]` | `{}` | keys outside `llm` / `visual` / `projector` / `diffusion`; a non-`bool` value; a policy whose config has no such switches (GR00T via `groot` or `lerobot_local` `policy_type="groot"`) |
 | `embodiment` | `str \| None` | `None` | a policy whose config has no embodiment tag (only GR00T declares one; others take their shape from the dataset) |
@@ -198,6 +198,11 @@ frames with a trained reward model, load it with lerobot's `make_reward_model`.
 config class - see [Isaac-GR00T](../policies/groot.md). `num_gpus` + `extra["cosmos_root"]` +
 `extra["sft_toml"]` drive `prepare()` (DCP convert), `train()` (`torchrun`) and
 `export()` (DCP -> safetensors) - see [Cosmos3](../policies/cosmos3.md).
+
+Neither backend takes a LoRA request. GR00T has no config field to carry one and
+Cosmos3 writes no adapter override, so `method="lora"` is refused by `validate()`
+instead of being run as the full fine-tune the caller did not ask for; on Cosmos3
+a different tuning strategy belongs in the recipe TOML (`extra["sft_toml"]`).
 
 ## Dependencies & extras (per provider)
 
