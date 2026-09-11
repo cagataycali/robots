@@ -58,25 +58,14 @@ logger = logging.getLogger(__name__)
 # Sensible default mirrors FinetuneConfig defaults (projector + diffusion on).
 _DEFAULT_TUNE = {"llm": False, "visual": False, "projector": True, "diffusion": True}
 
-# Tuning strategies this trainer can select. GR00T chooses what trains through
-# the tune_* switches, so a strategy only belongs here when _resolve_tune can
-# express it: ``full`` is the baseline and ``frozen_backbone`` forces the
-# backbone switches off. ``expert_only`` is NOT one of them - see
-# _EXPERT_ONLY_REFUSAL.
+# ``expert_only`` is deliberately absent. GR00T has no single expert-only
+# switch: it freezes the four components above individually, and which of them
+# the action expert spans is GR00T's decomposition to state, not this adapter's
+# to assume - so the set has to be named with ``tune={...}`` rather than
+# guessed from the method. lerobot's gate refuses ``method="expert_only"`` for
+# its native ``groot`` policy for the same reason (``GrootConfig`` carries the
+# four switches, not a ``train_expert_only`` field).
 _SUPPORTED_METHODS = {"full", "frozen_backbone"}
-
-# ``expert_only`` freezes everything but the action expert on the LeRobot
-# policies whose config declares ``train_expert_only`` (pi0 / pi05 / smolvla).
-# GrootConfig declares no such field - it exposes the tune_* switches instead -
-# so this trainer has nothing to forward the request to, and running the default
-# tune under an expert-only label would train the projector the caller asked to
-# freeze. Report the request and name the switch that does express it.
-_EXPERT_ONLY_REFUSAL = (
-    "method 'expert_only' is not a GR00T strategy: GR00T's config declares no "
-    "train_expert_only switch (LeRobot's pi0 / pi05 / smolvla declare one). "
-    "Select what trains with tune={...}: tune={'projector': False} leaves only "
-    "the diffusion action head training."
-)
 
 _INSTALL_HINT = (
     "Isaac-GR00T is not importable from this interpreter. Install it from source "
@@ -170,7 +159,15 @@ class Gr00tTrainer(Trainer):
             problems.append("embodiment is required for GR00T (--embodiment_tag)")
 
         if spec.method == "expert_only":
-            problems.append(_EXPERT_ONLY_REFUSAL)
+            problems.append(
+                "method 'expert_only' is not a GR00T strategy: GR00T freezes tune_llm / "
+                "tune_visual / tune_projector / tune_diffusion_model individually and has "
+                "no single expert-only switch, so which components the action expert spans "
+                "has to be named rather than assumed. Name them - tune={'projector': False} "
+                "trains the diffusion action head and freezes everything before it - or "
+                "train a lerobot policy whose config carries train_expert_only "
+                "(provider='lerobot_local')."
+            )
         elif spec.method not in _SUPPORTED_METHODS:
             problems.append(
                 f"unsupported method '{spec.method}' for GR00T "

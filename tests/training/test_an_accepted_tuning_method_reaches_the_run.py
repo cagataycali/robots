@@ -16,21 +16,36 @@ whole model, and was told the run succeeded. ``lora_r`` went the same way - the
 adapter-hyperparameter domain is owed only by a backend that reads the field, so
 a rank of ``0`` was accepted here too.
 
-The two peers show both halves of the correct posture. LeRobot honors the
-request, emitting ``--peft.method_type=LORA`` with the rank and scaling. GR00T
-refuses ``lora`` by name, because it has no config field to carry it. Cosmos3
-now refuses it the same way, naming the recipe TOML as the one surface that can
-express a different strategy, so the request can no longer be silently
+LeRobot honors the request, emitting ``--peft.method_type=LORA`` with the rank
+and scaling. Cosmos3 refuses it, naming the recipe TOML as the one surface that
+can express a different strategy, so the request can no longer be silently
 downgraded to the run the caller did not ask for.
 
-The sweep at the bottom derives its scope: a backend that declares its own set
-of accepted methods *and* builds a launch description from the spec must read
-``method`` somewhere other than the check that accepts it.
+GR00T went the same way one value further in. It refuses ``lora`` by name, and
+it reads ``method`` again for ``frozen_backbone`` - so the field is forwarded
+and the module looked compliant - while ``expert_only``, also accepted, was
+named nowhere but the accepted set. GR00T freezes ``tune_llm`` / ``tune_visual``
+/ ``tune_projector`` / ``tune_diffusion_model`` individually and has no single
+expert-only switch, so an accepted ``expert_only`` produced the four flags of a
+plain ``full`` fine-tune: the projector the caller asked to freeze trained, and
+``validate`` reported no problems. lerobot's own gate already refuses
+``method="expert_only"`` for its native ``groot`` policy for the same reason -
+``GrootConfig`` carries the four switches, not a ``train_expert_only`` field -
+and its docstring names this exact failure ("the run silently full-finetunes the
+backbone while reporting success"). The component set is expressible here, just
+not as a method: ``tune={"projector": False}`` is honored.
+
+The sweep at the bottom derives its scope and grades per VALUE, not per field:
+a backend that declares its own set of accepted methods *and* builds a launch
+description from the spec must name every accepted non-baseline strategy
+somewhere other than the declaration and the gate that accepts it. Grading the
+field alone is what let ``expert_only`` through.
 """
 
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 import json
 import pathlib
@@ -79,6 +94,35 @@ def cosmos_spec(tmp_path: pathlib.Path) -> TrainSpec:
         base_model="nvidia/cosmos-base",
         extra={"sft_toml": str(toml), "cosmos_root": str(root)},
     )
+
+
+@pytest.fixture
+def groot_spec(tmp_path: pathlib.Path) -> TrainSpec:
+    """A launchable GR00T spec whose ``method`` is the only thing under test.
+
+    Every input GR00T's ``validate`` reads is present and usable - a v3 dataset
+    root, a base model, an output dir, the required embodiment tag and a
+    checkout holding ``launch_finetune.py`` - so an empty problem list means
+    "launchable" and a non-empty one is about ``method``.
+    """
+    meta = tmp_path / "ds" / "meta"
+    meta.mkdir(parents=True)
+    meta.joinpath("info.json").write_text(json.dumps({"codebase_version": "v3.0"}))
+    launch = tmp_path / "groot" / "gr00t" / "experiment"
+    launch.mkdir(parents=True)
+    launch.joinpath("launch_finetune.py").write_text("")
+    return TrainSpec(
+        dataset_root=str(tmp_path / "ds"),
+        output_dir=str(tmp_path / "out"),
+        base_model="nvidia/GR00T-N1.5-3B",
+        embodiment="new_embodiment",
+        extra={"groot_root": str(tmp_path / "groot")},
+    )
+
+
+def _tune_flags(trainer: Gr00tTrainer, spec: TrainSpec) -> dict[str, str]:
+    """The four ``--tune_*`` flags of the command GR00T would launch."""
+    return dict(flag.lstrip("-").split("=", 1) for flag in trainer.build_command(spec) if flag.startswith("--tune_"))
 
 
 def _method_problems(trainer: Trainer, spec: TrainSpec) -> list[str]:
@@ -170,15 +214,79 @@ class TestThePeersShowBothHalvesOfThePosture:
         assert "--peft.method_type=LORA" in command("lora")
         assert command("lora") != command(BASELINE)
 
-    def test_groot_refuses_the_strategy_it_has_no_field_for(self, tmp_path: pathlib.Path) -> None:
-        spec = TrainSpec(
-            dataset_root=str(tmp_path / "ds"),
-            output_dir=str(tmp_path / "out"),
-            base_model="nvidia/gr00t",
-            embodiment="so101",
-            method="lora",
-        )
-        assert _method_problems(Gr00tTrainer(), spec)
+    def test_groot_refuses_the_strategy_it_has_no_field_for(self, groot_spec: TrainSpec) -> None:
+        groot_spec.method = "lora"
+        assert _method_problems(Gr00tTrainer(), groot_spec)
+
+
+class TestGr00tReportsTheExpertOnlyRequestItCannotName:
+    """An accepted ``expert_only`` trained the projector and reported success.
+
+    GR00T's flags name components, not strategies, so the request only means
+    something once the caller says which components. Refusing it is a statement
+    about this backend: the peer above honors the same value.
+    """
+
+    def test_it_is_reported_as_a_problem(self, groot_spec: TrainSpec) -> None:
+        groot_spec.method = "expert_only"
+        assert _method_problems(Gr00tTrainer(), groot_spec), "method='expert_only' was accepted"
+
+    def test_the_refusal_names_the_component_set_that_expresses_it(self, groot_spec: TrainSpec) -> None:
+        """A dead end would leave the caller with nothing to do next."""
+        groot_spec.method = "expert_only"
+        problems = _method_problems(Gr00tTrainer(), groot_spec)
+        assert problems and "tune={'projector': False}" in problems[0], problems
+
+    def test_the_refusal_names_the_backend_and_the_value(self, groot_spec: TrainSpec) -> None:
+        groot_spec.method = "expert_only"
+        problems = _method_problems(Gr00tTrainer(), groot_spec)
+        assert problems and "GR00T" in problems[0] and "'expert_only'" in problems[0]
+
+    def test_validate_reports_rather_than_raises(self, groot_spec: TrainSpec) -> None:
+        """``validate`` is documented to *return* problems."""
+        groot_spec.method = "expert_only"
+        assert isinstance(Gr00tTrainer().validate(groot_spec), list)
+
+    def test_one_problem_is_reported_for_one_bad_value(self, groot_spec: TrainSpec) -> None:
+        """The named refusal replaces the generic one rather than joining it."""
+        groot_spec.method = "expert_only"
+        assert len(_method_problems(Gr00tTrainer(), groot_spec)) == 1
+
+
+class TestTheGr00tStrategiesThatSurviveAreUnchanged:
+    """The fix narrows what ``validate`` accepts and writes no new flag.
+
+    ``frozen_backbone`` is graded here as well as ``full``: its flags equal the
+    default because ``_DEFAULT_TUNE`` already freezes the backbone, so it is
+    honored rather than dropped, and it must keep launching what it launched.
+    """
+
+    @pytest.mark.parametrize("method", [BASELINE, "frozen_backbone"])
+    def test_it_is_launchable(self, groot_spec: TrainSpec, method: str) -> None:
+        groot_spec.method = method
+        assert Gr00tTrainer().validate(groot_spec) == []
+
+    @pytest.mark.parametrize("method", [BASELINE, "frozen_backbone"])
+    def test_it_builds_the_backbone_frozen_action_head_run(self, groot_spec: TrainSpec, method: str) -> None:
+        groot_spec.method = method
+        assert _tune_flags(Gr00tTrainer(), groot_spec) == {
+            "tune_llm": "false",
+            "tune_visual": "false",
+            "tune_projector": "true",
+            "tune_diffusion_model": "true",
+        }
+
+    def test_the_component_set_the_refusal_names_is_honored(self, groot_spec: TrainSpec) -> None:
+        """The refusal points at a route that works, not at a second dead end."""
+        groot_spec.tune = {"projector": False}
+        trainer = Gr00tTrainer()
+        assert trainer.validate(groot_spec) == []
+        assert _tune_flags(trainer, groot_spec) == {
+            "tune_llm": "false",
+            "tune_visual": "false",
+            "tune_projector": "false",
+            "tune_diffusion_model": "true",
+        }
 
 
 def _backends_that_declare_their_methods() -> dict[str, ast.Module]:
@@ -216,40 +324,60 @@ def _accepted_methods(tree: ast.Module) -> set[str]:
     raise AssertionError("module does not declare _SUPPORTED_METHODS")
 
 
-def _reads_method_outside_validate(tree: ast.Module) -> bool:
-    """Does the module read ``spec.method`` anywhere but in ``validate``?
+class _DropAcceptance(ast.NodeTransformer):
+    """Strip the accepted-method declaration and every validation function.
 
-    ``validate`` is where the value is *accepted*; reading it only there is the
-    defect. The read itself is recognized by the rule the field-scoped domain
-    guards share, so a backend that forwards ``method`` through a table counts
-    as a reader too.
+    What remains is the part of a backend that *builds* something: naming a
+    strategy in the set that admits it, or in the gate that reports it, says
+    nothing about whether the run is configured differently.
     """
 
-    class _DropValidate(ast.NodeTransformer):
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef | None:
-            return None if node.name == "validate" else node
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign | None:
+        declares = any(getattr(target, "id", "") == "_SUPPORTED_METHODS" for target in node.targets)
+        return None if declares else node
 
-    return reads_spec_field(ast.unparse(_DropValidate().visit(tree)), ("method",))
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef | None:
+        return None if node.name.lstrip("_").startswith("validate") else node
 
 
-class TestEveryAcceptedStrategyIsReadWhereTheRunIsBuilt:
+def _unforwarded_methods(tree: ast.Module) -> set[str]:
+    """Accepted non-baseline strategies this backend never names again.
+
+    Graded per VALUE. A module that reads ``spec.method`` for one accepted
+    strategy forwards the *field*, which is why the field-scoped question
+    reported GR00T compliant while ``expert_only`` reached nothing: the read at
+    ``_resolve_tune`` is about ``frozen_backbone``. A value named anywhere
+    outside the declaration and the gate is credited, so a backend that
+    forwards through a lookup table counts as forwarding too.
+    """
+    accepted = _accepted_methods(tree)
+    remainder = _DropAcceptance().visit(copy.deepcopy(tree))
+    named = {
+        node.value
+        for node in ast.walk(remainder)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in accepted
+    }
+    return (accepted - {BASELINE}) - named
+
+
+class TestEveryAcceptedStrategyIsNamedWhereTheRunIsBuilt:
     """A backend that accepts a non-baseline strategy must consult it again.
 
     Scope is derived from the tree, so a backend that starts accepting an
-    adapter strategy fails this until it forwards the value.
+    adapter or freeze strategy fails this until it forwards that value.
     """
 
     def test_the_scan_finds_the_backends_that_declare_a_method_set(self) -> None:
         """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
         assert set(_backends_that_declare_their_methods()) == {"cosmos3.py", "groot.py", "lerobot.py"}
 
-    def test_a_backend_accepting_more_than_a_full_fine_tune_reads_the_field(self) -> None:
-        adrift = sorted(
-            name
+    def test_no_backend_accepts_a_strategy_it_never_names_again(self) -> None:
+        adrift = {
+            name: sorted(unforwarded)
             for name, tree in _backends_that_declare_their_methods().items()
-            if _accepted_methods(tree) - {BASELINE} and not _reads_method_outside_validate(tree)
-        )
-        assert adrift == [], f"backends accepting a strategy they never forward: {adrift}"
+            if (unforwarded := _unforwarded_methods(tree))
+        }
+        assert adrift == {}, f"strategies accepted but never forwarded: {adrift}"
 
     def test_the_rule_grades_a_non_empty_population(self) -> None:
         """Non-vacuity: the rule above is not satisfied by an empty population."""
@@ -270,16 +398,42 @@ class TestEveryAcceptedStrategyIsReadWhereTheRunIsBuilt:
             "    def build_command(self, spec):\n"
             "        return ['train']\n"
         )
-        assert _accepted_methods(planted) - {BASELINE}
-        assert not _reads_method_outside_validate(planted)
+        assert _unforwarded_methods(planted) == {"lora"}
 
-    def test_the_scanner_sees_a_forwarded_read(self) -> None:
-        """A backend that forwards ``method`` by name is a reader, not an offender."""
+    def test_a_value_forwarded_by_name_is_not_an_offender(self) -> None:
         planted = ast.parse(
             '_SUPPORTED_METHODS = {"full", "lora"}\n'
-            'FORWARDED = ("method",)\n'
             "class T:\n"
             "    def build_command(self, spec):\n"
-            "        return [getattr(spec, f) for f in FORWARDED]\n"
+            "        return ['--peft'] if spec.method == 'lora' else []\n"
         )
-        assert _reads_method_outside_validate(planted)
+        assert _unforwarded_methods(planted) == set()
+
+    def test_a_value_forwarded_through_a_table_is_not_an_offender(self) -> None:
+        """A backend that maps strategies to flags forwards them too."""
+        planted = ast.parse(
+            '_SUPPORTED_METHODS = {"full", "lora"}\n'
+            '_FLAGS = {"lora": "--peft.method_type=LORA"}\n'
+            "class T:\n"
+            "    def build_command(self, spec):\n"
+            "        return [_FLAGS[spec.method]]\n"
+        )
+        assert _unforwarded_methods(planted) == set()
+
+    def test_naming_a_value_only_in_the_gate_is_not_forwarding(self) -> None:
+        """The distinction the field-scoped question could not draw.
+
+        This module accepts two strategies, reads ``method`` outside
+        ``validate`` for one of them, and reaches nothing for the other - the
+        shape GR00T had.
+        """
+        planted = ast.parse(
+            '_SUPPORTED_METHODS = {"full", "lora", "frozen_backbone"}\n'
+            "class T:\n"
+            "    def _validate_method(self, spec):\n"
+            "        return [] if spec.method != 'lora' else ['no adapter']\n"
+            "    def build_command(self, spec):\n"
+            "        return ['--freeze'] if spec.method == 'frozen_backbone' else []\n"
+        )
+        assert reads_spec_field(ast.unparse(planted), ("method",))
+        assert _unforwarded_methods(planted) == {"lora"}
