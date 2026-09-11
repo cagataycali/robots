@@ -2513,6 +2513,41 @@ class SimEngine(ABC):
             return None
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
+    @staticmethod
+    def _validate_policy_object(value: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``policy_object`` that is not a :class:`Policy` instance.
+
+        The counterpart of :meth:`_validate_policy_mapping` for the third opaque
+        policy parameter on this surface. ``policy_object`` hands the rollout a
+        pre-built policy, so it BYPASSES provider resolution and the provider's
+        ``preflight`` hook - the two checks that would otherwise have something
+        to say about it. Unguarded, the wrong shape surfaced as a bare
+        ``AttributeError`` from the first attribute the runner reached for
+        (``set_control_frequency`` on the rollout path,
+        ``set_robot_state_keys`` on the eval path), naming a library internal
+        instead of the parameter the caller got wrong.
+
+        On ``start_policy`` it was worse than a bad message: that raise happened
+        on the executor worker, whose result nothing reads, so the caller was
+        handed ``status="success"`` / "Policy started" for a rollout that
+        applied no action, and ``list_policies_running`` then reported nothing
+        running - the same reading a completed rollout gives.
+
+        Args:
+            value: The caller-supplied value, or ``None``.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict to surface, or
+            ``None`` when the value can be driven.
+        """
+        from strands_robots.policies import policy_object_error
+
+        message = policy_object_error(value)
+        if message is None:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -2970,6 +3005,8 @@ class SimEngine(ABC):
             return err
 
         if err := self._validate_video_config(video, "run_policy"):
+            return err
+        if err := self._validate_policy_object(policy_object, "run_policy"):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "run_policy"):
             return err
@@ -4563,6 +4600,8 @@ class SimEngine(ABC):
 
         if err := self._validate_video_config(video, "eval_policy"):
             return err
+        if err := self._validate_policy_object(policy_object, "eval_policy"):
+            return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "eval_policy"):
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "eval_policy"):
@@ -4778,6 +4817,8 @@ class SimEngine(ABC):
         if hook_error := optional_callable_error(on_frame, "on_frame", "evaluate_benchmark"):
             return {"status": "error", "content": [{"text": hook_error}]}
         if err := self._validate_video_config(video, "evaluate_benchmark"):
+            return err
+        if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
             return err

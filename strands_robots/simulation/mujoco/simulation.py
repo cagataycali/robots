@@ -5692,6 +5692,13 @@ class MuJoCoSimEngine(
         # policy_kwargs only fails when create_policy / get_actions splats it,
         # i.e. inside the future, so without this guard the caller receives a
         # false "started" for a rollout that never produced an action.
+        # Same reason, for the parameter that BYPASSES the preflight below: a
+        # policy_object of the wrong shape only fails when the runner reaches
+        # for a method on it, which happens on the worker - so without this
+        # guard the caller is handed "Policy started" for a rollout that
+        # applies no action and then reports nothing running.
+        if err := self._validate_policy_object(policy_object, "start_policy"):
+            return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "start_policy"):
@@ -5985,6 +5992,12 @@ class MuJoCoSimEngine(
         # world, resolve a robot, or raise ``policy_running``.
         if observer_error := optional_callable_error(observer, "observer", "run_policy"):
             return {"status": "error", "content": [{"text": observer_error}]}
+
+        # Same reason as the observer domain above: a policy_object that cannot
+        # be driven is configuration, not a rollout, so it must be refused
+        # before the robot is claimed.
+        if err := self._validate_policy_object(policy_object, "run_policy"):
+            return err
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}

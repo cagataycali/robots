@@ -267,6 +267,53 @@ def policy_mapping_error(value: object, param: str = "policy_config") -> str | N
     return f"{param} must be a dict of {hint}; got {type(value).__name__} ({value!r})."
 
 
+def policy_object_error(value: object, param: str = "policy_object") -> str | None:
+    """Describe why ``value`` cannot be driven as a pre-built policy.
+
+    ``policy_object`` is the sibling of the keyword bags
+    :func:`policy_mapping_error` guards, and it fails the same way for the same
+    reason: it is an opaque parameter with no signature to bounce off, so a
+    value of the wrong shape is only detected when the rollout reaches for a
+    method on it. That happens well after the call the caller made, and on
+    ``start_policy`` it happens on a worker thread whose result nothing reads -
+    so the caller is handed ``status="success"`` for a rollout that never
+    produced an action.
+
+    Unlike the bags, this parameter is *bypass* rather than configuration: a
+    ``policy_object`` is driven directly, so it skips provider resolution and
+    the provider's ``preflight`` hook. Nothing downstream can turn the value
+    into a policy, which is why the domain is checked here.
+
+    A ``Policy`` SUBCLASS is called out separately: passing the class instead of
+    an instance is the likeliest version of this mistake, and it is the one
+    whose unguarded failure is least legible (attribute access on a class
+    reaches unbound descriptors rather than a missing attribute).
+
+    Args:
+        value: The caller-supplied value, or ``None`` (always accepted: the
+            parameter is optional and a provider is named instead).
+        param: Parameter name to quote in the message.
+
+    Returns:
+        A single-sentence explanation naming the parameter, what arrived and how
+        to obtain a usable value, or ``None`` when ``value`` can be driven.
+    """
+    if value is None or isinstance(value, Policy):
+        return None
+    if isinstance(value, type) and issubclass(value, Policy):
+        return (
+            f"{param} must be a Policy instance; got the class {value.__name__} itself. "
+            f"Instantiate it ({value.__name__}()), or omit {param} and name policy_provider "
+            "to have one built."
+        )
+    return (
+        f"{param} must be a Policy instance; got {type(value).__name__} ({value!r}). It is driven "
+        "directly, so it bypasses provider resolution and nothing downstream can turn this value "
+        f"into a policy. Pass an instance (create_policy(provider, **config) returns one), or omit "
+        f"{param} and name policy_provider to have one built."
+    )
+
+
 def create_policy(provider: str, **kwargs) -> Policy:
     """Create a policy instance.
 
