@@ -23,6 +23,13 @@ replaced by a subclass that runs a hook on the *calling* thread as the recorder
 thread is constructed, which is exactly the moment the recording must already
 be registered. The threads are real and ``render`` is faked, so the buffers,
 the guard and the flush all run without a GL context.
+
+Each cell starts its recording in a statement and asserts on the result
+afterwards. The start is what enters the window, so it must not sit inside an
+``assert``, which the compiler is free to discard - with ``-O`` the whole
+statement becomes two instructions and no call, and the cell reports a pass
+having never recorded anything. Only the read-only checks belong in the
+assertions.
 """
 
 from __future__ import annotations
@@ -120,8 +127,9 @@ def test_a_status_read_in_the_gap_sees_the_live_recording(probe: _GapProbe) -> N
     that is already running: ``[idle]`` promises there is no buffer left to
     encode, which is the one reading that verb documents it must never give."""
     seen: list[str] = []
-    assert probe.run(lambda: seen.append(_head(probe.sim.get_cameras_recording_status())))["status"] == "success"
+    started = probe.run(lambda: seen.append(_head(probe.sim.get_cameras_recording_status())))
 
+    assert started["status"] == "success", started
     assert seen[0].startswith("[recording]"), seen
     assert "first" in seen[0]
 
@@ -139,8 +147,9 @@ def test_a_second_start_in_the_gap_is_refused(probe: _GapProbe) -> None:
         if state is not None:
             probe.states.append(state)
 
-    assert probe.run(_start_again)["status"] == "success"
+    started = probe.run(_start_again)
 
+    assert started["status"] == "success", started
     assert second[0]["status"] == "error"
     assert "first" in _head(second[0])
     registered = getattr(probe.sim, "_cams_rec_state", None)
@@ -155,8 +164,9 @@ def test_a_stop_in_the_gap_really_stops_the_capture(probe: _GapProbe) -> None:
     recording had stopped and left the capture thread rendering into a buffer
     only the ``max_frames`` cap would ever bound."""
     stopped: list[dict] = []
-    assert probe.run(lambda: stopped.append(probe.sim.stop_cameras_recording()))["status"] == "success"
+    started = probe.run(lambda: stopped.append(probe.sim.stop_cameras_recording()))
 
+    assert started["status"] == "success", started
     assert stopped[0]["status"] == "success"
     assert "first" in _head(stopped[0]), _head(stopped[0])
     time.sleep(0.3)
@@ -184,7 +194,9 @@ def test_a_recorder_thread_that_cannot_start_is_reported_not_raised(probe: _GapP
 def test_the_ordinary_recording_round_trip_still_records(probe: _GapProbe) -> None:
     """The control: publishing before the thread starts changes nothing about an
     uncontended recording, which still captures frames and encodes them."""
-    assert probe.start("plain")["status"] == "success"
+    started = probe.start("plain")
+
+    assert started["status"] == "success", started
     _wait_for_frames(probe.sim, "cam_a")
 
     result = probe.sim.stop_cameras_recording()
