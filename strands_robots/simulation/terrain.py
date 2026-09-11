@@ -77,6 +77,24 @@ TERRAIN_STAIR_STEPS = 5
 # risers up to 8 cm), matching the staircase riser height.
 TERRAIN_PYRAMID_STEPS = 5
 
+# Smallest grid each kind needs to express the field this module documents: a
+# normalized surface flush with 0 at its lowest cell and reaching 1.0 at its
+# highest, with the declared number of plateaus for a stepped kind. A smaller
+# grid still produces a field, but not the terrain that was asked for - it is
+# flat, or stops short of its top plateau - so ``generate_heightfield`` refuses
+# it rather than returning ground the caller did not request.
+TERRAIN_MIN_RESOLUTION: dict[str, int] = {
+    # Two box-blur passes over a 2x2 grid average every cell to a single value,
+    # leaving no span to normalize: every seed returns flat ground.
+    "rough": 3,
+    # One column per plateau, or the top step is never reached.
+    "stairs": TERRAIN_STAIR_STEPS,
+    # Concentric square rings, of which an n x n grid has ``ceil(n / 2)``.
+    "pyramid": 2 * TERRAIN_PYRAMID_STEPS - 1,
+    # A constant-grade ramp is expressible on the smallest grid there is.
+    "slope": 2,
+}
+
 
 def validate_terrain(kind: str | None) -> None:
     """Raise ``ValueError`` for an unsupported terrain kind (``None`` is a flat ground)."""
@@ -267,9 +285,28 @@ def generate_heightfield(
       refusal into a ``{"status": "error"}`` tool result - so those two classes
       escaped it entirely rather than being reported through it.
 
-    The ``>= 2`` floor below is unchanged and stays a separate check: the shared
-    domain answers whether the value is a usable count at all, and a 1x1 field
-    (which MuJoCo does compile) is this module's own refusal.
+    The floor below stays a separate check from that domain: the shared domain
+    answers whether the value is a usable count at all, while whether a count is
+    large enough to draw the requested *shape* is this module's own refusal. That
+    floor is per kind (:data:`TERRAIN_MIN_RESOLUTION`), because the grid a kind
+    needs is a property of the kind. A single ``>= 2`` floor accepted eleven
+    counts that returned a field contradicting the geometry the constants above
+    document, and reported nothing:
+
+    * ``rough`` and ``pyramid`` at ``2`` returned an **entirely flat** field. Two
+      box-blur passes average a 2x2 grid to one value, and a 2x2 pyramid has a
+      single ring, so both normalize to all-zeros: a caller who asked for rough
+      ground or a pyramid got the plain floor they would have got from
+      ``terrain=None``, scaled to 0 cm of the ``TERRAIN_ELEVATION`` they sized
+      the ``<hfield>`` from.
+    * ``stairs`` below ``TERRAIN_STAIR_STEPS`` and ``pyramid`` below
+      ``2 * TERRAIN_PYRAMID_STEPS - 1`` cannot hold their declared plateau count,
+      so the field stopped short of ``1.0`` - a staircase whose top plateau is
+      missing tops out at 6 cm where the documented risers say 8 cm.
+
+    Every property this module promises - the normalized ``[0, 1]`` span, the
+    discrete plateau count, the pyramid's ``1.0`` centre - held only from these
+    floors upward, so the floors are where the field starts being the terrain.
 
     ``seed`` names the value-noise stream the ``"rough"`` field is drawn from, so
     it is measured against
@@ -306,8 +343,13 @@ def generate_heightfield(
     if positive_whole_number_error(resolution, "resolution", "terrain") is not None:
         raise ValueError(f"terrain resolution must be a positive whole number of grid cells, got {resolution!r}.")
     n = int(resolution)
-    if n < 2:
-        raise ValueError(f"terrain resolution must be >= 2, got {resolution}.")
+    minimum = TERRAIN_MIN_RESOLUTION[kind]
+    if n < minimum:
+        raise ValueError(
+            f"terrain resolution must be >= {minimum} for kind {kind!r}, got {n}: a smaller grid "
+            f"cannot express this kind's normalized 0..1 field, so the generator would return "
+            f"ground that is flat or short of its top plateau rather than the terrain requested."
+        )
     if kind == "rough":
         # Only this branch draws from an rng, so only this branch measures the
         # seed: the other kinds must not be refused for a value they never read.
@@ -334,6 +376,7 @@ __all__ = [
     "TERRAIN_SEED",
     "TERRAIN_STAIR_STEPS",
     "TERRAIN_PYRAMID_STEPS",
+    "TERRAIN_MIN_RESOLUTION",
     "validate_terrain",
     "validate_difficulty",
     "terrain_elevation",

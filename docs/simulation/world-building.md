@@ -224,6 +224,16 @@ is the ground-generation primitive a terrain *curriculum* (progressive
 difficulty across resets) builds on. (MuJoCo backend; the Newton backend
 rejects `terrain=` as not-yet-supported.)
 
+Those guarantees - the field flush with `z=0` at its lowest cell, reaching the
+full elevation at its highest, with the declared plateau count for a stepped
+kind - are properties of the *grid* as much as of the kind, so each kind needs a
+minimum number of cells to draw its shape at all. `create_world()` always uses a
+40-cell grid and is comfortably above every minimum. A caller reaching for the
+generator directly (`generate_heightfield(kind, resolution=...)`) is refused
+below it, naming the kind and the count that works, rather than handed a field
+that is flat or short of its top plateau; the minimums are exported as
+`TERRAIN_MIN_RESOLUTION`.
+
 That curriculum knob is `difficulty`, which scales the terrain's peak
 elevation (the metre height its normalized `[0, 1]` field maps to) without
 changing the terrain *kind*:

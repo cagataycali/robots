@@ -366,8 +366,8 @@ class TestResolutionIsMeasuredAgainstTheSharedDiscreteDomain:
         assert len(heights) == n * n
         assert heights == from_int
 
-    def test_the_floor_at_two_keeps_its_own_refusal(self) -> None:
-        """``1`` is a positive whole number, so the ``>= 2`` floor is still this module's.
+    def test_the_shape_floor_keeps_its_own_refusal(self) -> None:
+        """``1`` is a positive whole number, so the shape floor is still this module's.
 
         This fails if the shared domain is treated as the whole check and the
         floor is dropped, or if the floor's message is folded into the domain's.
@@ -375,7 +375,8 @@ class TestResolutionIsMeasuredAgainstTheSharedDiscreteDomain:
         assert positive_whole_number_error(1, "resolution", "terrain") is None, (
             "premise: the shared domain accepts 1, so only this module refuses it"
         )
-        with pytest.raises(ValueError, match=r">= 2"):
+        minimum = terrain.TERRAIN_MIN_RESOLUTION["rough"]
+        with pytest.raises(ValueError, match=rf">= {minimum}"):
             terrain.generate_heightfield("rough", resolution=1)
 
     def test_the_kind_is_still_checked_before_the_resolution(self) -> None:
@@ -387,3 +388,121 @@ class TestResolutionIsMeasuredAgainstTheSharedDiscreteDomain:
         with pytest.raises(ValueError) as exc:
             terrain.generate_heightfield("bogus", resolution=2.5)  # type: ignore[arg-type]
         assert "Supported" in str(exc.value)
+
+
+def _field_expresses_kind(kind: str, n: int) -> bool:
+    """Does an ``n x n`` field of ``kind`` have the shape this module documents?
+
+    Reads the generator behind ``generate_heightfield``'s floor, because that
+    floor is what the class below tests: asking the public entry point would
+    only report the floor back to itself.
+    """
+    generators: dict[str, Any] = {
+        "rough": lambda: terrain._rough(n, terrain.TERRAIN_SEED),
+        "stairs": lambda: terrain._stairs(n),
+        "pyramid": lambda: terrain._pyramid(n),
+        "slope": lambda: terrain._slope(n),
+    }
+    h = generators[kind]()
+    # Normalized flush with the nominal floor at its lowest cell and reaching the
+    # full elevation at its highest - the span every kind declares.
+    if not (min(h) == 0.0 and max(h) == 1.0):
+        return False
+    if kind == "stairs":
+        return len(set(h)) == terrain.TERRAIN_STAIR_STEPS
+    if kind == "pyramid":
+        grid = [h[i * n : (i + 1) * n] for i in range(n)]
+        return len(set(h)) == terrain.TERRAIN_PYRAMID_STEPS and grid[n // 2][n // 2] == 1.0
+    return True
+
+
+# Grid counts a positive-whole-number resolution can be, paired with the kinds
+# whose field they cannot draw. Enumerated from the generators rather than
+# listed, so the table is the defect itself and not a copy of it.
+_PROBE = range(2, 41)
+_DEGENERATE = [(kind, n) for kind in terrain.SUPPORTED_TERRAINS for n in _PROBE if not _field_expresses_kind(kind, n)]
+
+
+class TestAResolutionTheKindCannotExpressIsRefused:
+    """A grid too small to draw the requested shape is refused, not quietly drawn.
+
+    Every property this module promises of a field - the normalized ``[0, 1]``
+    span, a stepped kind's declared plateau count, the pyramid's ``1.0`` centre -
+    is a property of the *grid* as much as of the generator, and the tests above
+    pin them at resolutions 24/32/40 only. Below a kind-dependent floor the same
+    generators returned a field that contradicted all three while raising
+    nothing: ``rough`` and ``pyramid`` at ``2`` returned entirely flat ground,
+    and ``stairs`` at ``4`` topped out at ``0.75`` of the ``TERRAIN_ELEVATION``
+    the ``<hfield>`` is sized from, so the documented 2 cm risers reached 6 cm
+    instead of 8 cm. A caller who asked for rough ground got the plain floor.
+
+    :data:`~strands_robots.simulation.terrain.TERRAIN_MIN_RESOLUTION` is that
+    floor. It is graded here against what the generators actually produce rather
+    than against a copied number, so a generator whose usable range moves - a new
+    plateau count, a different blur - makes the floor wrong and fails this class
+    instead of silently re-opening the gap.
+    """
+
+    @pytest.mark.parametrize(("kind", "n"), _DEGENERATE)
+    def test_a_grid_that_cannot_draw_the_kind_returns_no_field(self, kind: str, n: int) -> None:
+        """The behaviour itself: every such count is refused rather than drawn.
+
+        Stated without naming the floor constant, so it holds for whatever the
+        floor is - what matters is that no accepted resolution produces a field
+        the caller did not ask for.
+        """
+        with pytest.raises(ValueError, match="resolution"):
+            terrain.generate_heightfield(kind, resolution=n)
+
+    def test_every_supported_kind_declares_a_floor(self) -> None:
+        """A kind added without a floor would be ungraded, which is how this shipped."""
+        assert set(terrain.TERRAIN_MIN_RESOLUTION) == set(terrain.SUPPORTED_TERRAINS)
+
+    @pytest.mark.parametrize("kind", terrain.SUPPORTED_TERRAINS)
+    def test_the_floor_is_exactly_where_the_field_becomes_the_terrain(self, kind: str) -> None:
+        """The refused counts are precisely those whose field is not this kind's.
+
+        Both directions matter: a floor set too low re-admits ground the caller
+        did not ask for, and one set too high refuses a grid that would have been
+        correct. Reading the accepted set off the generator pins both at once.
+        """
+        refused = {n for n in _PROBE if n < terrain.TERRAIN_MIN_RESOLUTION[kind]}
+        cannot_express = {n for n in _PROBE if not _field_expresses_kind(kind, n)}
+        assert refused == cannot_express, (
+            f"{kind}: refused {sorted(refused)} but the field is wrong for {sorted(cannot_express)}"
+        )
+
+    @pytest.mark.parametrize("kind", terrain.SUPPORTED_TERRAINS)
+    def test_a_resolution_below_the_floor_is_refused_by_name(self, kind: str) -> None:
+        """The refusal has to carry the kind and the count that would work."""
+        minimum = terrain.TERRAIN_MIN_RESOLUTION[kind]
+        if minimum == 2:  # nothing below this kind's floor is a usable count at all
+            pytest.skip(f"{kind} is expressible on the smallest grid there is")
+        with pytest.raises(ValueError) as exc:
+            terrain.generate_heightfield(kind, resolution=minimum - 1)
+        message = str(exc.value)
+        assert kind in message and f">= {minimum}" in message, message
+
+    @pytest.mark.parametrize("kind", terrain.SUPPORTED_TERRAINS)
+    def test_the_floor_itself_is_accepted(self, kind: str) -> None:
+        """The boundary is usable, so the refusal cannot be off by one."""
+        n = terrain.TERRAIN_MIN_RESOLUTION[kind]
+        assert len(terrain.generate_heightfield(kind, resolution=n, seed=terrain.TERRAIN_SEED)) == n * n
+
+    def test_flat_ground_was_what_the_refusal_replaced(self) -> None:
+        """The damaging case: a rough or pyramid request answered with the plain floor.
+
+        Pinned as arithmetic on the generators' own helpers rather than on the
+        public entry point, which now refuses these counts - the point is that
+        the field behind the refusal really was flat, so the refusal is not
+        rejecting usable ground.
+        """
+        assert max(terrain._rough(2, terrain.TERRAIN_SEED)) == 0.0
+        assert max(terrain._pyramid(2)) == 0.0
+
+    def test_stairs_below_the_floor_stopped_short_of_the_top_plateau(self) -> None:
+        """The quieter case: a staircase shorter than the elevation it is scaled by."""
+        field = terrain._stairs(4)
+        assert max(field) == 0.75, "a 4-cell staircase reaches only three of five plateaus"
+        short = terrain.TERRAIN_ELEVATION * max(field)
+        assert short < terrain.TERRAIN_ELEVATION

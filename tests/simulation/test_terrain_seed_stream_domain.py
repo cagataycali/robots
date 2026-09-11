@@ -72,7 +72,11 @@ ACCEPTED: tuple[tuple[str, Any], ...] = (
     ("far_above_a_32_bit_stream_range", 10**30),
 )
 
-RESOLUTION = 8
+# At or above every kind's minimum grid, so no cell here is ever refused for a
+# resolution the kind cannot draw - the subject of this file is the seed. Read
+# from the module rather than fixed at 8, which a pyramid cannot express: eight
+# cells hold four concentric rings, not the five plateaus the kind declares.
+RESOLUTION = max(terrain.TERRAIN_MIN_RESOLUTION.values())
 
 
 class TestASeedOutsideTheDomainIsRefused:
