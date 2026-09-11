@@ -20,7 +20,12 @@ from typing import Any
 import numpy as np
 import torch
 
-from ...utils import name_list_error, positive_count_error, positive_finite_number_error
+from ...utils import (
+    boolean_flag_error,
+    name_list_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
 from .._state_keys import drop_velocity_siblings
@@ -393,7 +398,11 @@ class LerobotLocalPolicy(Policy):
             actuator, so padding TRAVELS those joints to zero. Enable only when
             the consumer needs a fixed-width action dict and zero is a
             meaningful target for every key it pads. Either way the dim
-            mismatch itself is reported once via ``diagnose_action_dim``.
+            mismatch itself is reported once via ``diagnose_action_dim``. A
+            boolean, checked rather than read by truthiness - it selects a
+            posture rather than scaling a quantity, so a truthy spelling of off
+            (``"false"``, ``"no"``, ``"0"``) is refused rather than selecting
+            the padding posture the word asks to skip.
     """
 
     def __init__(
@@ -481,7 +490,12 @@ class LerobotLocalPolicy(Policy):
         # actuator keys, False (the default) omits the unmatched actuators so
         # they hold position; True commands them 0.0, which on an absolute-
         # position action space travels them to zero. See align_action_values.
-        self.pad_short_actions = bool(pad_short_actions)
+        # Checked rather than coerced with bool(): the two values select
+        # postures, and bool() is where "false" - a spelling of the omitting
+        # default - became the padding posture that moves those actuators.
+        if error := boolean_flag_error(pad_short_actions, "pad_short_actions", "lerobot_local"):
+            raise ValueError(error)
+        self.pad_short_actions = pad_short_actions
         # Routing-degradation telemetry. The heuristic (non-declarative)
         # remap path can keep a run alive while silently producing
         # meaningless inputs - a camera routed to an arbitrary model image

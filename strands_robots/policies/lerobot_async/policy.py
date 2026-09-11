@@ -58,7 +58,13 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy, align_action_values, chunk_count_error
-from strands_robots.utils import name_list_error, positive_finite_number_error, require_optional, tcp_port_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    name_list_error,
+    positive_finite_number_error,
+    require_optional,
+    tcp_port_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +163,15 @@ class LerobotAsyncPolicy(Policy):
             that differ from the ones the robot exposes (e.g.
             ``{"observation.images.front": "observation.images.laptop"}``); keys
             not present in the map pass through unchanged.
+        pad_short_actions: When a server chunk is NARROWER than the robot's
+            actuator keys, command the unmatched actuators to ``0.0`` instead of
+            omitting them. Defaults to False: an omitted actuator holds its
+            position, whereas ``0.0`` is an absolute target on a LeRobot
+            ``<motor>.pos`` follower, so padding TRAVELS those joints to zero.
+            A boolean, checked rather than read by truthiness - it selects a
+            posture rather than scaling a quantity, so a truthy spelling of off
+            (``"false"``, ``"no"``, ``"0"``) is refused rather than selecting
+            the padding posture the word asks to skip.
 
     Unrecognized kwargs are ignored (for forward-compatible ``policy_config``
     passthrough via :func:`~strands_robots.policies.create_policy`) but logged
@@ -165,8 +180,9 @@ class LerobotAsyncPolicy(Policy):
 
     Raises:
         ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing,
-            ``policy_type`` is not server-supported, or ``connect_timeout`` /
-            ``request_timeout`` is not a positive finite number.
+            ``policy_type`` is not server-supported, ``connect_timeout`` /
+            ``request_timeout`` is not a positive finite number, or
+            ``pad_short_actions`` is not a boolean.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -261,8 +277,13 @@ class LerobotAsyncPolicy(Policy):
         # A server chunk narrower than robot_state_keys leaves the trailing
         # actuators unmatched. False (the default) omits them so they hold
         # position; True commands them 0.0, which is an absolute target on a
-        # <motor>.pos follower. See align_action_values.
-        self.pad_short_actions = bool(pad_short_actions)
+        # <motor>.pos follower. See align_action_values. Checked rather than
+        # coerced with bool(): the two values select postures, and bool() is
+        # where "false" - a spelling of the omitting default - became the
+        # padding posture that travels those actuators to zero.
+        if error := boolean_flag_error(pad_short_actions, "pad_short_actions", "lerobot_async"):
+            raise ValueError(error)
+        self.pad_short_actions = pad_short_actions
 
         if ignored_kwargs:
             logger.warning(

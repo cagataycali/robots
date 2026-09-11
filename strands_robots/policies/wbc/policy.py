@@ -65,7 +65,7 @@ import numpy as np
 from strands_robots.locomotion_envelope import target_velocity_component_error
 from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy
-from strands_robots.utils import finite_number_error, require_optional, sequence_length
+from strands_robots.utils import boolean_flag_error, finite_number_error, require_optional, sequence_length
 
 from .config import _DEFAULT_CMD_SCALE, WBCConfig
 from .control import compute_targets, pd_control, projected_gravity
@@ -192,7 +192,11 @@ class WBCPolicy(Policy):
             directory.
         walk: When ``True`` (default) load and prefer the walk policy
             (``walk_policy_path``) for forward locomotion. When ``False`` only
-            the main policy is loaded/used.
+            the main policy is loaded/used. A boolean, checked rather than read
+            by truthiness - it selects a posture rather than scaling a
+            quantity, so a truthy spelling of off (``"false"``, ``"no"``,
+            ``"0"``) is refused rather than selecting the locomotion posture
+            the word asks to skip.
         target_velocity: Optional constructor-time default locomotion command
             ``[vx, vy, omega]`` (m/s, m/s, rad/s). Used when a call supplies no
             ``target_velocity`` kwarg - this is how a *static* walk works
@@ -224,7 +228,13 @@ class WBCPolicy(Policy):
         allow_missing_models: bool = False,
         **kwargs: Any,
     ) -> None:
-        self._walk = bool(walk)
+        # Checked rather than coerced with bool(): the two values select
+        # postures - load and prefer the walk policy, or run the balance policy
+        # alone - and bool() is where "false", a spelling of the balance-only
+        # posture, became the locomotion one. See boolean_flag_error.
+        if error := boolean_flag_error(walk, "walk", "WBCPolicy"):
+            raise ValueError(error)
+        self._walk = walk
         self._robot_state_keys: list[str] = []
         self._warned_no_velocity = False
         self._default_command = self._validate_velocity(target_velocity) if target_velocity is not None else None
