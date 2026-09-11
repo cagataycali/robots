@@ -58,7 +58,25 @@ logger = logging.getLogger(__name__)
 # Sensible default mirrors FinetuneConfig defaults (projector + diffusion on).
 _DEFAULT_TUNE = {"llm": False, "visual": False, "projector": True, "diffusion": True}
 
-_SUPPORTED_METHODS = {"full", "frozen_backbone", "expert_only"}
+# Tuning strategies this trainer can select. GR00T chooses what trains through
+# the tune_* switches, so a strategy only belongs here when _resolve_tune can
+# express it: ``full`` is the baseline and ``frozen_backbone`` forces the
+# backbone switches off. ``expert_only`` is NOT one of them - see
+# _EXPERT_ONLY_REFUSAL.
+_SUPPORTED_METHODS = {"full", "frozen_backbone"}
+
+# ``expert_only`` freezes everything but the action expert on the LeRobot
+# policies whose config declares ``train_expert_only`` (pi0 / pi05 / smolvla).
+# GrootConfig declares no such field - it exposes the tune_* switches instead -
+# so this trainer has nothing to forward the request to, and running the default
+# tune under an expert-only label would train the projector the caller asked to
+# freeze. Report the request and name the switch that does express it.
+_EXPERT_ONLY_REFUSAL = (
+    "method 'expert_only' is not a GR00T strategy: GR00T's config declares no "
+    "train_expert_only switch (LeRobot's pi0 / pi05 / smolvla declare one). "
+    "Select what trains with tune={...}: tune={'projector': False} leaves only "
+    "the diffusion action head training."
+)
 
 _INSTALL_HINT = (
     "Isaac-GR00T is not importable from this interpreter. Install it from source "
@@ -151,7 +169,9 @@ class Gr00tTrainer(Trainer):
         if not spec.embodiment:
             problems.append("embodiment is required for GR00T (--embodiment_tag)")
 
-        if spec.method not in _SUPPORTED_METHODS:
+        if spec.method == "expert_only":
+            problems.append(_EXPERT_ONLY_REFUSAL)
+        elif spec.method not in _SUPPORTED_METHODS:
             problems.append(
                 f"unsupported method '{spec.method}' for GR00T "
                 f"(expected one of {sorted(_SUPPORTED_METHODS)}); "

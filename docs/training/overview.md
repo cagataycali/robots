@@ -99,7 +99,7 @@ launching.
 | `num_gpus` / `num_nodes` | `int` | `1` | zero, negative, fractional, `bool` |
 | `resume` / `streaming` | `bool` | `False` | a non-`bool`; `streaming` together with `val_episodes` |
 | `seed` | `int \| None` | `None` | negative |
-| `method` | `str` | `"full"` | anything but `full` / `lora` / `expert_only` / `frozen_backbone` |
+| `method` | `str` | `"full"` | a strategy the selected backend cannot select - LeRobot takes `full` / `lora` / `expert_only`, GR00T `full` / `frozen_backbone` |
 | `lora_r` / `lora_alpha` | `int \| None` | `None` | non-positive |
 | `tune` | `dict[str, bool]` | `{}` | keys outside `llm` / `visual` / `projector` / `diffusion`; a non-`bool` value; a policy whose config has no such switches (GR00T via `groot` or `lerobot_local` `policy_type="groot"`) |
 | `embodiment` | `str \| None` | `None` | a policy whose config has no embodiment tag (only GR00T declares one; others take their shape from the dataset) |
@@ -198,6 +198,13 @@ frames with a trained reward model, load it with lerobot's `make_reward_model`.
 config class - see [Isaac-GR00T](../policies/groot.md). `num_gpus` + `extra["cosmos_root"]` +
 `extra["sft_toml"]` drive `prepare()` (DCP convert), `train()` (`torchrun`) and
 `export()` (DCP -> safetensors) - see [Cosmos3](../policies/cosmos3.md).
+
+GR00T selects what trains with `tune`, so `method` is limited to what those
+switches express: `full` and `frozen_backbone` (which forces `llm` and `visual`
+off). `GrootConfig` declares no `train_expert_only` field - that belongs to
+LeRobot's pi0 / pi05 / smolvla - so `method="expert_only"` is refused by
+`validate()` instead of being run as the default tune; `tune={"projector": False}`
+is how a GR00T run trains the diffusion action head alone.
 
 ## Dependencies & extras (per provider)
 

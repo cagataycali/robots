@@ -5,6 +5,7 @@ groot_root with a stub launch_finetune.py for the happy-path command tests).
 """
 
 import importlib
+import inspect
 import json
 import os
 import sys
@@ -608,3 +609,103 @@ class TestGrootWorker:
 
         assert len(calls) == 1
         assert calls[0][2] is None  # non-rank-0 worker must not touch the shared log
+
+
+class TestAStrategyThisTrainerCannotSelectIsRefused:
+    """``method="expert_only"`` is reported, not run as the default tune.
+
+    GR00T selects what trains through the ``tune_*`` switches, and
+    :func:`Gr00tTrainer._resolve_tune` is the one place a strategy can reach
+    them. ``expert_only`` never had a branch there, so it resolved to the
+    default tune: ``validate`` returned no problems and the launch argv was
+    byte-identical to ``method="full"``, including ``--tune_projector=true`` for
+    a caller who asked to train the action expert alone. With
+    ``tune={"llm": True}`` it went further and emitted ``--tune_llm=true``,
+    fine-tuning the language model under an expert-only label.
+
+    The strategy belongs to the LeRobot policies whose config declares
+    ``train_expert_only`` (pi0 / pi05 / smolvla); GrootConfig declares the
+    ``tune_*`` switches instead, which is why the sibling
+    ``LerobotTrainer(policy_type="groot")`` already refuses the same word for
+    the same architecture. This trainer now agrees with it.
+    """
+
+    def test_it_is_reported_as_a_problem(self, spec):
+        spec.method = "expert_only"
+        assert [p for p in Gr00tTrainer().validate(spec) if "expert_only" in p]
+
+    def test_the_refusal_names_the_missing_field_and_the_switch_that_works(self, spec):
+        """A dead end would leave the caller with nothing to do next."""
+        spec.method = "expert_only"
+        problems = [p for p in Gr00tTrainer().validate(spec) if "expert_only" in p]
+        assert problems and "train_expert_only" in problems[0] and "tune=" in problems[0], problems
+
+    def test_the_redirect_the_refusal_offers_trains_the_expert_alone(self, spec):
+        """The message's ``tune={'projector': False}`` is graded, not asserted in prose."""
+        spec.tune = {"projector": False}
+        cmd = Gr00tTrainer().build_command(spec)
+        assert "--tune_diffusion_model=true" in cmd
+        assert {"--tune_llm=false", "--tune_visual=false", "--tune_projector=false"} <= set(cmd)
+
+    def test_it_is_refused_even_when_tune_would_train_the_backbone(self, spec):
+        """The damaging request: an expert-only label over a language-model tune."""
+        spec.method = "expert_only"
+        spec.tune = {"llm": True}
+        assert [p for p in Gr00tTrainer().validate(spec) if "expert_only" in p]
+
+    def test_validate_reports_rather_than_raises(self, spec):
+        """``validate`` is documented to *return* problems."""
+        spec.method = "expert_only"
+        assert isinstance(Gr00tTrainer().validate(spec), list)
+
+    def test_the_sibling_trainer_refuses_the_same_word_for_the_same_policy(self, dataset_root, tmp_path):
+        """Non-vacuity: the strategy is refused for GR00T, not universally.
+
+        ``LerobotTrainer`` gates ``expert_only`` on the policy config declaring
+        ``train_expert_only``, so it accepts the request for pi0 and refuses it
+        for ``policy_type="groot"`` - the verdict this trainer now shares.
+        """
+        pytest.importorskip("psutil")
+        from strands_robots.training.lerobot import LerobotTrainer
+
+        def problems(policy_type):
+            spec = TrainSpec(
+                dataset_root=dataset_root,
+                output_dir=str(tmp_path / "out"),
+                base_model="lerobot/pi0",
+                method="expert_only",
+                extra={"policy_type": policy_type},
+            )
+            return [p for p in LerobotTrainer().validate(spec) if "expert_only" in p]
+
+        assert problems("groot"), "sibling accepted a strategy groot has no field for"
+        assert problems("pi0") == [], "expert_only is not universally unsupported"
+
+    def test_every_accepted_strategy_is_resolved_where_the_tune_flags_are_built(self):
+        """A strategy accepted but never resolved launches the default tune.
+
+        Scope is the production set, so a strategy added to
+        ``_SUPPORTED_METHODS`` without a branch in ``_resolve_tune`` fails this
+        instead of silently resolving to ``full``.
+        """
+        from strands_robots.training import groot as groot_mod
+
+        non_baseline = groot_mod._SUPPORTED_METHODS - {"full"}
+        assert non_baseline, "non-vacuity: the rule needs a strategy to grade"
+        resolved = inspect.getsource(Gr00tTrainer._resolve_tune)
+        unresolved = sorted(m for m in non_baseline if f'"{m}"' not in resolved)
+        assert unresolved == [], f"accepted but never resolved into the tune flags: {unresolved}"
+
+    @pytest.mark.parametrize("method", ["full", "frozen_backbone"])
+    def test_a_strategy_this_trainer_can_select_is_unchanged(self, spec, method):
+        """The two strategies ``_resolve_tune`` expresses stay launchable."""
+        spec.method = method
+        assert Gr00tTrainer().validate(spec) == []
+
+    def test_frozen_backbone_still_overrides_a_backbone_tune(self, spec):
+        """The strategy that IS forwarded still differs from the baseline."""
+        spec.tune = {"llm": True}
+        baseline = Gr00tTrainer().build_command(spec)
+        spec.method = "frozen_backbone"
+        assert "--tune_llm=true" in baseline
+        assert "--tune_llm=false" in Gr00tTrainer().build_command(spec)
