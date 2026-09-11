@@ -122,7 +122,7 @@ other spelling is refused. See
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL (when `nucleus_url` is not passed) | unset (Isaac defaults) |
 | `STRANDS_ISAAC_HEADLESS` | On forces headless; off forces a window | unset (uses `headless` kwarg) |
 | `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
-| `STRANDS_ISAAC_CAMERA_WARMUP_STEPS` | Render-bearing world steps `add_camera` takes before returning, so a new RTX camera's first `get_rgba()` is a real frame rather than the empty buffer the pipeline returns until it has been stepped. Raise on a slow GPU. Positive integer; anything else falls back to the default | `10` |
+| `STRANDS_ISAAC_CAMERA_WARMUP_STEPS` | Render-bearing world steps `add_camera` takes before returning, so a new RTX camera's first `get_rgba()` is a real frame rather than the empty buffer the pipeline returns until it has been stepped. Raise on a slow GPU. Positive integer; anything else is reported with a warning naming the variable and falls back to the default | `10` |
 
 </details>
 
