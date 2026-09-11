@@ -41,6 +41,38 @@ logger = logging.getLogger(__name__)
 # path from the native driver.
 _MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
+# The two recorded-move libraries the daemon serves, mapped to their HuggingFace
+# dataset ids. A dict rather than string surgery for the same reason
+# `_MOVE_NAME_RE` is a pattern rather than a substring check: the dataset id is
+# interpolated into the REST path, so the admitted set has to be enumerable both
+# to keep the interpolation structurally safe and so a refusal can name what was
+# expected. Kept identical to `strands_robots.drivers.reachy._MOVE_LIBRARIES`,
+# which resolves the same two libraries for the same daemon endpoints from the
+# native driver.
+_MOVE_LIBRARIES: dict[str, str] = {
+    "emotions": "pollen-robotics/reachy-mini-emotions-library",
+    "dances": "pollen-robotics/reachy-mini-dances-library",
+}
+
+
+def _library_error(library: str, verb: str) -> dict[str, str] | None:
+    """Structured rejection when ``library`` names no recorded-move library.
+
+    Args:
+        library: The caller's library name.
+        verb: The RPC doing the lookup, so the reason names it.
+
+    Returns:
+        An error envelope naming the value and the admitted set, or ``None``
+        when the library is one the daemon serves.
+    """
+    if library in _MOVE_LIBRARIES:
+        return None
+    return {
+        "status": "error",
+        "reason": f"{verb}: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}",
+    }
+
 
 def _key_prefix_error(value: Any, param: str, cls_name: str) -> str | None:
     """Structured rejection when a Zenoh key prefix cannot address one robot.
@@ -584,19 +616,21 @@ class ReachyMiniDriver(DeviceDriver):
 
         Args:
             move_name: Name of the move to play
-            library: Move library (emotions or dance)
+            library: Which library, one of ``'emotions'`` or ``'dances'``.
 
         Returns:
             A success envelope naming the move, or an error envelope naming the
-            gate that refused - the caller, the ``move_name``, or a daemon that
-            was not reached, in which case no move was played.
+            gate that refused - the caller, the ``library``, the ``move_name``,
+            or a daemon that was not reached, in which case no move was played.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "playMove")
+        if (refusal := _library_error(library, "playMove")) is not None:
+            return refusal
         if not _MOVE_NAME_RE.fullmatch(move_name or ""):
             return {"status": "error", "reason": f"invalid move_name: {move_name!r}"}
-        ds = f"pollen-robotics/reachy-mini-{'emotions' if library == 'emotions' else 'dances'}-library"
+        ds = _MOVE_LIBRARIES[library]
         result = await asyncio.to_thread(
             api,
             self._host,
@@ -613,14 +647,17 @@ class ReachyMiniDriver(DeviceDriver):
         """List available recorded moves.
 
         Args:
-            library: Move library (emotions or dance)
+            library: Which library, one of ``'emotions'`` or ``'dances'``.
 
         Returns:
             A success envelope whose ``moves`` is the daemon's array of names,
-            or an error envelope naming a daemon that was not reached - the
-            catalogue is then unknown rather than empty.
+            or an error envelope naming what refused - the ``library``, or a
+            daemon that was not reached, in which case the catalogue is unknown
+            rather than empty.
         """
-        ds = f"pollen-robotics/reachy-mini-{'emotions' if library == 'emotions' else 'dances'}-library"
+        if (refusal := _library_error(library, "listMoves")) is not None:
+            return refusal
+        ds = _MOVE_LIBRARIES[library]
         result = await asyncio.to_thread(
             api,
             self._host,
