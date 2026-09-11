@@ -15,6 +15,8 @@ import importlib.util
 import numpy as np
 import pytest
 
+from strands_robots.utils import coerce_pose_vector
+
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
 pytestmark = pytest.mark.skipif(not _HAS_NEWTON, reason="newton/warp not installed")
@@ -71,9 +73,24 @@ class TestNamedCameraRegistration:
         assert "look direction" in result["content"][0]["text"]
 
     def test_bad_position_shape_rejected(self, engine_with_so101):
-        result = engine_with_so101.add_camera("bad", position=[1.0, 1.0], target=[0.0, 0.0, 0.0])
+        """The refusal is the shared pose domain's own text, not a copy of it.
+
+        ``add_camera`` routes ``position`` through
+        :func:`~strands_robots.utils.coerce_pose_vector`, so the text this
+        backend emits is whatever that helper produces. A hand-copied substring
+        pinned nothing about that routing and drifted the moment the helper
+        worded the refusal differently: this cell asserted ``"3 elements"``
+        while the shared domain says ``"must be a 3-element vector"``, and the
+        mismatch stood because this module needs a real ``newton`` install and
+        so does not run in CI. Comparing against the helper's own output cannot
+        drift again, and it asserts more than a substring did - that the backend
+        forwards the shared message rather than composing a similar one.
+        """
+        bad = [1.0, 1.0]
+        result = engine_with_so101.add_camera("bad", position=bad, target=[0.0, 0.0, 0.0])
         assert result["status"] == "error"
-        assert "3 elements" in result["content"][0]["text"]
+        _value, expected = coerce_pose_vector("add_camera", "position", bad, 3)
+        assert result["content"][0]["text"] == expected
 
     def test_remove_camera(self, engine_with_so101):
         sim = engine_with_so101

@@ -32,6 +32,17 @@ MuJoCo refused all 16 unusable values in that set and accepted all 3 NumPy
 vectors. Every message here is the shared one, so a pose one backend refuses is
 refused by all of them.
 
+``add_camera`` is graded here for the same reason, not because it ever drifted:
+all three backends have routed its ``position`` and ``target`` through the
+shared helper from the start, and the structural guard below has required it -
+but the only cells that checked what the verdicts actually *were* lived in the
+per-backend camera modules, two of which need a ``newton``/``warp`` or
+``isaacsim`` install and so never run in CI. A stale expectation in the Newton
+one (``"3 elements"``, against a domain that says ``"must be a 3-element
+vector"``) therefore stood red for as long as newton was installed anywhere,
+while CI reported the module skipped. The camera cells here need neither
+install, because the pose guards precede the solver and the stage.
+
 ``TestNoPlacementMethodDrifts`` keeps it that way structurally: every public
 method of a backend engine class that takes a ``position`` / ``orientation`` /
 ``target`` parameter must route it through the shared helper. The scope is
@@ -296,6 +307,61 @@ class TestNewtonMoveObject:
         assert result["status"] == "success"
         assert "same" in result["content"][0]["text"]
         assert stub._world.objects["crate"].position == [0.0, 0.0, 0.0]
+
+
+class TestNewtonAddCamera:
+    """The camera pose, graded where CI can see it.
+
+    ``add_camera`` routes both its vectors through the shared helper, and
+    ``TestNoPlacementMethodDrifts`` already requires that structurally. The
+    behavioural half was reachable only from
+    ``tests/simulation/newton/test_multi_camera.py``, which needs a real
+    ``newton``/``warp`` install and is skipped wherever they are absent - so
+    what the verdicts actually were went ungraded on every CI run, and a stale
+    expectation in that module stood red for as long as newton was installed
+    anywhere. These cells need neither newton nor a GPU, because the guards
+    precede the solver.
+
+    Only the assertions the cross-backend parity class below cannot make live
+    here: that the refusal leaves no camera registered, and that an accepted
+    NumPy pose does not leak NumPy scalars onto the registry entry. The
+    verdicts themselves are pinned once, there.
+    """
+
+    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
+    def test_a_refused_pose_registers_no_camera(self, vec):
+        """No half-registered camera: a refused pose leaves the registry alone.
+
+        A camera stored with a wrong-length or non-finite pose is not inert -
+        ``_look_at_quat`` divides the view vector by a ``nan`` norm, so
+        ``render`` returns a frame from an all-NaN camera under a success result.
+        """
+        stub = _newton_stub()
+        NewtonSimEngine.add_camera(stub, "front", position=vec, target=[0.0, 0.0, 0.1])
+        assert dict(stub._world.cameras) == {}
+
+    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
+    def test_a_refused_target_registers_no_camera(self, vec):
+        stub = _newton_stub()
+        NewtonSimEngine.add_camera(stub, "front", position=[0.0, -0.6, 0.4], target=vec)
+        assert dict(stub._world.cameras) == {}
+
+    def test_a_numpy_pose_is_accepted_and_normalized(self):
+        """Accepted, and the NumPy scalars do not outlive the boundary.
+
+        Both vectors are stored on :class:`SimCamera` (annotated
+        ``list[float]``) and echoed in the agent-visible status text.
+        """
+        stub = _newton_stub()
+        result = NewtonSimEngine.add_camera(
+            stub, "front", position=np.array([0.0, -0.6, 0.4]), target=np.array([0.0, 0.0, 0.1])
+        )
+        assert result["status"] == "success", result
+        stored = stub._world.cameras["front"]
+        assert stored.position == [0.0, -0.6, 0.4]
+        assert stored.target == [0.0, 0.0, 0.1]
+        assert all(type(v) is float for v in stored.position)
+        assert all(type(v) is float for v in stored.target)
 
 
 # --------------------------------------------------------------------------- #
@@ -579,6 +645,33 @@ class TestEveryBackendGivesTheSameVerdict:
         assert mj_sim.add_object("crate", position=vec)["status"] == "success"
         assert NewtonSimEngine.add_object(_newton_stub(), "crate", position=vec)["status"] == "success"
         assert IsaacSimulation.add_object(_isaac_stub(), "crate", position=vec)["status"] == "success"
+
+    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
+    def test_add_camera_position_verdicts_match(self, mj_sim, vec):
+        """A camera pose one backend refuses is refused by all of them.
+
+        The invariant each ``add_camera`` docstring states - "these are the same
+        bounds the MuJoCo backend's ``add_camera`` enforces ... so a camera
+        configuration one backend refuses is refused by both". Pinned here
+        rather than in the per-backend camera modules because two of the three
+        need an install CI does not have.
+        """
+        mj = mj_sim.add_camera(name="wrist", position=vec, target=[0.0, 0.0, 0.1])
+        nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
+        ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
+        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+        assert len(texts) == 1, texts
+
+    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
+    def test_add_camera_target_verdicts_match(self, mj_sim, vec):
+        """``target`` is a pose vector too, and takes the same domain."""
+        mj = mj_sim.add_camera(name="wrist", position=[0.0, -0.6, 0.4], target=vec)
+        nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
+        ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
+        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+        assert len(texts) == 1, texts
 
     @pytest.mark.parametrize("vec", (UNUSABLE_POSITIONS[0], [NAN, 0.0, 0.0], "abc"))
     def test_move_object_position_verdicts_match(self, mj_sim, vec):
