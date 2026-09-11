@@ -176,7 +176,16 @@ method names:
   `velocity` (read from `joint_q` / `joint_qd` respectively) in a `json`
   block, plus a human-readable summary.
 - `list_robots_info()` and `list_objects()` return pretty-printed listings of
-  the robots and primitive objects in the world.
+  the robots and primitive objects in the world. Both report **live** poses,
+  read from the solver's `body_q` rather than from the `add_robot` /
+  `add_object` request: a robot whose model root carries an authored offset
+  (a `unitree_go2` asked for `z=0` stands at `z=0.445`) is listed where it
+  stands, and a robot or object that has since moved is listed where it is. A
+  robot with several root bodies (an `aloha` attaches two arm bases) has no one
+  base pose to measure, so its line reports the requested transform and says
+  so. A static object keeps reporting its record, which is where it is: Newton
+  bakes a static shape into the world instead of giving it a body, and nothing
+  can move it.
 - `list_bodies(robot_name=None)` lists Newton body labels and, when scoped to
   a robot, resolves a best-guess `gripper_body` mount (a body whose trailing
   path segment *names* `gripper`, `hand`, `jaw`, `ee`, or `tool` as one of its

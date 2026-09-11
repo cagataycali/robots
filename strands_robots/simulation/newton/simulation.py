@@ -308,6 +308,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._robot_free_base_joint: dict[str, str] = {}
         # Ordered full body labels per robot (rebuilt with the model).
         self._robot_body_map: dict[str, list[str]] = {}
+        # Body index of each dynamic object in the finalized model's body arrays
+        # (rebuilt with the model). ``-1`` for a static object, which Newton
+        # bakes into the world rather than giving it a body of its own.
+        # ``ModelBuilder.add_body`` labels an object's body positionally
+        # (``body_25``), so there is no name to resolve it by later - the index
+        # is captured when the body is created.
+        self._object_body_map: dict[str, int] = {}
         # Parsed mesh geometry keyed by resolved mesh_path, so rebuilds do not
         # re-read mesh assets off disk on every scene mutation.
         self._mesh_cache: dict[str, tuple[Any, Any]] = {}
@@ -1071,21 +1078,56 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return {"status": "success", "content": [{"text": f"'{name}' moved to {moved_to}"}]}
 
     def list_objects(self) -> dict[str, Any]:
-        """List objects in the world with their shape, pose, and mass.
+        """List objects in the world with their shape, live pose, and mass.
+
+        The reported pose is read from the solver state - where the object
+        *is* - not from ``SimObject.position``, which holds only the vector
+        ``add_object`` / ``move_object`` was asked for and which the physics
+        never writes. A dynamic object starts falling on the first step, so the
+        record went stale immediately and reported a 0 mm displacement for a
+        cube a robot had pushed across the table: exactly the reading a caller
+        grounds "did it move" on.
+
+        A static object keeps reporting its record, because that record IS
+        where it is: Newton bakes a static shape into the world instead of
+        giving it a body, nothing can move it, and ``move_object`` rebuilds the
+        scene at the new transform.
 
         Returns:
             Agent-tool dict whose ``text`` block mirrors the MuJoCo backend's
-            human-readable object listing.
+            human-readable object listing. ``status`` is ``"error"`` when there
+            is no world, or when a dynamic object in the scene record has no
+            body in the finalized model.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
         lines = ["Objects:\n"]
-        for name, obj in self._world.objects.items():
-            mass = "static" if obj.is_static or obj.mass <= 0 else f"{obj.mass}kg"
-            suffix = f", mesh={obj.mesh_path}" if obj.shape == "mesh" and obj.mesh_path else ""
-            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {mass}{suffix}")
+        with self._lock:
+            for name, obj in self._world.objects.items():
+                is_static = obj.is_static or obj.mass <= 0
+                mass = "static" if is_static else f"{obj.mass}kg"
+                suffix = f", mesh={obj.mesh_path}" if obj.shape == "mesh" and obj.mesh_path else ""
+                body_index = self._object_body_map.get(name, -1)
+                if is_static:
+                    position = list(obj.position)
+                elif body_index < 0:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Object '{name}' is in the scene record but has no body in the "
+                                    "finalized model, so its position cannot be read. The scene and the "
+                                    "record have diverged; re-add the object or call reset."
+                                )
+                            }
+                        ],
+                    }
+                else:
+                    position = self._live_body_position(body_index)
+                lines.append(f"  - {name}: {obj.shape} at {position}, {mass}{suffix}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Observation / action
@@ -1633,6 +1675,71 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             ],
         }
 
+    def _live_body_position(self, body_index: int) -> list[float]:
+        """Return the world position of one body, read from the live state.
+
+        ``body_q`` is the solver's own output - the array :meth:`step` swaps
+        into ``_state_0`` after each substep and ``eval_fk`` fills at build
+        time - so this answers where a body *is* at both ``t=0`` and mid
+        rollout. Rounded to 4 decimal places, matching what the MuJoCo
+        backend's listings report.
+
+        Must be called with ``self._lock`` held: a concurrent ``step`` writes
+        these arrays, and the read is otherwise torn.
+
+        Args:
+            body_index: Index into the finalized model's body arrays.
+
+        Returns:
+            The body's world ``[x, y, z]``.
+        """
+        tf = self._state_0.body_q.numpy()[body_index]
+        return [round(float(v), 4) for v in tf[:3]]
+
+    def _robot_root_world_position(self, robot_name: str) -> list[float] | None:
+        """Return the live world position of ``robot_name``'s single root body.
+
+        ``SimRobot.position`` is the translation of the transform ``add_robot``
+        hands ``add_mjcf`` / ``add_urdf``, and the model's own authored root
+        pose is composed with it rather than replaced - so it does not name
+        where the robot stands even before anything moves (a ``unitree_g1``
+        asked for ``z=0`` has its pelvis at ``z=0.793``). Nothing writes it
+        afterwards either. Read the body instead.
+
+        A robot's root bodies are those whose joint has the world (``-1``) as
+        its parent; ``_robot_body_map`` scopes the search to the bodies this
+        robot contributed. ``None`` when that set does not hold exactly one
+        body: an ``aloha`` attaches two independent arm bases, and a set of
+        roots has no single base pose to name. Also ``None`` before there is a
+        finalized model.
+
+        Must be called with ``self._lock`` held (see
+        :meth:`_live_body_position`).
+
+        Args:
+            robot_name: Key into the world's robot record.
+
+        Returns:
+            The root body's world ``[x, y, z]``, or ``None`` when there is no
+            single root to measure.
+        """
+        if self._model is None or self._state_0 is None:
+            return None
+        labels = list(self._model.body_label)
+        owned = {labels.index(label) for label in self._robot_body_map.get(robot_name, []) if label in labels}
+        if not owned:
+            return None
+        parents = self._model.joint_parent.numpy()
+        children = self._model.joint_child.numpy()
+        roots = [
+            int(child)
+            for parent, child in zip(parents, children, strict=True)
+            if int(parent) == -1 and int(child) in owned
+        ]
+        if len(roots) != 1:
+            return None
+        return self._live_body_position(roots[0])
+
     def _resolve_camera_pose(self, cam: SimCamera) -> tuple[tuple, tuple]:
         """Resolve a camera's world-frame ``(eye, target)`` from its :class:`SimCamera`.
 
@@ -2177,6 +2284,27 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         Distinct from :meth:`list_robots` (which returns ``list[str]`` for the
         SimEngine ABC). Mirrors the MuJoCo backend's per-robot summary.
 
+        ``Position`` is the base pose read back out of the solver state -
+        where the robot *is* - not the ``add_robot(position=...)`` request that
+        put it there. ``SimRobot.position`` holds only that request: it is the
+        translation of the transform handed to ``add_mjcf`` / ``add_urdf``,
+        which COMPOSES it with the model's own authored root pose rather than
+        replacing it, so a ``unitree_g1`` asked for ``z=0`` stands with its
+        pelvis at ``z=0.793`` and was listed at ``z=0`` from the first call.
+        Nothing writes the record afterwards either, so a robot that walks,
+        drives or falls kept reporting its spawn pose for the rest of the
+        session - a 0 mm reading for the displacement that *is* the success
+        signal of a locomotion rollout.
+
+        A robot with several root bodies (an ``aloha`` attaches two independent
+        arm bases) has no one base pose to name, so its line keeps reporting
+        the requested transform and says so, rather than implying a
+        measurement.
+
+        Thread-safety: acquires ``self._lock`` while reading the state arrays,
+        the same torn-read guard :meth:`get_observation` documents, because a
+        concurrent :meth:`step` writes them.
+
         Returns:
             Agent-tool dict whose ``text`` block lists each robot's asset,
             world position, joint count, and config.
@@ -2186,12 +2314,20 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use add_robot."}]}
         lines = ["Robots in simulation:\n"]
-        for name, robot in self._world.robots.items():
-            lines.append(
-                f"  - {name} ({Path(robot.urdf_path).name})\n"
-                f"    Position: {robot.position}, Joints: {len(robot.joint_names)}, "
-                f"Config: {robot.data_config or 'direct'}"
-            )
+        with self._lock:
+            for name, robot in self._world.robots.items():
+                measured = self._robot_root_world_position(name)
+                placement = (
+                    f"{measured}"
+                    if measured is not None
+                    else f"{list(robot.position or (0.0, 0.0, 0.0))} (requested transform; this model has "
+                    "no single root body, so it has no one base pose to measure)"
+                )
+                lines.append(
+                    f"  - {name} ({Path(robot.urdf_path).name})\n"
+                    f"    Position: {placement}, Joints: {len(robot.joint_names)}, "
+                    f"Config: {robot.data_config or 'direct'}"
+                )
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -2753,6 +2889,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._robot_joint_map = {}
         self._robot_free_base_joint = {}
         self._robot_body_map = {}
+        self._object_body_map = {}
 
         for robot_name, robot in self._world.robots.items():
             label_before = len(builder.joint_label)
@@ -2801,7 +2938,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             self._robot_body_map[robot_name] = list(builder.body_label[body_before:])
 
         for obj in self._world.objects.values():
-            self._add_object_to_builder(builder, obj)
+            self._object_body_map[obj.name] = self._add_object_to_builder(builder, obj)
 
         if self._world.ground_plane:
             builder.add_ground_plane()
@@ -2841,8 +2978,21 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 logger.warning("Newton viewer rebind failed, closing viewer: %s", exc)
                 self._close_viewer()
 
-    def _add_object_to_builder(self, builder: Any, obj: SimObject) -> None:
-        """Add one :class:`SimObject` primitive to a Newton builder."""
+    def _add_object_to_builder(self, builder: Any, obj: SimObject) -> int:
+        """Add one :class:`SimObject` primitive to a Newton builder.
+
+        Args:
+            builder: The ``newton.ModelBuilder`` under construction.
+            obj: The scene-record object to realise as body + shape.
+
+        Returns:
+            The index of the body created for ``obj`` in the finalized model's
+            body arrays, or ``-1`` when ``obj`` is static and therefore has no
+            body of its own (its shape is attached to the world). Callers
+            record this so a later read can find the object's live pose:
+            ``add_body`` labels the body positionally (``body_25``), so unlike
+            a robot's bodies it cannot be resolved by name afterwards.
+        """
         wp = self._wp
         xform = wp.transform(wp.vec3(*obj.position), self._wxyz_to_wp_quat(obj.orientation))
         if obj.is_static or obj.mass <= 0:
@@ -2870,6 +3020,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             mesh = self._nt.Mesh(vertices, indices)
             sx, sy, sz = (size + [1.0, 1.0, 1.0])[:3]
             builder.add_shape_mesh(body, xform=shape_xform, mesh=mesh, scale=wp.vec3(sx, sy, sz), color=color)
+        return body
 
     def _load_mesh_geometry(self, mesh_path: str | None) -> tuple[Any, Any]:
         """Load a mesh asset into ``(vertices, indices)`` arrays for Newton.
