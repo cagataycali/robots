@@ -1737,6 +1737,13 @@ class PolicyRunner:
         # policy reset/inference or an action from a value that cannot be called.
         if observer_error := optional_callable_error(observer, "observer", "PolicyRunner.run"):
             raise ValueError(observer_error)
+        # The legacy hook carries the same domain, for a sharper reason: an
+        # exception from it is counted against the consecutive-failure watchdog,
+        # so a value that is not callable at all spent five applied actions
+        # before aborting the episode with "aborting silent dataset corruption"
+        # - a message about a recorder, for a caller mistake visible here.
+        if hook_error := optional_callable_error(on_frame, "on_frame", "PolicyRunner.run"):
+            raise ValueError(hook_error)
 
         # A single rollout draws the policy's stochastic ops (VLA action-
         # chunk sampling, diffusion noise) from the unmanaged global RNG, so the
@@ -3292,6 +3299,13 @@ class PolicyRunner:
         # entry point would have refused.
         if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.evaluate"):
             raise ValueError(horizon_error)
+        # The caller's telemetry hook, on the same domain as run()'s and refused
+        # for the reason the eval loop cannot: a hook exception there is
+        # best-effort telemetry, logged and never fatal, so a value that is not
+        # callable at all was reported once per frame and the evaluation still
+        # returned a success rate the hook had watched none of.
+        if hook_error := optional_callable_error(on_frame, "on_frame", "PolicyRunner.evaluate"):
+            raise ValueError(hook_error)
         # The two bounds of this method's own episode loop, on the same shared
         # domain and raised for the same reason. A horizon outside the domain
         # degrades a rollout; a LOOP BOUND outside it removes the evaluation

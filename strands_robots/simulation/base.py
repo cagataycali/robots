@@ -4369,7 +4369,11 @@ class SimEngine(ABC):
         eval. Raising :class:`~strands_robots.simulation.policy_runner.CooperativeStop`
         stops the evaluation gracefully after the episodes completed so far
         (the result carries ``stopped_early=True`` and ``episodes_completed``),
-        matching :meth:`run_policy`.
+        matching :meth:`run_policy`. That best-effort posture covers a hook that
+        FAILS, not one that cannot be called at all: a non-callable ``on_frame``
+        is a caller error, refused up front with a structured error like
+        :meth:`run_policy`'s ``observer``, because absorbing it per frame would
+        return a success rate the caller's telemetry had watched none of.
 
         ``n_episodes`` and ``max_steps`` must be positive integers and
         ``control_frequency`` must be ``> 0``; a non-positive value is
@@ -4468,6 +4472,16 @@ class SimEngine(ABC):
         # produced it.
         if err := self._validate_posture_flags("eval_policy", async_rtc=async_rtc):
             return err
+        # A hook that cannot be called is configuration, not telemetry, and is
+        # knowable before the first step - so it is refused here, ahead of robot
+        # resolution, exactly as run_policy refuses its observer. The eval loop
+        # treats a hook exception as best-effort telemetry (logged, never
+        # fatal), which is right for a hook that fails at frame 700 and wrong
+        # for one that can never run: every frame raised the same TypeError, the
+        # caller's telemetry recorded nothing, and the returned success rate was
+        # byte-identical to the healthy call.
+        if hook_error := optional_callable_error(on_frame, "on_frame", "eval_policy"):
+            return {"status": "error", "content": [{"text": hook_error}]}
 
         robots = self.list_robots()
         if not robots:
@@ -4635,7 +4649,8 @@ class SimEngine(ABC):
                 :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
                 logged at WARN and never aborts the eval; a
                 ``RecordingFrameError`` is data loss rather than telemetry and
-                propagates on the first occurrence.
+                propagates on the first occurrence. A value that is not callable
+                at all is refused up front instead, as in :meth:`eval_policy`.
             policy_kwargs: Per-call goal payload forwarded verbatim to every
                 ``policy.get_actions(obs, instruction, **policy_kwargs)`` call
                 (same contract as :meth:`run_policy` / :meth:`eval_policy`).
@@ -4693,6 +4708,10 @@ class SimEngine(ABC):
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
 
+        # Same rule as eval_policy: an uncallable hook is refused before any
+        # other work, not absorbed frame by frame inside the shared eval loop.
+        if hook_error := optional_callable_error(on_frame, "on_frame", "evaluate_benchmark"):
+            return {"status": "error", "content": [{"text": hook_error}]}
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
