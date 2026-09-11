@@ -1,0 +1,156 @@
+{
+  "tree": "after",
+  "auth_file": "/home/cagatay/actions-runner-harness-3/_work/_temp/robots-src/strands_robots/dashboard/auth.py",
+  "rows": [
+    {
+      "id": "A",
+      "label": "remote attacker via socat TCP-LISTEN:8443,fork TCP:127.0.0.1:8090",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-A-e9e6mxq3/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "B",
+      "label": "same, forwarder bound on ::1",
+      "peer": "::1",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-B-rdb28fhv/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "C",
+      "label": "same, peer reported as 'localhost'",
+      "peer": "localhost",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-C-imi7wsk5/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "D",
+      "label": "L7 proxy emitting only x-client-ip (not on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "x-client-ip": "203.0.113.9"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-D-iqkkiptc/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "E",
+      "label": "L7 proxy emitting only via (not on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "via": "1.1 squid"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-E-zv76a1gj/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "F",
+      "label": "L7 proxy emitting x-forwarded-for (on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "x-forwarded-for": "203.0.113.9"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: this request arrived through a proxy or tunnel (it carries 'x-forwarded-for'). To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-F-myfn71as/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "G",
+      "label": "direct connection from another machine",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: this request came from another machine. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-G-czv8i130/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "H",
+      "label": "connection with no socket peer at all",
+      "peer": null,
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: this request came from another machine. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-H-7bi6auyb/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "I",
+      "label": "operator at the machine, presenting the minted token",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "file",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id 3urXeJILpjVU...",
+      "token_file_exists": true
+    },
+    {
+      "id": "J",
+      "label": "operator over ssh, presenting the token they read on the host",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "file",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id 1JYVMjTpk6sd...",
+      "token_file_exists": true
+    },
+    {
+      "id": "K",
+      "label": "guess from loopback",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "wrong",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, read the one-time bootstrap token this server wrote to /tmp/enroll-K-xtsywifj/enroll_token (mode 0600, on the machine running the dashboard) and pass it as the bootstrap value, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN.",
+      "token_file_exists": true
+    },
+    {
+      "id": "L",
+      "label": "BOOTSTRAP_TOKEN configured, correct value from a remote peer",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "env",
+      "env_token": true,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id Z-0PIcC48HBF...",
+      "token_file_exists": false
+    },
+    {
+      "id": "M",
+      "label": "BOOTSTRAP_TOKEN configured, nothing presented, from loopback",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "none",
+      "env_token": true,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, so enrolling it needs proof from the machine itself and the bootstrap token presented is not it: a loopback peer is not that proof - a same-host port forward (socat, ssh -L, nginx stream, a DNAT rule) makes any remote client look like 127.0.0.1. To enroll, pass the configured STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN as the bootstrap value.",
+      "token_file_exists": false
+    }
+  ],
+  "unconfigured_value_verdict": "403"
+}

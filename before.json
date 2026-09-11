@@ -1,0 +1,156 @@
+{
+  "tree": "before",
+  "auth_file": "/tmp/base502/strands_robots/dashboard/auth.py",
+  "rows": [
+    {
+      "id": "A",
+      "label": "remote attacker via socat TCP-LISTEN:8443,fork TCP:127.0.0.1:8090",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id tUe8KKSpOfhG...",
+      "token_file_exists": false
+    },
+    {
+      "id": "B",
+      "label": "same, forwarder bound on ::1",
+      "peer": "::1",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id edsQ1IvHev6-...",
+      "token_file_exists": false
+    },
+    {
+      "id": "C",
+      "label": "same, peer reported as 'localhost'",
+      "peer": "localhost",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id CXIUEgxnSuaC...",
+      "token_file_exists": false
+    },
+    {
+      "id": "D",
+      "label": "L7 proxy emitting only x-client-ip (not on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "x-client-ip": "203.0.113.9"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id nx1TtjJVyEdj...",
+      "token_file_exists": false
+    },
+    {
+      "id": "E",
+      "label": "L7 proxy emitting only via (not on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "via": "1.1 squid"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id uIHvO1qkqcyV...",
+      "token_file_exists": false
+    },
+    {
+      "id": "F",
+      "label": "L7 proxy emitting x-forwarded-for (on the roster)",
+      "peer": "127.0.0.1",
+      "headers": {
+        "x-forwarded-for": "203.0.113.9"
+      },
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, and this request arrived through a proxy or tunnel (it carries 'x-forwarded-for'), so it cannot be taken as the machine itself even though the connection came from loopback. Enroll from a browser on the machine with no proxy in between, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it. If the dashboard sits behind a same-host proxy, start uvicorn with --proxy-headers and --forwarded-allow-ips so the peer address is the real client's.",
+      "token_file_exists": false
+    },
+    {
+      "id": "G",
+      "label": "direct connection from another machine",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, and no STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN is set for it to be checked against, so it is limited to the machine itself - open the dashboard on that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+      "token_file_exists": false
+    },
+    {
+      "id": "H",
+      "label": "connection with no socket peer at all",
+      "peer": null,
+      "headers": {},
+      "token": "none",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, and no STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN is set for it to be checked against, so it is limited to the machine itself - open the dashboard on that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+      "token_file_exists": false
+    },
+    {
+      "id": "I",
+      "label": "operator at the machine, presenting the minted token",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "file",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id YnTE6R1Nwm49...",
+      "token_file_exists": false
+    },
+    {
+      "id": "J",
+      "label": "operator over ssh, presenting the token they read on the host",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "file",
+      "env_token": false,
+      "verdict": "403",
+      "detail": "the first passkey enrolled becomes the owner of this dashboard, and no STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN is set for it to be checked against, so it is limited to the machine itself - open the dashboard on that machine, or set STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN and pass it.",
+      "token_file_exists": false
+    },
+    {
+      "id": "K",
+      "label": "guess from loopback",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "wrong",
+      "env_token": false,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id QlmqXidWG0H0...",
+      "token_file_exists": false
+    },
+    {
+      "id": "L",
+      "label": "BOOTSTRAP_TOKEN configured, correct value from a remote peer",
+      "peer": "203.0.113.9",
+      "headers": {},
+      "token": "env",
+      "env_token": true,
+      "verdict": "ADMITTED",
+      "detail": "challenge_id issued, user_id SafPZxJzpCGm...",
+      "token_file_exists": false
+    },
+    {
+      "id": "M",
+      "label": "BOOTSTRAP_TOKEN configured, nothing presented, from loopback",
+      "peer": "127.0.0.1",
+      "headers": {},
+      "token": "none",
+      "env_token": true,
+      "verdict": "403",
+      "detail": "bootstrap token required for first enrollment",
+      "token_file_exists": false
+    }
+  ],
+  "unconfigured_value_verdict": "ADMITTED"
+}
