@@ -2441,9 +2441,43 @@ class RenderingMixin:
                 if lag < interval:
                     _time.sleep(interval - lag)
 
-        state["thread"] = _threading.Thread(target=_loop, daemon=True)
-        state["thread"].start()
+        # Register BEFORE the thread exists. The registration is the only route
+        # every other recorder verb has to this recording -
+        # ``get_cameras_recording_status``, ``stop_cameras_recording`` and the
+        # guard both start verbs ask (:meth:`_refuse_replacing_cams_recording`)
+        # all read ``_cams_rec_state`` - so a thread that is capturing before it
+        # is published is a recorder nothing can see: a concurrent status read
+        # answered ``[idle]`` about a live capture, a stop reported "Was not
+        # recording cameras" as a success and left that thread rendering to its
+        # ``max_frames`` cap, and a second start was admitted onto the same
+        # cameras and then had its own registration overwritten by the store
+        # below, orphaning its thread and its frames. Publishing first closes
+        # all three, and costs nothing: ``running`` is already set, so the phase
+        # a status read sees is ``[recording]`` with no frames yet, and the
+        # ``thread`` slot stays ``None`` for the same window that the
+        # synchronous recorder - which registers before it builds its closures -
+        # leaves it ``None`` for good, so every reader already tolerates it.
         self._cams_rec_state = state
+        state["thread"] = _threading.Thread(target=_loop, daemon=True)
+        try:
+            state["thread"].start()
+        except RuntimeError as e:
+            # No capture loop will ever run, so the registration this method
+            # just published would refuse every later start for the lifetime of
+            # the world (only a flush deregisters) and hand ``stop`` an
+            # unstarted thread to join. Deregister and report instead.
+            self._cams_rec_state = None
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"start_cameras_recording: could not start the recorder thread for "
+                            f"'{tag}': {e}. Nothing was recorded and no recording is registered."
+                        )
+                    }
+                ],
+            }
 
         # Wait for the recorder thread to warm its GL context and enter the
         # capture loop before reporting success. Worst case is the 30-attempt

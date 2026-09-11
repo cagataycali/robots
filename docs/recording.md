@@ -560,6 +560,14 @@ and once it has exited, starting would silently discard the frames the failed
 stop just promised were recoverable. Retrying the stop is the remedy in both
 cases, and on a recording whose loop has exited it joins immediately and encodes.
 
+That registration is published before the capture thread is started, so the check
+also covers two starts racing each other: there is no window in which a thread is
+capturing while `get_cameras_recording_status` answers `[idle]` and
+`stop_cameras_recording` reports "Was not recording cameras" as a success. If the
+capture thread cannot be started at all, the recording is deregistered again and
+`start_cameras_recording` returns a structured error naming it, rather than
+leaving behind a registration that only a flush could clear.
+
 `get_cameras_recording_status` reports which of the four phases holds, in its
 text and as `phase` in its JSON block:
 
