@@ -679,9 +679,25 @@ class BoosterDriver:
             )
 
     def cleanup(self) -> None:
-        """Release the SDK channels. Idempotent, and stops first."""
-        if self._connected:
-            self.stop_task()
+        """Release the SDK channels. Idempotent, and stops first.
+
+        Annotated ``-> None``, so - like :meth:`stop` - it carries no verdict,
+        which makes the log the only place a halt this teardown could not
+        complete can be recorded. It is the more urgent of the two: the channels
+        released below are what a retry would need, so a refused halt here
+        leaves the T1 walking at its last commanded twist, or the host holding
+        the upper body, with nothing left in the process able to reach it. The
+        release still happens either way - a teardown that stopped half-way
+        would leak the channels *and* leave the robot moving.
+        """
+        if self._connected and (detail := halt_failure_detail(self.stop_task())) is not None:
+            logger.error(
+                "%s.cleanup(): the halt did not complete and the SDK channels are being released, "
+                "so the T1 may still be walking or holding the upper body with nothing left to "
+                "reach it: %s",
+                self._tool_name,
+                detail,
+            )
         for channel in (self._subscriber, self._publisher, self._battery_subscriber, self._fall_subscriber):
             if channel is None:
                 continue

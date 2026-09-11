@@ -15,7 +15,7 @@ naming the gripper and what the wire said - the shape `BoosterDriver`,
 `HardwareDriver.stop` documents. Behaviour on a disconnected gripper is
 unchanged: `stop_task` answers `success` there, so nothing is logged.
 
-`tests/drivers/test_stop_hook_logs_the_halt_it_could_not_complete.py` graded only
+`tests/drivers/test_a_verdict_free_hook_logs_the_halt_it_could_not_complete.py` graded only
 the hooks that delegate to an envelope verb, which is why a hook holding its own
 wire was invisible to it. It now carries a second derived relation: a `stop` that
 catches its own wire failure must report it at a level a default configuration

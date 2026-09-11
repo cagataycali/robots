@@ -1,4 +1,4 @@
-"""The verdict-free ``stop`` hook logs a halt it could not complete.
+"""A verdict-free hook logs a halt it could not complete.
 
 :data:`~strands_robots.drivers.base.DRIVER_SURFACE` carries two ways to halt a
 robot and only one of them can answer. ``stop_task`` returns an envelope and
@@ -55,6 +55,34 @@ derived the same way: *a ``stop`` that catches its own wire failure must report 
 at a level a default configuration emits, naming the robot.* ``RobotiqDriver.stop``
 now delegates to ``stop_task`` like the three above, which leaves that population
 the two hooks that really do hold the wire themselves.
+
+``stop`` is not the only verdict-free hook, though: ``cleanup`` is annotated
+``-> None`` on all twelve drivers too, and two of them delegated a halt to a verb
+that decides one and dropped it exactly as the three above did.
+
+======================  ====================  ==================================
+driver                  discarded envelope    what a refusal leaves running
+======================  ====================  ==================================
+``BoosterDriver``       ``stop_task()``       the T1 walking, or the host still
+                                              holding the upper body
+``CrazyflieDriver``     ``land()``            the aircraft flying
+======================  ====================  ==================================
+
+In this hook the same absence is worse. ``stop`` leaves the robot connected, so a
+caller who learns nothing can still ask again; ``cleanup`` goes on to release the
+SDK channels and the radio link that a retry would need, so a refused halt it did
+not report leaves a walking T1 or an airborne aircraft with nothing in the
+process able to reach it - and no envelope, flag or log saying so. The relation is
+therefore graded over both hooks rather than restated for the second, and the
+release stays unconditional: a teardown that stopped half-way would leak the
+channels *and* leave the robot moving.
+
+The wire relation below stays on ``stop`` alone, and that is a scope boundary
+rather than an omission. Six ``cleanup`` hooks do catch a failure and report it at
+``debug``, but what they caught is a channel or socket close during teardown -
+not a halt, and not something an operator can act on. "The robot may still be
+moving" and "the socket we were discarding anyway did not close" are different
+facts, and only the first is what a verdict-free hook owes a log.
 """
 
 from __future__ import annotations
@@ -72,6 +100,7 @@ import pytest
 
 import strands_robots.drivers as drivers_pkg
 from strands_robots.drivers.base import halt_failure_detail
+from strands_robots.drivers.booster import BoosterDriver
 from strands_robots.drivers.registry import get_native_driver_class
 
 # Reused wholesale from each driver's own suite: the SDK doubles and the
@@ -84,6 +113,11 @@ from tests.drivers.test_earthrover_driver import _live_driver as _live_rover
 
 #: The annotated return type that makes a driver method a status envelope.
 _ENVELOPE_RETURN = "dict[str, Any]"
+
+#: The hooks :data:`~strands_robots.drivers.base.DRIVER_SURFACE` annotates
+#: ``-> None``. Neither can answer, so for both the log is the only place a halt
+#: they could not complete survives.
+_VERDICT_FREE_HOOKS = ("stop", "cleanup")
 
 
 # --------------------------------------------------------------------------- #
@@ -149,12 +183,17 @@ class TestThePremise:
         assert len(classes) >= 10, f"the driver census went blind: {sorted(classes)}"
         assert {"BoosterDriver", "CrazyflieDriver", "EarthRoverDriver"} <= set(classes)
 
+    @pytest.mark.parametrize("hook", _VERDICT_FREE_HOOKS)
     @pytest.mark.parametrize("name", sorted(_driver_classes()))
-    def test_the_hook_carries_no_verdict(self, name: str) -> None:
-        node = _method_ast(_driver_classes()[name], "stop")
-        assert isinstance(node, ast.AsyncFunctionDef)
-        assert node.returns is not None, f"{name}.stop must annotate its return"
-        assert ast.unparse(node.returns) == "None", f"{name}.stop must be the verdict-free hook"
+    def test_the_hook_carries_no_verdict(self, name: str, hook: str) -> None:
+        node = _method_ast(_driver_classes()[name], hook)
+        # ``stop`` is awaited by the mesh; ``cleanup`` runs from a teardown that
+        # cannot await one. The difference is who calls them, not what they can
+        # answer - which is nothing.
+        expected = ast.AsyncFunctionDef if hook == "stop" else ast.FunctionDef
+        assert isinstance(node, expected), f"{name}.{hook} changed shape"
+        assert node.returns is not None, f"{name}.{hook} must annotate its return"
+        assert ast.unparse(node.returns) == "None", f"{name}.{hook} must be a verdict-free hook"
 
     def test_the_halt_verbs_that_can_refuse_really_do(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The verdict exists on both ground robots; the hook simply dropped it.
@@ -170,18 +209,19 @@ class TestThePremise:
         assert rover.stop_task()["status"] == "error"
 
 
-class TestEveryStopHookReadsTheHaltItDelegated:
-    """The relation, over the derived fleet."""
+class TestEveryVerdictFreeHookReadsTheHaltItDelegated:
+    """The relation, over the derived fleet and both verdict-free hooks."""
 
-    def test_no_stop_hook_discards_an_envelope(self) -> None:
+    @pytest.mark.parametrize("hook", _VERDICT_FREE_HOOKS)
+    def test_no_hook_discards_an_envelope(self, hook: str) -> None:
         offenders = {}
         for name, cls in sorted(_driver_classes().items()):
-            discarded = _discarded_envelopes(_method_ast(cls, "stop"), _envelope_verbs(cls))
+            discarded = _discarded_envelopes(_method_ast(cls, hook), _envelope_verbs(cls))
             if discarded:
                 offenders[name] = discarded
         assert offenders == {}, (
-            "these stop hooks call a verb that decides a halt verdict and then discard it. "
-            "stop() returns None, so nothing anywhere records that the robot did not stop: "
+            f"these {hook} hooks call a verb that decides a halt verdict and then discard it. "
+            f"{hook}() returns None, so nothing anywhere records that the robot did not stop: "
             f"{offenders}"
         )
 
@@ -503,6 +543,95 @@ class TestARefusedHaltIsLoggedNamingWhatMayStillMove:
         with caplog.at_level(logging.DEBUG):
             asyncio.run(driver.stop())
         assert _errors(caplog) == ""
+
+
+# --------------------------------------------------------------------------- #
+# Regression - the teardown reports the halt, and releases either way.         #
+# --------------------------------------------------------------------------- #
+
+
+class _FakeLink:
+    """A radio link that records the close its teardown owes it."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close_link(self) -> None:
+        self.closed = True
+
+
+class TestATeardownReportsTheHaltAndStillReleases:
+    """The regression: on ``main`` both teardowns released in silence.
+
+    Each cell asserts the pair, because either half alone is a different bug: a
+    report without the release leaks the channel *and* leaves the robot moving,
+    and a release without the report is what ``main`` did.
+    """
+
+    def test_the_t1_teardown_names_what_may_still_be_walking(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sdk = _FakeSdk()
+        monkeypatch.setitem(sys.modules, "booster_robotics_sdk_python", sdk)
+        driver = _live_booster(sdk)
+        sdk.client.refuse.add("MoveCommand")
+        channels = (sdk.subscriber, sdk.publisher, sdk.battery, sdk.fall)
+        assert all(channel is not None for channel in channels), "the connect double went blind"
+        with caplog.at_level(logging.DEBUG):
+            driver.cleanup()
+        errors = _errors(caplog)
+        assert "may still be walking" in errors, errors
+        # Which half did not land, and that the channels have gone with it.
+        assert "locomotion_halted=False" in errors, errors
+        assert "being released" in errors, errors
+        assert [channel.closed for channel in channels if channel is not None] == [True] * 4
+        assert driver.is_connected is False
+
+    def test_the_aircraft_teardown_names_what_may_still_be_flying(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        driver = _refusing_aircraft(monkeypatch)
+        link = _FakeLink()
+        monkeypatch.setattr(driver, "_cf", link)
+        with caplog.at_level(logging.DEBUG):
+            driver.cleanup()
+        errors = _errors(caplog)
+        assert "may still be flying" in errors, errors
+        assert "the link went away" in errors, errors
+        assert link.closed, "the radio link must be released whatever the descent answered"
+        assert driver.is_connected is False
+
+    @pytest.mark.parametrize(
+        ("label", "build"),
+        [("the T1 halted", _healthy_booster), ("the aircraft is descending", _healthy_aircraft)],
+    )
+    def test_a_teardown_whose_halt_landed_logs_no_error(
+        self, label: str, build: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        driver = build(monkeypatch)
+        with caplog.at_level(logging.DEBUG):
+            driver.cleanup()
+        assert _errors(caplog) == "", label
+
+    def test_the_teardown_halt_still_reaches_the_wire(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Reading a verdict must not have replaced sending the command.
+        sdk = _FakeSdk()
+        monkeypatch.setitem(sys.modules, "booster_robotics_sdk_python", sdk)
+        _live_booster(sdk).cleanup()
+        assert ("MoveCommand", (0.0, 0.0, 0.0)) in sdk.client.calls
+
+    def test_a_teardown_with_nothing_to_halt_does_not_halt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The branch reached after a failed connect: there is no halt to report,
+        # and no client to ask for one.
+        from strands_robots.drivers import crazyflie as module
+
+        driver = module.CrazyflieDriver()
+        monkeypatch.setattr(driver, "land", lambda **_: pytest.fail("a grounded aircraft must not be landed"))
+        driver.cleanup()
+
+        never_connected = BoosterDriver()
+        monkeypatch.setattr(never_connected, "stop_task", lambda: pytest.fail("an unconnected T1 must not be halted"))
+        never_connected.cleanup()
 
 
 # --------------------------------------------------------------------------- #

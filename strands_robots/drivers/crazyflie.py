@@ -1136,9 +1136,22 @@ class CrazyflieDriver:
         descent first (it needs the link), then the telemetry block, then the
         link itself. Every step tolerates a half-built driver, because cleanup
         is what runs after a failed connect.
+
+        Annotated ``-> None``, so - like :meth:`stop` - it carries no verdict,
+        which makes the log the only place a descent this teardown could not
+        complete can be recorded. It is the more urgent of the two: the radio
+        link closed below is what a retry would need, so a refused descent here
+        leaves the aircraft flying with nothing left in the process able to land
+        it. The release still happens either way - a teardown that stopped
+        half-way would leak the link *and* leave the aircraft airborne.
         """
-        if self.is_connected:
-            self.land()
+        if self.is_connected and (detail := halt_failure_detail(self.land())) is not None:
+            logger.error(
+                "%s.cleanup(): the descent was refused and the radio link is being closed, "
+                "so the aircraft may still be flying with nothing left to land it: %s",
+                self._tool_name,
+                detail,
+            )
         self._halt_repeater()
         block = self._log_config
         if block is not None:

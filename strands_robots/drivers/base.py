@@ -199,7 +199,17 @@ class HardwareDriver(Protocol):
         """
 
     def cleanup(self) -> None:
-        """Release the device and every background resource held for it."""
+        """Release the device and every background resource held for it.
+
+        Annotated ``-> None``, so like :meth:`stop` it carries no verdict, and
+        the same obligation follows: an implementation that delegates to a halt
+        verb must read that verb's envelope and log a non-success, naming what
+        may still be moving. Here it is the more urgent of the two, because this
+        hook goes on to release the channel a retry would need - a refused halt
+        it did not report leaves a robot moving with nothing left in the process
+        able to reach it. The release is owed either way: stopping half-way
+        leaks the resource *and* leaves the robot moving.
+        """
 
 
 #: The driver a robot gets when nothing says otherwise. Every robot in the
