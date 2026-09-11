@@ -122,8 +122,16 @@ works, no cloud dependency required):
   image blocks for a multimodal judge (needs the `lerobot` extra). Every
   recorded camera is included - one block per camera per sampled position,
   position-major, cameras in sorted order, with the count and grouping
-  stated in the leading text block. That is deliberate, not a missing
-  simplification: the same world motion can be well above a judge's
+  stated in the leading text block and every image block immediately
+  preceded by a text block naming its camera and `frame_index`, so a
+  per-view observation can be attributed to a view and joined back onto that
+  frame's state row. The label sits *before* its image because that is what
+  binds it: with the labels moved after their images and nothing else
+  changed - same bytes, same token count - naming the blocked view scored
+  0/40 rather than 40/40, and every wrong answer was the camera named by the
+  label that then preceded the blocked image, so a text block is read as a
+  caption of the image that follows it. The interleave itself is deliberate,
+  not a missing simplification: the same world motion can be well above a judge's
   legibility threshold in one view and below it in another (a 185 mm slide
   measured as 84 px of travel in one camera and 22 px in the other, with
   the verdict lost on the weaker view alone - PR #2486 review), so
@@ -154,13 +162,19 @@ could not read rather than dying on it, so no tool raises past the dispatch.
 
 Two failure modes lean on judge capability rather than on a payload field,
 so calibrate before trusting them: `jerky_motion` is grounded for a
-text-only judge by `rms_state_jerk`, but `camera_occlusion` is inherently a
-claim about *one* view that the payload's unlabelled image blocks cannot
-name, and the open-weights VLM measured on PR #2486 did not tag even a
-total single-camera occlusion (0 visible object pixels in every sampled
-frame of that view) from any presentation. Expect `camera_occlusion` from a
-human or a stronger multimodal judge, and treat any direction phrase in a
-free-text `note` as a statement about a camera frame, not about the world.
+text-only judge by `rms_state_jerk`, and `camera_occlusion` is a claim about
+*one* view, so it needs a payload in which that view can be named. It now
+can be - each image block carries its camera - and that turned out to be
+what the earlier measurement was reporting rather than judge capability: on
+a three-camera recording with one view fully blocked (0 visible object
+pixels in every sampled frame of that view, 1.2-2.1% of frame in the other
+two), naming the blocked camera from this payload scored 15/40 before the
+per-block labels and 40/40 after, with the same open-weights VLM scoring
+30/30 on the identical frames asked one at a time. Naming the view is not
+the same as emitting the tag over a real dataset, so still calibrate
+(`measure_agreement`) before trusting `camera_occlusion`, and treat any
+direction phrase in a free-text `note` as a statement about a camera frame,
+not about the world.
 The `note` is for humans and is never parsed by anything downstream - the
 filterable channels are the closed vocabularies, and that split is measured,
 not stylistic: on a frozen-arm control clip (arm silhouette travelling ~1 px
