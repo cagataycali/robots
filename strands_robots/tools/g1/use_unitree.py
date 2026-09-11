@@ -35,8 +35,11 @@ concurrent calls clobber each other's response futures and return
 rc=3104.
 
 Safety rails:
-    * Mutative ops (Set*, Execute*, Move*, ...) are detected and flagged
-      in the response.
+    * Mutative ops are decided by ALLOWLIST: a name is a read only when it is
+      in ``READONLY_WHITELIST`` or is a ``Get*`` / ``Check*``; every other
+      public verb - including one this module has never seen - is a write
+      and is flagged in the response. A denylist here failed open on every
+      SDK bump (F-001 follow-up).
     * ``HIGH_DANGER_OPS`` names the calls that can drop or walk the robot
       (ZeroTorque, SetFsmId, SetVelocity, Move, ReleaseMode, ...); those
       are flagged loudly in every response envelope - including the error
@@ -102,6 +105,14 @@ SERVICES: dict[str, tuple[str, float]] = {
     ),
 }
 
+#: Verb families the pinned SDK writes with. DESCRIPTIVE ONLY: :func:`_is_mutative`
+#: does not consult this table. It once did, as a denylist - a name matching none
+#: of these dispatched with no operator prompt - so every SDK bump that added a
+#: verb spelled differently (``Recover``, ``Trigger``, ``ArmTask``, ...) was a
+#: silent, ungated actuation path (F-001 follow-up). The gate now asks the
+#: opposite question, "is this a read?", and everything else stops for an
+#: operator. This tuple stays as the vocabulary the docs and the audit test
+#: name, and as a floor: every one of these MUST still classify as mutative.
 MUTATIVE_PREFIXES = (
     "Set",
     "Execute",
@@ -129,6 +140,11 @@ MUTATIVE_PREFIXES = (
     "SwitchTo",
 )
 
+#: The ONLY names, beyond the ``Get*`` / ``Check*`` families, that dispatch
+#: without an operator. This is the allowlist the gate decision is made from:
+#: a verb that is not here and not a ``Get``/``Check`` is treated as a write,
+#: whatever it is called. Add to it only after reading the SDK method and
+#: confirming it sends no command.
 READONLY_WHITELIST = {
     "CheckMode",
     "GetActionList",
@@ -185,17 +201,26 @@ def _is_private(operation_name: str) -> bool:
 
 
 def _is_mutative(operation_name: str) -> bool:
-    if _is_readonly(operation_name):
-        return False
-    if _is_private(operation_name):
-        # Nothing in a raw name says whether it writes - the command is in the
-        # opaque ``apiId``. :func:`_is_readonly` already declines to call such a
-        # name a read; this is the other half of that, so the classification
-        # fails closed. ``use_unitree`` refuses these before consulting it, and
-        # this is what the surface falls back to if that refusal is ever
-        # removed: gated, rather than dispatched with no prompt at all.
-        return True
-    return any(operation_name.startswith(p) for p in MUTATIVE_PREFIXES)
+    """Whether dispatching *operation_name* needs an operator in the loop.
+
+    An ALLOWLIST decision: a name is a read when :func:`_is_readonly` says so
+    (``READONLY_WHITELIST`` or the ``Get*`` / ``Check*`` families), and every
+    other name is a write. That includes names this module has never heard of.
+
+    It used to be the other way round - mutative when the name matched one of
+    :data:`MUTATIVE_PREFIXES`, otherwise not - which meant the gate defaulted
+    to *allow*. :func:`_execute` dispatches any public attribute of the client
+    and :func:`list_operations` advertises every one, so the moment the pinned
+    SDK grew a verb spelled outside those 24 prefixes it was discoverable,
+    dispatchable and ungated, and no test could notice because nothing tied
+    the prefix table to the SDK surface. The known instances were closed by
+    the F-001 gate; this closes the class (CWE-862): unknown means gated.
+
+    Private names fail closed for the same reason as before - nothing in
+    ``_Call`` says what it writes - and :func:`use_unitree` refuses them
+    before consulting this at all.
+    """
+    return not _is_readonly(operation_name)
 
 
 def _import_client_class(qualname: str) -> Any:
@@ -627,9 +652,10 @@ def use_unitree(
         }
 
     # Private SDK plumbing (_Call, _CallNoReply, _CallBinary, ...) on the
-    # base rpc.client.Client bypasses the prefix-based classifier, so refuse
-    # it before the classifier runs.  list_operations already filters these
-    # names, so they are undiscoverable; this makes them undispatchable too.
+    # base rpc.client.Client names no command at all, so no operator could
+    # approve it knowingly: refuse it before the classifier runs rather than
+    # gate it.  list_operations already filters these names, so they are
+    # undiscoverable; this makes them undispatchable too.
     if _is_private(operation_name):
         return {
             "status": "error",
