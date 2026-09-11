@@ -336,7 +336,7 @@ def test_a_selector_naming_no_motor_is_refused_not_widened_to_every_motor(rmd, v
 def test_list_moves_targets_dances_library(rmd):
     calls = []
     with patch.object(rmd, "api", lambda *a, **k: calls.append(a) or {"moves": []}):
-        res = _run(_bare(rmd).listMoves("dance"))
+        res = _run(_bare(rmd).listMoves("dances"))
     assert res["status"] == "success"
     assert calls[0][2].endswith("reachy-mini-dances-library")
 
@@ -346,6 +346,54 @@ def test_list_moves_defaults_to_emotions_library(rmd):
     with patch.object(rmd, "api", lambda *a, **k: calls.append(a) or {}):
         _run(_bare(rmd).listMoves())
     assert calls[0][2].endswith("reachy-mini-emotions-library")
+
+
+class TestALibraryTheDaemonDoesNotServeIsRefusedByName:
+    """An unknown recorded-move library names no library, so it plays nothing.
+
+    Both move RPCs resolved the HuggingFace dataset id with a ternary --
+    ``'emotions' if library == 'emotions' else 'dances'`` -- so every spelling
+    that was not exactly ``"emotions"`` addressed the *dances* library and
+    reported success. The near-misses of the default were the damaging ones:
+    ``playMove("happy", library="emotion")`` is a motion command, and it played
+    a dance choreography while the reply echoed the caller's own ``"emotion"``
+    back. The native driver gates the same two daemon endpoints against
+    ``strands_robots.drivers.reachy._MOVE_LIBRARIES`` and refuses an unknown
+    library by name; these RPCs now agree with it.
+    """
+
+    # Spellings a caller reaches for that name no library the daemon serves:
+    # a singular of either name (what the docstring used to document), a
+    # near-miss of the default, a case variant, and empty/blank.
+    UNKNOWN = ["dance", "emotion", "Emotions", "expressions", "", "  "]
+
+    @pytest.mark.parametrize("library", UNKNOWN)
+    @pytest.mark.parametrize(("method", "kwargs"), [("listMoves", {}), ("playMove", {"move_name": "happy"})])
+    def test_unknown_library_is_refused_and_reaches_no_daemon(self, rmd, method, kwargs, library):
+        with patch.object(rmd, "api", MagicMock()) as fake_api:
+            res = _run(getattr(_bare(rmd), method)(library=library, **kwargs))
+        assert res["status"] == "error", res
+        assert repr(library) in res["reason"], res
+        assert "dances" in res["reason"] and "emotions" in res["reason"], res
+        assert method in res["reason"], res
+        # Nothing was played and no catalogue was read: the refusal is the
+        # whole outcome, not a redirect to the other library.
+        fake_api.assert_not_called()
+
+    @pytest.mark.parametrize(("library", "dataset"), sorted({"emotions": "emotions", "dances": "dances"}.items()))
+    @pytest.mark.parametrize(("method", "kwargs"), [("listMoves", {}), ("playMove", {"move_name": "happy"})])
+    def test_a_library_the_daemon_serves_still_addresses_its_own_dataset(self, rmd, method, kwargs, library, dataset):
+        calls = []
+        with patch.object(rmd, "api", lambda *a, **k: calls.append(a[2]) or {}):
+            res = _run(getattr(_bare(rmd), method)(library=library, **kwargs))
+        assert res["status"] == "success", res
+        assert f"pollen-robotics/reachy-mini-{dataset}-library" in calls[0], calls
+
+    def test_the_admitted_set_matches_the_native_driver(self, rmd):
+        """The two drivers speak to one daemon, so they admit one set of names."""
+        from strands_robots.drivers import reachy as native
+
+        assert rmd._MOVE_LIBRARIES == native._MOVE_LIBRARIES
 
 
 @pytest.mark.parametrize(
