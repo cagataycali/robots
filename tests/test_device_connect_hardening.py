@@ -489,43 +489,60 @@ def _make_reachy():
     return drv, rmd
 
 
-def test_playmove_rejects_path_traversal():
-    drv, rmd = _make_reachy()
-    captured = {}
+def _authorized_reachy(monkeypatch):
+    """A Reachy double whose caller is past the authorization gate.
 
-    def fake_api(host, port, path, method="GET", data=None):
-        captured["path"] = path
-        return {"ok": True}
+    ``playMove`` authorizes the caller *before* it reads ``move_name``, and an
+    unset ``DEVICE_CONNECT_RPC_ALLOW`` authorizes nobody - so a name-gate row
+    driven on a bare double is answered by the authorization refusal and reports
+    nothing about the name it passed. Naming the caller the way
+    :func:`test_playmove_allows_clean_name` does is what puts the name gate in
+    the path, which is the difference between grading it and grading the gate
+    in front of it.
 
-    rmd.api = fake_api  # patch module-level api used via asyncio.to_thread
-    res = _run(drv.playMove("../../daemon/shutdown"))
-    assert res["status"] == "error"
-    assert "path" not in captured  # api() never called
-
-
-def test_playmove_rejects_query_injection():
-    drv, rmd = _make_reachy()
-    res = _run(drv.playMove("x?admin=true&reset=1"))
-    assert res["status"] == "error"
-
-
-def test_playmove_allows_clean_name(monkeypatch):
-    # authz is graded elsewhere: name the caller the contextvar would carry over D2D
+    Returns:
+        The driver double, and the list every ``api`` call appends its request
+        path to.
+    """
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")
     import strands_robots.device_connect.reachy_mini_driver as rmd_mod
 
     monkeypatch.setattr(rmd_mod, "get_rpc_source_device", lambda: "op-1")
     drv, rmd = _make_reachy()
-    captured = {}
+    paths: list[str] = []
+    monkeypatch.setattr(
+        rmd, "api", lambda host, port, path, method="GET", data=None: paths.append(path) or {"ok": True}
+    )
+    return drv, paths
 
-    def fake_api(host, port, path, method="GET", data=None):
-        captured["path"] = path
-        return {"ok": True}
 
-    rmd.api = fake_api
+@pytest.mark.parametrize(
+    "move_name",
+    ["../../daemon/shutdown", "x?admin=true&reset=1", ".", "..", ".hidden", ""],
+    ids=["separator", "query", "dot", "dot-dot", "leading-dot", "empty"],
+)
+def test_playmove_refuses_a_name_that_is_not_one_path_segment(monkeypatch, move_name):
+    """A refused name reaches no request, whatever token makes it unsafe.
+
+    ``.`` and ``..`` are spelled entirely from the admitted alphabet, so the
+    charset alone admitted the two tokens a URL path resolves relative to its
+    parent: ``move_name=".."`` was sent and resolves to
+    ``.../recorded-move-dataset/pollen-robotics``, an endpoint the caller named
+    nothing about. The gate requires an alphanumeric first character, which is
+    what makes it one bare path segment rather than only a safe charset.
+    """
+    drv, paths = _authorized_reachy(monkeypatch)
+    res = _run(drv.playMove(move_name))
+    assert res["status"] == "error"
+    assert paths == []
+
+
+def test_playmove_allows_clean_name(monkeypatch):
+    """The over-refusal control: one bare path segment still reaches its move."""
+    drv, paths = _authorized_reachy(monkeypatch)
     res = _run(drv.playMove("happy_wiggle"))
     assert res["status"] == "success"
-    assert captured["path"].endswith("/happy_wiggle")
+    assert paths == ["/api/move/play/recorded-move-dataset/pollen-robotics/reachy-mini-emotions-library/happy_wiggle"]
 
 
 # ── Reachy daemon auth ────────────────────────────────────────

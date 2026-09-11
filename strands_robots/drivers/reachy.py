@@ -92,7 +92,17 @@ _PATH_MOVE_LIST = "/api/move/recorded-move-datasets/list/{dataset}"
 #: A recorded move's name goes into a URL path, so the admitted alphabet is the
 #: same one :mod:`strands_robots.device_connect.reachy_mini_driver` enforces -
 #: anything else is refused before a request is built from it.
-_MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\Z")
+#:
+#: The leading character is alphanumeric, which is what makes this a *bare path
+#: segment* rather than only a charset: ``.`` and ``..`` are spelled entirely
+#: from the admitted alphabet, so a charset alone admits the two tokens a URL
+#: path resolves relative to its parent. ``move_name=".."`` builds
+#: ``/api/move/play/recorded-move-dataset/<owner>/<library>/..``, which resolves
+#: to ``/api/move/play/recorded-move-dataset/<owner>`` - a daemon endpoint the
+#: caller did not name. Same shape and same reason as the bare-path-segment
+#: gate :mod:`strands_robots.drivers.feetech.bus` applies to the two names it
+#: interpolates into a calibration file path.
+_MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 #: The two recorded-move libraries the daemon serves, mapped to their
 #: HuggingFace dataset ids. A dict rather than string surgery so a refusal can
@@ -726,7 +736,9 @@ class ReachyDriver:
         The Mini's expressive behaviour is a recorded head+antenna+body
         choreography served by the daemon from a HuggingFace library - the same
         rail :meth:`stop_task` halts. Three gates: connected, ``library`` in the
-        admitted set, ``move_name`` in the URL-safe alphabet.
+        admitted set, ``move_name`` a bare URL path segment - the alphabet plus
+        an alphanumeric first character, so a dot segment cannot re-point the
+        request at the daemon's parent path.
 
         Args:
             move_name: The move's name in the library, e.g. ``'happy'``.
@@ -743,7 +755,8 @@ class ReachyDriver:
             return _refuse(f"play_move: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
         if not _MOVE_NAME_RE.fullmatch(move_name or ""):
             return _refuse(
-                f"play_move: invalid move_name {move_name!r}; expected 1-128 chars of [A-Za-z0-9._-] - "
+                f"play_move: invalid move_name {move_name!r}; expected 1-128 chars of [A-Za-z0-9._-] "
+                "starting with a letter or digit (one bare path segment, so no '.' or '..') - "
                 "list_moves() names the library's catalogue"
             )
         result = self._daemon_post(_PATH_MOVE_PLAY.format(dataset=dataset, move=move_name))
