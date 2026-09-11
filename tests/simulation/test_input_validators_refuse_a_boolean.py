@@ -549,6 +549,16 @@ _NOT_AN_INPUT_DOMAIN = {
     # tests/simulation/test_rollout_duration_must_produce_a_control_step.py fails
     # when either delegation is dropped.
     "_validate_duration": "coerces only factors their own domains accepted",
+    # Holds already-coerced coordinates to MuJoCo's mjMAXVAL ceiling. Every
+    # caller runs its own domain first - set_joint_positions through
+    # _coerce_joint_state_map, move_object / add_object through
+    # coerce_pose_vector and coerce_orientation_quaternion - and each of those
+    # refuses a boolean by name, so one is answered with its own reason and
+    # never reaches this float(). Pinned behaviourally rather than only claimed
+    # here: tests/simulation/mujoco/
+    # test_a_qpos_write_beyond_mujocos_ceiling_is_refused.py fails when any of
+    # those delegations is dropped.
+    "qpos_ceiling_error": "coerces only coordinates their own domains accepted",
 }
 
 _GUARDED_VALIDATORS = {

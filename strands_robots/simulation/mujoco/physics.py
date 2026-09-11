@@ -29,6 +29,7 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,
+    qpos_ceiling_error,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
     fromto_fixed_size_components,
@@ -1727,6 +1728,17 @@ class PhysicsMixin:
                     }
                 ],
             }
+
+        # A range bounds a LIMITED joint, but an unlimited one (a floating
+        # base's free joint, a continuous hinge) is bounded by nothing above,
+        # so a finite value can still exceed the ceiling mj_step's own
+        # mj_checkPos applies to qpos - past it the next step resets every
+        # joint and object. Checked after the range so a limited joint keeps
+        # the more specific message naming its own range.
+        if ceiling_err := qpos_ceiling_error(
+            "set_joint_positions", ((name, float(v)) for name, v in positions.items())
+        ):
+            return {"status": "error", "content": [{"text": ceiling_err}]}
 
         with self._lock:
             servos, other_drives = joint_drive_map(model, mj)

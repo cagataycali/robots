@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import warnings
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -485,6 +486,87 @@ def mj_name_to_id(model: Any, obj_type: int, name: Any) -> int:
     import mujoco as _mj
 
     return int(_mj.mj_name2id(model, obj_type, name))
+
+
+def pose_qpos_components(
+    position: "list[float] | None", orientation: "list[float] | None"
+) -> "list[tuple[str, float]]":
+    """Label the pose components a dynamic body's freejoint writes into ``qpos``.
+
+    A freejoint's ``qpos`` slice is ``[x, y, z, qw, qx, qy, qz]``, so both
+    vectors land there verbatim and both are held to
+    :func:`qpos_ceiling_error`'s ceiling. An omitted component (``None``) leaves
+    that part of the pose unchanged and contributes no value to check.
+
+    Args:
+        position: ``[x, y, z]`` in meters, already coerced to finite floats, or
+            ``None`` when omitted.
+        orientation: A wxyz quaternion, already coerced to finite floats, or
+            ``None`` when omitted. Its magnitude is NOT normalized on write, so
+            a huge component reaches ``qpos`` as written.
+
+    Returns:
+        ``(label, value)`` pairs naming each component for the caller, e.g.
+        ``("position[0]", 1.0)`` / ``("orientation[3]", 0.0)``.
+    """
+    labelled: list[tuple[str, float]] = []
+    for param, vector in (("position", position), ("orientation", orientation)):
+        if vector is None:
+            continue
+        labelled.extend((f"{param}[{i}]", float(v)) for i, v in enumerate(vector))
+    return labelled
+
+
+def qpos_ceiling_error(method: str, values: "Iterable[tuple[str, float]]") -> str | None:
+    """Refusal message if a caller value is too large to be a joint coordinate.
+
+    ``mj_step`` runs ``mj_checkPos`` before it integrates: a ``qpos`` entry
+    whose magnitude exceeds ``mjMAXVAL`` makes MuJoCo declare the simulation
+    unstable and ``mj_resetData`` the ENTIRE state - every joint of every robot
+    and every object, back to its initial value - reporting that only as a
+    ``WARNING`` line on stderr. So a scene the caller spent a rollout building
+    is destroyed by the next ``step`` while the write that doomed it reported
+    success.
+
+    Finite is therefore not enough to be writable, which is the same reason
+    :meth:`~strands_robots.simulation.mujoco.physics.PhysicsMixin.set_joint_velocities`
+    holds ``qvel`` to this ceiling. A joint's declared range bounds the values a
+    limited joint accepts, but a joint that declares NO range - a floating
+    base's free joint, a continuous hinge - has nothing else bounding it, and a
+    free joint's quaternion components are not renormalized on write either.
+
+    Shared by every MuJoCo surface that writes a caller-supplied value into
+    ``qpos``, defined in this low-level module for the reason
+    :data:`_NO_WORLD_MSG` is (the facade and its mixins can both source it
+    without a circular import), so their accepted domains cannot diverge.
+
+    Only a value that really reaches ``qpos`` is held to the ceiling. A static
+    object is welded to the worldbody with no free joint, so it owns no ``qpos``
+    entry and a far-away static body is stable - callers of this helper gate it
+    on the dynamic path rather than refusing a pose that works.
+
+    Args:
+        method: Calling method name, opening the message.
+        values: ``(label, value)`` pairs already coerced to finite floats, where
+            *label* names the component for the caller (``"position[0]"``, a
+            joint name).
+
+    Returns:
+        ``None`` when every value is within the ceiling, else the message naming
+        the method, each offending component and the consequence avoided.
+    """
+    import mujoco as _mj
+
+    ceiling = float(_mj.mjMAXVAL)
+    beyond = [f"{label}={value:.4g}" for label, value in values if abs(value) > ceiling]
+    if not beyond:
+        return None
+    return (
+        f"{method}: value too large to be a joint coordinate, nothing written: "
+        + "; ".join(beyond)
+        + ". The next step would report the simulation unstable and reset every joint and object "
+        f"to its initial state. MuJoCo's ceiling is mjMAXVAL={ceiling:.0e} on qpos."
+    )
 
 
 # One-shot guard so the software-rendering warning fires at most once per

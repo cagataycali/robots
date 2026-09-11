@@ -109,6 +109,8 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,
+    pose_qpos_components,
+    qpos_ceiling_error,
 )
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
@@ -3961,6 +3963,13 @@ class MuJoCoSimEngine(
         orientation, e = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
+        # Finite is not enough for the pose of a DYNAMIC body: it is written
+        # into the object's freejoint qpos, where a magnitude past MuJoCo's own
+        # ceiling makes the next step reset the whole world. A static body is
+        # welded with no freejoint, owns no qpos entry and is stable however
+        # far away it sits, so it is not held to the ceiling.
+        if not is_static and (e := qpos_ceiling_error("add_object", pose_qpos_components(position, orientation))):
+            return {"status": "error", "content": [{"text": e}]}
         if size is not None and (e := finite_vector_error("add_object", "size", size)) is not None:
             return {"status": "error", "content": [{"text": e}]}
 
@@ -4230,7 +4239,13 @@ class MuJoCoSimEngine(
             jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
             if jnt_id >= 0:
                 # Dynamic object: a freejoint carries its pose, so move it cheaply
-                # through data.qpos + a forward pass (no recompile).
+                # through data.qpos + a forward pass (no recompile). The pose
+                # lands in qpos verbatim, so hold it to MuJoCo's ceiling first -
+                # past it the next step resets every joint and object. Only this
+                # branch writes qpos; the static branch below has no qpos entry
+                # to overflow, so a far-away static body stays movable.
+                if e := qpos_ceiling_error("move_object", pose_qpos_components(position, orientation)):
+                    return {"status": "error", "content": [{"text": e}]}
                 qpos_addr = model.jnt_qposadr[jnt_id]
                 moved = False
                 if position is not None:

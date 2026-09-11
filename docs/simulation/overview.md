@@ -173,6 +173,20 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     (`add_object`, `add_camera`) and [`send_action`](#actions) enforce - one
     library, one answer to "is this a usable number".
 
+!!! note "Finite is not enough for a value that lands in `qpos` or `qvel`"
+    `mj_step` checks `qpos`, `qvel` and `qacc` against `mjMAXVAL` (1e10) before
+    it integrates, and past that ceiling MuJoCo calls the simulation unstable
+    and resets *every* joint and object to its initial state, reporting it only
+    on stderr. So `set_joint_positions`, `move_object` and `add_object` hold a
+    caller value to that ceiling, as `set_joint_velocities` does, and refuse
+    before writing rather than reporting success over a world the next `step`
+    wipes. A joint's range already bounds a limited joint; the ceiling is what
+    bounds one that declares no range (a floating base, a continuous hinge) and
+    a dynamic object's freejoint pose, whose quaternion is not renormalized on
+    write. It is MuJoCo's own limit, so `mjMAXVAL` exactly is still writable. A
+    static object is welded with no freejoint and owns no `qpos` entry, so a
+    far-away static body is stable and is not held to the ceiling.
+
 !!! note "The same domain applies to the world-configuration parameters"
     `set_gravity` / `create_world(gravity=...)`, `set_timestep` /
     `create_world(timestep=...)`, the `mass` on `set_body_properties` and
