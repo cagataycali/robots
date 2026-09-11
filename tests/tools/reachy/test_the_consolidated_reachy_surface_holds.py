@@ -398,9 +398,12 @@ class TestTheDriverAccessorGates:
         [
             ({"move_name": "../evil"}, "invalid move_name"),
             ({"move_name": ""}, "invalid move_name"),
+            ({"move_name": "."}, "invalid move_name"),
+            ({"move_name": ".."}, "invalid move_name"),
+            ({"move_name": ".hidden"}, "invalid move_name"),
             ({"move_name": "ok", "library": "gestures"}, "unknown library"),
         ],
-        ids=["path-escape", "empty-name", "unknown-library"],
+        ids=["path-escape", "empty-name", "dot", "dot-dot", "leading-dot", "unknown-library"],
     )
     def test_play_move_refuses_bad_input_before_any_request(self, kwargs: dict[str, Any], fragment: str) -> None:
         result = _bare_driver().play_move(**kwargs)
@@ -439,6 +442,42 @@ class _FakeTransport:
     def api(self, host: str, port: int, path: str, method: str = "GET", data: Any = None) -> Any:
         self.paths.append(path)
         return self.body
+
+
+class TestARefusedMoveNameBuildsNoRequest:
+    """A dot segment is not a bare path segment, so it never reaches the daemon.
+
+    ``move_name`` is interpolated into
+    ``/api/move/play/recorded-move-dataset/{dataset}/{move}``, and ``.`` and
+    ``..`` are spelled entirely from the admitted alphabet - so a charset-only
+    gate admits the two tokens a URL path resolves relative to its parent.
+    ``move_name=".."`` used to be sent, and the request it built resolves to
+    ``.../recorded-move-dataset/pollen-robotics``: a daemon endpoint the caller
+    named nothing about. The rows above judge the envelope; this pair judges the
+    wire, because a refusal that still sent the request would satisfy them.
+    """
+
+    @staticmethod
+    def _driver_recording(monkeypatch: pytest.MonkeyPatch) -> tuple[ReachyDriver, _FakeTransport]:
+        transport = _FakeTransport({"ok": True})
+        monkeypatch.setattr(reachy_driver_module, "_resolve_transport", lambda: transport)
+        return _bare_driver(), transport
+
+    @pytest.mark.parametrize("move_name", [".", "..", ".hidden"], ids=["dot", "dot-dot", "leading-dot"])
+    def test_a_dot_segment_reaches_no_request(self, monkeypatch: pytest.MonkeyPatch, move_name: str) -> None:
+        driver, transport = self._driver_recording(monkeypatch)
+        result = driver.play_move(move_name)
+        assert result["status"] == "error"
+        assert transport.paths == []
+
+    def test_a_bare_name_still_reaches_the_move_it_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The over-refusal control: tightening the gate must not close the verb."""
+        driver, transport = self._driver_recording(monkeypatch)
+        result = driver.play_move("happy_wiggle")
+        assert result["status"] == "success"
+        assert transport.paths == [
+            "/api/move/play/recorded-move-dataset/pollen-robotics/reachy-mini-emotions-library/happy_wiggle"
+        ]
 
 
 class TestTheMoveCatalogueIsReadAsAnArray:

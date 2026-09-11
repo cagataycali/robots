@@ -31,9 +31,15 @@ from strands_robots.utils import dial_host_error, finite_number_error, tcp_port_
 logger = logging.getLogger(__name__)
 
 # Security hardening: recorded-move names are interpolated into a REST URL
-# path, so restrict them to a safe charset to prevent path traversal and
-# query/parameter injection into the daemon API.
-_MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}\Z")
+# path, so restrict them to one bare path segment - the safe charset plus an
+# alphanumeric first character - to prevent path traversal and query/parameter
+# injection into the daemon API. The leading-character rule is what excludes
+# `.` and `..`, which a charset drawn from the same alphabet admits: a `..`
+# name builds a URL that resolves to the daemon's parent path, naming an
+# endpoint the caller did not ask for. Kept identical to
+# `strands_robots.drivers.reachy._MOVE_NAME_RE`, which gates the same daemon
+# path from the native driver.
+_MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
 def _key_prefix_error(value: Any, param: str, cls_name: str) -> str | None:
