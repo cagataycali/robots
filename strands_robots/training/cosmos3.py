@@ -17,6 +17,12 @@ the :class:`Trainer` ABC has optional ``prepare``/``export`` hooks:
   ``cosmos_framework.scripts.export_model`` so ``create_policy`` can consume
   it.
 
+``TrainSpec.method`` is honored only as ``"full"``. The recipe TOML and the
+Hydra override list are the whole configuration surface here, and no override
+selects an adapter, so an adapter strategy is refused by ``validate`` rather
+than run as a full fine-tune - the same posture GR00T takes toward a strategy
+it has no config field for.
+
 Multi-node HSDP maps ``num_nodes`` →
 ``model.config.parallelism.data_parallel_replicate_degree`` (intra-node shard
 stays at ``nproc_per_node``). 8×H100 80 GB is the tested floor.
@@ -42,7 +48,12 @@ from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_METHODS = {"full", "lora"}
+# ``method`` names a tuning strategy, and this backend forwards exactly one: a
+# full fine-tune. The run is configured by the recipe TOML plus the Hydra
+# override list ``build_overrides`` writes, and that list carries no adapter
+# request - so accepting an adapter strategy here would launch a full fine-tune
+# and report success, which is indistinguishable from never having asked.
+_SUPPORTED_METHODS = {"full"}
 
 _INSTALL_HINT = (
     "cosmos-framework is not importable from this interpreter. "
@@ -127,13 +138,13 @@ class Cosmos3Trainer(Trainer):
         """Pure preflight for a Cosmos3 SFT run.
 
         Runs the shared input-safety gate, then checks a LeRobotDataset v3
-        ``dataset_root``, a ``base_model`` to convert to DCP, an
-        ``output_dir``, a supported ``method``, a usable run size (``steps`` /
-        ``global_batch_size``), an
-        ``extra['sft_toml']`` recipe that exists, and a resolvable
-        ``cosmos_framework`` checkout (COSMOS_ROOT / ``cosmos_root`` /
-        ``extra['cosmos_root']``). Returns the problem list; empty means
-        launchable. Read-only - no filesystem writes, no GPUs.
+        ``dataset_root``, a ``base_model`` to convert to DCP, an ``output_dir``,
+        a ``method`` this backend can forward (``full`` only - no override
+        selects an adapter), a usable run size (``steps`` /
+        ``global_batch_size``), an ``extra['sft_toml']`` recipe that exists, and
+        a resolvable ``cosmos_framework`` checkout (COSMOS_ROOT /
+        ``cosmos_root`` / ``extra['cosmos_root']``). Returns the problem list;
+        empty means launchable. Read-only - no filesystem writes, no GPUs.
         """
         problems: list[str] = self._security_problems(spec)
 
@@ -152,7 +163,9 @@ class Cosmos3Trainer(Trainer):
 
         if spec.method not in _SUPPORTED_METHODS:
             problems.append(
-                f"unsupported method '{spec.method}' for Cosmos3 (expected one of {sorted(_SUPPORTED_METHODS)})"
+                f"unsupported method '{spec.method}' for Cosmos3 (expected one of {sorted(_SUPPORTED_METHODS)}); "
+                f"the Hydra overrides this backend writes carry no adapter request, so a strategy other "
+                f"than 'full' has to be configured in the recipe TOML (extra['sft_toml'])"
             )
         problems.extend(self._run_size_problems(spec))
         problems.extend(self._checkpoint_cadence_problems(spec))
