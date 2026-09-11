@@ -1264,27 +1264,37 @@ class Go2Driver:
         drops one must cost that field, not the whole callback and with it the
         IMU the mesh publishes.
 
+        Never raises, like the twin :meth:`~strands_robots.drivers.g1.G1Driver._on_lowstate`:
+        the SDK owns this thread, so an escaping decode error kills the
+        subscription instead of reaching a caller, and this is the topic behind
+        both write gates - the battery floor :meth:`send_action` checks and the
+        measured pose it holds uncommanded joints at would then be frozen at the
+        last frame that happened to decode.
+
         Args:
             msg: The decoded ``unitree_go`` ``LowState_``.
         """
-        imu = getattr(msg, "imu_state", None)
-        if imu is not None:
-            self._imu = {
-                "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
-                "gyroscope": telemetry_float_list(getattr(imu, "gyroscope", None)),
-                "accelerometer": telemetry_float_list(getattr(imu, "accelerometer", None)),
-                "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
-            }
-        bms = getattr(msg, "bms_state", None)
-        if bms is not None:
-            self._battery = {
-                "pct": telemetry_float(getattr(bms, "soc", None)),
-                "current": telemetry_float(getattr(bms, "current", None)),
-                "cycle": telemetry_int(getattr(bms, "cycle", None)),
-            }
-        joints = decode_motor_state(getattr(msg, "motor_state", None), GO2_JOINT_INDEX)
-        if joints is not None:
-            self._joints = joints
+        try:
+            imu = getattr(msg, "imu_state", None)
+            if imu is not None:
+                self._imu = {
+                    "quaternion": telemetry_float_list(getattr(imu, "quaternion", None)),
+                    "gyroscope": telemetry_float_list(getattr(imu, "gyroscope", None)),
+                    "accelerometer": telemetry_float_list(getattr(imu, "accelerometer", None)),
+                    "rpy": telemetry_float_list(getattr(imu, "rpy", None)),
+                }
+            bms = getattr(msg, "bms_state", None)
+            if bms is not None:
+                self._battery = {
+                    "pct": telemetry_float(getattr(bms, "soc", None)),
+                    "current": telemetry_float(getattr(bms, "current", None)),
+                    "cycle": telemetry_int(getattr(bms, "cycle", None)),
+                }
+            joints = decode_motor_state(getattr(msg, "motor_state", None), GO2_JOINT_INDEX)
+            if joints is not None:
+                self._joints = joints
+        except Exception as exc:  # noqa: BLE001 - IDL message can be anything
+            logger.debug("%s: lowstate decode failed: %s", self._tool_name, exc)
 
     def _on_sportmode(self, msg: Any) -> None:
         """Cache body pose, velocity and gait from ``rt/sportmodestate``.
@@ -1294,18 +1304,24 @@ class Go2Driver:
         rollout: body height and velocity say what the robot actually did with
         the frames this driver sent.
 
+        Never raises, for the reason :meth:`_on_lowstate` states: a decode error
+        on the SDK's own thread must cost this frame, not the subscription.
+
         Args:
             msg: The decoded ``unitree_go`` ``SportModeState_``.
         """
-        self._sport = {
-            "mode": telemetry_int(getattr(msg, "mode", None)),
-            "gait_type": telemetry_int(getattr(msg, "gait_type", None)),
-            "body_height": telemetry_float(getattr(msg, "body_height", None)),
-            "position": telemetry_float_list(getattr(msg, "position", None)),
-            "velocity": telemetry_float_list(getattr(msg, "velocity", None)),
-            "yaw_speed": telemetry_float(getattr(msg, "yaw_speed", None)),
-            "foot_force": telemetry_int_list(getattr(msg, "foot_force", None)),
-        }
+        try:
+            self._sport = {
+                "mode": telemetry_int(getattr(msg, "mode", None)),
+                "gait_type": telemetry_int(getattr(msg, "gait_type", None)),
+                "body_height": telemetry_float(getattr(msg, "body_height", None)),
+                "position": telemetry_float_list(getattr(msg, "position", None)),
+                "velocity": telemetry_float_list(getattr(msg, "velocity", None)),
+                "yaw_speed": telemetry_float(getattr(msg, "yaw_speed", None)),
+                "foot_force": telemetry_int_list(getattr(msg, "foot_force", None)),
+            }
+        except Exception as exc:  # noqa: BLE001 - IDL message can be anything
+            logger.debug("%s: sportmodestate decode failed: %s", self._tool_name, exc)
 
 
 class _ControlLoop:

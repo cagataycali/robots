@@ -59,7 +59,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=None`, `mesh_path=None` - omitted lets the shape decide: `plane` is made static and refuses an explicit `is_static=False`, every other shape is dynamic |
 | `remove_object` | `name` |
 | `move_object` | `name`, `position`, `orientation` (NOT `pos`/`quat`) |
-| `list_objects` | - |
+| `list_objects` | - each object's shape, mass, and **live** position, read from the physics rather than from the `add_object`/`move_object` request, so a settled or pushed object reports where it is |
 
 ## Cameras
 
