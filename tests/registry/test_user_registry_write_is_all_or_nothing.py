@@ -43,8 +43,8 @@ import numpy as np
 import pytest
 
 from strands_robots.registry import get_robot
+from strands_robots.registry._overlay import user_registry_path
 from strands_robots.registry.user_registry import (
-    _get_user_registry_path,
     _invalidate_cache,
     get_user_robots,
     register_robot,
@@ -87,7 +87,7 @@ def test_a_refused_registration_changes_nothing_on_disk(tmp_path, bad_kwargs):
     """The overlay a refused registration was refused from still holds its robots."""
     assets = tmp_path / "assets"
     existing = _populate(assets)
-    overlay = _get_user_registry_path()
+    overlay = user_registry_path()
     before = overlay.read_bytes()
 
     with pytest.raises(ValueError) as excinfo:
@@ -120,7 +120,7 @@ def test_a_commit_that_fails_leaves_the_previous_document(tmp_path, monkeypatch)
     """
     assets = tmp_path / "assets"
     existing = _populate(assets)
-    overlay = _get_user_registry_path()
+    overlay = user_registry_path()
     before = overlay.read_bytes()
 
     def refuse(*_args: object, **_kwargs: object) -> None:
@@ -144,7 +144,7 @@ def test_an_unregister_whose_commit_fails_keeps_every_robot(tmp_path, monkeypatc
     """
     assets = tmp_path / "assets"
     existing = _populate(assets)
-    overlay = _get_user_registry_path()
+    overlay = user_registry_path()
     before = overlay.read_bytes()
 
     def refuse(*_args: object, **_kwargs: object) -> None:
@@ -163,7 +163,7 @@ def test_the_stored_document_is_what_a_reader_parses_back(tmp_path):
     """A successful write is unaffected: same JSON text, four-space indent, one trailing newline."""
     assets = tmp_path / "assets"
     names = _populate(assets, count=2)
-    overlay = _get_user_registry_path()
+    overlay = user_registry_path()
 
     text = overlay.read_text(encoding="utf-8")
     document = json.loads(text)

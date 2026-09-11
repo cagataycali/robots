@@ -15,8 +15,8 @@ from unittest import mock
 import pytest
 
 from strands_robots.registry import get_robot, list_robots, resolve_name
+from strands_robots.registry._overlay import user_registry_path
 from strands_robots.registry.user_registry import (
-    _get_user_registry_path,
     _invalidate_cache,
     _load_user_registry,
     get_user_robots,
@@ -308,19 +308,19 @@ class TestPersistence:
     def test_writes_json_file(self, tmp_path):
         robot_dir = _make_robot(tmp_path / "assets")
         register_robot(name="test_bot", model_xml="bot.xml", asset_dir=str(robot_dir))
-        path = _get_user_registry_path()
+        path = user_registry_path()
         assert path.exists()
         data = json.loads(path.read_text())
         assert "test_bot" in data["robots"]
 
     def test_corrupted_json_returns_empty(self):
-        path = _get_user_registry_path()
+        path = user_registry_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("NOT JSON!!!")
         assert _load_user_registry() == {"robots": {}}
 
     def test_valid_json_without_robots_key_returns_empty(self):
-        path = _get_user_registry_path()
+        path = user_registry_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"version": 1}')
         assert _load_user_registry() == {"robots": {}}
@@ -359,7 +359,7 @@ class TestStrandsBaseDirIntegration:
         custom = tmp_path / "custom_base"
         custom.mkdir()
         with mock.patch.dict(os.environ, {"STRANDS_BASE_DIR": str(custom)}, clear=False):
-            assert _get_user_registry_path().parent == custom
+            assert user_registry_path().parent == custom
 
     def test_assets_dir_does_not_move_registry(self, tmp_path, monkeypatch):
         """Setting only STRANDS_ASSETS_DIR must not change the registry location."""
@@ -368,12 +368,12 @@ class TestStrandsBaseDirIntegration:
         custom_assets.mkdir()
         monkeypatch.setenv("STRANDS_ASSETS_DIR", str(custom_assets))
         # Registry should land under the default base, not the assets dir.
-        assert ".strands_robots" in str(_get_user_registry_path())
+        assert ".strands_robots" in str(user_registry_path())
 
     def test_defaults_to_dot_strands_robots(self, monkeypatch):
         monkeypatch.delenv("STRANDS_BASE_DIR", raising=False)
         monkeypatch.delenv("STRANDS_ASSETS_DIR", raising=False)
-        assert ".strands_robots" in str(_get_user_registry_path())
+        assert ".strands_robots" in str(user_registry_path())
 
 
 # ===========================================================================
