@@ -103,6 +103,13 @@ duck.send_action({"skill": "kick_left"})  # a named skill (robot.do)
 duck.emergency_stop()                  # robot.stop
 ```
 
+All three halt paths - `stop()`, `stop_task()` and `emergency_stop()` - send the
+same `robot.stop`, and an accepted one is recorded in
+`get_status()["motion_stopped"]`, the field an operator reads to decide whether
+the robot is safe to approach. Only an accepted halt sets it: a stop robotd
+declines leaves it false. `relax()` and `enable_torque(False)` de-energise rather
+than halt a commanded motion, so they leave the flag alone.
+
 `robotd` owns the walking/skill ONNX on-device, so `run_policy`/`start_task`
 refuse and point back at the intent path; use `mode="sim"` for a host-driven
 [`MicroduckPolicy` rollout](../policies/microduck.md#walking-in-mujoco). For a remote robot, forward its socket to a local

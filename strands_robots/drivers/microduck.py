@@ -872,8 +872,27 @@ class MicroduckDriver:
         return self._discrete(_M_RELAX, {}, "relax")
 
     def emergency_stop(self) -> dict[str, Any]:
-        """Stop the robot immediately via ``robot.stop``."""
-        return self._discrete(_M_STOP, {}, "emergency_stop")
+        """Stop the robot immediately via ``robot.stop``, and record the halt.
+
+        The same request :meth:`stop` and :meth:`stop_task` send, so which of
+        the three a caller reached for cannot change what :meth:`get_status`
+        publishes under ``motion_stopped`` - the field an operator reads to
+        decide whether the robot is safe to approach. Only an accepted stop
+        records it: a refusal returns before the latch, because reporting a
+        halt robotd declined is the affirmative lie the flag exists to avoid.
+
+        Torque state is a different fact: :meth:`relax` and
+        :meth:`enable_torque` de-energise rather than halt a commanded motion,
+        and deliberately leave the flag alone.
+
+        Returns:
+            A success envelope naming the method and robotd's result, or a
+            refusal under this verb's own label.
+        """
+        envelope = self._discrete(_M_STOP, {}, "emergency_stop")
+        if envelope["status"] == "success":
+            self._stopped = True
+        return envelope
 
     def _discrete(self, method: str, params: dict[str, Any], label: str) -> dict[str, Any]:
         if self._client is None or not self._client.alive:

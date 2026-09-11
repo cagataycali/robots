@@ -11,9 +11,20 @@ Microduck's suite states it in those words, and
 Mini's carries the comment "Reporting a halt that did not happen is an
 affirmative lie on a safety path".
 
-Both suites graded that flag in one direction only: it may not become true
-without an accepted stop. Nothing graded the other direction, and the two
-drivers had diverged there.
+Both suites graded that flag in two directions only: it may not become true
+without an accepted stop, and - since this file - a write that supersedes a halt
+clears it. Neither graded the direction that matters most on a safety path: that
+an *accepted* halt is recorded at all. The Microduck reaches robotd's
+``robot.stop`` from three verbs, and only two of them recorded it.
+:meth:`~strands_robots.drivers.microduck.MicroduckDriver.emergency_stop` sent the
+same request as
+:meth:`~strands_robots.drivers.microduck.MicroduckDriver.stop` and
+:meth:`~strands_robots.drivers.microduck.MicroduckDriver.stop_task`, robotd
+accepted it, the envelope reported success - and ``get_status`` kept publishing
+``motion_stopped=False``. The verb whose name says the halt is urgent was the one
+that did not report it, so an operator who reached for the e-stop and then read
+the status was told the robot was not stopped.
+(On the clearing direction, which this file opened with:)
 :meth:`~strands_robots.drivers.microduck.MicroduckDriver.send_action` clears the
 latch once its intents are on the wire. The Mini set it in
 :meth:`~strands_robots.drivers.reachy.ReachyDriver.stop` and
@@ -43,6 +54,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 from typing import Any
 
 import pytest
@@ -125,6 +137,77 @@ _MINI_DAEMON_MOVES: tuple[tuple[str, Any, str], ...] = (
     ("wake_up", lambda d: d.wake_up(), reachy_mod._PATH_WAKE),
     ("goto_sleep", lambda d: d.goto_sleep(), reachy_mod._PATH_SLEEP),
 )
+
+
+class _DecliningRobotd:
+    """A live robotd connection that refuses every request.
+
+    ``OSError`` is the failure the driver's request paths catch, so this is the
+    "connected, and the daemon said no" case - distinct from a dead socket,
+    which the degraded-surface suite covers.
+    """
+
+    def __init__(self) -> None:
+        self.alive = True
+        self.methods: list[str] = []
+
+    def call(self, method: str, params: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
+        self.methods.append(method)
+        raise OSError("estop engaged")
+
+    def notify(self, method: str, params: dict[str, Any]) -> None:
+        self.methods.append(method)
+        raise OSError("estop engaged")
+
+    def close(self) -> None:
+        return None
+
+
+#: The Microduck's halt verbs, with the call that drives each. ``stop`` is the
+#: ``-> None`` hook, so its "envelope" is the absence of one.
+#: :meth:`TestEveryHaltPathRecordsTheHalt.test_the_population_is_every_verb_that_issues_the_halt`
+#: derives this same set from the module and fails if a fourth verb arrives, so
+#: the rows below cannot silently stop covering the population.
+_DUCK_HALT_PATHS: tuple[tuple[str, Any], ...] = (
+    ("stop", lambda d: asyncio.run(d.stop())),
+    ("stop_task", lambda d: d.stop_task()),
+    ("emergency_stop", lambda d: d.emergency_stop()),
+)
+
+
+def _halt_token(cls: Any) -> str:
+    """The identifier a driver's ``stop_task`` names to reach its halt on the wire.
+
+    Derived rather than listed because the two publishers halt over different
+    transports - the Microduck sends the ``robot.stop`` JSON-RPC method
+    (``_M_STOP``), the Mini posts the daemon's stop path (``_PATH_STOP``) - and
+    each names exactly one such constant in ``stop_task``, the shared
+    :data:`~strands_robots.drivers.base.DRIVER_SURFACE` member that halts.
+
+    Args:
+        cls: A driver class whose ``get_status`` publishes ``motion_stopped``.
+
+    Returns:
+        The single ``_*STOP*`` identifier named in the class's ``stop_task``.
+    """
+    named = sorted(set(re.findall(r"\b_[A-Z_]*STOP[A-Z_]*\b", inspect.getsource(cls.stop_task))))
+    assert len(named) == 1, f"{cls.__name__}.stop_task names {named}, so the halt is no longer one constant"
+    return named[0]
+
+
+def _methods_naming(cls: Any, token: str) -> set[str]:
+    """The class's own methods whose source references ``token``."""
+    found = set()
+    for name, member in vars(cls).items():
+        if name.startswith("__") or not callable(member):
+            continue
+        try:
+            source = inspect.getsource(member)
+        except (OSError, TypeError):  # pragma: no cover - a C-level member
+            continue
+        if token in source:
+            found.add(name)
+    return found
 
 
 class TestTheMiniClearsTheHaltWhenItCommitsMotion:
@@ -259,34 +342,95 @@ class TestTheMicroduckHoldsTheSameContract:
         assert _flag(driver) is True
 
 
+def _flag_publishers() -> dict[str, Any]:
+    """Shipped native driver classes whose ``get_status`` publishes the flag.
+
+    Derived from the driver table rather than listed, so a third driver that
+    starts publishing ``motion_stopped`` is graded by every rule below on the
+    day it arrives.
+
+    Returns:
+        Class name to class, for each shipped native driver that publishes the
+        flag.
+    """
+    classes: dict[str, Any] = {}
+    for robot in list_native_drivers():
+        cls = get_native_driver_class(robot)
+        if cls is not None:
+            classes[cls.__name__] = cls
+    assert len(classes) > 5, f"the driver table did not load: {sorted(classes)}"
+    return {name: cls for name, cls in classes.items() if "motion_stopped" in inspect.getsource(cls.get_status)}
+
+
 class TestEveryDriverPublishingTheFlagClearsItOnItsWritePath:
     """Derived from the shipped drivers, so a third one is graded on arrival."""
 
-    @staticmethod
-    def _publishers() -> dict[str, Any]:
-        """Shipped native driver classes whose ``get_status`` publishes the flag."""
-        classes: dict[str, Any] = {}
-        for robot in list_native_drivers():
-            cls = get_native_driver_class(robot)
-            if cls is not None:
-                classes[cls.__name__] = cls
-        assert len(classes) > 5, f"the driver table did not load: {sorted(classes)}"
-        return {name: cls for name, cls in classes.items() if "motion_stopped" in inspect.getsource(cls.get_status)}
-
     def test_the_population_is_the_two_daemon_drivers(self) -> None:
-        assert sorted(self._publishers()) == ["MicroduckDriver", "ReachyDriver"]
+        assert sorted(_flag_publishers()) == ["MicroduckDriver", "ReachyDriver"]
 
     def test_every_publisher_clears_the_flag_in_send_action(self) -> None:
         adrift = [
             name
-            for name, cls in self._publishers().items()
+            for name, cls in _flag_publishers().items()
             if "self._stopped = False" not in inspect.getsource(cls.send_action)
         ]
         assert adrift == [], f"these drivers publish motion_stopped but never clear it on the write path: {adrift}"
 
-    @pytest.mark.parametrize("setter", ["stop", "stop_task"])
-    def test_both_setters_are_still_the_only_way_to_report_a_halt(self, setter: str) -> None:
-        """The flag becomes true on an accepted stop, and nowhere else."""
-        source = inspect.getsource(ReachyDriver)
-        assert source.count("self._stopped = True") == 2, "a new path started reporting a halt"
-        assert f"def {setter}" in source
+
+class TestEveryHaltPathRecordsTheHalt:
+    """An accepted halt is reported whichever verb the caller reached for.
+
+    The direction the two suites left ungraded. ``motion_stopped`` is only worth
+    reading if it answers "is this robot stopped", not "is this robot stopped,
+    assuming you halted it through one of the two verbs that happen to record
+    it". The Microduck reaches ``robot.stop`` from three verbs and recorded two.
+    """
+
+    @staticmethod
+    def _duck(client: Any) -> MicroduckDriver:
+        return _duck(client)
+
+    def test_the_population_is_every_verb_that_issues_the_halt(self) -> None:
+        """:data:`_DUCK_HALT_PATHS` must stay the whole population, not a sample.
+
+        A fourth verb that reaches ``_M_STOP`` fails here rather than going
+        ungraded, which is what let the third one ship unrecorded.
+        """
+        issuing = _methods_naming(MicroduckDriver, _halt_token(MicroduckDriver))
+        assert issuing == {verb for verb, _ in _DUCK_HALT_PATHS}, (
+            f"the Microduck now issues its halt from {sorted(issuing)}; "
+            f"_DUCK_HALT_PATHS covers {sorted(verb for verb, _ in _DUCK_HALT_PATHS)}"
+        )
+
+    @pytest.mark.parametrize(("verb", "call"), _DUCK_HALT_PATHS, ids=[p[0] for p in _DUCK_HALT_PATHS])
+    def test_an_accepted_halt_is_published(self, verb: str, call: Any) -> None:
+        client = _RobotdDouble()
+        driver = self._duck(client)
+        assert _flag(driver) is False, "the fixture must start from a robot that is not halted"
+        call(driver)
+        # Non-vacuity: the halt has to have reached the wire, or this cell would
+        # pass on a verb that refused before sending anything.
+        assert "robot.stop" in client.methods, f"{verb} never issued the halt"
+        assert _flag(driver) is True, f"{verb} halted the robot and the status reported it as not stopped"
+
+    @pytest.mark.parametrize(("verb", "call"), _DUCK_HALT_PATHS, ids=[p[0] for p in _DUCK_HALT_PATHS])
+    def test_a_declined_halt_is_not_published(self, verb: str, call: Any) -> None:
+        """The other half: robotd refused, so nothing was halted to report."""
+        driver = self._duck(_DecliningRobotd())
+        call(driver)
+        assert _flag(driver) is False, f"{verb} was declined and the status reported a halt"
+
+    def test_recording_the_halt_and_issuing_it_are_the_same_population(self) -> None:
+        """For every publisher: the verbs that halt are exactly those that record it.
+
+        One equality covers both directions - a halt verb that forgets to
+        record, and a non-halt path that starts claiming one - for each
+        publisher over its own transport's halt constant.
+        """
+        for name, cls in _flag_publishers().items():
+            issuing = _methods_naming(cls, _halt_token(cls))
+            recording = _methods_naming(cls, "self._stopped = True")
+            assert issuing == recording, (
+                f"{name}: {sorted(issuing - recording)} issue the halt without recording it; "
+                f"{sorted(recording - issuing)} record a halt they never issued"
+            )
