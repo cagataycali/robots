@@ -374,8 +374,11 @@ class TestTheDocumentedReasonIsTheRealOne:
         """The reason the reference page quotes, unwrapped to a single line."""
         page = Path(reachy_mod.__file__).parents[2] / "docs" / "getting-started" / "robot-factory.md"
         text = page.read_text(encoding="utf-8")
-        blocks = [chunk for chunk in text.split("```") if "connect_eagerly()" in chunk]
-        assert len(blocks) == 1, f"expected exactly one connect_eagerly block, found {len(blocks)}"
+        # Selected by its subject, not by being the page's only such block: the page
+        # quotes more than one ``connect_eagerly`` reason, and the resolver's is the
+        # one this class grades.
+        blocks = [c for c in text.split("```") if "connect_eagerly()" in c and "cannot import" in c]
+        assert len(blocks) == 1, f"expected exactly one quoted transport-import reason, found {len(blocks)}"
         after = blocks[0].split("connect_eagerly()", 1)[1]
         return " ".join(after.replace('"', " ").split())
 
