@@ -56,10 +56,35 @@ def requested_changes(author: str, at: str = "2026-08-01T00:00:00Z") -> Any:
     return Review(author=author, state="CHANGES_REQUESTED", submitted_at=at)
 
 
+_SAME = object()
+
+
+def workflow_run(
+    actor: str | None,
+    event: str = "pull_request",
+    at: str = "2026-08-01T00:00:00Z",
+    triggering_actor: Any = _SAME,
+    **extra: Any,
+) -> dict[str, Any]:
+    """One row of ``GET /actions/runs``, carrying both attribution fields.
+
+    The API always returns both, and they agree until a held run is approved or
+    a run is re-run -- so ``triggering_actor`` defaults to ``actor`` and is
+    passed explicitly only where the divergence is the subject.
+    """
+    return {
+        "created_at": at,
+        "event": event,
+        "actor": {"login": actor} if actor else None,
+        "triggering_actor": {"login": actor} if triggering_actor is _SAME else triggering_actor,
+        **extra,
+    }
+
+
 # --------------------------------------------------------------------------
 # The four measured pull requests.
 #
-# pull request | triggering_actor | approved by  | commit.author.login | reviewDecision
+# pull request | actor            | approved by  | commit.author.login | reviewDecision
 # #1894        | yinsong1986      | cagataycali  | yinsong1986         | APPROVED
 # #1920        | cagataycali      | yinsong1986  | None                | APPROVED
 # #1722        | cagataycali      | cagataycali  | cagataycali         | REVIEW_REQUIRED
@@ -177,7 +202,7 @@ def test_an_undetermined_pusher_is_not_a_finding():
     """A lookup that cannot attribute the push must not guess from the commit.
 
     #1920's head was committed under the strands-robots git identity, whose
-    commit.author.login is None while its triggering_actor is cagataycali. A
+    commit.author.login is None while its run actor is cagataycali. A
     fallback to commit metadata would have read that pull request as having no
     pusher and, had the approver been the same account, as satisfied. So an
     unknown pusher is its own outcome and passes.
@@ -219,12 +244,8 @@ def test_the_most_recent_workflow_run_names_the_pusher():
     """
     payload = {
         "workflow_runs": [
-            {
-                "created_at": "2026-08-01T07:50:16Z",
-                "event": "pull_request",
-                "triggering_actor": {"login": "cagataycali"},
-            },
-            {"created_at": "2026-08-02T09:00:00Z", "event": "pull_request", "triggering_actor": {"login": "Vivek0712"}},
+            workflow_run("cagataycali", at="2026-08-01T07:50:16Z"),
+            workflow_run("Vivek0712", at="2026-08-02T09:00:00Z"),
         ]
     }
     original = mod._get
@@ -248,24 +269,14 @@ def test_a_review_triggered_run_does_not_name_the_pusher():
     """
     payload = {
         "workflow_runs": [
-            {
-                "created_at": "2026-08-03T22:45:21Z",
-                "event": "pull_request",
-                "triggering_actor": {"login": "cagataycali"},
-                "name": "Last Push Approval Check",
-            },
-            {
-                "created_at": "2026-08-03T22:45:21Z",
-                "event": "pull_request",
-                "triggering_actor": {"login": "cagataycali"},
-                "name": "Pull Request and Push Action",
-            },
-            {
-                "created_at": "2026-08-03T23:11:27Z",
-                "event": "pull_request_review",
-                "triggering_actor": {"login": "yinsong1986"},
-                "name": "Last Push Approval Check",
-            },
+            workflow_run("cagataycali", at="2026-08-03T22:45:21Z", name="Last Push Approval Check"),
+            workflow_run("cagataycali", at="2026-08-03T22:45:21Z", name="Pull Request and Push Action"),
+            workflow_run(
+                "yinsong1986",
+                event="pull_request_review",
+                at="2026-08-03T23:11:27Z",
+                name="Last Push Approval Check",
+            ),
         ]
     }
     original = mod._get
@@ -289,9 +300,7 @@ def test_only_push_producing_events_attribute_a_pusher(event):
     original = mod._get
     try:
         mod._get = lambda url, token: {
-            "workflow_runs": [
-                {"created_at": "2026-08-03T23:00:00Z", "event": event, "triggering_actor": {"login": "someone-else"}}
-            ]
+            "workflow_runs": [workflow_run("someone-else", event=event, at="2026-08-03T23:00:00Z")]
         }
         assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") is None
     finally:
@@ -303,9 +312,7 @@ def test_a_push_event_run_attributes_the_pusher():
     original = mod._get
     try:
         mod._get = lambda url, token: {
-            "workflow_runs": [
-                {"created_at": "2026-08-03T23:00:00Z", "event": "push", "triggering_actor": {"login": "cagataycali"}}
-            ]
+            "workflow_runs": [workflow_run("cagataycali", event="push", at="2026-08-03T23:00:00Z")]
         }
         assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") == "cagataycali"
     finally:
@@ -321,22 +328,51 @@ def test_a_head_with_no_workflow_run_yields_no_pusher():
         mod._get = original
 
 
-def test_a_run_without_a_triggering_actor_is_skipped_not_trusted():
+def test_a_run_without_an_actor_is_skipped_not_trusted():
     original = mod._get
     try:
         mod._get = lambda url, token: {
             "workflow_runs": [
-                {"created_at": "2026-08-02T09:00:00Z", "event": "pull_request", "triggering_actor": None},
-                {
-                    "created_at": "2026-08-01T09:00:00Z",
-                    "event": "pull_request",
-                    "triggering_actor": {"login": "cagataycali"},
-                },
+                workflow_run(None, at="2026-08-02T09:00:00Z"),
+                workflow_run("cagataycali", at="2026-08-01T09:00:00Z"),
             ]
         }
         assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") == "cagataycali"
     finally:
         mod._get = original
+
+
+def test_approving_a_held_run_does_not_rename_the_pusher():
+    """A maintainer who approves a fork's held runs did not push the head.
+
+    ``triggering_actor`` names the account behind the newest *attempt*, so
+    approving a held run rewrites it to the approver while ``actor`` stays on
+    the pusher. On a first-time contributor's fork every run starts at
+    ``action_required``, which makes the approval a maintainer's ordinary first
+    act -- and reading ``triggering_actor`` then named them the pusher of a
+    branch in a repository they cannot push to.
+
+    Measured on #3448, head ``b3d2233a``: all nine of its ``pull_request`` runs
+    read ``actor: shipitfast`` and ``triggering_actor: cagataycali`` after the
+    maintainer approved them, while #3467, whose runs were never held, reads
+    ``shipitfast`` in both. Re-running a run moves the field the same way, so a
+    pull request whose CI a maintainer re-ran was exposed too, fork or not.
+    """
+    original = mod._get
+    try:
+        mod._get = lambda url, token: {
+            "workflow_runs": [
+                workflow_run("shipitfast", at="2026-09-10T15:40:04Z", triggering_actor={"login": "cagataycali"})
+            ]
+        }
+        pusher = mod.resolve_pusher("strands-labs/robots", "b3d2233a", "t")
+    finally:
+        mod._get = original
+
+    assert pusher == "shipitfast"
+    # So the maintainer who approved the runs can still be the second reviewer
+    # the rule wants, rather than being disqualified as the pusher.
+    assert mod.classify(pusher, [approved("cagataycali")]).outcome == mod.SATISFIED
 
 
 def test_reviews_are_parsed_from_the_rest_shape():

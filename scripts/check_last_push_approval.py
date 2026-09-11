@@ -31,25 +31,57 @@ The pusher appears in none of the fields a reviewer would naturally check, and
 commit metadata answers the question wrongly in both directions. Measured on
 four pull requests in this repository:
 
-===========  ==================  ================  =====================
-pull request ``triggering_actor``  approved by       ``commit.author.login``
-===========  ==================  ================  =====================
-#1894        yinsong1986         cagataycali       yinsong1986
-#1920        cagataycali         yinsong1986       ``None``
-#1722        cagataycali         cagataycali       cagataycali
-#1035        cagataycali         cagataycali       cagataycali
-===========  ==================  ================  =====================
+============  ===========  ===========  =======================
+pull request  ``actor``    approved by  ``commit.author.login``
+============  ===========  ===========  =======================
+#1894         yinsong1986  cagataycali  yinsong1986
+#1920         cagataycali  yinsong1986  ``None``
+#1722         cagataycali  cagataycali  cagataycali
+#1035         cagataycali  cagataycali  cagataycali
+============  ===========  ===========  =======================
 
 #1920 and #1722 share a pusher and differ only in whether the approver is a
 different account; #1920 merged and #1722 has been blocked since 2026-08-01, so
 that is the variable. And #1920's head was committed under the
 ``strands-robots`` git identity, which has no linked GitHub account: its
 ``commit.author.login`` is ``None``, so commit metadata does not merely mislead
-there, it declines to answer while ``triggering_actor`` answers correctly.
-#1722's metadata names the pusher and #1920's does not, for the same verdict --
-which is why this reads the workflow run::
+there, it declines to answer while the workflow run answers correctly. #1722's
+metadata names the pusher and #1920's does not, for the same verdict -- which is
+why this reads the workflow run::
 
-    GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>  ->  triggering_actor
+    GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>  ->  actor
+
+``actor``, not ``triggering_actor``
+-----------------------------------
+A run carries both. ``actor`` is the account whose event created it;
+``triggering_actor`` names the account behind the *latest attempt*, so GitHub
+rewrites it when a maintainer **approves a held run** or **re-runs** one.
+
+On a first-time contributor's fork every run starts at ``action_required``, and
+approving them is often a maintainer's first act on the pull request -- which
+then renames them as the pusher of a branch in a repository they cannot push
+to. Measured across the open fork pull requests, reading the same
+``pull_request`` runs by both fields:
+
+=======================================  ==============  ======================
+pull request                             ``actor``       ``triggering_actor``
+=======================================  ==============  ======================
+#3448, #3427, #3400 (held, approved)     shipitfast      cagataycali
+#3467 (runs never held)                  shipitfast      shipitfast
+=======================================  ==============  ======================
+
+The event filter below does not rescue ``triggering_actor``: approving does not
+create a new run under a different event, it re-attributes the existing
+``pull_request`` run. So the pusher was read as the approving maintainer on
+three of the four, and once that maintainer approved the pull request this check
+reported ``pusher-only-approval`` over a pull request GitHub's own rule -- which
+reads the real pusher -- was willing to merge. That is the #1905 presentation
+reached from a further cause, landing on exactly the population where
+first-review latency matters most.
+
+``actor`` is stable under both rewrites, and agrees with ``triggering_actor`` on
+every case already pinned here (#1894, #1920, #1722, #1035, and #1921's own), so
+nothing the old field answered correctly is lost.
 
 What this reports, and what it deliberately does not
 ----------------------------------------------------
@@ -135,7 +167,7 @@ Usage
 Exit status is ``1`` for ``pusher-only-approval``, else ``0``. A lookup that
 cannot determine the pusher exits ``0`` and says so: an unknown pusher is not
 evidence of a deadlock, and this check refusing to guess is the whole point of
-reading ``triggering_actor`` rather than the commit.
+reading the run's ``actor`` rather than the commit.
 """
 
 from __future__ import annotations
@@ -155,8 +187,8 @@ API_ROOT = "https://api.github.com"
 # not, which is why it cannot retract an earlier approval.
 POSITION_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 
-# Workflow-run events whose ``triggering_actor`` is the account that put the
-# commit there. Every other event names whoever caused *that* event instead, and
+# Workflow-run events whose ``actor`` is the account that put the commit there.
+# Every other event names whoever caused *that* event instead, and
 # filtering on this set is load-bearing rather than defensive: this check's own
 # ``pull_request_review`` trigger produces a run on the same head sha attributed
 # to the **reviewer**, newer than the push's own runs. Reading the newest run
@@ -234,7 +266,7 @@ class Verdict:
         if self.outcome == UNKNOWN_PUSHER:
             return (
                 "Could not determine who pushed the head commit: no workflow run "
-                "reports a triggering_actor for it. Not treated as a finding, "
+                "a push produces reports an actor for it. Not treated as a finding, "
                 "because commit metadata is not a sound substitute."
             )
         return (
@@ -348,13 +380,18 @@ def _get(url: str, token: str) -> object:
 def resolve_pusher(repo: str, head_sha: str, token: str) -> str | None:
     """Return the account GitHub attributes the head push to, or ``None``.
 
-    Reads ``triggering_actor`` from the workflow runs for the commit, counting
-    only runs whose event is one a push produces (``PUSH_ATTRIBUTING_EVENTS``).
-    A run started by anything else -- a review, a comment, a manual dispatch --
-    is attributed to whoever did *that*, not to the pusher. When several
-    qualifying runs exist they normally agree; when they do not, the most
-    recently created wins, because a re-push under a different account produces
-    newer runs than the ones the previous push left behind.
+    Reads ``actor`` from the workflow runs for the commit, counting only runs
+    whose event is one a push produces (``PUSH_ATTRIBUTING_EVENTS``). A run
+    started by anything else -- a review, a comment, a manual dispatch -- is
+    attributed to whoever did *that*, not to the pusher. When several qualifying
+    runs exist they normally agree; when they do not, the most recently created
+    wins, because a re-push under a different account produces newer runs than
+    the ones the previous push left behind.
+
+    ``actor`` rather than ``triggering_actor``: the latter names the account
+    behind the newest *attempt*, so approving a held run or re-running one moves
+    it to the maintainer while ``actor`` stays on the pusher. See the module
+    docstring.
 
     Returns ``None`` when no qualifying run exists, which the caller reports as
     ``unknown-pusher`` rather than falling back to the commit metadata.
@@ -365,7 +402,7 @@ def resolve_pusher(repo: str, head_sha: str, token: str) -> str | None:
     for run in runs:
         if run.get("event") not in PUSH_ATTRIBUTING_EVENTS:
             continue
-        actor = (run.get("triggering_actor") or {}).get("login")
+        actor = (run.get("actor") or {}).get("login")
         if actor:
             dated.append((run.get("created_at") or "", actor))
     if not dated:
@@ -499,7 +536,7 @@ def render(verdict: Verdict, repo: str, pr: int, head_sha: str) -> str:
         "|---|---|",
         f"| pull request | {repo}#{pr} |",
         f"| head | `{head_sha}` |",
-        f"| pushed by (`triggering_actor`) | {verdict.pusher or '(undetermined)'} |",
+        f"| pushed by (`actor`) | {verdict.pusher or '(undetermined)'} |",
         f"| current approvals | {_join(verdict.approvers)} |",
     ]
     if verdict.is_finding:

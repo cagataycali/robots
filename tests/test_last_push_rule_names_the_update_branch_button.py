@@ -175,4 +175,7 @@ class TestTheWrittenRuleCoversTheButtonAndItsMetadata:
         """
         agents = self._agents()
         assert "web-flow" in agents, "the commit-metadata guidance does not name the button's own shape"
-        assert "triggering_actor" in agents
+        # The field the checks read, and the one it is not: `actor` survives a
+        # held run being approved, which `triggering_actor` does not.
+        assert "`actor`" in agents
+        assert "`triggering_actor`" in agents
