@@ -33,6 +33,17 @@ A third shape follows from the same statement: a body that decodes to a JSON
 array or scalar is not a mapping, so spreading it raised ``TypeError`` out of a
 method whose entire contract is the envelope.
 
+The second point is a property of every REST RPC, not of the merge: nesting the
+reply under a key of the envelope's own keeps it away from ``status`` but does
+not decide one. ``playMove``, ``listMoves``, ``wakeUp`` and ``sleep`` each
+answered ``status="success"`` carrying the transport's reason inside ``result``,
+so a caller was told the move played, the catalogue was read and the motors were
+woken by a daemon that was never reached -- three of the four command motion.
+``TestNoRestVerbReportsACallThatDidNotLandAsASuccess`` grades the rule over the
+whole family, and every verb is driven a second time against a daemon that
+*did* answer, because a verb refused by the authorization gate in front of the
+daemon read would otherwise satisfy the failure rows for the wrong reason.
+
 ``TestTheHealthyPayloadIsUnchanged`` and ``TestWhyTheEnvelopeOwnsTheVerdict``
 pass on both trees -- the first pins the reading that must not change (both
 payload shapes the pre-existing suites drive), the second pins the premises
@@ -213,6 +224,129 @@ class TestADaemonThatWasNotReachedIsNotASuccess:
         assert not (envelope["status"] == "success" and "error" in envelope)
 
 
+#: Every REST RPC that carries a daemon reply back to the caller, with a body the
+#: daemon really answers that endpoint with. The catalogue endpoint is declared
+#: ``-> list[str]``, so its healthy body is an array rather than an object - the
+#: shape that makes "not a mapping" unusable as the failure test.
+_REST_VERBS = [
+    pytest.param("playMove", lambda d: d.playMove("happy"), {"ok": True}, id="playMove"),
+    pytest.param("listMoves", lambda d: d.listMoves(), ["happy", "sad"], id="listMoves"),
+    pytest.param("wakeUp", lambda d: d.wakeUp(), {"ok": True}, id="wakeUp"),
+    pytest.param("sleep", lambda d: d.sleep(), {"ok": True}, id="sleep"),
+    pytest.param("getDaemonStatus", lambda d: d.getDaemonStatus(), {"ok": True}, id="getDaemonStatus"),
+]
+
+
+def _authorized(rmd: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Satisfy the authorization gate that sits in front of the daemon read.
+
+    An unset ``DEVICE_CONNECT_RPC_ALLOW`` authorizes nobody, so without this
+    every gated verb answers ``authz_error`` - an error envelope that would
+    satisfy the failure rows below while the daemon read never ran.
+    """
+    monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "operator")
+    monkeypatch.setattr(rmd, "get_rpc_source_device", lambda: "operator")
+
+
+def _rest_reply(rmd: Any, monkeypatch: pytest.MonkeyPatch, call: Any, body: Any) -> dict[str, Any]:
+    """Drive one REST RPC with ``body`` standing in for the daemon's reply."""
+    _authorized(rmd, monkeypatch)
+    monkeypatch.setattr(rmd, "api", lambda *_args, **_kwargs: body)
+    result: dict[str, Any] = asyncio.run(call(_bare(rmd)))
+    return result
+
+
+class TestNoRestVerbReportsACallThatDidNotLandAsASuccess:
+    """The rule ``getDaemonStatus`` established, over every verb that reads the daemon."""
+
+    @pytest.mark.parametrize(("verb", "call", "healthy"), _REST_VERBS)
+    @pytest.mark.parametrize("body", _FAILURE_BODIES)
+    def test_the_verdict_is_error(
+        self, rmd: Any, monkeypatch: pytest.MonkeyPatch, verb: str, call: Any, healthy: Any, body: dict[str, Any]
+    ) -> None:
+        assert _rest_reply(rmd, monkeypatch, call, body)["status"] == "error"
+
+    @pytest.mark.parametrize(("verb", "call", "healthy"), _REST_VERBS)
+    @pytest.mark.parametrize("body", _FAILURE_BODIES)
+    def test_the_reason_names_the_verb_the_daemon_and_the_cause(
+        self, rmd: Any, monkeypatch: pytest.MonkeyPatch, verb: str, call: Any, healthy: Any, body: dict[str, Any]
+    ) -> None:
+        """Which call did not land, against which address, and why."""
+        reason = _rest_reply(rmd, monkeypatch, call, body)["reason"]
+        assert verb in reason
+        assert f"{_HOST}:{_PORT}" in reason
+        assert body["error"] in reason
+
+    @pytest.mark.parametrize(("verb", "call", "healthy"), _REST_VERBS)
+    @pytest.mark.parametrize("body", _FAILURE_BODIES)
+    def test_no_verb_reports_the_motion_it_did_not_command(
+        self, rmd: Any, monkeypatch: pytest.MonkeyPatch, verb: str, call: Any, healthy: Any, body: dict[str, Any]
+    ) -> None:
+        """``move``/``moves``/``result`` are readings of a call that never landed."""
+        envelope = _rest_reply(rmd, monkeypatch, call, body)
+        assert not (set(envelope) & {"move", "moves", "result"})
+
+    @pytest.mark.parametrize(("verb", "call", "healthy"), _REST_VERBS)
+    def test_a_daemon_that_answered_is_still_a_success(
+        self, rmd: Any, monkeypatch: pytest.MonkeyPatch, verb: str, call: Any, healthy: Any
+    ) -> None:
+        """Non-vacuity, and the over-reach guard.
+
+        The failure rows above are only about the daemon read if the same call,
+        through the same helper, reaches it when the daemon answers. This cell
+        holds on both trees: the reading a caller already gets is unchanged.
+        """
+        assert _rest_reply(rmd, monkeypatch, call, healthy)["status"] == "success"
+
+    def test_an_unset_allowlist_would_have_refused_these_verbs_first(
+        self, rmd: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Why :func:`_authorized` exists: the gate in front answers first.
+
+        Without it the failure rows would be graded against ``authz_error``,
+        which is an error envelope for a daemon read that never happened.
+        """
+        monkeypatch.delenv("DEVICE_CONNECT_RPC_ALLOW", raising=False)
+        monkeypatch.setattr(rmd, "api", lambda *_a, **_k: {"ok": True})
+        envelope = asyncio.run(_bare(rmd).wakeUp())
+        assert envelope["status"] == "error"
+        assert "not authorized" in envelope["reason"]
+
+    def test_the_stop_verb_keeps_its_stronger_refusal(self, rmd: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The one member that raises instead, and why it is not converted.
+
+        A caller acting on a false success from a *stop* stops nothing, so that
+        failure must not be catchable as a result - the criterion
+        :meth:`ReachyMiniDriver._transport_failure` records.
+        """
+        _authorized(rmd, monkeypatch)
+        monkeypatch.setattr(rmd, "api", lambda *_a, **_k: {"error": "boom"})
+        with pytest.raises(RuntimeError, match="transport failure"):
+            asyncio.run(_bare(rmd).stopMotion())
+
+
+class TestEveryDaemonReadInThisDriverConsultsTheReply:
+    """A drift guard: the next REST verb inherits the rule without being listed."""
+
+    def test_no_method_returns_without_judging_the_reply(self, rmd: Any) -> None:
+        assert _daemon_reads_that_ignore_the_reply(rmd) == set()
+
+    def test_the_scan_sees_the_daemon_reads_at_all(self, rmd: Any) -> None:
+        """Non-vacuity: the scan must find the family it grades."""
+        assert {"playMove", "listMoves", "wakeUp", "sleep", "getDaemonStatus"} <= _methods_that_read_the_daemon(rmd)
+
+    def test_the_rule_grades_constructed_exemplars(self) -> None:
+        """The shipped class satisfies the rule, so grade the rule directly too."""
+        ignores = 'async def f(self):\n    r = await asyncio.to_thread(api, h, p, "/x")\n    return {"result": r}\n'
+        judges = (
+            'async def f(self):\n    r = await asyncio.to_thread(api, h, p, "/x")\n'
+            '    if (bad := self._transport_failure(r, "f")) is not None:\n        return bad\n'
+            '    return {"result": r}\n'
+        )
+        assert _ignores_the_reply(ast.parse(ignores).body[0]) is True
+        assert _ignores_the_reply(ast.parse(judges).body[0]) is False
+
+
 class TestABodyThatIsNotAnObjectIsReportedNotRaised:
     """Valid JSON that is not a mapping cannot be spread into the envelope."""
 
@@ -330,6 +464,88 @@ def _envelopes_that_spread_a_mapping(rmd: Any) -> set[str]:
             if any(key is None for key in literal.keys):
                 merging.add(member.name)
     return merging
+
+
+def _calls_the_daemon(function: ast.AST) -> bool:
+    """``True`` when this method calls :func:`reachy_transport.api`.
+
+    Both spellings count: a direct call, and the ``asyncio.to_thread(api, ...)``
+    hand-off every async RPC uses to keep the blocking HTTP call off the loop.
+    """
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id == "api":
+            return True
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "to_thread"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "api"
+        ):
+            return True
+    return False
+
+
+def _judges_the_reply(function: ast.AST) -> bool:
+    """``True`` when this method decides whether the daemon's reply landed.
+
+    Three spellings are accepted, because the driver uses all three: the shared
+    :meth:`ReachyMiniDriver._transport_failure`, the ``"error" in result`` test
+    the stop raises on, and a direct ``result.get("error")``.
+    """
+    for node in ast.walk(function):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "_transport_failure":
+                return True
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "error"
+            ):
+                return True
+        if (
+            isinstance(node, ast.Compare)
+            and isinstance(node.ops[0], ast.In)
+            and isinstance(node.left, ast.Constant)
+            and node.left.value == "error"
+        ):
+            return True
+    return False
+
+
+def _ignores_the_reply(function: ast.AST) -> bool:
+    """``True`` for a method that reads the daemon and never judges the reply."""
+    return _calls_the_daemon(function) and not _judges_the_reply(function)
+
+
+def _methods_that_read_the_daemon(rmd: Any) -> set[str]:
+    """Every method of the driver that calls the daemon's REST API."""
+    return {
+        member.name
+        for member in _class_body(rmd).body
+        if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and _calls_the_daemon(member)
+    }
+
+
+def _daemon_reads_that_ignore_the_reply(rmd: Any) -> set[str]:
+    """Every method that reads the daemon and reports without judging the reply.
+
+    ``connect`` is exempt: it reads the status endpoint only to pick a link
+    variant, inside a ``try`` whose fallback is the Wireless link, and answers no
+    envelope at all.
+    """
+    return {
+        member.name
+        for member in _class_body(rmd).body
+        if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef)
+        and member.name != "connect"
+        and _ignores_the_reply(member)
+    }
 
 
 def _envelopes_that_merge_a_foreign_mapping(rmd: Any) -> set[str]:

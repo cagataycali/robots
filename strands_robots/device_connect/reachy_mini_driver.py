@@ -531,6 +531,47 @@ class ReachyMiniDriver(DeviceDriver):
 
     # ── Move RPCs (REST) ──────────────────────────────────────
 
+    def _transport_failure(self, result: Any, verb: str) -> dict[str, Any] | None:
+        """Return a refusal for a daemon reply that never landed, else ``None``.
+
+        :func:`~strands_robots.device_connect.reachy_transport.api` reports every
+        HTTP and connection failure as ``{"error": ...}`` rather than raising, so
+        a reply carrying that key is a call that did not reach the daemon. Nesting
+        it under a key of the envelope's own (``{"status": "success", "result":
+        result}``) keeps it away from the verdict but does not decide one: the
+        caller still reads ``success`` for a command the robot never received.
+
+        The refusal is an envelope rather than the ``RuntimeError``
+        :meth:`_stop_motion_impl` raises, on the criterion
+        :meth:`getDaemonStatus` records: that one guards a *stop*, where a caller
+        acting on a false success stops nothing, so it must not be catchable as a
+        result. These verbs' every other refusal - ``authz_error``, an invalid
+        ``move_name`` - is already an envelope, and a remote caller branches on
+        ``status``.
+
+        Presence rather than truthiness decides, because an HTTP error with an
+        empty body puts ``""`` under ``error``. A reply that is not a mapping is
+        not a transport failure: the catalogue endpoint answers with a JSON
+        array, so only the callers that require an object judge that shape.
+
+        Args:
+            result: The reply :func:`api` handed back.
+            verb: RPC name, so a reason names the call that did not land.
+
+        Returns:
+            ``{"status": "error", "reason": ...}`` naming the verb, the daemon's
+            address and the transport's cause, or ``None`` when the daemon
+            answered.
+        """
+        if not isinstance(result, dict):
+            return None
+        if (error := result.get("error")) is None:
+            return None
+        return {
+            "status": "error",
+            "reason": f"{verb}: daemon unreachable ({self._host}:{self._api_port}): {error}",
+        }
+
     @rpc()
     async def playMove(self, move_name: str, library: str = "emotions") -> dict[str, Any]:
         """Play a recorded move from the HuggingFace library.
@@ -538,6 +579,11 @@ class ReachyMiniDriver(DeviceDriver):
         Args:
             move_name: Name of the move to play
             library: Move library (emotions or dance)
+
+        Returns:
+            A success envelope naming the move, or an error envelope naming the
+            gate that refused - the caller, the ``move_name``, or a daemon that
+            was not reached, in which case no move was played.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
@@ -552,6 +598,8 @@ class ReachyMiniDriver(DeviceDriver):
             f"/api/move/play/recorded-move-dataset/{ds}/{move_name}",
             "POST",
         )
+        if (failure := self._transport_failure(result, "playMove")) is not None:
+            return failure
         return {"status": "success", "move": move_name, "result": result}
 
     @rpc()
@@ -560,6 +608,11 @@ class ReachyMiniDriver(DeviceDriver):
 
         Args:
             library: Move library (emotions or dance)
+
+        Returns:
+            A success envelope whose ``moves`` is the daemon's array of names,
+            or an error envelope naming a daemon that was not reached - the
+            catalogue is then unknown rather than empty.
         """
         ds = f"pollen-robotics/reachy-mini-{'emotions' if library == 'emotions' else 'dances'}-library"
         result = await asyncio.to_thread(
@@ -568,6 +621,8 @@ class ReachyMiniDriver(DeviceDriver):
             self._api_port,
             f"/api/move/recorded-move-datasets/list/{ds}",
         )
+        if (failure := self._transport_failure(result, "listMoves")) is not None:
+            return failure
         return {"status": "success", "moves": result}
 
     # ── Expression RPCs (Zenoh animations via transport) ───────
@@ -618,7 +673,13 @@ class ReachyMiniDriver(DeviceDriver):
 
     @rpc()
     async def wakeUp(self) -> dict[str, Any]:
-        """Wake up the robot (enable motors + play wake animation)."""
+        """Wake up the robot (enable motors + play wake animation).
+
+        Returns:
+            A success envelope, or an error envelope naming the caller that was
+            not authorized or the daemon that was not reached - in which case
+            the motors were not enabled.
+        """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "wakeUp")
@@ -629,11 +690,19 @@ class ReachyMiniDriver(DeviceDriver):
             "/api/move/play/wake_up",
             "POST",
         )
+        if (failure := self._transport_failure(result, "wakeUp")) is not None:
+            return failure
         return {"status": "success", "result": result}
 
     @rpc()
     async def sleep(self) -> dict[str, Any]:
-        """Put robot to sleep (play sleep animation + disable motors)."""
+        """Put robot to sleep (play sleep animation + disable motors).
+
+        Returns:
+            A success envelope, or an error envelope naming the caller that was
+            not authorized or the daemon that was not reached - in which case
+            the robot is still awake.
+        """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "sleep")
@@ -644,6 +713,8 @@ class ReachyMiniDriver(DeviceDriver):
             "/api/move/play/goto_sleep",
             "POST",
         )
+        if (failure := self._transport_failure(result, "sleep")) is not None:
+            return failure
         return {"status": "success", "result": result}
 
     async def _stop_motion_impl(self) -> dict[str, Any]:
@@ -724,11 +795,8 @@ class ReachyMiniDriver(DeviceDriver):
                 "status": "error",
                 "reason": f"daemon status is not a JSON object: {type(result).__name__}",
             }
-        if (error := result.get("error")) is not None:
-            return {
-                "status": "error",
-                "reason": f"daemon unreachable ({self._host}:{self._api_port}): {error}",
-            }
+        if (failure := self._transport_failure(result, "getDaemonStatus")) is not None:
+            return failure
         return {**result, "status": "success"}
 
     # ── Events ────────────────────────────────────────────────
