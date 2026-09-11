@@ -475,6 +475,146 @@ class TestStopWhenEntityProbe:
         assert _json_block(result)["stopped_reason"] == "error"
 
 
+class TestStopWhenBasePredicateProbe:
+    """A ``base_*`` clause whose floating base cannot be resolved must be an
+    up-front structured error, for the same reason a typo'd body name is: the
+    clause compiles clean, degrades to a constant at evaluation time, and burns
+    the whole step budget reporting ``stopped_reason="budget"`` - indistinguishable
+    from an honest miss.
+
+    Two spellings reach that state and the evaluation path already treats them
+    alike (one ``robot base`` warning each): a ``robot`` name no robot in the
+    scene answers to, and a robot that has no floating base at all - a fixed-base
+    arm, which is what ``sim_with_robot_and_cube`` provides. Neither was probed,
+    because the walker collected entities by KWARG and ``robot`` was in no kwarg
+    roster; it is now collected by PREDICATE, so the clause that omits the kwarg
+    and rides the sole-robot default is covered too.
+    """
+
+    def test_the_base_family_is_derived_from_the_registry(self):
+        """The population is read off the factories, so a predicate added later
+        is probed without editing a list."""
+        from strands_robots.simulation.predicates import PREDICATE_REGISTRY, predicate_reads_robot_base
+
+        base_family = {n for n in PREDICATE_REGISTRY if predicate_reads_robot_base(n)}
+        assert base_family == {
+            "base_ang_vel_xy",
+            "base_below_z",
+            "base_beyond_x",
+            "base_beyond_y",
+            "base_height",
+            "base_lin_vel_z",
+            "base_orientation",
+            "base_tipped",
+            "base_velocity",
+            "base_velocity_tracking",
+            "base_yaw_beyond",
+        }
+        # Every other predicate names bodies/joints/geoms, not a robot base.
+        assert not base_family & {"body_above_z", "joint_above", "contact_between", "grasped"}
+
+    def test_unknown_predicate_name_is_still_the_compiler_s_error(self):
+        from strands_robots.simulation.predicates import predicate_reads_robot_base
+
+        with pytest.raises(ValueError, match="Unknown predicate 'base_nope'"):
+            predicate_reads_robot_base("base_nope")
+
+    @pytest.mark.parametrize(
+        "clause",
+        [
+            pytest.param({"predicate": "base_tipped", "tol": 0.7, "robot": "alice"}, id="named-robot"),
+            pytest.param({"predicate": "base_tipped", "tol": 0.7}, id="implicit-sole-robot"),
+            pytest.param({"predicate": "base_below_z", "z": 0.1}, id="base_below_z"),
+            pytest.param({"predicate": "base_yaw_beyond", "yaw": 1.0}, id="base_yaw_beyond"),
+            pytest.param(
+                {"all": [{"predicate": "body_above_z", "body": "cube", "z": 0.2}, {"predicate": "base_tipped"}]},
+                id="inside-a-group",
+            ),
+        ],
+    )
+    def test_fixed_base_arm_rejected_before_rollout(self, sim_with_robot_and_cube, clause):
+        """so100 is a fixed-base arm: it reports no base_pos/base_quat, so every
+        base term on it is permanently False."""
+        t0 = sim_with_robot_and_cube._world.sim_time
+        result = sim_with_robot_and_cube.run_policy(
+            robot_name="alice",
+            policy_provider="mock",
+            n_steps=200,
+            control_frequency=50.0,
+            fast_mode=True,
+            stop_when=clause,
+        )
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "no floating base" in text
+        assert "never fire" in text
+        assert _json_block(result)["stopped_reason"] == "error"
+        # Nothing ran: no budget was burned on the clause that cannot fire.
+        assert sim_with_robot_and_cube._world.sim_time == t0
+
+    def test_typo_robot_names_the_robots_the_scene_does_have(self, sim_with_robot_and_cube):
+        result = sim_with_robot_and_cube.run_policy(
+            robot_name="alice",
+            policy_provider="mock",
+            n_steps=200,
+            control_frequency=50.0,
+            fast_mode=True,
+            stop_when={"predicate": "base_tipped", "tol": 0.7, "robot": "alicce"},
+        )
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "alicce" in text
+        assert "alice" in text  # the refusal lists what the scene does have
+        assert _json_block(result)["stopped_reason"] == "error"
+
+    def test_a_floating_base_clause_still_runs(self):
+        """The over-reach control: on a robot that HAS a floating base every
+        spelling of the clause is armed and evaluated exactly as before."""
+        s = Simulation(tool_name="stop_when_base_test", mesh=False)
+        s.create_world()
+        assert s.add_robot(name="dog", data_config="go2")["status"] == "success"
+        try:
+            for clause, reason in (
+                ({"predicate": "base_tipped", "tol": 0.7, "robot": "dog"}, "budget"),
+                ({"predicate": "base_tipped", "tol": 0.7}, "budget"),
+                # The base really is where the predicate can read it: go2 spawns
+                # at z=0.445, so a generous floor test fires on the first step.
+                ({"predicate": "base_below_z", "z": 99.0}, "predicate"),
+            ):
+                result = s.run_policy(
+                    robot_name="dog",
+                    policy_provider="mock",
+                    n_steps=5,
+                    control_frequency=50.0,
+                    fast_mode=True,
+                    stop_when=clause,
+                )
+                assert result["status"] == "success", (clause, result)
+                assert _json_block(result)["stopped_reason"] == reason, (clause, result)
+        finally:
+            s.cleanup()
+
+    def test_can_resolve_base_reads_the_evaluation_path(self):
+        """``can_resolve_base`` must answer for the same lookup the predicates
+        use, on both sides: a floating base resolves, a fixed base does not."""
+        from strands_robots.simulation.predicates import can_resolve_base
+
+        s = Simulation(tool_name="stop_when_base_probe", mesh=False)
+        s.create_world()
+        assert s.add_robot(name="dog", data_config="go2")["status"] == "success"
+        assert s.add_robot(name="arm", data_config="so100")["status"] == "success"
+        try:
+            observation = s.get_observation(robot_name="dog", skip_images=True)
+            # base_pos and base_quat come from the same free-joint block, which
+            # is what lets one probe cover the orientation/twist terms too.
+            assert "base_pos" in observation and "base_quat" in observation
+            assert can_resolve_base(s, "dog") is True
+            assert can_resolve_base(s, "arm") is False
+            assert can_resolve_base(s, "nosuchrobot") is False
+        finally:
+            s.cleanup()
+
+
 class TestErrorResultsCarryJson:
     """Every error exit path carries the stopped_reason='error' json block -
     'recorded on ALL exit paths' (review on #1656, item 3)."""

@@ -3386,9 +3386,14 @@ class SimEngine(ABC):
         check are out of contract - a rollout does not create bodies.
         """
         from strands_robots.simulation.benchmark_spec import stop_when_referenced_entities
-        from strands_robots.simulation.predicates import can_resolve_body, can_resolve_joint, supports_body_lookup
+        from strands_robots.simulation.predicates import (
+            can_resolve_base,
+            can_resolve_body,
+            can_resolve_joint,
+            supports_body_lookup,
+        )
 
-        bodies, joints = stop_when_referenced_entities(stop_when)
+        bodies, joints, robot_bases = stop_when_referenced_entities(stop_when)
 
         def _err(text: str) -> dict[str, Any]:
             return {
@@ -3421,6 +3426,25 @@ class SimEngine(ABC):
                 "The clause would never fire and the rollout would silently run to its "
                 "step budget. Check the names against get_observation()'s keys "
                 "(joint names are namespaced '<robot>/<joint>')."
+            )
+        unresolved_bases = [r for r in robot_bases if not can_resolve_base(self, r)]
+        if unresolved_bases:
+            try:
+                known = self.list_robots()
+            except Exception:  # noqa: BLE001 - the refusal must not depend on the listing
+                known = []
+            named = [r for r in unresolved_bases if r is not None and r not in known]
+            spelled = [r if r is not None else "<the sole robot>" for r in unresolved_bases]
+            cause = (
+                f"no robot in the scene is named {named} (robots: {known})"
+                if named
+                else f"{spelled} has no floating base - a fixed-base arm reports no base_pos/base_quat"
+            )
+            return _err(
+                f"stop_when arms a base_* predicate on {spelled}, but {cause}. Base predicates "
+                "read the floating-base signals, so the clause would never fire and the rollout "
+                "would silently run to its step budget. Use a body/joint predicate for a "
+                "fixed-base robot, or name a robot that has a floating base."
             )
         return None
 

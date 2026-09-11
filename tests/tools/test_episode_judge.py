@@ -14,6 +14,7 @@ with pyarrow, so no recording (and no shared cache) is involved.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +141,59 @@ class TestLoadEpisode:
     def test_a_traversal_root_is_refused_before_any_read(self, dataset_root):
         result = _load_episode(str(dataset_root) + "/../dataset", 0)
         assert result["status"] == "error"
+
+
+class TestEveryToolAnswersWithAnEnvelopeWhenPyarrowIsAbsent:
+    """No tool raises when the parquet reader is missing.
+
+    ``pyarrow`` ships with the lerobot extra, so a judge process that only
+    reads datasets recorded elsewhere can be running without it. Two of these
+    tools reach a parquet read - ``load_episode`` through
+    :func:`strands_robots.verify_dataset.read_dataset_episode_indices`, which
+    documents ImportError for exactly this, and ``sample_frames`` through this
+    module's own frame reader - so the module's "every tool returns the
+    envelope and never raises" contract has to hold for the missing dependency
+    too, not just for a corrupt or absent file.
+    """
+
+    #: Every tool, called with arguments the healthy fixture satisfies, so a
+    #: refusal can only come from the blocked import.
+    TOOLS = {
+        "load_episode": lambda root: _load_episode(str(root), 0),
+        "sample_frames": lambda root: _sample_frames(str(root), 0),
+        "read_predicate_verdict": lambda root: _read_predicate_verdict(str(root), 0),
+        "write_label": lambda root: _write_label(str(root), 0, quality="high"),
+    }
+
+    @pytest.fixture
+    def no_pyarrow(self, monkeypatch):
+        """Make the tools' function-local ``import pyarrow.parquet`` fail."""
+        monkeypatch.setitem(sys.modules, "pyarrow.parquet", None)
+        monkeypatch.setitem(sys.modules, "pyarrow", None)
+
+    @pytest.mark.parametrize("tool_name", sorted(TOOLS))
+    def test_the_tool_returns_an_envelope(self, tool_name, verdict_root, no_pyarrow):
+        result = self.TOOLS[tool_name](verdict_root)
+        assert isinstance(result, dict)
+        assert result["status"] in {"success", "error"}
+        assert result["content"]
+
+    @pytest.mark.parametrize("tool_name", ["load_episode", "sample_frames"])
+    def test_a_parquet_reading_tool_names_the_missing_extra(self, tool_name, verdict_root, no_pyarrow):
+        """The two tools that need the reader say so, which is also what keeps
+        the table above non-vacuous: a fixture that failed to block the import
+        would let these succeed."""
+        result = self.TOOLS[tool_name](verdict_root)
+        assert result["status"] == "error", _text(result)
+        assert "pyarrow" in _text(result)
+        assert "lerobot extra" in _text(result)
+
+    @pytest.mark.parametrize("tool_name", sorted(TOOLS))
+    def test_the_same_call_is_unchanged_with_the_reader_present(self, tool_name, verdict_root):
+        """The refusal is confined to the missing dependency: with pyarrow
+        installed every tool still answers as it did."""
+        result = self.TOOLS[tool_name](verdict_root)
+        assert result["status"] == "success", _text(result)
 
 
 class TestSampleFrames:

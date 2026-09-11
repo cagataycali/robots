@@ -351,7 +351,17 @@ def load_episode(root: str, episode: int) -> dict[str, Any]:
                 {"json": payload},
             ],
         }
-    except (ValueError, OSError) as e:
+    except (ImportError, ValueError, OSError) as e:
+        # ``read_dataset_episode_indices`` documents ImportError for an absent
+        # ``pyarrow`` - it ships with the lerobot extra, so a judge process that
+        # only reads recorded datasets can lack it. Caught here alongside the
+        # corruption and IO failures because this module's contract is that no
+        # tool raises: a judge run over a hundred episodes must report the
+        # episode it could not read, not die on it. That callee's other two
+        # callers already read it this way -
+        # :func:`strands_robots.verify_dataset.verify_dataset` in one tuple, and
+        # :meth:`~strands_robots.simulation.base.SimEngine.verify_dataset_episodes`
+        # in a handler of its own.
         return _error(f"load_episode: {e}")
 
 
