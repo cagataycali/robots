@@ -73,6 +73,14 @@ registers and the measured pose - three RTDE round trips to the same controller,
 which a halt was otherwise answered by one more setpoint. `stop()` carries no verdict (the
 driver protocol annotates it `-> None`); read `stop_task()` when the outcome matters.
 
+`start_task()` is the one verb in the fleet that builds the policy for you, from the
+provider registry, and a provider it cannot build is refused rather than raised: the verb
+is reached as an agent tool, where an exception is not something the caller can handle.
+The refusal names the provider and carries the build's own reason, so a remote-code
+provider reports the `STRANDS_TRUST_REMOTE_CODE` opt-in it wants and a mistyped
+`checkpoint_dir` reports the path. Hold a built policy and `run_policy()` skips the build
+entirely.
+
 Joint keys are the arm's own names, in RTDE wire order, and the MuJoCo assets declare
 them identically - so an action dict recorded in simulation streams to the controller
 with no remap:

@@ -1102,6 +1102,11 @@ class URDriver:
     ) -> dict[str, Any]:
         """Build a policy from the provider registry and roll it out in the background.
 
+        A provider that cannot be built is refused, never raised: this is the one
+        driver in the fleet that builds a policy from the provider registry, and
+        it is reached as an agent tool, where an exception is not something the
+        caller can handle.
+
         Args:
             instruction: Natural-language instruction handed to the policy.
             policy_port: Port the policy server listens on; ``None`` uses the
@@ -1122,7 +1127,21 @@ class URDriver:
             kwargs["port"] = policy_port
         try:
             policy = create_policy(policy_provider, **kwargs)
-        except (ImportError, TypeError, ValueError) as exc:
+        # Recovery path: catch broadly. The refusal below is this verb's
+        # documented answer to a provider it cannot build, and the exceptions a
+        # build raises are not enumerable. Naming
+        # ``(ImportError, TypeError, ValueError)`` covered neither half of the
+        # real population: nine of the twenty-nine registered provider
+        # spellings raised past the envelope, ``lerobot_local`` among them,
+        # because :func:`~strands_robots.policies.create_policy`'s own
+        # documented ``UntrustedRemoteCodeError`` is a ``RuntimeError``; and a
+        # provider whose constructor resolves a checkpoint off disk raises
+        # ``FileNotFoundError`` from a path the caller mistyped. Widening the
+        # tuple to cover today's classes would re-break on the next provider,
+        # and ``register_policy`` lets a caller add one this package never sees.
+        # The rollout loop catches this broadly for the same reason one step
+        # later - see :meth:`_Rollout._run`.
+        except Exception as exc:  # noqa: BLE001 - an unbuildable provider is refused, not raised
             return _refuse(f"start_task: could not build the {policy_provider!r} policy: {exc}")
         return self.run_policy(policy, instruction=instruction, duration=duration)
 
