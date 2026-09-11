@@ -69,6 +69,8 @@ from strands_robots.tools.reachy import envelope_error
 from strands_robots.utils import finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
+    from concurrent.futures import Future
+
     from strands.types.tools import ToolSpec, ToolUse
 
     from strands_robots.policies import Policy
@@ -121,6 +123,12 @@ _MOVE_LIBRARIES: dict[str, str] = {
 #: failure that still reaches :func:`_resolve_transport` is a broken install of a
 #: module the core distribution ships rather than a missing optional dependency.
 _TRANSPORT_MODULE = "strands_robots.device_connect.reachy_transport"
+
+#: How long :meth:`ReachyDriver._start_link` waits for a link's handshake before
+#: giving up on it. Read back off the module rather than inlined so a caller that
+#: needs a different budget, and the tests that exercise the give-up path, can set
+#: it - the same shape as ``device_connect``'s ``_INIT_TIMEOUT_S``.
+_LINK_START_TIMEOUT_S: float = 10.0
 
 
 def _resolve_transport() -> Any:
@@ -487,18 +495,60 @@ class ReachyDriver:
             daemon=True,
         )
         thread.start()
+        future = asyncio.run_coroutine_threadsafe(
+            link.start(on_joints=self._on_joints, on_imu=self._on_imu),
+            loop,
+        )
         try:
-            future = asyncio.run_coroutine_threadsafe(
-                link.start(on_joints=self._on_joints, on_imu=self._on_imu),
-                loop,
+            future.result(timeout=_LINK_START_TIMEOUT_S)
+        except TimeoutError:
+            # Named before the general handler because this one carries no
+            # message: ``str(TimeoutError())`` is the empty string, so reporting
+            # it as a cause produced "failed to start: " and told an operator
+            # nothing. The budget is the cause, so the budget is what is named.
+            self._release_link(link, future, loop)
+            return (
+                f"link to {self._host}:{self._api_port} did not finish its handshake within {_LINK_START_TIMEOUT_S:g}s"
             )
-            future.result(timeout=10)
         except Exception as exc:  # noqa: BLE001 - any link failure is a connect failure
-            loop.call_soon_threadsafe(loop.stop)
+            self._release_link(link, future, loop)
             return f"link to {self._host}:{self._api_port} failed to start: {exc}"
         self._loop = loop
         self._loop_thread = thread
         return None
+
+    def _release_link(self, link: Any, future: Future[None], loop: asyncio.AbstractEventLoop) -> None:
+        """Close whatever a bring-up that will not be adopted already opened.
+
+        A ``start`` that raised, or that outran
+        :data:`_LINK_START_TIMEOUT_S`, can still have put the link on the wire:
+        :meth:`~strands_robots.device_connect.reachy_transport.WebSocketLink.start`
+        assigns the connected socket before it spawns its read task, and the
+        Zenoh link subscribes to its first topic before its second. The link is
+        not adopted after such a failure - ``_link`` stays ``None`` so the driver
+        reports itself disconnected - which means :meth:`cleanup` has nothing to
+        stop and no verb can ever reach that socket again. Every later
+        :meth:`connect_eagerly` builds a fresh link, so the stranded reader stays
+        subscribed for the life of the process, writing sensor frames nobody
+        reads: exactly the outcome :meth:`connect_eagerly` refuses a second link
+        in order to avoid.
+
+        So the handshake is cancelled and the link is asked to stop, on the loop
+        it was started on, before that loop is stopped. Both concrete links
+        tolerate a ``stop`` after a partial ``start``: the WebSocket link guards
+        each handle it clears, and the Zenoh link's stop is a no-op.
+
+        Args:
+            link: The link whose bring-up failed.
+            future: The pending handshake, cancelled here.
+            loop: The loop the handshake was submitted to; stopped last.
+        """
+        future.cancel()
+        try:
+            asyncio.run_coroutine_threadsafe(link.stop(), loop).result(timeout=_LINK_START_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 - teardown of a failed bring-up must not raise
+            logger.debug("%s: stopping the failed link raised: %s", self._tool_name, exc)
+        loop.call_soon_threadsafe(loop.stop)
 
     async def get_status(self) -> dict[str, Any]:
         """Report reachability, hardware variant and the latest battery read.
