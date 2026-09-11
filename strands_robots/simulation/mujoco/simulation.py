@@ -1885,6 +1885,13 @@ class MuJoCoSimEngine(
         model source". The bare model-source message is kept only when no
         ``name`` was supplied at all.
 
+        Resolving the model from ``name`` is a DEPRECATED fallback, and the
+        success message carries a ``Warning:`` line naming the ``data_config=``
+        form to use instead. That notice belongs to the call that used the
+        fallback and to no other: it is not reported on a later call that
+        resolved its model correctly, including when the deprecated call it
+        came from failed.
+
         A model source that is SUPPLIED but empty (``urdf_path=""`` /
         ``data_config=""``) is refused naming THAT parameter, rather than read
         as omitted. Read by truthiness the two were indistinguishable, so an
@@ -2019,6 +2026,15 @@ class MuJoCoSimEngine(
         #      fallback kept for one release with a DeprecationWarning).
         # Pass `data_config` for new code; the `name`-as-registry-key path
         # will be removed.
+        #
+        # The deprecation notice is per-call state, so it is carried in a local
+        # and not on the engine: an attribute armed here is only disarmed by the
+        # success return below, so any error exit between the two (a mesh the
+        # downloader cannot resolve, an injection the recompiler refuses, an
+        # unexpected compile crash) left it armed for the NEXT add_robot to
+        # report - accusing a caller that passed data_config= correctly, and
+        # naming the earlier robot.
+        deprecation_hint: str | None = None
         resolved_path = urdf_path
         if not resolved_path and data_config:
             resolved_path = resolve_model(data_config)
@@ -2037,7 +2053,7 @@ class MuJoCoSimEngine(
                     name,
                     name,
                 )
-                self._add_robot_deprecation_hint: str | None = (
+                deprecation_hint = (
                     f"Hint: add_robot(name='{name}') resolved via deprecated "
                     f"name-as-registry-key fallback. Prefer: "
                     f"add_robot(name='<instance_label>', data_config='{name}')."
@@ -2204,9 +2220,7 @@ class MuJoCoSimEngine(
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             mesh_line = f"\nMesh peer: {robot.peer_id}" if robot.peer_id else ""
-            hint = getattr(self, "_add_robot_deprecation_hint", None)
-            self._add_robot_deprecation_hint = None
-            hint_line = f"\nWarning: {hint}" if hint else ""
+            hint_line = f"\nWarning: {deprecation_hint}" if deprecation_hint else ""
             return {
                 "status": "success",
                 "content": [
