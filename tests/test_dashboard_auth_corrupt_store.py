@@ -95,10 +95,18 @@ def test_a_stranger_cannot_seize_the_dashboard_through_a_disk_error(tmp_path):
 
 
 def test_the_person_at_the_machine_can_still_recover(tmp_path):
+    """Recovery needs the token the server wrote beside the store - loopback alone is not the owner."""
     _corrupt_store(tmp_path)
     auth._load()
 
-    opts = auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="recovery")
+    with pytest.raises(HTTPException) as e:
+        auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="recovery")
+    assert e.value.status_code == 403
+    assert "unreadable" in e.value.detail and str(auth._enroll_token_path()) in e.value.detail
+
+    opts = auth.begin_registration(
+        FakeRequest(client_host="127.0.0.1"), label="recovery", bootstrap=auth._local_enroll_token()
+    )
     assert opts.get("challenge_id"), "recovery must not be a dead end for the owner"
 
 

@@ -65,10 +65,20 @@ def _passing_reg_verifier(monkeypatch, cred_id: bytes = CRED_ID):
     )
 
 
+def _proof() -> str:
+    """What the owner at the machine reads off disk to prove the first enrollment.
+
+    The first enrollment is admitted on this token and never on the loopback peer
+    alone (F-007 follow-up); a later enrollment ignores the value, so passing it
+    unconditionally keeps these cells about the ceremony rather than the gate.
+    """
+    return auth._local_enroll_token()
+
+
 def _enroll(monkeypatch, request=None, label="phone") -> str:
     """Run a full (verifier-stubbed) enrollment; returns the credential id."""
     request = request or FakeRequest()
-    begun = auth.begin_registration(request, label=label)
+    begun = auth.begin_registration(request, label=label, bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
     out = auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
     return out["credential_id"]
@@ -79,7 +89,7 @@ def _enroll(monkeypatch, request=None, label="phone") -> str:
 
 def test_finish_registration_stores_binding_and_mints_valid_session(monkeypatch):
     request = FakeRequest()
-    begun = auth.begin_registration(request, label="phone")
+    begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
 
     out = auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
@@ -101,7 +111,7 @@ def test_finish_registration_stores_binding_and_mints_valid_session(monkeypatch)
 
 def test_registration_challenge_is_single_use(monkeypatch):
     request = FakeRequest()
-    begun = auth.begin_registration(request, label="phone")
+    begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
     _passing_reg_verifier(monkeypatch)
     auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
     with pytest.raises(HTTPException) as e:
@@ -114,7 +124,7 @@ def test_duplicate_credential_is_409_and_not_stored_twice(monkeypatch):
     _enroll(monkeypatch, request)
     # A second ceremony that "verifies" to the SAME credential id must refuse -
     # otherwise a replayed enrollment quietly forks the credential list.
-    begun = auth.begin_registration(request, label="again")
+    begun = auth.begin_registration(request, label="again", bootstrap=_proof())
     with pytest.raises(HTTPException) as e:
         auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID_B64})
     assert e.value.status_code == 409
@@ -124,7 +134,7 @@ def test_duplicate_credential_is_409_and_not_stored_twice(monkeypatch):
 def test_finish_registration_bubbles_verifier_refusal(monkeypatch):
     """When the library refuses, no credential and no token appear."""
     request = FakeRequest()
-    begun = auth.begin_registration(request, label="phone")
+    begun = auth.begin_registration(request, label="phone", bootstrap=_proof())
 
     def refuse(**kw):
         raise Exception("bad attestation")
@@ -244,7 +254,7 @@ def test_delete_credential_removes_one_of_two(monkeypatch):
     request = FakeRequest()
     _enroll(monkeypatch, request)
     other = b"\x03" * 16
-    begun = auth.begin_registration(request, label="backup")
+    begun = auth.begin_registration(request, label="backup", bootstrap=_proof())
     _passing_reg_verifier(monkeypatch, cred_id=other)
     auth.finish_registration(request, begun["challenge_id"], {"id": bytes_to_base64url(other)})
 

@@ -85,13 +85,23 @@ class TestAForwardedHeaderCannotForgeLocality:
 
 
 class TestThePersonAtTheMachineIsStillLetIn:
-    """The guard exists so the owner can recover: a browser on the machine
-    sends no forwarding header, and is let in."""
+    """The guard exists so the owner can recover - with the token the server
+    wrote beside the store. A loopback peer on its own is no longer enough
+    (F-007 follow-up: a same-host L4 forwarder gives every remote client a
+    127.0.0.1 peer and adds no header), so the owner proves presence by
+    reading a 0600 file only the service user can read."""
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
-    def test_a_local_peer_can_recover(self, tmp_path: Path, peer: str) -> None:
+    def test_a_local_peer_can_recover_with_the_local_token(self, tmp_path: Path, peer: str) -> None:
         _corrupt_store(tmp_path)
-        opts = auth.begin_registration(FakeRequest(client_host=peer), label="recovery")
+        with pytest.raises(HTTPException) as raised:
+            auth.begin_registration(FakeRequest(client_host=peer), label="recovery")
+        assert raised.value.status_code == 403
+        assert str(auth._enroll_token_path()) in raised.value.detail, "the refusal must say where the token is"
+
+        opts = auth.begin_registration(
+            FakeRequest(client_host=peer), label="recovery", bootstrap=auth._local_enroll_token()
+        )
         assert opts.get("challenge_id")
 
     def test_a_local_peer_behind_a_proxy_is_refused_and_told_the_remedy(self, tmp_path: Path) -> None:

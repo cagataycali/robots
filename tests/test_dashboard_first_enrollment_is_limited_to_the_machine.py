@@ -25,6 +25,13 @@ and these cells pin each way through it. The wording still differs per cause, be
 a refusal that blames a disk error where none occurred sends the reader to the wrong
 place; that split is asserted here rather than left to prose.
 
+Follow-up (F-007, L4 case): the loopback peer stopped being sufficient. ``socat``,
+``ssh -L`` or an nginx ``stream{}`` on the same host relays raw bytes, adds no HTTP
+header and hands every remote client a ``127.0.0.1`` peer, so "the machine" is now
+proven with a token the server writes to a ``0600`` file beside the store. The
+cells below that once enrolled on loopback alone now present it; see
+``test_dashboard_auth_first_enrollment_needs_local_proof.py`` for the token itself.
+
 Scope note: this bounds the *first* enrollment only. Later enrollments are a session
 decision belonging to the route, and the last cell pins that this gate stops applying
 once a credential exists -- an owner adding a phone from their sofa is not this
@@ -104,14 +111,22 @@ class TestTheFirstEnrollmentOnAFreshStore:
         assert auth._load().get("credentials") == []
 
     def test_the_person_at_the_machine_still_enrolls_with_no_configuration(self) -> None:
-        """The zero-config local path is the common one and must stay frictionless."""
-        opts = auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="owner")
+        """The zero-config local path stays open - it costs one ``cat`` of a file only
+        the service user can read (F-007 follow-up: the loopback peer alone stopped
+        being proof, because a same-host L4 forwarder gives every remote client one)."""
+        with pytest.raises(HTTPException) as e:
+            auth.begin_registration(FakeRequest(client_host="127.0.0.1"), label="owner")
+        assert e.value.status_code == 403
+        opts = auth.begin_registration(
+            FakeRequest(client_host="127.0.0.1"), label="owner", bootstrap=auth._local_enroll_token()
+        )
         assert opts.get("challenge_id")
 
     @pytest.mark.parametrize("peer", ["127.0.0.1", "127.0.0.53", "::1", "localhost"])
-    def test_every_spelling_of_the_machine_itself_is_accepted(self, peer: str) -> None:
-        opts = auth.begin_registration(FakeRequest(client_host=peer), label="owner")
-        assert opts.get("challenge_id")
+    def test_no_spelling_of_the_machine_itself_is_accepted_without_the_proof(self, peer: str) -> None:
+        with pytest.raises(HTTPException) as e:
+            auth.begin_registration(FakeRequest(client_host=peer), label="owner")
+        assert e.value.status_code == 403
 
 
 class TestWhatCountsAsTheMachine:

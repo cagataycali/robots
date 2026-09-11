@@ -117,7 +117,7 @@ def test_begin_registration_rejects_raw_ip():
 
 
 def test_begin_registration_yields_options_and_challenge():
-    out = auth.begin_registration(FakeRequest(), label="test key")
+    out = auth.begin_registration(FakeRequest(), label="test key", bootstrap=auth._local_enroll_token())
     assert out["challenge_id"]
     assert out["options"]["rp"]["id"] == "localhost"
     assert out["options"]["challenge"]

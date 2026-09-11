@@ -11,11 +11,16 @@ without ``--proxy-headers``, however, EVERY remote visitor's socket peer is
 ``127.0.0.1``, so during the pre-enrollment window a stranger who reached the
 tunnel first could enroll the owner passkey.
 
-A proxy adds its forwarding headers to everything it relays and a browser on
-the machine sends none of them, so the presence of any such header is the fact
-that tells the two apart. The values stay untrusted: a header's presence is
-evidence of a hop, never an address. Loopback with no header is still let in;
-the bootstrap token is still the way in from anywhere.
+A proxy adds its forwarding headers to everything it relays, so the presence
+of any such header is evidence of a hop - never an address, the values stay
+untrusted - and a proxied request is refused and TOLD it was proxied.
+
+The follow-up (``test_dashboard_auth_first_enrollment_needs_local_proof.py``)
+retired the other half of the original rule: loopback with no header is no
+longer let in either, because a same-host L4 forwarder adds no header at all.
+Presence at the machine is now proven with a token read off the local disk;
+the header check survives as the diagnosis in the refusal, and these cells pin
+that diagnosis. The bootstrap token is still the way in from anywhere.
 """
 
 from __future__ import annotations
@@ -69,7 +74,6 @@ class TestAProxiedLoopbackPeerIsNotTheMachine:
         assert raised.value.status_code == 403
         assert header in raised.value.detail
         assert "STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN" in raised.value.detail
-        assert "--proxy-headers" in raised.value.detail
 
     def test_the_header_value_is_not_read_so_a_loopback_claim_is_no_better(self) -> None:
         """A proxied stranger who spells the forwarded address as loopback is still proxied."""
@@ -101,17 +105,26 @@ class TestAProxiedLoopbackPeerIsNotTheMachine:
 
 
 class TestTheMachineItselfIsStillLetIn:
+    """With the token the server wrote beside the store - that is what "the machine" means now."""
+
     @pytest.mark.parametrize("peer", ["127.0.0.1", "::1"])
-    def test_loopback_with_no_forwarding_header_enrolls(self, peer: str) -> None:
-        opts = auth.begin_registration(FakeRequest(client_host=peer), label="owner")
+    def test_loopback_with_no_forwarding_header_enrolls_with_the_local_token(self, peer: str) -> None:
+        opts = auth.begin_registration(
+            FakeRequest(client_host=peer), label="owner", bootstrap=auth._local_enroll_token()
+        )
         assert opts.get("challenge_id")
 
     def test_ordinary_browser_headers_are_not_proxy_evidence(self) -> None:
+        """The refusal an unproven local browser gets does not accuse it of being proxied."""
         request = FakeRequest(
             {"user-agent": "Mozilla/5.0", "accept": "*/*", "origin": "http://localhost:8090", "cookie": "a=b"},
             client_host="127.0.0.1",
         )
-        opts = auth.begin_registration(request, label="owner")
+        assert auth._arrived_through_a_proxy(request) is None
+        with pytest.raises(HTTPException) as raised:
+            auth.begin_registration(request, label="owner")
+        assert "through a proxy" not in raised.value.detail
+        opts = auth.begin_registration(request, label="owner", bootstrap=auth._local_enroll_token())
         assert opts.get("challenge_id")
 
 
