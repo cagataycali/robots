@@ -3520,6 +3520,13 @@ class MuJoCoSimEngine(
         and the base ``quaternion``/``angular_velocity`` match get_observation's
         ``base_quat``/``base_ang_vel`` for the same robot.
 
+        Every value in one answer is read in a single critical section, so the
+        reported joints, base pose and ``end_effector`` position all describe one
+        configuration the robot was actually in - not a splice of two physics
+        steps, which is what a concurrent ``mj_step`` (a ``PolicyRunner`` worker,
+        the ``step()`` loop, the camera recorder) produced when the reads were
+        not serialised.
+
         A robot whose every actuator is a torque ``<motor>`` (a Menagerie
         quadruped or humanoid) additionally carries ``"actuation": "torque"``,
         with the same fact as a ``note:`` line in the text: its ``ctrl`` is a
@@ -3540,100 +3547,111 @@ class MuJoCoSimEngine(
         robot = self._world.robots[robot_name]
         model, data = self._world._model, self._world._data
 
-        # Namespace-aware joint lookup (see add_robot / _apply_sim_action).
-        pfx = robot.namespace or ""
-        state = {}
-        free_jnt_id = -1  # the robot's floating-base free joint, if any
-        for jnt_name in robot.joint_names:
-            jnt_id = -1
-            if pfx:
-                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
-            if jnt_id < 0:
-                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
-            if jnt_id < 0:
-                continue
-            # A FREE joint (6-DoF floating base, e.g. a humanoid's named
-            # ``floating_base_joint``) has no scalar hinge/slide value: its qpos
-            # is [xyz(3) + quat(4)] and qvel is [linvel(3) + angvel(3)]. Reading
-            # qpos[jnt_qposadr] as a "position" reports the base x-coordinate as a
-            # joint angle and silently drops the orientation, so record it and
-            # surface a structured ``base`` entry below instead.
-            if model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
-                free_jnt_id = jnt_id
-                continue
-            state[jnt_name] = {
-                "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),
-                "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
-            }
+        # One critical section for every mjData read below. A concurrent
+        # mj_step - from a PolicyRunner worker, the step() loop or the
+        # camera recorder, none of which the dispatch lock covers - lands
+        # between two of these reads and answers with a configuration the
+        # robot was never in: joint angles from one step, the end-effector
+        # position the caller offsets a move_to target from taken from
+        # another. Splitting the reads into per-section locks would leave
+        # exactly that gap, so the whole readback (including the text it
+        # formats from those values) is serialised the way get_body_state
+        # and get_observation already serialise theirs.
+        with self._lock:
+            # Namespace-aware joint lookup (see add_robot / _apply_sim_action).
+            pfx = robot.namespace or ""
+            state = {}
+            free_jnt_id = -1  # the robot's floating-base free joint, if any
+            for jnt_name in robot.joint_names:
+                jnt_id = -1
+                if pfx:
+                    jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                if jnt_id < 0:
+                    jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                if jnt_id < 0:
+                    continue
+                # A FREE joint (6-DoF floating base, e.g. a humanoid's named
+                # ``floating_base_joint``) has no scalar hinge/slide value: its qpos
+                # is [xyz(3) + quat(4)] and qvel is [linvel(3) + angvel(3)]. Reading
+                # qpos[jnt_qposadr] as a "position" reports the base x-coordinate as a
+                # joint angle and silently drops the orientation, so record it and
+                # surface a structured ``base`` entry below instead.
+                if model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
+                    free_jnt_id = jnt_id
+                    continue
+                state[jnt_name] = {
+                    "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),
+                    "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
+                }
 
-        # Additive sensor noise (set_obs_noise); no-op when unconfigured. Runs
-        # over the scalar joints only; the floating-base pose/twist below is left
-        # un-noised, matching get_observation's base_quat / base_ang_vel contract.
-        state = self._apply_state_noise(state)
+            # Additive sensor noise (set_obs_noise); no-op when unconfigured. Runs
+            # over the scalar joints only; the floating-base pose/twist below is left
+            # un-noised, matching get_observation's base_quat / base_ang_vel contract.
+            state = self._apply_state_noise(state)
 
-        # Floating base: surface the full 6-DoF pose + twist under a ``base`` key,
-        # consistent with get_observation's base_quat / base_ang_vel. Recovered
-        # from the kinematic tree when the free joint is unnamed and therefore
-        # absent from ``joint_names`` (e.g. a mobile base like LeKiwi).
-        # The base is whichever free joint the ownership-checked resolver names,
-        # never whichever one happens to come last in ``joint_names``. The loop
-        # above records a free joint only to skip its degenerate scalar; letting
-        # it also CHOOSE reported a sibling prop's pose as the robot's base on
-        # any scene that ships a free-jointed task object under the robot's own
-        # namespace - a kick ball, a Menagerie grasping cube - because such a
-        # joint is a named entry in ``joint_names`` too and the last write won.
-        # :meth:`_robot_base_free_joint` is the single owner of that question and
-        # already checks ownership; it also recovers an UNNAMED base the loop
-        # cannot see (a mobile base like LeKiwi), so it answers both cases. Its
-        # ``-1`` is not allowed to erase a base the loop did find.
-        owned_free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
-        if owned_free_jnt_id >= 0:
-            free_jnt_id = owned_free_jnt_id
-        base: dict[str, list[float]] | None = None
-        if free_jnt_id >= 0:
-            qadr = int(model.jnt_qposadr[free_jnt_id])
-            vadr = int(model.jnt_dofadr[free_jnt_id])
-            base = {
-                "position": [float(v) for v in data.qpos[qadr : qadr + 3]],
-                "quaternion": [float(v) for v in data.qpos[qadr + 3 : qadr + 7]],
-                "linear_velocity": [float(v) for v in data.qvel[vadr : vadr + 3]],
-                "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
-            }
+            # Floating base: surface the full 6-DoF pose + twist under a ``base`` key,
+            # consistent with get_observation's base_quat / base_ang_vel. Recovered
+            # from the kinematic tree when the free joint is unnamed and therefore
+            # absent from ``joint_names`` (e.g. a mobile base like LeKiwi).
+            # The base is whichever free joint the ownership-checked resolver names,
+            # never whichever one happens to come last in ``joint_names``. The loop
+            # above records a free joint only to skip its degenerate scalar; letting
+            # it also CHOOSE reported a sibling prop's pose as the robot's base on
+            # any scene that ships a free-jointed task object under the robot's own
+            # namespace - a kick ball, a Menagerie grasping cube - because such a
+            # joint is a named entry in ``joint_names`` too and the last write won.
+            # :meth:`_robot_base_free_joint` is the single owner of that question and
+            # already checks ownership; it also recovers an UNNAMED base the loop
+            # cannot see (a mobile base like LeKiwi), so it answers both cases. Its
+            # ``-1`` is not allowed to erase a base the loop did find.
+            owned_free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
+            if owned_free_jnt_id >= 0:
+                free_jnt_id = owned_free_jnt_id
+            base: dict[str, list[float]] | None = None
+            if free_jnt_id >= 0:
+                qadr = int(model.jnt_qposadr[free_jnt_id])
+                vadr = int(model.jnt_dofadr[free_jnt_id])
+                base = {
+                    "position": [float(v) for v in data.qpos[qadr : qadr + 3]],
+                    "quaternion": [float(v) for v in data.qpos[qadr + 3 : qadr + 7]],
+                    "linear_velocity": [float(v) for v in data.qvel[vadr : vadr + 3]],
+                    "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
+                }
 
-        text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
-        for jnt, vals in state.items():
-            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
-        if base is not None:
-            p_, q_ = base["position"], base["quaternion"]
-            lv_, av_ = base["linear_velocity"], base["angular_velocity"]
-            text += (
-                f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
-                f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
-                f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
-                f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
-            )
-
-        json_payload: dict[str, Any] = {"state": state}
-        if base is not None:
-            json_payload["base"] = base
-
-        # Name the frame move_to drives and where it is now. Without this an
-        # agent reads the pose of whichever body looks like a hand (the jaw),
-        # sends move_to a target offset from THAT, and gets "unreachable" for a
-        # point the wrist frame never was at - two wasted turns per motion.
-        frame = discover_ee_frame(model, pfx or None)
-        if frame is not None:
-            frame_name, frame_type = frame
-            obj = mj.mjtObj.mjOBJ_SITE if frame_type == "site" else mj.mjtObj.mjOBJ_BODY
-            frame_id = mj_name_to_id(model, obj, frame_name)
-            if frame_id >= 0:
-                xpos = data.site_xpos[frame_id] if frame_type == "site" else data.xpos[frame_id]
-                ee_pos = [float(xpos[0]), float(xpos[1]), float(xpos[2])]
+            text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
+            for jnt, vals in state.items():
+                text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+            if base is not None:
+                p_, q_ = base["position"], base["quaternion"]
+                lv_, av_ = base["linear_velocity"], base["angular_velocity"]
                 text += (
-                    f"end_effector ({frame_type} '{frame_name}', the frame move_to drives): "
-                    f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
+                    f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
+                    f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
+                    f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
+                    f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
                 )
-                json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+
+            json_payload: dict[str, Any] = {"state": state}
+            if base is not None:
+                json_payload["base"] = base
+
+            # Name the frame move_to drives and where it is now. Without this an
+            # agent reads the pose of whichever body looks like a hand (the jaw),
+            # sends move_to a target offset from THAT, and gets "unreachable" for a
+            # point the wrist frame never was at - two wasted turns per motion.
+            frame = discover_ee_frame(model, pfx or None)
+            if frame is not None:
+                frame_name, frame_type = frame
+                obj = mj.mjtObj.mjOBJ_SITE if frame_type == "site" else mj.mjtObj.mjOBJ_BODY
+                frame_id = mj_name_to_id(model, obj, frame_name)
+                if frame_id >= 0:
+                    xpos = data.site_xpos[frame_id] if frame_type == "site" else data.xpos[frame_id]
+                    ee_pos = [float(xpos[0]), float(xpos[1]), float(xpos[2])]
+                    text += (
+                        f"end_effector ({frame_type} '{frame_name}', the frame move_to drives): "
+                        f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
+                    )
+                    json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
 
         # Name torque-only actuation, because its normal behaviour reads as a
         # broken model. A Menagerie quadruped is driven entirely by <motor>, so

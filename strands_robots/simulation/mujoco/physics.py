@@ -815,7 +815,6 @@ class PhysicsMixin:
         # reject the case where the caller forgot both args (handled above).
         f = np.array([0.0, 0.0, 0.0] if force is None else force, dtype=np.float64)
         t = np.array([0.0, 0.0, 0.0] if torque is None else torque, dtype=np.float64)
-        p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
 
         # Latch the wrench in this body's own row of ``xfrc_applied``.
         #
@@ -836,6 +835,12 @@ class PhysicsMixin:
         # persists on every subsequent step until the next apply_force call
         # for this body (or a reset()).
         with self._lock:
+            # The default point is this body's CoM, read inside the same
+            # critical section that latches the wrench: read outside it, a
+            # concurrent step moved the body in between and the call
+            # reported a point from one configuration for a wrench applied
+            # in another.
+            p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
             # xfrc_applied's torque acts about the body centre of mass, so a
             # force applied at an offset point contributes (point - com) x
             # force. A caller who named no point asked for the CoM itself,

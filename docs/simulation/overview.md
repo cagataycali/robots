@@ -109,6 +109,16 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     encoding runs unlocked. This holds for a direct Python call and for a call
     from your own thread, not just through the tool surface.
 
+!!! note "State reads are serialised against physics too"
+    `get_robot_state` reads every joint's `qpos`/`qvel`, a floating base's pose
+    and twist, and the world position of the frame `move_to` drives in one
+    critical section, so the answer is a configuration the robot was actually in
+    rather than a splice of two physics steps - joint angles that never
+    coexisted, or joints from one step beside an `end_effector` position from
+    another (the field whose documented use is to offset a `move_to` target from
+    it). `get_observation`, `get_body_state` and the joint writers serialise the
+    same way.
+
 !!! note "Camera intrinsics follow the renderer"
     `sim.get_camera_params(camera_name)` returns the pinhole `K` of the frame
     the renderer actually draws. A camera declaring a physical sensor (MJCF
