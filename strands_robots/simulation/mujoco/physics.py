@@ -2615,6 +2615,12 @@ class PhysicsMixin:
         If ``body_name`` is given, the response is filtered to that
         single body (and errors cleanly if the body doesn't exist).
         Otherwise returns every body as before.
+
+        The name may be bare (``"gripper"``) or namespaced
+        (``"arm0/gripper"``), on the same terms as :meth:`get_body_state`,
+        :meth:`get_jacobian`, :meth:`apply_force` and
+        :meth:`set_body_properties`: ``add_robot`` namespaces every compiled
+        body, and a bare name is retried under each robot's namespace.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2628,7 +2634,7 @@ class PhysicsMixin:
             mj.mj_camlight(model, data)
 
             if body_name is not None:
-                bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+                bid = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
                 if bid < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 body_payload = {
