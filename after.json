@@ -1,0 +1,23 @@
+{
+  "tree": "/home/cagatay/actions-runner-harness-3/_work/_temp/robots-src",
+  "package": "/home/cagatay/actions-runner-harness-3/_work/_temp/robots-src/strands_robots/__init__.py",
+  "booster": {
+    "operator_sees": [
+      "ERROR booster_t1.cleanup(): the halt did not complete and the SDK channels are being released, so the T1 may still be walking or holding the upper body with nothing left to reach it: locomotion_halted=False, upper_body_released=True"
+    ],
+    "channels_closed": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "is_connected": false
+  },
+  "crazyflie": {
+    "operator_sees": [
+      "ERROR crazyflie.cleanup(): the descent was refused and the radio link is being closed, so the aircraft may still be flying with nothing left to land it: land: the link went away"
+    ],
+    "link_closed": true,
+    "is_connected": false
+  }
+}

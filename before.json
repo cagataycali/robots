@@ -1,0 +1,19 @@
+{
+  "tree": "/tmp/base34559",
+  "package": "/tmp/base34559/strands_robots/__init__.py",
+  "booster": {
+    "operator_sees": [],
+    "channels_closed": [
+      true,
+      true,
+      true,
+      true
+    ],
+    "is_connected": false
+  },
+  "crazyflie": {
+    "operator_sees": [],
+    "link_closed": true,
+    "is_connected": false
+  }
+}
