@@ -61,9 +61,18 @@ def test_a_refused_kwarg_logs_no_cleanup_error(caplog: pytest.LogCaptureFixture,
 
 
 def test_the_finalizer_skips_an_instance_without_a_shutdown_latch(caplog: pytest.LogCaptureFixture) -> None:
-    """``__del__`` returns before ``cleanup()`` when ``__init__`` never got that far."""
+    """``__del__`` returns before ``cleanup()`` when ``__init__`` never got that far.
+
+    Driven the way the interpreter drives it -- dropping the last reference and
+    collecting -- rather than by calling ``__del__`` directly, so what is graded
+    is the finalization the operator actually gets. The cells above reach the
+    guard through the validators; this one reaches it on an instance that ran no
+    ``__init__`` at all, which keeps the guard graded if the latch ever moves
+    above the validators and the refused-kwarg path stops exercising it.
+    """
     instance = HwRobot.__new__(HwRobot)
     instance.tool_name_str = "probe"
     with caplog.at_level(logging.ERROR, logger=_LOGGER):
-        instance.__del__()
+        del instance
+        gc.collect()
     assert _cleanup_errors(caplog) == []
