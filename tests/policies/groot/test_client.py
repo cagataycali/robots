@@ -6,6 +6,7 @@ handling, and error paths.
 Requires: msgpack, pyzmq (groot-service extras). Tests are skipped when not installed.
 """
 
+import gc
 import logging
 from unittest.mock import MagicMock
 
@@ -378,7 +379,8 @@ class TestClientTeardownNonBlocking:
         try:
             assert client.socket.getsockopt(zmq.LINGER) == 0
         finally:
-            client.__del__()
+            del client
+            gc.collect()
 
     def test_teardown_bounded_with_queued_request_to_dead_server(self):
         import threading
@@ -390,8 +392,16 @@ class TestClientTeardownNonBlocking:
 
         done = threading.Event()
 
+        # The worker must hold the only remaining reference, because releasing
+        # it there is what runs the finalizer on that thread -- which is the
+        # placement this bound is about. Calling ``__del__`` by hand would grade
+        # the method body rather than the collection an operator gets.
+        holder = [client]
+        del client
+
         def _run() -> None:
-            client.__del__()
+            holder.clear()
+            gc.collect()
             done.set()
 
         worker = threading.Thread(target=_run, daemon=True)

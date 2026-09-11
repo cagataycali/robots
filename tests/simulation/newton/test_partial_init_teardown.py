@@ -14,6 +14,7 @@ missing-Warp path is exercised even on machines without the Newton stack.
 
 from __future__ import annotations
 
+import gc
 import logging
 
 import pytest
@@ -79,7 +80,10 @@ class TestPartialInitTeardown:
     ) -> None:
         engine = _capture_partial_engine(solver="mujoco")
         with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.base"):
-            engine.__del__()
+            # Released and collected rather than called by hand: the finalizer
+            # under test is the one the interpreter runs on a half-built engine.
+            del engine
+            gc.collect()
         assert not any("Cleanup error during __del__" in record.getMessage() for record in caplog.records), (
             "teardown of a partially-built engine must not log a cleanup error"
         )
