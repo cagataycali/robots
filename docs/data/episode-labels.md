@@ -144,6 +144,14 @@ works, no cloud dependency required):
 - `read_predicate_verdict` - the authoritative deterministic verdict.
 - `write_label` - the annotation; structurally unable to touch the verdict.
 
+All four answer with the `{"status", "content"}` envelope even when the
+parquet reader is missing. `pyarrow` ships with the `lerobot` extra, so a judge
+process that only reads datasets recorded elsewhere can be running without it;
+`load_episode` and `sample_frames` then refuse by naming the extra to install,
+and the two sidecar tools (`read_predicate_verdict`, `write_label`) read JSON
+and are unaffected. A judge run over a hundred episodes reports the episode it
+could not read rather than dying on it, so no tool raises past the dispatch.
+
 Two failure modes lean on judge capability rather than on a payload field,
 so calibrate before trusting them: `jerky_motion` is grounded for a
 text-only judge by `rms_state_jerk`, but `camera_occlusion` is inherently a
