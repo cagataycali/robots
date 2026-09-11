@@ -218,6 +218,15 @@ RESUME_REPLAY_CACHE_MAX: int = _parse_positive_int_env("STRANDS_MESH_RESUME_REPL
 #: ``reason`` beside it is the exception's type name, which is bounded already.
 MAX_DEGRADED_DETAIL_LEN: int = 256
 
+#: Total budget for joining the sensor loops :meth:`Mesh.start` launched, spent
+#: across all of them rather than per loop: the loops wind down in parallel and
+#: notice the stop within 10ms (:class:`~strands_robots.mesh.pacing.Ticker`), so
+#: a per-loop budget would let one wedged driver read cost nine times this. Named
+#: so the docstring, the WARNING and the tests read one value. Matches
+#: :data:`strands_robots.mesh.input._INPUT_JOIN_TIMEOUT_S` and
+#: :data:`strands_robots.teleop_mixin._TELEOP_JOIN_TIMEOUT_S` in purpose.
+LOOP_JOIN_TIMEOUT_S: float = 2.0
+
 
 def _resume_freshness_window_s() -> float:
     """Lazy resolver for ``STRANDS_MESH_RESUME_FRESHNESS_S``.
@@ -953,6 +962,13 @@ class Mesh(SensorLoopsMixin):
     def stop(self) -> None:
         """Stop all loops and release the session reference.
 
+        Waits for the loops :meth:`start` launched before releasing anything they
+        publish through, so a tick already inside :meth:`publish` cannot land on
+        the wire after this peer has announced it left. The wait is bounded by
+        :data:`LOOP_JOIN_TIMEOUT_S` and shared across the loops; a sensor read
+        that blocks past it leaves its loop free to publish once more, and that
+        loop is named at WARNING rather than the stop being reported as complete.
+
         Drops every :meth:`subscribe` subscription and clears :attr:`inbox`:
         the subscribers are undeclared with the session reference, and the
         ``(topic, callback)`` pairs behind them are not retained, so
@@ -965,6 +981,8 @@ class Mesh(SensorLoopsMixin):
                 return
             self._running = False
             self._stop_event.set()
+
+        self._join_loops()
 
         with _LOCAL_ROBOTS_LOCK:
             _LOCAL_ROBOTS.pop(self.peer_id, None)
@@ -1027,6 +1045,41 @@ class Mesh(SensorLoopsMixin):
             self._has_session_ref = False
 
         logger.info("[mesh] %s off mesh", self.peer_id)
+
+    def _join_loops(self) -> None:
+        """Wait for the loops :meth:`start` launched, then say what did not stop.
+
+        Called by :meth:`stop` before it undeclares the subscribers and drops the
+        session reference, because that is what the loops publish through: a tick
+        already inside :meth:`publish` when the flag flipped would otherwise land
+        on the wire after this peer announced it had left, using a session
+        reference it no longer holds.
+
+        ``join()`` returns ``None`` whether or not a thread finished, so the
+        liveness read after it is the only thing that tells a stopped loop from
+        one that outlasted :data:`LOOP_JOIN_TIMEOUT_S`. A driver whose sensor read
+        blocks past that budget - a serial read on a wedged bus is the ordinary
+        case - leaves its loop free to publish once more after :meth:`stop`
+        returns, so that outcome is logged at WARNING naming the loops rather than
+        being announced as a stop that happened. The roster is left in place: a
+        caller can read :attr:`_threads` for those handles, and :meth:`start`
+        rebuilds it on a rejoin.
+        """
+        deadline = time.monotonic() + LOOP_JOIN_TIMEOUT_S
+        for thread in list(self._threads):
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        if late := [t.name for t in self._threads if t.is_alive()]:
+            logger.warning(
+                "[mesh] %s: %d of %d loop(s) did not stop within %.1fs and may "
+                "publish once more after stop() returns: %s. A sensor read that "
+                "blocks - a serial bus that stopped answering is the ordinary "
+                "cause - is what holds a tick open past the budget.",
+                self.peer_id,
+                len(late),
+                len(self._threads),
+                LOOP_JOIN_TIMEOUT_S,
+                ", ".join(late),
+            )
 
     @property
     def alive(self) -> bool:

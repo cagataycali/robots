@@ -56,6 +56,9 @@ def _bare_mesh_for_stop(subs=None, safety_publishers=None):
     mesh._running = True
     mesh._lifecycle_lock = threading.RLock()
     mesh._stop_event = MagicMock()
+    # No loop was launched, so the roster stop() joins is empty - but it must be
+    # present, like every other attribute stop() reads on this bare instance.
+    mesh._threads = []
     mesh._subs_lock = threading.RLock()
     mesh._subs = list(subs or [])
     mesh._user_subs = set()

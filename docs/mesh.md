@@ -311,6 +311,13 @@ change, or a hub that went away and came back. The peer keeps its identity
 across it: the `peer_id` is unchanged, and an engaged e-stop lockout stays
 engaged, so a network blip is not a way to forget a stop.
 
+`stop()` waits for the sensor loops before it releases anything they publish
+through, so by the time it returns the peer really is off the wire rather than
+merely flagged as gone. The wait is bounded and shared across the loops: a sensor
+read that blocks - a serial bus that stopped answering is the ordinary cause -
+holds one tick open past the budget, and that loop is then named at WARNING as
+still able to publish once more, instead of the stop being reported as complete.
+
 What does not survive is your own `subscribe()` topics. `start()` re-declares
 the peer's built-in topics from the table above; the subscribers `subscribe()`
 returned are undeclared with the session reference and their callbacks are not
