@@ -502,17 +502,65 @@ _SOFTWARE_RENDERERS: tuple[str, ...] = (
 )
 
 
+# Remedies for a software-rasterizer fallback, keyed on what is actually
+# installed. glvnd reports every cause of the fallback the same way - as Mesa
+# answering instead of NVIDIA - so the cause has to be narrowed from the host
+# rather than read off the renderer string.
+_REMEDY_NO_NVIDIA_LIBRARY = (
+    "No NVIDIA EGL library (libEGL_nvidia.so.*) is installed, so Mesa is the "
+    "expected backend here; a GPU render needs the NVIDIA driver's EGL library "
+    "(in a container, NVIDIA_DRIVER_CAPABILITIES must include 'graphics')."
+)
+_REMEDY_ICD_MISSING = (
+    "libEGL_nvidia is installed but no NVIDIA EGL vendor ICD is registered - "
+    "write /usr/share/glvnd/egl_vendor.d/10_nvidia.json containing "
+    '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}} '
+    "(in a container, NVIDIA_DRIVER_CAPABILITIES must include 'graphics')."
+)
+_REMEDY_DRIVER_UNREACHABLE = (
+    "An NVIDIA EGL vendor ICD is already registered and libEGL_nvidia is "
+    "installed, so a missing ICD is NOT the cause - the driver is installed but "
+    "unreachable from this process. Check that 'nvidia-smi' works here: a "
+    "container can expose /dev/nvidia* and still deny opening it (device cgroup), "
+    "which glvnd can only report as this fallback."
+)
+
+
+def _software_rendering_remedy() -> str:
+    """The remedy for a software-rasterizer fallback, chosen from what is installed.
+
+    A missing vendor ICD is the most common cause of the fallback but not the
+    only one: an NVIDIA host whose driver is installed and registered can still
+    be unable to reach the GPU, and a host with no NVIDIA EGL library at all is
+    running Mesa correctly. Prescribing the ICD unconditionally sends the first
+    case to re-apply a fix it already has and tells the second to install an ICD
+    it does not want, so narrow the advice with the same two facts
+    :func:`_ensure_nvidia_egl_vendor_icd` decides on.
+
+    Returns:
+        One sentence naming the cause that is still standing, and what to do.
+    """
+    if not _nvidia_egl_library_present():
+        return _REMEDY_NO_NVIDIA_LIBRARY
+    if not _nvidia_egl_icd_registered():
+        return _REMEDY_ICD_MISSING
+    return _REMEDY_DRIVER_UNREACHABLE
+
+
 def _warn_if_software_rendering(probe_stdout: str) -> None:
     """Warn once when the active GL renderer is a CPU software rasterizer.
 
-    MuJoCo's EGL backend silently routes to Mesa ``llvmpipe`` when no GPU EGL
-    vendor ICD is registered - e.g. an NVIDIA container missing
-    ``/usr/share/glvnd/egl_vendor.d/10_nvidia.json``. Offscreen rendering still
-    works but runs on the CPU at roughly two orders of magnitude lower
+    MuJoCo's EGL backend routes to Mesa ``llvmpipe`` whenever NVIDIA's EGL
+    vendor does not answer - because no vendor ICD is registered (e.g. an NVIDIA
+    container missing ``/usr/share/glvnd/egl_vendor.d/10_nvidia.json``), because
+    no NVIDIA EGL library is installed, or because the driver is installed and
+    registered but the GPU is unreachable from this process. Offscreen rendering
+    still works but runs on the CPU at roughly two orders of magnitude lower
     throughput, which silently throttles every policy observation, rollout
     video, and dataset recording. The render probe reports ``GL_RENDERER`` via
-    the ``__GL_RENDERER__=`` marker; surface a software rasterizer as an
-    actionable warning instead of a silent performance cliff.
+    the ``__GL_RENDERER__=`` marker; surface a software rasterizer as a warning
+    that names the cause still standing, via :func:`_software_rendering_remedy`,
+    instead of a silent performance cliff.
 
     Args:
         probe_stdout: Captured stdout of the render probe subprocess. When it
@@ -534,11 +582,9 @@ def _warn_if_software_rendering(probe_stdout: str) -> None:
         logger.warning(
             "MuJoCo is rendering on a CPU software rasterizer (GL_RENDERER=%r); "
             "offscreen renders will be ~100x slower than GPU and the GPU EGL "
-            "backend is NOT active. On an NVIDIA host/container, register the "
-            "NVIDIA EGL vendor ICD - write /usr/share/glvnd/egl_vendor.d/10_nvidia.json "
-            'containing {"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}} '
-            "and ensure NVIDIA_DRIVER_CAPABILITIES includes 'graphics'.",
+            "backend is NOT active. %s",
             renderer,
+            _software_rendering_remedy(),
         )
 
 
