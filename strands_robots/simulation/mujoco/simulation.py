@@ -2904,11 +2904,53 @@ class MuJoCoSimEngine(
         return controller.uninstall
 
     def list_robots_info(self) -> dict[str, Any]:
-        """Agent-tool action: pretty-printed robot listing.
+        """Agent-tool action: pretty-printed robot listing, with live base poses.
 
         Separate from :meth:`list_robots` (which returns ``list[str]`` for
         the SimEngine ABC) because the dispatcher needs a dict-shaped
         response for user display.
+
+        ``Position`` is the base pose read from ``mjData`` -- where the robot
+        *is* -- not the ``add_robot(position=...)`` request that put it there.
+        ``SimRobot.position`` holds only that request, and the physics never
+        writes it, so reporting it described every robot by its spawn argument
+        in two ways at once. ``position`` is the attach FRAME's translation and
+        MuJoCo COMPOSES it with the model's own authored root pose rather than
+        replacing it (see :meth:`_robot_root_world_position`), so 29 of the 51
+        single-root robots in the built-in registry never stood where the
+        request named even at ``t=0``: a ``jvrc`` asked for ``z=0`` has its
+        pelvis at ``z=1.4``, a ``unitree_g1`` at ``z=0.793``, a ``unitree_go2``
+        at ``z=0.445``. And 32 of the 63 have a floating base, so any robot
+        that walks, drives, flies or falls kept reporting its spawn pose for
+        the rest of the session -- a 0 mm reading for the displacement that
+        *is* the success signal of a locomotion rollout.
+
+        :meth:`add_robot` already reports the measured placement through
+        :meth:`_describe_robot_placement`, so the two calls contradicted each
+        other for the same robot in the same session. This method reads the
+        pose directly instead of reusing that helper: the helper also names the
+        request and the model's root offset beside the measurement, which is
+        the useful comparison at add time but becomes a false label later --
+        after the robot has moved, ``measured - requested`` is accumulated
+        motion, not a "model root offset".
+
+        A model with several root bodies (12 in the registry: an ``aloha``
+        attaches two arm bases, an ``rby1`` six) has no one base pose to name,
+        so its line keeps reporting the requested attach frame and says so
+        rather than implying a measurement. Five of those twelve (``apollo``,
+        ``lekiwi``, ``open_duck_mini``, ``stretch``, ``stretch3``) do have a
+        floating base, so their line can still age; the label is what stops it
+        from being read as a live reading.
+
+        Thread-safety: acquires ``self._lock`` while reading the position
+        arrays, the same torn-read guard :meth:`get_observation` and
+        :meth:`list_objects` document, because a concurrent ``mj_step`` mutates
+        them.
+
+        Returns:
+            A ``{status, content}`` tool result whose text enumerates the
+            robots (or reports that there are none). ``status`` is ``"error"``
+            when no world exists.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2916,13 +2958,21 @@ class MuJoCoSimEngine(
             return {"status": "success", "content": [{"text": "No robots. Use action='add_robot'."}]}
 
         lines = ["Robots in simulation:\n"]
-        for name, robot in self._world.robots.items():
-            status = "running" if robot.policy_running else "idle"
-            lines.append(
-                f"  - {name} ({os.path.basename(robot.urdf_path)})\n"
-                f"    Position: {robot.position}, Joints: {len(robot.joint_names)}, "
-                f"Config: {robot.data_config or 'direct'}, Status: {status}"
-            )
+        with self._lock:
+            for name, robot in self._world.robots.items():
+                status = "running" if robot.policy_running else "idle"
+                measured = self._robot_root_world_position(robot)
+                placement = (
+                    f"{measured}"
+                    if measured is not None
+                    else f"{list(robot.position or (0.0, 0.0, 0.0))} (requested attach frame; "
+                    "this model has no single root body, so it has no one base pose to measure)"
+                )
+                lines.append(
+                    f"  - {name} ({os.path.basename(robot.urdf_path)})\n"
+                    f"    Position: {placement}, Joints: {len(robot.joint_names)}, "
+                    f"Config: {robot.data_config or 'direct'}, Status: {status}"
+                )
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def describe(self) -> dict[str, Any]:

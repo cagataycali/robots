@@ -49,7 +49,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 |--------|-----------|
 | `add_robot` | `robot_name`, `position=[0,0,0]`, `data_config=None`, `urdf_path=None` |
 | `remove_robot` | `name` |
-| `list_robots` | - |
+| `list_robots` | - each robot's asset, joint count, and **live** base position, read from the physics rather than from the `add_robot` request, so a robot that walked (or whose model's root pose offset the request) reports where it is |
 | `get_robot_state` | `name` → joint positions, velocities, torques |
 
 ## Objects

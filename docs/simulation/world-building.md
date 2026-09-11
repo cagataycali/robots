@@ -128,8 +128,11 @@ those `position=[0, 0, 0]` spawns the robot standing rather than sunk into the
 floor, which is the reason the compose is the useful default. `add_robot`
 reports the *measured* world position of the robot's root body and names the
 request and the model's offset beside it whenever they differ, so a spawn that
-did not land where it was asked is visible in the result. This differs from
-`add_object`, whose `position` places its body at exactly that world point.
+did not land where it was asked is visible in the result. `list_robots` reports
+the same measured base pose, re-read from the physics on every call, so a robot
+that has since walked, driven or fallen is listed where it now is rather than
+where it spawned. This differs from `add_object`, whose `position` places its
+body at exactly that world point.
 
 ### Adding a robot does not disturb the scene it joins
 
