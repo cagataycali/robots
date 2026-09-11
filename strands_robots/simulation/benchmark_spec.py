@@ -328,8 +328,8 @@ _BODY_LIST_KWARGS = frozenset({"particles", "containers"})
 _JOINT_NAME_KWARGS = frozenset({"joint"})
 
 
-def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]:
-    """Collect the body and joint names a ``stop_when`` clause references.
+def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str], list[str | None]]:
+    """Collect the body, joint and robot-base entities a ``stop_when`` clause references.
 
     Walks the same shapes :func:`compile_stop_when` accepts (a single
     predicate call or an ``all``/``any`` group) and gathers the values of the
@@ -338,9 +338,21 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]
     ``containers`` - every shape the predicate factories accept for them, which
     is :func:`~strands_robots.utils.name_list_error`'s domain rather than
     ``list`` alone - and ``joint`` for joints) so the caller can probe each one
-    against the live sim before arming the clause. Geom names
-    (``contact_between``) are not collected - there is no generic geom
-    lookup on the engine ABC to probe them with.
+    against the live sim before arming the clause.
+
+    The ``base_*`` family names a robot rather than a body, so it is collected
+    separately and by PREDICATE rather than by kwarg
+    (:func:`~strands_robots.simulation.predicates.predicate_reads_robot_base`):
+    ``robot`` defaults to the sole robot, so a base clause references a base
+    whether or not it spells one, and a clause that omits the kwarg needs
+    probing just as much as one that typos it. A collected ``None`` is that
+    default, to be probed with
+    :func:`~strands_robots.simulation.predicates.can_resolve_base`.
+
+    Geom names (``contact_between``) are still not collected - there is no
+    generic geom lookup on the engine ABC to probe them with, unlike bodies
+    (``get_body_state``), joints (``get_observation``) and robot bases
+    (``get_observation``'s floating-base signals).
 
     Args:
         stop_when: A clause dict already validated by
@@ -348,14 +360,22 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]
             results rather than raising - validation is the compiler's job).
 
     Returns:
-        ``(bodies, joints)`` - deduplicated, insertion-ordered name lists.
+        ``(bodies, joints, robot_bases)`` - deduplicated, insertion-ordered.
+        ``robot_bases`` entries are a robot name or ``None`` for the sole robot.
     """
+    from strands_robots.simulation.predicates import PREDICATE_REGISTRY, predicate_reads_robot_base
+
     bodies: dict[str, None] = {}
     joints: dict[str, None] = {}
+    robot_bases: dict[str | None, None] = {}
 
     def _collect(call: Any) -> None:
         if not isinstance(call, dict):
             return
+        predicate = call.get("predicate")
+        if isinstance(predicate, str) and predicate in PREDICATE_REGISTRY and predicate_reads_robot_base(predicate):
+            robot = call.get("robot")
+            robot_bases.setdefault(robot if isinstance(robot, str) and robot else None)
         for key, value in call.items():
             if isinstance(value, str) and value:
                 if key in _BODY_NAME_KWARGS:
@@ -376,7 +396,7 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str]]
                 if isinstance(entries, list):
                     for entry in entries:
                         _collect(entry)
-    return list(bodies), list(joints)
+    return list(bodies), list(joints), list(robot_bases)
 
 
 def _compile_reward_terms(terms: list[Any] | None) -> list[Callable[[SimEngine], float]]:

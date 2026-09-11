@@ -71,6 +71,7 @@ Register custom predicates with :func:`register_predicate`.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 from collections.abc import Callable, Mapping
@@ -2174,6 +2175,39 @@ def predicate_kind(name: str) -> str:
     return "unknown"
 
 
+def predicate_reads_robot_base(name: str) -> bool:
+    """Whether a registered predicate resolves a robot's FLOATING BASE.
+
+    True for the ``base_*`` family - every term that reads ``get_observation``'s
+    ``base_pos`` / ``base_quat`` floating-base signals through
+    :func:`_base_position` / :func:`_base_quaternion` / :func:`_base_twist`, and
+    so selects its robot with the optional ``robot`` kwarg (default: the sole
+    robot). Read from the factory's signature rather than a name list, so it
+    stays in lock-step with the registry with no separate table to drift -
+    including predicates added by :func:`register_predicate`.
+
+    Args:
+        name: A predicate name. Must be registered in :data:`PREDICATE_REGISTRY`.
+
+    Returns:
+        ``True`` when the factory accepts a ``robot`` parameter.
+
+    Raises:
+        ValueError: If ``name`` is not registered (mirrors :func:`make_predicate`).
+    """
+    factory = PREDICATE_REGISTRY.get(name)
+    if factory is None:
+        valid = sorted(PREDICATE_REGISTRY.keys())
+        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    try:
+        return "robot" in inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        # A factory whose signature cannot be read (a C callable, an exotic
+        # partial) cannot be classified; treat it as not base-referencing
+        # rather than refusing a clause we cannot describe.
+        return False
+
+
 def supports_body_lookup(sim: SimEngine) -> bool:
     """Whether *sim*'s backend can resolve body names at all.
 
@@ -2228,17 +2262,45 @@ def can_resolve_joint(sim: SimEngine, joint: str) -> bool:
     return _joint_position(sim, joint) is not None
 
 
+def can_resolve_base(sim: SimEngine, robot: str | None) -> bool:
+    """Whether *robot*'s floating base resolves in *sim* right now.
+
+    Mirrors :func:`can_resolve_body` for the ``base_*`` family, using the same
+    ``get_observation`` path those terms read at evaluation time
+    (:func:`_base_position`). ``False`` means every base-referencing term for
+    that robot would degrade to a constant forever, which happens for two
+    reasons the evaluation path already treats alike (both log the one
+    ``robot base`` warning): the name matches no robot in the scene, or it
+    matches a robot that has no floating base - a fixed-base arm.
+
+    A floating base surfaces ``base_pos`` and ``base_quat`` together (both are
+    read from the same free-joint block), so probing the position covers the
+    orientation- and twist-reading terms as well.
+
+    Args:
+        sim: The engine to probe.
+        robot: The robot name a base clause references, or ``None`` for the
+            sole robot - the default every ``base_*`` predicate applies.
+
+    Returns:
+        ``True`` when the floating base resolves to a position.
+    """
+    return _base_position(sim, robot) is not None
+
+
 __all__ = [
     "PREDICATE_REGISTRY",
     "BoolPredicate",
     "PredicateFactory",
     "RewardTerm",
     "StatefulRewardTerm",
+    "can_resolve_base",
     "can_resolve_body",
     "can_resolve_joint",
     "contact_is_active",
     "make_predicate",
     "predicate_kind",
+    "predicate_reads_robot_base",
     "register_predicate",
     "supports_body_lookup",
 ]
