@@ -4215,21 +4215,60 @@ class MuJoCoSimEngine(
         }
 
     def list_objects(self) -> dict[str, Any]:
-        """List every object in the scene with its shape, position, and mass.
+        """List every object in the scene with its shape, live position, and mass.
+
+        The reported position is read from ``mjData`` -- where the object *is*
+        -- not from the ``add_object`` / ``move_object`` request that put it
+        there. Those requests are the only pose the scene record holds, so
+        reporting it described a manipuland by the placement it was *asked* to
+        take: an object spawned above its rest height reported the spawn height
+        for the rest of the session (a free-fall settle is the first thing any
+        scene does), and one the robot pushed reported no motion at all. That
+        is the reading a caller grounds "did the object move" on, so a stale
+        placement is a silent wrong answer rather than a cosmetic one.
+
+        An object the compiled model carries no body for is reported as an
+        error naming it. No caller is known to produce that state, but the two
+        readings available without the guard are both silent wrong answers of
+        the class this method exists to stop publishing: its last requested
+        placement is the value the fix removes, and an unresolved name is
+        ``-1``, which indexes the position arrays from the end and so reports
+        some *other* body's pose under this object's name.
+
+        Thread-safety: acquires ``self._lock`` to prevent a torn read while a
+        concurrent ``mj_step`` mutates the position arrays.
 
         Returns:
             A ``{status, content}`` tool result whose text enumerates the
             objects (or reports that there are none). ``status`` is
-            ``"error"`` when no world exists.
+            ``"error"`` when no world exists, or when an object in the scene
+            record has no body in the compiled model.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}]}
 
+        model, data = self._world._model, self._world._data
         lines = ["Objects:\n"]
-        for name, obj in self._world.objects.items():
-            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
+        with self._lock:
+            for name, obj in self._world.objects.items():
+                body_id = mj_name_to_id(model, self._mj.mjtObj.mjOBJ_BODY, name)
+                if body_id < 0:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Object '{name}' is in the scene record but has no body in the "
+                                    "compiled model, so its position cannot be read. The scene and the "
+                                    "record have diverged; re-add the object or call reset."
+                                )
+                            }
+                        ],
+                    }
+                position = [round(float(v), 4) for v in data.xpos[body_id]]
+                lines.append(f"  - {name}: {obj.shape} at {position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def list_cameras_info(self) -> dict[str, Any]:
