@@ -99,7 +99,7 @@ launching.
 | `num_gpus` / `num_nodes` | `int` | `1` | zero, negative, fractional, `bool` |
 | `resume` / `streaming` | `bool` | `False` | a non-`bool`; `streaming` together with `val_episodes` |
 | `seed` | `int \| None` | `None` | negative |
-| `method` | `str` | `"full"` | anything the selected backend cannot forward - LeRobot takes `full` / `lora` / `expert_only`, GR00T `full` / `frozen_backbone` / `expert_only`, Cosmos3 `full` only |
+| `method` | `str` | `"full"` | anything the selected backend cannot forward - LeRobot takes `full` / `lora` / `expert_only`, GR00T `full` / `frozen_backbone` (name components with `tune` instead), Cosmos3 `full` only |
 | `lora_r` / `lora_alpha` | `int \| None` | `None` | non-positive |
 | `tune` | `dict[str, bool]` | `{}` | keys outside `llm` / `visual` / `projector` / `diffusion`; a non-`bool` value; a policy whose config has no such switches (GR00T via `groot` or `lerobot_local` `policy_type="groot"`) |
 | `embodiment` | `str \| None` | `None` | a policy whose config has no embodiment tag (only GR00T declares one; others take their shape from the dataset) |
@@ -195,7 +195,10 @@ frames with a trained reward model, load it with lerobot's `make_reward_model`.
 `embodiment` + `tune` + `extra["groot_root"]` drive `launch_finetune.py`; with
 `extra={"policy_type": "groot"}` the same two fields reach lerobot's own
 `GrootConfig(embodiment_tag=..., tune_projector=...)` instead, discovered off the
-config class - see [Isaac-GR00T](../policies/groot.md). `num_gpus` + `extra["cosmos_root"]` +
+config class - see [Isaac-GR00T](../policies/groot.md). GR00T freezes components
+individually rather than by strategy, so `method="expert_only"` is refused for it
+and the set is named directly: `tune={"projector": False}` trains the diffusion
+action head with everything before it frozen. `num_gpus` + `extra["cosmos_root"]` +
 `extra["sft_toml"]` drive `prepare()` (DCP convert), `train()` (`torchrun`) and
 `export()` (DCP -> safetensors) - see [Cosmos3](../policies/cosmos3.md).
 

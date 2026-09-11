@@ -58,7 +58,14 @@ logger = logging.getLogger(__name__)
 # Sensible default mirrors FinetuneConfig defaults (projector + diffusion on).
 _DEFAULT_TUNE = {"llm": False, "visual": False, "projector": True, "diffusion": True}
 
-_SUPPORTED_METHODS = {"full", "frozen_backbone", "expert_only"}
+# ``expert_only`` is deliberately absent. GR00T has no single expert-only
+# switch: it freezes the four components above individually, and which of them
+# the action expert spans is GR00T's decomposition to state, not this adapter's
+# to assume - so the set has to be named with ``tune={...}`` rather than
+# guessed from the method. lerobot's gate refuses ``method="expert_only"`` for
+# its native ``groot`` policy for the same reason (``GrootConfig`` carries the
+# four switches, not a ``train_expert_only`` field).
+_SUPPORTED_METHODS = {"full", "frozen_backbone"}
 
 _INSTALL_HINT = (
     "Isaac-GR00T is not importable from this interpreter. Install it from source "
@@ -151,7 +158,17 @@ class Gr00tTrainer(Trainer):
         if not spec.embodiment:
             problems.append("embodiment is required for GR00T (--embodiment_tag)")
 
-        if spec.method not in _SUPPORTED_METHODS:
+        if spec.method == "expert_only":
+            problems.append(
+                "method 'expert_only' is not a GR00T strategy: GR00T freezes tune_llm / "
+                "tune_visual / tune_projector / tune_diffusion_model individually and has "
+                "no single expert-only switch, so which components the action expert spans "
+                "has to be named rather than assumed. Name them - tune={'projector': False} "
+                "trains the diffusion action head and freezes everything before it - or "
+                "train a lerobot policy whose config carries train_expert_only "
+                "(provider='lerobot_local')."
+            )
+        elif spec.method not in _SUPPORTED_METHODS:
             problems.append(
                 f"unsupported method '{spec.method}' for GR00T "
                 f"(expected one of {sorted(_SUPPORTED_METHODS)}); "
