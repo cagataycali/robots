@@ -399,6 +399,39 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str],
     return list(bodies), list(joints), list(robot_bases)
 
 
+def _spec_referenced_entities(spec: dict[str, Any]) -> tuple[list[str], list[str], list[str | None]]:
+    """Collect the entities a spec's ``success`` / ``failure`` / ``dense_reward`` name.
+
+    Runs :func:`stop_when_referenced_entities` over all three clauses and
+    merges the results, so one probe covers every term the evaluation loop
+    will call. ``dense_reward`` is a bare list of predicate calls rather than
+    an ``all`` / ``any`` group, so it is wrapped in one before walking - the
+    collector's two accepted shapes are a single call and a group.
+
+    Args:
+        spec: A spec dict, before or after :meth:`DeclarativeBenchmark.from_dict`
+            has validated it (unrecognized shapes yield empty results, matching
+            the collector).
+
+    Returns:
+        ``(bodies, joints, robot_bases)`` - deduplicated, insertion-ordered,
+        in ``success`` -> ``failure`` -> ``dense_reward`` order.
+    """
+    bodies: dict[str, None] = {}
+    joints: dict[str, None] = {}
+    robot_bases: dict[str | None, None] = {}
+    clauses = (spec.get("success"), spec.get("failure"), {"all": spec.get("dense_reward") or []})
+    for clause in clauses:
+        clause_bodies, clause_joints, clause_bases = stop_when_referenced_entities(clause)
+        for body in clause_bodies:
+            bodies.setdefault(body)
+        for joint in clause_joints:
+            joints.setdefault(joint)
+        for base in clause_bases:
+            robot_bases.setdefault(base)
+    return list(bodies), list(joints), list(robot_bases)
+
+
 def _compile_reward_terms(terms: list[Any] | None) -> list[Callable[[SimEngine], float]]:
     if terms is None:
         return []
@@ -436,6 +469,7 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         reward_terms: list[Callable[[SimEngine], float]],
         scene: str | None = None,
         instruction: str = "",
+        referenced_entities: tuple[list[str], list[str], list[str | None]] | None = None,
     ):
         # Mirror the four string checks ``from_dict`` runs, for the reason the two
         # mirrors below state: a directly constructed benchmark must not carry a
@@ -499,6 +533,10 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         self._reward_terms = list(reward_terms)
         self._scene = scene
         self._instruction = instruction
+        # ``None`` (a direct construction) means the clauses arrived compiled,
+        # so what they reference cannot be read back - see
+        # :meth:`referenced_entities`.
+        self._referenced_entities = referenced_entities
 
     @property
     def name(self) -> str:
@@ -563,6 +601,41 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         a value its tokenizer cannot take while the evaluation reported success.
         """
         return self._instruction
+
+    def referenced_entities(self) -> tuple[list[str], list[str], list[str | None]]:
+        """Scene entities this benchmark's clauses name, for a pre-eval probe.
+
+        ``(bodies, joints, robot_bases)``, collected from the spec's
+        ``success`` / ``failure`` / ``dense_reward`` clauses by
+        :func:`stop_when_referenced_entities` - the same collector
+        ``run_policy`` probes a ``stop_when`` clause with, because a benchmark
+        clause is authored in the identical DSL.
+        :meth:`~strands_robots.simulation.base.SimEngine.evaluate_benchmark`
+        resolves each one against the live scene before it builds a policy, so
+        a name the scene does not have is refused there instead of degrading to
+        a constant and reporting a 0% success rate.
+
+        All three lists are empty when there is nothing a pre-eval probe can
+        decide, which is the case in two situations:
+
+        * The benchmark declares its own ``scene``. :meth:`on_episode_start`
+          loads it before the first observation, so the bodies it creates do
+          not exist yet when the probe runs, and reporting them missing would
+          refuse a spec that is correct.
+        * The instance was built by calling the constructor with compiled
+          ``success_fn`` / ``failure_fn`` callables instead of through
+          :meth:`from_dict`, so the clauses are opaque - the same contract
+          ``run_policy`` applies to a callable ``stop_when``.
+
+        Returns:
+            Fresh lists, so a caller cannot mutate the compiled spec. A
+            ``robot_bases`` entry is a robot name, or ``None`` for the sole
+            robot (the default every ``base_*`` predicate applies).
+        """
+        if self._scene or self._referenced_entities is None:
+            return [], [], []
+        bodies, joints, robot_bases = self._referenced_entities
+        return list(bodies), list(joints), list(robot_bases)
 
     def on_episode_start(self, sim: SimEngine, rng: random.Random) -> None:
         """Load the declared scene (if any) before delegating to the base impl.
@@ -699,6 +772,7 @@ class DeclarativeBenchmark(BenchmarkProtocol):
             reward_terms=reward_terms,
             scene=scene,
             instruction=instruction,
+            referenced_entities=_spec_referenced_entities(spec),
         )
 
 

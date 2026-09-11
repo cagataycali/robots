@@ -3373,19 +3373,44 @@ class SimEngine(ABC):
             return None, err
         return {r: int(action_horizon) for r in policies}, None
 
-    def _stop_when_unresolved_error(self, stop_when: dict[str, Any]) -> dict[str, Any] | None:
-        """Structured error if a ``stop_when`` clause references unresolvable entities.
+    def _unresolvable_entity_error(
+        self,
+        entities: tuple[list[str], list[str], list[str | None]],
+        *,
+        subject: str,
+        consequence: str,
+        err: Callable[[str], dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Structured error if any entity in *entities* does not resolve in this sim.
 
-        Probes every body/joint name in the clause through the SAME lookup
-        path the predicates use at evaluation time
+        The one owner of the four probes a predicate-DSL clause needs, shared
+        by :meth:`_stop_when_unresolved_error` (``run_policy``) and
+        :meth:`evaluate_benchmark`: whether the backend can look bodies up at
+        all, then each body, each joint, and each robot floating base, through
+        the SAME lookup path the predicates use at evaluation time
         (:func:`~strands_robots.simulation.predicates.can_resolve_body` /
-        :func:`~strands_robots.simulation.predicates.can_resolve_joint`,
-        including the LIBERO ``<name>_main`` fallback), against the live
-        scene, once, before the rollout starts. Returns ``None`` when every
-        referenced entity resolves. Bodies added to the scene AFTER this
-        check are out of contract - a rollout does not create bodies.
+        :func:`~strands_robots.simulation.predicates.can_resolve_joint` /
+        :func:`~strands_robots.simulation.predicates.can_resolve_base`,
+        including the LIBERO ``<name>_main`` body fallback).
+
+        Both callers admit the same DSL and both are undone by the same
+        mistake, so they share the wording rather than each spelling its own
+        copy of it - only the clause named and the consequence differ.
+
+        Args:
+            entities: ``(bodies, joints, robot_bases)`` as collected by
+                :func:`~strands_robots.simulation.benchmark_spec.stop_when_referenced_entities`.
+            subject: What references the entities, opening every message
+                (``"stop_when"``, ``"benchmark 'drawer-open' ..."``).
+            consequence: One capitalized sentence naming what the caller gets
+                if the clause is armed anyway. Slotted between the finding and
+                the remedy in each message.
+            err: Builds the caller's error envelope from a message, so each
+                surface keeps its own prefix and json block.
+
+        Returns:
+            ``None`` when every entity resolves, else *err*'s envelope.
         """
-        from strands_robots.simulation.benchmark_spec import stop_when_referenced_entities
         from strands_robots.simulation.predicates import (
             can_resolve_base,
             can_resolve_body,
@@ -3393,38 +3418,26 @@ class SimEngine(ABC):
             supports_body_lookup,
         )
 
-        bodies, joints, robot_bases = stop_when_referenced_entities(stop_when)
-
-        def _err(text: str) -> dict[str, Any]:
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"run_policy: {text}"},
-                    {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
-                ],
-            }
+        bodies, joints, robot_bases = entities
 
         if bodies and not supports_body_lookup(self):
-            return _err(
-                f"stop_when references bodies {bodies} but this backend has no body lookup "
-                "(get_body_state), so the clause could never fire and the rollout would "
-                "silently run to its step budget. Use a clause without body-referencing "
+            return err(
+                f"{subject} references bodies {bodies} but this backend has no body lookup "
+                f"(get_body_state). {consequence} Use a clause without body-referencing "
                 "predicates, or a backend that supports body lookups."
             )
         missing_bodies = [b for b in bodies if not can_resolve_body(self, b)]
         if missing_bodies:
-            return _err(
-                f"stop_when references bodies not present in the scene: {missing_bodies}. "
-                "The clause would never fire and the rollout would silently run to its "
-                "step budget. Check the names against the loaded scene (get_state lists "
+            return err(
+                f"{subject} references bodies not present in the scene: {missing_bodies}. "
+                f"{consequence} Check the names against the loaded scene (get_state lists "
                 "objects; describe() lists actions)."
             )
         missing_joints = [j for j in joints if not can_resolve_joint(self, j)]
         if missing_joints:
-            return _err(
-                f"stop_when references joints not present in the observation: {missing_joints}. "
-                "The clause would never fire and the rollout would silently run to its "
-                "step budget. Check the names against get_observation()'s keys "
+            return err(
+                f"{subject} references joints not present in the observation: {missing_joints}. "
+                f"{consequence} Check the names against get_observation()'s keys "
                 "(joint names are namespaced '<robot>/<joint>')."
             )
         unresolved_bases = [r for r in robot_bases if not can_resolve_base(self, r)]
@@ -3440,13 +3453,41 @@ class SimEngine(ABC):
                 if named
                 else f"{spelled} has no floating base - a fixed-base arm reports no base_pos/base_quat"
             )
-            return _err(
-                f"stop_when arms a base_* predicate on {spelled}, but {cause}. Base predicates "
-                "read the floating-base signals, so the clause would never fire and the rollout "
-                "would silently run to its step budget. Use a body/joint predicate for a "
-                "fixed-base robot, or name a robot that has a floating base."
+            return err(
+                f"{subject} arms a base_* predicate on {spelled}, but {cause}. Base predicates "
+                f"read the floating-base signals. {consequence} Use a body/joint predicate for "
+                "a fixed-base robot, or name a robot that has a floating base."
             )
         return None
+
+    def _stop_when_unresolved_error(self, stop_when: dict[str, Any]) -> dict[str, Any] | None:
+        """Structured error if a ``stop_when`` clause references unresolvable entities.
+
+        Probes every body/joint/robot-base name in the clause against the live
+        scene, once, before the rollout starts, through
+        :meth:`_unresolvable_entity_error` - the prober
+        :meth:`evaluate_benchmark` shares for a benchmark spec's clauses, which
+        are authored in the same DSL. Returns ``None`` when every referenced
+        entity resolves. Bodies added to the scene AFTER this check are out of
+        contract - a rollout does not create bodies.
+        """
+        from strands_robots.simulation.benchmark_spec import stop_when_referenced_entities
+
+        def _err(text: str) -> dict[str, Any]:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"run_policy: {text}"},
+                    {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
+                ],
+            }
+
+        return self._unresolvable_entity_error(
+            stop_when_referenced_entities(stop_when),
+            subject="stop_when",
+            consequence="The clause would never fire and the rollout would silently run to its step budget.",
+            err=_err,
+        )
 
     def _run_episodes(
         self,
@@ -4789,6 +4830,38 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+
+        # Probe the entities the spec's clauses name against the LIVE scene,
+        # before any policy is built. A benchmark clause is authored in the
+        # same predicate DSL as ``stop_when`` and compiles the same way, so it
+        # fails the same way: a body the scene does not have makes its term a
+        # constant (predicates never raise), which for a success clause means
+        # every episode scores a miss. The eval then reports success_rate 0.0
+        # under status="success" - the number a caller publishes, and
+        # indistinguishable from an honest policy failure. ``run_policy``
+        # refuses the identical clause up front; this is that guard on the
+        # surface whose entire output is that rate. Benchmarks that cannot be
+        # probed (their own ``scene``, or opaque compiled clauses) report no
+        # entities and are evaluated unchanged.
+        referenced = getattr(spec, "referenced_entities", None)
+        if callable(referenced):
+
+            def _benchmark_err(text: str) -> dict[str, Any]:
+                return {"status": "error", "content": [{"text": f"evaluate_benchmark: {text}"}]}
+
+            probe_error = self._unresolvable_entity_error(
+                referenced(),
+                subject=f"benchmark {benchmark_name!r} (success / failure / dense_reward)",
+                consequence=(
+                    "Each referencing term degrades to a constant, so no success or failure "
+                    "clause built on it can ever fire and no dense_reward term built on it can "
+                    "ever be non-zero: every episode would score a miss and the benchmark would "
+                    "report a 0% success rate that reads as an honest policy failure."
+                ),
+                err=_benchmark_err,
+            )
+            if probe_error is not None:
+                return probe_error
 
         if policy_object is None:
             policy = create_policy(policy_provider, **(policy_config or {}))
