@@ -1,0 +1,109 @@
+{
+ "tree": "/tmp/base501/strands_robots/__init__.py",
+ "rows": [
+  {
+   "verb": "Frobnicate",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Frobnicate ok"
+  },
+  {
+   "verb": "Recover",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Recover ok"
+  },
+  {
+   "verb": "Continue",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Continue ok"
+  },
+  {
+   "verb": "Trigger",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Trigger ok"
+  },
+  {
+   "verb": "Activate",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Activate ok"
+  },
+  {
+   "verb": "Engage",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.Engage ok"
+  },
+  {
+   "verb": "ArmTask",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.ArmTask ok"
+  },
+  {
+   "verb": "DoThing",
+   "kind": "unknown",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.DoThing ok"
+  },
+  {
+   "verb": "SetVelocity",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.SetVelocity refused: 'loco.SetVelocity' can drop or walk the robot; it needs operator approval before it "
+  },
+  {
+   "verb": "Move",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Move refused: 'loco.Move' can drop or walk the robot; it needs operator approval before it is sent. No to"
+  },
+  {
+   "verb": "ZeroTorque",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.ZeroTorque refused: 'loco.ZeroTorque' can drop or walk the robot; it needs operator approval before it is"
+  },
+  {
+   "verb": "GetFsmId",
+   "kind": "read",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.GetFsmId ok"
+  },
+  {
+   "verb": "CheckMode",
+   "kind": "read",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.CheckMode ok"
+  }
+ ]
+}

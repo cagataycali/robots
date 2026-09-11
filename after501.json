@@ -1,0 +1,109 @@
+{
+ "tree": "/home/cagatay/actions-runner-harness/_work/_temp/robots-src/strands_robots/__init__.py",
+ "rows": [
+  {
+   "verb": "Frobnicate",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Frobnicate refused: 'loco.Frobnicate' commands the robot; it needs operator approval before it is sent. N"
+  },
+  {
+   "verb": "Recover",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Recover refused: 'loco.Recover' commands the robot; it needs operator approval before it is sent. No tool"
+  },
+  {
+   "verb": "Continue",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Continue refused: 'loco.Continue' commands the robot; it needs operator approval before it is sent. No to"
+  },
+  {
+   "verb": "Trigger",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Trigger refused: 'loco.Trigger' commands the robot; it needs operator approval before it is sent. No tool"
+  },
+  {
+   "verb": "Activate",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Activate refused: 'loco.Activate' commands the robot; it needs operator approval before it is sent. No to"
+  },
+  {
+   "verb": "Engage",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Engage refused: 'loco.Engage' commands the robot; it needs operator approval before it is sent. No tool_c"
+  },
+  {
+   "verb": "ArmTask",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.ArmTask refused: 'loco.ArmTask' commands the robot; it needs operator approval before it is sent. No tool"
+  },
+  {
+   "verb": "DoThing",
+   "kind": "unknown",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.DoThing refused: 'loco.DoThing' commands the robot; it needs operator approval before it is sent. No tool"
+  },
+  {
+   "verb": "SetVelocity",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.SetVelocity refused: 'loco.SetVelocity' can drop or walk the robot; it needs operator approval before it "
+  },
+  {
+   "verb": "Move",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.Move refused: 'loco.Move' can drop or walk the robot; it needs operator approval before it is sent. No to"
+  },
+  {
+   "verb": "ZeroTorque",
+   "kind": "known-write",
+   "mutative": true,
+   "status": "error",
+   "dispatched": false,
+   "message": "loco.ZeroTorque refused: 'loco.ZeroTorque' can drop or walk the robot; it needs operator approval before it is"
+  },
+  {
+   "verb": "GetFsmId",
+   "kind": "read",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.GetFsmId ok"
+  },
+  {
+   "verb": "CheckMode",
+   "kind": "read",
+   "mutative": false,
+   "status": "success",
+   "dispatched": true,
+   "message": "loco.CheckMode ok"
+  }
+ ]
+}
