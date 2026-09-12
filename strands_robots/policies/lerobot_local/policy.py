@@ -2748,18 +2748,36 @@ class LerobotLocalPolicy(Policy):
         image_items = [(k, v) for k, v in observation_dict.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
         used_feats: set[str] = set()
         unmatched_imgs = []
-        for k, v in image_items:
-            mapped = self.camera_key_map.get(k) if self.camera_key_map else None
-            if mapped is not None:
+        # 1a) The explicit map is applied over the WHOLE observation before any
+        #     exact-name match runs. Resolving it inside the single loop below
+        #     instead would make the precedence depend on observation order: a
+        #     camera that happens to be iterated earlier and matches a declared
+        #     key by name would claim the slot the caller bound by hand, and the
+        #     mapped camera would then be dropped for having no free slot left.
+        #     ``_resolve_camera_targets`` resolves the map in its own first pass
+        #     for the same reason, and the two routers have to agree - the only
+        #     difference between them is whether the checkpoint ships a
+        #     preprocessor, which is not something a camera binding may depend on.
+        mapped_sources: set[str] = set()
+        if self.camera_key_map:
+            for k, v in image_items:
+                mapped = self.camera_key_map.get(k)
+                if mapped is None:
+                    continue
                 if mapped not in declared_img_feats:
                     raise ValueError(
                         f"camera_key_map routes camera '{k}' to image key '{mapped}', "
                         "but the policy does not declare it. Declared image keys: "
                         f"{sorted(declared_img_feats)}."
                     )
+                mapped_sources.add(k)
                 if mapped not in used_feats:
                     out[mapped] = v
                     used_feats.add(mapped)
+        # 1b) Exact-name match, then positional fill, for the cameras the
+        #     explicit map did not already route.
+        for k, v in image_items:
+            if k in mapped_sources:
                 continue
             prefixed = f"observation.images.{k}"
             if prefixed in self._input_features and prefixed not in used_feats:
