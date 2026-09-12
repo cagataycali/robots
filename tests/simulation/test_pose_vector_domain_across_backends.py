@@ -184,6 +184,9 @@ def _newton_stub() -> Any:
         # routes its ``mass`` through it, and a stand-in that omitted it would
         # make that guard look absent rather than unexercised.
         _validate_mass=SimEngine._validate_mass,
+        # Likewise inherited: ``add_object`` routes ``is_static`` through it, and
+        # a stand-in that omitted it would make that guard look absent.
+        _validate_posture_flags=SimEngine._validate_posture_flags,
     )
     return stub
 
@@ -390,6 +393,7 @@ def _isaac_stub() -> Any:
         _world=types.SimpleNamespace(scene=types.SimpleNamespace(add=lambda handle: None)),
         _construct_shape_prim=lambda **kwargs: (object(), kwargs.get("size")),
         _validate_mass=SimEngine._validate_mass,
+        _validate_posture_flags=SimEngine._validate_posture_flags,
     )
 
 

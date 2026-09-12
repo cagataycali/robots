@@ -854,7 +854,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 refused rather than handed to the solver rebuild.
             is_static: When True the object is fixed in the world.
                 ``None`` (the default) means unspecified; Newton derives
-                nothing from ``shape``, so it resolves to dynamic.
+                nothing from ``shape``, so it resolves to dynamic. A supplied
+                value must be a boolean: it selects a posture, so ``0`` and the
+                truthy ``"false"`` are refused rather than read by truthiness.
             mesh_path: Path to a mesh asset (``.obj`` / ``.stl`` / ``.glb`` /
                 ``.usd`` -- anything ``trimesh.load`` accepts). Required and
                 only used when ``shape="mesh"``; the mesh is loaded via
@@ -878,6 +880,21 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # than reaching the error path it guards.
         if (name_err := entity_name_error("add_object", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
+
+        # ``is_static`` selects a posture, so it is checked rather than read by
+        # truthiness - the same domain the MuJoCo backend applies, so a spelling
+        # one backend refuses is refused by all of them. Every read of it here is
+        # a truthiness one, so ``"false"`` fixed a body asked to be dynamic and
+        # ``0`` was stored verbatim. ``None`` is the documented "unspecified"
+        # sentinel, resolved just below, so only a supplied value is graded.
+        if is_static is not None:
+            if err := self._validate_posture_flags("add_object", is_static=is_static):
+                return err
+            # Normalized to a plain ``bool`` now it is known to be one: the
+            # ``numpy`` boolean this domain accepts would otherwise land on
+            # :class:`SimObject.is_static`, which is annotated ``bool``, and
+            # render as ``np.True_`` in the agent-visible object listing.
+            is_static = bool(is_static)
 
         # ``None`` means the caller did not specify, per
         # :meth:`~strands_robots.simulation.base.SimEngine.add_object`. Newton

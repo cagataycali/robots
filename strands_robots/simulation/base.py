@@ -1234,6 +1234,17 @@ class SimEngine(ABC):
         would make restating that declared default a hard error for the one
         shape whose whole point is being static.
 
+        The two chosen values select a *posture* -- welded to the world, or a
+        free body the solver integrates -- so a supplied ``is_static`` is
+        checked rather than read by truthiness: anything that is neither a
+        boolean nor ``None`` is refused. Reading it by truthiness inverts both
+        halves. ``0`` is the same value as the ``False`` a backend may refuse
+        for a shape it forces static, so it reaches the quiet override that
+        refusal exists to prevent, and every non-empty string is truthy, so
+        ``"false"`` welds a body the caller asked to be dynamic and lands on
+        :class:`SimObject.is_static`, which is annotated ``bool`` and read by
+        ``list_objects``, the scene rebuild and domain randomization.
+
         ``material`` (optional): backend-specific visual material/texture
         spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
         that supports it (MuJoCo) attaches a real material so surfaces can be

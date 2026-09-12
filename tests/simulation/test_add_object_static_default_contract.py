@@ -364,3 +364,184 @@ class TestNoDeclaredDefaultDrifts:
                     )
         assert graded >= 10, f"premise: only {graded} shared defaults graded on {label}"
         assert not offenders, "; ".join(offenders)
+
+
+#: Falsy non-booleans. Each is a caller's spelling of "dynamic", and each is
+#: ``== False`` - ``0`` *is* the value the plane refusal answers, since
+#: ``int(False) == 0``. Pre-fix every one of them reached the quiet override the
+#: refusal beside it exists to prevent.
+FALSY_NON_BOOLEANS: tuple[Any, ...] = (0, 0.0, "", [], {})
+
+#: Truthy non-booleans, including the three spellings an operator reaches for to
+#: opt out. Pre-fix each welded a body the caller asked to be dynamic.
+TRUTHY_NON_BOOLEANS: tuple[Any, ...] = ("false", "no", "off", 1, [0])
+
+#: Every spelling that must keep behaving exactly as it did. ``None`` is the
+#: documented "unspecified" sentinel and the numpy booleans are part of the
+#: declared domain (:func:`~strands_robots.utils.boolean_flag_error` accepts
+#: them), so refusing any of these would be an over-refusal.
+HONORED_FLAGS: tuple[Any, ...] = (True, False, None)
+
+
+def _numpy_booleans() -> tuple[Any, ...]:
+    np = pytest.importorskip("numpy")
+    return (np.True_, np.False_)
+
+
+class TestASuppliedFlagIsCheckedNotReadByTruthiness:
+    """The refusal this file already pins must not depend on the spelling.
+
+    ``TestTheRefusalSurvives`` above pins that a plane handed an explicit
+    ``is_static=False`` is refused, and names silently overriding it as "the
+    obvious wrong fix... the caller would be told a dynamic plane was built and
+    get a static one". That refusal read the flag by IDENTITY (``is_static is
+    False``) while every other read of it was a truthiness one, so both halves
+    of the domain walked through:
+
+    * ``add_object(shape="plane", is_static=0)`` returned ``status="success"``
+      and registered a **static** plane - the same value as the ``False`` beside
+      it (``0 == False``), given the opposite verdict.
+    * ``add_object(shape="box", is_static="false")`` returned
+      ``status="success"`` having welded the body: no freejoint, and it fell
+      0.0 m in 400 steps where an explicit ``is_static=False`` fell 0.4751 m.
+      ``'false'`` was then stored on :class:`SimObject.is_static`, annotated
+      ``bool`` and read by ``list_objects``, the rebuild and randomization.
+    * ``is_static=np.False_`` - a value the flag domain *accepts* - also reached
+      the override, because ``np.False_ is False`` is ``False``.
+
+    A supplied flag is now graded on the shared posture domain and normalized to
+    a plain ``bool``, so the identity reads below it are sound.
+    """
+
+    @pytest.mark.parametrize("value", FALSY_NON_BOOLEANS)
+    def test_a_falsy_non_boolean_is_not_a_second_spelling_of_the_refused_false(self, sim, value):
+        """The headline: one value, one verdict, however it is written."""
+        result = sim.add_object(name="ground", shape="plane", position=[0.0, 0.0, 0.0], is_static=value)
+        assert result["status"] == "error", (value, result)
+        assert "ground" not in (sim._world.objects if sim._world else {})
+
+    def test_the_refused_false_and_its_falsy_spellings_agree(self, sim):
+        """``0 == False``, so the two calls ask the identical question."""
+        assert 0 == False  # noqa: E712 - the premise, stated as the code reads it
+        declared = sim.add_object(name="a", shape="plane", position=[0.0, 0.0, 0.0], is_static=False)
+        spelled = sim.add_object(name="b", shape="plane", position=[0.0, 0.0, 0.0], is_static=0)
+        assert declared["status"] == spelled["status"] == "error", (declared, spelled)
+
+    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
+    def test_a_truthy_non_boolean_does_not_weld_a_body_asked_to_be_dynamic(self, sim, value):
+        result = sim.add_object(name="crate", shape="box", position=[0.0, 0.0, 0.5], is_static=value)
+        assert result["status"] == "error", (value, result)
+        assert "crate" not in (sim._world.objects if sim._world else {})
+
+    def test_the_refusal_names_the_parameter_and_the_value_it_read(self, sim):
+        text = sim.add_object(name="crate", shape="box", position=[0.0, 0.0, 0.5], is_static="false")["content"][0][
+            "text"
+        ]
+        assert "is_static" in text and "'false'" in text, text
+
+    def test_the_two_postures_really_are_different_physics(self, sim):
+        """Non-vacuity: what the refusal protects is a different world.
+
+        Without this the cells above could pass on a backend where the flag
+        changed nothing at all.
+        """
+        mujoco = pytest.importorskip("mujoco")
+        assert sim.add_object(name="floor", shape="plane", position=[0.0, 0.0, 0.0])["status"] == "success"
+        assert (
+            sim.add_object(name="falling", shape="box", position=[0.3, 0.0, 0.5], size=[0.05] * 3, is_static=False)[
+                "status"
+            ]
+            == "success"
+        )
+        assert (
+            sim.add_object(name="welded", shape="box", position=[-0.3, 0.0, 0.5], size=[0.05] * 3, is_static=True)[
+                "status"
+            ]
+            == "success"
+        )
+        heights = {}
+        for name in ("falling", "welded"):
+            body = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
+            heights[name] = float(sim.mj_data.xpos[body][2])
+        sim.step(400)
+        for name in ("falling", "welded"):
+            body = mujoco.mj_name2id(sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, name)
+            heights[name] -= float(sim.mj_data.xpos[body][2])
+        assert heights["welded"] == 0.0, heights
+        assert heights["falling"] > 0.4, heights
+
+
+class TestNoDeclaredSpellingIsRefused:
+    """The over-refusal guard: these all pass pre-fix and must keep passing."""
+
+    @pytest.mark.parametrize("value", HONORED_FLAGS)
+    def test_a_box_honors_every_declared_spelling(self, sim, value):
+        result = sim.add_object(name="crate", shape="box", position=[0.0, 0.0, 0.4], is_static=value)
+        assert result["status"] == "success", (value, result)
+        stored = sim._world.objects["crate"].is_static
+        assert stored is bool(value), (value, stored)
+
+    def test_a_plane_still_takes_the_two_spellings_that_mean_static(self, sim):
+        for name, value in (("ground", None), ("wall", True)):
+            assert sim.add_object(name=name, shape="plane", position=[0.0, 0.0, 0.0], is_static=value)["status"] == (
+                "success"
+            )
+            assert sim._world.objects[name].is_static is True
+
+    @pytest.mark.parametrize("index", [0, 1])
+    def test_a_numpy_boolean_is_accepted_and_normalized(self, sim, index):
+        """Accepted by the domain, so it must be honored - and not stored raw.
+
+        Pre-fix ``np.False_`` slipped past the plane refusal (identity), and
+        ``np.True_`` was stored verbatim on a field annotated ``bool`` and
+        rendered as ``np.True_`` in the object listing an agent reads.
+        """
+        value = _numpy_booleans()[index]
+        result = sim.add_object(name="crate", shape="box", position=[0.0, 0.0, 0.4], is_static=value)
+        assert result["status"] == "success", (value, result)
+        stored = sim._world.objects["crate"].is_static
+        assert stored is bool(value), (value, stored)
+        assert type(stored) is bool, type(stored)
+
+    def test_a_numpy_false_reaches_the_plane_refusal_not_the_override(self, sim):
+        result = sim.add_object(name="ground", shape="plane", position=[0.0, 0.0, 0.0], is_static=_numpy_booleans()[1])
+        assert result["status"] == "error", result
+        assert "is_static=True" in result["content"][0]["text"], result
+
+
+class TestEveryBackendChecksTheSuppliedFlag:
+    """The domain must not diverge: a spelling one backend refuses, all refuse.
+
+    Newton and Isaac read the flag purely by truthiness, so ``"false"`` fixed a
+    body asked to be dynamic on both and ``0`` was stored verbatim. GL-free:
+    the guard runs before either method touches a solver or a stage.
+    """
+
+    @staticmethod
+    def _call(label: str, value: Any) -> tuple[dict[str, Any], Any]:
+        from tests.simulation.test_pose_vector_domain_across_backends import _isaac_stub, _newton_stub
+
+        if label == "newton":
+            from strands_robots.simulation.newton.simulation import NewtonSimEngine
+
+            stub = _newton_stub()
+            return NewtonSimEngine.add_object(stub, "crate", is_static=value), stub._world.objects
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        stub = _isaac_stub()
+        return IsaacSimulation.add_object(stub, "crate", is_static=value), stub._objects
+
+    @pytest.mark.parametrize("label", ["newton", "isaac"])
+    @pytest.mark.parametrize("value", FALSY_NON_BOOLEANS + TRUTHY_NON_BOOLEANS)
+    def test_a_non_boolean_is_refused_and_registers_nothing(self, label, value):
+        result, registry = self._call(label, value)
+        assert result["status"] == "error", (label, value, result)
+        assert "is_static" in result["content"][0]["text"], result
+        assert dict(registry) == {}, (label, value, registry)
+
+    @pytest.mark.parametrize("label", ["newton", "isaac"])
+    @pytest.mark.parametrize("value", HONORED_FLAGS)
+    def test_every_declared_spelling_is_still_honored(self, label, value):
+        result, registry = self._call(label, value)
+        assert result["status"] == "success", (label, value, result)
+        assert registry["crate"].is_static is bool(value), (label, value)

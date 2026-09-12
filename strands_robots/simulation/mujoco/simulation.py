@@ -3859,7 +3859,11 @@ class MuJoCoSimEngine(
                 means unspecified: ``shape="plane"`` resolves it to True, every
                 other shape to False. A plane cannot be dynamic, so an explicit
                 ``is_static=False`` there is refused rather than overridden --
-                which is why the default is ``None`` and not ``False``.
+                which is why the default is ``None`` and not ``False``. A
+                supplied value must be a boolean, because it selects a posture:
+                ``0`` is that same refused ``False`` and must not reach the
+                override instead of the refusal, and ``"false"`` reads as truthy
+                and would weld a body asked to be dynamic.
             mesh_path: Mesh asset path; required and only used when
                 ``shape="mesh"``. The asset defines the geom's extent, and
                 MuJoCo collides a mesh geom as its **convex hull** -- not as the
@@ -3935,6 +3939,26 @@ class MuJoCoSimEngine(
 
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+
+        # ``is_static`` selects a posture, so it is checked rather than read by
+        # truthiness. The resolution below tests it by IDENTITY and every later
+        # read is a truthiness one, so a non-boolean escaped both: ``0`` is the
+        # same value as the ``False`` the next branch refuses for a plane, yet
+        # it reached the silent override that branch exists to prevent, and
+        # ``"false"`` welded a body asked to be dynamic while storing that
+        # string on the record :class:`SimObject` annotates ``bool``. ``None``
+        # is the documented "unspecified" sentinel, resolved just below, so only
+        # a value the caller supplied is graded.
+        if is_static is not None:
+            if err := self._validate_posture_flags("add_object", is_static=is_static):
+                return err
+            # Normalized to a plain ``bool`` now it is known to be one. The
+            # resolution below tests by identity and ``np.False_ is False`` is
+            # False, so the numpy boolean this domain accepts reached the quiet
+            # override instead of its refusal; and a surviving ``np.True_`` would
+            # land on :class:`SimObject.is_static`, which is annotated ``bool``,
+            # and render as ``np.True_`` in the agent-visible listing.
+            is_static = bool(is_static)
 
         # planes are infinite and must be static.  Explicit
         # is_static=False for a plane is an error; None or True both
