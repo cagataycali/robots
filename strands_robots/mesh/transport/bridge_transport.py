@@ -51,6 +51,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.mesh.transport.iot_transport import _is_camera_ref
+
 if TYPE_CHECKING:
     from strands_robots.mesh.transport.iot_transport import IotMqttTransport
     from strands_robots.mesh.transport.zenoh_transport import ZenohTransport
@@ -214,8 +216,11 @@ def _should_bridge(
     # Camera S3-reference metadata (``camera/<cam>/ref``) is a small pointer to
     # an offloaded frame, not the frame itself. It must reach cloud subscribers
     # so they learn the S3 key, so it bridges regardless of the suffix filter
-    # (raw ``camera/<cam>`` frame topics still stay LAN-only).
-    if suffix.startswith("camera/") and suffix.endswith("/ref"):
+    # (raw ``camera/<cam>`` frame topics still stay LAN-only). The shape test is
+    # the transport's own, so the two legs cannot drift on which topics are
+    # pointers -- an exemption granted here but not there (or the reverse) is a
+    # frame on the WAN or a pointer that never arrives.
+    if _is_camera_ref(topic):
         return True
 
     # Exact match -- fast path.
