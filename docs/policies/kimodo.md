@@ -37,6 +37,12 @@ sim.run_policy(
 )
 ```
 
+The flag is a real boolean, not a spelling of one. A JSON `policy_config` that
+writes `"trust_remote_code": "false"` is refused at construction, naming the key
+and the value, rather than forwarded: `from_pretrained` reads the flag by
+truthiness and every non-empty string is truthy, so the string would have run
+the checkpoint's code for the caller who asked it not to.
+
 Weights are fetched from HuggingFace on first use under the NVIDIA Open Model
 License; nothing is bundled with `strands_robots`.
 

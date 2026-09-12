@@ -31,6 +31,20 @@ and it keeps the documented precedence: an explicit keyword beats a ``config=``
 base.  The three controls at the bottom pass before and after the fix, pinning
 that the coarse provider gate is untouched, that the dataclass route is
 undisturbed, and that a typo is still refused rather than swallowed.
+
+Reaching the flag is not the same as the flag carrying the decision.  The
+field was declared ``bool`` and checked nowhere - ``__post_init__`` validated
+every numeric knob, ``dtype``, ``model_id`` and ``seed`` around it - so a
+value arrived at ``from_pretrained`` as given, and diffusers reads it by
+truthiness.  Measured through ``build_policy_kwargs``, the route a JSON
+``policy_config`` travels: ``"false"``, ``"no"`` and ``"0"`` each reached the
+loader verbatim and truthy, so the caller who spelled the opt-out the way JSON
+invites had the checkpoint's code executed.  The flag selects a posture rather
+than scaling a quantity, so it is now checked with
+:func:`~strands_robots.utils.boolean_flag_error` in ``__post_init__`` - the one
+site every route re-validates through - and refused before any loader is
+built.  ``None`` on the policy keyword stays the documented "not supplied"
+sentinel: ``_resolve_config`` drops it before the dataclass sees it.
 """
 
 from __future__ import annotations
@@ -40,6 +54,7 @@ import sys
 import types
 from typing import Any
 
+import numpy as np
 import pytest
 
 from strands_robots.policies import UntrustedRemoteCodeError, create_policy
@@ -125,6 +140,71 @@ def test_the_caller_can_still_opt_in_to_running_repository_code(monkeypatch, loa
     policy = create_policy("kimodo", trust_remote_code=True, device="cpu")
 
     assert loader_kwargs(policy)["trust_remote_code"] is True
+
+
+TRUTHY_OPT_OUT_SPELLINGS = ["false", "no", "off", "0"]
+OTHER_NON_BOOLEAN = [1, 0, 1.0, "true", [], [1]]
+
+
+@pytest.mark.parametrize("spelling", TRUTHY_OPT_OUT_SPELLINGS)
+def test_a_truthy_spelling_of_the_opt_out_never_reaches_the_loader(monkeypatch, loader_kwargs, spelling):
+    """A ``policy_config`` that spells the refusal as a string is refused, not obeyed inverted.
+
+    Pre-fix this call constructed, and ``from_pretrained`` received the string
+    verbatim - truthy, so the checkpoint's code ran for the caller who asked it
+    not to. The refusal names the parameter and the value so a JSON author is
+    sent to the right key.
+    """
+    monkeypatch.setenv(_TRUST_ENV, "1")
+    forwarded = build_policy_kwargs("kimodo", trust_remote_code=spelling, device="cpu")
+
+    with pytest.raises(ValueError, match=r"trust_remote_code must be a boolean") as refused:
+        create_policy("kimodo", **forwarded)
+
+    assert repr(spelling) in str(refused.value)
+
+
+@pytest.mark.parametrize("value", OTHER_NON_BOOLEAN, ids=[repr(v) for v in OTHER_NON_BOOLEAN])
+def test_every_route_to_the_dataclass_applies_the_same_domain(value):
+    """Direct construction, ``from_dict`` and the policy keyword refuse identically.
+
+    The check lives in ``__post_init__`` because ``_resolve_config`` merges an
+    override back through the dataclass, so one site covers every route; this
+    pins that none of them bypasses it.
+    """
+    for route in (
+        lambda: KimodoConfig(trust_remote_code=value),
+        lambda: KimodoConfig.from_dict({"trust_remote_code": value}),
+        lambda: KimodoPolicy(trust_remote_code=value, device="cpu"),
+    ):
+        with pytest.raises(ValueError, match=r"KimodoConfig: trust_remote_code must be a boolean"):
+            route()
+
+
+@pytest.mark.parametrize("value", [True, False, np.bool_(True), np.bool_(False)], ids=repr)
+def test_a_boolean_is_stored_as_given(value):
+    """Control: the two declared spellings, Python or NumPy, are untouched."""
+    assert KimodoConfig(trust_remote_code=value).trust_remote_code is value
+
+
+def test_the_policy_keyword_none_still_means_not_supplied(loader_kwargs):
+    """Control: ``KimodoPolicy(trust_remote_code=None)`` keeps the documented sentinel.
+
+    ``None`` is dropped by ``_resolve_config`` before the dataclass sees it, so
+    the default ``False`` reaches the loader and the new check never fires on
+    the policy's own sentinel.
+    """
+    assert loader_kwargs(KimodoPolicy(trust_remote_code=None, device="cpu"))["trust_remote_code"] is False
+
+
+def test_the_remote_code_flag_is_refused_ahead_of_every_other_knob():
+    """A config that is wrong in two places names the security flag first.
+
+    The flag whose misread runs someone else's code is the one a caller must
+    not be sent past to fix a frame count.
+    """
+    with pytest.raises(ValueError, match=r"^KimodoConfig: trust_remote_code must be a boolean"):
+        KimodoConfig(trust_remote_code="false", num_frames=0)
 
 
 def test_every_config_field_is_reachable_through_a_keyword():
