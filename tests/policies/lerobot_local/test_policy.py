@@ -832,6 +832,61 @@ class TestBuildBatchFromLerobotFormat:
         assert batch["observation.cam1"].shape == (1, 3, 48, 64)
         assert float(batch["observation.cam1"].max()) == 1.0
 
+    def test_unlabeled_torch_uint8_image_normalized(self):
+        """A uint8 channel-last torch tensor is detected and scaled to [0, 1]."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        img = torch.full((48, 64, 3), 255, dtype=torch.uint8)
+        batch = policy._build_batch_from_lerobot_format({"observation.cam1": img}, {})
+        assert batch["observation.cam1"].shape == (1, 3, 48, 64)
+        assert batch["observation.cam1"].dtype == torch.float32
+        assert float(batch["observation.cam1"].max()) == 1.0
+
+    def test_uint8_frame_converts_the_same_as_numpy_or_torch(self):
+        """The same frame converts identically whether the caller pre-tensorized it.
+
+        A torch tensor is what a torch-native caller naturally holds; leaving it
+        as Byte reaches the model at 255x the numpy path's scale.
+        """
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        frame = np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3)
+        from_numpy = policy._build_batch_from_lerobot_format({"observation.images.c": frame}, {})
+        from_torch = policy._build_batch_from_lerobot_format(
+            {"observation.images.c": torch.from_numpy(frame.copy())}, {}
+        )
+        assert torch.equal(from_numpy["observation.images.c"], from_torch["observation.images.c"])
+
+    def test_torch_uint8_frame_matches_the_preprocess_path(self):
+        """This builder agrees with ``_canonicalize_obs_images`` on a uint8 frame.
+
+        The two run on opposite sides of one branch - this builder when no
+        processor pipeline is loaded, the canonicalizer when one is - so a caller
+        must not get a differently scaled image for setting ``use_processor``.
+        The frame is shaped so its leading dimension is not itself a plausible
+        channel count, which is the one case where the two layout heuristics
+        still differ and which this cell is not about.
+        """
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        img = torch.from_numpy(np.arange(48 * 64 * 3, dtype=np.uint8).reshape(48, 64, 3))
+        built = policy._build_batch_from_lerobot_format({"observation.images.c": img}, {})
+        canonical = policy._canonicalize_obs_images({"observation.images.c": img})
+        # The canonicalizer leaves batching to _fixup_preprocessed_batch.
+        assert torch.equal(built["observation.images.c"], canonical["observation.images.c"].unsqueeze(0))
+
+    def test_torch_float_image_is_not_rescaled(self):
+        """An already-scaled float frame passes through untouched (no second /255)."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        img = torch.full((4, 6, 3), 0.5, dtype=torch.float32)
+        batch = policy._build_batch_from_lerobot_format({"observation.images.c": img}, {})
+        assert float(batch["observation.images.c"].max()) == 0.5
+
+    def test_non_image_uint8_tensor_keeps_its_values(self):
+        """Only images are rescaled - a uint8 scalar/state entry is left alone."""
+        policy = _make_loaded_policy(state_dim=6, include_images=False)
+        batch = policy._build_batch_from_lerobot_format(
+            {"observation.gripper_ticks": torch.tensor([200], dtype=torch.uint8)}, {}
+        )
+        assert float(batch["observation.gripper_ticks"].max()) == 200.0
+
     def test_numeric_list_state_becomes_batched_tensor(self):
         """A 1D numeric list gains a batch dimension."""
         policy = _make_loaded_policy(state_dim=6, include_images=False)

@@ -2918,7 +2918,8 @@ class LerobotLocalPolicy(Policy):
         """Build batch from observation dict already in LeRobot format (observation.* keys).
 
         Converts each value to the appropriate tensor format:
-        - Images (HWC uint8) → CHW float32 [0, 1] with batch dim
+        - Images (HWC uint8) → CHW float32 [0, 1] with batch dim, for a
+          ``np.uint8`` array and a ``torch.uint8`` tensor alike
         - State vectors → float32 with batch dim
         - Scalars → float32 tensor with batch dim
 
@@ -2951,6 +2952,16 @@ class LerobotLocalPolicy(Policy):
                 # HWC → CHW: LeRobot expects channel-first image layout
                 if is_image and tensor.dim() == 3 and tensor.shape[-1] in (1, 3, 4):
                     tensor = tensor.permute(2, 0, 1)
+                # uint8 images are [0, 255] - normalize to float32 [0, 1], the
+                # same conversion the ndarray branch below and
+                # :meth:`_canonicalize_obs_images` apply. ``torch.uint8`` is the
+                # dtype signal for an unscaled frame exactly as ``np.uint8`` is,
+                # and without this the frame reaches the model as Byte: lerobot's
+                # image resize then raises "upsample_bilinear2d_out_frame not
+                # implemented for 'Byte'", which names neither the observation
+                # key nor the conversion the caller is missing.
+                if is_image and tensor.dtype == torch.uint8:
+                    tensor = tensor.float() / 255.0
                 # Add batch dimension (required by policy.select_action)
                 if is_image and tensor.dim() == 3:
                     tensor = tensor.unsqueeze(0)
