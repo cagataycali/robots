@@ -4457,7 +4457,14 @@ class MuJoCoSimEngine(
         mount points before placing a camera; robot bodies are namespaced
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
 
-        Validation: ``name`` must be a non-empty ``str`` containing no NUL, and
+        Validation: ``name`` must be a non-empty ``str`` containing no NUL; must
+        be a camera token (letters, digits, ``_`` or ``-``, opening on a letter
+        or a digit) optionally scoped to one robot as ``<robot>/<camera>``, which
+        is how a wrist camera is named on a namespaced robot
+        (:func:`~strands_robots.utils.scoped_camera_name_error` - the name is the
+        key the mesh topic, the S3 object key and the
+        ``observation.images.<name>`` dataset feature are built from, and each of
+        those reads other punctuation as structure); and
         must not be one of the free-camera routing tokens
         (:data:`~strands_robots.utils.FREE_CAMERA_TOKENS` - ``None``, ``""``,
         ``"default"``, ``"free"``). ``render``/``render_depth``/``get_frame``
@@ -4465,7 +4472,7 @@ class MuJoCoSimEngine(
         so a camera created under any of them could never be rendered from even
         though it is registered, compiled into the model and listed by
         ``list_cameras``; a non-string name is additionally not addressable
-        through the agent-tool surface. Both halves of the name rule come from
+        through the agent-tool surface. All three parts of the name rule come from
         the shared :func:`~strands_robots.utils.camera_name_error`, which every
         backend's ``add_camera`` reads, so the rule and its order are stated
         once: the name is judged BEFORE any value, because a reserved name is
