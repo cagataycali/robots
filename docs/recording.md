@@ -892,6 +892,22 @@ recording: a failed write is counted in `dropped_frame_count`, warned about at
 `WARNING` (on the 1st, 2nd, 4th, 8th ... failure so a 50 Hz loop cannot flood the
 log), and the rollout continues.
 
+`strict` must be a boolean - it selects a posture, so it is checked on the same
+domain as `use_videos` / `streaming_encoding` / `overwrite` rather than read by
+truthiness, and a value outside it is a `ValueError` from the constructor:
+
+```python
+DatasetRecorder(dataset=ds, strict=None)      # ValueError: strict must be a boolean
+DatasetRecorder(dataset=ds, strict="false")   # ValueError: strict must be a boolean
+```
+
+Read by truthiness these inverted in both directions. Every falsy non-boolean
+(`None`, `0`, `""`, `[]`) selected best-effort recording without ever being a
+declared spelling of it, so a run that lost a quarter of its frames completed and
+reported success; and every non-empty string is truthy, so `strict="false"` - the
+spelling reached for to opt out - selected fail-fast and then named `strict=True`
+in the message above whatever the caller wrote.
+
 ### An episode the recorder cannot flush stops a recorded evaluation
 
 `save_episode` is the episode-level counterpart, and a failed flush is worse than

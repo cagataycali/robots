@@ -42,6 +42,19 @@ The documented direct creation API was the one left reading them by truthiness,
 so the facade and the method it forwards to disagreed about which values are
 usable - the disagreement the ``fps`` guard in the same block exists to prevent.
 
+**The constructor was the fourth surface**, and this file used to scope it out on
+the argument that ``strict`` "fails toward *raising* - loud, and recoverable".
+That holds for the truthy half only. ``strict`` selects raise-vs-drop on a failed
+dataset write, and read by truthiness the *falsy* non-booleans select the drop:
+measured on ``51cbede7`` against a dataset whose every fourth write fails,
+``strict=None`` (also ``0``, ``0.0``, ``""``, ``[]``, ``{}``) wrote 75 of 100
+attempted frames, counted the other 25 in ``dropped_frame_count`` and let
+``save_episode`` complete - the short episode with re-timestamped frames that
+:class:`~strands_robots.dataset_recorder.RecordingFrameError`'s own docstring
+exists to prevent. The truthy half is not clean either: it selected fail-fast and
+then reported ``strict=True`` in the refusal text whatever the caller wrote, so
+``strict="false"`` raised a message naming the opposite of the value it was given.
+
 This is the posture half of that guard block; the numeric half is covered by
 ``tests/test_dataset_recorder_fps_domain.py`` (the rate) and
 ``tests/test_dataset_schema_column_names_distinct.py`` (the column names). The
@@ -70,13 +83,16 @@ from strands_robots.utils import boolean_flag_error
 # guard-placement tests read the module's own source, and one handle for one
 # module keeps that unambiguous.
 DatasetRecorder = recorder_mod.DatasetRecorder
+RecordingFrameError = recorder_mod.RecordingFrameError
 
-# The posture flags each creation entry point declares. Derived from the live
+# The posture flags each construction surface declares - the two classmethod
+# entry points and the constructor they both end at. Derived from the live
 # signatures in ``TestEveryDeclaredPostureFlagIsChecked`` rather than trusted
 # here, so a fourth flag added later is covered without an edit to this list.
 CREATION_FLAGS: dict[str, tuple[str, ...]] = {
     "create": ("use_videos", "streaming_encoding", "overwrite"),
     "resume": ("streaming_encoding",),
+    "__init__": ("strict",),
 }
 
 # Values that are not booleans. ``boolean_flag_error`` owns this domain - the
@@ -131,6 +147,43 @@ class _FakeLeRobotDataset:
         return cls({})
 
 
+#: The schema the direct constructor is fed. ``add_frame`` refuses a declared
+#: column the frame has no value for rather than writing 0.0, so the frame below
+#: names every column - what is under test is the write, not the schema.
+_JOINTS = ["j1", "j2"]
+_FEATURES: dict[str, Any] = {
+    "observation.state": {"dtype": "float32", "names": list(_JOINTS)},
+    "action": {"dtype": "float32", "names": list(_JOINTS)},
+}
+_FULL_FRAME: dict[str, Any] = dict.fromkeys(_JOINTS, 0.0)
+
+
+class _FlakyWriter:
+    """An open dataset whose write fails on every *fail_every*-th frame.
+
+    ``fail_every=0`` never fails, which is the writer for a construction-only
+    cell; ``1`` fails on the first frame, which is what makes the raise-vs-drop
+    posture observable in one call.
+    """
+
+    def __init__(self, *, fail_every: int) -> None:
+        self.repo_id = "local/flaky"
+        self.root = "/tmp/local-flaky"
+        self.features = _FEATURES
+        self.fail_every = fail_every
+        self.attempts = 0
+        self.written = 0
+
+    def add_frame(self, frame: dict[str, Any]) -> None:
+        self.attempts += 1
+        if self.fail_every and self.attempts % self.fail_every == 0:
+            raise RuntimeError(f"transient dataset write failure at frame {self.attempts}")
+        self.written += 1
+
+    def save_episode(self) -> None:
+        return None
+
+
 def _create(**kwargs: Any) -> DatasetRecorder:
     """Call ``create`` with keywords the ``bool`` annotations disallow.
 
@@ -145,6 +198,11 @@ def _create(**kwargs: Any) -> DatasetRecorder:
 def _resume(**kwargs: Any) -> DatasetRecorder:
     """``resume`` counterpart of :func:`_create`."""
     return DatasetRecorder.resume(**kwargs)
+
+
+def _recorder(**kwargs: Any) -> DatasetRecorder:
+    """Constructor counterpart of :func:`_create`, for the same reason."""
+    return DatasetRecorder(**kwargs)
 
 
 def _existing_dataset(root: Path, *, episodes: int = 1, frames: int = 4) -> Path:
@@ -501,18 +559,68 @@ class TestNeighbouringSurfacesStayOutOfScope:
         bucket = _flags_checked_by(source, "sync_dataset_to_bucket")
         assert {"create", "private", "delete"} <= bucket, sorted(bucket)
 
-    def test_strict_fails_loudly_rather_than_silently(self) -> None:
-        """``__init__``'s flag is out of scope, and this records why.
-
-        ``strict`` selects raise-vs-drop on a malformed frame, so a truthy
-        non-boolean fails toward *raising* - loud, and recoverable. It is not the
-        silent-inversion case the creation flags are, and it is still declared, so
-        this pins the boundary rather than the behaviour.
-        """
-        assert inspect.signature(DatasetRecorder.__init__).parameters["strict"].annotation in (bool, "bool")
-        source = Path(inspect.getfile(DatasetRecorder)).read_text(encoding="utf-8")
-        assert _flags_checked_by(source, "__init__") == set()
-
     def test_resume_declares_no_rate_of_its_own(self) -> None:
         """``resume`` inherits the schema from disk, so it has no ``fps`` flag."""
         assert "fps" not in inspect.signature(DatasetRecorder.resume).parameters
+
+
+class TestStrictNoLongerDecidesFrameLossByTruthiness:
+    """The constructor's flag: a value that is not a boolean must not drop frames.
+
+    The correction this file's docstring records. ``strict`` was scoped out here
+    because a truthy non-boolean fails toward raising, which is loud; the falsy
+    half fails toward the drop, which is the silent inversion, and it is the half
+    that reaches disk. ``save_episode`` completes either way, so the truncation
+    is only visible to a caller who reads ``dropped_frame_count`` - which is the
+    counter the opt-in they never wrote would have told them to read.
+    """
+
+    def test_a_falsy_non_boolean_no_longer_drops_a_frame_it_was_never_told_to_drop(self) -> None:
+        """The measured consequence: 100 attempted frames, 75 on disk, no raise."""
+        dataset = _FlakyWriter(fail_every=4)
+        with pytest.raises(ValueError, match="strict must be a boolean"):
+            _recorder(dataset=dataset, task="probe", strict=None)
+        assert dataset.attempts == 0, "a refused recorder still reached the dataset"
+
+    @pytest.mark.parametrize(
+        ("label", "value"),
+        UNHONORABLE,
+        ids=[lbl for lbl, _ in UNHONORABLE],
+    )
+    def test_no_unhonorable_value_builds_a_recorder(self, label: str, value: Any) -> None:
+        """Both halves of the domain, refused by the name the caller wrote."""
+        with pytest.raises(ValueError) as excinfo:
+            _recorder(dataset=_FlakyWriter(fail_every=0), strict=value)
+        assert str(excinfo.value) == boolean_flag_error(value, "strict", "DatasetRecorder")
+
+    def test_the_refusal_leaves_a_renderable_instance(self) -> None:
+        """The constructor raises before it assigns, so ``repr`` must survive.
+
+        The contract ``tests/test_repr_survives_partial_construction.py`` owns,
+        pinned here for the frame this guard raises in: a reader chasing the
+        ``strict`` refusal must not be sent after a missing attribute instead.
+        """
+        half_built = DatasetRecorder.__new__(DatasetRecorder)
+        rendered = repr(half_built)
+        assert "DatasetRecorder" in rendered
+        assert "AttributeError" not in rendered
+
+    @pytest.mark.parametrize(("label", "value"), HONORABLE, ids=[lbl for lbl, _ in HONORABLE])
+    def test_a_boolean_is_stored_as_given(self, label: str, value: bool) -> None:
+        """Control: checked, not converted - the value the caller passed."""
+        recorder = _recorder(dataset=_FlakyWriter(fail_every=0), strict=value)
+        assert recorder.strict is value
+
+    def test_strict_true_still_raises_on_a_failed_write(self) -> None:
+        """Control: the documented fail-fast posture is unchanged."""
+        recorder = DatasetRecorder(dataset=_FlakyWriter(fail_every=1), task="t", strict=True)
+        with pytest.raises(RecordingFrameError, match="strict=True"):
+            recorder.add_frame(_FULL_FRAME, _FULL_FRAME)
+        assert recorder.dropped_frame_count == 0
+
+    def test_strict_false_still_drops_counts_and_completes(self) -> None:
+        """Control: the documented best-effort posture is unchanged."""
+        recorder = DatasetRecorder(dataset=_FlakyWriter(fail_every=1), task="t", strict=False)
+        recorder.add_frame(_FULL_FRAME, _FULL_FRAME)
+        assert recorder.dropped_frame_count == 1
+        assert recorder.frame_count == 0

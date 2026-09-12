@@ -925,6 +925,35 @@ class DatasetRecorder:
         strict: bool = True,
         camera_key_map: dict[str, str] | None = None,
     ):
+        """Wrap an open LeRobotDataset writer.
+
+        Args:
+            dataset: An open ``LeRobotDataset`` accepting ``add_frame``. Built by
+                :meth:`create` or reopened by :meth:`resume`; a plain
+                ``LeRobotDataset(...)`` is read-only and its ``add_frame``
+                raises.
+            task: Default task description for frames that name none of their
+                own. The bottom of the three-level chain :meth:`add_frame`
+                documents.
+            strict: Whether a failed dataset write raises
+                :class:`RecordingFrameError` (the default) or is counted in
+                ``dropped_frame_count`` and logged. A posture rather than a
+                quantity, so it is held to the domain the rest of this module
+                applies to its flags
+                (:func:`~strands_robots.utils.boolean_flag_error`).
+            camera_key_map: Optional remap of observed camera stream names to
+                the declared schema names, in either bare or fully-qualified
+                spelling (see :meth:`create`).
+
+        Raises:
+            ValueError: ``strict`` is not a boolean. Refused rather than read by
+                truthiness: a falsy non-boolean selected best-effort recording,
+                which drops frames and completes, and a truthy one selected
+                fail-fast and then named ``strict=True`` in the refusal text
+                whatever the caller wrote.
+        """
+        if text := boolean_flag_error(strict, "strict", "DatasetRecorder"):
+            raise ValueError(text)
         self.dataset = dataset
         self.default_task = task
         self.frame_count = 0
