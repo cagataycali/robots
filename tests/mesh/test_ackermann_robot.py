@@ -390,6 +390,57 @@ def test_drive_short_duration_still_gets_trailing_zero(rec: _Recorder) -> None:
     assert rec.calls[1]["fields"] == {"angle": 0.0, "throttle": 0.0}
 
 
+#: ``(drive kwargs, the phrase the refusal must carry)`` for every command the
+#: rest mapping replaces. Each of these previously reached the servo topic as
+#: ``{"angle": 0.0, "throttle": 0.0}`` - byte for byte the stop message - under
+#: ``status="success"``. The rotate-in-place rows are what an agent actually
+#: writes, since the drive tool's own description states the car "cannot turn in
+#: place" while the call accepted it anyway; the sub-epsilon rows are the same
+#: substitution reached from the other side, a speed under the platform's floor.
+_REST_SUBSTITUTIONS: list[tuple[dict[str, Any], str]] = [
+    ({"linear": 0.0, "angular": 1.0}, "cannot turn in place"),
+    ({"linear": 0.0, "angular": -2.5, "duration": 1.0}, "cannot turn in place"),
+    ({"linear": 5e-4, "angular": 1.0}, "cannot turn in place"),
+    ({"linear": 5e-4, "angular": 0.0}, "below the rest threshold"),
+    ({"linear": -5e-4}, "below the rest threshold"),
+]
+
+
+@pytest.mark.parametrize(("kwargs", "expected"), _REST_SUBSTITUTIONS)
+def test_drive_refuses_a_command_the_rest_mapping_would_replace(
+    rec: _Recorder, kwargs: dict[str, Any], expected: str
+) -> None:
+    """A command that maps to rest is refused, not published as a halt.
+
+    ``_twist_to_servo`` sends every sub-epsilon speed to ``(0.0, 0.0)``, which is
+    the correct conversion - the platform cannot yaw at rest. It is not a correct
+    *answer*: the zero pair is what ``stop()`` publishes, so a rotate-in-place
+    request and a halt left byte-identical, and the caller was told ``success``
+    for a heading change that never happened.
+    """
+    car = _car(init_services=_HANDSHAKE)
+    result = car.drive(**kwargs)
+    assert result["status"] == "error"
+    assert expected in result["content"][0]["text"]
+    # Refused ahead of the handshake, like every other domain refusal here: an
+    # unexecutable request must not be what switches the car into manual mode.
+    assert rec.calls == []
+
+
+def test_drive_still_accepts_the_commands_the_geometry_can_execute(rec: _Recorder) -> None:
+    """The refusal narrows nothing: rest itself, and any yaw with speed, still go out.
+
+    ``drive(0, 0)`` maps to the zero pair because it *asked* for rest, and an arc
+    is a yaw the bicycle model can convert, so both keep reaching the wire.
+    """
+    car = _car()
+    assert car.drive(linear=0.0, angular=0.0)["status"] == "success"
+    assert car.drive(linear=1.0, angular=1.0)["status"] == "success"
+    assert [call["fields"] for call in rec.calls][0] == {"angle": 0.0, "throttle": 0.0}
+    turn = rec.calls[1]["fields"]
+    assert turn["throttle"] > 0 and turn["angle"] > 0
+
+
 def test_drive_overlong_duration_rejected_before_enable(rec: _Recorder) -> None:
     # Validation precedes side effects: an invalid request must not switch the
     # car into manual mode.

@@ -272,7 +272,13 @@ are clamped to `max_speed`; holds longer
 than `max_duration` are rejected loudly rather than silently truncated. The
 `linear`/`angular`/`duration`/`count` values themselves are checked against the
 same shared domains the differential-drive bridges use, so an unusable value is
-refused with identical text on every transport. The
+refused with identical text on every transport. A pair the steering geometry
+cannot execute is refused for the same reason: below the rest threshold
+(1e-3 m/s) the bicycle model maps any command to the zero servo pair, so
+`drive(linear=0.0, angular=1.0)` - a rotate in place, which this platform cannot
+do - would otherwise leave as byte-identical to `stop()` and report success for a
+heading change that never happened. Give a turn a linear speed to travel at, or
+call `stop()`; `drive(0, 0)` still means rest, because that is what it asked for. The
 stock platform publishes no odometry, so there is deliberately no
 `get_pose`.
 

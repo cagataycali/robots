@@ -114,6 +114,59 @@ def _twist_to_servo(
     return (delta / max_steering_rad, throttle)
 
 
+def _rest_command_error(linear: float, angular: float, context: str) -> str | None:
+    """Report why a command maps to rest although it did not ask for rest, or ``None``.
+
+    :func:`_twist_to_servo` maps every ``abs(linear) < _REST_VELOCITY_EPS`` onto
+    ``(0.0, 0.0)``, which is the right conversion - a stock Ackermann platform
+    steers its front wheels and cannot yaw about its own axis, and ``atan2``
+    near ``v = 0`` would amplify noise into hard steering. What it cannot decide
+    is whether the caller meant that. A ``drive(linear=0.0, angular=1.0)`` leaves
+    on the wire as the same zero servo pair a stop uses, so a rotate-in-place
+    request and a halt are indistinguishable to the vehicle and to the caller,
+    who is told ``success`` for a heading change that never happened and plans
+    the next leg from a pose the car is not in.
+
+    The threshold is read from :data:`_REST_VELOCITY_EPS` rather than restated,
+    so the door and the conversion cannot come to disagree about what rest is.
+    This is :func:`~strands_robots.drivers.earthrover.drive_axis_error`'s
+    disposition - a velocity has no endpoint to land on, so it is refused by name
+    rather than substituted - applied at the other end of the range, and the rule
+    :meth:`~strands_robots.mesh._mobile_base.MobileBaseRobot.drive` already states
+    for ``count=0``: a request that commands nothing must not report success.
+
+    Args:
+        linear: The requested body-frame linear velocity in m/s, already known
+            finite.
+        angular: The requested body-frame yaw rate in rad/s, already known
+            finite.
+        context: Calling surface to quote in the reason.
+
+    Returns:
+        A reason naming the threshold and what to send instead, or ``None`` when
+        the command is executable - including the all-zero command, which is a
+        halt and means exactly what it maps to.
+    """
+    if abs(float(linear)) >= _REST_VELOCITY_EPS:
+        return None
+    if float(angular):
+        return (
+            f"{context}: angular={float(angular)} rad/s asks the car to yaw, but linear="
+            f"{float(linear)} m/s is below the rest threshold {_REST_VELOCITY_EPS} m/s - an "
+            "Ackermann platform steers its front wheels and cannot turn in place, so this "
+            "would go on the wire as the same zero servo pair a stop uses. Give the turn a "
+            "linear speed to travel at, or call stop() to hold the car still."
+        )
+    if float(linear):
+        return (
+            f"{context}: linear={float(linear)} m/s is below the rest threshold "
+            f"{_REST_VELOCITY_EPS} m/s, so it maps to the same zero servo pair a stop uses "
+            "and the car would not move. Command at least that speed, or call stop() to hold "
+            "the car still."
+        )
+    return None
+
+
 class AckermannRosRobot:
     """An Ackermann-steering ROS 2 car exposed as a strands-controllable robot.
 
@@ -274,8 +327,11 @@ class AckermannRosRobot:
         ``round(duration * publish_rate)`` messages, takes precedence over
         ``count``). Validation runs before any side effect, in order: inputs
         must be finite, ``duration`` (when given) must be a positive finite
-        number within ``max_duration``, and only then does the vehicle's
-        ``init_services`` handshake run (automatically, before the first
+        number within ``max_duration``, the pair must name a motion the steering
+        geometry can execute - a yaw asked for at rest is refused, because this
+        platform cannot turn in place and the conversion would otherwise publish
+        it as the same zero servo pair a stop uses - and only then does the
+        vehicle's ``init_services`` handshake run (automatically, before the first
         command; a failed handshake aborts the drive). Every timed or
         multi-message non-zero command is followed by a single zero servo
         message - even if the main publish failed - so it can never leave the
@@ -314,6 +370,11 @@ class AckermannRosRobot:
                 f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
                 "- issue shorter commands instead of one long hold"
             )
+        # Ordered with the other refusals, ahead of the handshake: a command the
+        # kinematics cannot execute must not be what switches the car into a
+        # commandable state, and it must not be published as a halt either.
+        if rest_err := _rest_command_error(linear, angular, "drive"):
+            return self._error(rest_err)
         if not self._enabled and self.init_services:
             enabled = self.enable(tool_context=tool_context)
             if enabled.get("status") != "success":
