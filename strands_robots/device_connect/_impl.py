@@ -279,16 +279,18 @@ def init_device_connect_sync(
     The runtime stays alive as long as the process (daemon thread).
 
     That outliving is the *successful* outcome, and it is the only one with
-    something to serve. A bring-up that raised built no runtime, so the loop and
-    the thread are unreachable from the caller: the pair is adopted onto the
-    runtime below, on the success path only. Parking that thread in
+    something to serve. A bring-up that produced no runtime -- because it raised,
+    or because it finished without returning one -- left the loop and the thread
+    unreachable from the caller: the pair is adopted onto the runtime below, on
+    the success path only. Parking that thread in
     ``run_forever`` anyway left an idle loop -- and the epoll and self-pipe
     descriptors it holds -- alive for the life of the process, once per failed
     attempt, so a caller retrying an unreachable broker accumulated one parked
     thread and three descriptors per try with no way to reach any of them. The
-    bring-up thread therefore closes its own loop and returns when the bring-up
-    failed, and this call waits :data:`~strands_robots.device_connect._LOOP_JOIN_TIMEOUT_S`
-    for it, so the failure the caller is handed also means the machinery is gone.
+    bring-up thread therefore closes its own loop and returns whenever the
+    holder is empty, and this call waits
+    :data:`~strands_robots.device_connect._LOOP_JOIN_TIMEOUT_S` for it, so the
+    failure the caller is handed also means the machinery is gone.
 
     Same parameters as :func:`init_device_connect`.
 
@@ -299,6 +301,9 @@ def init_device_connect_sync(
         TimeoutError: If the bring-up does not finish within the wrapper's
             budget. The runtime is not returned in that case, so the caller
             is never handed ``None`` in place of a ``DeviceRuntime``.
+        RuntimeError: If the bring-up finished without returning a runtime.
+            Nothing came up, so this is a failed bring-up like any other, and
+            it is reported as one rather than returned as an empty success.
     """
     loop = asyncio.new_event_loop()
     ready = threading.Event()
@@ -331,12 +336,15 @@ def init_device_connect_sync(
     def _run():
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_start())
-        if error_holder[0] is not None:
-            # A failed bring-up has nothing to serve, and the caller never
-            # receives this loop (it is adopted onto the runtime below, which
-            # does not exist on this path). Release it here rather than
-            # cross-thread: this is the thread that owns the loop, so the close
-            # cannot race a runner, and there is no window in which a stop
+        if runtime_holder[0] is None:
+            # No runtime came up, so nothing will ever be served on this loop,
+            # and the caller never receives it either (it is adopted onto the
+            # runtime below, which does not exist on this path). The gate is the
+            # holder rather than the recorded exception because a bring-up can
+            # leave the holder empty without raising, and that route has exactly
+            # as little to serve as the one that raised. Release it here rather
+            # than cross-thread: this is the thread that owns the loop, so the
+            # close cannot race a runner, and there is no window in which a stop
             # scheduled from outside is consumed by the ``run_until_complete``
             # above and leaves ``run_forever`` running with no one left to stop
             # it. Returning also retires the thread.
@@ -357,24 +365,30 @@ def init_device_connect_sync(
     _timeout = _pkg._INIT_TIMEOUT_S
     started = ready.wait(timeout=_timeout)
 
-    # The recorded failure first: ``_start``'s ``finally`` sets the event on both
-    # paths, so a bring-up that failed inside the budget arrives with ``started``
-    # true and its own exception, which names the cause better than the budget.
-    if error_holder[0] is not None:
-        # ``_run`` closes the loop and returns on this path; wait for it so the
-        # exception below is handed over an already-released loop rather than
-        # one closing behind the caller's back. A thread that outlasts the
-        # budget is reported rather than raised over: the caller's failure is
-        # the bring-up's own exception, which names the cause better than a
-        # slow release, and hiding it behind this one would lose it.
+    def _await_release() -> None:
+        """Wait for the bring-up thread to release the loop it owns.
+
+        ``_run`` closes the loop and returns whenever no runtime came up, so
+        waiting here means the failure the caller is handed is over an
+        already-released loop rather than one closing behind its back. A thread
+        that outlasts the budget is reported rather than raised over: the
+        caller's failure names the cause better than a slow release, and hiding
+        it behind this one would lose it.
+        """
         thread.join(timeout=_pkg._LOOP_JOIN_TIMEOUT_S)
         if thread.is_alive():
             logger.warning(
                 "init_device_connect_sync: the bring-up thread did not return within "
-                "%.1fs of a failed bring-up, so the loop it ran on is still open; "
-                "a callback from the partial bring-up is still running on it.",
+                "%.1fs of a bring-up that produced no runtime, so the loop it ran on is "
+                "still open; a callback from the partial bring-up is still running on it.",
                 _pkg._LOOP_JOIN_TIMEOUT_S,
             )
+
+    # The recorded failure first: ``_start``'s ``finally`` sets the event on both
+    # paths, so a bring-up that failed inside the budget arrives with ``started``
+    # true and its own exception, which names the cause better than the budget.
+    if error_holder[0] is not None:
+        _await_release()
         raise error_holder[0]
     if not started:
         raise TimeoutError(
@@ -384,9 +398,21 @@ def init_device_connect_sync(
         )
 
     runtime = runtime_holder[0]
-    if runtime is not None:
-        runtime._loop = loop
-        runtime._thread = thread
+    if runtime is None:
+        # A bring-up that finished without building a runtime is a failed
+        # bring-up: this call promises a ``DeviceRuntime``, and handing back the
+        # empty holder instead is the one outcome a caller cannot act on -- the
+        # foreground runner's status line reports "see the warning above" for a
+        # missing runtime, and on this route nothing logged one.
+        _await_release()
+        raise RuntimeError(
+            "init_device_connect_sync: the Device Connect bring-up finished without "
+            "returning a runtime, so there is nothing to serve. init_device_connect "
+            "returns the runtime it started; a substitute standing in for it must do "
+            "the same."
+        )
+    runtime._loop = loop
+    runtime._thread = thread
     return runtime
 
 
