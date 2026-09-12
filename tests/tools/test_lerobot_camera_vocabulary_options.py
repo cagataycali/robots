@@ -272,6 +272,12 @@ class TestOnlyTheOptionsAnActionReadsAreValidated:
         replaced - it becomes the saved file's extension and OpenCV writes it if it
         can - so narrowing it to the three names the docstring lists would refuse
         working requests. Its failure mode is loud, not silent.
+
+        The inline copy is the other half of that result and is not a vocabulary
+        question: the Converse API carries a fixed set of encodings, so a format
+        it cannot carry is re-encoded rather than refused. What that re-encode may
+        not do is discard pixels - see
+        ``test_only_a_jpeg_request_is_answered_with_lossy_pixels``.
         """
         result = _call(action="capture", camera_id=0, save_path=str(tmp_path), format="tiff")
 

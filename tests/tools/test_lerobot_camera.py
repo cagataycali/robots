@@ -92,16 +92,62 @@ def test_actions_requiring_camera_id_error_without_it(action: str) -> None:
 # --- _frame_to_image_content (pure helper) --------------------------------
 
 
-@pytest.mark.parametrize(
-    "fmt,expected",
-    [("jpg", "jpeg"), ("jpeg", "jpeg"), ("png", "png"), ("bmp", "jpeg")],
-)
+# The inline copy's encoding, per requested format. JPEG is the answer to a JPEG
+# request and to nothing else: every other spelling names a container the caller
+# chose to keep the frame in, and the encoding used to be a lossy default for all
+# of them - ``"bmp"`` is one of the three the tool's docstring lists. ``"PNG"``
+# covers the case-insensitive comparison, ``"tiff"``/``"webp"``/``"gif"`` the
+# spellings OpenCV writes to disk but the Converse API cannot carry.
+INLINE_ENCODINGS = [
+    ("jpg", "jpeg"),
+    ("jpeg", "jpeg"),
+    ("JPG", "jpeg"),
+    ("png", "png"),
+    ("PNG", "png"),
+    ("bmp", "png"),
+    ("tiff", "png"),
+    ("webp", "png"),
+    ("gif", "png"),
+]
+
+
+@pytest.mark.parametrize("fmt,expected", INLINE_ENCODINGS)
 def test_frame_to_image_content_formats(fmt: str, expected: str) -> None:
     frame = np.zeros((4, 4, 3), dtype=np.uint8)
     content = cam_mod._frame_to_image_content(frame, fmt)
     assert content["image"]["format"] == expected
     assert isinstance(content["image"]["source"]["bytes"], bytes)
     assert content["image"]["source"]["bytes"]
+
+
+@pytest.mark.parametrize("fmt,expected", INLINE_ENCODINGS)
+def test_only_a_jpeg_request_is_answered_with_lossy_pixels(fmt: str, expected: str) -> None:
+    """The bytes handed back must be the frame's own pixels unless JPEG was asked for.
+
+    The declared format above says what the copy claims to be; this says what it
+    carries. A frame with a gradient and one odd pixel is the discriminator: PNG
+    round-trips it exactly, and JPEG's block transform does not, so the assertion
+    is on the decoded pixels rather than on the codec's name.
+    """
+    frame = np.zeros((8, 8, 3), dtype=np.uint8)
+    frame[:, :4] = (255, 0, 0)
+    frame[:, 4:] = (0, 0, 255)
+    frame[0, 0] = (17, 200, 99)
+
+    content = cam_mod._frame_to_image_content(frame, fmt)
+    decoded = cam_mod.cv2.imdecode(
+        np.frombuffer(content["image"]["source"]["bytes"], dtype=np.uint8), cam_mod.cv2.IMREAD_COLOR
+    )
+    assert decoded is not None, f"format={fmt!r} produced bytes no decoder accepts"
+    round_tripped = cam_mod.cv2.cvtColor(decoded, cam_mod.cv2.COLOR_BGR2RGB)
+
+    if expected == "jpeg":
+        assert not np.array_equal(round_tripped, frame), "a JPEG request is the one lossy answer"
+    else:
+        assert np.array_equal(round_tripped, frame), (
+            f"format={fmt!r} lost pixels: max difference "
+            f"{int(np.abs(round_tripped.astype(int) - frame.astype(int)).max())} of 255"
+        )
 
 
 def test_frame_to_image_content_handles_encode_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -497,14 +543,6 @@ def test_create_camera_realsense_uses_real_config_dataclass_field() -> None:
 
 
 # --- frame encoding failure -------------------------------------------------
-
-
-def test_frame_to_image_content_unknown_format_defaults_to_jpeg() -> None:
-    """An unrecognised format string falls back to JPEG encoding rather than
-    erroring."""
-    frame = np.zeros((4, 4, 3), dtype=np.uint8)
-    content = cam_mod._frame_to_image_content(frame, "tiff")
-    assert content["image"]["format"] == "jpeg"
 
 
 def test_create_camera_opencv_maps_color_mode_and_rotation(monkeypatch: pytest.MonkeyPatch) -> None:

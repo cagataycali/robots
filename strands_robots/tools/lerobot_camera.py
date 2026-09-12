@@ -84,8 +84,42 @@ REALSENSE_SDK_ABSENT = (
 logger = logging.getLogger(__name__)
 
 
+#: The ``format`` spellings whose inline copy is encoded as JPEG. Every other
+#: spelling gets PNG - see :func:`_frame_to_image_content` for why the set is
+#: this way round rather than a default.
+_INLINE_JPEG_FORMATS: frozenset[str] = frozenset({"jpg", "jpeg"})
+
+
 def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> dict[str, Any]:
-    """Convert a numpy frame to image content format for Converse API."""
+    """Encode *frame* as Converse-API image content, keeping its pixels.
+
+    The Converse API carries a fixed set of encodings, so a capture saved in a
+    container it does not accept still has to be re-encoded for the inline copy.
+    The only thing that decision can cost is pixels, so JPEG is used when - and
+    only when - a JPEG was asked for; every other spelling is carried as PNG,
+    which is lossless and which the API accepts.
+
+    Reading it the other way round, as a default, made the lossy codec the
+    answer to every spelling the branch did not name. Measured on ``20a7ea49``
+    against a captured 8x6 frame, ``format="bmp"`` - one of the three the tool's
+    own docstring lists - wrote a real BMP to disk and handed back a JPEG whose
+    pixels differ from the frame by up to 213 of 255, under ``status="success"``
+    and an "Image Capture Success!" summary that says nothing about it. A caller
+    selects a lossless container precisely so that the frame survives, and the
+    half of the result a model actually looks at was the half that discarded it.
+    ``format="tiff"``, ``"webp"`` and ``"gif"`` reached the same fallback.
+
+    ``format="jpg"`` and ``format="png"`` are unchanged, which is every spelling
+    the fallback was not answering.
+
+    Args:
+        frame: The captured frame, RGB (or any shape OpenCV can encode as-is).
+        format: The caller's requested image format, compared case-insensitively.
+
+    Returns:
+        Converse image content, or text content naming the failure when the
+        frame cannot be encoded at all.
+    """
     try:
         # Convert RGB to BGR for OpenCV encoding
         if len(frame.shape) == 3 and frame.shape[2] == 3:
@@ -93,16 +127,12 @@ def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> dict[str,
         else:
             bgr_frame = frame
 
-        # Encode frame to specified format
-        if format.lower() in ["jpg", "jpeg"]:
+        if format.lower() in _INLINE_JPEG_FORMATS:
             success, encoded_img = cv2.imencode(".jpg", bgr_frame)
             image_format = "jpeg"
-        elif format.lower() == "png":
+        else:
             success, encoded_img = cv2.imencode(".png", bgr_frame)
             image_format = "png"
-        else:
-            success, encoded_img = cv2.imencode(".jpg", bgr_frame)  # Default to JPEG
-            image_format = "jpeg"
 
         if not success:
             raise ValueError("Failed to encode frame")
@@ -537,7 +567,10 @@ def lerobot_camera(
             refused rather than silently read as "NO_ROTATION".
         format: Image format ("jpg", "png", "bmp"). Becomes the saved file's
             extension, so like filename it is resolved inside save_path and
-            refused if it names a location outside it.
+            refused if it names a location outside it. The image returned
+            alongside the file is encoded as JPEG only for a JPEG request; any
+            other format is carried back losslessly as PNG, so the inline copy
+            has the frame's own pixels.
         capture_duration: Duration for video recording (positive seconds)
         preview_duration: Duration for preview display (positive seconds)
         async_mode: Use async reading for better performance. A boolean; it
