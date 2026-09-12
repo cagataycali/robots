@@ -278,6 +278,18 @@ def init_device_connect_sync(
     returns immediately - matching the Zenoh mesh ``init_mesh()`` pattern.
     The runtime stays alive as long as the process (daemon thread).
 
+    That outliving is the *successful* outcome, and it is the only one with
+    something to serve. A bring-up that raised built no runtime, so the loop and
+    the thread are unreachable from the caller: the pair is adopted onto the
+    runtime below, on the success path only. Parking that thread in
+    ``run_forever`` anyway left an idle loop -- and the epoll and self-pipe
+    descriptors it holds -- alive for the life of the process, once per failed
+    attempt, so a caller retrying an unreachable broker accumulated one parked
+    thread and three descriptors per try with no way to reach any of them. The
+    bring-up thread therefore closes its own loop and returns when the bring-up
+    failed, and this call waits :data:`~strands_robots.device_connect._LOOP_JOIN_TIMEOUT_S`
+    for it, so the failure the caller is handed also means the machinery is gone.
+
     Same parameters as :func:`init_device_connect`.
 
     Raises:
@@ -319,6 +331,17 @@ def init_device_connect_sync(
     def _run():
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_start())
+        if error_holder[0] is not None:
+            # A failed bring-up has nothing to serve, and the caller never
+            # receives this loop (it is adopted onto the runtime below, which
+            # does not exist on this path). Release it here rather than
+            # cross-thread: this is the thread that owns the loop, so the close
+            # cannot race a runner, and there is no window in which a stop
+            # scheduled from outside is consumed by the ``run_until_complete``
+            # above and leaves ``run_forever`` running with no one left to stop
+            # it. Returning also retires the thread.
+            loop.close()
+            return
         loop.run_forever()
 
     thread = threading.Thread(target=_run, daemon=True, name="device-connect-runtime")
@@ -338,6 +361,20 @@ def init_device_connect_sync(
     # paths, so a bring-up that failed inside the budget arrives with ``started``
     # true and its own exception, which names the cause better than the budget.
     if error_holder[0] is not None:
+        # ``_run`` closes the loop and returns on this path; wait for it so the
+        # exception below is handed over an already-released loop rather than
+        # one closing behind the caller's back. A thread that outlasts the
+        # budget is reported rather than raised over: the caller's failure is
+        # the bring-up's own exception, which names the cause better than a
+        # slow release, and hiding it behind this one would lose it.
+        thread.join(timeout=_pkg._LOOP_JOIN_TIMEOUT_S)
+        if thread.is_alive():
+            logger.warning(
+                "init_device_connect_sync: the bring-up thread did not return within "
+                "%.1fs of a failed bring-up, so the loop it ran on is still open; "
+                "a callback from the partial bring-up is still running on it.",
+                _pkg._LOOP_JOIN_TIMEOUT_S,
+            )
         raise error_holder[0]
     if not started:
         raise TimeoutError(

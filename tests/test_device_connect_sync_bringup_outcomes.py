@@ -12,6 +12,12 @@ The two failure outcomes cross a thread boundary, which is why they are pinned
 here: the recorded exception is re-raised on the caller's thread, and an expired
 budget raises rather than handing back the ``None`` the holder still contains.
 
+A failed bring-up also has machinery to give back. The loop and the thread are
+handed to the caller by being adopted onto the returned runtime, so on a failure
+there is nothing to adopt them and nothing to serve on them either -- which is
+why the release is graded here alongside the exception, rather than left to a
+caller that has no handle to release.
+
 Nothing here needs a broker, a Docker stack or the Kit runtime: the awaited half
 is substituted, and the wrapper's budget is a module attribute so the expiry
 arm resolves in milliseconds instead of the shipped 30 seconds.
@@ -24,6 +30,7 @@ import asyncio
 import importlib
 import logging
 import pathlib
+import threading
 import types
 from typing import Any
 
@@ -55,6 +62,26 @@ async def _completes(*_a: Any, **_k: Any) -> Any:
 async def _fails(*_a: Any, **_k: Any) -> Any:
     """A bring-up that fails the way an unreachable broker does."""
     raise RuntimeError("no broker at tcp://127.0.0.1:7447")
+
+
+def _failing_on(loop_holder: list[Any]) -> Any:
+    """A failing bring-up that first records the loop it is running on.
+
+    The wrapper creates that loop itself and only hands it to the caller by
+    adopting it onto the returned runtime, so on the failure path the coroutine
+    is the one place it is observable at all.
+    """
+
+    async def _bring_up(*_a: Any, **_k: Any) -> Any:
+        loop_holder.append(asyncio.get_running_loop())
+        raise RuntimeError("no broker at tcp://127.0.0.1:7447")
+
+    return _bring_up
+
+
+def _runtime_threads() -> list[Any]:
+    """The wrapper's bring-up threads that are still alive."""
+    return [t for t in threading.enumerate() if t.name == "device-connect-runtime"]
 
 
 async def _never_finishes(*_a: Any, **_k: Any) -> Any:
@@ -266,3 +293,93 @@ class TestTheBudgetIsReadFromTheModuleRatherThanAnInlineLiteral:
         module = _dc()
 
         assert module.init_device_connect_sync.__annotations__["return"] == "DeviceRuntime"
+
+
+class TestAFailedBringUpReleasesTheLoopItRanOn:
+    """The machinery a failure leaves behind.
+
+    The loop and the thread reach the caller one way only: they are adopted onto
+    the runtime the wrapper returns. A bring-up that raised has no runtime, so
+    the pair is unreachable -- and parking the thread in ``run_forever`` anyway
+    kept an idle loop, with the epoll and self-pipe descriptors it holds, alive
+    for the life of the process. Once per failed attempt: a caller retrying an
+    unreachable broker accumulated a parked thread and three descriptors per try
+    with no way to reach any of them.
+
+    The thread that owns the loop closes it and returns instead, and the wrapper
+    waits for that before raising, so the failure the caller is handed also
+    means the machinery is gone.
+    """
+
+    def test_a_failed_bring_up_closes_the_loop_it_ran_on(self, monkeypatch):
+        """No runtime adopted the loop, so nothing else can ever close it."""
+        loops: list[Any] = []
+
+        with pytest.raises(RuntimeError):
+            _sync(monkeypatch, _failing_on(loops), budget=30.0)
+
+        assert len(loops) == 1, loops
+        assert loops[0].is_closed()
+
+    def test_a_failed_bring_up_leaves_no_thread_parked_on_that_loop(self, monkeypatch):
+        """The thread is retired with the loop: it was started to serve a
+        runtime that does not exist, and the caller has no handle to stop it."""
+        before = _runtime_threads()
+
+        with pytest.raises(RuntimeError):
+            _sync(monkeypatch, _fails, budget=30.0)
+
+        assert _runtime_threads() == before
+
+    def test_a_retried_bring_up_does_not_accumulate_loops(self, monkeypatch):
+        """The shape a caller actually hits: an unreachable broker is retried,
+        and each attempt has to release its own loop rather than add one."""
+        loops: list[Any] = []
+        before = _runtime_threads()
+
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                _sync(monkeypatch, _failing_on(loops), budget=30.0)
+
+        assert len(loops) == 3, loops
+        assert [loop.is_closed() for loop in loops] == [True, True, True]
+        assert _runtime_threads() == before
+
+    def test_a_release_that_outlasts_its_budget_is_reported(self, monkeypatch, caplog):
+        """A thread still running the loop cannot have it closed under it, so
+        that outcome is logged rather than silently taken for a release.
+
+        The double is a thread that has not returned: it ignores the join budget
+        and reports itself alive, which is what a bring-up whose partial teardown
+        is still on the loop looks like to this code.
+        """
+
+        class _NeverReturns(threading.Thread):
+            def join(self, timeout: float | None = None) -> None:
+                del timeout  # a thread that never returns outlasts any budget
+                self.was_joined = True
+
+            def is_alive(self) -> bool:
+                return True
+
+        monkeypatch.setattr(threading, "Thread", _NeverReturns)
+        monkeypatch.setattr(_dc(), "_LOOP_JOIN_TIMEOUT_S", 0.05)
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect._impl"):
+            with pytest.raises(RuntimeError) as excinfo:
+                _sync(monkeypatch, _fails, budget=30.0)
+
+        assert "no broker" in str(excinfo.value)
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings, caplog.records
+        assert "did not return within 0.1s" in warnings[0]
+        assert "still open" in warnings[0]
+
+    def test_the_release_budget_reads_without_the_device_connect_extra(self):
+        """It is a float on the package, next to the bring-up budget, so a
+        caller (or this file) can read and substitute it without the extra."""
+        module = _dc()
+
+        budget = module._LOOP_JOIN_TIMEOUT_S
+        assert isinstance(budget, float)
+        assert 0.0 < budget < float("inf")

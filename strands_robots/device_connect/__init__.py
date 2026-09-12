@@ -84,6 +84,19 @@ __all__ = [
 _INIT_TIMEOUT_S: float = 30.0
 
 
+# How long ``init_device_connect_sync`` waits for the bring-up thread to return
+# after a *failed* bring-up, before reporting that it did not. That thread owns
+# the loop it created and closes it on its way out, so the wait is what makes
+# the release observable to the caller that is about to be handed the failure.
+# A budget rather than an unbounded wait: the thread is only as free to return
+# as the coroutine it just ran, and a partially-built runtime whose teardown
+# blocks would otherwise hold a failed ``init_device_connect_sync`` open for as
+# long as that takes. Same family as ``mesh.input._INPUT_JOIN_TIMEOUT_S`` and
+# ``drivers.reachy._LOOP_JOIN_TIMEOUT_S``, and defined here for the same reason
+# as the budget above: it is a float literal that needs no extra to read.
+_LOOP_JOIN_TIMEOUT_S: float = 5.0
+
+
 # Map each name callers reach through the package to the module it lives in.
 # The public :data:`__all__` names are the documented API; the additional
 # private names below are module-level symbols ``_impl`` defines or re-exports
