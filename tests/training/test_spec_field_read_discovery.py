@@ -69,6 +69,11 @@ FIELD_SCOPED_GATES: dict[str, tuple[str, ...]] = {
     # reader scan AND on the forwarded set below.
     "_resume_problems": ("resume",),
     "_streaming_problems": ("streaming",),
+    # The three RL posture gates. Their fields live on ``RLTrainSpec`` and no
+    # provider forwards them, so they are graded on the reader scan only.
+    "_observation_normalization_problems": ("normalize_obs",),
+    "_advantage_normalization_problems": ("normalize_advantage",),
+    "_temperature_autotune_problems": ("autotune_alpha",),
     "_launch_topology_problems": ("num_gpus", "num_nodes"),
     # The RL run-size gate. Its two fields live on ``RLTrainSpec`` and no
     # provider forwards them, so it is graded on the reader scan only.
@@ -272,6 +277,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_rl_run_size_domain.py",
             "test_rl_checkpoint_interval_domain.py",
             "test_rl_replay_domain.py",
+            "test_rl_posture_flag_domain.py",
             "test_seed_domain.py",
             "test_target_entropy_domain.py",
             "test_td3_noise_domain.py",

@@ -163,6 +163,10 @@ class FastTd3Trainer(BaseRLAlgo):
             problems.append("output_dir is required")
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
+        # normalize_obs selects whether setup() wraps both observation streams in
+        # EmpiricalNormalization, and reads the flag by truthiness - so it takes
+        # the shared boolean domain ahead of the numeric knobs below.
+        problems.extend(self._observation_normalization_problems(spec))
         problems.extend(self._discount_factor_problems(spec))
         # policy_delay is the modulus that decides whether the actor and the
         # target networks move at all; a modulus the test never satisfies trains

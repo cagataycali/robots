@@ -377,6 +377,21 @@ log-probability in the actor loss the resulting checkpoint holds non-finite
 parameters. Both previously reported success. It is inert when
 `autotune_alpha=False`, which builds no temperature optimizer.
 
+The three RL posture flags - `normalize_obs` on every backend,
+`normalize_advantage` on PPO, `autotune_alpha` on FastSAC - are `bool`s on the
+same shared domain as `TrainSpec.resume` and `streaming`, checked by the
+`validate()` of each backend that reads them and by no other. Each selects a
+posture rather than scaling a quantity, and each was read by truthiness where it
+is spent (`... if spec.normalize_obs else None`, `if spec.normalize_advantage:`,
+`if self.autotune_alpha:`), so the spellings a caller reaches for to opt out -
+`"false"`, `"no"`, `"0"` - selected the affirmative branch, and `0` or `None`
+selected the negative one without being a declared spelling of it. Every one
+previously passed `validate()`. `autotune_alpha` is checked **ahead of** the
+`alpha_lr` check it gates, and that check reads the rate only once the flag is a
+usable `True`: `autotune_alpha="false", alpha_lr=-1.0` used to be refused as
+`alpha_lr` - the rate of an optimizer the caller had asked not to build - and is
+now refused as the flag.
+
 `init_alpha` - the temperature that rate moves - must be a positive finite
 number, checked by the same `validate()`. FastSAC stores the temperature's
 *logarithm* (`log_alpha = log(init_alpha)`, with `alpha = exp(log_alpha)`

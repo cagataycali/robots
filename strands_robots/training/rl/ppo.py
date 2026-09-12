@@ -179,6 +179,13 @@ class PpoTrainer(BaseRLAlgo):
             problems.append("output_dir is required")
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
+        # normalize_obs and normalize_advantage each select a posture - wrap the
+        # observation streams or feed them raw; standardize advantages per batch
+        # or use them as computed - and setup() and update() read both by
+        # truthiness, so the spellings a caller reaches for to opt out select the
+        # affirmative branch. The shared boolean domain refuses them by name.
+        problems.extend(self._observation_normalization_problems(spec))
+        problems.extend(self._advantage_normalization_problems(spec))
         problems.extend(self._discount_factor_problems(spec))
         # lam is the other factor of the same trace decay: the recursion decays by
         # gamma * lam, so the gate above cannot bound the trace on its own.

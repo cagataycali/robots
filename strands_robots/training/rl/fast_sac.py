@@ -160,9 +160,18 @@ class FastSacTrainer(BaseRLAlgo):
             problems.append("env_factory is required (a zero-arg callable returning a SimEnv)")
         if not spec.output_dir:
             problems.append("output_dir is required")
+        # normalize_obs selects whether setup() wraps both observation streams in
+        # EmpiricalNormalization, and reads the flag by truthiness - so it takes
+        # the shared boolean domain ahead of the numeric knobs below.
+        problems.extend(self._observation_normalization_problems(spec))
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
         problems.extend(self._discount_factor_problems(spec))
+        # autotune_alpha selects whether a temperature optimizer is built at all,
+        # and so whether alpha_lr is read. It goes ahead of the rate it gates: a
+        # non-boolean here is refused as the flag, not as the rate the misread
+        # posture would have selected.
+        problems.extend(self._temperature_autotune_problems(spec))
         # alpha_lr is a second learning rate on a second optimizer: the actor
         # and critics take spec.learning_rate, the entropy temperature takes
         # this one, and only the first is covered above.

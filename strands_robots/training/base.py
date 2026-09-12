@@ -327,6 +327,31 @@ class Trainer(ABC):
 
         return streaming_problems(spec, context=self.provider_name)
 
+    def _observation_normalization_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight ``normalize_obs``: a ``bool``."""
+        from strands_robots.training._validate import observation_normalization_problems
+
+        return observation_normalization_problems(spec, context=self.provider_name)
+
+    def _advantage_normalization_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight ``normalize_advantage``: a ``bool``."""
+        from strands_robots.training._validate import advantage_normalization_problems
+
+        return advantage_normalization_problems(spec, context=self.provider_name)
+
+    def _temperature_autotune_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight ``autotune_alpha``: a ``bool``.
+
+        A backend whose ``validate`` consults
+        :meth:`_temperature_learning_rate_problems` MUST consult this one first,
+        since that gate reads ``alpha_lr`` only on the branch this flag selects
+        - so a misread posture is refused by the flag's own name rather than as
+        the rate it would have selected.
+        """
+        from strands_robots.training._validate import temperature_autotune_problems
+
+        return temperature_autotune_problems(spec, context=self.provider_name)
+
     def _lora_hyperparameter_problems(self, spec: TrainSpec) -> list[str]:
         """Preflight ``lora_r`` and ``lora_alpha``, each a positive ``int`` or ``None``.
 

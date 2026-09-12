@@ -82,8 +82,16 @@ class RLTrainSpec(TrainSpec):
         max_grad_norm: Gradient-norm clip.
         hidden_dims: MLP hidden layer sizes for actor and critic.
         init_noise_std: Initial action-distribution standard deviation.
-        normalize_obs: Wrap observations in ``EmpiricalNormalization``.
-        normalize_advantage: Standardize advantages per batch.
+        normalize_obs: Wrap observations in ``EmpiricalNormalization``. A
+            posture flag, so a ``bool`` on the shared
+            :func:`~strands_robots.utils.boolean_flag_error` domain, checked by
+            every backend's preflight through
+            :meth:`Trainer._observation_normalization_problems`: each reads it
+            as ``... if spec.normalize_obs else None``, so ``"false"`` would
+            build the normalizers it asks to skip.
+        normalize_advantage: Standardize advantages per batch. Same domain, read
+            by PPO alone and checked through
+            :meth:`Trainer._advantage_normalization_problems`.
         device: Torch device (``"cpu"`` / ``"cuda"``); ``None`` auto-selects.
         log_interval: Iterations between checkpoints. This is the RL loop's
             checkpoint cadence, not a logging one - no RL module emits a
@@ -116,7 +124,11 @@ class RLTrainSpec(TrainSpec):
             its initialization, and ``True`` is refused rather than read as the
             hard update it would otherwise alias.
         autotune_alpha: Automatically tune the entropy temperature against
-            ``target_entropy`` (SAC).
+            ``target_entropy`` (SAC). Same domain, checked through
+            :meth:`Trainer._temperature_autotune_problems` ahead of the
+            ``alpha_lr`` check it gates: read by truthiness, ``"false"`` built
+            the temperature optimizer the caller had declined and ``0`` held the
+            temperature fixed without being a spelling of ``False``.
         init_alpha: Initial entropy temperature (SAC).
         alpha_lr: Learning rate for the temperature optimizer (SAC).
         target_entropy: Target policy entropy, the constant the temperature is

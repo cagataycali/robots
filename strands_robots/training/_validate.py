@@ -271,6 +271,41 @@ def streaming_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return _posture_flag_problems(spec, ("streaming",), context=context)
 
 
+def observation_normalization_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report ``normalize_obs``: a ``bool``.
+
+    The flag decides whether an RL backend wraps both observation streams in
+    ``EmpiricalNormalization`` or feeds them to the networks raw, and every
+    backend reads it as ``... if spec.normalize_obs else None``. Read by
+    truthiness, ``"false"``, ``"no"`` and ``"0"`` build the normalizers a caller
+    opted out of, and ``0`` or ``None`` skips them without being a declared
+    spelling of ``False``.
+    """
+    return _posture_flag_problems(spec, ("normalize_obs",), context=context)
+
+
+def advantage_normalization_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report ``normalize_advantage``: a ``bool``.
+
+    Read by the on-policy backend only, at the two sites that decide whether
+    advantages are standardized per batch before the surrogate loss.
+    """
+    return _posture_flag_problems(spec, ("normalize_advantage",), context=context)
+
+
+def temperature_autotune_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report ``autotune_alpha``: a ``bool``.
+
+    The flag selects whether SAC builds a temperature optimizer and moves
+    ``log_alpha`` against ``target_entropy``, or holds the temperature at
+    ``init_alpha`` for the whole run. It also gates whether ``alpha_lr`` is read
+    at all, which is why :func:`temperature_learning_rate_problems` reads it
+    only once this gate has passed: a misread posture is then refused by the
+    flag's own name rather than as the rate it would have selected.
+    """
+    return _posture_flag_problems(spec, ("autotune_alpha",), context=context)
+
+
 def lora_hyperparameter_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Report ``lora_r`` and ``lora_alpha``, each a count when supplied.
 
@@ -326,8 +361,16 @@ def optimization_epochs_problems(spec: TrainSpec, *, context: str) -> list[str]:
 
 
 def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list[str]:
-    """Report ``alpha_lr``: a rate. Empty unless ``autotune_alpha`` is set."""
-    if not getattr(spec, "autotune_alpha", False):
+    """Report ``alpha_lr``: a rate. Empty unless ``autotune_alpha`` is ``True``.
+
+    The rate is read only on the branch the flag selects, so the flag has to be
+    a usable boolean before it can select anything: a value outside the
+    ``bool`` domain is :func:`temperature_autotune_problems`' to report, and a
+    verdict on the rate beside it would send the caller to fix a knob the
+    posture they spelled does not read.
+    """
+    autotune = getattr(spec, "autotune_alpha", False)
+    if boolean_flag_error(autotune, "autotune_alpha", context) is not None or not autotune:
         return []
     error = positive_finite_number_error(getattr(spec, "alpha_lr", 3e-4), "alpha_lr", context)
     return [error] if error is not None else []
