@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import re
 import textwrap
 from typing import Any
 
@@ -40,6 +41,10 @@ NUM_DOFS = len(JOINT_NAMES)
 # A pose whose every entry is distinct, so a mis-ordered or partially-filled
 # read cannot coincide with the right answer.
 POSE = np.linspace(-0.4, 0.4, NUM_DOFS).astype(np.float32)
+
+# A velocity vector disjoint from POSE, so a velocity read that fell through to
+# the position offsets would be visible rather than coincidentally right.
+VELOCITY = np.linspace(1.0, 2.0, NUM_DOFS).astype(np.float32)
 
 
 class _EchoSession:
@@ -265,11 +270,106 @@ class TestTheRobotStateKeysConvention:
         resolved = _resolved_pose({"observation.state": state.reshape(1, NUM_DOFS)}, policy)
         assert np.array_equal(resolved, POSE)
 
-    def test_a_key_list_naming_no_velocities_names_the_joint_it_cannot_resolve(self):
-        """A key list of joint names cannot answer the ``.vel`` pass."""
+    def test_a_second_key_list_readdresses_the_array(self):
+        """The offsets follow the LATEST list, not the one they were built from.
+
+        Convention 3 reads the array through a name -> offset map. A map that
+        outlived the list it was built from would read the new feed at the old
+        offsets, and because both lists name the same 29 joints the result is a
+        fully-populated but permuted pose - the one error the by-name resolution
+        exists to prevent, and one no downstream check can detect.
+        """
         policy = _policy()
-        with pytest.raises(KeyError, match=r"missing from self\._robot_state_keys"):
+        policy.set_robot_state_keys(list(JOINT_NAMES))
+        reordered = list(reversed(JOINT_NAMES))
+        policy.set_robot_state_keys(reordered)
+        state = np.array([POSE[JOINT_NAMES.index(name)] for name in reordered], dtype=np.float32)
+        assert np.array_equal(_resolved_pose({"observation.state": state}, policy), POSE)
+
+    def test_a_repeated_key_resolves_to_its_first_position(self):
+        """A feed that names a key twice reads the first of the two entries.
+
+        This is what a rescan of the list answers, so it is what the offset map
+        must answer: building the map is not allowed to move which entry a joint
+        reads.
+        """
+        duplicated = [JOINT_NAMES[0], *JOINT_NAMES]
+        policy = _policy()
+        policy.set_robot_state_keys(duplicated)
+        state = np.zeros(len(duplicated), dtype=np.float32)
+        state[0] = POSE[0]
+        state[1] = POSE[0] + 1.0  # the shadowed second entry, deliberately wrong
+        for offset, name in enumerate(JOINT_NAMES[1:], start=2):
+            state[offset] = POSE[JOINT_NAMES.index(name)]
+        assert np.array_equal(_resolved_pose({"observation.state": state}, policy), POSE)
+        assert duplicated.index(JOINT_NAMES[0]) == 0
+
+
+class TestAKeyListCannotAnswerTheVelocityPass:
+    """The refusal for a value the state array has no offset for.
+
+    A joint-name key list addresses joint POSITIONS. ``set_robot_state_keys``
+    validates that every joint this config names is in the list, so after a
+    successful call a position is always addressable and only a suffixed
+    spelling - a velocity - can be missing. The refusal therefore cannot ask for
+    that call: the caller has already made it, and making it again with the same
+    joint list adds nothing.
+    """
+
+    @staticmethod
+    def _velocity_refusal() -> str:
+        policy = _policy()
+        policy.set_robot_state_keys(list(JOINT_NAMES))
+        with pytest.raises(KeyError) as excinfo:
             policy._pack_by_name({"observation.state": POSE}, ".vel")
+        return str(excinfo.value)
+
+    def test_it_names_the_spelling_it_could_not_address(self):
+        assert "left_hip_pitch_joint.vel" in self._velocity_refusal()
+
+    def test_it_does_not_prescribe_the_call_the_caller_already_made(self):
+        """Naming ``set_robot_state_keys`` as the SOURCE of the list is fine.
+
+        Naming it as the remedy is not: the caller reaching this branch has
+        called it, successfully, with a list this policy accepted.
+        """
+        message = self._velocity_refusal()
+        assert "(call set_robot_state_keys)" not in message
+        assert "set_robot_state_keys was given" in message
+
+    def test_it_names_no_private_attribute(self):
+        """A caller cannot act on a name the library does not expose."""
+        message = self._velocity_refusal()
+        # A private name is a leading underscore with no word character before
+        # it; the public ``set_robot_state_keys`` contains ``_robot_state_keys``
+        # as a substring, so a bare substring test would flag the right message.
+        assert re.findall(r"(?<!\w)_\w+", message) == []
+        assert "self." not in message
+
+    @pytest.mark.parametrize(
+        ("remedy", "observation", "kwargs"),
+        [
+            ("dof_vel=[...] through get_actions kwargs", {"observation.state": POSE}, {"dof_vel": VELOCITY}),
+            ("per-joint", {f"{name}.vel": float(v) for name, v in zip(JOINT_NAMES, VELOCITY)}, {}),
+        ],
+    )
+    def test_every_remedy_it_names_resolves_the_velocities(self, remedy, observation, kwargs):
+        """A refusal may only name a route that works. Each is driven here."""
+        assert remedy.split("=")[0].split()[0] in self._velocity_refusal()
+        policy = _policy()
+        policy.set_robot_state_keys(list(JOINT_NAMES))
+        resolved = policy._extract_dof_vel(observation, kwargs)
+        assert np.allclose(resolved, VELOCITY)
+
+    def test_the_widened_state_remedy_resolves_both_passes(self):
+        """The third remedy: extend the array AND its key list together."""
+        assert "extend the state array" in self._velocity_refusal()
+        policy = _policy()
+        policy.set_robot_state_keys([*JOINT_NAMES, *(f"{name}.vel" for name in JOINT_NAMES)])
+        widened = np.concatenate([POSE, VELOCITY])
+        observation = {"observation.state": widened}
+        assert np.array_equal(policy._pack_by_name(observation, ""), POSE)
+        assert np.array_equal(policy._pack_by_name(observation, ".vel"), VELOCITY)
 
 
 class TestAnObservationNoConventionCanAnswer:

@@ -69,6 +69,30 @@ _GTP_G1_HF_REPO = "cagataydev/protomotions-gtp-unitree-g1"
 _GTP_G1_ONNX_FILENAME = "unified_pipeline.onnx"
 
 
+def _first_index_of_each(keys: list[str]) -> dict[str, int]:
+    """Map each key to its FIRST position in ``keys``.
+
+    This is the addressing map for a flat ``observation.state``: the array is
+    ordered by the robot's own key list, so a key's position in that list is the
+    array offset its value sits at.
+
+    First occurrence wins, which is what ``list.index`` answers. A robot whose
+    feed repeats a key therefore resolves to the same entry through the map as
+    through a rescan of the list, so building the map cannot change which value
+    a joint reads.
+
+    Args:
+        keys: The robot's state-key list, in the order its state array is packed.
+
+    Returns:
+        ``{key: offset}`` covering every distinct key in ``keys``.
+    """
+    index: dict[str, int] = {}
+    for position, key in enumerate(keys):
+        index.setdefault(key, position)
+    return index
+
+
 @runtime_checkable
 class ProtoMotionsSession(Protocol):
     """Injection seam for the ONNX tracker session.
@@ -185,11 +209,16 @@ class ProtoMotionsPolicy(Policy):
         if motion is not None:
             self.load_motion(motion)
 
-        # Cache of joint names -> their index inside a caller-supplied
-        # ``observation.state`` (list-of-values). Recomputed lazily whenever
-        # the robot's state-key list changes.
-        self._state_index_cache: dict[str, int] | None = None
+        # The robot's own key list for a flat ``observation.state``, and the
+        # name -> position map that addresses the array with it. The two are
+        # built together here and rebuilt together in
+        # :meth:`set_robot_state_keys`, because a map that outlived its list
+        # would read the new array at the old list's offsets - the one failure
+        # this lookup exists to prevent. First occurrence wins, matching the
+        # ``list.index`` the map replaces, so a duplicated key resolves to the
+        # same entry either way.
         self._robot_state_keys: list[str] = list(self._config.joint_names)
+        self._state_index_cache: dict[str, int] = _first_index_of_each(self._robot_state_keys)
 
     # ------------------------------------------------------------------
     # Policy interface
@@ -226,10 +255,16 @@ class ProtoMotionsPolicy(Policy):
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Resolve the 29 GTP joint names by NAME in the robot's key list.
 
-        The tracker's ONNX input is dof-index-based, so we build a lookup from
-        joint name -> the caller's ``observation.state`` index and cache it.
-        Resolving by name means the tracker's output aligns with the robot's
-        actuators regardless of sim-specific joint ordering or namespacing.
+        The tracker's ONNX input is dof-index-based, so this builds the lookup
+        from joint name -> the caller's ``observation.state`` offset that every
+        later read of that array goes through. Resolving by name means the
+        tracker's output aligns with the robot's actuators regardless of
+        sim-specific joint ordering or namespacing.
+
+        The list and its map are replaced together. A map left over from the
+        previous list would address the new array at the old list's offsets, so
+        a re-ordered feed would be read as though it had not moved - a permuted
+        pose the tracker cannot detect.
 
         Args:
             robot_state_keys: The robot's own joint-name list (as reported by
@@ -251,7 +286,7 @@ class ProtoMotionsPolicy(Policy):
                 "The GTP tracker drives the 29-DOF G1; load unitree_g1."
             )
         self._robot_state_keys = keys
-        self._state_index_cache = {name: keys.index(name) for name in keys}
+        self._state_index_cache = _first_index_of_each(keys)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -657,18 +692,20 @@ ProtoMotionsConfig.action_ema_alpha` filter state is cleared here for the same
                     out[i] = fill
             return out
 
-        # 3. observation.state matches self._robot_state_keys order.
+        # 3. observation.state is addressed by the robot's own key list, through
+        # the name -> position map built with it. The map is what makes this a
+        # single lookup per joint: rescanning the list per joint is quadratic in
+        # the key count and runs twice a tick (positions, then velocities) for
+        # the whole rollout.
         if state_arr is not None and self._robot_state_keys:
             out = np.zeros(self._config.num_dofs, dtype=np.float32)
             for i, name in enumerate(self._config.joint_names):
                 key = name + suffix
-                if key in self._robot_state_keys:
-                    out[i] = float(state_arr[self._robot_state_keys.index(key)])
+                index = self._state_index_cache.get(key)
+                if index is not None:
+                    out[i] = float(state_arr[index])
                 elif fill is None:
-                    raise KeyError(
-                        f"ProtoMotionsPolicy: joint {key!r} missing from "
-                        f"self._robot_state_keys (call set_robot_state_keys)."
-                    )
+                    raise KeyError(self._unaddressable_state_key_msg(key, suffix))
                 else:
                     out[i] = fill
             return out
@@ -681,3 +718,42 @@ ProtoMotionsConfig.action_ema_alpha` filter state is cleared here for the same
                 f"per-joint keys, or explicit `dof_pos`/`dof_vel` kwargs."
             )
         return np.full(self._config.num_dofs, fill, dtype=np.float32)
+
+    def _unaddressable_state_key_msg(self, key: str, suffix: str) -> str:
+        """Explain why a flat ``observation.state`` holds no value for ``key``.
+
+        The array is addressed by the robot's own key list, so a key absent from
+        that list has no offset to read and no reordering of the array can
+        supply one. What the caller can do depends on which value is missing,
+        and every remedy named here is a surface they can reach:
+        :meth:`get_actions` takes ``dof_pos``/``dof_vel`` outright, the per-joint
+        convention takes the spelling directly on the observation, and the list
+        itself is what :meth:`set_robot_state_keys` was given.
+
+        Naming that method as the *remedy* would be the one thing this message
+        must not do. A runtime reaches this branch having already called it, and
+        successfully: the call validates that every joint this config names is
+        present, so a position is always addressable afterwards and only a
+        suffixed spelling - a velocity - can be missing. Repeating the call with
+        the same joint list cannot add one.
+
+        Args:
+            key: The spelling looked up, e.g. ``"left_hip_pitch_joint.vel"``.
+            suffix: The spelling's suffix (``""`` for a position, ``".vel"``
+                for a velocity), which selects the kwarg named as a remedy.
+
+        Returns:
+            The refusal text. Nothing here names a private attribute: the
+            caller cannot act on one.
+        """
+        kwarg = "dof_vel" if suffix else "dof_pos"
+        return (
+            f"ProtoMotionsPolicy: 'observation.state' carries no {key!r}. The array "
+            f"is addressed by the robot's own state-key list - the one "
+            f"set_robot_state_keys was given, {len(self._robot_state_keys)} keys, "
+            f"none of them {key!r} - so there is no offset in it to read this value "
+            f"from, and that list already resolves every joint position this config "
+            f"names. Supply {kwarg}=[...] through get_actions kwargs, or put "
+            f"per-joint {key!r} keys on the observation, or extend the state array "
+            f"and its key list together with the {suffix!r} spellings."
+        )

@@ -87,6 +87,19 @@ Missing signals are refused, not substituted: no anchor pose raises naming the
 key it wanted (`base_quat` stands in only when the config's anchor body *is* the
 floating base), and an absent `<joint>.vel` is refused rather than read as zero.
 
+A runtime that publishes one flat `observation.state` instead of per-joint keys
+is read through the robot's own key list - the list `set_robot_state_keys`
+receives - so a key's position in that list is the offset its value sits at. A
+list of joint names therefore addresses joint *positions* only: it holds no
+offset for `<joint>.vel`, and no further `set_robot_state_keys` call with the
+same joint list can add one. Three routes supply the velocities:
+
+```python
+policy.set_robot_state_keys([*joints, *(f"{j}.vel" for j in joints)])   # widen both
+await policy.get_actions({"observation.state": state}, "", dof_vel=[...])  # or pass them
+await policy.get_actions({**{f"{j}.vel": v for j, v in ...}}, "")          # or per-joint keys
+```
+
 Orientations need not be exactly unit: both rotation helpers normalise their
 input, so a drifted IMU reading or a lerped sample (up to 8% short, which read
 as-is is a heading 6.2 degrees off) gives the unit quaternion's answer:
