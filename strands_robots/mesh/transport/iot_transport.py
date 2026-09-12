@@ -268,9 +268,11 @@ def _is_camera_ref(topic: str) -> bool:
 
     The exemption is granted on the topic's SHAPE, not on substrings of it: the
     family segment must itself be ``camera``, and a camera name must sit between
-    it and the ``ref`` tail. A camera name is a free string taken from the
-    robot's own ``config.cameras`` keys, so a substring test hands the exemption
-    to topics that carry a frame rather than a pointer -- a camera named ``ref``
+    it and the ``ref`` tail. A camera name is taken from the robot's own
+    ``config.cameras`` keys - a bare token at the doors that accept one
+    (:func:`~strands_robots.utils.camera_token_error`), and whatever a config
+    built by other means carries - so a substring test hands the exemption to
+    topics that carry a frame rather than a pointer -- a camera named ``ref``
     publishes its inline base64 JPEG on ``strands/<peer>/camera/ref``, and a
     ``ref`` tail under any other family (``input/camera/ref``) reads as a
     pointer too. Both are the WAN payload the drop rule exists to refuse, and

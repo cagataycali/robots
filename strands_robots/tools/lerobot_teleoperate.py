@@ -12,7 +12,6 @@ This tool integrates teleoperation and recording functionality from lerobot, all
 import importlib.util
 import logging
 import os
-import re
 import signal
 import subprocess
 import time
@@ -41,7 +40,7 @@ from strands_robots.tools._process_stop import (
 )
 from strands_robots.utils import (
     boolean_flag_error,
-    entity_name_error,
+    camera_token_error,
     non_negative_whole_number_error,
     positive_finite_number_error,
     positive_whole_number_error,
@@ -294,8 +293,11 @@ def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
 # returned, and an episode is recorded from a camera nobody asked for. The last
 # three are the failure this module's numeric table already exists to prevent -
 # argv the detached subprocess cannot parse, reported minutes later in its log.
-# A name is a key in that dict and must be a bare token; a value is quoted at
-# the render (``_yaml_scalar``) so it is read back as the string it was.
+# A name is a key in that dict and must be a bare token, which is not this
+# module's rule to state either: ``utils.camera_token_error`` owns it, because
+# the ``Robot`` factory's ``cameras`` mapping is a second door onto the same
+# name and the two must accept one alphabet. A value is quoted at the render
+# (``_yaml_scalar``) so it is read back as the string it was.
 #
 # Which ``type`` values exist, and which options each admits, is not this
 # module's to list: ``type`` selects a class from lerobot's ``CameraConfig``
@@ -326,34 +328,6 @@ _CAMERA_GEOMETRY_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]
     ("height", positive_whole_number_error),
     ("fps", positive_whole_number_error),
 )
-
-# A bare token: what a camera name may be without becoming punctuation in the
-# rendered dict, where it is a key. The name is additionally the dataset's
-# ``observation.images.<name>`` feature key, which is the same alphabet.
-_CAMERA_TOKEN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\Z")
-
-
-def _bare_token_error(where: str, param: str, value: Any) -> str | None:
-    """Refuse a camera name that would be punctuation in the argv.
-
-    Args:
-        where: The message prefix naming the surface and the map entry.
-        param: The name of the value being checked, for the message.
-        value: The claimed token, as supplied.
-
-    Returns:
-        An error message naming the value and the alphabet, or ``None``.
-    """
-    if error := entity_name_error(where, param, value):
-        return error
-    if _CAMERA_TOKEN.match(value) is None:
-        return (
-            f"{where}: {param}={refusal_repr(value)} is not a bare token. lerobot parses "
-            "--robot.cameras as a nested dict, where ',', ':', '{', '}', '=' and whitespace "
-            "are structure, so a value carrying one changes the shape of that dict rather "
-            "than the value in it. Use letters, digits, '_' or '-'."
-        )
-    return None
 
 
 def _camera_entry_error(context: str, name: str, entry: Any) -> str | None:
@@ -428,7 +402,7 @@ def _camera_map_error(robot_cameras: Any) -> str | None:
             f"mapping, got {refusal_repr(robot_cameras)}."
         )
     for name, entry in robot_cameras.items():
-        if error := _bare_token_error(context, "robot_cameras camera name", name):
+        if error := camera_token_error(context, "robot_cameras camera name", name):
             return error
         if error := _camera_entry_error(context, name, entry):
             return error

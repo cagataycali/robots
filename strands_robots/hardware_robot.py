@@ -62,6 +62,7 @@ from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     boolean_flag_error,
+    camera_token_error,
     dds_domain_id_error,
     positive_count_error,
     positive_finite_number_error,
@@ -357,14 +358,22 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
         names, ready for ``lerobot.cameras.make_cameras_from_configs``.
 
     Raises:
-        ValueError: If ``config`` is not a mapping, names a camera ``type``
-            lerobot does not register, carries a key that is not a declared
-            field of the resolved class, omits a field that has no default, or
-            holds a value lerobot's own config validation refuses. An unknown
-            key is refused rather than dropped per AGENTS.md > Review Learnings
-            (#86): a silently discarded option reports success while the camera
-            streams at the default.
+        ValueError: If ``camera_name`` is not a bare token
+            (:func:`~strands_robots.utils.camera_token_error`), or if ``config``
+            is not a mapping, names a camera ``type`` lerobot does not register,
+            carries a key that is not a declared field of the resolved class,
+            omits a field that has no default, or holds a value lerobot's own
+            config validation refuses. An unknown key is refused rather than
+            dropped per AGENTS.md > Review Learnings (#86): a silently discarded
+            option reports success while the camera streams at the default.
     """
+    # The name is graded before the options because it is what every consumer
+    # keys this camera's frames by -- a mesh topic level, an S3 object key, a
+    # dataset feature key -- so no option is worth checking under a name none of
+    # them can carry. ``lerobot_teleoperate`` holds its ``robot_cameras`` to the
+    # same rule at the same point, through the same owner.
+    if (name_err := camera_token_error("Robot(cameras=...)", "camera name", camera_name)) is not None:
+        raise ValueError(name_err)
     if not isinstance(config, Mapping):
         raise ValueError(
             f"Camera {camera_name!r} config must be a mapping of option name to value, "
@@ -642,6 +651,14 @@ class Robot(TeleopMixin, AgentTool):
             robot: LeRobot Robot instance, RobotConfig, or robot type string
             cameras: Camera configuration dict:
                 {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
+                Each key names one camera and must be a bare token of letters,
+                digits, ``_`` or ``-``: it is the identity every consumer keys
+                that camera's frames by - a level of the mesh topic they are
+                published on, a segment of the S3 key they are offloaded to, and
+                the ``observation.images.<name>`` feature key a recording writes
+                them under - so a name carrying punctuation any of those reserves
+                is refused here
+                (:func:`~strands_robots.utils.camera_token_error`).
             action_horizon: Actions consumed from each inferred policy chunk
                 before re-querying. Must be a positive integer - it is a lower
                 bound on the chunk slice the task loop applies

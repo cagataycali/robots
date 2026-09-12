@@ -5,6 +5,7 @@ import logging
 import math
 import numbers
 import os
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -2992,6 +2993,86 @@ def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_ca
     if routes_free_camera_tokens:
         return reserved_camera_name_error(method, param_name, name)
     return None
+
+
+#: What a camera's name in a ``cameras`` mapping may be: a bare token of
+#: letters, digits, ``_`` and ``-``, opening on a letter or a digit. Every
+#: consumer keys the camera's frames by this name, and each of them reserves
+#: punctuation of its own - see :func:`camera_token_error`.
+_CAMERA_TOKEN: Final = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+
+
+def camera_token_error(method: str, param_name: str, name: Any) -> str | None:
+    """Return an error message if ``name`` cannot key the camera it names.
+
+    A camera's name in a ``cameras`` mapping is not just a label: it is the
+    identity every downstream consumer keys that camera's frames by, and each of
+    them reserves punctuation of its own. So the name has to be a bare token
+    (:data:`_CAMERA_TOKEN`) at every door that accepts one - the
+    :class:`~strands_robots.hardware_robot.Robot` factory's ``cameras`` mapping
+    and the ``robot_cameras`` of
+    :func:`~strands_robots.tools.lerobot_teleoperate.lerobot_teleoperate` - and
+    the rule lives here, beside :func:`entity_name_error`, for the same reason
+    that one does: two doors onto one name must not accept different alphabets.
+
+    Three consumers, each of which reads a character it reserves as structure
+    rather than as part of the name:
+
+    * **The mesh topic.**
+      :meth:`~strands_robots.mesh.core.Mesh._encode_and_publish_frames`
+      publishes each frame on ``strands/<peer_id>/camera/<name>``. A ``/`` in
+      the name adds a topic level, so the frame lands under a key no
+      ``strands/*/camera/*`` subscription matches, and ``*`` / ``**`` are Zenoh
+      wildcards, which a ``put`` is routed by intersection - the frame is
+      delivered to every peer that subscribes to any camera rather than to the
+      one asking for this camera. Measured on this tree, a camera named
+      ``'wrist/ref'`` published its 274054-byte inline frame on
+      ``strands/rover-01/camera/wrist/ref``, which is the shape of the small S3
+      *pointer* the IoT transport exempts from its camera-frame drop
+      (:func:`~strands_robots.mesh.transport.iot_transport._is_camera_ref`), so
+      the whole frame was forwarded to the broker the drop exists to spare.
+    * **The S3 key.**
+      :meth:`~strands_robots.mesh.iot.camera_offload.CameraOffloader.s3_key_for`
+      joins the name into ``<prefix>/<peer_id>/<name>/<ts>.jpg``, so ``..``
+      walks out of the peer's own prefix.
+    * **The argv.** ``lerobot_teleoperate`` renders the entry into the nested
+      ``--robot.cameras`` dict lerobot's draccus CLI parses, where ``,``, ``:``,
+      ``{``, ``}``, ``=`` and whitespace are structure - a name carrying one
+      changes the shape of that dict rather than the value in it, and is
+      reported minutes later in a detached subprocess's log.
+
+    The name is additionally the dataset feature key a recording writes it under
+    (``observation.images.<name>``, see
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`), whose
+    ``.`` separator is the same kind of structure.
+
+    Args:
+        method: The surface being called, for the message prefix (e.g.
+            ``"Robot(cameras=...)"``).
+        param_name: What is being named, for the message (e.g.
+            ``"camera name"``).
+        name: The claimed camera name. Anything at all; a value that cannot be a
+            key of any kind is refused first by :func:`entity_name_error`.
+
+    Returns:
+        An error message naming the value and the alphabet, or ``None`` when
+        *name* is a bare token.
+    """
+    if (err := entity_name_error(method, param_name, name)) is not None:
+        return err
+    if _CAMERA_TOKEN.match(name) is not None:
+        return None
+    rendered = refusal_repr(name)
+    return (
+        f"{method}: {param_name}={rendered} is not a bare token. A camera's name is the "
+        "identity every consumer keys its frames by, and each reserves punctuation of its "
+        "own: the mesh publishes them on 'strands/<peer_id>/camera/<name>', where '/' adds a "
+        "topic level and '*' is a wildcard a put is routed by; the S3 offload joins it into "
+        "the object key, where '..' walks out of the peer's prefix; a recording writes it as "
+        "the 'observation.images.<name>' dataset feature key; and lerobot parses "
+        "--robot.cameras as a nested dict, where ',', ':', '{', '}', '=' and whitespace are "
+        "structure. Use letters, digits, '_' or '-'."
+    )
 
 
 def published_string_error(value: Any, param: str, context: str) -> str | None:
