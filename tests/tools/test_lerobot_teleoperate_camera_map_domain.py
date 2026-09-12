@@ -135,30 +135,30 @@ UNUSABLE = [
 USABLE = [
     pytest.param(
         {"front": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}},
-        "--robot.cameras={front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}",
+        "--robot.cameras={'front': {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}",
         id="fully-specified",
     ),
     pytest.param(
         {"front": {"fps": 60}},
-        "--robot.cameras={front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 60}}",
+        "--robot.cameras={'front': {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 60}}",
         id="partially-specified-defaults-the-rest",
     ),
     pytest.param(
         {"wrist-1": {"index_or_path": "/dev/video0", "type": "opencv"}},
-        "--robot.cameras={wrist-1: {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}",
+        "--robot.cameras={'wrist-1': {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}",
         id="device-path-and-a-hyphenated-name",
     ),
     pytest.param(
         {"front": {}, "wrist": {"index_or_path": 2}},
-        "--robot.cameras={front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, "
-        "wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}",
+        "--robot.cameras={'front': {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, "
+        "'wrist': {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}",
         id="two-cameras",
     ),
     # The options are the resolved class's, so a RealSense renders the field
     # that identifies it and none of OpenCV's; the geometry defaults still apply.
     pytest.param(
         {"top": {"type": "intelrealsense", "serial_number_or_name": "0123", "use_depth": True}},
-        "--robot.cameras={top: {type: intelrealsense, width: 640, height: 480, fps: 30, "
+        "--robot.cameras={'top': {type: intelrealsense, width: 640, height: 480, fps: 30, "
         "serial_number_or_name: '0123', use_depth: True}}",
         id="realsense-by-serial",
     ),
@@ -166,19 +166,19 @@ USABLE = [
     # flow-mapping parse and ``, wrist: {...`` describes a second camera.
     pytest.param(
         {"front": {"index_or_path": "/dev/v4l/by-id/usb-046d_C922[1]", "fourcc": "MJPG"}},
-        "--robot.cameras={front: {type: opencv, index_or_path: '/dev/v4l/by-id/usb-046d_C922[1]', "
+        "--robot.cameras={'front': {type: opencv, index_or_path: '/dev/v4l/by-id/usb-046d_C922[1]', "
         "width: 640, height: 480, fps: 30, fourcc: 'MJPG'}}",
         id="a-bracket-in-a-device-path",
     ),
     pytest.param(
         {"front": {"index_or_path": "0, wrist: {type: opencv, index_or_path: 5"}},
-        "--robot.cameras={front: {type: opencv, index_or_path: '0, wrist: {type: opencv, index_or_path: 5', "
+        "--robot.cameras={'front': {type: opencv, index_or_path: '0, wrist: {type: opencv, index_or_path: 5', "
         "width: 640, height: 480, fps: 30}}",
         id="delimiters-in-a-value-are-a-value",
     ),
     pytest.param(
         {"front": {"index_or_path": "/dev/vi'deo"}},
-        "--robot.cameras={front: {type: opencv, index_or_path: '/dev/vi''deo', width: 640, height: 480, fps: 30}}",
+        "--robot.cameras={'front': {type: opencv, index_or_path: '/dev/vi''deo', width: 640, height: 480, fps: 30}}",
         id="a-quote-in-a-device-path",
     ),
 ]
@@ -222,6 +222,20 @@ class TestACameraMapTheArgvCannotCarryIsRefusedBeforeIt:
         guard must not reach the argv in its own spelling.
         """
         assert "index_or_path: 4," in str(_cameras_flag(_teleop({"front": {"index_or_path": value}})))
+
+    @pytest.mark.parametrize("name", ["yes", "no", "null", "true", "false", "on", "off", "Yes", "TRUE", "Off"])
+    def test_a_yaml_boolean_or_null_camera_name_round_trips_as_the_string(self, name: str) -> None:
+        """YAML 1.1 re-types bare ``yes``/``no``/``null`` as booleans/null.
+
+        A camera named ``yes`` must appear in the argv as the string ``'yes'``
+        (single-quoted), not as the boolean ``True`` that an unquoted bare
+        ``yes:`` resolves to under draccus / pyyaml. Measured against
+        lerobot 0.6.1: ``{yes: {...}}`` decoded to key ``'True'`` while
+        ``{'yes': {...}}`` decoded to key ``'yes'``.
+        """
+        flag = _cameras_flag(_teleop({name: {}}))
+        assert flag is not None
+        assert f"'{name}':" in flag, f"camera name {name!r} must be quoted in {flag}"
 
 
 class TestEveryModeThatEmitsTheMapChecksIt:

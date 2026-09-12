@@ -514,7 +514,7 @@ def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
         options = ", ".join(
             f"{key}: {value if key == 'type' else _yaml_scalar(value)}" for key, value in rendered.items()
         )
-        entries.append(f"{cam_name}: {{{options}}}")
+        entries.append(f"{_yaml_scalar(cam_name)}: {{{options}}}")
     return "{" + ", ".join(entries) + "}"
 
 
