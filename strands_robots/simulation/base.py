@@ -4425,6 +4425,11 @@ class SimEngine(ABC):
         own process. Two evals at the same seed replay identically; ``None``
         leaves RNG state untouched. Only a non-negative integer can seed those
         RNGs, so anything else is refused here rather than at the first draw.
+        Each episode's record in the returned ``episodes`` list reports the
+        ``seed`` that attempt ran on, so a caller reading a single failed
+        episode out of a batch can replay that one rather than the whole eval;
+        it is ``None`` when no ``seed`` was given, because an unseeded eval
+        derives no per-episode seed to report.
 
         ``policy_object`` mirrors :meth:`run_policy`: pass an already-built
         ``Policy`` to skip the ``create_policy`` round-trip (e.g. a loaded

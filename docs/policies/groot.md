@@ -52,7 +52,7 @@ Gr00tPolicy(
     embodiment_tag="NEW_EMBODIMENT",
     device="cuda",                  # local mode only
     groot_version=None,             # force "n1.5"/"n1.6"/"n1.7"; None = auto-detect
-    strict=False,
+    strict=False,                   # forwarded to the N1.6/N1.7 loader
     api_token=None,                 # fallback: GROOT_API_TOKEN env var
     observation_mapping=None,
     action_mapping=None,
@@ -60,6 +60,17 @@ Gr00tPolicy(
     strict_keys=False,             # raise instead of positional key-guessing
 )
 ```
+
+`strict` and `strict_keys` each select a posture rather than scaling a
+quantity, so a non-boolean is refused at construction in **either** mode -
+naming the parameter and the value given - rather than read by truthiness.
+Every non-empty string is truthy, so `strict_keys="false"` used to select the
+strict posture and then report it as `strict_keys=True`; `None` and `0` took
+the permissive branch while spelling neither. `True`, `False` and NumPy
+booleans are stored as given. The check is not scoped to local mode even though
+only local mode reads either flag, because local mode needs Isaac-GR00T
+installed: a caller composing a `policy_config` against a service-mode policy
+would otherwise get no answer until they moved to a GPU host.
 
 ## Strict key matching
 
@@ -77,7 +88,8 @@ policy = create_policy("groot", data_config="so100_dualcam",
 ```
 
 `strict_keys` defaults to `False` (positional fallback preserved) and is a
-no-op when an explicit mapping is supplied.
+no-op when an explicit mapping is supplied. A non-boolean is refused, so the
+`ValueError` above is only ever raised for a caller who really asked for it.
 
 Auto-inference is local-mode only, because it reads the checkpoint's modality
 configs and service mode cannot introspect the remote server. A service-mode
