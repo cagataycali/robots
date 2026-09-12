@@ -445,13 +445,16 @@ def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
     entries = []
     for cam_name, cam_config in robot_cameras.items():
         cam_type = cam_config.get("type", "opencv")
-        cam_path = cam_config.get("index_or_path", 0)
-        # lerobot declares the camera config's ``fps`` / ``width`` / ``height``
-        # as ``int``, and the check above accepts an integral real so a geometry
-        # read from a config or promoted by NumPy is still honored. Rendered as
-        # the whole number the field is declared, the way every other numeric
-        # flag on this argv is (``str(int(dataset_fps))``): a ``30.0`` token
-        # would otherwise be a value accepted here and rejected there.
+        # lerobot declares the camera config's ``index_or_path`` as ``int | Path``
+        # and ``fps`` / ``width`` / ``height`` as ``int``, and the check above
+        # accepts an integral real so a geometry or an index read from a config
+        # or promoted by NumPy is still honored. Rendered as the whole number the
+        # field is declared, the way every other numeric flag on this argv is
+        # (``str(int(dataset_fps))``): a ``30.0`` or ``4.0`` token would
+        # otherwise be a value accepted here and rejected there - draccus parses
+        # ``4.0`` as neither an ``int`` nor a ``Path``.
+        device = cam_config.get("index_or_path", 0)
+        cam_path = device if isinstance(device, str) else int(device)
         fps_val = int(cam_config.get("fps", 30))
         width = int(cam_config.get("width", 640))
         height = int(cam_config.get("height", 480))

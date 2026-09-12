@@ -161,6 +161,16 @@ class TestACameraMapTheArgvCannotCarryIsRefusedBeforeIt:
         """A rate read from a config or promoted by NumPy is a usable rate."""
         assert "fps: 30}" in str(_cameras_flag(_teleop({"front": {"fps": value}})))
 
+    @pytest.mark.parametrize("value", [4, 4.0, np.int64(4), np.float64(4.0)])
+    def test_an_integral_index_is_rendered_as_the_whole_number(self, value: Any) -> None:
+        """An index the guard accepts is emitted as the ``int`` lerobot decodes.
+
+        draccus decodes ``index_or_path: 4`` as ``int`` and refuses ``4.0`` as
+        both an ``int`` and a ``Path``, so an integral real that passed the
+        guard must not reach the argv in its own spelling.
+        """
+        assert "index_or_path: 4," in str(_cameras_flag(_teleop({"front": {"index_or_path": value}})))
+
 
 class TestEveryModeThatEmitsTheMapChecksIt:
     """The map is on the argv of all four modes, so the rule cannot be per-mode."""
