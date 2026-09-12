@@ -556,6 +556,71 @@ class TestStopReportsBothHalvesOfTheHalt:
         assert outcome["content"][0]["json"] == {"locomotion_halted": True, "upper_body_released": False}
 
 
+class TestTheHeadIsPointedThroughTheLocoClient:
+    """The head's own verb, which no frame can reach.
+
+    :data:`UPPER_BODY_SLOTS` deliberately excludes the two head slots, so
+    ``send_action`` refuses them and points the caller at ``rotate_head()`` -
+    making this verb the only path to the head. It is a high-level loco call
+    rather than a published frame: nothing downstream validates the angles, and
+    the client returns no outcome, so the driver's own refusals are the whole
+    contract.
+    """
+
+    @pytest.mark.parametrize(
+        ("pitch", "yaw", "named"),
+        [
+            pytest.param(float("nan"), 0.0, "pitch", id="nan-pitch"),
+            pytest.param(float("inf"), 0.0, "pitch", id="inf-pitch"),
+            pytest.param(0.0, float("nan"), "yaw", id="nan-yaw"),
+            pytest.param(0.0, "0.1", "yaw", id="string-yaw"),
+        ],
+    )
+    def test_an_angle_that_is_not_a_number_is_refused_naming_it(
+        self, sdk: _FakeSdk, pitch: Any, yaw: Any, named: str
+    ) -> None:
+        """A non-finite angle never reaches the head.
+
+        ``RotateHead`` takes the angles as C++ doubles, so ``nan``/``inf``
+        survive the call and the T1 resolves them itself - the refusal has to
+        happen here or not at all.
+        """
+        driver = _live_driver(sdk)
+        sdk.client.calls.clear()
+        result = driver.rotate_head(pitch, yaw)
+        assert result["status"] == "error"
+        reason = result["content"][0]["text"]
+        assert named in reason
+        assert "rotate_head" in reason
+        assert not [call for call in sdk.client.calls if call[0] == "RotateHead"]
+
+    def test_an_unconnected_driver_refuses_before_touching_the_sdk(self) -> None:
+        """No client yet is a named refusal, not an AttributeError."""
+        result = BoosterDriver().rotate_head(0.1, 0.2)
+        assert result["status"] == "error"
+        assert "connect_eagerly()" in result["content"][0]["text"]
+
+    def test_a_pointed_head_reaches_the_client_as_doubles(self, sdk: _FakeSdk) -> None:
+        """The accepted call: the angles arrive as floats and are echoed back."""
+        driver = _live_driver(sdk)
+        result = driver.rotate_head(-0.25, 1)
+        assert result["status"] == "success"
+        assert result["content"][0]["json"] == {"pitch": -0.25, "yaw": 1}
+        assert ("RotateHead", (-0.25, 1.0)) in sdk.client.calls
+        # An int yaw is widened for the SDK's double parameter rather than
+        # forwarded as an int.
+        sent = next(args for name, args in sdk.client.calls if name == "RotateHead")
+        assert all(isinstance(angle, float) for angle in sent)
+
+    def test_a_robot_that_refuses_the_angles_is_reported_not_raised(self, sdk: _FakeSdk) -> None:
+        """A driver verb answers with an envelope even when the T1 throws."""
+        driver = _live_driver(sdk)
+        sdk.client.refuse = {"RotateHead"}
+        result = driver.rotate_head(0.1, 0.2)
+        assert result["status"] == "error"
+        assert "refused the head angles" in result["content"][0]["text"]
+
+
 class TestTheReadSurface:
     """What the mesh and the agent see."""
 
