@@ -135,6 +135,9 @@ Because the safety gates run *above* dispatch, Device Connect inherits the same 
 !!! danger "Human-in-the-loop on actuation"
     The actuation actions — `tell`, `send`, `stop`, `broadcast`, `emergency_stop`, `rpc` — are gated behind an out-of-band operator approval (`tool_context.interrupt`), so they run only inside a Strands agent loop where a human approves. Called from a bare script they **fail closed**. Read-only `peers` works anywhere. Approval is delivered outside the LLM's tool arguments, so prompt injection can't smuggle it. The gated set is configurable via `STRANDS_MESH_HITL_ACTIONS`.
 
+!!! warning "A stop is graded by the device's answer, not by delivery"
+    A device answers its `stop` RPC with an envelope, so an authorization refusal or a `stop_policy` that could not halt a rollout arrives as a *delivered reply* rather than as a transport error. `stop` and `emergency_stop` both read that reply: a device reporting it did not stop makes the result `status="error"` naming the device and its answer, audits the verdict as a failure, and logs at `CRITICAL`. A reply that reports no verdict either way is not read as a refusal, so an unreachable device stays a gap rather than a claimed stop.
+
 ## Architecture
 
 ```mermaid
