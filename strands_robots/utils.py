@@ -2943,10 +2943,11 @@ def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_ca
 
     The whole name rule for a camera creation site, in one place and in one
     order: :func:`entity_name_error` first (a value that cannot be a registry
-    key at all), then :func:`reserved_camera_name_error` (a ``str`` this
-    backend's own render entry points resolve past). Every ``add_camera``
-    reads it, so the order is a property of the rule rather than of whichever
-    body a caller reached.
+    key at all), then :func:`camera_segments_error` (a ``str`` some consumer of
+    the camera's frames would read as structure), then
+    :func:`reserved_camera_name_error` (a ``str`` this backend's own render
+    entry points resolve past). Every ``add_camera`` reads it, so the order is a
+    property of the rule rather than of whichever body a caller reached.
 
     That order was the defect this composition removes. The two guards had been
     applied separately at each site, and the sites disagreed about where the
@@ -2990,9 +2991,73 @@ def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_ca
     """
     if (err := entity_name_error(method, param_name, name)) is not None:
         return err
+    if (err := camera_segments_error(method, param_name, name)) is not None:
+        return err
     if routes_free_camera_tokens:
         return reserved_camera_name_error(method, param_name, name)
     return None
+
+
+def camera_segments_error(method: str, param_name: str, name: str) -> str | None:
+    """Return an error message if a scene camera's name is not bare tokens joined by ``/``.
+
+    The simulation counterpart to :func:`camera_token_error`, and the reason it
+    is a separate rule rather than that one: a scene camera's name may carry a
+    ``/``, because the simulation itself writes one. A robot's cameras are
+    registered under ``<namespace>/<cam>`` (``arm0/wrist``), ``render_all``
+    resolves a short name against that form, and :func:`camera_schema_key`
+    collapses the separator to ``__`` for the dataset column - so refusing the
+    character outright would refuse a shape three documented surfaces produce
+    and read. What those surfaces never produce is a segment that is not a bare
+    token, and that is what this rule holds each segment to
+    (:data:`_CAMERA_TOKEN`), so the alphabet has one owner across both doors and
+    only the separator differs.
+
+    The consumers are the ones :func:`camera_token_error` names, reached from
+    the scene rather than from a ``cameras`` mapping. Measured on this tree, one
+    ``create_world`` then ``add_camera`` per name, before this rule existed:
+
+    * ``'a/b'``, ``'..'``, ``'sub/../etc'``, ``'a b'``, ``'cam#1'`` and ``'**'``
+      each registered under ``status="success"``; only ``''`` was refused.
+    * :meth:`~strands_robots.mesh.core.Mesh._publish_sim_cameras` strips the
+      robot's namespace and publishes the rest on
+      ``strands/<peer_id>/camera/<name>``, so ``'**'`` went out on
+      ``strands/rover01/camera/**`` - a Zenoh wildcard on a ``put``, which is
+      routed by intersection to every peer subscribed to any camera.
+    * :meth:`~strands_robots.mesh.iot.camera_offload.CameraOffloader.s3_key_for`
+      joined ``'../../etc/passwd'`` into ``'frames/rover01/../../etc/passwd/123.jpg'``.
+    * The MuJoCo backend renders the name into MJCF and the Isaac backend into a
+      USD prim path (``<stage>/Cameras/<name>``), where whitespace and ``#`` are
+      not a name either.
+
+    An empty segment is refused too (``'/wrist'``, ``'arm0/'``, ``'a//b'``):
+    each is a topic level with nothing in it, and the namespace strip above would
+    publish the second on the bare camera root.
+
+    Args:
+        method: The calling method, for the message prefix (e.g. ``"add_camera"``).
+        param_name: The parameter being validated, for the message.
+        name: The claimed camera name. Already a non-empty ``str`` with no NUL:
+            :func:`entity_name_error` runs first at every call site, which is
+            what lets this one read the value as text.
+
+    Returns:
+        An error message naming the value and the alphabet, or ``None`` when
+        every ``/``-separated segment of *name* is a bare token.
+    """
+    if all(_CAMERA_TOKEN.match(segment) is not None for segment in name.split("/")):
+        return None
+    rendered = refusal_repr(name)
+    return (
+        f"{method}: {param_name}={rendered} is not bare tokens joined by '/'. A scene camera's "
+        "name is the identity every consumer keys its frames by, and each reserves punctuation "
+        "of its own: the mesh publishes them on 'strands/<peer_id>/camera/<name>', where '*' is "
+        "a wildcard a put is routed by; the S3 offload joins it into the object key, where '..' "
+        "walks out of the peer's prefix; a recording writes it as the "
+        "'observation.images.<name>' dataset feature key; and the backend renders it into the "
+        "scene description. Use letters, digits, '_' or '-' in each segment, with '/' only as "
+        "the namespace separator the simulation itself writes ('arm0/wrist')."
+    )
 
 
 #: What a camera's name in a ``cameras`` mapping may be: a bare token of
