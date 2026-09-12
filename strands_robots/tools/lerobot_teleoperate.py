@@ -29,6 +29,7 @@ from strands_robots.tools._process_stop import (
     SIGTERM_GRACE_S,
     SessionManager,
     confirm_exit,
+    generate_session_name,
     process_started_since_boot,
     recorded_pid,
     reused_pid_result,
@@ -1118,7 +1119,7 @@ def lerobot_teleoperate(
 
             # Generate session name if not provided
             if not session_name:
-                session_name = f"teleop_{int(time.time())}"
+                session_name = generate_session_name("teleop")
 
             # Check if session already exists
             if session_manager.get_session(session_name):

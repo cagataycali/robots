@@ -35,6 +35,7 @@ from strands_robots.tools._process_stop import (
     SIGTERM_GRACE_S,
     SessionManager,
     confirm_exit,
+    generate_session_name,
     process_started_since_boot,
     recorded_pid,
     reused_pid_result,
@@ -986,7 +987,7 @@ def lerobot_train(
                 }
 
             if not session_name:
-                session_name = f"train_{int(time.time())}"
+                session_name = generate_session_name("train")
             if session_manager.get_session(session_name):
                 return {
                     "status": "error",

@@ -61,6 +61,7 @@ import math
 import os
 import sys
 import time
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -345,6 +346,41 @@ def unusable_pid_result(session_name: str, recorded: Any) -> dict[str, Any]:
             {"json": {"session_name": session_name, "pid_usable": False, "stopped": False}},
         ],
     }
+
+
+def generate_session_name(prefix: str) -> str:
+    """A session name for a caller who did not supply one.
+
+    The name is the caller's handle on a detached process: ``status`` reports it,
+    ``stop`` signals it, and the ``start`` result hands it back as the only way
+    to reach the run again. A second-resolution timestamp alone is not that
+    handle - two ``start`` calls in the same second derive the same name, and an
+    agent issuing independent tool calls together makes that the ordinary case
+    rather than an exotic one. Whichever record is written second replaces the
+    first, so the name ``start`` returned for one run afterwards addresses the
+    other: ``status`` reports a stranger's policy and output directory, ``stop``
+    signals a stranger's process and reports success, and both runs append to
+    the single log file the shared name resolves to.
+
+    That is the outcome this module already refuses to reach through a reused
+    pid (see the module docstring); a reused name reaches it too. The random
+    suffix keeps the name a caller was handed pointing at the run it was handed
+    for, and needs no lock around the store to do it - unlike checking the name
+    against the store before writing it, which two concurrent ``start`` calls
+    can both pass before either writes.
+
+    An explicitly supplied session name is not routed here: a caller who names a
+    session owns that name, so a collision with one they already hold is
+    reported to them rather than silently renamed.
+
+    Args:
+        prefix: Tool-specific prefix identifying the verb (``train``, ``teleop``).
+
+    Returns:
+        A unique name of the form ``<prefix>_<epoch_seconds>_<8 hex digits>``.
+        The timestamp is kept so names still sort and read chronologically.
+    """
+    return f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
 
 
 def session_log_path(session_name: str) -> Path:
