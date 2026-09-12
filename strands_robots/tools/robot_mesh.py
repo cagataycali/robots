@@ -1144,7 +1144,22 @@ def _device_connect_dispatch(
             # already-validated positive finite budget, not a guard: min() would
             # pass nan straight through (min(nan, 5.0) is nan).
             result = conn.invoke(target, "stop", _with_identity({}), timeout=min(timeout, 5.0))
-            r = result.get("result", result)
+            r = result.get("result", result) if isinstance(result, dict) else result
+            # Graded with the rule Mesh.emergency_stop reads (_reports_failure_to_stop),
+            # as the fleet-wide branch below is: an authz refusal or a stop_policy
+            # that could not halt a rollout arrives as status="error" inside a
+            # DELIVERED reply, not as a raised invoke. Counting delivery returned
+            # the refusal under status="success" and audited it as ok=True, so an
+            # agent branching on the envelope proceeded as if the arm had halted.
+            if isinstance(r, dict) and _reports_failure_to_stop(r):
+                answer = json.dumps(r, default=str)
+                logger.critical(
+                    "[safety] stop over Device Connect: %r reported it did NOT stop: %s",
+                    target,
+                    answer[:600],
+                )
+                _audit_tool_action(action, target, False, f"reported it did NOT stop: {answer[:600]}")
+                return _DCResult(_err(f"Stop {target}: reported it did NOT stop: {answer[:1500]}"))
             _audit_tool_action(action, target, True, "")
             return _DCResult(_ok(f"Stop {target}: {json.dumps(r, default=str)}"))
 

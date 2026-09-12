@@ -5309,8 +5309,9 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
 
-            # Refuse a name that cannot address the camera this call creates, on
-            # the shared ``camera_name_error`` rule every backend's
+            # Refuse a name that cannot address the camera this call creates, or
+            # cannot key its frames at the consumers that read the name as
+            # structure, on the shared ``camera_name_error`` rule every backend's
             # ``add_camera`` reads, so a name one backend refuses is refused by
             # all three - the same invariant this method already honours for
             # ``position`` / ``target`` / ``fov`` / ``width`` / ``height``

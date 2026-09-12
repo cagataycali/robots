@@ -2944,9 +2944,11 @@ def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_ca
     The whole name rule for a camera creation site, in one place and in one
     order: :func:`entity_name_error` first (a value that cannot be a registry
     key at all), then :func:`reserved_camera_name_error` (a ``str`` this
-    backend's own render entry points resolve past). Every ``add_camera``
-    reads it, so the order is a property of the rule rather than of whichever
-    body a caller reached.
+    backend's own render entry points resolve past), then
+    :func:`scoped_camera_name_error` (a ``str`` this backend registers happily
+    and the consumers that key frames by it read as structure). Every
+    ``add_camera`` reads it, so the order is a property of the rule rather than
+    of whichever body a caller reached.
 
     That order was the defect this composition removes. The two guards had been
     applied separately at each site, and the sites disagreed about where the
@@ -2986,20 +2988,32 @@ def camera_name_error(method: str, param_name: str, name: Any, *, routes_free_ca
 
     Returns:
         The first refusal in the documented order, or ``None`` when *name* can
-        address a camera on this backend.
+        address a camera on this backend *and* key that camera's frames at the
+        consumers which read the name as structure.
     """
     if (err := entity_name_error(method, param_name, name)) is not None:
         return err
-    if routes_free_camera_tokens:
-        return reserved_camera_name_error(method, param_name, name)
-    return None
+    if routes_free_camera_tokens and (err := reserved_camera_name_error(method, param_name, name)) is not None:
+        return err
+    return scoped_camera_name_error(method, param_name, name)
 
 
-#: What a camera's name in a ``cameras`` mapping may be: a bare token of
-#: letters, digits, ``_`` and ``-``, opening on a letter or a digit. Every
+#: The alphabet a camera token is written in: letters, digits, ``_`` and ``-``,
+#: opening on a letter or a digit. Both camera-name shapes below are built from
+#: this one string, so the door that takes a bare token and the door that takes a
+#: scoped one cannot come to accept different alphabets.
+_CAMERA_TOKEN_ALPHABET: Final = r"[A-Za-z0-9][A-Za-z0-9_-]*"
+
+#: What a camera's name in a ``cameras`` mapping may be: one bare token. Every
 #: consumer keys the camera's frames by this name, and each of them reserves
 #: punctuation of its own - see :func:`camera_token_error`.
-_CAMERA_TOKEN: Final = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+_CAMERA_TOKEN: Final = re.compile(rf"\A{_CAMERA_TOKEN_ALPHABET}\Z")
+
+#: What a camera's name in a sim scene may be: a bare token, optionally scoped to
+#: one robot as ``<robot>/<camera>``. One optional level, because that is the one
+#: namespace ``add_robot`` gives what it spawns and the only one the mesh strips -
+#: see :func:`scoped_camera_name_error`.
+_SCOPED_CAMERA_NAME: Final = re.compile(rf"\A{_CAMERA_TOKEN_ALPHABET}(?:/{_CAMERA_TOKEN_ALPHABET})?\Z")
 
 
 def camera_token_error(method: str, param_name: str, name: Any) -> str | None:
@@ -3072,6 +3086,69 @@ def camera_token_error(method: str, param_name: str, name: Any) -> str | None:
         "the 'observation.images.<name>' dataset feature key; and lerobot parses "
         "--robot.cameras as a nested dict, where ',', ':', '{', '}', '=' and whitespace are "
         "structure. Use letters, digits, '_' or '-'."
+    )
+
+
+def scoped_camera_name_error(method: str, param_name: str, name: Any) -> str | None:
+    """Return an error message if a sim camera's *name* cannot key its own frames.
+
+    The sim-scene counterpart to :func:`camera_token_error`. That rule holds a
+    camera's name to one bare token, because the name is the identity every
+    downstream consumer keys the camera's frames by and each of them reserves
+    punctuation of its own; this one applies the same alphabet to a sim scene,
+    where a name may additionally carry one namespace level.
+
+    One level, and not a free path, because a robot's namespace is one level:
+    ``add_robot`` registers every robot it spawns with
+    ``SimRobot.namespace = "<robot>/"`` and namespaces its bodies, joints and
+    actuators under it, so ``add_camera("alice/wrist_cam", ...)`` is how a wrist
+    camera is scoped to the robot ``alice``. That prefix is also the only one the
+    mesh removes: :meth:`~strands_robots.mesh.core.Mesh._publish_sim_cameras`
+    strips exactly ``r.namespace`` from each MuJoCo camera name before handing
+    the short name to
+    :meth:`~strands_robots.mesh.core.Mesh._encode_and_publish_frames`, so a
+    one-level scoped name reaches the topic as the bare token that function's
+    consumers require. A second level survives the strip, and is structure again.
+
+    Everything else is refused for the reasons :func:`camera_token_error`
+    documents: the mesh topic (a ``/`` adds a level no ``strands/*/camera/*``
+    subscription matches, and ``*`` / ``**`` are Zenoh wildcards a ``put`` is
+    routed by intersection), the S3 object key (``..`` walks out of the peer's
+    own prefix), the ``observation.images.<name>`` dataset feature key, and the
+    nested ``--robot.cameras`` dict lerobot's CLI parses. Measured on one
+    ``create_world`` before this guard, ``add_camera`` returned
+    ``status="success"`` for ``'..'``, ``'sub/../etc'``, ``'a b'``, ``'cam#1'``,
+    ``'*'``, ``'**'``, ``'a//b'``, ``'/lead'`` and ``'trail/'``, and
+    ``list_cameras`` reported every one of them.
+
+    Args:
+        method: The surface being called, for the message prefix (e.g.
+            ``"add_camera"``).
+        param_name: The parameter being validated, for the message.
+        name: The claimed camera name. Anything at all; a value that cannot be a
+            registry key of any kind is refused first by
+            :func:`entity_name_error`.
+
+    Returns:
+        An error message naming the value and the alphabet, or ``None`` when
+        *name* is a camera token optionally scoped to one robot.
+    """
+    if (err := entity_name_error(method, param_name, name)) is not None:
+        return err
+    if _SCOPED_CAMERA_NAME.match(name) is not None:
+        return None
+    rendered = refusal_repr(name)
+    return (
+        f"{method}: {param_name}={rendered} cannot key a camera's frames. A sim camera's name "
+        "is a bare token of letters, digits, '_' or '-', opening on a letter or a digit, "
+        "optionally scoped to one robot as '<robot>/<camera>' (the namespace add_robot gives "
+        "what it spawns, and the one the mesh strips). Every other character is structure to "
+        "a consumer that keys frames by this name: the mesh publishes them on "
+        "'strands/<peer_id>/camera/<name>', where a further '/' adds a topic level no "
+        "'strands/*/camera/*' subscription matches and '*' / '**' are wildcards a put is "
+        "routed by intersection; the S3 offload joins it into the object key, where '..' "
+        "walks out of the peer's prefix; and a recording writes it as the "
+        "'observation.images.<name>' dataset feature key."
     )
 
 
