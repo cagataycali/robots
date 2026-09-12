@@ -207,9 +207,13 @@ LOG_VARIABLES: tuple[tuple[str, str], ...] = (
 _LOG_NAME = "strands_state"
 _LOG_PERIOD_MS = 100
 
-#: Action keys :func:`action_to_setpoint` understands, for the refusal message
-#: when an action names none of them.
+#: Action keys :func:`action_to_setpoint` understands. The allowlist an action
+#: is checked against, and the set both of its refusals name.
 ACTION_KEYS: tuple[str, ...] = ("vx", "vy", "vz", "wz", "z")
+
+#: The unit gloss both :func:`action_to_setpoint` refusals carry, named once so
+#: the two cannot drift apart.
+_ACTION_KEY_UNITS = "vx/vy/vz in m/s, wz in rad/s, z the hover height in m"
 
 #: ``cflib`` ``Commander`` method names this driver calls. Named constants
 #: because :func:`action_to_setpoint` returns one of them and the tests assert
@@ -368,6 +372,14 @@ def action_to_setpoint(action: Mapping[str, Any]) -> tuple[str, tuple[float, flo
     all-zero setpoint - would latch the aircraft into a hover the caller never
     asked for and report success for it.
 
+    A key *outside* :data:`ACTION_KEYS` is refused for that same reason, even
+    with a known key beside it. Absent means resting, but unknown means the
+    caller named a component the aircraft never receives, and the two are not
+    distinguishable downstream: ``{"vx": 0.0, "height": 1.5}`` - ``height``
+    being this module's own internal spelling of the hover key ``z`` - reaches
+    precisely the all-zero setpoint the gate above exists to refuse, and
+    reports success for it.
+
     Args:
         action: Joint targets keyed as this driver names them; see
             :data:`ACTION_KEYS`.
@@ -379,7 +391,15 @@ def action_to_setpoint(action: Mapping[str, Any]) -> tuple[str, tuple[float, flo
     if not any(key in action for key in ACTION_KEYS):
         return (
             f"send_action: no flight command in {sorted(action)}; expected at least one of "
-            f"{list(ACTION_KEYS)} (vx/vy/vz in m/s, wz in rad/s, z the hover height in m)"
+            f"{list(ACTION_KEYS)} ({_ACTION_KEY_UNITS})"
+        )
+    # Checked after the gate above rather than before it, so each refusal
+    # diagnoses one fault: an action with no known key is told what to send,
+    # and an action that mostly parsed is told which component was dropped.
+    unknown = sorted(set(action) - set(ACTION_KEYS))
+    if unknown:
+        return (
+            f"send_action: {unknown} name no flight command; expected any of {list(ACTION_KEYS)} ({_ACTION_KEY_UNITS})"
         )
     height = action.get("z")
     if (
