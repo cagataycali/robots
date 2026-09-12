@@ -1093,6 +1093,20 @@ def _device_connect_dispatch(
             # pass nan straight through (min(nan, 5.0) is nan).
             result = conn.invoke(target, "stop", _with_identity({}), timeout=min(timeout, 5.0))
             r = result.get("result", result)
+            # Graded with the rule the built-in mesh path reads
+            # (_reports_failure_to_stop), for the same reason the fleet-wide
+            # branch below reads it: the device answers its stop RPC with an
+            # envelope, so an authz refusal or a stop_policy that could not halt
+            # a rollout arrives as a DELIVERED reply rather than as a raised
+            # invoke. Counting delivery returned that refusal under
+            # status="success" and audited ok=True, so a caller branching on the
+            # envelope -- and the audit row an incident reads first -- both said
+            # the robot had halted while the robot had just said it had not.
+            if isinstance(r, dict) and _reports_failure_to_stop(r):
+                answer = json.dumps(r, default=str)
+                logger.critical("[safety] stop over Device Connect: %s reported it did NOT stop: %s", target, answer)
+                _audit_tool_action(action, target, False, f"reported it did not stop: {answer}")
+                return _DCResult(_err(f"Stop {target}: reported it did NOT stop: {answer[:1500]}"))
             _audit_tool_action(action, target, True, "")
             return _DCResult(_ok(f"Stop {target}: {json.dumps(r, default=str)}"))
 
