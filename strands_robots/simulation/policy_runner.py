@@ -3213,9 +3213,14 @@ class PolicyRunner:
             success_fn: Legacy success predicate (see above).
             spec: :class:`BenchmarkProtocol` to drive the eval. When
                 provided, overrides the ``success_fn`` path.
-            seed: Master RNG seed. Each episode derives a child RNG from it,
-                so evaluations are reproducible within a process. Only used
-                when ``spec`` is provided.
+            seed: Master RNG seed. Each episode derives a child seed from it,
+                so evaluations are reproducible within a process. Used on BOTH
+                routes: the ``success_fn`` path draws the same per-episode seeds
+                from the same master RNG and forwards each to ``policy.reset``,
+                which this entry used to say it did not. Every episode record in
+                the result reports the ``seed`` its attempt ran on, so a single
+                failing episode can be replayed on its own; it is ``None`` for an
+                unseeded eval, which draws no per-episode seed at all.
             action_horizon: Max actions consumed per policy call before
                 requerying the observation, as in :meth:`run`. Clamped up to the
                 policy's own chunk length when it emits more.
@@ -3586,7 +3591,12 @@ class PolicyRunner:
                 # re-runs at the same master seed. Forwarded to ``policy.reset``
                 # too, because a service-mode policy samples in another process
                 # that ``set_eval_seed`` cannot reach. Best-effort, like every
-                # other ``reset`` call site.
+                # other ``reset`` call site. Bound to ``None`` first so the
+                # episode record below reports the seed on every route through
+                # the loop: an unseeded eval draws none (a master RNG is
+                # deliberately not built from entropy here), and ``None`` says
+                # that rather than naming a seed the episode never ran on.
+                episode_seed: int | None = None
                 if master_rng is not None:
                     episode_seed = master_rng.randint(0, 2**31 - 1)
                     set_eval_seed(episode_seed)
@@ -3670,7 +3680,7 @@ class PolicyRunner:
                         if success:
                             break
 
-                results.append({"episode": ep, "steps": steps, "success": success})
+                results.append({"episode": ep, "steps": steps, "success": success, "seed": episode_seed})
                 # #708 - roll the attached recorder over to a new episode so the
                 # dataset records per-episode boundaries rather than collapsing
                 # every rollout into one mega-episode.
