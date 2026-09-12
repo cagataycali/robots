@@ -130,6 +130,15 @@ _TRANSPORT_MODULE = "strands_robots.device_connect.reachy_transport"
 #: it - the same shape as ``device_connect``'s ``_INIT_TIMEOUT_S``.
 _LINK_START_TIMEOUT_S: float = 10.0
 
+#: How long :meth:`ReachyDriver._stop_loop` waits for the thread running the
+#: link's loop to return from ``run_forever`` before giving up on closing that
+#: loop. A budget rather than an unbounded wait because the thread is only as
+#: free to return as the callbacks on it: a link callback wedged on a socket read
+#: would otherwise hold teardown open for as long as the read takes. Matches
+#: ``_CAMS_REC_JOIN_TIMEOUT_S`` and ``_TELEOP_JOIN_TIMEOUT_S`` in purpose, and is
+#: read off the module for the same reason as the budget above.
+_LOOP_JOIN_TIMEOUT_S: float = 5.0
+
 
 def _resolve_transport() -> Any:
     """Return the Reachy transport module, or a reason naming what failed.
@@ -506,18 +515,66 @@ class ReachyDriver:
             # message: ``str(TimeoutError())`` is the empty string, so reporting
             # it as a cause produced "failed to start: " and told an operator
             # nothing. The budget is the cause, so the budget is what is named.
-            self._release_link(link, future, loop)
+            self._release_link(link, future, loop, thread)
             return (
                 f"link to {self._host}:{self._api_port} did not finish its handshake within {_LINK_START_TIMEOUT_S:g}s"
             )
         except Exception as exc:  # noqa: BLE001 - any link failure is a connect failure
-            self._release_link(link, future, loop)
+            self._release_link(link, future, loop, thread)
             return f"link to {self._host}:{self._api_port} failed to start: {exc}"
         self._loop = loop
         self._loop_thread = thread
         return None
 
-    def _release_link(self, link: Any, future: Future[None], loop: asyncio.AbstractEventLoop) -> None:
+    def _stop_loop(self, loop: asyncio.AbstractEventLoop, thread: threading.Thread) -> None:
+        """Stop the loop running *thread*, wait for it, and close the loop.
+
+        ``asyncio.new_event_loop`` is what :meth:`_start_link` calls to get this
+        loop, and ``loop.close()`` is that call's documented
+        counterpart: it releases the selector and the self-pipe the loop opened.
+        ``loop.stop()`` is not that counterpart - it only asks ``run_forever`` to
+        return. So a teardown that stops without closing abandons an open loop,
+        and Python says so: every connect/teardown cycle raised one
+        ``ResourceWarning: unclosed event loop``, reported not here but wherever
+        the collector happened to reclaim it, which is code that has nothing to
+        do with this driver.
+
+        The wait is not politeness, it is what makes the close legal: closing a
+        loop that is still running raises ``RuntimeError``, and ``stop()`` is
+        asynchronous - it schedules the stop and returns, so the thread is still
+        inside ``run_forever`` when it does. Waiting for the thread is therefore
+        the only way to know the loop has stopped, and it is why the thread
+        handle is kept at all.
+
+        Bounded by :data:`_LOOP_JOIN_TIMEOUT_S`, and a thread that outlasts it
+        keeps its loop: the loop is by definition still running, so closing it
+        would raise, and reporting a teardown that did not happen is worse than
+        one open loop. That outcome is logged rather than raised, because
+        teardown is a caller's last action and has no error to return to.
+
+        Args:
+            loop: The loop to stop and close.
+            thread: The thread running that loop, waited for here.
+        """
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=_LOOP_JOIN_TIMEOUT_S)
+        if thread.is_alive():
+            logger.warning(
+                "%s: the link loop did not stop within %.1fs, so its loop is left open; "
+                "a link callback is still running on it.",
+                self._tool_name,
+                _LOOP_JOIN_TIMEOUT_S,
+            )
+            return
+        loop.close()
+
+    def _release_link(
+        self,
+        link: Any,
+        future: Future[None],
+        loop: asyncio.AbstractEventLoop,
+        thread: threading.Thread,
+    ) -> None:
         """Close whatever a bring-up that will not be adopted already opened.
 
         A ``start`` that raised, or that outran
@@ -542,13 +599,15 @@ class ReachyDriver:
             link: The link whose bring-up failed.
             future: The pending handshake, cancelled here.
             loop: The loop the handshake was submitted to; stopped last.
+            thread: The thread running that loop, so the loop this bring-up
+                opened is closed rather than left for the collector.
         """
         future.cancel()
         try:
             asyncio.run_coroutine_threadsafe(link.stop(), loop).result(timeout=_LINK_START_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - teardown of a failed bring-up must not raise
             logger.debug("%s: stopping the failed link raised: %s", self._tool_name, exc)
-        loop.call_soon_threadsafe(loop.stop)
+        self._stop_loop(loop, thread)
 
     async def get_status(self) -> dict[str, Any]:
         """Report reachability, hardware variant and the latest battery read.
@@ -592,14 +651,21 @@ class ReachyDriver:
         self._stopped = True
 
     def cleanup(self) -> None:
-        """Stop the link and its loop. Idempotent."""
+        """Stop the link, then stop and close the loop it ran on. Idempotent.
+
+        The loop is closed and not merely stopped - see :meth:`_stop_loop` for
+        why the two are different and why closing it means waiting for the
+        thread first. ``_loop`` and ``_loop_thread`` are adopted together by
+        :meth:`_start_link` and cleared together here, so one being set is the
+        same condition as both.
+        """
         if self._link is not None and self._loop is not None:
             try:
                 asyncio.run_coroutine_threadsafe(self._link.stop(), self._loop).result(timeout=5)
             except Exception as exc:  # noqa: BLE001 - teardown must not raise
                 logger.debug("%s: link stop failed during cleanup: %s", self._tool_name, exc)
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop is not None and self._loop_thread is not None:
+            self._stop_loop(self._loop, self._loop_thread)
         self._link = None
         self._loop = None
         self._loop_thread = None

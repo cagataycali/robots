@@ -283,6 +283,15 @@ subscribed to a Mini the caller has just been told it is not connected to:
 The reason names the budget that expired rather than the timeout's own message,
 which is empty.
 
+Either way the loop the bring-up opened is closed, not merely stopped. The link runs
+on a background asyncio loop, and `loop.stop()` only asks it to return from
+`run_forever` - the selector and self-pipe it opened are released by `loop.close()`.
+So teardown waits for that thread (up to 5s) and then closes the loop, on the success
+path through `cleanup()` and on both give-up paths, rather than leaving one open loop
+per connect cycle for the garbage collector to complain about later. A thread that
+outlasts the wait keeps its loop, because closing a running loop raises, and that
+outcome is logged instead of reported as a teardown that finished.
+
 `hardware.driver` is optional and validated when the registry loads: a value that is not a
 driver name is refused there, naming the robot, rather than being read as "no preference".
 
