@@ -10,5 +10,12 @@ the argv too, and a name or value carrying `,` `:` `{` `}` `=` or whitespace cha
 *shape* of that dict - one entry parsed as two, or a second camera the call never named.
 A non-mapping entry answered `'str' object has no attribute 'get'`, which names nothing.
 
-The whole map is now checked before a flag is rendered, at the single render site, and
-an integral geometry is emitted as the whole number lerobot declares the field.
+The whole map is now checked before a flag is rendered, at the single render site. Which
+`type` values exist and which options each admits is read from lerobot's `CameraConfig`
+registry through the one owner the `Robot` factory already uses
+(`hardware_robot._camera_option_vocabulary`), so the `realsense` spelling the tool's own
+schema suggested is refused naming `intelrealsense`, and a RealSense's
+`serial_number_or_name` is admitted and rendered where the copied five-key list refused it.
+A string value is quoted in the rendered dict so draccus reads it back verbatim: unquoted,
+`/dev/video[1]` failed to parse and a serial `0123` arrived as the octal `"83"`. An integral
+geometry or index is emitted as the whole number lerobot declares the field.

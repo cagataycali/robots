@@ -289,6 +289,58 @@ def _resolve_camera_config_class(camera_name: str, cam_type: Any) -> type:
         ) from None
 
 
+def _camera_option_vocabulary(camera_name: str, config: Mapping[str, Any]) -> tuple[type, dict[str, Any]]:
+    """Resolve the config class one camera entry names and the options it may state.
+
+    The one owner of the camera option vocabulary. ``type`` selects the class
+    through lerobot's ``CameraConfig`` choice registry, and the options an entry
+    may then name are that class's declared dataclass fields - so a backend
+    lerobot adds, or a field it renames, is admitted here by construction rather
+    than by a list kept in step by hand. Every surface that accepts the
+    serialized ``cameras`` shape reads it from here: the ``Robot`` factory
+    constructs the config, and ``lerobot_teleoperate`` renders the same entry
+    into the ``--robot.cameras`` argv of a detached subprocess, where an option
+    the class does not declare would be refused minutes later in that process's
+    log rather than here.
+
+    Args:
+        camera_name: The key this camera was registered under, named in every
+            refusal so a multi-camera rig reports which entry is at fault.
+        config: The per-camera options, already known to be a mapping.
+
+    Returns:
+        The resolved ``CameraConfig`` subclass and its declared fields by name.
+
+    Raises:
+        ValueError: If ``type`` is not a registered camera backend, or the entry
+            names an option the resolved class does not declare. An unknown
+            option is refused rather than dropped per AGENTS.md > Review
+            Learnings (#86): a silently discarded option reports success while
+            the camera streams at the default. The suggestion is drawn from the
+            resolved class's own fields: an ``index_or_path`` sent to a
+            RealSense is a real mistake, and pointing at
+            ``serial_number_or_name`` is what makes it fixable.
+    """
+    ConfigClass = _resolve_camera_config_class(camera_name, config.get(_CAMERA_TYPE_KEY, "opencv"))
+    fields = {f.name: f for f in dataclasses.fields(ConfigClass)}
+    accepted = sorted(set(fields) | {_CAMERA_TYPE_KEY})
+
+    unknown = sorted(set(config) - set(fields) - {_CAMERA_TYPE_KEY}, key=repr)
+    if unknown:
+        hints = []
+        for key in unknown:
+            close = difflib.get_close_matches(str(key), accepted, n=1, cutoff=0.7)
+            if close:
+                hints.append(f"{key!r} -> {close[0]!r}")
+        hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
+        raise ValueError(
+            f"Unknown option(s) for camera {camera_name!r}: {unknown}.{hint} "
+            f"{ConfigClass.__name__} accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
+            f"the camera backend). (If this is a typo, fix it.)"
+        )
+    return ConfigClass, fields
+
+
 def _build_camera_config(camera_name: str, config: Any) -> Any:
     """Build the lerobot camera config for one entry of a ``cameras`` dict.
 
@@ -319,28 +371,9 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
             f"got {type(config).__name__}: {config!r}."
         )
 
-    ConfigClass = _resolve_camera_config_class(camera_name, config.get(_CAMERA_TYPE_KEY, "opencv"))
+    ConfigClass, fields = _camera_option_vocabulary(camera_name, config)
     class_name = ConfigClass.__name__
-
-    fields = {f.name: f for f in dataclasses.fields(ConfigClass)}
     accepted = sorted(set(fields) | {_CAMERA_TYPE_KEY})
-
-    unknown = sorted(set(config) - set(fields) - {_CAMERA_TYPE_KEY}, key=repr)
-    if unknown:
-        hints = []
-        for key in unknown:
-            close = difflib.get_close_matches(str(key), accepted, n=1, cutoff=0.7)
-            if close:
-                hints.append(f"{key!r} -> {close[0]!r}")
-        hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
-        # The suggestion is drawn from the resolved class's own fields: an
-        # ``index_or_path`` sent to a RealSense is a real mistake, and pointing
-        # at ``serial_number_or_name`` is what makes it fixable.
-        raise ValueError(
-            f"Unknown option(s) for camera {camera_name!r}: {unknown}.{hint} "
-            f"{class_name} accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
-            f"the camera backend). (If this is a typo, fix it.)"
-        )
 
     missing = sorted(
         name

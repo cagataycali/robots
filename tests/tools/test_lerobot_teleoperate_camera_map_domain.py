@@ -13,6 +13,8 @@ on ``e588be1``, the rendered flag for each request:
 | ``{"front": {"resolution": "1920x1080"}}`` | ``640x480`` | ditto for geometry |
 | ``{"front": {"fps": 0}}`` | ``fps: 0`` | the same quantity ``--dataset.fps 0`` is refused |
 | ``{"front": {"width": -640}}`` | ``width: -640`` | ditto |
+| ``{"front": {"type": "realsense"}}`` | ``type: realsense`` | not a registered backend (lerobot's is ``intelrealsense``); the subprocess dies in its log |
+| ``{"top": {"type": "intelrealsense", "serial_number_or_name": "0123"}}`` | ``serial_number_or_name: 0123`` | YAML reads ``0123`` as octal: the serial arrives as ``"83"`` |
 | ``{"front,wrist": {}}`` | one entry parsed as two | draccus cannot parse it |
 | ``{"front": {"index_or_path": "0, wrist: {type: opencv, index_or_path: 5"}}`` | a **second camera** | the argv describes a set the call never named |
 | ``{"front": "opencv"}`` | ``AttributeError`` | ``"Command build failed: 'str' object has no attribute 'get'"`` names nothing |
@@ -21,10 +23,20 @@ The first three rows are the silent ones, and they are the reason an unknown
 option is a refusal rather than a default: ``_build_camera_arg`` renders the
 default for every option an entry does not name, so a misspelling is not dropped
 - it records an episode from a device nobody asked for, under the caller's own
-camera name, and reports ``status="success"``. The last two rows are the failure
+camera name, and reports ``status="success"``. The last rows are the failure
 this module's numeric table already exists to prevent: the map goes onto the
 command line of a subprocess started with ``start_new_session=True``, which is
 not a channel the call can read a failure back from.
+
+Which ``type`` values exist and which options each admits is lerobot's
+``CameraConfig`` registry's to say, read through the one owner
+(``hardware_robot._camera_option_vocabulary``) rather than a list copied here:
+a copy admitted the ``realsense`` spelling and refused the
+``serial_number_or_name`` a RealSense is identified by. A string value is
+quoted at the render so draccus reads it back as the string it was, which is
+the only closure for the last rows: a blocklist of structure characters misses
+``[``, ``]``, ``?``, a leading ``*`` or ``&``, and every re-typing YAML does
+(``0123``, ``yes``, ``~``, ``1e3``).
 
 The geometry rows are checked with the guards ``lerobot_camera`` already reads
 ``width`` / ``height`` / ``fps`` with, so a frame size or rate that tool refuses
@@ -39,6 +51,9 @@ import numpy as np
 import pytest
 
 pytest.importorskip("psutil")
+# The vocabulary is lerobot's camera registry, so every cell that judges a map
+# needs it; the sibling registry test gates on the same module.
+pytest.importorskip("lerobot")
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 from strands_robots.tools import _process_stop  # noqa: E402
@@ -91,13 +106,21 @@ UNUSABLE = [
     pytest.param({"front\n--robot.port=/dev/x": {}}, "bare token", id="newline-in-name"),
     pytest.param({"": {}}, "non-empty string", id="empty-name"),
     pytest.param({7: {}}, "non-empty string", id="non-str-name"),
-    pytest.param({"front": {"type": "opencv}"}}, "bare token", id="brace-in-type"),
-    pytest.param({"front": {"type": 0}}, "non-empty string", id="non-str-type"),
+    pytest.param({"front": {"type": "opencv}"}}, "Unsupported camera type", id="brace-in-type"),
+    pytest.param({"front": {"type": 0}}, "Unsupported camera type", id="non-str-type"),
+    pytest.param({"front": {"type": ["opencv"]}}, "Unsupported camera type", id="unhashable-type"),
+    # The spelling the tool's own schema once suggested; lerobot registers
+    # ``intelrealsense``, and the refusal must say so rather than leave the
+    # caller hunting for one that does not exist.
+    pytest.param({"top": {"type": "realsense"}}, "Did you mean 'intelrealsense'?", id="realsense-spelling"),
+    # The option set is the resolved class's: a RealSense is identified by
+    # ``serial_number_or_name``, and the hint names it.
     pytest.param(
-        {"front": {"index_or_path": "0, wrist: {type: opencv, index_or_path: 5"}},
-        "index_or_path",
-        id="value-injects-a-camera",
+        {"top": {"type": "intelrealsense", "index_or_path": 0}},
+        "serial_number_or_name",
+        id="opencv-option-on-a-realsense",
     ),
+    pytest.param({"top": {"type": "intelrealsense", "serial_number_or_name": ""}}, "is empty", id="empty-serial"),
     pytest.param({"front": {"index_or_path": -1}}, "index_or_path", id="negative-index"),
     pytest.param({"front": {"index_or_path": ""}}, "index_or_path", id="empty-device"),
     pytest.param({"front": "opencv"}, "must be a mapping", id="entry-is-not-a-mapping"),
@@ -105,8 +128,10 @@ UNUSABLE = [
     pytest.param("front", "must be a mapping", id="map-is-a-string"),
 ]
 
-# Maps a run can honour, with the flag each must still render. The control that
-# makes the refusals above a narrowing rather than a blanket one.
+# Maps a run can honour, with the flag each must render. The control that makes
+# the refusals above a narrowing rather than a blanket one. A string value is
+# single-quoted, the YAML form draccus reads back verbatim (see the module
+# docstring); a number renders bare, as the ``int`` the field declares.
 USABLE = [
     pytest.param(
         {"front": {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30}},
@@ -119,8 +144,8 @@ USABLE = [
         id="partially-specified-defaults-the-rest",
     ),
     pytest.param(
-        {"wrist-1": {"index_or_path": "/dev/video0", "type": "realsense"}},
-        "--robot.cameras={wrist-1: {type: realsense, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}",
+        {"wrist-1": {"index_or_path": "/dev/video0", "type": "opencv"}},
+        "--robot.cameras={wrist-1: {type: opencv, index_or_path: '/dev/video0', width: 640, height: 480, fps: 30}}",
         id="device-path-and-a-hyphenated-name",
     ),
     pytest.param(
@@ -128,6 +153,33 @@ USABLE = [
         "--robot.cameras={front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, "
         "wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}}",
         id="two-cameras",
+    ),
+    # The options are the resolved class's, so a RealSense renders the field
+    # that identifies it and none of OpenCV's; the geometry defaults still apply.
+    pytest.param(
+        {"top": {"type": "intelrealsense", "serial_number_or_name": "0123", "use_depth": True}},
+        "--robot.cameras={top: {type: intelrealsense, width: 640, height: 480, fps: 30, "
+        "serial_number_or_name: '0123', use_depth: True}}",
+        id="realsense-by-serial",
+    ),
+    # Quoted, a path is carried as the path it is: unquoted, ``[`` fails the
+    # flow-mapping parse and ``, wrist: {...`` describes a second camera.
+    pytest.param(
+        {"front": {"index_or_path": "/dev/v4l/by-id/usb-046d_C922[1]", "fourcc": "MJPG"}},
+        "--robot.cameras={front: {type: opencv, index_or_path: '/dev/v4l/by-id/usb-046d_C922[1]', "
+        "width: 640, height: 480, fps: 30, fourcc: 'MJPG'}}",
+        id="a-bracket-in-a-device-path",
+    ),
+    pytest.param(
+        {"front": {"index_or_path": "0, wrist: {type: opencv, index_or_path: 5"}},
+        "--robot.cameras={front: {type: opencv, index_or_path: '0, wrist: {type: opencv, index_or_path: 5', "
+        "width: 640, height: 480, fps: 30}}",
+        id="delimiters-in-a-value-are-a-value",
+    ),
+    pytest.param(
+        {"front": {"index_or_path": "/dev/vi'deo"}},
+        "--robot.cameras={front: {type: opencv, index_or_path: '/dev/vi''deo', width: 640, height: 480, fps: 30}}",
+        id="a-quote-in-a-device-path",
     ),
 ]
 
@@ -193,7 +245,6 @@ class TestEveryModeThatEmitsTheMapChecksIt:
         if mode == "dagger":
             kwargs["action"] = "dagger"
             kwargs["policy_path"] = "lerobot/act_so101"
-            monkeypatch.setattr(tele_mod, "_require_rollout_module", lambda: None, raising=False)
         with pytest.raises(ValueError, match="index"):
             build_lerobot_command(**kwargs)
 
@@ -244,19 +295,48 @@ class TestTheToolAnswersTheCallerInsteadOfASessionLog:
         assert "robot_cameras['front']" in text, text
 
 
-class TestTheOptionSetIsTheOneTheRenderReads:
-    """The declared options and the rendered options cannot drift apart.
+class TestTheOptionSetIsTheRegistrys:
+    """The vocabulary is lerobot's camera registry, read through its one owner.
 
-    An option added to ``_build_camera_arg`` but not to the key set would be
-    refused as unknown; one added to the set but never rendered would be accepted
-    and silently dropped. Both are the same defect this file closes.
+    A list copied here would admit a ``type`` the registry does not know and
+    refuse a field a backend declares, which is the defect this file closes; so
+    the population is derived from the registry rather than restated.
     """
 
-    def test_every_declared_option_is_rendered(self) -> None:
-        rendered = _teleop({"front": {}})
-        flag = str(_cameras_flag(rendered))
-        for option in tele_mod._CAMERA_ENTRY_KEYS:
-            assert f"{option}: " in flag, f"{option} is declared but not rendered: {flag}"
+    def test_every_registered_backend_renders_and_every_declared_field_is_admitted(self) -> None:
+        import dataclasses
+
+        from lerobot.cameras.configs import CameraConfig
+
+        from strands_robots.hardware_robot import _ensure_lerobot_cameras_registered
+
+        _ensure_lerobot_cameras_registered()
+        choices = sorted(CameraConfig.get_known_choices())
+        assert {"opencv", "intelrealsense"} <= set(choices), choices
+        numeric = {name for name, _ in tele_mod._CAMERA_RENDER_DEFAULTS}
+        for choice in choices:
+            fields = [f.name for f in dataclasses.fields(CameraConfig.get_choice_class(choice))]
+            # Every field the class declares is an admitted option. The four
+            # with a numeric domain take a whole number; every other one takes
+            # a string, which the render must quote whatever the field's type.
+            entry = {"type": choice, **{name: (7 if name in numeric else "x") for name in fields}}
+            flag = str(_cameras_flag(_teleop({"cam": entry})))
+            assert flag.startswith(f"--robot.cameras={{cam: {{type: {choice}, "), flag
+            for name in fields:
+                assert f"{name}: {7 if name in numeric else chr(39) + 'x' + chr(39)}" in flag, (choice, name, flag)
+
+    def test_a_field_the_backend_does_not_declare_is_refused_with_the_backends_fields(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            _teleop({"top": {"type": "intelrealsense", "fourcc": "MJPG"}})
+        text = str(excinfo.value)
+        assert "RealSenseCameraConfig accepts" in text, text
+        assert "'fourcc'" not in text.split("accepts")[1], text  # an OpenCV-only field is not offered
+
+    def test_the_defaults_render_only_where_the_backend_declares_them(self) -> None:
+        """``index_or_path`` names an OpenCV device; a RealSense has no such field."""
+        flag = str(_cameras_flag(_teleop({"top": {"type": "intelrealsense", "serial_number_or_name": "1"}})))
+        assert "index_or_path" not in flag, flag
+        assert "width: 640, height: 480, fps: 30" in flag, flag
 
     def test_the_geometry_options_share_the_recorders_domain(self) -> None:
         """The same guard ``lerobot_camera`` reads pixels and frames with."""

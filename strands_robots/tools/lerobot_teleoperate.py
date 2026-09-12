@@ -270,9 +270,8 @@ def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
     return None
 
 
-# The five options ``_build_camera_arg`` renders, and the domain each numeric one
-# is read against. The camera map is the one argument that reaches the lerobot
-# argv as *structure* rather than as a value: it is rendered into the nested-dict
+# The camera map is the one argument that reaches the lerobot argv as
+# *structure* rather than as a value: it is rendered into the nested-dict
 # literal draccus parses, so a name or a value carrying one of the delimiters
 # below changes the shape of that dict instead of the number in it. Measured on
 # ``e588be1``, with nothing refused:
@@ -283,6 +282,8 @@ def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
 #   {"front": {"fps": 0}}           -> fps: 0              (the same quantity
 #                                       ``--dataset.fps 0`` is refused)
 #   {"front": {"width": -640}}      -> width: -640
+#   {"front": {"type": "realsense"}} -> type: realsense    (not a registered
+#                                       backend; lerobot's is ``intelrealsense``)
 #   {"front,wrist": {}}             -> one entry parsed as two
 #   {"front": {"index_or_path":
 #     "0, wrist: {type: opencv, index_or_path: 5"}}
@@ -290,9 +291,31 @@ def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
 #
 # The first three are silent: the session starts, ``status="success"`` is
 # returned, and an episode is recorded from a camera nobody asked for. The last
-# two are the failure this module's numeric table already exists to prevent -
+# three are the failure this module's numeric table already exists to prevent -
 # argv the detached subprocess cannot parse, reported minutes later in its log.
-_CAMERA_ENTRY_KEYS: tuple[str, ...] = ("type", "index_or_path", "width", "height", "fps")
+# A name is a key in that dict and must be a bare token; a value is quoted at
+# the render (``_yaml_scalar``) so it is read back as the string it was.
+#
+# Which ``type`` values exist, and which options each admits, is not this
+# module's to list: ``type`` selects a class from lerobot's ``CameraConfig``
+# registry and the options are that class's declared fields, read through the
+# one owner of that vocabulary, ``hardware_robot._camera_option_vocabulary``
+# (AGENTS.md: derive the refuses-nothing-real half of an enumerable domain from
+# the shipped catalogue rather than a copied list). A copy here admitted the
+# ``realsense`` spelling the tool's own schema suggested and refused the
+# ``serial_number_or_name`` a RealSense is identified by.
+
+# The options rendered for every camera whether or not the entry states them,
+# in the order they are rendered, with the value an unstated one takes. Only
+# the ones the resolved class declares are emitted: ``index_or_path`` names an
+# OpenCV device and is absent from a RealSense config. The geometry defaults are
+# the ``Robot`` factory's, so the two surfaces open an unstated camera alike.
+_CAMERA_RENDER_DEFAULTS: tuple[tuple[str, Any], ...] = (
+    ("index_or_path", 0),
+    ("width", 640),
+    ("height", 480),
+    ("fps", 30),
+)
 
 # ``width`` / ``height`` / ``fps`` are the same pixels and frames
 # ``lerobot_camera`` already reads with these guards, so a geometry that tool
@@ -303,19 +326,14 @@ _CAMERA_GEOMETRY_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]
     ("fps", positive_whole_number_error),
 )
 
-# A bare token: what a name or an enumerated option may be without becoming
-# punctuation in the rendered dict. The camera name is additionally the dataset's
+# A bare token: what a camera name may be without becoming punctuation in the
+# rendered dict, where it is a key. The name is additionally the dataset's
 # ``observation.images.<name>`` feature key, which is the same alphabet.
 _CAMERA_TOKEN = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
-# Every character draccus reads as structure in ``{name: {key: value, ...}}``.
-# A device path may contain the rest (``/dev/video0``, ``.../by-id/usb-...``),
-# so a path is checked against this set rather than against the token rule.
-_CAMERA_STRUCTURE_CHARS = ",:{}=" + "\t\n\r\x0b\x0c "
-
 
 def _bare_token_error(where: str, param: str, value: Any) -> str | None:
-    """Refuse a camera name or option that would be punctuation in the argv.
+    """Refuse a camera name that would be punctuation in the argv.
 
     Args:
         where: The message prefix naming the surface and the map entry.
@@ -337,48 +355,50 @@ def _bare_token_error(where: str, param: str, value: Any) -> str | None:
     return None
 
 
-def _camera_entry_error(where: str, entry: Any) -> str | None:
+def _camera_entry_error(context: str, name: str, entry: Any) -> str | None:
     """Refuse a per-camera config the rendered argv would not carry as asked.
 
     Args:
-        where: The message prefix naming the surface and the camera.
+        context: The message prefix naming the surface.
+        name: The camera's name in the map, already known to be a bare token.
         entry: The config mapping for one camera, as supplied.
 
     Returns:
         An error message naming the option and its domain, or ``None`` when every
         option this entry states is rendered as given.
     """
+    where = f"{context}: robot_cameras[{refusal_repr(name)}]"
     if not isinstance(entry, Mapping):
         return (
-            f"{where} must be a mapping of camera option to value, got "
-            f"{refusal_repr(entry)}. Valid options: {list(_CAMERA_ENTRY_KEYS)}."
+            f"{where} must be a mapping of camera option to value, got {refusal_repr(entry)}. "
+            "'type' selects the lerobot camera backend (default 'opencv'); the other options "
+            "are the fields that backend declares."
         )
-    for key in entry:
-        if key not in _CAMERA_ENTRY_KEYS:
-            return (
-                f"{where}: unknown option {refusal_repr(key)}. Every option an entry does not "
-                f"name is rendered as its default, so a misspelling is not dropped - it opens "
-                f"the default device at the default geometry under this camera's name. Valid "
-                f"options: {list(_CAMERA_ENTRY_KEYS)}."
-            )
+    # Lazy for the reason ``teleoperator`` imports its registry walk lazily:
+    # ``hardware_robot`` is the ``Robot`` factory, and this tool is importable
+    # without it. The registry is lerobot's, so an unregistered ``type`` or an
+    # undeclared option is refused with the owner's own wording - the known
+    # backends, and the resolved class's fields with a closest-match hint.
+    from strands_robots.hardware_robot import _camera_option_vocabulary
+
+    try:
+        _camera_option_vocabulary(name, entry)
+    except ValueError as exc:
+        return (
+            f"{where}: {exc} Every option an entry does not name is rendered as its default, so a "
+            "misspelling is not dropped - it opens the default device at the default geometry "
+            "under this camera's name."
+        )
     for key, check in _CAMERA_GEOMETRY_DOMAINS:
         if key in entry and (error := check(entry[key], key, where)):
             return error
-    if "type" in entry and (error := _bare_token_error(where, "type", entry["type"])):
-        return error
-    if "index_or_path" not in entry:
-        return None
-    device = entry["index_or_path"]
-    if not isinstance(device, str):
-        return non_negative_whole_number_error(device, "index_or_path", where)
-    if not device:
-        return f"{where}: index_or_path is empty, which names no device index and no device path."
-    if breaks := [character for character in device if character in _CAMERA_STRUCTURE_CHARS]:
-        return (
-            f"{where}: index_or_path={refusal_repr(device)} carries {breaks[0]!r}, which is "
-            "structure in the nested dict lerobot parses - the rendered argv would describe a "
-            "different set of cameras. A device path may contain any other character."
-        )
+    if "index_or_path" in entry and not isinstance(entry["index_or_path"], str):
+        return non_negative_whole_number_error(entry["index_or_path"], "index_or_path", where)
+    # An empty string names no device index, path or serial. Any other string is
+    # carried as given: the render quotes it (:func:`_yaml_scalar`).
+    for key, value in entry.items():
+        if key != "type" and isinstance(value, str) and not value:
+            return f"{where}: {key} is empty, which names no device."
     return None
 
 
@@ -409,9 +429,32 @@ def _camera_map_error(robot_cameras: Any) -> str | None:
     for name, entry in robot_cameras.items():
         if error := _bare_token_error(context, "robot_cameras camera name", name):
             return error
-        if error := _camera_entry_error(f"{context}: robot_cameras[{refusal_repr(name)}]", entry):
+        if error := _camera_entry_error(context, name, entry):
             return error
     return None
+
+
+def _yaml_scalar(value: Any) -> str:
+    """Render one option value so draccus reads back exactly the value given.
+
+    A string is single-quoted, the one YAML form in which no character is
+    structure and nothing is re-typed: unquoted, ``/dev/video[1]`` fails to
+    parse, ``0, wrist: {...}`` describes a second camera, and a RealSense serial
+    ``0123`` is read as the octal integer ``83`` and arrives as the string
+    ``"83"`` (measured against lerobot 0.6.1 / draccus 0.8.0). A blocklist of
+    characters cannot close that, because YAML also re-types ``yes``, ``~``,
+    ``1e3`` and a date; quoting closes it for every string at once. Numbers and
+    flags render bare, since those are the types the fields declare.
+
+    Args:
+        value: The option value, already admitted by :func:`_camera_entry_error`.
+
+    Returns:
+        The scalar as it appears inside the rendered ``{key: value}`` dict.
+    """
+    if isinstance(value, str):
+        return "'" + value.replace("'", "''") + "'"
+    return str(value)
 
 
 def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
@@ -428,23 +471,35 @@ def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
     by remembering.
 
     Args:
-        robot_cameras: Map of camera name to a config dict with optional keys
-            ``type``, ``index_or_path``, ``width``, ``height``, ``fps``.
+        robot_cameras: Map of camera name to a config dict. ``type`` selects the
+            lerobot camera backend (default ``opencv``); every other key must be
+            a field the selected backend's config class declares.
 
     Returns:
         The nested dict string suitable for ``--robot.cameras=<value>``.
 
     Raises:
-        ValueError: If any name or option would not be rendered as given - an
-            unknown option (silently defaulted), a geometry or rate outside the
-            domain the recorders share, or a value carrying dict punctuation. The
-            refusal precedes the argv, so no subprocess is launched.
+        ValueError: If any name or option would not be rendered as given - a
+            name that is not a bare token, a ``type`` lerobot does not register,
+            an option the selected backend does not declare (silently defaulted),
+            a geometry or rate outside the domain the recorders share, or an
+            empty device string. The refusal precedes the argv, so no subprocess
+            is launched.
     """
     if error := _camera_map_error(robot_cameras):
         raise ValueError(error)
+    from strands_robots.hardware_robot import _camera_option_vocabulary
+
     entries = []
     for cam_name, cam_config in robot_cameras.items():
-        cam_type = cam_config.get("type", "opencv")
+        _, fields = _camera_option_vocabulary(cam_name, cam_config)
+        rendered: dict[str, Any] = {"type": cam_config.get("type", "opencv")}
+        for key, default in _CAMERA_RENDER_DEFAULTS:
+            if key in fields:
+                rendered[key] = cam_config.get(key, default)
+        for key in fields:
+            if key in cam_config and key not in rendered:
+                rendered[key] = cam_config[key]
         # lerobot declares the camera config's ``index_or_path`` as ``int | Path``
         # and ``fps`` / ``width`` / ``height`` as ``int``, and the check above
         # accepts an integral real so a geometry or an index read from a config
@@ -453,15 +508,13 @@ def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
         # (``str(int(dataset_fps))``): a ``30.0`` or ``4.0`` token would
         # otherwise be a value accepted here and rejected there - draccus parses
         # ``4.0`` as neither an ``int`` nor a ``Path``.
-        device = cam_config.get("index_or_path", 0)
-        cam_path = device if isinstance(device, str) else int(device)
-        fps_val = int(cam_config.get("fps", 30))
-        width = int(cam_config.get("width", 640))
-        height = int(cam_config.get("height", 480))
-        entries.append(
-            f"{cam_name}: {{type: {cam_type}, index_or_path: {cam_path}, "
-            f"width: {width}, height: {height}, fps: {fps_val}}}"
+        for key, _ in _CAMERA_RENDER_DEFAULTS:
+            if key in rendered and not isinstance(rendered[key], str):
+                rendered[key] = int(rendered[key])
+        options = ", ".join(
+            f"{key}: {value if key == 'type' else _yaml_scalar(value)}" for key, value in rendered.items()
         )
+        entries.append(f"{cam_name}: {{{options}}}")
     return "{" + ", ".join(entries) + "}"
 
 
@@ -875,22 +928,27 @@ def lerobot_teleoperate(
     Camera Configuration Format:
         {
             "camera_name": {
-                "type": "opencv",  # or "realsense"
-                "index_or_path": 0,  # camera index or device path
+                "type": "opencv",  # a lerobot camera backend; "intelrealsense" for a RealSense
+                "index_or_path": 0,  # camera index or device path (opencv)
                 "width": 640,
                 "height": 480,
                 "fps": 30
             }
         }
 
-        Those five are the only options an entry may name, and every option an
-        entry leaves out is rendered as the default shown above. So a misspelled
-        option is refused rather than dropped: "index" instead of
-        "index_or_path" would otherwise record the default device under this
-        camera's name. The name itself, and "type", must be a bare token
-        (letters, digits, "_", "-"); "width" / "height" / "fps" must be positive
-        whole numbers, the same domain lerobot_camera reads them with; and
-        "index_or_path" must be a non-negative index or a device path. The map is
+        "type" selects the backend from lerobot's camera registry, and the other
+        options an entry may name are the fields that backend's config declares
+        - an opencv camera is identified by "index_or_path", a RealSense by
+        "serial_number_or_name" - the same vocabulary Robot(cameras=...) reads.
+        An unstated "index_or_path" / "width" / "height" / "fps" is rendered as
+        the default shown above. So a misspelled option is refused rather than
+        dropped: "index" instead of "index_or_path" would otherwise record the
+        default device under this camera's name. The name itself must be a bare
+        token (letters, digits, "_", "-"); "width" / "height" / "fps" must be
+        positive whole numbers, the same domain lerobot_camera reads them with;
+        and "index_or_path" must be a non-negative index or a device path. A
+        string value is quoted in the rendered argv, so a device path or a
+        serial is read back exactly as given ("0123" stays "0123"). The map is
         rendered into the argv of a detached subprocess, so a value that would
         not be carried as given is reported here instead of in a session log.
 
