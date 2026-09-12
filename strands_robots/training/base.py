@@ -258,6 +258,20 @@ class Trainer(ABC):
 
         return rl_replay_problems(spec, context=self.provider_name)
 
+    def _rl_warmup_reachable_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight ``total_timesteps`` against ``learning_starts``.
+
+        A ``total_timesteps`` whose collected env steps stay below the
+        ``learning_starts`` threshold takes zero gradient updates for the whole
+        run and still reports success, exporting its initialization as the
+        trained policy. For the off-policy backends that gate their update on a
+        warmup; the two counts are graded as counts elsewhere, this is the
+        relation between them.
+        """
+        from strands_robots.training._validate import rl_warmup_reachable_problems
+
+        return rl_warmup_reachable_problems(spec, context=self.provider_name)
+
     def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
         """Preflight ``learning_rate`` when supplied: a positive finite number."""
         from strands_robots.training._validate import learning_rate_problems

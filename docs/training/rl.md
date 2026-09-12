@@ -303,6 +303,26 @@ separately rather than against that shared domain, because the accepted sets
 differ: PPO parallelizes and accepts any count `>= 1`, while the MuJoCo-backed
 FastSAC is single-env and requires exactly `1`.
 
+On the two off-policy backends `total_timesteps` is also checked *against*
+`learning_starts`, because that pair decides whether the run takes a gradient step
+at all. The loop collects `max(1, total_timesteps // steps_per_iter)` iterations of
+`steps_per_iter` env steps and updates only once the replay buffer holds
+`learning_starts` transitions, so a budget that never reaches the threshold spends
+the whole run on the uniform-random warmup. Measured on the MuJoCo reach env with
+`total_timesteps=40`, `rollout_steps=10` and `learning_starts=64`, `validate()`
+reported nothing, `update()` was called **zero** times, and `train()` wrote a
+checkpoint, exported it and reported `status="success"` with
+`"4 iterations x 10 steps complete"` - and the exported `policy.pt` was
+bit-identical to the weights `setup()` had just initialized. The same shape on
+FastTD3 behaved the same way. That is the outcome the `gradient_steps` domain
+already refuses, reached through this pair instead, so `validate()` now reports it
+and names both routes out: the next multiple of `steps_per_iter` at or above
+`learning_starts`, or a `learning_starts` at or below what the budget collects.
+The relation is asked of the loop's arithmetic rather than of `total_timesteps`
+alone, since the floor division is what is actually collected - 45 steps at 10 per
+iteration is four iterations of ten, so a `learning_starts` of 45 is out of reach
+even though the budget is not below it.
+
 `hidden_dims` must be a sequence of positive integer layer widths, checked by
 `validate()` on all three RL backends - each builds every network it trains by
 expanding the same field (the on-policy actor and critic; off-policy the actor,

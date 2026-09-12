@@ -35,6 +35,10 @@ _GATE_FIELDS: dict[str, tuple[str, ...]] = {
     "_run_size_problems": ("steps", "global_batch_size"),
     "_rl_run_size_problems": ("total_timesteps", "rollout_steps"),
     "_rl_replay_problems": ("buffer_size", "batch_size", "gradient_steps"),
+    # A relation, so it names both operands: the budget and the threshold it
+    # must reach. ``rollout_steps`` / ``num_envs`` are read to size an iteration
+    # but are graded, and reported on, by ``_rl_run_size_problems``.
+    "_rl_warmup_reachable_problems": ("total_timesteps", "learning_starts"),
     "_learning_rate_problems": ("learning_rate",),
     "_launch_topology_problems": ("num_gpus", "num_nodes"),
     "_seed_problems": ("seed",),

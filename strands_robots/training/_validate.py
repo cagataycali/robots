@@ -162,6 +162,60 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
+def rl_warmup_reachable_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report a run budget that never reaches ``learning_starts``.
+
+    An off-policy loop collects ``rollout_steps * num_envs`` env steps per
+    iteration for ``max(1, total_timesteps // (rollout_steps * num_envs))``
+    iterations, and takes a gradient step only once the replay buffer holds
+    ``learning_starts`` transitions. When the steps the loop will collect stay
+    below that threshold the update never runs: the whole budget is spent on the
+    uniform-random warmup, and the run then writes a checkpoint, exports it and
+    reports success having taken zero gradient steps -- so the loadable artifact
+    a caller gets back is the initialization, not a trained policy.
+
+    The relation is asked of the loop's own arithmetic rather than of
+    ``total_timesteps`` alone, because the floor division is what the loop
+    actually collects: 45 steps at ``rollout_steps=10`` is four iterations of
+    ten, so a ``learning_starts`` of 45 is out of reach even though the budget
+    is not below it.
+
+    Every operand is asked of the shared count domain first and the relation
+    only of values that are counts. Without that, a non-finite operand decides
+    it silently: every comparison against ``nan`` is False and ``inf`` is below
+    no ``int``, so the relation would pass and the run it admits is the one this
+    reports. A count that is not a count is left to the caller that grades it,
+    so it is reported once rather than twice.
+    """
+    # Read through ``getattr`` like the sibling gates: the RL fields live on
+    # ``RLTrainSpec``, and a default of 1 makes an absent field relate to nothing.
+    values = {
+        name: getattr(spec, name, 1) for name in ("total_timesteps", "rollout_steps", "num_envs", "learning_starts")
+    }
+    if any(positive_count_error(value, name, context) is not None for name, value in values.items()):
+        return []
+
+    total_timesteps, rollout_steps = values["total_timesteps"], values["rollout_steps"]
+    learning_starts = values["learning_starts"]
+    steps_per_iter = rollout_steps * values["num_envs"]
+    collected = max(1, total_timesteps // steps_per_iter) * steps_per_iter
+    if collected >= learning_starts:
+        return []
+    # Both remedies are stated as the value that actually reaches the threshold.
+    # total_timesteps is consumed a whole iteration at a time, so the budget that
+    # works is the next multiple of steps_per_iter at or above learning_starts --
+    # naming learning_starts itself would send the caller to a budget that still
+    # floors below it (64 at 10 per iteration collects 60).
+    reachable_budget = -(-learning_starts // steps_per_iter) * steps_per_iter
+    return [
+        f"total_timesteps ({total_timesteps}) collects {collected} env steps at "
+        f"{steps_per_iter} per iteration, which never reaches learning_starts "
+        f"({learning_starts}), so the run would take zero gradient steps and "
+        f"export its initialization; raise total_timesteps to at least "
+        f"{reachable_budget} or lower learning_starts to at most {collected}"
+    ]
+
+
 def launch_topology_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Report ``num_gpus`` and ``num_nodes``, each a count.
 

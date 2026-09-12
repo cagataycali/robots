@@ -44,8 +44,12 @@ consequences of *strict*, both deliberate and pinned below: an integral float
 such as ``1000.0`` and a ``numpy`` integer are now refused although the bare
 comparison accepted them, because the field is annotated ``int`` and a relation
 between a strict count and a loose one is the drift this closes; and a very large
-``int`` is still accepted, because magnitude is not the axis - ``10**400`` is a
-count, and a run that has not reached it has genuinely not finished warming up.
+``int`` is still a count as far as *this* domain is concerned, because magnitude
+is not its axis - ``10**400`` is a count. Whether the run's budget can ever reach
+such a warmup is a separate relation, and one that did not exist when the
+sentence above was written: ``tests/training/test_rl_warmup_is_reachable.py`` now
+owns it and refuses the value there, as a budget the loop cannot reach rather
+than as a value that is not a count.
 
 The scope of the *gate* is unchanged: ``_rl_replay_problems`` still reports
 nothing about this field, because PPO reads neither it nor the three replay
@@ -184,8 +188,17 @@ class TestTheUsableDomainIsUntouched:
         assert "positive integer" not in _about_learning_starts(1)[0]
 
     def test_a_very_large_count_is_still_a_count(self) -> None:
-        """Magnitude is not the axis: an enormous warmup is a warmup."""
-        assert not _about_learning_starts(10**400)
+        """Magnitude is not this domain's axis: an enormous warmup is a warmup.
+
+        The reachability relation does refuse this value - a warmup the run's
+        budget cannot reach is the zero-update success this file's own table
+        records - but it is refused for the relation it fails, not as a spelling
+        that is not a count. Which is the distinction the sibling cell above
+        draws for the batch relation.
+        """
+        problems = _about_learning_starts(10**400)
+        assert not [p for p in problems if "positive integer" in p]
+        assert [p for p in problems if "never reaches learning_starts" in p]
 
 
 class TestWhatStrictNewlyRefuses:

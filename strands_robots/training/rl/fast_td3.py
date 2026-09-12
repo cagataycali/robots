@@ -252,6 +252,17 @@ class FastTd3Trainer(BaseRLAlgo):
                 f"learning_starts ({spec.learning_starts}) must be >= batch_size ({spec.batch_size}) "
                 "so the first gradient step can sample a full batch"
             )
+        # The sibling relation on the same threshold: batch_size decides whether
+        # the first gradient step can sample, total_timesteps decides whether it
+        # is reached at all. The loop collects a whole number of iterations of
+        # rollout_steps, and takes no gradient step until the buffer holds
+        # learning_starts, so a budget below that spends the entire run on the
+        # uniform-random warmup and then writes a checkpoint, exports it and
+        # reports success having taken zero gradient steps - the same outcome
+        # ``_rl_replay_problems`` already refuses for ``gradient_steps=0``,
+        # reached through this pair of fields instead. Shared with the sibling
+        # backend rather than duplicated, since both gate on the same warmup.
+        problems.extend(self._rl_warmup_reachable_problems(spec))
         # log_interval is this loop's checkpoint cadence - the modulus of the one
         # test that decides whether an intermediate checkpoint is written - so it
         # answers the same question save_freq does for a supervised run and takes
