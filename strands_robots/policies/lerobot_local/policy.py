@@ -22,6 +22,7 @@ import torch
 
 from ...utils import (
     boolean_flag_error,
+    free_camera_routing_rank,
     name_list_error,
     positive_count_error,
     positive_finite_number_error,
@@ -2804,7 +2805,13 @@ class LerobotLocalPolicy(Policy):
                 used_feats.add(k)
             else:
                 unmatched_imgs.append((k, v))
-        # Fill any remaining declared image slots, in declaration order.
+        # Fill any remaining declared image slots, in declaration order, with
+        # the backend's own free view ranked behind every camera the caller
+        # added - the same ordering ``_resolve_camera_targets`` applies, because
+        # the only difference between the two routers is whether the checkpoint
+        # ships a preprocessor, which is not something a camera binding may
+        # depend on.
+        unmatched_imgs.sort(key=lambda item: free_camera_routing_rank(item[0]))
         free_feats = [f for f in declared_img_feats if f not in used_feats]
         if self.strict_keys and unmatched_imgs and free_feats:
             raise ValueError(
@@ -3108,6 +3115,17 @@ class LerobotLocalPolicy(Policy):
                 unmatched.append(cam)
 
         # 3) Positional fallback into the remaining declared slots (loud).
+        #    The free view a backend registers for itself ranks behind every
+        #    camera the caller added (``free_camera_routing_rank``): it is FIRST
+        #    in the observation, so filling the slots in observation order gave
+        #    slot 0 to a debug view of the whole scene and, once the slots ran
+        #    out, dropped one of the caller's real cameras to seat it. That is
+        #    the outcome the exact-name rung on the sibling router already names
+        #    as the reason it binds by name. The rank leaves the real cameras in
+        #    their existing relative order, so it decides only which camera a
+        #    guess picks, and it does not drop the free view - a scene whose only
+        #    camera is the free view still fills the slot it filled before.
+        unmatched.sort(key=free_camera_routing_rank)
         free = [feat for feat in targets if feat not in used]
         if self.strict_keys and unmatched and free:
             raise ValueError(

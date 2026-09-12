@@ -2752,6 +2752,43 @@ def reserved_camera_name_error(method: str, param_name: str, name: Any) -> str |
     )
 
 
+def free_camera_routing_rank(name: Any) -> int:
+    """Sort rank that orders the free view behind every real camera.
+
+    The routing-site counterpart to :func:`reserved_camera_name_error`. That
+    guard keeps a caller from *creating* a camera under a
+    :data:`FREE_CAMERA_TOKENS` name; this one keeps the free view a backend
+    creates for itself from outranking a camera the caller did create, wherever
+    cameras compete for a fixed number of slots.
+
+    ``create_world`` registers the built-in free view under ``"default"`` before
+    any ``add_camera`` call, so it is FIRST in ``list_cameras()`` and first among
+    the image entries of ``get_observation()``. Any consumer that fills N slots
+    from that sequence therefore hands slot 0 to a fixed three-quarter debug
+    view of the whole scene - a view no checkpoint was trained on and no caller
+    asked to be an input - and, when the slots run out, drops one of the
+    caller's real cameras to make room for it.
+
+    Used as a ``list.sort`` / ``sorted`` key, this sinks the token names to the
+    end while leaving the real cameras in their existing relative order (both
+    are stable), so it changes which camera a *guess* picks and nothing else. It
+    does not remove the free view from the candidates: a scene whose only camera
+    is the free view still fills the slot it would have filled.
+
+    Args:
+        name: An observation camera key. Membership is the whole rule, so the
+            answer agrees with :data:`FREE_CAMERA_TOKENS` for every member
+            (including the ``None`` / ``""`` spellings a render call site uses,
+            which no observation key can carry). A name that is not a token at
+            all is ranked with the real cameras; judging whether it is a usable
+            name belongs to the caller's own guard, not to an ordering.
+
+    Returns:
+        ``1`` for a free-camera routing token, ``0`` for every other name.
+    """
+    return 1 if name in FREE_CAMERA_TOKENS else 0
+
+
 def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     """Return an error message if ``value`` is not a usable camera field of view.
 

@@ -108,6 +108,35 @@ bind to their own slots and the extra camera is dropped, instead of the extra
 camera positionally displacing a real view. Set `strict_keys=True` to turn an
 unresolved camera name into a hard error rather than a positional guess.
 
+## The free view is the last candidate for a positional slot
+
+When NO camera matches a declared key by name, every camera goes to the
+positional fallback - including the free view a backend registers for itself
+(`default`, and the other `FREE_CAMERA_TOKENS` spellings). `create_world`
+registers that view before any `add_camera` call, so it leads `list_cameras()`
+and `get_observation()`; filling the slots in observation order therefore gave
+slot 0 to a fixed three-quarter debug view of the whole scene and, with more
+cameras than slots, dropped the caller's last real view to seat it.
+
+Cameras the caller added are now ranked ahead of the free view, so a guess picks
+real views first:
+
+```python
+sim.add_camera(name="cam_a", ...)   # observation order: default, cam_a, cam_b
+sim.add_camera(name="cam_b", ...)   # policy declares .../front and .../wrist
+
+# before: default -> .../front, cam_a -> .../wrist, cam_b dropped
+# now:    cam_a   -> .../front, cam_b -> .../wrist, default dropped
+```
+
+The free view is ranked last, not removed: a scene whose only camera is the free
+view still fills the slot it filled before. Real cameras keep their relative
+order among themselves, so the ordering decides only which camera a *guess*
+picks - a name the policy declares still binds by name, and an explicit
+`camera_key_map` still outranks both. The fallback stays loud either way
+(`positional_fallback_used` and a per-camera WARN); `strict_keys=True` still
+turns it into an error.
+
 ## See also
 
 - [LeRobot Local](lerobot-local.md) - camera routing, the pre-flight check, `obs_rename_override`.
