@@ -124,8 +124,10 @@ _M_SUBSCRIBE = "robot.subscribe"
 #: silently no-op'd on the robot.
 SKILLS: tuple[str, ...] = ("ground_pick", "kick_left", "kick_right", "sit_toggle", "roulade")
 
-#: Action keys this driver knows how to turn into an intent, for the refusal
-#: message when an action names none of them.
+#: Action keys this driver knows how to turn into an intent. An action key
+#: outside this tuple is refused, so it is also the vocabulary the two refusal
+#: messages name - the one for an action naming none of them, and the one for an
+#: action naming a key beside them.
 _ACTION_KEYS: tuple[str, ...] = (
     "vx",
     "vy",
@@ -184,11 +186,33 @@ def action_to_wire(action: dict[str, Any]) -> list[tuple[str, dict[str, Any], bo
     reason string when a ``skill`` value is not a known skill, so the driver
     refuses at the door rather than sending a frame robotd will reject.
 
+    A key this driver has no intent for is refused for the same reason, even
+    with a known key beside it. Absent means resting - an action naming only ``vx``
+    walks straight - but unknown means the caller named a component robotd never
+    receives, and every intent frame carries its whole group, so the two are not
+    distinguishable downstream: ``{"vx": 0.15, "yaw": 0.6}`` - ``yaw`` being the
+    spelling ``get_status``' pose block uses for the heading - sends
+    ``robot.move{vx:0.15,vy:0,vyaw:0}``, walking straight past the turn that was
+    asked for, and reports success. The same holds for a 14-joint
+    :data:`~strands_robots.policies.microduck.MICRODUCK_JOINT_NAMES` action:
+    four of its keys are head axes, so it would send a ``robot.head`` frame
+    built from those four and drop the other ten - the per-joint stream
+    :meth:`MicroduckDriver.run_policy` refuses by name, arriving through the
+    intent path instead.
+
     The param structs mirror the Rust field order exactly:
     ``MoveParams{vx,vy,vyaw}``, ``HeadParams{neck_pitch,head_pitch,head_yaw,
     head_roll}``, ``PoseParams{z,roll,pitch,active}``, ``MouthParams{open}``,
     ``DoParams{skill}``.
     """
+    unknown = sorted(set(action) - set(_ACTION_KEYS))
+    if unknown and not set(action).isdisjoint(_ACTION_KEYS):
+        # Only when something else in the action did parse, so each refusal
+        # diagnoses one fault: an action naming no intent at all is told what to
+        # send (send_action's "nothing to send"), and one that mostly parsed is
+        # told which component was dropped.
+        return f"{unknown} name no Microduck intent; expected any of {sorted(_ACTION_KEYS)}"
+
     if "active" in action and (reason := boolean_flag_error(action["active"], "active", "send_action")) is not None:
         # A posture flag selects a standing pose on hardware; reading it by
         # truthiness would send active=true for the string "false". Refuse.
@@ -753,8 +777,8 @@ class MicroduckDriver:
         """Map an action dict onto robotd intents and send them.
 
         Gates, in order: this driver fronts this robot; it is connected; every
-        numeric value is finite; the action names at least one intent this driver
-        can send. Continuous intents (twist/head/pose/mouth) are notifications;
+        numeric value is finite; every key names an intent this driver can send;
+        the action names at least one of them. Continuous intents (twist/head/pose/mouth) are notifications;
         a ``skill`` is a ``robot.do`` request whose IntentResult is returned.
 
         Accepted keys: ``vx``/``vy``/``vyaw`` (twist, m/s and rad/s),

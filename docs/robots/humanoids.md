@@ -103,6 +103,18 @@ duck.send_action({"skill": "kick_left"})  # a named skill (robot.do)
 duck.emergency_stop()                  # robot.stop
 ```
 
+Every intent frame carries its whole group -- `robot.move` always carries
+`vx`/`vy`/`vyaw`, `robot.pose` always `z`/`roll`/`pitch`/`active` -- so an
+absent key is the resting value (`{"vx": 0.15}` walks straight ahead) and a key
+this driver does not know is refused, even with a known key beside it. That
+distinction matters because the two are indistinguishable on the wire:
+`{"vx": 0.15, "yaw": 0.6}` -- `yaw` being the spelling the `get_status` pose
+block uses for the heading -- would otherwise send `vyaw: 0`, walk straight past
+the turn and report success. The same refusal catches a 14-joint
+`MICRODUCK_JOINT_NAMES` action: four of its keys are head axes, so it would
+arrive as a `robot.head` frame with the other ten joints dropped, which is the
+per-joint stream `run_policy` refuses by name.
+
 All three halt paths - `stop()`, `stop_task()` and `emergency_stop()` - send the
 same `robot.stop`, and an accepted one is recorded in
 `get_status()["motion_stopped"]`, the field an operator reads to decide whether
