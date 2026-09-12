@@ -10,6 +10,9 @@ outcome for the caller:
 * ``video={"path": p, "resolution": [320, 240]}`` recorded at the default
   640x480 while the caller believed the request had been honored.
 * ``video={"path": p, "fps": 0}`` fell through an ``or`` chain to 30 fps.
+* ``video={"path": p, "camera": "top", "camera_name": "wrist"}`` recorded from
+  ``top`` while the caller had also named ``wrist``: two accepted spellings of
+  one field, one of them discarded.
 
 Every one of those is now a structured error naming the offending key.
 """
@@ -121,6 +124,56 @@ class TestVideoConfigSchema:
         assert config.enabled is False
 
 
+# Every field with two spellings, and a pair of values for it that disagree.
+# ``_pick`` resolves a field by taking the first spelling that carries a value,
+# so each row is a request half of which the recorder would drop.
+ALIAS_CONFLICTS = [
+    ("path", "path", "/tmp/asked.mp4", "output_path", "/tmp/other.mp4"),
+    ("path", "path", "/tmp/asked.mp4", "record_video", "/tmp/other.mp4"),
+    ("fps", "fps", 30, "video_fps", 60),
+    ("camera", "camera", "top", "camera_name", "wrist"),
+    ("camera", "camera", "top", "video_camera", "wrist"),
+    ("width", "width", 320, "video_width", 1280),
+    ("height", "height", 240, "video_height", 720),
+]
+
+
+class TestOneFieldSpelledTwice:
+    """Two spellings of one field must not resolve to one of them in silence."""
+
+    @pytest.mark.parametrize(("field", "winner", "kept", "loser", "dropped"), ALIAS_CONFLICTS)
+    def test_disagreeing_spellings_are_refused(self, field, winner, kept, loser, dropped):
+        video = {"path": "/tmp/a.mp4", winner: kept, loser: dropped}
+        error = VideoConfig.validation_error(video)
+        assert error is not None, f"{video!r} silently discarded {loser!r}"
+        # Both spellings and both values, so the caller can see which half was
+        # about to be dropped rather than only that something was wrong.
+        for token in (repr(winner), repr(loser), repr(kept), repr(dropped)):
+            assert token in error, error
+        with pytest.raises(ValueError, match="video"):
+            VideoConfig.from_dict(video)
+
+    @pytest.mark.parametrize(("field", "winner", "kept", "loser", "dropped"), ALIAS_CONFLICTS)
+    def test_agreeing_spellings_discard_nothing_and_are_honored(self, field, winner, kept, loser, dropped):
+        # The same two keys carrying the same value resolve to it: nothing is
+        # dropped, so refusing this would narrow a documented spelling.
+        config = VideoConfig.from_dict({"path": "/tmp/a.mp4", winner: kept, loser: kept})
+        assert getattr(config, field) == kept
+
+    def test_a_spelling_carrying_none_is_not_a_second_value(self):
+        # ``None`` means "not supplied" throughout this schema, so the one
+        # spelling that carries a value is unambiguous and wins.
+        config = VideoConfig.from_dict({"path": None, "output_path": "/tmp/a.mp4"})
+        assert config is not None
+        assert config.path == "/tmp/a.mp4"
+
+    def test_an_unknown_key_still_reports_as_unknown(self):
+        # A dict with both faults reports the unknown key: it names a field this
+        # schema has no spelling for at all, which no choice of spelling fixes.
+        error = VideoConfig.validation_error({"path": "/tmp/a.mp4", "output_path": "/tmp/b.mp4", "filename": "c"})
+        assert "unknown key 'filename'" in (error or "")
+
+
 class TestRolloutRejectsBadVideoConfig:
     """The public rollout entry points surface the schema error themselves."""
 
@@ -153,6 +206,22 @@ class TestRolloutRejectsBadVideoConfig:
         assert result["status"] == "error", result
         assert "unknown key 'resolution'" in result["content"][0]["text"]
         # Nothing was recorded at the wrong resolution.
+        assert not video_path.exists()
+
+    @requires_gl
+    def test_run_policy_refuses_a_camera_named_twice_instead_of_picking_one_view(self, sim_with_arm, tmp_path):
+        video_path = tmp_path / "two_cameras.mp4"
+        result = sim_with_arm.run_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            n_steps=4,
+            control_frequency=30.0,
+            fast_mode=True,
+            video={"path": str(video_path), "camera": "arm1/side", "camera_name": "wrist"},
+        )
+        assert result["status"] == "error", result
+        assert "'camera' and 'camera_name'" in result["content"][0]["text"]
+        # No MP4 shot from one of the two views the caller named.
         assert not video_path.exists()
 
     def test_start_policy_reports_the_error_instead_of_a_false_started(self, sim_with_arm, tmp_path):

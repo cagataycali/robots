@@ -1097,6 +1097,12 @@ class MuJoCoSimEngine(
         scalar taken as the z-component). A value MuJoCo cannot integrate is
         rejected with a structured error instead of being compiled into
         ``model.opt``. ``None`` selects the engine default for either.
+
+        ``ground_plane`` must be a ``bool``: it selects a posture (lay a floor
+        or leave the world open), so a non-boolean is refused under the shared
+        :func:`~strands_robots.utils.boolean_flag_error` domain rather than
+        read by truthiness - ``"false"`` does not lay a floor and ``0`` does
+        not omit one.
         """
         # mujoco verified at __init__
 
@@ -1123,6 +1129,15 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
+
+        # ``ground_plane`` selects a posture - lay a floor or leave the world
+        # open - so it is checked, not read by truthiness: ``"false"`` would lay
+        # the floor the word declines, and ``0`` would omit it without being a
+        # declared spelling. Checked ahead of the world-exists report, which
+        # reads the flag to describe the world it cannot rebuild, and ahead of
+        # the compile that would lay the floor.
+        if err := self._validate_posture_flags("create_world", ground_plane=ground_plane):
+            return err
 
         if self._world is not None and self._world._model is not None:
             return self._world_exists_error(

@@ -2606,6 +2606,59 @@ Corrections from code review that apply to all future contributions:
   runtime, the one shape where this exemption would suppress a true finding and
   the one direction `ruff` and `mypy` cannot report, since the cast string
   resolves either way.
+- **`py/mixed-returns` does not read a `NoReturn` it did not model, so a
+  test helper that returns a value on one path and ends in `pytest.fail(...)`
+  on the other is reported as falling through.** `pytest.fail`, `pytest.skip`,
+  `pytest.exit` and `pytest.xfail` are each declared `-> NoReturn` in
+  `_pytest/outcomes.py` - as the `__call__` of an outcome class, which is why
+  the analysis does not follow it - so the only way past that line is an
+  exception and the implicit `None` the alert describes cannot be produced.
+  The shape is the idiomatic one for a helper that searches and refuses:
+
+  ```python
+  def _self_calls(module: str, method: str) -> set[str]:
+      for node in ast.walk(tree):
+          if isinstance(node, ast.FunctionDef) and node.name == method:
+              return {...}
+      pytest.fail(f"{method} not found in {module}")
+  ```
+
+  Do not answer the alert by rewriting the helper. Run the counterfactual,
+  because the two cases need opposite actions and only one of them is a false
+  positive:
+
+  | `mypy` after replacing the outcome with a call that can return | meaning | action |
+  |---|---|---|
+  | `Missing return statement [return]` at the `def` | the fall-through exists only if the terminal call returns, and it cannot | dismiss as `false positive` |
+  | clean | the helper is `-> Any` or unannotated, so `mypy` is not reading its body at all | read the terminal call yourself |
+
+  Measured with the three helpers' own annotations: `-> dict[str, str]` and
+  `-> set[str]` report `[return]` on the counterfactual and are clean as
+  written, and `-> Any` reports nothing either way - `mypy` does not grade a
+  missing return against `Any`, and `[tool.mypy]` relaxes
+  `disallow_untyped_defs` for `tests.*` and `tests_integ.*`, so an unannotated
+  helper's body is not read there. `hatch run lint` runs `mypy` over both test
+  trees, so the first row is already inside `call-test-lint / Test and Lint`;
+  the second row is the hole. Do not reach for the query filter: the rule
+  carries live signal, since a helper ending in `print(...)` or a cleanup
+  call is exactly the defect it names, and `tests/test_codeql_query_filters.py`
+  pins the filter at two ids.
+
+  Three instances, one class, none adjudicated until the third held a merge:
+
+  | alert | site | terminal call | cost before it was adjudicated |
+  |---|---|---|---|
+  | 823 | `tests/simulation/test_recording_rate_matches_control_frequency.py` | `pytest.fail` | open on `main` for 45 days |
+  | 1140 | `tests/drivers/ur/test_ur_sim_joint_order_matches_the_wire.py` | `pytest.skip`, closing a `try` handler | open on `main` for 12 days, and `-> Any`, so in the second row |
+  | 1206 | `tests/mesh/test_mesh_guide_opening_block_starts_the_mesh.py` | `pytest.fail` | a review thread gated #3551 under `required_review_thread_resolution`; merged 8 seconds after the resolve |
+
+  `tests/test_mixed_return_helpers_end_in_a_pytest_outcome.py` grades the
+  boundary at every site whatever the annotation: it derives from the test
+  trees every function that returns a value and can fall off its end through a
+  bare call - the terminal statement, or the last statement of an `if`, `try`
+  or `with` branch it ends in - and refuses one whose call is not a declared
+  `NoReturn`. That is the one shape where this exemption would suppress a true
+  finding and the one `mypy` cannot report in a test.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."

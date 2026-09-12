@@ -350,7 +350,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             timestep: Physics timestep in seconds (defaults to the engine's
                 ``default_timestep``).
             gravity: Gravity vector ``[x, y, z]`` (default ``[0, 0, -9.81]``).
-            ground_plane: Whether to add a ground plane.
+            ground_plane: Whether to add a ground plane. Must be a ``bool``:
+                a non-boolean is refused under the shared
+                :func:`~strands_robots.utils.boolean_flag_error` domain rather
+                than read by truthiness.
             terrain: Heightfield terrain kind (e.g. ``"rough"``/``"stairs"``/``"pyramid"``/``"slope"``,
                 MuJoCo backend only). The Newton backend has no heightfield
                 ground yet, so a non-None value is rejected with an actionable
@@ -409,6 +412,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 ],
             }
+        # ``ground_plane`` selects a posture - lay a floor or leave the world
+        # open - so it is checked, not read by truthiness (the same domain the
+        # MuJoCo backend applies): ``"false"`` would lay the floor the word
+        # declines, and ``0`` would omit it without being a declared spelling.
+        if err := self._validate_posture_flags("create_world", ground_plane=ground_plane):
+            return err
         # Same contract as set_timestep / set_gravity (and the MuJoCo backend):
         # never build a world around a dt or gravity vector the setters would
         # refuse. The effective timestep is validated so an unusable engine

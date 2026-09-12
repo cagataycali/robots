@@ -265,8 +265,24 @@ def _is_camera_ref(topic: str) -> bool:
     hundred bytes. It is exactly the pointer a cloud subscriber needs to fetch
     the offloaded frame, so it MUST traverse MQTT even though its topic sits
     under the otherwise-dropped ``camera/`` prefix.
+
+    The exemption is granted on the topic's SHAPE, not on substrings of it: the
+    family segment must itself be ``camera``, and a camera name must sit between
+    it and the ``ref`` tail. A camera name is a free string taken from the
+    robot's own ``config.cameras`` keys, so a substring test hands the exemption
+    to topics that carry a frame rather than a pointer -- a camera named ``ref``
+    publishes its inline base64 JPEG on ``strands/<peer>/camera/ref``, and a
+    ``ref`` tail under any other family (``input/camera/ref``) reads as a
+    pointer too. Both are the WAN payload the drop rule exists to refuse, and
+    letting one through inflates broker billing exactly the way the tail-append
+    match in :func:`~strands_robots.mesh.transport.bridge_transport._should_bridge`
+    already refuses to.
+
+    A multi-segment camera name keeps its exemption: the tail is matched, not
+    the segment count, so ``camera/front/left/ref`` is still a pointer.
     """
-    return topic.startswith("strands/") and topic.endswith("/ref") and "/camera/" in topic
+    parts = topic.split("/")
+    return len(parts) >= 5 and parts[0] == "strands" and parts[2] == "camera" and parts[-1] == "ref"
 
 
 def _should_drop(topic: str) -> bool:
