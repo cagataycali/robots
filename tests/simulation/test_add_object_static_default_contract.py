@@ -422,7 +422,6 @@ class TestASuppliedFlagIsCheckedNotReadByTruthiness:
 
     def test_the_refused_false_and_its_falsy_spellings_agree(self, sim):
         """``0 == False``, so the two calls ask the identical question."""
-        assert 0 == False  # noqa: E712 - the premise, stated as the code reads it
         declared = sim.add_object(name="a", shape="plane", position=[0.0, 0.0, 0.0], is_static=False)
         spelled = sim.add_object(name="b", shape="plane", position=[0.0, 0.0, 0.0], is_static=0)
         assert declared["status"] == spelled["status"] == "error", (declared, spelled)
