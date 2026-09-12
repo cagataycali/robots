@@ -184,8 +184,17 @@ class TestTheUsableDomainIsUntouched:
         assert "positive integer" not in _about_learning_starts(1)[0]
 
     def test_a_very_large_count_is_still_a_count(self) -> None:
-        """Magnitude is not the axis: an enormous warmup is a warmup."""
-        assert not _about_learning_starts(10**400)
+        """Magnitude is not *this* axis: an enormous warmup is still a count.
+
+        It is refused - no run's step budget or replay capacity reaches it, by
+        the reachability relation graded in
+        ``tests/training/test_warmup_threshold_is_reachable.py`` - but as a
+        threshold out of reach rather than as a non-count, which is the only
+        question this gate decides.
+        """
+        problems = _about_learning_starts(10**400)
+        assert "positive integer" not in " ".join(problems)
+        assert [p for p in problems if "is never reached" in p]  # not silently accepted either
 
 
 class TestWhatStrictNewlyRefuses:

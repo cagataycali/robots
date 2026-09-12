@@ -258,6 +258,18 @@ class Trainer(ABC):
 
         return rl_replay_problems(spec, context=self.provider_name)
 
+    def _rl_warmup_reachability_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight that ``learning_starts`` is a replay fill the run can reach.
+
+        The step budget ``total_timesteps`` collects and the ``buffer_size``
+        capacity each bound the fill a run ever reaches; either below the
+        threshold takes zero gradient steps for the whole run and still reports
+        success with a written checkpoint.
+        """
+        from strands_robots.training._validate import warmup_reachability_problems
+
+        return warmup_reachability_problems(spec, context=self.provider_name)
+
     def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
         """Preflight ``learning_rate`` when supplied: a positive finite number."""
         from strands_robots.training._validate import learning_rate_problems

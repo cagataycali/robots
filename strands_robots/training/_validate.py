@@ -162,6 +162,48 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
+def warmup_reachability_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report a ``learning_starts`` threshold an off-policy run never reaches.
+
+    ``learning_starts`` is the replay fill the first gradient step waits for,
+    and two caller-supplied counts bound the fill a run ever reaches: the step
+    budget it collects, ``max(1, total_timesteps // steps) * steps`` for
+    ``steps = rollout_steps * num_envs``, and ``buffer_size``, the ring
+    buffer's own capacity. Either one below the threshold takes **zero**
+    gradient steps for the whole run, which still reports ``status="success"``
+    with a written checkpoint and an exported policy - the outcome
+    :func:`rl_replay_problems` and the ``learning_starts >= batch_size``
+    relation each cite as the one they exist to refuse, reached here by plain
+    positive counts that pass every per-field domain.
+
+    Both operands are reported when both are short, so a caller sees every
+    count it has to raise. Every operand is asked of the count domain first:
+    the relation is only meaningful between counts, and each field already has
+    a gate that reports a non-count as one, so a non-count is left to that gate
+    rather than described as an unreachable threshold.
+    """
+    fields = ("total_timesteps", "rollout_steps", "num_envs", "learning_starts", "buffer_size")
+    values = {field: getattr(spec, field, 1) for field in fields}
+    if any(positive_count_error(value, field, context) is not None for field, value in values.items()):
+        return []
+
+    steps = values["rollout_steps"] * values["num_envs"]
+    collected = max(1, values["total_timesteps"] // steps) * steps
+    threshold = values["learning_starts"]
+    problems: list[str] = []
+    if collected < threshold:
+        problems.append(
+            f"learning_starts ({threshold}) is never reached: total_timesteps "
+            f"({values['total_timesteps']}) collects {collected} steps, so the run takes zero gradient steps"
+        )
+    if values["buffer_size"] < threshold:
+        problems.append(
+            f"learning_starts ({threshold}) is never reached: buffer_size ({values['buffer_size']}) "
+            "caps the replay buffer below it, so the run takes zero gradient steps"
+        )
+    return problems
+
+
 def launch_topology_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Report ``num_gpus`` and ``num_nodes``, each a count.
 

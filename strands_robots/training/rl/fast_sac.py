@@ -262,6 +262,20 @@ class FastSacTrainer(BaseRLAlgo):
                 f"learning_starts ({spec.learning_starts}) must be >= batch_size ({spec.batch_size}) "
                 "so the first gradient step can sample a full batch"
             )
+        # That relation sizes the FIRST batch; it does not make the threshold
+        # reachable. Two more caller-supplied counts bound the fill a run ever
+        # reaches - the step budget it collects, max(1, total_timesteps // steps)
+        # * steps, and buffer_size, the ring buffer's capacity - and either one
+        # below learning_starts takes zero gradient steps for the whole run while
+        # still reporting success with a checkpoint and an exported policy, the
+        # outcome the relation above and _rl_replay_problems each cite as the one
+        # they exist to refuse. Both were reachable with plain positive counts
+        # that pass every per-field domain: buffer_size=1 builds the same one-slot
+        # buffer as buffer_size=True, which the count rule refuses for exactly
+        # this outcome, and a total_timesteps below learning_starts warms up for
+        # the whole budget. Graded as a relation between counts, so a non-count is
+        # left to the domain gate that names it.
+        problems.extend(self._rl_warmup_reachability_problems(spec))
         # log_interval is this loop's checkpoint cadence - the modulus of the one
         # test that decides whether an intermediate checkpoint is written - so it
         # answers the same question save_freq does for a supervised run and takes

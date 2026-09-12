@@ -35,6 +35,7 @@ _GATE_FIELDS: dict[str, tuple[str, ...]] = {
     "_run_size_problems": ("steps", "global_batch_size"),
     "_rl_run_size_problems": ("total_timesteps", "rollout_steps"),
     "_rl_replay_problems": ("buffer_size", "batch_size", "gradient_steps"),
+    "_rl_warmup_reachability_problems": ("learning_starts", "total_timesteps", "buffer_size"),
     "_learning_rate_problems": ("learning_rate",),
     "_launch_topology_problems": ("num_gpus", "num_nodes"),
     "_seed_problems": ("seed",),
