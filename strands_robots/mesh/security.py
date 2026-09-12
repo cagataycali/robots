@@ -1050,6 +1050,14 @@ def validate_mesh_identifier(value: Any, param: str) -> str:
     :class:`~strands_robots.mesh.core.Mesh` interpolates into
     ``strands/{sender_id}/response/{responder}/{turn_id}`` to answer it.
 
+    The same contract covers a segment interpolated into an AWS IoT reserved
+    MQTT topic - the ``thing_name`` and ``shadow_name`` of
+    :func:`~strands_robots.mesh.iot.shadow.shadow_update_topic`. MQTT spells
+    its wildcards ``+`` and ``#`` rather than ``*``, and reserves ``/`` as the
+    level separator, so the charset below excludes all three for the reason
+    :func:`~strands_robots.mesh.core.init_mesh` already gives when it refuses
+    them in a ``peer_id``: they break MQTT topic structure.
+
     Zenoh treats ``*`` and ``**`` as key-expression wildcards, so an
     unvalidated segment silently widens a point-to-point subscription into a
     match-any one: a receiver built with ``source_peer_id="**"`` subscribes to
