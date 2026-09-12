@@ -124,6 +124,15 @@ CONTROL_TABLE: Final[dict[str, tuple[int, int, str]]] = {
     "PRESENT_INPUT_VOLTAGE": (144, 2, "0.1V units."),
 }
 
+# Address -> (name, width), derived from CONTROL_TABLE rather than written out
+# again, so the widths a write is graded against cannot drift from the widths the
+# table publishes. Addresses are unique in the table; the assert states that
+# rather than letting a future duplicate silently drop the earlier entry.
+_REGISTER_AT: Final[dict[int, tuple[str, int]]] = {
+    address: (name, width) for name, (address, width, _) in CONTROL_TABLE.items()
+}
+assert len(_REGISTER_AT) == len(CONTROL_TABLE), "CONTROL_TABLE has two names at one address"
+
 
 def checksum(frame: bytes) -> int:
     """Return the Protocol 2.0 CRC over ``frame``.
@@ -314,10 +323,20 @@ def sync_write_packet(register_address: int, data_length: int, entries: list[tup
     carries N (id, data) tuples and the servos self-select on ID.
 
     Args:
-        register_address: The register to write.
+        register_address: The register to write. An address
+            :data:`CONTROL_TABLE` names is graded against that register's
+            declared width; an address it does not name carries whatever
+            ``data_length`` the caller asks for, because the table is a
+            curated subset of the servo's registers and not an allowlist.
         data_length: Bytes per servo. Must match the register's width in
-            :data:`CONTROL_TABLE` - a 4-byte write to a 2-byte register is
-            accepted by the servo but writes into the next register.
+            :data:`CONTROL_TABLE`, and is refused when it does not: a 4-byte
+            write to a 2-byte register is accepted by the servo but runs on
+            into the next register, and a 2-byte write to a 4-byte register
+            leaves the rest of it unwritten. The servo answers a sync-write
+            with nothing at all, so neither mistake can come back as an
+            error - it comes back as a joint somewhere the caller did not
+            ask for, which is why the width is checked before the packet is
+            framed.
         entries: List of ``(servo_id, data)`` pairs. Each ``data`` must be
             exactly ``data_length`` bytes; a data of the wrong length is
             :class:`ValueError`, not a silent truncation, because the servo
@@ -327,14 +346,35 @@ def sync_write_packet(register_address: int, data_length: int, entries: list[tup
         The full framed packet, targeting :data:`BROADCAST_ID`.
 
     Raises:
-        ValueError: If any entry's data is not ``data_length`` bytes, or if
-            an entry's ID is outside ``0..0xFC``, or if the parameter block
-            would overflow the 16-bit length field.
+        ValueError: If ``data_length`` disagrees with the width
+            :data:`CONTROL_TABLE` declares for ``register_address``, if any
+            entry's data is not ``data_length`` bytes, or if an entry's ID is
+            outside ``0..0xFC``, or if the parameter block would overflow the
+            16-bit length field.
     """
     if data_length <= 0 or data_length > 0xFFFF:
         raise ValueError(f"sync_write_packet: data_length must be > 0 and <= 0xFFFF; got {data_length}")
     if not 0 <= register_address <= 0xFFFF:
         raise ValueError(f"sync_write_packet: register_address must be 0..0xFFFF; got {register_address}")
+    # Graded here, with the other register-level checks, rather than in the entry
+    # loop below: a data_length that does not fit the register is wrong about the
+    # register, and reporting it first tells a caller the width to ask for
+    # instead of the width their entries failed to match.
+    listed = _REGISTER_AT.get(register_address)
+    if listed is not None and data_length != listed[1]:
+        name, width = listed
+        if data_length > width:
+            spill = _REGISTER_AT.get(register_address + width)
+            lands = f"into {spill[0]}" if spill is not None else "into the register above it"
+            consequence = (
+                f"the servo accepts the longer write and runs the extra {data_length - width} byte(s) on {lands}"
+            )
+        else:
+            consequence = f"the servo leaves the remaining {width - data_length} byte(s) of it unwritten"
+        raise ValueError(
+            f"sync_write_packet: {name} at register_address={register_address} is {width} bytes wide, "
+            f"got data_length={data_length}; {consequence}"
+        )
     params = bytearray(
         [
             register_address & 0xFF,

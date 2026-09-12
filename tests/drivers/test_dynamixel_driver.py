@@ -184,6 +184,86 @@ class TestProtocol:
         with pytest.raises(ValueError, match="data_length"):
             sync_write_packet(register_address=116, data_length=0, entries=[])
 
+    # ------------------- sync width against the register --------------------
+    #
+    # A servo answers a SYNC_WRITE with nothing, so a data_length that does not
+    # fit the register it addresses cannot come back as an error - it comes back
+    # as a joint somewhere nobody asked for. The widths below are read from
+    # CONTROL_TABLE rather than retyped, so a table edit moves these cases with
+    # it instead of leaving them pinning a stale width.
+
+    _MISMATCHED_WIDTHS = [
+        # A 4-byte current command runs its top half into GOAL_VELOCITY, so
+        # asking for 500 mA also commands a velocity of 0 on a moving joint.
+        pytest.param("GOAL_CURRENT", 4, "runs the extra 2 byte(s) on into GOAL_VELOCITY", id="current-into-velocity"),
+        pytest.param("TORQUE_ENABLE", 4, "runs the extra 3 byte(s) on into LED", id="torque-into-led"),
+        # The register above GOAL_VELOCITY is one the table does not name, so the
+        # refusal says where the bytes go without inventing a name for it.
+        pytest.param("GOAL_VELOCITY", 8, "on into the register above it", id="velocity-into-unlisted"),
+        pytest.param("GOAL_POSITION", 2, "leaves the remaining 2 byte(s) of it unwritten", id="position-short"),
+        pytest.param("GOAL_CURRENT", 1, "leaves the remaining 1 byte(s) of it unwritten", id="current-short"),
+    ]
+
+    @pytest.mark.parametrize(("register", "data_length", "consequence"), _MISMATCHED_WIDTHS)
+    def test_sync_write_refuses_a_data_length_the_register_is_not(
+        self, register: str, data_length: int, consequence: str
+    ) -> None:
+        """The refusal names the register, its width, and where the bytes land.
+
+        Naming the consequence is the point: a caller who picked the wrong width
+        picked it from a register map, and "GOAL_CURRENT is 2 bytes wide" sends
+        them back to the map, while "runs on into GOAL_VELOCITY" tells them what
+        the servo would have done with the packet.
+        """
+        address, width, _ = CONTROL_TABLE[register]
+        assert data_length != width
+        with pytest.raises(ValueError) as excinfo:
+            sync_write_packet(address, data_length, [(1, bytes(data_length))])
+        message = str(excinfo.value)
+        assert f"{register} at register_address={address} is {width} bytes wide" in message
+        assert consequence in message
+
+    def test_sync_write_accepts_every_listed_register_at_its_own_width(self) -> None:
+        """The gate narrows nothing a correct caller does.
+
+        Every register the table names, framed at the width the table declares
+        for it, still produces a broadcast packet - so the refusal above cannot
+        be passing merely because the width check refuses everything.
+        """
+        for name, (address, width, _) in CONTROL_TABLE.items():
+            packet = sync_write_packet(address, width, [(1, bytes(width))])
+            assert packet[4] == BROADCAST_ID, name
+
+    def test_sync_write_leaves_an_address_the_table_does_not_name_ungraded(self) -> None:
+        """CONTROL_TABLE is a curated subset of the servo's registers, not an
+        allowlist. PROFILE_VELOCITY (112) is a real 4-byte register it omits;
+        grading unlisted addresses would refuse writes to every register the
+        table has not got round to naming.
+        """
+        assert 112 not in {address for address, _, _ in CONTROL_TABLE.values()}
+        packet = sync_write_packet(112, 4, [(1, bytes(4))])
+        assert packet[4] == BROADCAST_ID
+
+    def test_a_zero_data_length_is_still_reported_as_a_count(self) -> None:
+        """The width gate reads a data_length that is already a positive count,
+        so the domain check keeps its place in front of it: a 0 is diagnosed as
+        a 0 rather than as a width GOAL_POSITION happens not to be.
+        """
+        with pytest.raises(ValueError, match=r"data_length must be > 0"):
+            sync_write_packet(register_address=116, data_length=0, entries=[])
+
+    def test_the_register_width_is_reported_before_the_entry_length(self) -> None:
+        """A caller who picks the wrong width sizes their entries to it, so both
+        checks have something to say. The register is the fault that explains the
+        other one, and a caller told only "expected 2" would re-send entries at a
+        width GOAL_POSITION still will not take.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            sync_write_packet(register_address=116, data_length=2, entries=[(1, b"\x00")])
+        message = str(excinfo.value)
+        assert "GOAL_POSITION at register_address=116 is 4 bytes wide" in message
+        assert "expected 2" not in message
+
     # -------------------------------- parse --------------------------------
 
     def _make_status(self, servo_id: int, err: int, params: bytes) -> bytes:
@@ -267,6 +347,12 @@ class TestProtocol:
 
     def test_torque_enable_width_is_one_byte(self) -> None:
         assert CONTROL_TABLE["TORQUE_ENABLE"][:2] == (64, 1)
+
+    def test_no_two_registers_share_an_address(self) -> None:
+        """A sync-write's width is looked up by address, so two names at one
+        address would silently grade one of them by the other's width."""
+        addresses = [address for address, _, _ in CONTROL_TABLE.values()]
+        assert len(addresses) == len(set(addresses))
 
     def test_max_unicast_id_below_the_broadcast(self) -> None:
         """A codec-level invariant. The values are the manual's; a change here
