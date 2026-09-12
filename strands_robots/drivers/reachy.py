@@ -697,9 +697,11 @@ class ReachyDriver:
            the head pose and turns the body no further than the limit, so a
            lone body yaw beyond it would report success and stop short. The
            limit is skipped, not guessed, while that target is unknown.
-        3. The action names at least one thing this driver can send. An action
-           dict of unknown keys is refused rather than reported as a successful
-           no-op.
+        3. Every key names something this driver can send. An action naming no
+           axis at all is refused rather than reported as a successful no-op,
+           and so is one that names a real axis alongside a key this driver has
+           no actuator for: a dropped head axis is not left alone but commanded
+           to zero, because the daemon's head command is a whole pose.
 
         Degrees in, radians and pose matrices out. The caller-facing unit is
         degrees because the envelope is expressed in degrees and because the
@@ -743,6 +745,15 @@ class ReachyDriver:
             return _refuse(
                 f"send_action: nothing to send - none of {sorted(action)} names a Reachy Mini axis; "
                 f"expected any of {sorted(_ACTION_KEYS)}"
+            )
+        # Checked after the gate above rather than before it, so each refusal
+        # diagnoses one fault: an action naming no axis at all is told what to
+        # send, and an action that mostly parsed is told which key was dropped.
+        if unknown := sorted(set(action) - _ACTION_KEYS):
+            return _refuse(
+                f"send_action: {unknown} names no Reachy Mini axis; expected any of {sorted(_ACTION_KEYS)}. "
+                "A dropped head axis is commanded to zero rather than left alone, because the daemon's "
+                "head command is a whole pose"
             )
 
         for command in commands:

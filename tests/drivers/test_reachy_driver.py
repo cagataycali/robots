@@ -635,6 +635,93 @@ class TestActionsReachTheWireInTheDaemonsUnits:
         assert "socket closed" in _text(result)
 
 
+#: Misspellings drawn from this module's own public vocabulary, each paired with
+#: the axis it was meant to name. ``reachy_look`` takes ``pitch``/``roll``/``yaw``,
+#: ``reachy_antennas`` takes ``left``/``right`` and ``reachy_body_turn`` takes
+#: ``yaw``, while the driver's action keys spell the same axes ``head_pitch``,
+#: ``antenna_left`` and ``body_yaw`` - so a caller who read one of those
+#: signatures and drove the driver directly writes exactly these actions.
+_DROPPED_AXIS = [
+    ("a typo on a head axis", {"head_pitch": 20.0, "head_rol": 15.0}, "head_rol"),
+    ("the reachy_look spelling of a head axis", {"head_pitch": 20.0, "roll": 15.0}, "roll"),
+    ("the reachy_antennas spelling of an antenna", {"head_yaw": 20.0, "left": 30.0}, "left"),
+    ("the reachy_body_turn spelling of the body", {"body_yaw": 10.0, "yaw": 30.0}, "yaw"),
+]
+
+
+class TestAnActionCarryingAKeyNoAxisAnswersIsRefused:
+    """One unknown key beside a real one is refused, not quietly dropped.
+
+    The whole-pose rule that makes :func:`_head_yaw_of` knowable also makes a
+    dropped head axis worse than a no-op: the daemon's head command carries all
+    six axes, so a misspelled ``head_roll`` does not leave the roll alone - it
+    commands it to zero. An operator who asked for 15 degrees of roll and got
+    zero, under a success envelope, plans the next gesture around a pose the
+    robot never held. The four in-house precedents for the same guard are
+    ``ur.targets_from_action``, ``earthrover.send_action``,
+    ``franka`` joint commands and ``crazyflie.action_to_setpoint``.
+    """
+
+    @pytest.mark.parametrize(
+        ("label", "action", "dropped"),
+        _DROPPED_AXIS,
+        ids=[case[0] for case in _DROPPED_AXIS],
+    )
+    def test_the_refusal_names_the_dropped_key_and_nothing_reaches_the_wire(
+        self, monkeypatch: pytest.MonkeyPatch, label: str, action: dict[str, float], dropped: str
+    ) -> None:
+        del label
+        driver, _, link = _connected(monkeypatch)
+        result = driver.send_action(dict(action))
+        assert result["status"] == "error"
+        reason = _text(result)
+        assert dropped in reason, reason
+        # The accepted set is named, so a caller is not left to read the source
+        # for the spelling that would have worked.
+        assert "head_roll" in reason and "antenna_left" in reason and "body_yaw" in reason, reason
+        assert link.commands == []
+
+    def test_the_reason_says_a_dropped_head_axis_would_have_been_zeroed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The substitution, not merely the unknown name, is what the caller
+        # needs told: "ignored" and "commanded to zero" are different outcomes.
+        driver, _, _ = _connected(monkeypatch)
+        reason = _text(driver.send_action({"head_pitch": 20.0, "head_rol": 15.0}))
+        assert "whole pose" in reason and "zero" in reason, reason
+
+    def test_an_action_of_only_unknown_keys_still_gets_the_nothing_to_send_reason(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The two refusals partition: an action naming no axis at all is told
+        # what to send, and one that mostly parsed is told what was dropped.
+        driver, _, _ = _connected(monkeypatch)
+        nothing = _text(driver.send_action({"pitch": 20.0, "roll": 15.0}))
+        partial = _text(driver.send_action({"head_pitch": 20.0, "roll": 15.0}))
+        assert "nothing to send" in nothing, nothing
+        assert "nothing to send" not in partial, partial
+
+    def test_an_action_whose_every_key_is_an_axis_still_reaches_the_wire(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The guard must not narrow the accepted vocabulary: every documented
+        # key, in one action, is still carried.
+        driver, _, link = _connected(monkeypatch)
+        action = {
+            "head_pitch": 5.0,
+            "head_roll": 5.0,
+            "head_yaw": 5.0,
+            "head_x": 1.0,
+            "head_y": 1.0,
+            "head_z": 1.0,
+            "body_yaw": 5.0,
+            "antenna_left": 5.0,
+            "antenna_right": 5.0,
+        }
+        assert driver.send_action(action)["status"] == "success"
+        assert [sorted(c) for c in link.commands] == [
+            ["head_pose"],
+            ["body_yaw"],
+            ["antennas_joint_positions"],
+        ]
+
+
 class TestTheStopPathReachesTheDaemon:
     """A Mini has a real stop: a recorded move can be halted mid-play."""
 
