@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -151,6 +152,45 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 # kinova_gen3 is joint_1..joint_7), which is why the run, not the prefix, is
 # what identifies a placeholder.
 _GENERIC_STATE_KEY_PREFIX = "joint_"
+
+
+def _route_camera_key_map(base: dict[str, str], camera_key_map: Mapping[str, str] | None) -> dict[str, str]:
+    """Route an explicit ``camera_key_map`` over an embodiment's ``obs_rename``.
+
+    ``camera_key_map`` is the first rung of camera routing for every other
+    router in this class (:meth:`LerobotLocalPolicy._resolve_camera_targets`,
+    :meth:`LerobotLocalPolicy._to_lerobot_observation` and
+    :meth:`LerobotLocalPolicy._synthesized_camera_renames` all resolve it before
+    any name match), so the declarative path has to honor it too: the only
+    difference between those routers and this one is whether the checkpoint
+    ships a preprocessor and whether an ``embodiment`` is declared, and a camera
+    binding may not depend on either.
+
+    The replacement is scoped by rename TARGET, not by source key. An
+    embodiment declares ``{"front": "observation.images.image"}``; a caller who
+    maps their own camera onto that same feature means *instead of* ``front``,
+    not *as well as* - two sources feeding one target would let whichever the
+    pipeline renamed last win. So every declared source whose target a
+    ``camera_key_map`` entry claims is dropped before the entries are added.
+
+    An entry naming an image feature the model does not declare is left in the
+    merged map so ``EmbodimentMap.validate`` refuses it by name, matching the
+    ``camera_key_map routes camera ... but the policy does not declare it``
+    refusal the other two routers raise.
+
+    Args:
+        base: The embodiment's declared ``obs_rename`` map.
+        camera_key_map: Caller mapping of runtime camera name -> image feature.
+
+    Returns:
+        The routed rename map; a copy of ``base`` when no map is given.
+    """
+    if not camera_key_map:
+        return dict(base)
+    claimed = set(camera_key_map.values())
+    merged = {src: dst for src, dst in base.items() if dst not in claimed}
+    merged.update(camera_key_map)
+    return merged
 
 
 def _undeclared_image_feature_error(
@@ -375,9 +415,14 @@ class LerobotLocalPolicy(Policy):
             default) adopts the model config value, else 10.0.
         camera_key_map: Optional explicit mapping of robot/sim camera name
             (e.g. "top") to the policy's declared image feature key
-            (e.g. "observation.images.top"). When omitted, cameras are
-            routed by exact short-name match and then by declared order
-            with a warning on mismatch.
+            (e.g. "observation.images.top"). It is the first rung of camera
+            routing on every path, including a declared ``embodiment``: an
+            entry claiming an image feature replaces the source key the
+            embodiment declares for that feature, so a scene whose cameras are
+            named for the scene routes without renaming them. When omitted,
+            cameras are routed by the embodiment's ``obs_rename``, then by
+            exact short-name match and then by declared order with a warning on
+            mismatch.
         strict_keys: When True, raise (instead of warning + a degraded
             binding) wherever a key cannot be bound by name. It governs BOTH
             halves of the key binding, not cameras alone:
@@ -1501,10 +1546,12 @@ class LerobotLocalPolicy(Policy):
 
         Resolution: the model needs every declared image feature populated, so
         for each image rename TARGET (``observation.images.*``) at least one of
-        its source keys must be present in ``observation_keys``. A caller-
-        supplied ``obs_rename_override`` is merged over the embodiment's
-        ``obs_rename`` first, so an explicit override that maps a present camera
-        onto the feature satisfies the check.
+        its source keys must be present in ``observation_keys``. The caller's own
+        camera bindings are routed over the embodiment's ``obs_rename`` first -
+        ``camera_key_map`` (routing rung 1, see :func:`_route_camera_key_map`)
+        and then ``obs_rename_override`` - so an explicit binding that maps a
+        present camera onto the feature satisfies the check rather than being
+        refused with a remedy it already used.
 
         The converse is also checked: an explicit ``image_keys=`` replaces the
         feature list that would be derived from those same rename targets (it is
@@ -1595,7 +1642,14 @@ class LerobotLocalPolicy(Policy):
         except Exception:  # noqa: BLE001 - unknown/odd spec; create_policy reports it
             return
 
-        obs_rename = _merge_obs_rename(embodiment.obs_rename, policy_config.get("obs_rename_override"))
+        # ``camera_key_map`` is routing rung 1 (see :func:`_route_camera_key_map`),
+        # so it is applied before the availability check below: a caller who
+        # bound their cameras with it has already answered the question this
+        # check asks, and refusing them would name a remedy they used.
+        obs_rename = _merge_obs_rename(
+            _route_camera_key_map(embodiment.obs_rename, policy_config.get("camera_key_map")),
+            policy_config.get("obs_rename_override"),
+        )
 
         # Group source keys by the image feature TARGET they feed. A target is
         # satisfied when ANY of its sources is present in the observation, so an
@@ -1628,9 +1682,10 @@ class LerobotLocalPolicy(Policy):
             f"are in the runtime observation, which provides {sorted(obs)}. Either:\n"
             f"  (a) rename your sim cameras to one of {expected} "
             f"(e.g. sim.add_camera(name={expected[0]!r}, ...)), or\n"
-            f"  (b) pass policy_config={{'obs_rename_override': "
-            f"{{'<your_camera_name>': '{missing_features[0]}'}}}} to map an existing "
-            f"camera onto the model's image feature without renaming it."
+            f"  (b) pass policy_config={{'camera_key_map': "
+            f"{{'<your_camera_name>': '{missing_features[0]}'}}}} (or the equivalent "
+            f"'obs_rename_override') to map an existing camera onto the model's image "
+            f"feature without renaming it."
         )
 
     def _synthesized_camera_renames(self) -> dict[str, str]:
@@ -1680,8 +1735,10 @@ class LerobotLocalPolicy(Policy):
 
         1. Resolves ``self._embodiment_spec`` (name / dict / EmbodimentMap), or
            synthesises a trivial map from ``robot_state_keys`` for back-compat.
-        2. Validates the map against the model's declared input/output features
-           (fail-fast on dim or key mismatch).
+        2. Routes ``camera_key_map`` and then ``obs_rename_override`` over the
+           map's declared ``obs_rename``, and validates the result against the
+           model's declared input/output features (fail-fast on dim or key
+           mismatch).
         3. Injects ``rename_map`` + a ``strands_pack_state`` step into the
            preprocessor pipeline via :meth:`ProcessorBridge.apply_embodiment`.
 
@@ -1714,13 +1771,21 @@ class LerobotLocalPolicy(Policy):
         except ValueError as exc:
             raise RuntimeError(f"Failed to load embodiment {spec!r}: {exc}") from exc
 
-        # Merge any caller-supplied obs_rename override OVER the embodiment's
-        # declared renames so custom sim camera names route onto the model's
-        # image features without renaming cameras. Override entries win.
-        if self._obs_rename_override:
+        # Route the caller's own camera bindings over the embodiment's declared
+        # renames so custom sim camera names reach the model's image features
+        # without renaming cameras. ``camera_key_map`` is applied first (routing
+        # rung 1, honored identically by the other routers - see
+        # :func:`_route_camera_key_map`), then ``obs_rename_override`` over that:
+        # the override is the last word because it is the only spelling that can
+        # DROP a declared rename (a falsy value), so a caller already relying on
+        # it keeps exactly the map they had.
+        if self.camera_key_map or self._obs_rename_override:
             from dataclasses import replace
 
-            merged = _merge_obs_rename(embodiment.obs_rename, self._obs_rename_override)
+            merged = _merge_obs_rename(
+                _route_camera_key_map(embodiment.obs_rename, self.camera_key_map),
+                self._obs_rename_override,
+            )
             embodiment = replace(embodiment, obs_rename=merged)
 
         # Fail-fast validation against the model's declared features.

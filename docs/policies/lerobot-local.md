@@ -236,17 +236,34 @@ inputs as `observation.images.*`. Each camera is routed by, in order:
 ### Embodiment `obs_rename` and the pre-flight check
 
 `embodiment="so101"` routes cameras from the embodiment's `obs_rename`
-(`{runtime_camera_name: "observation.images.*"}`), merged under any
-`obs_rename_override`. Before the model is built the policy checks that every
-declared image feature has a source in the runtime observation and refuses
-otherwise, naming both sides:
+(`{runtime_camera_name: "observation.images.*"}`), under `camera_key_map` and
+then `obs_rename_override`. A `camera_key_map` entry replaces the source key the
+embodiment declares for the feature it claims, so a scene whose cameras are
+named for the scene routes onto an embodiment without renaming them:
+
+```python
+# so101 declares front -> .../image and wrist -> .../wrist_image
+create_policy("lerobot_local", pretrained_name_or_path=..., embodiment="so101",
+              camera_key_map={"cam_top": "observation.images.image",
+                              "cam_wrist": "observation.images.wrist_image"})
+# routed obs_rename: {cam_top: .../image, cam_wrist: .../wrist_image}
+```
+
+`obs_rename_override` is applied last, because a falsy value there is the only
+way to DROP a declared rename (`{"wrist": None}` adapts a two-camera embodiment
+to a single-camera checkpoint). An entry in either map naming an image feature
+the model does not declare is refused by name.
+
+Before the model is built the policy checks that every declared image feature
+has a source in the runtime observation - after routing both maps, so a camera
+you bound explicitly satisfies it - and refuses otherwise, naming both sides:
 
 ```text
 Embodiment 'so101' cannot route cameras to the model's image feature(s)
 ['observation.images.image', 'observation.images.wrist_image']: none of the
 expected source key(s) ['front', 'wrist'] are in the runtime observation, which
 provides [...]. Either: (a) rename your sim cameras to one of ['front', 'wrist']
-..., or (b) pass policy_config={'obs_rename_override': {...}} ...
+..., or (b) pass policy_config={'camera_key_map': {...}} ...
 ```
 
 A single-camera checkpoint needs no embodiment: declare the joint names with
