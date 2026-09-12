@@ -3,21 +3,25 @@
 ``pad_short_actions`` (``lerobot_local``, ``lerobot_async``) and ``walk``
 (``wbc``) each select one of two postures rather than scaling a quantity, and
 each constructor stored the caller's value through ``bool(...)``;
-``lerobot_local``'s ``strict_keys`` and ``cache_model`` were stored as given and
-read by truthiness, which is the same inversion without the call. Every
+``lerobot_local``'s ``strict_keys`` and ``cache_model`` and ``Gr00tPolicy``'s
+``strict`` and ``strict_keys`` were stored as given and read by truthiness,
+which is the same inversion without the call. Every
 non-empty string is truthy, so ``bool("false")`` is ``True``: the spellings a
 caller reaches for to opt OUT selected the posture the word asks to skip, and
 ``None`` / ``0`` took the other branch without ever being a declared spelling of
 it. Nothing raised and nothing logged on either half.
 
-Both postures move a joint. ``pad_short_actions=True`` commands the unmatched
+Both postures are load-bearing. ``pad_short_actions=True`` commands the unmatched
 actuators ``0.0``, which is an absolute target on a LeRobot ``<motor>.pos``
 follower or a MuJoCo position actuator, so they TRAVEL there
 (:func:`~strands_robots.policies.base.align_action_values` says so); measured on
 a 6-actuator SO-101 driven by a 4-value chunk, ``pad_short_actions="false"``
 swung joints 5 and 6 by -1.06 rad and -1.02 rad where ``False`` held both at
 0.0000 rad. ``walk="false"`` loads and prefers the locomotion policy instead of
-running the balance policy alone.
+running the balance policy alone. ``Gr00tPolicy(strict_keys="false")`` selected
+the strict posture and then reported it as ``strict_keys=True`` in the refusal
+text - the sweep at the bottom of this file measures that against the two
+inference helpers that read the flag.
 
 So each is now checked with :func:`~strands_robots.utils.boolean_flag_error` -
 the domain the package already applies to the postures in ``mesh.iot`` and to
@@ -36,6 +40,12 @@ import numpy as np
 import pytest
 
 from strands_robots.policies.base import align_action_values
+from strands_robots.policies.groot.data_config import load_data_config
+from strands_robots.policies.groot.policy import (
+    Gr00tPolicy,
+    _auto_infer_action_mapping,
+    _auto_infer_observation_mapping,
+)
 from strands_robots.policies.lerobot_async import LerobotAsyncPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.wbc.policy import WBCPolicy
@@ -63,6 +73,14 @@ def _local_cache(value: Any) -> LerobotLocalPolicy:
     return LerobotLocalPolicy(cache_model=value)
 
 
+def _groot_strict(value: Any) -> Gr00tPolicy:
+    return Gr00tPolicy(strict=value)
+
+
+def _groot_strict_keys(value: Any) -> Gr00tPolicy:
+    return Gr00tPolicy(strict_keys=value)
+
+
 def _wbc(value: Any) -> WBCPolicy:
     return WBCPolicy(walk=value, allow_missing_models=True)
 
@@ -75,6 +93,8 @@ SITES: list[tuple[str, str, Callable[[Any], Any], str]] = [
     ("lerobot_local", "pad_short_actions", _local, "pad_short_actions"),
     ("lerobot_local", "strict_keys", _local_strict, "strict_keys"),
     ("lerobot_local", "cache_model", _local_cache, "cache_model"),
+    ("Gr00tPolicy", "strict", _groot_strict, "_strict"),
+    ("Gr00tPolicy", "strict_keys", _groot_strict_keys, "_strict_keys"),
     ("WBCPolicy", "walk", _wbc, "_walk"),
 ]
 
@@ -144,6 +164,54 @@ def test_the_two_postures_really_move_different_actuators() -> None:
     omitted_values, omitted_keys = align_action_values(chunk, keys, pad_short=False)
     assert padded_keys == keys and padded_values[4:] == [0.0, 0.0]
     assert omitted_keys == keys[:4] and len(omitted_values) == 4
+
+
+def _model_declaring_other_names() -> dict[str, Any]:
+    """Modality configs whose key spellings need positional fallback to resolve.
+
+    A checkpoint trained under different key names than the ``data_config``
+    declares is the only situation ``strict_keys`` speaks to: with matching
+    names there is nothing to fall back on and either posture returns the same
+    mapping.
+    """
+
+    def keys(*names: str) -> Any:
+        return type("Modality", (), {"modality_keys": list(names)})()
+
+    return {
+        "video": keys("cam_high", "cam_wrist"),
+        "state": keys("arm_joints", "grip"),
+        "action": keys("action.arm", "action.grip"),
+        "language": keys("annotation.human.task_description"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("infer", "modality"),
+    [(_auto_infer_observation_mapping, "video"), (_auto_infer_action_mapping, "action")],
+    ids=["observation", "action"],
+)
+def test_a_truthy_spelling_of_off_selected_the_strict_posture_and_misreported_it(
+    infer: Callable[..., Any], modality: str
+) -> None:
+    """Premise for the GR00T rows: the flag is read, and reading it wrong inverts.
+
+    Both helpers take ``strict_keys`` straight from the constructor's stored
+    value, so before the check ``strict_keys="false"`` raised the very refusal
+    the caller spelled *off* to avoid - and named ``strict_keys=True`` while
+    doing it, pointing the reader at a value they never passed.
+    """
+    config = load_data_config("so100_dualcam")
+    model = _model_declaring_other_names()
+
+    assert infer(config, model, strict_keys=False) is not None  # the opt-out resolves
+
+    for posture in ("false", True):
+        with pytest.raises(ValueError, match=f"strict_keys=True: cannot resolve {modality} keys"):
+            infer(config, model, strict_keys=posture)
+
+    with pytest.raises(ValueError, match="strict_keys"):
+        _groot_strict_keys("false")
 
 
 def _coerced_postures(source: str) -> list[str]:
