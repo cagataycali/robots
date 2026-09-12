@@ -219,7 +219,11 @@ below the nominal floor), and it is regenerated identically on every
 `reset()` (deterministic given the terrain kind), so a benchmark that
 evaluates a policy on rough ground is reproducible. `terrain` only applies
 when `ground_plane=True` (the default, which is the master floor switch);
-an unknown kind is rejected with an error listing the supported kinds. It
+an unknown kind is rejected with an error listing the supported kinds.
+`ground_plane` itself must be a boolean: it selects a posture (lay a floor or
+leave the world open), so a non-boolean is refused under the shared
+`boolean_flag_error` domain rather than read by truthiness - `"false"` does
+not lay a floor and `0` does not omit one (MuJoCo and Newton backends). It
 is the ground-generation primitive a terrain *curriculum* (progressive
 difficulty across resets) builds on. (MuJoCo backend; the Newton backend
 rejects `terrain=` as not-yet-supported.)
