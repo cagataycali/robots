@@ -335,7 +335,7 @@ class TestTheOptionSetIsTheRegistrys:
             # a string, which the render must quote whatever the field's type.
             entry = {"type": choice, **{name: (7 if name in numeric else "x") for name in fields}}
             flag = str(_cameras_flag(_teleop({"cam": entry})))
-            assert flag.startswith(f"--robot.cameras={{cam: {{type: {choice}, "), flag
+            assert flag.startswith(f"--robot.cameras={{'cam': {{type: {choice}, "), flag
             for name in fields:
                 assert f"{name}: {7 if name in numeric else chr(39) + 'x' + chr(39)}" in flag, (choice, name, flag)
 

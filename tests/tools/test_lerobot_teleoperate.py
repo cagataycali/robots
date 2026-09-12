@@ -427,7 +427,9 @@ def test_build_start_command_emits_nested_camera_config() -> None:
         robot_cameras={"front": {"type": "opencv", "index_or_path": 2, "width": 1280, "height": 720, "fps": 60}},
     )
     cam_args = [a for a in cmd if a.startswith("--robot.cameras=")]
-    assert cam_args == ["--robot.cameras={front: {type: opencv, index_or_path: 2, width: 1280, height: 720, fps: 60}}"]
+    assert cam_args == [
+        "--robot.cameras={'front': {type: opencv, index_or_path: 2, width: 1280, height: 720, fps: 60}}"
+    ]
     # The stale flat camera flag must not appear.
     assert not any(a.startswith("--camera-config") for a in cmd)
 

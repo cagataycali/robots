@@ -461,7 +461,7 @@ def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
     """Render a camera map as a lerobot 0.5 nested ``--robot.cameras`` value.
 
     lerobot 0.5's draccus CLI parses ``--robot.cameras`` as a nested dict, e.g.
-    ``{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}``.
+    ``{'front': {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}``.
     The pre-0.5 ``--camera-config name=type:path:fps:WxH`` flat form no longer
     exists. Each entry defaults to opencv/index 0/640x480/30fps when unset.
 

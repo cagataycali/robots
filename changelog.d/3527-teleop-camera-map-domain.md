@@ -16,6 +16,8 @@ registry through the one owner the `Robot` factory already uses
 (`hardware_robot._camera_option_vocabulary`), so the `realsense` spelling the tool's own
 schema suggested is refused naming `intelrealsense`, and a RealSense's
 `serial_number_or_name` is admitted and rendered where the copied five-key list refused it.
-A string value is quoted in the rendered dict so draccus reads it back verbatim: unquoted,
-`/dev/video[1]` failed to parse and a serial `0123` arrived as the octal `"83"`. An integral
+A string value and the camera name are quoted in the rendered dict so draccus reads them
+back verbatim: unquoted, `/dev/video[1]` failed to parse, a serial `0123` arrived as the
+octal `"83"`, and a camera named `yes` or `null` was re-typed to the YAML 1.1 boolean or
+null rather than kept as the dataset feature key the caller wrote. An integral
 geometry or index is emitted as the whole number lerobot declares the field.
