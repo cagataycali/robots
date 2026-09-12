@@ -84,7 +84,17 @@ def sim():
 
 
 @pytest.fixture
-def constant_reward_task(tmp_path: Path, sim):
+def arm(tmp_path: Path, sim) -> str:
+    """A world holding the one-joint probe arm, shared by both evaluation routes."""
+    sim.create_world()
+    robot_xml = tmp_path / "probe.xml"
+    robot_xml.write_text(_ROBOT_XML)
+    sim.add_robot("arm1", urdf_path=str(robot_xml))
+    return "arm1"
+
+
+@pytest.fixture
+def constant_reward_task(tmp_path: Path, sim, arm):
     """A task paying a known constant reward per step, never succeeding.
 
     ``constant`` is used rather than a distance or velocity term so the peak is a
@@ -92,17 +102,12 @@ def constant_reward_task(tmp_path: Path, sim):
     probe's physics, and a failure would then be unattributable between the
     arithmetic under test and the scene.
     """
-    sim.create_world()
-    robot_xml = tmp_path / "probe.xml"
-    robot_xml.write_text(_ROBOT_XML)
-    sim.add_robot("arm1", urdf_path=str(robot_xml))
-
     spec_path = tmp_path / "constant_reward.json"
     spec_path.write_text(
         json.dumps(
             {
                 "name": "constant-reward-probe",
-                "default_robot": "arm1",
+                "default_robot": arm,
                 "supported_robots": [],
                 "max_steps": _MAX_STEPS,
                 "dense_reward": [{"predicate": "constant", "value": _STEP_REWARD}],
@@ -231,3 +236,91 @@ class TestPassHatKDescribesRepeatedAttempts:
         assert json.loads(json.dumps(row)) == row, "pass_hat_k does not survive a JSON round trip"
         # The probe never satisfies a success condition, so every k is 0.0.
         assert set(row.values()) == {0.0}, f"probe task cannot succeed, so every k should be 0.0: {row}"
+
+
+class _SucceedsForTheFirstAttempts:
+    """A ``success_fn`` that succeeds on the first ``budget`` steps it is asked about.
+
+    An attempt ends as soon as the criterion holds, so a budget of ``c`` makes
+    exactly the first ``c`` attempts succeed and the rest run to ``max_steps``.
+    That yields a chosen ``c`` out of ``n`` without depending on the probe's
+    physics, for the same reason the reward task pays a constant.
+    """
+
+    def __init__(self, budget: int) -> None:
+        self.budget = budget
+
+    def __call__(self, observation: dict) -> bool:
+        if self.budget > 0:
+            self.budget -= 1
+            return True
+        return False
+
+
+class TestPassHatKIsReportedOnTheSuccessFnRoute:
+    """The reliability figure follows the success criterion, not the reward source.
+
+    :meth:`PolicyRunner.evaluate` has two routes - a ``spec`` (delegated to
+    ``_evaluate_with_spec``) and a ``success_fn`` - and ``pass_hat_k`` is derived
+    from ``n_success`` and ``episodes_completed``, which both report. The classes
+    above exercise the spec route only, so these cells cover the other one, where
+    a measured evaluation carried a ``success_rate`` and no reliability figure at
+    all.
+    """
+
+    def _evaluated(self, sim, robot: str, *, n_episodes: int, budget: int) -> dict:
+        return _metrics(
+            sim.eval_policy(
+                robot_name=robot,
+                policy_provider="mock",
+                n_episodes=n_episodes,
+                max_steps=_MAX_STEPS,
+                success_fn=_SucceedsForTheFirstAttempts(budget),
+                seed=0,
+            )
+        )
+
+    def test_a_measured_evaluation_reports_it(self, sim, arm) -> None:
+        metrics = self._evaluated(sim, arm, n_episodes=5, budget=2)
+        assert metrics["success_measured"] is True, "probe did not measure success, so nothing is owed"
+        assert "pass_hat_k" in metrics, (
+            f"a measured evaluation of {metrics['episodes_completed']} attempts with "
+            f"{metrics['n_success']} successes reports success_rate="
+            f"{metrics['success_rate']} and no reliability figure"
+        )
+
+    def test_the_row_agrees_with_the_estimator(self, sim, arm) -> None:
+        """Graded against the estimator applied to the payload's own counts.
+
+        Independent of how many attempts the criterion happened to end, so the
+        cell pins the arithmetic rather than the probe.
+        """
+        metrics = self._evaluated(sim, arm, n_episodes=5, budget=2)
+        completed, successes = metrics["episodes_completed"], metrics["n_success"]
+        assert 0 < successes < completed, (
+            f"{successes}/{completed} is a degenerate split, so an all-zero or all-one row would pass"
+        )
+        expected = {str(k): round(v, 4) for k, v in pass_hat_k(completed, successes).items()}
+        assert metrics["pass_hat_k"] == expected
+
+    def test_k_of_one_is_the_success_rate(self, sim, arm) -> None:
+        metrics = self._evaluated(sim, arm, n_episodes=4, budget=1)
+        assert metrics["pass_hat_k"]["1"] == pytest.approx(metrics["success_rate"], abs=1e-4)
+
+    def test_an_unmeasured_evaluation_reports_nothing(self, sim, arm) -> None:
+        """No criterion means no reliability, rather than a row of zeros.
+
+        Without a ``success_fn`` every attempt counts as a failure for a reason
+        unrelated to the policy, so a ``0.0`` row would read as measured
+        unreliability - the same reason ``k`` above ``episodes_completed`` is
+        absent instead of zero.
+        """
+        metrics = _metrics(
+            sim.eval_policy(robot_name=arm, policy_provider="mock", n_episodes=3, max_steps=_MAX_STEPS, seed=0)
+        )
+        assert metrics["success_measured"] is False
+        assert "pass_hat_k" not in metrics
+
+    def test_the_payload_survives_json(self, sim, arm) -> None:
+        metrics = self._evaluated(sim, arm, n_episodes=3, budget=1)
+        assert json.loads(json.dumps(metrics))["pass_hat_k"] == metrics["pass_hat_k"]

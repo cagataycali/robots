@@ -3309,7 +3309,11 @@ class PolicyRunner:
             five consecutive attempts succeed about 8% of the time. Keys above
             ``episodes_completed`` are absent rather than ``0.0``, because a short
             run has not measured a long streak and a zero would read as though it
-            had.
+            had. Reported on BOTH routes, unlike the reward fields above: it is
+            derived from ``n_success`` and ``episodes_completed``, which the
+            ``success_fn`` path reports too, so it needs no ``spec``. Absent
+            altogether when no success criterion was in force, since every attempt
+            then counts as a failure for a reason unrelated to the policy.
 
             Every payload carries ``success_measured`` (bool): ``True`` when a
             success criterion was in force (a ``spec`` or a non-``None``
@@ -3752,6 +3756,20 @@ class PolicyRunner:
                         "stopped_early": stopped_early,
                         "recording_save_error": recording_save_error,
                         "n_success": n_success,
+                        # Derived from ``n_success`` and ``episodes_completed``, both
+                        # reported here, rather than from a reward - so the reliability
+                        # figure belongs to this route as much as to the spec one, which
+                        # is where it shipped. Omitted entirely when no success criterion
+                        # was in force: every attempt then counts as a failure for a
+                        # reason unrelated to the policy, and a row of zeros would read
+                        # as measured unreliability rather than an unasked question. That
+                        # is the same rule that makes keys above ``episodes_completed``
+                        # absent rather than ``0.0``.
+                        **(
+                            {"pass_hat_k": {str(k): round(v, 4) for k, v in pass_hat_k(n_completed, n_success).items()}}
+                            if success_measured
+                            else {}
+                        ),
                         "avg_steps": round(avg_steps, 1),
                         "max_steps": max_steps,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
