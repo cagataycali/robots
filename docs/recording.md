@@ -162,6 +162,15 @@ of the pair won the column, the column would be named after the other one, and
 if the two render at different sizes the first frame is rejected and the episode
 is lost.
 
+The plain-MP4 sinks name a *file* after the same camera, so they owe the same
+collapse. `start_cameras_recording(output_dir=..., name="clip")` writes
+`clip__arm0__wrist.mp4` directly in `output_dir`, spelled like the
+`observation.images.arm0__wrist` column a dataset recording of that camera
+declares. Left as `/` the name is a directory separator, so the clip landed a
+level below the directory that was asked for, under a name the recording tag was
+missing from. Two cameras that collapse to one clip are refused before a frame is
+captured, the way `start_recording` refuses them.
+
 `cameras=` is a list of **distinct** camera names, and every surface that accepts
 one - `start_recording`, `render_all`, and the plain-MP4
 `start_cameras_recording` / `start_cameras_recording_synchronous` - enforces that

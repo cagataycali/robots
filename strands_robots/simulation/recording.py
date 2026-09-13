@@ -128,6 +128,27 @@ def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict
     return None
 
 
+def _schema_key_collisions(camera_names: Iterable[str]) -> dict[str, list[str]]:
+    """Group the camera names that collapse to one :func:`~strands_robots.utils.camera_schema_key`.
+
+    Blank names are ignored: a backend skips an unnamed camera, so it names
+    neither a dataset column nor a file.
+
+    Args:
+        camera_names: Scene camera names, in the backend's own order.
+
+    Returns:
+        ``{the shared key: the names that collapse to it}``, sorted by key and
+        holding only the keys more than one name claims.
+    """
+    groups: dict[str, list[str]] = {}
+    for name in camera_names:
+        if not name:
+            continue
+        groups.setdefault(camera_schema_key(name), []).append(name)
+    return {key: members for key, members in sorted(groups.items()) if len(members) > 1}
+
+
 def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) -> dict[str, Any] | None:
     """Error envelope when two scene cameras share one dataset feature name.
 
@@ -172,12 +193,7 @@ def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) 
         A tool-style error envelope, or ``None`` when every name has a distinct
         key.
     """
-    groups: dict[str, list[str]] = {}
-    for name in camera_names:
-        if not name:
-            continue
-        groups.setdefault(camera_schema_key(name), []).append(name)
-    collisions = {key: members for key, members in sorted(groups.items()) if len(members) > 1}
+    collisions = _schema_key_collisions(camera_names)
     if not collisions:
         return None
     described = "; ".join(f"{key!r} <- {sorted(members)}" for key, members in collisions.items())
@@ -193,6 +209,54 @@ def camera_schema_key_collision_error(method: str, camera_names: Iterable[str]) 
                     "after the other one, and if they render at different sizes the first frame is "
                     "rejected and the episode is lost. Rename one of them (add_camera(name=...)) so "
                     "the names still differ once '/' becomes '__', then record again."
+                )
+            }
+        ],
+    }
+
+
+def camera_clip_name_collision_error(method: str, camera_names: Iterable[str]) -> dict[str, Any] | None:
+    """Error envelope when two cameras would write to one MP4 clip.
+
+    A raw camera recording writes one clip per camera into ``output_dir``, and a
+    camera's ``/`` namespace separator cannot survive into a file name - there
+    it names a directory, so ``arm0/wrist`` would put the clip one level below
+    the directory the caller asked for, under a name the recording tag is
+    missing from. The separator is therefore written as ``__``
+    (:func:`~strands_robots.utils.camera_schema_key`, the same collapse that
+    names the dataset column for that camera, so a clip and its
+    ``observation.images.*`` feature are spelled alike).
+
+    That mapping is not injective: ``arm0/wrist`` and ``arm0__wrist`` are two
+    cameras in the scene and one file on disk, so one camera's clip would
+    overwrite the other's while the result reported both as written. It is
+    refused as the recording starts, before a frame is captured - where
+    :func:`camera_schema_key_collision_error` refuses the same pair of names for
+    the dataset sink.
+
+    Args:
+        method: The public method name, used to prefix the message.
+        camera_names: The cameras this recording will capture.
+
+    Returns:
+        A tool-style error envelope, or ``None`` when every camera names its own
+        clip.
+    """
+    collisions = _schema_key_collisions(camera_names)
+    if not collisions:
+        return None
+    described = "; ".join(f"{key!r} <- {sorted(members)}" for key, members in collisions.items())
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{method}: these cameras do not name distinct MP4 clips: {described}. A "
+                    "camera's '/' namespace separator cannot be part of a file name (it names a "
+                    "directory), so it is written as '__' - which makes these names one file, and "
+                    "the clip flushed first would be overwritten by the other. Rename one of them "
+                    "(add_camera(name=...)) or pass cameras=[...] naming only one of them, then "
+                    "record again."
                 )
             }
         ],

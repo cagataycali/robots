@@ -24,6 +24,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     robot_owned_actuator_ids,
     tendon_joint_ids,
 )
+from strands_robots.simulation.recording import camera_clip_name_collision_error
 from strands_robots.simulation.safe_output import (
     atomic_write_bytes,
     env_flag,
@@ -32,7 +33,7 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
-from strands_robots.utils import FREE_CAMERA_TOKENS, name_list_error
+from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -2236,6 +2237,14 @@ class RenderingMixin:
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
+        # A namespaced camera ("arm0/wrist") is ONE camera, and the clip names
+        # below write its separator as "__" so the clip stays a file inside
+        # output_dir. That collapse is not injective, so two cameras naming one
+        # clip are refused before a frame is captured rather than one silently
+        # overwriting the other.
+        if collision := camera_clip_name_collision_error("start_cameras_recording", names):
+            return collision
+
         # output_dir and name are LLM-supplied: reject traversal / symlink /
         # metacharacters (and a name carrying path separators) before we
         # makedirs and interpolate name into the per-camera filename.
@@ -2262,7 +2271,7 @@ class RenderingMixin:
         tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
 
         buffers = {cam: [] for cam in names}
-        paths = {cam: _os.path.join(out_dir, f"{tag}__{cam}.mp4") for cam in names}
+        paths = {cam: _os.path.join(out_dir, f"{tag}__{camera_schema_key(cam)}.mp4") for cam in names}
 
         # ``ready`` is set by the recorder thread once its GL context is warm
         # and it has entered the capture loop. ``start`` blocks on it below so
@@ -2862,6 +2871,14 @@ class RenderingMixin:
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
+        # A namespaced camera ("arm0/wrist") is ONE camera, and the clip names
+        # below write its separator as "__" so the clip stays a file inside
+        # output_dir. That collapse is not injective, so two cameras naming one
+        # clip are refused before a frame is captured rather than one silently
+        # overwriting the other.
+        if collision := camera_clip_name_collision_error("start_cameras_recording_synchronous", names):
+            return collision
+
         # output_dir and name are LLM-supplied: reject traversal / symlink /
         # metacharacters (and a name carrying path separators) before we
         # makedirs and interpolate name into the per-camera filename.
@@ -2888,7 +2905,7 @@ class RenderingMixin:
         tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
 
         buffers: dict[str, list] = {cam: [] for cam in names}
-        paths = {cam: _os.path.join(out_dir, f"{tag}__{cam}.mp4") for cam in names}
+        paths = {cam: _os.path.join(out_dir, f"{tag}__{camera_schema_key(cam)}.mp4") for cam in names}
 
         state: dict[str, Any] = {
             "running": True,
