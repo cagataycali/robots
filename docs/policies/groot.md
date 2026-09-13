@@ -179,6 +179,13 @@ signals is: the result is then `{"status": "error", ...}` naming the port and th
 surviving pid, because reporting success there would send the next `start` into a
 bind that cannot succeed. Check the status before rebinding the same port.
 
+The six posture flags - `remove_volumes`, `force`, `deterministic`,
+`use_tensorrt`, `http_server` and `use_sim_policy_wrapper` - are checked rather
+than read by truthiness, and only by the actions that consume them: a spelling
+such as `remove_volumes="false"` is refused up front instead of selecting the
+volume removal it reads as declining, and `status` or `stop`, which read none of
+the six, refuse none of them.
+
 ## See also
 
 - [Policy providers](../policies/overview.md)
