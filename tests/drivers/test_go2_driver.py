@@ -143,8 +143,10 @@ class _RecordingMotionSwitcher:
     def __init__(self, readings: list[Any]) -> None:
         self._readings = list(readings)
         self.release_calls = 0
+        self.check_calls = 0
 
     def CheckMode(self) -> Any:
+        self.check_calls += 1
         return self._readings.pop(0) if self._readings else (0, {"name": ""})
 
     def ReleaseMode(self) -> None:
@@ -564,6 +566,49 @@ def test_release_sport_mode_gives_up_by_name_when_the_mode_will_not_clear() -> N
     reason = _text(result)
     assert "'normal'" in reason
     assert "after 2 release attempts" in reason
+    assert driver._sport_mode_released is False
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 5])
+def test_a_mode_that_clears_on_the_last_release_is_reported_released(attempts: int) -> None:
+    """The release that finally works is confirmed, whichever round performs it.
+
+    ``attempts`` counts release-then-verify rounds, so the last round's release
+    owes a read as much as the earlier ones do. Reading once per round instead
+    spends the budget on reads that precede a release and never looks after the
+    final one, which reports failure on a robot that let go - and, because the
+    write gate caches that verdict, keeps ``send_action`` refused until the
+    caller happens to ask a second time.
+    """
+    switcher = _RecordingMotionSwitcher([(0, {"name": "ai"})] * attempts + [(0, {"name": ""})])
+    driver = Go2Driver(motion_switcher_client_factory=lambda _iface: switcher)
+
+    result = driver.release_sport_mode(attempts=attempts)
+
+    assert result["status"] == "success", _text(result)
+    assert result["content"][0]["json"]["released_mode"] == "ai"
+    assert driver._sport_mode_released is True
+    assert switcher.release_calls == attempts, "one release per mode still holding the robot"
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 5])
+def test_giving_up_names_a_mode_read_after_the_last_release(attempts: int) -> None:
+    """The refusal's claim is backed by a reading taken since the last release.
+
+    "still active after N release attempts" is a statement about the robot now,
+    so the driver must have asked it after letting go for the Nth time: N rounds
+    take N releases and N + 1 reads. Refusing on the read that came *before* the
+    last release would name a mode the driver had not looked for since.
+    """
+    switcher = _RecordingMotionSwitcher([(0, {"name": "normal"})] * (attempts + 1))
+    driver = Go2Driver(motion_switcher_client_factory=lambda _iface: switcher)
+
+    result = driver.release_sport_mode(attempts=attempts)
+
+    assert result["status"] == "error"
+    assert f"'normal' still active after {attempts} release attempts" in _text(result)
+    assert switcher.release_calls == attempts
+    assert switcher.check_calls == attempts + 1, "every release is followed by the read that verifies it"
     assert driver._sport_mode_released is False
 
 

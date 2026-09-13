@@ -890,11 +890,15 @@ class Go2Driver:
 
         Args:
             attempts: How many release-then-verify rounds to try before giving
-                up. Must be a positive count.
+                up. Must be a positive count. Every round's release is followed
+                by the read that confirms it, so ``attempts=1`` really does
+                release once and then look again.
 
         Returns:
             A success envelope naming the released mode when the robot reports no
-            active mode, or an error envelope naming why the gate stays shut.
+            active mode, or an error envelope naming why the gate stays shut. A
+            refusal for a mode that would not clear names what the last read
+            after the last release reported, not what was seen before it.
         """
         if err := positive_count_error(attempts, "attempts", "release_sport_mode"):
             return _refuse(err)
@@ -902,7 +906,15 @@ class Go2Driver:
         if client is None:
             return _refuse(self._sport_mode_client_error or "MotionSwitcherClient is unavailable")
         previous: str | None = None
-        for _ in range(int(attempts)):
+        # A round is a release followed by the read that verifies it, so N rounds
+        # take N + 1 reads: one to see what holds the robot, then one after every
+        # release. Reading only once per round would leave the last release
+        # unverified, and the refusal below would then name a mode as still
+        # active without having asked the robot again since letting go of it -
+        # on a robot that released on its final attempt, a refusal whose reading
+        # was never taken.
+        last_round = int(attempts)
+        for round_index in range(last_round + 1):
             mode_name, refusal = self._read_mode_name(client)
             if refusal is not None:
                 return _refuse(refusal)
@@ -922,6 +934,8 @@ class Go2Driver:
                     ],
                 }
             previous = mode_name
+            if round_index == last_round:
+                break
             try:
                 client.ReleaseMode()
             except Exception as exc:  # noqa: BLE001 - any transport failure is one reason

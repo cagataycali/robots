@@ -103,7 +103,10 @@ service driving the legs. Until it is released, a `rt/lowcmd` frame puts that
 controller and your commands on the same twelve motors, so every write path
 (`send_action`, `run_policy`, `start_task`) refuses until `release_sport_mode()`
 confirms the robot reports no active mode. Releasing is deliberately *not* a side
-effect of `connect_eagerly()`, which only subscribes to read.
+effect of `connect_eagerly()`, which only subscribes to read. The release is
+asynchronous, so `release_sport_mode(attempts=N)` polls: N release-then-verify
+rounds, each release followed by the `CheckMode()` read that confirms it, and a
+refusal names the mode that last read reported.
 
 **Actions are keyed by joint name, never by index.** `rt/lowcmd`'s `motor_cmd`
 array follows Unitree's `LegID` order - front-right, front-left, rear-right,
