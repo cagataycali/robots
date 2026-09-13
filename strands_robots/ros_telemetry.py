@@ -629,13 +629,43 @@ class RosTelemetryBridge(RosTelemetryBase):
         self._image_publisher(robot, camera).publish(msg)
 
     def shutdown(self) -> None:
-        """Destroy the node and, if this bridge initialized rclpy, shut it down."""
+        """Destroy the node and, if this bridge initialized rclpy, shut it down.
+
+        Best-effort, and safe to call more than once. The two steps release two
+        independent resources - a node handle and the process-wide rclpy context
+        - so neither failure is allowed to skip the other:
+
+        * A node that will not be destroyed (rclpy raises ``InvalidHandle`` or
+          ``RCLError`` from the C layer) is logged at debug, because the context
+          shutdown below takes the node down with it. Letting it propagate left
+          the context this bridge initialized running for the life of the
+          process: ``_owns_context`` stays set, so the next bridge finds
+          ``rclpy.ok()`` already true, disclaims ownership, and never shuts it
+          down either - and both call sites tear the bridge down inside a
+          suppressing block, so the leaked participant and its discovery
+          threads were never reported to anyone.
+        * A context that will not shut down is logged at *warning*, because
+          nothing after it retries: that failure is the last word on a
+          participant still on the wire.
+        """
         node = getattr(self, "_node", None)
         if node is not None:
             try:
                 node.destroy_node()
+            except Exception:  # noqa: BLE001 - the context release below is what matters
+                logger.debug("%s: destroying the ROS 2 node failed", type(self).__name__, exc_info=True)
             finally:
                 self._node = None
         if getattr(self, "_owns_context", False) and self._rclpy.ok():
-            self._rclpy.shutdown()
-            self._owns_context = False
+            try:
+                self._rclpy.shutdown()
+            except Exception:  # noqa: BLE001 - reported, because nothing else releases the context
+                logger.warning(
+                    "%s: the ROS 2 context this bridge initialized could not be shut down; "
+                    "its participant stays on domain %s until the process exits",
+                    type(self).__name__,
+                    os.environ.get("ROS_DOMAIN_ID", "?"),
+                    exc_info=True,
+                )
+            else:
+                self._owns_context = False

@@ -428,7 +428,13 @@ concurrently with publishing, and it is torn down cleanly on `cleanup()`/`stop()
 That teardown is best-effort: a node destroyed on a context another
 component already shut down is reported at WARNING and `cleanup()` carries
 on to disconnect the motors bus and the cameras, because a bridge that will
-not release must not leave the serial port held or the arm energised.
+not release must not leave the serial port held or the arm energised. The same
+rule holds one level in, where the bridge releases two things - its node handle
+and, when it was this bridge that called `rclpy.init()`, the process-wide
+context: a failure releasing one no longer skips the other, so a node that
+refuses to be destroyed does not leave the participant on the domain for the
+life of the process. A context that itself refuses to shut down is logged at
+warning, because nothing after it retries.
 
 Because the inbound `joint_command` topic drives the physical arm, two guards
 harden it (both threaded through `Robot()`):

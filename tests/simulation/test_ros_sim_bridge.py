@@ -9,10 +9,13 @@ publisher wiring with NO ROS 2 installed. They assert that:
 * :meth:`SimEngine._publish_ros_telemetry` reads joint state from
   ``get_observation`` and forwards it, and is a no-op when the bridge is off.
 * Enabling the bridge with no ``rclpy`` raises a clear :class:`ImportError`.
+* :meth:`SimRosBridge.shutdown` releases the node handle *and* the rclpy context
+  it initialized, so a failure destroying one does not leak the other.
 """
 
 from __future__ import annotations
 
+import logging
 import sys
 from types import ModuleType
 from typing import Any
@@ -46,6 +49,8 @@ class _FakeNode:
         self.name = name
         self.publishers: list[_FakePublisher] = []
         self.destroyed = False
+        #: Set to model rclpy's ``InvalidHandle`` / ``RCLError`` out of the C layer.
+        self.destroy_error: BaseException | None = None
 
     def get_clock(self) -> _FakeClock:
         return _FakeClock()
@@ -56,6 +61,8 @@ class _FakeNode:
         return pub
 
     def destroy_node(self) -> None:
+        if self.destroy_error is not None:
+            raise self.destroy_error
         self.destroyed = True
 
 
@@ -176,6 +183,58 @@ def test_sim_ros_bridge_shutdown_destroys_node(fake_ros: dict[str, Any]) -> None
     assert node.destroyed is True
     assert fake_ros["shutdown"] is True
     bridge.shutdown()  # idempotent
+
+
+def test_shutdown_releases_the_context_when_the_node_will_not_die(fake_ros: dict[str, Any]) -> None:
+    """A node that cannot be destroyed does not keep the rclpy context alive.
+
+    ``shutdown`` releases two independent resources: this bridge's node handle
+    and - when it was this bridge that called ``rclpy.init()`` - the
+    process-wide context. Letting a ``destroy_node`` failure propagate skipped
+    the second release, and nothing retried it: the bridge keeps claiming
+    ownership while the next bridge in the process sees ``rclpy.ok()`` already
+    true, disclaims ownership, and never shuts it down either. Both call sites
+    (``SimEngine.cleanup`` and ``Robot.cleanup``) tear the bridge down inside a
+    suppressing block, so the leaked participant was reported to no one.
+    """
+    from strands_robots.simulation.ros_bridge import SimRosBridge
+
+    bridge = SimRosBridge(domain_id=7)
+    assert fake_ros["inited"] is True  # this bridge owns the context
+    fake_ros["nodes"][0].destroy_error = RuntimeError("failed to destroy node: handle invalid")
+
+    bridge.shutdown()  # best-effort: the node failure is not the caller's to handle
+
+    assert fake_ros["shutdown"] is True, "the context release was skipped by the node failure"
+    assert fake_ros["inited"] is False, "the rclpy context outlived the bridge that initialized it"
+    # ...so ownership passes cleanly to the next bridge in this process.
+    SimRosBridge(domain_id=7).shutdown()
+    assert fake_ros["inited"] is False
+
+
+def test_shutdown_reports_a_context_it_could_not_release(
+    fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A context that will not shut down is reported, because nothing retries it.
+
+    Unlike the node handle - which the context shutdown would have taken down
+    anyway - a failed ``rclpy.shutdown`` is the last word on a participant still
+    on the wire, so it is logged at warning rather than swallowed at debug.
+    """
+    from strands_robots.simulation.ros_bridge import SimRosBridge
+
+    bridge = SimRosBridge(domain_id=7)
+
+    def _boom() -> None:
+        raise RuntimeError("rcl_shutdown failed")
+
+    monkeypatch.setattr(sys.modules["rclpy"], "shutdown", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="strands_robots.ros_telemetry"):
+        bridge.shutdown()  # must not raise out of teardown
+
+    assert "could not be shut down" in caplog.text
+    assert "domain 7" in caplog.text
 
 
 class _FakeEngine(SimEngine):
