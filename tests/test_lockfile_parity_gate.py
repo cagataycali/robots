@@ -30,15 +30,19 @@ Two halves, deliberately split by what they can afford to do:
 * ``uv lock --check``, in ``.github/workflows/lockfile-parity.yml``, is the
   complete test.  It re-resolves against the index, so it needs the network and
   belongs in a workflow.
-* The tests here are **offline and structural**.  They cover the two drift
-  classes actually measured above -- a locked version below a declared floor, and
-  a declared dependency missing from the lock entirely -- so the required check
-  reports them without a network round trip, and they name the drift in the
-  manifest's own terms rather than as "the lockfile needs to be updated".
+* The tests here are **offline and structural**.  They cover the three drift
+  classes actually measured above -- a locked version below a declared floor, a
+  declared dependency missing from the lock entirely, and a dependency the
+  manifest documents as a wheel whose only locked artifact is a source
+  distribution -- so the required check reports them without a network round
+  trip, and they name the drift in the manifest's own terms rather than as "the
+  lockfile needs to be updated".
 
 Neither subsumes the other: ``--check`` catches drift these cannot see (a
 transitive pin, a marker change), and these fail in the required check, which
-``--check`` cannot do while the gate is advisory.
+``--check`` cannot do while the gate is advisory.  The artifact-kind rule is not
+reachable from ``--check`` at all: the sdist it refuses **is** a resolution inside
+the declared bounds, which is what ``--check`` grades.
 
 **The floor pin refuses a distribution only when every locked version is below
 the floor, not when any is.**  That is measured, not cautious.  ``uv`` forks the
@@ -69,6 +73,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _LOCK = _REPO_ROOT / "uv.lock"
 _GATE = _REPO_ROOT / ".github" / "workflows" / "lockfile-parity.yml"
+
+#: Extras whose documented contract is a *wheel*: installable with a plain
+#: ``pip install`` and no toolchain.  ``[ros2]`` declares only the cyclonedds RMW
+#: binding precisely because it is the pip-installable half of ROS 2 -- the manifest
+#: comment, ``docs/rtps-integration.md`` ("cyclonedds - a self-contained wheel"),
+#: :mod:`strands_robots.hardware_rtps_bridge` ("a single self-contained pip wheel")
+#: and the install hint in :mod:`strands_robots.rtps.idl` all promise it, and the
+#: whole reason the RTPS bridge exists beside the rclpy one is that it needs no
+#: sourced distro.  An sdist here is that promise falsified: the build wants a
+#: CycloneDDS C install.  Add an extra to this tuple when its remedy is a bare
+#: ``pip install`` rather than a system package.
+_WHEEL_ONLY_EXTRAS = ("ros2",)
 
 #: This project, which appears in its own manifest as ``strands-robots[<extra>]``
 #: recursive extras. Those resolve to the other extras rather than to a
@@ -230,8 +246,87 @@ def test_no_locked_version_falls_below_its_declared_floor() -> None:
     )
 
 
+def _locked_wheel_counts() -> dict[str, list[tuple[str, int]]]:
+    """Map every locked distribution to ``(version, number of wheels)`` per entry.
+
+    One row per ``[[package]]`` entry rather than per name, because uv forks the
+    resolution and each fork is the artifact set some real environment installs
+    from.  Read with ``tomllib`` rather than this module's line-oriented regex:
+    the artifact lists are tables, not the two header lines a version needs.
+    """
+    counts: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for package in tomllib.loads(_LOCK.read_text(encoding="utf-8"))["package"]:
+        name = _canonical(package["name"])
+        counts[name].append((package.get("version", "?"), len(package.get("wheels", ()))))
+    return dict(counts)
+
+
+def _wheel_only_requirements() -> list[str]:
+    """Canonical names the :data:`_WHEEL_ONLY_EXTRAS` extras declare."""
+    return sorted({_canonical(req.name) for where, req in _declared_requirements() if where in _WHEEL_ONLY_EXTRAS})
+
+
+def test_the_wheel_only_extras_declare_the_dependency_this_rule_grades() -> None:
+    """The rule below must actually reach a requirement, or it passes vacuously.
+
+    A renamed extra or a moved requirement would leave the artifact-kind rule
+    grading the empty set, which is indistinguishable from a lock that satisfies
+    it.  So the population is pinned here, in the manifest's own terms.
+    """
+    graded = _wheel_only_requirements()
+    assert "cyclonedds" in graded, (
+        f"the extras named in _WHEEL_ONLY_EXTRAS ({list(_WHEEL_ONLY_EXTRAS)}) declare {graded}, which "
+        "does not include the cyclonedds binding they exist to deliver. Either the extra was renamed "
+        "or the requirement moved - point _WHEEL_ONLY_EXTRAS at its new home, because a rule that "
+        "grades no requirement reports success."
+    )
+
+
+def test_a_wheel_only_extra_locks_a_wheel() -> None:
+    """An extra documented as a pip wheel must lock a wheel, not only an sdist.
+
+    ``[ros2]`` declared ``cyclonedds>=0.10.2,<1.0.0`` under ``requires-python =
+    ">=3.12"``.  cyclonedds ships wheels for cp37-cp310 up to 0.10.5 and for
+    cp310-cp313 from 11.0.1, so no version that ceiling admitted had a wheel for
+    any interpreter this project supports, and the lock recorded the 0.10.5
+    **sdist** alone.  ``pip install 'strands-robots[ros2]'`` - the line
+    ``docs/rtps-integration.md`` annotates "cyclonedds - a self-contained wheel" -
+    therefore ended in a source build on every supported Python::
+
+        Failed to build `cyclonedds==0.10.5`
+        Could not locate cyclonedds. Try to set CYCLONEDDS_HOME or CMAKE_PREFIX_PATH
+
+    That C install is the one thing this extra exists to make unnecessary: the
+    RTPS bridge is the rclpy-free transport, so an install needing a CycloneDDS
+    toolchain leaves it no easier to provision than the sourced distro it was
+    built to avoid.
+
+    The lock is the right place to read the answer.  It is resolved under the
+    project's own ``requires-python``, so uv records only artifacts a supported
+    interpreter can use - an entry with no wheels means every supported
+    interpreter builds this dependency from source.
+
+    Phrased over the artifact *kind*, not over platform coverage: cyclonedds has
+    published no linux-aarch64 wheel in any release, so a rule demanding one per
+    platform would refuse a lock that is already as good as the index allows.
+    """
+    counts = _locked_wheel_counts()
+    sdist_only = [
+        f"{name} {version} (declared by {list(_WHEEL_ONLY_EXTRAS)}, locked with {wheels} wheels)"
+        for name in _wheel_only_requirements()
+        for version, wheels in counts.get(name, ())
+        if wheels == 0
+    ]
+    assert not sdist_only, (
+        "these dependencies are declared by an extra whose documented remedy is a plain `pip install`, "
+        f"and the lock carries no wheel for them: {sdist_only}. Every supported interpreter therefore "
+        "builds them from source, which needs the C toolchain the extra exists to avoid. Widen the "
+        "version bound in pyproject.toml to a series that publishes wheels, then run `uv lock`."
+    )
+
+
 # --------------------------------------------------------------------------- #
-# The gate that catches everything these two cannot.
+# The gate that catches everything these cannot.
 # --------------------------------------------------------------------------- #
 
 
@@ -239,7 +334,8 @@ def test_no_locked_version_falls_below_its_declared_floor() -> None:
 def gate_text() -> str:
     assert _GATE.is_file(), (
         f"{_GATE.relative_to(_REPO_ROOT)} is missing. The offline pins in this "
-        "module cover two drift classes; the workflow is what compares the lock "
+        "module cover three drift classes; the workflow is what compares the "
+        "lock "
         "against the manifest in full."
     )
     return _GATE.read_text(encoding="utf-8")

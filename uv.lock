@@ -936,12 +936,22 @@ wheels = [
 
 [[package]]
 name = "cyclonedds"
-version = "0.10.5"
+version = "11.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/cf/28eb9c823dfc245c540f5286d71b44aeee2a51021fc85b25bb9562be78cc/cyclonedds-0.10.5.tar.gz", hash = "sha256:63fc4d6fdb2fd35181c40f4e90757149f2def5f570ef19fb71edc4f568755f8a", size = 156919, upload-time = "2024-06-05T18:50:42.999Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/52/f501db026eff5aed63598c51b58a09ee45cf90306791cbf7c05f1a30ebf9/cyclonedds-11.0.1.tar.gz", hash = "sha256:487cdd9e3dbe3bc6f66c3318c45979f4015bb9d32d5dfcb9bb4a67376176a526", size = 191643, upload-time = "2026-03-20T12:47:30.097Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2d/bf/b779a39d4415e630ca5af5eb2143ff13b396c8d35cfd5ef8b36aa51f9579/cyclonedds-11.0.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:60d86cfbb06dcbac1167ad1dd6eea7fa62e1adcc09132c7e27d1641fe8e2790d", size = 924927, upload-time = "2026-03-20T12:47:47.825Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/19/d6d7a3ff4738ecbd74d6c634776ac665f7a41d68230f01a11d4756490608/cyclonedds-11.0.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:e74b7daf503a63b37765e5d8e2808db641d1fc53637004a04636cf564864ba16", size = 855612, upload-time = "2026-03-20T12:47:49.496Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/27/26dafd6cde19a440497c26d3fd39560db2e5ec2261fa628801000a0cd8b6/cyclonedds-11.0.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3e96507088c57165f7c189c3a85be866f74c7449fb0cbc6316ad306e5f599be1", size = 7704807, upload-time = "2026-03-20T12:47:51.365Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/9e/966e6f25650b65726361eac161e71cca998c653ae39a0118bc5f94356d0e/cyclonedds-11.0.1-cp312-cp312-win_amd64.whl", hash = "sha256:db977a7306f85e5b83cacfa0137a26955c9fe1d6ad03621407e00005adc01ede", size = 1348220, upload-time = "2026-03-20T12:47:53.119Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/40/56f1dd62cf7272e78c3c3f5885e7eec1a99f923dea9522208c0849a816bc/cyclonedds-11.0.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:20b5f2b4c1e42bf3d217f45ba3664dc21a16b74803b8b457e91ea187b11fc7bd", size = 924924, upload-time = "2026-03-20T12:47:54.9Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/28/f6f660f62f459532723c25a69e577694e01a44686aa20a5a2053ec67a402/cyclonedds-11.0.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:c3b899649685fd2606ea65620ea173b28d61e775adf8785861460ff91efbbbb8", size = 855636, upload-time = "2026-03-20T12:47:56.196Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/a5/a6c8052dafd16c8c0e02eb6ef0cb2bb086d726d654c56e94ec4cdb1640ab/cyclonedds-11.0.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fef1f6ce115a579e322f3156842e8b660883e4e8b0aa2f5e2a3df9d7959d1736", size = 7704791, upload-time = "2026-03-20T12:47:58.037Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/fb/df46b2aeff2e07716c0659bae2f5ac67bdd33e7ad4cce1cc35c505a0aa90/cyclonedds-11.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:850d6624dad8c9f3e0e65423225bd8e4c14c85c2d53bd64e16c2569ea3b491db", size = 1348209, upload-time = "2026-03-20T12:48:00.061Z" },
+]
 
 [[package]]
 name = "daqp"
@@ -4370,7 +4380,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'mesh-iot'", specifier = ">=1.34.0,<2.0.0" },
     { name = "boto3", marker = "extra == 'sagemaker'", specifier = ">=1.34.0,<2.0.0" },
     { name = "cflib", marker = "extra == 'crazyflie'", specifier = ">=0.1.25,<0.2.0" },
-    { name = "cyclonedds", marker = "extra == 'ros2'", specifier = ">=0.10.2,<1.0.0" },
+    { name = "cyclonedds", marker = "extra == 'ros2'", specifier = ">=0.10.2,<12" },
     { name = "device-connect-agent-tools", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "device-connect-agent-tools", marker = "extra == 'device-connect'", specifier = ">=0.1.0" },
     { name = "device-connect-edge", marker = "extra == 'all'", specifier = ">=0.2.0" },

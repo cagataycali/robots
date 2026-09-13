@@ -580,8 +580,16 @@ device-connect = [
 # So, like the [curobo] extra, this stays minimal: it pulls only the
 # pip-installable cyclonedds Python binding (a DDS RMW rclpy can use). Installing
 # this extra does NOT by itself provision ROS 2 - source a real distro first.
+# The ceiling admits the 11.x series because that is where the wheels are:
+# cyclonedds publishes cp37-cp310 wheels up to 0.10.5 and cp310-cp313 wheels from
+# 11.0.1, so under `requires-python = ">=3.12"` every version below 11 resolves
+# to the sdist, whose build needs a CycloneDDS C install (`CYCLONEDDS_HOME`).
+# A ceiling below 11 therefore contradicts the "self-contained pip wheel" this
+# extra exists to deliver. `tests/test_lockfile_parity_gate.py` pins that the
+# locked artifact is a wheel, since a resolution inside the declared bounds is
+# what `uv lock --check` grades.
 ros2 = [
-    "cyclonedds>=0.10.2,<1.0.0",
+    "cyclonedds>=0.10.2,<12",
 ]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
 # device): strands.models.ollama.OllamaModel does a top-level `import ollama`.
