@@ -96,6 +96,13 @@ WBCPolicy(
 A missing `onnxruntime` or a missing checkpoint raises `RuntimeError` at
 construction - WBC never falls back to silent zero torques.
 
+`walk` and `allow_missing_models` each select a posture, so both are checked
+rather than read by truthiness: a non-boolean raises `ValueError` naming the
+parameter. A string such as `"false"` - the spelling a JSON `policy_config`
+reaches for - is truthy, and before the check `allow_missing_models="false"`
+selected the test seam, skipping the eager load and deferring the missing
+checkpoint to the first `get_actions` call.
+
 ### Config value domain
 
 `WBCConfig` refuses an unusable *value* at construction, because every numeric

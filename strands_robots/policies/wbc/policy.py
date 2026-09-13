@@ -208,7 +208,12 @@ class WBCPolicy(Policy):
             construction. Assignment is the only route: ``**kwargs`` below
             absorbs unknown keywords, so a session passed to this constructor is
             dropped. Production callers leave this ``False`` so a missing
-            checkpoint fails loudly at construction.
+            checkpoint fails loudly at construction. Checked with
+            :func:`~strands_robots.utils.boolean_flag_error` like ``walk``: it
+            selects a posture, and read by truthiness a string spelling of
+            ``False`` selected the seam, so the eager load the caller asked for
+            was skipped and the missing checkpoint surfaced only at the first
+            ``get_actions`` - as a refusal advising the value they had passed.
         **kwargs: Forward-compatibility absorber for the smart-string / registry
             resolution path. Per the #300 contract, providers MUST ignore
             unknown kwargs rather than raising.
@@ -216,7 +221,8 @@ class WBCPolicy(Policy):
     Raises:
         RuntimeError: If ``onnxruntime`` is missing, or a checkpoint file is
             absent, when ``allow_missing_models`` is ``False``.
-        ValueError: If the resolved config dimensions are inconsistent.
+        ValueError: If ``walk`` or ``allow_missing_models`` is not a boolean,
+            or the resolved config dimensions are inconsistent.
     """
 
     def __init__(
@@ -233,6 +239,12 @@ class WBCPolicy(Policy):
         # alone - and bool() is where "false", a spelling of the balance-only
         # posture, became the locomotion one. See boolean_flag_error.
         if error := boolean_flag_error(walk, "walk", "WBCPolicy"):
+            raise ValueError(error)
+        # Same domain for the seam flag in the same signature. Read by
+        # truthiness, "false" took the `allow_missing_models` branch below, so
+        # the eager load this spelling asks for was skipped and the refusal
+        # arrived one call later, naming the value the caller had passed.
+        if error := boolean_flag_error(allow_missing_models, "allow_missing_models", "WBCPolicy"):
             raise ValueError(error)
         self._walk = walk
         self._robot_state_keys: list[str] = []
