@@ -38,7 +38,7 @@ from .embodiment import (
     observed_state_keys,
     state_key_remedy,
 )
-from .processor import ProcessorBridge
+from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
@@ -1169,8 +1169,11 @@ class LerobotLocalPolicy(Policy):
           warning below still fires so a raw-action checkpoint is not mistaken for
           a frozen policy.
         * ``_configure_embodiment`` raises ``ValueError``: the pipeline loaded and
-          was ACTIVE, but the caller's embodiment / ``image_keys`` are incompatible
-          with the model's declared features. Discarding it silently degrades a
+          was ACTIVE, but the caller's DECLARED embodiment cannot be configured onto
+          it - either the embodiment / ``image_keys`` are incompatible with the
+          model's declared features, or the active bridge carries no preprocessor
+          for the rename + pack-state steps to be injected into (a checkpoint
+          shipping only ``policy_postprocessor.json``). Discarding it silently degrades a
           WORKING normalization pipeline to the raw flow AND misdirects the
           downstream "no policy_postprocessor.json" diagnostic (the checkpoint
           shipped one - it was discarded here). Surface the real cause as a
@@ -1744,6 +1747,16 @@ class LerobotLocalPolicy(Policy):
 
         If no embodiment is declared AND no ``robot_state_keys`` are set, this is
         a no-op and the policy uses the legacy heuristic remap path.
+
+        Raises:
+            ValueError: A DECLARED embodiment could not be configured - its keys do
+                not match the model's declared features, or the bridge carries no
+                preprocessor for step 3 to inject into. Both leave the caller's map
+                unapplied while the action side keeps converting, so the load path
+                is told rather than left to half-apply it. A map synthesised from
+                ``robot_state_keys`` is exempt from the second case: it carries
+                native units and the keys the legacy path already binds.
+            RuntimeError: The embodiment *spec* itself is malformed (bad name/dict).
         """
         from .embodiment import EmbodimentMap, load_embodiment
 
@@ -1791,8 +1804,39 @@ class LerobotLocalPolicy(Policy):
         # Fail-fast validation against the model's declared features.
         embodiment.validate(self._input_features, self._output_features)
 
-        # Inject into the pipeline (rename_map + pack-state step).
+        # A declared embodiment needs a preprocessor to be injected INTO.
+        # ``apply_embodiment`` installs the rename map and the pack-state step on
+        # the PREprocessor pipeline, and ``ProcessorBridge.from_pretrained`` skips
+        # a pipeline whose config the checkpoint omits - so a checkpoint shipping
+        # only ``policy_postprocessor.json`` leaves the bridge ACTIVE with nothing
+        # to configure, and ``apply_embodiment`` returns having applied none of it.
+        #
+        # That is not a degraded version of what the caller asked for. The legacy
+        # path composes ``observation.state`` in the SIM's own units (radians for a
+        # MuJoCo arm) and binds cameras by name/position rather than by the declared
+        # ``obs_rename``, while ``_tensor_to_action_dicts`` still converts the
+        # returned action with ``model_action_to_sim`` - so exactly half of a
+        # ``*_units="degrees"`` embodiment (so100 / so101) is applied. Refuse, and
+        # let the caller's own error path fall back to the raw obs/action flow with
+        # both halves consistent.
+        #
+        # Only a DECLARED spec is refused: the map synthesised from
+        # ``robot_state_keys`` above carries native units and the same keys the
+        # legacy path already binds, so leaving that one unapplied drops nothing.
         assert self._processor_bridge is not None
+        if self._embodiment_spec is not None and not self._processor_bridge.has_preprocessor:
+            raise ValueError(
+                f"embodiment {embodiment.name!r} was declared, but this checkpoint ships "
+                f"no {PREPROCESSOR_CONFIG} (only {POSTPROCESSOR_CONFIG}), so there is no "
+                "preprocessor pipeline to inject it into. Its obs_rename, state_keys, "
+                "dim_policy and state_units all run as preprocessor steps and none of them "
+                "would apply, while the action side would still convert with "
+                f"action_units={embodiment.action_units!r}. Use a checkpoint that ships a "
+                "preprocessor, or drop embodiment= and let the raw obs/action flow bind the "
+                "observation."
+            )
+
+        # Inject into the pipeline (rename_map + pack-state step).
         self._processor_bridge.apply_embodiment(embodiment, input_features=self._input_features)
 
         self._embodiment = embodiment

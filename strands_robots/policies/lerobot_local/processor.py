@@ -695,6 +695,17 @@ class ProcessorBridge:
             input_features: Model ``config.input_features`` (for state dim). When
                 provided, the pack-state step's ``expected_dim`` is set from the
                 model's declared ``observation.state`` shape.
+
+        Note:
+            Both steps land on the PREprocessor, so a bridge carrying only a
+            postprocessor has nothing to configure and this returns having applied
+            nothing. That is reachable only for the map
+            ``LerobotLocalPolicy._configure_embodiment`` synthesises from
+            ``robot_state_keys`` (native units, the same keys the legacy path
+            already binds, so nothing is dropped); a DECLARED embodiment is refused
+            there before reaching this call, because leaving one unapplied would
+            drop the caller's obs_rename and state units while the action side kept
+            converting.
         """
         if self._preprocessor is None:
             logger.debug("apply_embodiment: no preprocessor loaded, nothing to configure")

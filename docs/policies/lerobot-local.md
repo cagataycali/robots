@@ -197,7 +197,15 @@ policy = create_policy(
 The built-in `so100` / `so101` maps declare `state_units`/`action_units`
 `"degrees"`; every other map defaults to `"native"`, which is right for real
 hardware - an SO follower already reports driver units - and wrong for a sim
-packing radians. `joint_mids` is the companion knob: LeRobot's `DEGREES` mode is
+packing radians.
+
+Both halves of a declared map are installed as *preprocessor* steps, so a
+checkpoint that ships no `policy_preprocessor.json` (only a postprocessor) has
+nothing for them to be installed into. Declaring an `embodiment` against one is
+refused at load, naming the missing pipeline: the alternative is that the state
+side keeps the sim's radians while the action side still converts back from
+degrees, i.e. half the map. Drop `embodiment=` to use the raw obs/action flow, or
+load a checkpoint that ships a preprocessor. `joint_mids` is the companion knob: LeRobot's `DEGREES` mode is
 mid-point centered, so without it sim `qpos=0` is taken to be the calibration
 mid.
 
