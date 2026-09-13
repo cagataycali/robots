@@ -23,9 +23,7 @@ non-VLA reference implementation.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
-from typing import Any, Protocol, runtime_checkable
-
-import numpy as np
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.utils import (
@@ -33,6 +31,12 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only. ``import strands_robots`` imports this module for the
+    # ``Policy`` ABC, and is documented as leaving numpy out of ``sys.modules``
+    # (#3587); the one ``np.ndarray`` below is a string annotation for that reason.
+    import numpy as np
 
 
 class Policy(ABC):
@@ -505,7 +509,7 @@ class ChunkedPolicy(Protocol):
 
 
 def align_action_values(
-    values: Sequence[float] | np.ndarray,
+    values: "Sequence[float] | np.ndarray",
     action_keys: Sequence[str],
     *,
     pad_short: bool = False,

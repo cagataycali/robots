@@ -44,12 +44,7 @@ from strands_robots.policies.base import (
     required_bodies_error,
     resolve_chunk_length,
 )
-
-# Cosmos3Policy is import-safe: it depends only on numpy. The WebSocket
-# client uses a self-contained msgpack+websockets transport (no
-# ``openpi-client`` dependency).
 from strands_robots.policies.composite import CompositePolicy
-from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
     create_policy,
@@ -99,13 +94,14 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    # Static-analysis import so ``list_policy_types`` (resolved lazily below)
-    # is a defined export for type-checkers / CodeQL py/undefined-export.
+    # Static-analysis imports so the names resolved lazily below are defined
+    # exports for type-checkers / CodeQL py/undefined-export.
+    from strands_robots.policies.cosmos3 import Cosmos3Policy
     from strands_robots.policies.lerobot_local.resolution import list_policy_types
 
 
 def __getattr__(name: str) -> object:
-    """Lazily expose the ``lerobot_local`` policy-type discovery surface.
+    """Lazily expose the two exports whose modules carry a heavy import.
 
     ``list_policy_types()`` answers "which ``policy_type`` strings can I pass to
     ``create_policy('lerobot_local', policy_type=...)``?" -- the natural follow-up
@@ -114,7 +110,18 @@ def __getattr__(name: str) -> object:
     562) rather than at ``import strands_robots.policies`` time. This keeps the
     package import torch-free while still exposing the discovery peer next to
     ``list_providers``.
+
+    ``Cosmos3Policy`` needs no torch, but its package imports numpy at module
+    scope in three modules, and ``import strands_robots`` - which imports this
+    package for the ``Policy`` ABC - is documented as leaving numpy out of
+    ``sys.modules`` (#3587). The registry still constructs it by provider name
+    through :func:`create_policy`, which imports the module it needs when asked.
     """
+    if name == "Cosmos3Policy":
+        from strands_robots.policies.cosmos3 import Cosmos3Policy as _Cosmos3Policy
+
+        globals()["Cosmos3Policy"] = _Cosmos3Policy
+        return _Cosmos3Policy
     if name == "list_policy_types":
         from strands_robots.policies.lerobot_local.resolution import (
             list_policy_types as _list_policy_types,

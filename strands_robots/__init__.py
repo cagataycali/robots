@@ -235,11 +235,17 @@ __all__ = [
 # extra do not pay import-attempt cost on every `import strands_robots`.
 # This is the canonical location - strands_robots/simulation/__init__.py
 # intentionally does NOT duplicate this call.
+#
+# LEAF: the selector is imported from ``strands_robots._mujoco_gl`` and not from
+# the MuJoCo backend module, because importing anything under
+# ``strands_robots.simulation`` runs that package's ``__init__`` and, through
+# ``SimEngine`` -> the policy runner -> the rendering package, initialises
+# numpy - which ``__getattr__`` below promises this import does not do (#3587).
 import importlib.util as _importlib_util  # noqa: E402
 
 if _importlib_util.find_spec("mujoco") is not None:
     try:
-        from strands_robots.simulation.mujoco.backend import _configure_gl_backend
+        from strands_robots._mujoco_gl import _configure_gl_backend
 
         _configure_gl_backend()
     except (ImportError, AttributeError, OSError):

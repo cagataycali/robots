@@ -348,23 +348,23 @@ class TestImportResilience:
         pytest.importorskip("mujoco")
         import importlib
 
-        import strands_robots.simulation.mujoco.backend as backend_mod
+        import strands_robots._mujoco_gl as gl_mod
 
-        real = backend_mod._configure_gl_backend
+        real = gl_mod._configure_gl_backend
 
         def _raise_oserror():
             # Mirrors a headless box with no usable GL device: EGL/OSMesa
             # initialisation surfaces as an OSError.
             raise OSError("simulated EGL device-open failure")
 
-        backend_mod._configure_gl_backend = _raise_oserror  # type: ignore[assignment]
+        gl_mod._configure_gl_backend = _raise_oserror  # type: ignore[assignment]
         try:
             # Reload re-runs the package body, which now calls the raising
             # shim. The except-guard must swallow it: reload must not raise.
             reloaded = importlib.reload(strands_robots)
             assert callable(reloaded.create_policy)
         finally:
-            backend_mod._configure_gl_backend = real  # type: ignore[assignment]
+            gl_mod._configure_gl_backend = real  # type: ignore[assignment]
             importlib.reload(strands_robots)
 
     def test_import_survives_dyld_shim_failure(self):
@@ -384,3 +384,80 @@ class TestImportResilience:
         finally:
             dyld_mod.ensure_ffmpeg_on_dyld_path = real  # type: ignore[assignment]
             importlib.reload(strands_robots)
+
+
+class TestBareImportLeavesNumpyUnloaded:
+    """``import strands_robots`` leaves numpy out of ``sys.modules``.
+
+    ``__getattr__`` documents the bare import as importing neither torch, lerobot,
+    numpy nor mujoco, and the numpy half is load-bearing rather than cosmetic.
+    Coverage resolves a dotted ``--cov=strands_robots.<sub>`` source with
+    ``importlib.util.find_spec`` inside ``sys_modules_saved()``: that imports the
+    parent package, and whatever numpy the parent initialises is then dropped
+    from ``sys.modules``, so the next ``import numpy`` re-executes its Python
+    layer over an already-initialised C extension and ``ndarray.max()`` returns
+    a foreign ``_NoValue``. Measured at ``4578a5f6f``: 2268 Isaac tests passed
+    with ``--no-cov`` and 149 failed under ``--cov=strands_robots.simulation``,
+    every one a ``float()`` of that sentinel (#3587).
+
+    Two chains used to reach numpy on the bare import. ``policies/__init__``
+    exported ``Cosmos3Policy`` eagerly, and ``policies.base`` imported numpy for
+    one annotation; both are now lazy. And the GL selector the root runs at
+    import time lived in ``simulation.mujoco.backend``, so importing it ran
+    ``simulation/__init__`` -> ``SimEngine`` -> the policy runner -> the rendering
+    package - twelve numpy-importing modules for a function that reads
+    ``os.environ``. It now lives in :mod:`strands_robots._mujoco_gl`, a leaf that
+    imports only the stdlib, which the third case here keeps true: a third-party
+    import added to that module lands on every ``import strands_robots``.
+
+    Each subprocess case is a clean interpreter, because the property is about
+    the bare import and this process has long since imported everything.
+    """
+
+    @staticmethod
+    def _run(code: str) -> None:
+        import subprocess
+        import sys
+
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+
+    def test_the_bare_import_leaves_numpy_out_of_sys_modules(self):
+        self._run(
+            "import sys, strands_robots; "
+            "loaded = sorted(m for m in sys.modules if m == 'numpy' or m.startswith('numpy.')); "
+            "assert not loaded, 'import strands_robots initialised numpy: %r' % loaded[:3]"
+        )
+
+    def test_a_coverage_style_probe_of_a_subpackage_leaves_numpy_usable(self):
+        # The exact sequence coverage runs to resolve ``--cov=strands_robots.simulation``:
+        # find_spec inside a saved-and-restored sys.modules, then the first real import.
+        self._run(
+            "import sys, importlib.util; "
+            "saved = dict(sys.modules); "
+            "importlib.util.find_spec('strands_robots.simulation'); "
+            "sys.modules.clear(); sys.modules.update(saved); "
+            "import numpy as np; "
+            "value = float(np.abs(np.array([1.0, 2.0])).max()); "
+            "assert value == 2.0, value"
+        )
+
+    def test_the_gl_selector_leaf_imports_only_the_stdlib_at_module_scope(self):
+        # Module-scope imports are what every ``import strands_robots`` pays; the
+        # one in-function import (``strands_robots.utils.get_base_dir``, itself
+        # stdlib-only) runs only when an NVIDIA ICD has to be staged.
+        import sys
+
+        import strands_robots._mujoco_gl as gl_mod
+
+        tree = ast.parse(Path(gl_mod.__file__).read_text(encoding="utf-8"))
+        imported = set()
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.add(node.module.split(".")[0])
+        foreign = sorted(imported - sys.stdlib_module_names)
+        assert not foreign, (
+            f"strands_robots._mujoco_gl imports {foreign} at module scope; that lands on every import strands_robots"
+        )

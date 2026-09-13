@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+import strands_robots._mujoco_gl as gl_mod
 from strands_robots.simulation.mujoco import backend as backend_mod
 
 
@@ -34,21 +35,21 @@ class TestIsHeadless:
 
     def test_non_linux_is_not_headless(self, restore_env):
         with patch.object(sys, "platform", "darwin"):
-            assert backend_mod._is_headless() is False
+            assert gl_mod._is_headless() is False
 
     def test_linux_with_display_not_headless(self, restore_env):
         restore_env.setenv("DISPLAY", ":0")
         with patch.object(sys, "platform", "linux"):
-            assert backend_mod._is_headless() is False
+            assert gl_mod._is_headless() is False
 
     def test_linux_with_wayland_not_headless(self, restore_env):
         restore_env.setenv("WAYLAND_DISPLAY", "wayland-0")
         with patch.object(sys, "platform", "linux"):
-            assert backend_mod._is_headless() is False
+            assert gl_mod._is_headless() is False
 
     def test_linux_no_display_is_headless(self, restore_env):
         with patch.object(sys, "platform", "linux"):
-            assert backend_mod._is_headless() is True
+            assert gl_mod._is_headless() is True
 
 
 class TestConfigureGLBackend:
@@ -56,24 +57,24 @@ class TestConfigureGLBackend:
 
     def test_respects_user_mujoco_gl(self, restore_env):
         restore_env.setenv("MUJOCO_GL", "glfw")
-        backend_mod._configure_gl_backend()
+        gl_mod._configure_gl_backend()
         # Value unchanged.
         assert os.environ["MUJOCO_GL"] == "glfw"
 
     def test_noop_on_non_headless(self, restore_env):
         with patch.object(sys, "platform", "darwin"):
-            backend_mod._configure_gl_backend()
+            gl_mod._configure_gl_backend()
         # Nothing was set.
         assert "MUJOCO_GL" not in os.environ
 
     def test_headless_picks_egl_when_available(self, restore_env):
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = [None]
             try:
-                backend_mod._configure_gl_backend()
+                gl_mod._configure_gl_backend()
                 assert os.environ.get("MUJOCO_GL") == "egl"
                 load.assert_called_once()
             finally:
@@ -83,11 +84,11 @@ class TestConfigureGLBackend:
     def test_headless_falls_back_to_osmesa(self, restore_env):
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = [OSError("no libEGL"), None]
             try:
-                backend_mod._configure_gl_backend()
+                gl_mod._configure_gl_backend()
                 assert os.environ.get("MUJOCO_GL") == "osmesa"
                 assert load.call_count == 2
             finally:
@@ -98,11 +99,11 @@ class TestConfigureGLBackend:
 
         with (
             patch.object(sys, "platform", "linux"),
-            patch("strands_robots.simulation.mujoco.backend.ctypes.cdll.LoadLibrary") as load,
+            patch("strands_robots._mujoco_gl.ctypes.cdll.LoadLibrary") as load,
         ):
             load.side_effect = OSError("no GL")
-            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
-                backend_mod._configure_gl_backend()
+            with caplog.at_level(logging.WARNING, logger="strands_robots._mujoco_gl"):
+                gl_mod._configure_gl_backend()
             # MUJOCO_GL stays unset.
             assert "MUJOCO_GL" not in os.environ
             # Warning text lists both libraries.
@@ -189,7 +190,7 @@ class TestCanRenderProbeOutcomes:
             args=[], returncode=1, stdout=b"", stderr=b"libEGL: failed to load driver"
         )
         with patch.object(backend_mod.subprocess, "run", return_value=completed):
-            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+            with caplog.at_level(logging.WARNING, logger="strands_robots._mujoco_gl"):
                 assert backend_mod._can_render() is False
         assert any("probe failed" in rec.message for rec in caplog.records)
         self._clear_cache()
@@ -202,7 +203,7 @@ class TestCanRenderProbeOutcomes:
         long_err = ("E" * 500).encode()
         completed = subprocess.CompletedProcess(args=[], returncode=2, stdout=b"", stderr=long_err)
         with patch.object(backend_mod.subprocess, "run", return_value=completed):
-            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+            with caplog.at_level(logging.WARNING, logger="strands_robots._mujoco_gl"):
                 assert backend_mod._can_render() is False
         # The truncation marker is appended once stderr exceeds 200 chars.
         assert any("..." in rec.message for rec in caplog.records)
@@ -216,7 +217,7 @@ class TestCanRenderProbeOutcomes:
         with patch.object(
             backend_mod.subprocess, "run", side_effect=subprocess.TimeoutExpired(cmd="probe", timeout=10)
         ):
-            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.backend"):
+            with caplog.at_level(logging.WARNING, logger="strands_robots._mujoco_gl"):
                 assert backend_mod._can_render() is False
         assert any("timed out" in rec.message for rec in caplog.records)
         self._clear_cache()

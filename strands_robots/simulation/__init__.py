@@ -114,9 +114,9 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # triggers an omni/isaacsim import.
     "IsaacSimulation": ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),
     "IsaacConfig": ("strands_robots.simulation.isaac.config", "IsaacConfig"),
-    "_configure_gl_backend": ("strands_robots.simulation.mujoco.backend", "_configure_gl_backend"),
+    "_configure_gl_backend": ("strands_robots._mujoco_gl", "_configure_gl_backend"),
     "_ensure_mujoco": ("strands_robots.simulation.mujoco.backend", "_ensure_mujoco"),
-    "_is_headless": ("strands_robots.simulation.mujoco.backend", "_is_headless"),
+    "_is_headless": ("strands_robots._mujoco_gl", "_is_headless"),
 }
 
 

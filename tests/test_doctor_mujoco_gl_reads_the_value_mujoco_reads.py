@@ -86,13 +86,13 @@ def linux_headless(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     machine ran the suite, so a host without OSMesa disagreed about the advice
     while agreeing about the verdict.
     """
-    import strands_robots.simulation.mujoco.backend as backend
+    import strands_robots._mujoco_gl as gl_mod
 
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
-    monkeypatch.setattr(backend, "_library_loads", lambda _name: True)
+    monkeypatch.setattr(gl_mod, "_library_loads", lambda _name: True)
     return monkeypatch
 
 
@@ -327,10 +327,10 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
 
     @pytest.fixture
     def icd_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as gl_mod
 
         staged: list[bool] = []
-        monkeypatch.setattr(backend, "_ensure_nvidia_egl_vendor_icd", lambda: staged.append(True))
+        monkeypatch.setattr(gl_mod, "_ensure_nvidia_egl_vendor_icd", lambda: staged.append(True))
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.delenv("DISPLAY", raising=False)
         monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
@@ -340,10 +340,10 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_every_spelling_of_egl_stages_the_vendor_icd(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as gl_mod
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
-        backend._configure_gl_backend()
+        gl_mod._configure_gl_backend()
         assert icd_spy == [True], (
             f"MUJOCO_GL={spelling!r} selects MuJoCo's EGL backend, so glvnd has to be pointed at the "
             "NVIDIA vendor ICD; without it an NVIDIA host missing that ICD renders on Mesa llvmpipe"
@@ -353,31 +353,31 @@ class TestTheEGLVendorICDGuaranteeFollowsTheFoldedValue:
     def test_a_non_egl_backend_does_not_stage_the_vendor_icd(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as gl_mod
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
-        backend._configure_gl_backend()
+        gl_mod._configure_gl_backend()
         assert icd_spy == [], f"MUJOCO_GL={spelling!r} does not select EGL, so no vendor ICD is needed"
 
     @pytest.mark.parametrize("spelling", ["egl", "EGL", " egl ", "glfw", "off"])
     def test_a_user_value_is_never_overwritten(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool], spelling: str
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as gl_mod
 
         monkeypatch.setenv("MUJOCO_GL", spelling)
-        backend._configure_gl_backend()
-        assert backend.os.environ["MUJOCO_GL"] == spelling, "a value the user set is theirs"
+        gl_mod._configure_gl_backend()
+        assert gl_mod.os.environ["MUJOCO_GL"] == spelling, "a value the user set is theirs"
 
     def test_a_whitespace_only_value_is_not_a_preference(
         self, monkeypatch: pytest.MonkeyPatch, icd_spy: list[bool]
     ) -> None:
-        import strands_robots.simulation.mujoco.backend as backend
+        import strands_robots._mujoco_gl as gl_mod
 
         monkeypatch.setenv("MUJOCO_GL", "   ")
-        monkeypatch.setattr(backend.ctypes.cdll, "LoadLibrary", lambda _name: None)
-        backend._configure_gl_backend()
-        assert backend.os.environ["MUJOCO_GL"] == "egl", (
+        monkeypatch.setattr(gl_mod.ctypes.cdll, "LoadLibrary", lambda _name: None)
+        gl_mod._configure_gl_backend()
+        assert gl_mod.os.environ["MUJOCO_GL"] == "egl", (
             "MuJoCo reads a whitespace-only value as no preference, so a headless host still gets "
             "an offscreen backend configured rather than being left on GLFW"
         )
@@ -387,7 +387,7 @@ class TestTheTranscribedVocabularyMatchesTheModule:
     """The vocabulary written out above and the module's own must not drift."""
 
     def test_the_disable_family_agrees(self) -> None:
-        from strands_robots.simulation.mujoco.backend import _MUJOCO_GL_DISABLE
+        from strands_robots._mujoco_gl import _MUJOCO_GL_DISABLE
 
         assert _MUJOCO_GL_DISABLE == frozenset(_DISABLE)
 
@@ -396,13 +396,13 @@ class TestTheTranscribedVocabularyMatchesTheModule:
         [("Linux", _LINUX_ONLY), ("Darwin", _DARWIN_ONLY), ("Windows", _WINDOWS_ONLY), ("FreeBSD", ())],
     )
     def test_the_accepted_set_agrees(self, system: str, extra: tuple[str, ...]) -> None:
-        from strands_robots.simulation.mujoco.backend import _mujoco_gl_valid_values
+        from strands_robots._mujoco_gl import _mujoco_gl_valid_values
 
         assert _mujoco_gl_valid_values(system) == frozenset(_ANY_PLATFORM) | frozenset(extra)
 
     @pytest.mark.parametrize("raw", ["EGL", " egl ", "\tOSMesa\n", "", "   ", "off"])
     def test_the_fold_agrees(self, monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
-        from strands_robots.simulation.mujoco.backend import _mujoco_gl_value
+        from strands_robots._mujoco_gl import _mujoco_gl_value
 
         monkeypatch.setenv("MUJOCO_GL", raw)
         assert _mujoco_gl_value() == raw.lower().strip()
