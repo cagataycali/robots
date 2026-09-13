@@ -931,7 +931,9 @@ def issue_token(
 ) -> str:
     """A session token. `iat0` is the ORIGINAL sign-in, carried unchanged through every
     renewal so the absolute cap in renewal_verdict() cannot be reset by re-issuing.
-    `via` marks how the token was minted (e.g. "handoff") for later forensics."""
+    `via` marks how the token was minted (e.g. "handoff") for later forensics, and is
+    likewise carried through every renewal by renew_if_due(): a session that began as a
+    URL handoff stays recognisable as one for as long as it lives."""
     now = int(time.time())
     payload = {
         "sub": subject,
@@ -1024,6 +1026,13 @@ def renew_if_due(token: str, now: float | None = None) -> str | None:
         A newly issued token, never expiring earlier than the one held and never
         past the session's maximum age, or None when the session is still fresh,
         has reached that maximum, or does not verify.
+
+    The renewed token carries the held one's ``via`` marker, for the same reason
+    it carries ``iat0``: both describe the ORIGINAL sign-in, and a renewal is the
+    same session continuing rather than a new one. Dropping ``via`` here would
+    erase the marker at the first renewal, and a handoff token - minted with a
+    lifetime far shorter than ``TOKEN_TTL`` - is already past the half-life
+    threshold when it is minted, so its first renewal is its first use.
     """
     if not token:
         return None
@@ -1034,11 +1043,13 @@ def renew_if_due(token: str, now: float | None = None) -> str | None:
     verdict = renewal_verdict(claims, time.time() if now is None else now)
     if not verdict.get("renew"):
         return None
+    via = claims.get("via")
     return issue_token(
         str(claims.get("sub") or ""),
         str(claims.get("name") or ""),
         iat0=verdict.get("iat0"),
         exp=verdict.get("exp"),
+        via=str(via) if via else None,
     )
 
 
