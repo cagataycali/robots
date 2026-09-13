@@ -253,6 +253,16 @@ def telemetry_summary(data: Mapping[str, Any]) -> str:
     for what it is, while ``f"{float('nan'):.6f}"`` renders here as the position
     ``nan`` rather than as no position at all.
 
+    The headlamp is a flag, so it is read as one rather than for truthiness -
+    the same disposition :meth:`EarthRoverDriver.send_action` applies to the
+    ``lamp`` it writes. The SDK carries the field as the ``1``/``0`` that
+    command puts on the wire, so those two integers and the two booleans are
+    the readings; anything else is no reading. Read for truth, a snapshot whose
+    firmware no longer carries ``lamp`` reported the headlamp *off*, and one
+    that spelled it ``"off"`` reported it *on* - a lamp state this function
+    decided rather than one the rover said, on the one field an operator
+    driving at night reads to know whether the light is burning.
+
     Args:
         data: A ``/data`` snapshot, as :meth:`EarthRoverDriver.read_state`
             returns it.
@@ -266,10 +276,12 @@ def telemetry_summary(data: Mapping[str, Any]) -> str:
     plotted = all(value is not None and math.isfinite(value) for value in (latitude, longitude))
     has_fix = bool(data.get("gps_signal")) and plotted and latitude != NO_FIX_LATITUDE
     gps = f"{latitude:.6f}, {longitude:.6f}" if has_fix else "no fix"
+    lamp = data.get("lamp")
+    lamp_state = "on" if lamp is True or lamp == 1 else "off" if lamp is False or lamp == 0 else "?"
     return (
         f"battery {data.get('battery', '?')}% | signal {data.get('signal_level', '?')}/4 | "
         f"heading {data.get('orientation', '?')} deg | speed {data.get('speed', '?')} | "
-        f"lamp {'on' if data.get('lamp') else 'off'} | GPS {gps}"
+        f"lamp {lamp_state} | GPS {gps}"
     )
 
 

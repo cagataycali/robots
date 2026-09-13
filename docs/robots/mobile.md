@@ -202,6 +202,14 @@ percent scale needs to be told about: `linear=1` and `linear=100` are the same c
 both saturate. `lamp` is read as a boolean rather than for truthiness, so `lamp="off"`
 is refused instead of switching the headlamp on.
 
+The `sensors` summary reads the lamp the same way. The SDK carries the field as the `1`/`0`
+that `lamp` write puts on the wire, so those integers and the two booleans are the readings;
+anything else - a firmware that no longer carries `lamp`, or one that spells it `"off"` -
+reads `?`, like every other field the snapshot does not carry. Read for truthiness the
+summary answered for the rover: a dropped field reported the headlamp *off* and the string
+`"off"` reported it *on*. The whole `/data` block beside the summary is unchanged, so a
+caller that wants the raw field still reads it.
+
 Every endpoint - including `POST /control`, which *drives* - is built from that one
 string, so it has to address the host you wrote. A value whose authority names one host
 and resolves to another is refused at construction, because the transport does not refuse

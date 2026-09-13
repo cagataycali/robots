@@ -35,6 +35,7 @@ from strands_robots.drivers.earthrover import (
     base_url_error,
     detect_image_format,
     drive_axis_error,
+    telemetry_summary,
 )
 
 _DATA = {
@@ -523,6 +524,49 @@ class TestCameraFrames:
         assert CAMERA_VIEWS == ("front", "rear")
 
 
+class TestTheLampIsReadAsAFlag:
+    """The summary line reports the headlamp the rover described, or says it cannot.
+
+    ``send_action`` writes the lamp as the ``1``/``0`` the SDK carries and
+    refuses anything that is not a boolean, so those two integers and the two
+    booleans are the readings this field arrives in. Read for truthiness
+    instead, the summary answered for the rover: a snapshot whose firmware no
+    longer carries ``lamp`` read *off*, and one that spelled it ``"off"`` -
+    the very value the write door refuses because a word must not switch a
+    headlamp - read *on*.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(True, "on"), (1, "on"), (False, "off"), (0, "off")],
+        ids=["true", "one", "false", "zero"],
+    )
+    def test_a_reported_lamp_is_named(self, value: Any, expected: str) -> None:
+        assert f"lamp {expected}" in telemetry_summary({**_DATA, "lamp": value})
+
+    @pytest.mark.parametrize(
+        "value",
+        [None, "off", "false", "on", "", [], 2],
+        ids=["null", "off-word", "false-word", "on-word", "empty", "list", "out-of-range"],
+    )
+    def test_a_lamp_that_is_no_reading_is_not_named_at_all(self, value: Any) -> None:
+        """Neither state may be invented from a value that is not a flag."""
+        line = telemetry_summary({**_DATA, "lamp": value})
+        assert "lamp ?" in line
+        assert "lamp on" not in line and "lamp off" not in line
+
+    def test_a_snapshot_without_the_field_reads_like_its_absent_siblings(self) -> None:
+        """``?`` is what battery, signal, heading and speed already read absent."""
+        line = telemetry_summary({"gps_signal": 0})
+        assert line == "battery ?% | signal ?/4 | heading ? deg | speed ? | lamp ? | GPS no fix"
+
+    def test_an_unreadable_lamp_costs_the_lamp_and_nothing_else(self) -> None:
+        """A verb must not lose the battery beside the field it cannot read."""
+        line = telemetry_summary({**_DATA, "lamp": "off", "gps_signal": 3})
+        assert f"battery {_DATA['battery']}%" in line
+        assert f"GPS {_DATA['latitude']:.6f}," in line
+
+
 # --------------------------------------------------------------------------- #
 # The agent surface.                                                          #
 # --------------------------------------------------------------------------- #
@@ -687,6 +731,11 @@ class TestTheAgentSurface:
         driver = _live_driver(session)
         assert self._invoke(driver, action="lamp", on=on)["status"] == "success"
         assert session.posts[-1][1] == {"command": {"linear": 0.0, "angular": 0.0, "lamp": 1 if on else 0}}
+
+    def test_the_sensors_verb_reports_a_lamp_the_snapshot_never_carried_as_unknown(self, session: _FakeSession) -> None:
+        driver = _live_driver(session)
+        session.routes["/data"] = _FakeResponse(200, {k: v for k, v in _DATA.items() if k != "lamp"})
+        assert "lamp ?" in self._invoke(driver, action="sensors")["content"][0]["text"]
 
     def test_a_lamp_that_is_not_a_boolean_is_refused_not_read_for_truth(self, session: _FakeSession) -> None:
         driver = _live_driver(session)
