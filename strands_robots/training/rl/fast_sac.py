@@ -352,7 +352,6 @@ class FastSacTrainer(BaseRLAlgo):
         self._obs = self.env.reset()
         self._collected_steps = 0
         self._ep_return = 0.0
-        self._recent_returns: list[float] = []
 
     @property
     def alpha(self) -> torch.Tensor:
@@ -411,8 +410,6 @@ class FastSacTrainer(BaseRLAlgo):
             else:
                 self._obs = next_obs
 
-        if ep_returns:
-            self._recent_returns = ep_returns
         mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else float(sum(step_rewards))
         return {
             "mean_reward": float(sum(step_rewards) / max(1, len(step_rewards))),

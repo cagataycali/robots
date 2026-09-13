@@ -129,8 +129,9 @@ class PersistentPolicy(Policy):
         provider: Provider name or smart string forwarded to
             :func:`create_policy` (e.g. ``"lerobot_local"``, ``"mock"``).
         policy_object: An already-constructed policy to wrap instead of building
-            a new one. When given, ``provider`` is recorded for identification
-            only and ``**config`` is ignored.
+            a new one. When given, both ``provider`` and ``**config`` are
+            ignored; :attr:`provider_name` reports the wrapped policy's own
+            provider, which is what identifies the resident model.
         **config: Provider-specific keyword arguments forwarded to
             :func:`create_policy`.
     """
@@ -142,7 +143,6 @@ class PersistentPolicy(Policy):
         policy_object: Policy | None = None,
         **config: Any,
     ) -> None:
-        self._provider_arg = provider
         self._config = dict(config)
         # Serialise inference across BOTH the sync and async entry points with a
         # single ``threading.Lock``. The wrapped model holds per-episode state,

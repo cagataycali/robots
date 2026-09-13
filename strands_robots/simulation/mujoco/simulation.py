@@ -760,13 +760,11 @@ class MuJoCoSimEngine(
         self._lock = threading.RLock()
 
         self._viewer_handle = None
-        self._viewer_thread = None
 
         # Thread-local renderer cache - MuJoCo Renderer uses thread-local GL
         # contexts (CGL on macOS, GLX on Linux). Sharing renderers across
         # threads causes SIGSEGV in cgl.free(). Each thread gets its own.
         self._renderer_tls = threading.local()
-        self._renderer_model = None
 
         # Fail fast: verify MuJoCo is importable at construction time
         # so consumers catch missing-dependency errors immediately.

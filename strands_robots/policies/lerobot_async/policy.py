@@ -299,7 +299,6 @@ class LerobotAsyncPolicy(Policy):
         # Lazily initialised gRPC state (typed Any: modules imported on demand).
         self._grpc: Any = None
         self._pb2: Any = None
-        self._pb2_grpc: Any = None
         self._channel: Any = None
         self._stub: Any = None
 
@@ -371,7 +370,6 @@ class LerobotAsyncPolicy(Policy):
 
         self._grpc = grpc
         self._pb2 = services_pb2
-        self._pb2_grpc = services_pb2_grpc
         self._channel = grpc.insecure_channel(self.server_address, grpc_channel_options())
         stub = services_pb2_grpc.AsyncInferenceStub(self._channel)
         try:

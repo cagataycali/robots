@@ -233,8 +233,8 @@ class RenderingMixin:
     the low-level ``_apply_sim_action`` (MuJoCo ``ctrl[]`` write + mj_step).
 
     **Coupling** (see the :mod:`simulation` top-level docstring): mixin reaches
-    into ``self._world``, ``self._renderer_tls``, ``self._renderer_model``,
-    ``self.default_width`` / ``self.default_height``, ``self._lock`` and
+    into ``self._world``, ``self._renderer_tls``, ``self.default_width`` /
+    ``self.default_height``, ``self._lock`` and
     ``self._viewer_handle``. ``TYPE_CHECKING`` stubs below exist so mypy
     accepts those lookups; they are a documentary contract, not an
     enforceable protocol.
@@ -249,7 +249,6 @@ class RenderingMixin:
 
         _world: "SimWorld | None"
 
-        _renderer_model: Any
         _renderer_tls: Any  # threading.local() - per-thread renderer dict
         default_width: int
         default_height: int
@@ -361,9 +360,6 @@ class RenderingMixin:
         if self._renderer_tls.model is not self._world._model:
             renderers.clear()
             self._renderer_tls.model = self._world._model
-            # Keep the per-instance marker for compatibility with any remaining
-            # read paths that checked self._renderer_model.
-            self._renderer_model = self._world._model
 
         key = (width, height)
         if key not in renderers:

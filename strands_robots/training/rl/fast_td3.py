@@ -337,7 +337,6 @@ class FastTd3Trainer(BaseRLAlgo):
         self._update_count = 0
         self._ep_return = 0.0
         self._ep_returns_vec = torch.zeros(spec.num_envs, device=self.device)
-        self._recent_returns: list[float] = []
 
     def _norm_actor(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
         return self.actor_norm(x, update=update) if self.actor_norm is not None else x
@@ -421,8 +420,6 @@ class FastTd3Trainer(BaseRLAlgo):
             else:
                 self._obs = next_obs
 
-        if ep_returns:
-            self._recent_returns = ep_returns
         mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else float(sum(step_rewards))
         return {
             "mean_reward": float(sum(step_rewards) / max(1, len(step_rewards))),
@@ -488,8 +485,6 @@ class FastTd3Trainer(BaseRLAlgo):
                         self._ep_returns_vec[i] = 0.0
             self._obs = next_obs
 
-        if ep_returns:
-            self._recent_returns = ep_returns
         mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else reward_sum / max(1, N)
         return {
             "mean_reward": reward_sum / max(1, reward_count),

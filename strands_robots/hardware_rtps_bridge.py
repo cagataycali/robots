@@ -229,7 +229,6 @@ class HardwareRtpsBridge(RosTelemetryBase):
             enable_commands=self._enable_commands,
             dds_security_config=dds_security_config,
         )
-        self._dds_security_config = dds_security_config
 
         # Build the participant with DDS Security QoS when a config is supplied,
         # so BOTH the outbound telemetry and the inbound command surface ride a
