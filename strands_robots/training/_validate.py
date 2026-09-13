@@ -162,6 +162,41 @@ def rl_replay_problems(spec: TrainSpec, *, context: str) -> list[str]:
     return problems
 
 
+def warmup_batch_relation_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Report ``learning_starts``, and a warmup too short to fill a first batch.
+
+    ``learning_starts >= batch_size`` is a relation between two counts, so BOTH
+    operands are asked of the shared count domain and the relation only of two
+    values that are counts. Asking it of ``batch_size`` alone was not enough: a
+    non-finite ``learning_starts`` makes ``<`` answer False (every comparison
+    against ``nan`` is False, and ``inf`` is below no int), so the relation
+    passed and both consumers then read a value that is not a count.
+    ``collect_rollout`` tests ``buffer.size < learning_starts`` to decide the
+    random warmup and ``train`` tests ``buffer.size >= learning_starts`` to
+    decide whether ``update()`` runs at all, so ``nan`` skips the warmup and
+    takes zero gradient steps while ``inf`` warms up forever and takes zero
+    gradient steps - a run that reports success having learned nothing, which is
+    the outcome :func:`rl_replay_problems` exists to refuse for ``buffer_size``.
+
+    This relation sizes the FIRST batch only; making the threshold *reachable*
+    is the separate rule in :func:`warmup_reachability_problems`, which both
+    off-policy backends consult on the next line. Both halves of one warmup
+    contract, and both live here rather than in each backend that shares them
+    verbatim.
+    """
+    learning_starts = getattr(spec, "learning_starts", 1)
+    error = positive_count_error(learning_starts, "learning_starts", context)
+    if error is not None:
+        return [error]
+    batch_size = getattr(spec, "batch_size", 1)
+    if positive_count_error(batch_size, "batch_size", context) is None and learning_starts < batch_size:
+        return [
+            f"learning_starts ({learning_starts}) must be >= batch_size ({batch_size}) "
+            "so the first gradient step can sample a full batch"
+        ]
+    return []
+
+
 def warmup_reachability_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Report a ``learning_starts`` threshold an off-policy run never reaches.
 

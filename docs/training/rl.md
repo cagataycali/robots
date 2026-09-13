@@ -309,6 +309,10 @@ the replay fill the first gradient step waits for, and two counts bound the fill
 run ever reaches: the step budget it collects,
 `max(1, total_timesteps // steps) * steps`, and the ring buffer's own capacity.
 Either below the threshold takes **zero** gradient steps for the whole run.
+Both halves of that contract - the threshold's own domain plus
+`learning_starts >= batch_size`, and whether the threshold is ever reached - are
+one shared rule rather than a copy in each off-policy backend, so the two report
+them identically.
 `learning_starts >= batch_size` does not cover it - that relation sizes the first
 batch, not the wait for it - so `total_timesteps=20` against
 `learning_starts=32`, and `buffer_size=8` against `learning_starts=16`, each

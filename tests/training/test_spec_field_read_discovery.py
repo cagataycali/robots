@@ -267,6 +267,7 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
             "test_gradient_clip_domain.py",
             "test_initial_temperature_domain.py",
             "test_launch_topology_domain.py",
+            "test_learning_starts_count_domain.py",
             "test_lora_hyperparameter_domain.py",
             "test_loss_weight_domain.py",
             "test_network_width_domain.py",

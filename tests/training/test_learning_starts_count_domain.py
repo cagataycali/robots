@@ -49,8 +49,14 @@ count, and a run that has not reached it has genuinely not finished warming up.
 
 The scope of the *gate* is unchanged: ``_rl_replay_problems`` still reports
 nothing about this field, because PPO reads neither it nor the three replay
-counts. ``tests/training/test_rl_replay_domain.py`` pins that, and this file
-grades the domain FastSAC asks of the field in its own ``validate``.
+counts. ``tests/training/test_rl_replay_domain.py`` pins that.
+
+The field and its relation are owned by
+:func:`~strands_robots.training._validate.warmup_batch_relation_problems`,
+reached through ``Trainer._rl_warmup_batch_problems``. Both off-policy backends
+state the rule identically, so the structural pins below read it off that one
+owner and require that no backend restate it - a second copy is a bound that can
+drift from the shared one.
 """
 
 from __future__ import annotations
@@ -58,6 +64,7 @@ from __future__ import annotations
 import ast
 import inspect
 import math
+import pathlib
 import textwrap
 from typing import Any
 
@@ -65,10 +72,11 @@ import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training._validate import rl_replay_problems
+from strands_robots.training._validate import rl_replay_problems, warmup_batch_relation_problems
+from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.utils import positive_count_error
+from tests.training._spec_field_reads import reads_spec_field
 
 #: The batch size every case below pairs with, so the relation has a real operand.
 BATCH_SIZE = 256
@@ -241,21 +249,20 @@ class TestTheGateStillReportsNothingAboutIt:
 
 
 class TestBothOperandsOfTheRelationShareOneDomain:
-    """The structural claim, read off the source rather than asserted in prose."""
+    """The structural claim, read off the owner's source rather than prose."""
 
     @staticmethod
-    def _validate_source() -> str:
-        return inspect.getsource(FastSacTrainer.validate)
+    def _owner_source() -> str:
+        return textwrap.dedent(inspect.getsource(warmup_batch_relation_problems))
 
     def test_the_relation_reads_both_fields(self) -> None:
         """Premise: this is the statement the two operands meet in."""
-        assert "spec.learning_starts < spec.batch_size" in self._validate_source()
+        assert "learning_starts < batch_size" in self._owner_source()
 
     def test_each_operand_is_asked_of_the_shared_domain(self) -> None:
-        source = self._validate_source()
         asked = {
             call.args[1].value
-            for call in ast.walk(ast.parse(textwrap.dedent(source)))
+            for call in ast.walk(ast.parse(self._owner_source()))
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
             and call.func.id == "positive_count_error"
@@ -266,14 +273,99 @@ class TestBothOperandsOfTheRelationShareOneDomain:
 
     def test_the_domain_is_asked_before_the_relation(self) -> None:
         """A guard after the comparison would not stop the comparison."""
-        source = self._validate_source()
-        domain_at = source.index('positive_count_error(spec.learning_starts, "learning_starts"')
-        relation_at = source.index("spec.learning_starts < spec.batch_size")
-        assert domain_at < relation_at
+        source = self._owner_source()
+        assert source.index('"learning_starts", context') < source.index("learning_starts < batch_size")
 
     def test_the_domain_is_not_restated_locally(self) -> None:
         """One owner: no hand-rolled isfinite / isinstance beside the shared call."""
-        source = self._validate_source()
+        source = self._owner_source()
         assert "math.isfinite" not in source
         assert "isinstance(spec.learning_starts" not in source
         assert math.isfinite(1.0)  # the module imports math only for this premise
+
+
+class TestOneOwnerForTheWarmupBatchRelation:
+    """No off-policy backend may re-implement the relation or skip its gate.
+
+    The set of backends in scope is derived from the tree rather than listed, so a
+    third off-policy trainer that starts warming up a replay buffer fails these
+    tests until it routes through the gate.
+    """
+
+    @staticmethod
+    def _training_modules() -> list[pathlib.Path]:
+        """Every training module except the one that owns the rule."""
+        root = pathlib.Path(inspect.getfile(Trainer)).parent
+        owner = pathlib.Path(inspect.getfile(warmup_batch_relation_problems)).resolve()
+        return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
+
+    @staticmethod
+    def _defines_validate(source: str) -> bool:
+        return any(isinstance(n, ast.FunctionDef) and n.name == "validate" for n in ast.walk(ast.parse(source)))
+
+    @staticmethod
+    def _calls_the_gate(source: str) -> bool:
+        return any(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_rl_warmup_batch_problems"
+            for n in ast.walk(ast.parse(source))
+        )
+
+    def test_no_module_re_implements_the_relation(self) -> None:
+        """A local comparison is a second copy of the bound, and can drift."""
+        offenders = [
+            p.name for p in self._training_modules() if "spec.learning_starts < spec.batch_size" in p.read_text()
+        ]
+        assert offenders == [], f"modules compare the two operands locally: {offenders}"
+
+    def test_every_preflight_that_reads_it_routes_through_the_gate(self) -> None:
+        adrift = [
+            p.name
+            for p in self._training_modules()
+            if self._defines_validate(src := p.read_text())
+            and reads_spec_field(src, ("learning_starts",))
+            and not self._calls_the_gate(src)
+        ]
+        assert adrift == [], f"preflights read learning_starts without the shared gate: {adrift}"
+
+    def test_the_reader_set_is_the_expected_one(self) -> None:
+        """Non-vacuity: a mis-rooted scan cannot sweep an empty tree clean."""
+        readers = {
+            p.name
+            for p in self._training_modules()
+            if self._defines_validate(src := p.read_text()) and reads_spec_field(src, ("learning_starts",))
+        }
+        assert readers == {"fast_sac.py", "fast_td3.py"}, readers
+
+    def test_the_scanners_detect_a_planted_defect(self) -> None:
+        """Both rules really report the shapes they are written to catch."""
+        planted = "def validate(self, spec):\n    return [] if spec.learning_starts < spec.batch_size else []\n"
+        assert self._defines_validate(planted)
+        assert reads_spec_field(planted, ("learning_starts",))
+        assert not self._calls_the_gate(planted)
+        assert self._calls_the_gate("def validate(self, spec):\n    return self._rl_warmup_batch_problems(spec)\n")
+
+
+class TestBothOffPolicyBackendsStateItIdentically:
+    """One owner means one message, which is what a shared rule buys."""
+
+    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
+    def test_a_non_count_reads_the_same_from_either_backend(self, value: Any) -> None:
+        spec = _spec(learning_starts=value)
+        sac = [p for p in create_trainer("fast_sac").validate(spec) if "learning_starts" in p]
+        td3 = [p for p in create_trainer("fast_td3").validate(spec) if "learning_starts" in p]
+        assert sac and [p.replace("fast_sac", "") for p in sac] == [p.replace("fast_td3", "") for p in td3]
+
+    def test_a_short_warmup_reads_the_same_from_either_backend(self) -> None:
+        """The relation names both values, and names them once per backend."""
+        spec = _spec(learning_starts=10)
+        expected = [
+            f"learning_starts (10) must be >= batch_size ({BATCH_SIZE}) "
+            "so the first gradient step can sample a full batch"
+        ]
+        for provider in ("fast_sac", "fast_td3"):
+            assert [p for p in create_trainer(provider).validate(spec) if "sample a full batch" in p] == expected
+
+    def test_a_satisfied_relation_is_silent_from_either_backend(self) -> None:
+        spec = _spec(learning_starts=BATCH_SIZE)
+        for provider in ("fast_sac", "fast_td3"):
+            assert not [p for p in create_trainer(provider).validate(spec) if "sample a full batch" in p]

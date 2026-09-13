@@ -258,6 +258,20 @@ class Trainer(ABC):
 
         return rl_replay_problems(spec, context=self.provider_name)
 
+    def _rl_warmup_batch_problems(self, spec: TrainSpec) -> list[str]:
+        """Report ``learning_starts``, and a warmup below ``batch_size``.
+
+        The first half of the off-policy warmup contract: the threshold must be a
+        count, and at least ``batch_size`` or the first gradient step cannot
+        sample a full batch. Both off-policy backends state it identically, so it
+        is owned here rather than inlined in each.
+        :meth:`_rl_warmup_reachability_problems` is the second half - whether the
+        threshold is ever *reached*.
+        """
+        from strands_robots.training._validate import warmup_batch_relation_problems
+
+        return warmup_batch_relation_problems(spec, context=self.provider_name)
+
     def _rl_warmup_reachability_problems(self, spec: TrainSpec) -> list[str]:
         """Preflight that ``learning_starts`` is a replay fill the run can reach.
 

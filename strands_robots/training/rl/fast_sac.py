@@ -244,33 +244,13 @@ class FastSacTrainer(BaseRLAlgo):
         # gates cite as the precedent they generalize; it is now shared with them
         # rather than duplicated between this backend and its sibling.
         problems.extend(self._polyak_coefficient_problems(spec))
-        # learning_starts >= batch_size is a relation between two counts, so BOTH
-        # operands are asked of the shared count domain and the relation only of
-        # two values that are counts. Asking it of batch_size alone was not
-        # enough: a non-finite learning_starts makes ``<`` answer False (every
-        # comparison against nan is False, and inf is below no int), so the
-        # relation passed and both consumers then read a value that is not a
-        # count. ``collect_rollout`` tests ``buffer.size < learning_starts`` to
-        # decide the random warmup and ``train`` tests ``buffer.size >=
-        # learning_starts`` to decide whether ``update()`` runs at all, so nan
-        # skips the warmup and takes zero gradient steps while inf warms up
-        # forever and takes zero gradient steps - a run that reports success
-        # having learned nothing, which is the outcome _rl_replay_problems exists
-        # to refuse for buffer_size. The domain is the strict count one its
-        # sibling operand already uses, so the relation compares two values drawn
-        # from one domain rather than one count against whatever the other side
-        # happened to be.
-        learning_starts_error = positive_count_error(spec.learning_starts, "learning_starts", self.provider_name)
-        if learning_starts_error is not None:
-            problems.append(learning_starts_error)
-        elif (
-            positive_count_error(spec.batch_size, "batch_size", self.provider_name) is None
-            and spec.learning_starts < spec.batch_size
-        ):
-            problems.append(
-                f"learning_starts ({spec.learning_starts}) must be >= batch_size ({spec.batch_size}) "
-                "so the first gradient step can sample a full batch"
-            )
+        # learning_starts is this backend's warmup threshold, and it must be at
+        # least batch_size or the first gradient step cannot sample a full batch.
+        # Both operands are counts, so the relation and each operand's domain are
+        # one rule - shared with the sibling off-policy backend that states it
+        # identically rather than inlined in both. The reasoning the relation
+        # rests on lives with it, in warmup_batch_relation_problems.
+        problems.extend(self._rl_warmup_batch_problems(spec))
         # That relation sizes the FIRST batch; it does not make the threshold
         # reachable. Two more caller-supplied counts bound the fill a run ever
         # reaches - the step budget it collects, max(1, total_timesteps // steps)
