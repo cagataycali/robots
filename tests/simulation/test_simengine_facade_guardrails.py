@@ -6,6 +6,9 @@ concrete facades on :class:`strands_robots.simulation.base.SimEngine` promise:
 * ``eval_policy`` accepts a pre-built ``policy_object`` and runs it.
 * ``evaluate_benchmark`` returns structured error dicts (never raises) when the
   sim has no robots or when the robot is ambiguous in a multi-robot scene.
+* ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` resolve ``robot_name``
+  by presence rather than truthiness, so a supplied name the scene does not hold
+  is reported by name at every one of them instead of being treated as "omitted".
 * ``register_benchmark_from_file`` validates its arguments and converts loader
   exceptions into structured error dicts rather than propagating them.
 * ``start_policy`` transparently passes through to ``run_policy``.
@@ -164,6 +167,34 @@ def test_evaluate_benchmark_explicit_unknown_robot_reports_not_found(monkeypatch
     assert result["status"] == "error"
     text = result["content"][0]["text"]
     assert "ghost" in text and "not found" in text
+
+
+@pytest.mark.parametrize("robots", [("solo",), ("arm_a", "arm_b")], ids=["sole-robot", "multi-robot"])
+@pytest.mark.parametrize("surface", ["run_policy", "eval_policy", "evaluate_benchmark"])
+def test_a_supplied_robot_name_the_scene_lacks_is_reported_by_name(surface, robots, monkeypatch):
+    """Every policy surface resolves ``robot_name`` by presence, not truthiness.
+
+    ``robot_name=""`` is the shape an unset config value arrives in. It is a
+    name no scene holds, so each surface reports it as one rather than reading
+    the empty string as "not supplied" and resolving a robot on the caller's
+    behalf. ``evaluate_benchmark`` kept a second copy of the resolution that did
+    read it that way: in a sole-robot scene it substituted the only loaded robot
+    and published a ``success_rate`` for a robot the caller never named, and in
+    a multi-robot scene it refused the supplied argument as "'robot_name' is
+    required", naming the one thing that had been passed.
+    """
+    import strands_robots.simulation.benchmark as bench
+
+    monkeypatch.setattr(bench, "get_benchmark", lambda name: object())
+    args: tuple[Any, ...] = ("any_bench",) if surface == "evaluate_benchmark" else ()
+    kwargs: dict[str, Any] = {"robot_name": ""}
+    if surface != "evaluate_benchmark":
+        kwargs["policy_object"] = MockPolicy()
+
+    result = getattr(FakeSim(robots=robots), surface)(*args, **kwargs)
+
+    assert result["status"] == "error", result
+    assert "not found" in result["content"][0]["text"], result
 
 
 def test_evaluate_benchmark_unknown_name_lists_registered():

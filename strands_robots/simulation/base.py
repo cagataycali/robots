@@ -4716,9 +4716,16 @@ class SimEngine(ABC):
         Args:
             benchmark_name: Key from :func:`register_benchmark` /
                 :func:`register_benchmark_from_file`.
-            robot_name: Robot to evaluate. If ``None`` and the benchmark has
-                exactly one supported robot that matches a loaded robot, that
-                robot is picked; otherwise returns an error.
+            robot_name: Robot to evaluate, resolved by the same rule
+                :meth:`run_policy` and :meth:`eval_policy` apply: ``None``
+                picks the sole loaded robot, and a scene holding several of
+                them returns an error listing the candidates. A name that IS
+                supplied is never re-resolved, so one the scene does not hold -
+                including an empty string - is reported by name rather than
+                replaced with a robot the caller did not ask for.
+                Compatibility with the benchmark's own ``supported_robots`` is
+                then enforced per episode by
+                :meth:`~strands_robots.simulation.benchmark.BenchmarkProtocol.on_episode_start`.
             policy_provider: Policy provider name (forwarded to
                 :func:`create_policy`).
             policy_config: Provider-specific kwargs.
@@ -4882,25 +4889,22 @@ class SimEngine(ABC):
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
-
-        resolved_robot = robot_name
-        if not resolved_robot:
-            # Try to pick a robot. Prefer single-robot scenes; multi-robot
-            # scenes require explicit selection.
-            if len(robots) == 1:
-                resolved_robot = robots[0]
-            else:
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"evaluate_benchmark: 'robot_name' is required when the sim has "
-                                f"multiple robots. Loaded: {robots}"
-                            )
-                        }
-                    ],
-                }
+        # The same resolver ``run_policy`` and ``eval_policy`` use, rather than
+        # a second copy of it. The copy this replaces asked ``if not
+        # resolved_robot``, which reads the parameter by truthiness where every
+        # other policy surface reads it by presence: an explicit ``robot_name=""``
+        # - the shape an unset config value arrives in - was taken for "not
+        # supplied" and silently substituted with the sole loaded robot, so the
+        # benchmark published a success_rate for a robot the caller never named.
+        # In a multi-robot scene the same value was refused as "'robot_name' is
+        # required", which names the argument that WAS supplied and sends the
+        # caller to add it again. ``_resolve_single_robot`` returns any supplied
+        # name unchanged, so both spellings now reach the membership test below
+        # and are reported by name.
+        try:
+            resolved_robot = self._resolve_single_robot(robot_name)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
         if resolved_robot not in robots:
             return {
                 "status": "error",
