@@ -108,6 +108,13 @@ asynchronous, so `release_sport_mode(attempts=N)` polls: N release-then-verify
 rounds, each release followed by the `CheckMode()` read that confirms it, and a
 refusal names the mode that last read reported.
 
+The gate follows the last reading rather than the first success. The write path
+reads a cached verdict so it stays usable at 500 Hz, and nothing else re-asks the
+robot, so a Go2 that re-enters a motion mode - the app, a fall-recovery, an
+operator's remote - is only noticed by the next `release_sport_mode()`. A release
+that reads a mode still holding the legs therefore shuts the gate again, and
+`send_action` refuses (naming that mode) until a release confirms an empty one.
+
 **Actions are keyed by joint name, never by index.** `rt/lowcmd`'s `motor_cmd`
 array follows Unitree's `LegID` order - front-right, front-left, rear-right,
 rear-left - while the Go2's own URDF/MJCF description declares its joints

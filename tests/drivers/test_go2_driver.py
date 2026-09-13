@@ -140,17 +140,29 @@ class _RecordingMotionSwitcher:
     ``["ai", ""]`` is a mode that goes away after one ``ReleaseMode``.
     """
 
-    def __init__(self, readings: list[Any]) -> None:
+    def __init__(
+        self,
+        readings: list[Any],
+        *,
+        check_error: BaseException | None = None,
+        release_error: BaseException | None = None,
+    ) -> None:
         self._readings = list(readings)
+        self._check_error = check_error
+        self._release_error = release_error
         self.release_calls = 0
         self.check_calls = 0
 
     def CheckMode(self) -> Any:
         self.check_calls += 1
+        if self._check_error is not None:
+            raise self._check_error
         return self._readings.pop(0) if self._readings else (0, {"name": ""})
 
     def ReleaseMode(self) -> None:
         self.release_calls += 1
+        if self._release_error is not None:
+            raise self._release_error
 
 
 def install_unitree_sdk_stub(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -857,3 +869,142 @@ class TestMotionSwitcherClientImportPath:
             "The correct import path lives in "
             "strands_robots.tools.g1._motion_switcher._SDK_MODULE"
         )
+
+
+# --------------------------------------------------------------------------- #
+# The write gate follows the last mode reading, not the first release.        #
+# --------------------------------------------------------------------------- #
+
+
+def _gate_open_driver(switcher: _RecordingMotionSwitcher) -> tuple[Go2Driver, _RecordingPublisher]:
+    """Return a released driver whose motion switcher is ``switcher``.
+
+    :func:`_released_driver` with the switcher wired in, for the cells that ask
+    what a SECOND ``release_sport_mode`` does to a gate an earlier one opened.
+    """
+    driver = Go2Driver(
+        tool_name="go2",
+        port="192.168.123.161",
+        motion_switcher_client_factory=lambda _iface: switcher,
+    )
+    driver._connected = True
+    driver._sport_mode_released = True
+    driver._battery = {"pct": 88.0, "current": 1.0, "cycle": 3}
+    pub = _RecordingPublisher()
+    driver._pubs = pub  # type: ignore[assignment]
+    return driver, pub
+
+
+@pytest.mark.parametrize(
+    ("make_switcher", "expected_fragment"),
+    [
+        pytest.param(
+            lambda: _RecordingMotionSwitcher([(0, {"name": "ai"})] * 4),
+            "'ai' still active",
+            id="a-mode-that-will-not-clear",
+        ),
+        pytest.param(
+            lambda: _RecordingMotionSwitcher([(0, {"name": 3})]),
+            "'name' must be a string",
+            id="an-undecodable-reading",
+        ),
+        pytest.param(
+            lambda: _RecordingMotionSwitcher([], check_error=OSError("no route to host")),
+            "CheckMode() failed: no route to host",
+            id="a-read-that-raised",
+        ),
+        pytest.param(
+            lambda: _RecordingMotionSwitcher([(0, {"name": "normal"})] * 4, release_error=OSError("link down")),
+            "ReleaseMode() failed while releasing 'normal'",
+            id="a-release-that-raised",
+        ),
+    ],
+)
+def test_a_refused_release_shuts_a_write_gate_an_earlier_release_opened(
+    make_switcher: Any, expected_fragment: str
+) -> None:
+    """A release that does not confirm an empty mode leaves no write admitted.
+
+    ``_sport_mode_released`` IS the write gate: ``_check_motion_gates`` reads
+    that cached boolean rather than taking a DDS round trip, so nothing else
+    re-asks the robot. A Go2 therefore re-enters a motion mode - the app, a
+    fall-recovery, an operator's remote - without the gate hearing about it, and
+    the next ``release_sport_mode`` is the only thing that looks. When that look
+    comes back with anything other than ``""``, the flag an earlier release set
+    is stale and the driver holds positive evidence that the onboard controller
+    has the legs.
+
+    The sibling cells above assert the same ``_sport_mode_released is False``,
+    but from a driver that was never released - where it is already False before
+    the call, so the assertion holds whatever the code does. These start from a
+    released one, which is the only state in which the clearing is observable.
+
+    The four rows are every way a round can end without an empty mode: a mode
+    that will not clear, a reading that cannot be decoded, a read that raised
+    and a release that raised. Each must leave the gate shut, because the reason
+    the write is dangerous is the same in all four.
+    """
+    driver, pub = _gate_open_driver(make_switcher())
+
+    result = driver.release_sport_mode(attempts=2)
+
+    assert result["status"] == "error"
+    assert expected_fragment in _text(result)
+    assert driver._sport_mode_released is False
+    assert driver.state["sport_mode_released"] is False, "the stale verdict must not be reported either"
+
+    write = driver.send_action({"FL_calf_joint": -1.5})
+    assert write["status"] == "error"
+    assert "sport mode is not released" in _text(write)
+    assert pub.writes == [], "no rt/lowcmd frame may reach a robot the onboard controller is driving"
+
+
+def test_a_release_that_reaches_no_mode_opens_the_write_gate(stub_unitree_sdk: None) -> None:
+    """The control: shutting the gate on an active mode must not shut it on a freed one.
+
+    An empty mode name is the one reading that is evidence the robot is free, so
+    it still opens the gate and the write still reaches ``rt/lowcmd``.
+    """
+    switcher = _RecordingMotionSwitcher([(0, {"name": "ai"}), (0, {"name": ""})])
+    driver, pub = _gate_open_driver(switcher)
+    driver._sport_mode_released = False  # as a freshly constructed driver is
+
+    assert driver.release_sport_mode()["status"] == "success"
+    assert driver._sport_mode_released is True
+
+    write = driver.send_action({"FL_calf_joint": -1.5})
+    assert write["status"] == "success", _text(write)
+    assert len(pub.writes) == 1
+
+
+def test_an_unusable_attempt_count_is_refused_before_the_robot_is_asked() -> None:
+    """``attempts`` is a round count, so it is graded on the shared positive domain.
+
+    Refused before the switcher is opened: a budget the driver cannot honor is a
+    caller mistake, not something to discover half way through releasing.
+    """
+    switcher = _RecordingMotionSwitcher([(0, {"name": ""})])
+    driver = Go2Driver(motion_switcher_client_factory=lambda _iface: switcher)
+
+    result = driver.release_sport_mode(attempts=0)
+
+    assert result["status"] == "error"
+    assert "attempts" in _text(result)
+    assert (switcher.check_calls, switcher.release_calls) == (0, 0)
+
+
+def test_a_switcher_that_cannot_be_opened_names_what_failed() -> None:
+    """The gate stays shut and the refusal names the client that would not open."""
+
+    def _explode(_interface: str) -> Any:
+        raise OSError("no such interface eth9")
+
+    driver = Go2Driver(motion_switcher_client_factory=_explode)
+
+    result = driver.release_sport_mode()
+
+    assert result["status"] == "error"
+    reason = _text(result)
+    assert "cannot open MotionSwitcherClient" in reason
+    assert "eth9" in reason
+    assert driver._sport_mode_released is False

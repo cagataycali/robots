@@ -953,9 +953,18 @@ class Go2Driver:
             client: An open motion-switcher client.
 
         Returns:
-            :func:`decode_mode_name`'s ``(mode_name, refusal)`` pair. A refusal
-            clears :attr:`_sport_mode_released`, because a reading that cannot be
-            decoded is not evidence that the robot is free.
+            :func:`decode_mode_name`'s ``(mode_name, refusal)`` pair.
+
+            Every reading that is not ``""`` clears
+            :attr:`_sport_mode_released`, because that flag IS the write gate
+            (:meth:`_check_motion_gates` reads it rather than taking a DDS round
+            trip) and only an empty mode name is evidence that the robot is
+            free. Two readings say it is not: one that cannot be decoded, and
+            one that decodes to the name of a mode still holding the legs. The
+            second is the stronger evidence of the two, so a gate opened by an
+            earlier release must shut on it as well - a Go2 that re-entered a
+            motion mode after being released would otherwise keep admitting
+            ``rt/lowcmd`` frames into a fight with the onboard controller.
         """
         try:
             reading = client.CheckMode()
@@ -967,7 +976,7 @@ class Go2Driver:
         mode_name, refusal = decode_mode_name(reading)
         self._sport_mode_name = mode_name
         self._sport_mode_refusal = refusal
-        if refusal is not None:
+        if refusal is not None or mode_name:
             self._sport_mode_released = False
         return mode_name, refusal
 
