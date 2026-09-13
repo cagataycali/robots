@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from strands_robots.simulation.mujoco.backend import _mujoco_gl_valid_values
+from strands_robots._mujoco_gl import _mujoco_gl_valid_values
 from tests.test_examples_mujoco_gl import _is_guarded_expr, _module_scope_gl_defaults
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
