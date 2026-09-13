@@ -43,7 +43,7 @@ from strands_robots.registry import (
 | `get_robot(name)` | Full registry entry dict. |
 | `has_sim(name)` / `has_hardware(name)` | Sim / real support flags. |
 | `get_hardware_type(name)` | LeRobot type string for `mode="real"`. |
-| `list_robots_by_category()` | `{category: [names]}`. |
+| `list_robots_by_category()` | Group name to the `list_robots()` records in it. Every robot is in exactly one group, so the group sizes sum to `len(list_robots())`. `category` is optional, so a robot that declares none is grouped under `"other"` rather than under a nameless group, and a declared name is stripped of surrounding whitespace so a padded spelling joins its own group. `list_robots()` still reports each robot's own `category` exactly as its entry declares it. |
 | `list_aliases()` | All 121 aliases, keyed by `normalize_robot_name` (so every key is a spelling a folded query can produce), including every GR00T `data_config` spelling (so `data_config` names resolve as robot names). |
 | `normalize_robot_name(name)` | The fold every registry lookup applies: lowercase, trimmed, dashes as underscores. Canonical names, aliases and the uniqueness constraints over both are all keyed by it, so this is the rule that predicts which robot a name reaches. |
 | `format_robot_table()` | Pretty-printed robot table. |

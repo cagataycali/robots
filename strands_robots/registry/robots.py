@@ -233,11 +233,38 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     return results
 
 
+#: Group name for a robot whose registry entry declares no category. It is a
+#: group name and not a category: nothing in the registry carries it, and
+#: :func:`list_robots` keeps reporting such a robot's own ``category`` verbatim.
+#: Named because the grouping, the table cell and the display order must all
+#: spell it the same way - three literals would be three things to keep in step.
+_UNCATEGORIZED = "other"
+
+
 def list_robots_by_category() -> dict[str, list[dict[str, Any]]]:
-    """List robots grouped by category (arm, humanoid, mobile, ...)."""
+    """Group every registered robot under the category name it is listed by.
+
+    A group name is something a caller switches on and a reader sees in a table
+    cell, so every group here has one. A robot whose registry entry declares no
+    category - ``category`` is optional in both the package registry and the
+    user overlay, and :func:`register_robot` accepts ``category=""`` - is
+    grouped under ``"other"``, and a declared name is stripped of surrounding
+    whitespace so a padded spelling joins its own group instead of opening a
+    blank-looking second one beside it. :func:`list_robots` still reports each
+    robot's ``category`` exactly as the entry declares it; the normalization is
+    this grouping's, not the registry's.
+
+    Returns:
+        Group name to the :func:`list_robots` records in it. Every robot appears
+        in exactly one group, so the group sizes sum to ``len(list_robots())``.
+    """
     categories: dict[str, list] = {}
     for robot in list_robots():
-        cat = robot.get("category", "other")
+        # Read by value, not by presence. :func:`list_robots` always supplies
+        # the key, substituting "" for an entry that declares no category, so a
+        # presence-default (``get("category", _UNCATEGORIZED)``) can never fire:
+        # it grouped such a robot under "" instead.
+        cat = str(robot.get("category") or "").strip() or _UNCATEGORIZED
         categories.setdefault(cat, []).append(robot)
     return categories
 
@@ -309,7 +336,11 @@ def format_robot_table(max_width: int = 100) -> str:
     # Preferred groups first, then any remaining categories in sorted order
     # so no robot is silently dropped from the body (see _CATEGORY_DISPLAY_ORDER).
     ordered_cats = [c for c in _CATEGORY_DISPLAY_ORDER if c in by_cat]
-    ordered_cats += sorted(c for c in by_cat if c not in _CATEGORY_DISPLAY_ORDER)
+    ordered_cats += sorted(c for c in by_cat if c not in _CATEGORY_DISPLAY_ORDER and c != _UNCATEGORIZED)
+    # Last, because it is the absence of a category rather than one: sorted in,
+    # "other" would outrank every custom category from "quadruped" on.
+    if _UNCATEGORIZED in by_cat:
+        ordered_cats.append(_UNCATEGORIZED)
     for cat in ordered_cats:
         for r in by_cat[cat]:
             sim = "yes" if r["has_sim"] else ""
@@ -319,8 +350,11 @@ def format_robot_table(max_width: int = 100) -> str:
             if len(desc) > desc_width:
                 desc = desc[: desc_width - 3].rstrip() + "..."
             lines.append(
+                # The group name, not ``r["category"]``: a robot that declares
+                # none is rendered under the group it is grouped in rather than
+                # in a blank cell that names no group at all.
                 f"{r['name']:<{_NAME_WIDTH}} "
-                f"{r['category']:<{_CAT_WIDTH}} "
+                f"{cat:<{_CAT_WIDTH}} "
                 f"{joints:<{_JOINTS_WIDTH}} "
                 f"{sim:<{_SIM_WIDTH}} "
                 f"{real:<{_REAL_WIDTH}} "

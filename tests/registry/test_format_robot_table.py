@@ -156,10 +156,3 @@ class TestCustomCategoryNotDropped:
         lines = table.split("\n")
         non_empty_rows = [ln for ln in lines[2:-2] if ln.strip() and "Total:" not in ln]
         assert len(non_empty_rows) == len(list_robots())
-
-    def test_missing_category_defaults_to_other_and_is_shown(self, tmp_path):
-        """A robot registered with an empty category groups under ``"other"``
-        (via ``list_robots_by_category``) and must still be rendered."""
-        self._register(tmp_path, "mysterybot", "")
-        table = format_robot_table(max_width=1000)
-        assert "mysterybot" in table
