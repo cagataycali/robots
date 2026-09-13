@@ -351,13 +351,22 @@ def update(patch: dict[str, Any]) -> list[str]:
 
 
 def unknown_keys(patch: dict[str, Any]) -> list[str]:
-    """Dotted names in ``patch`` that this schema does not know."""
+    """Dotted names in ``patch`` that this schema does not know.
+
+    NAMES only. A name this schema does know, carrying a value it cannot use, is
+    not reported here - that is :func:`update_strict`'s errors, which is where a
+    flattened section (a known section given a scalar rather than a mapping of
+    its keys) is reported too. The two doors together account for every part of
+    a patch that cannot be applied, and the split is by name-versus-value so
+    that neither has to guess what the other reported.
+    """
     out: list[str] = []
     for section, values in (patch or {}).items():
         if section not in _SCHEMA:
             out.append(f"{section}.*" if isinstance(values, dict) else str(section))
             continue
         if not isinstance(values, dict):
+            # Known name, unusable value: update_strict's error, not this list.
             continue
         for key in values:
             if key not in _SCHEMA[section]:
@@ -368,6 +377,10 @@ def unknown_keys(patch: dict[str, Any]) -> list[str]:
 def update_strict(patch: dict[str, Any]) -> tuple[list[str], list[str]]:
     """Like :func:`update`, but invalid VALUES are reported, never stored. Returns ``(changed,
     errors)`` where each error names the dotted key and the reason.
+
+    A section given something other than a mapping of its keys is such a value,
+    and is reported under the section's own name; :func:`unknown_keys` does not
+    report it, because the name is one this schema knows.
     """
     return _update(patch, strict=True)
 
@@ -379,7 +392,30 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
         current = load()
         stored = _read_file()
         for section, values in (patch or {}).items():
-            if section not in _SCHEMA or not isinstance(values, dict):
+            if section not in _SCHEMA:
+                continue
+            if not isinstance(values, dict):
+                # A section holds keys, so a scalar - or a list, or None - in its
+                # place names none of them: there is nothing to coerce, and no
+                # key whose shape a lenient degrade could fall back to. Every
+                # other part of a patch this store cannot apply is accounted for
+                # to the caller: an unknown NAME by unknown_keys(), an unusable
+                # VALUE by the errors below. A known section flattened to a
+                # scalar was the one spelling accounted for by neither, so
+                # ``{"security": "<token>"}`` - the section holding the bearer
+                # every /api and /ws request must present - returned no unknown
+                # name, no error and no changed key, and stored nothing. The
+                # caller's only honest report of that is a success.
+                #
+                # WARNING rather than DEBUG on the lenient path for the same
+                # reason: there the report the caller can make IS a success (an
+                # empty changed list), so this log line is the only signal the
+                # patch went nowhere.
+                reason = f"{section}: expected a mapping of {section} keys, got {type(values).__name__}"
+                if strict:
+                    errors.append(reason)
+                else:
+                    logger.warning("ignoring settings patch: %s", reason)
                 continue
             for key, raw in values.items():
                 if key not in _SCHEMA[section]:
