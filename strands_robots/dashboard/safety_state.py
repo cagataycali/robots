@@ -11,7 +11,12 @@ class Lockout:
     """The fleet-wide lockout as this dashboard understands it."""
 
     state: str = "unknown"  # locked | clear | unknown
+    #: The instant the sender reported, on the SENDER's clock. For display.
     since: float | None = None
+    #: The instant this dashboard learned of the event, on ITS OWN clock. Every
+    #: ordering question is decided on this, never on :attr:`since` - see
+    #: :func:`_learned_at`.
+    arrived: float | None = None
     by: str | None = None
     reason: str = "no e-stop or resume seen since this dashboard started"
 
@@ -20,9 +25,26 @@ class Lockout:
         out: dict[str, Any] = {"state": self.state, "reason": self.reason}
         if self.since is not None:
             out["since"] = self.since
+        if self.arrived is not None:
+            out["arrived"] = self.arrived
         if self.by:
             out["by"] = self.by
         return out
+
+
+def _learned_at(lockout: Lockout) -> float | None:
+    """The lockout instant on THIS dashboard's clock, for ordering local observations.
+
+    ``first_seen`` and ``proof_at`` are stamped by this dashboard, so they may
+    only be ordered against a stamp from the same clock. :attr:`Lockout.since`
+    is not one: it is whatever the sending peer put in the envelope's ``t``,
+    which the mesh admits up to ``STRANDS_MESH_RESUME_FRESHNESS_S`` (60 s by
+    default) behind the receiver's clock, before any cross-peer skew.
+
+    Falls back to :attr:`Lockout.since` for a lockout assembled by hand rather
+    than folded from an event, where no local stamp exists to prefer.
+    """
+    return lockout.arrived if lockout.arrived is not None else lockout.since
 
 
 def _source_of(data: dict[str, Any]) -> str | None:
@@ -34,7 +56,16 @@ def _source_of(data: dict[str, Any]) -> str | None:
 
 
 def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float) -> Lockout:
-    """Fold one `strands/safety/**` event into the verdict."""
+    """Fold one `strands/safety/**` event into the verdict.
+
+    Args:
+        current: The verdict so far.
+        kind: The event, ``"estop"`` or ``"resume"``; anything else is ignored.
+        data: The envelope body. ``t`` is the SENDER's clock and is recorded for
+            display only; it is never used to order this dashboard's own
+            observations (see :func:`_learned_at`).
+        now: This dashboard's clock, recorded as :attr:`Lockout.arrived`.
+    """
     t_val = data.get("t")
     when = t_val if isinstance(t_val, (int, float)) else now
     who = _source_of(data)
@@ -42,6 +73,7 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
         return Lockout(
             state="locked",
             since=float(when),
+            arrived=now,
             by=who,
             reason=(f"an e-stop from {who} locked the fleet" if who else "an e-stop locked the fleet"),
         )
@@ -50,6 +82,7 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
         return Lockout(
             state="unknown",
             since=float(when),
+            arrived=now,
             by=who,
             reason=(
                 "a resume was broadcast, but each peer verifies the override code itself - "
@@ -66,6 +99,7 @@ def note_command_accepted(current: Lockout, *, now: float) -> Lockout:
     return Lockout(
         state="clear",
         since=now,
+        arrived=now,
         by=None,
         reason="a command this peer accepted proves its lockout is not engaged",
     )
@@ -84,9 +118,12 @@ def peer_lockout(fleet: Lockout, *, first_seen: float | None) -> Lockout:
     """The verdict for ONE peer, given when the dashboard first saw it.
 
     A peer that appeared after the e-stop is a process that never received it.
+    "After" is decided against the instant this dashboard *learned* of the stop,
+    because that is the same clock ``first_seen`` was stamped by.
     """
-    if fleet.state == "locked" and first_seen is not None and fleet.since is not None:
-        if first_seen > fleet.since:
+    learned_at = _learned_at(fleet)
+    if fleet.state == "locked" and first_seen is not None and learned_at is not None:
+        if first_seen > learned_at:
             return replace(
                 fleet,
                 state="unknown",
@@ -99,8 +136,17 @@ def peer_lockout(fleet: Lockout, *, first_seen: float | None) -> Lockout:
 
 
 def resolve_peer(fleet: Lockout, *, first_seen: float | None = None, proof_at: float | None = None) -> Lockout:
-    """The verdict shown on one peer's card."""
+    """The verdict shown on one peer's card.
+
+    Args:
+        fleet: The fleet-wide verdict.
+        first_seen: When this dashboard first saw the peer, on its own clock.
+        proof_at: When this dashboard saw the peer accept an action
+            :func:`proves_clear` admits, on its own clock. Only proof from after
+            the stop was known counts; earlier proof says nothing about now.
+    """
     verdict = peer_lockout(fleet, first_seen=first_seen)
-    if proof_at is not None and (fleet.since is None or proof_at > fleet.since):
+    learned_at = _learned_at(fleet)
+    if proof_at is not None and (learned_at is None or proof_at > learned_at):
         return note_command_accepted(verdict, now=proof_at)
     return verdict

@@ -152,6 +152,18 @@ name collision with it. A peer heartbeating `"age": 0` does not report itself
 fresh, one claiming `"reachable": true` does not report itself in contact, and
 one naming another peer's id does not answer a lookup for that peer.
 
+**The same rule decides a lockout badge.** A safety envelope's `t` is the
+*sender's* wall clock, admitted anywhere inside the two bounds above, so it may
+sit a minute behind the clock of the process reading it. Anything a monitor ranks
+against its own observations - when it first saw a peer, when it last watched
+that peer accept a command - is therefore ordered against the instant it
+*learned* of the stop, not against `t`. `Lockout` records both:
+`since` is the reported instant, for display; `arrived` is the local one, and
+every verdict is decided on it. Reading `t` instead let a peer that was already
+on the mesh look freshly spawned ("may never have received it"), and let a
+command accepted before the stop was even known count as proof the peer was
+clear.
+
 Repeated wrong codes arm a brute-force cooldown
 (`STRANDS_MESH_RESUME_MAX_FAILS`, `STRANDS_MESH_RESUME_BACKOFF_S`): during the
 cooldown even the correct code is refused, so wait it out rather than retrying in
