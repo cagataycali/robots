@@ -151,6 +151,21 @@ def _load_plugin_backends() -> dict[str, type[SimEngine]]:
     return _PLUGIN_BACKENDS_CACHE
 
 
+def _engine_class_passed_as_loader(loader: object) -> type[SimEngine] | None:
+    """Return the backend class a caller passed where a loader belongs, else ``None``.
+
+    ``register_backend`` takes a callable that *returns* the backend class. A
+    class is itself callable, so passing one satisfies the call the registry
+    makes and yields an instance where a class is expected -- the mistake
+    ``register_backend(name, cls)`` invites. Only a :class:`SimEngine` subclass
+    is reported: a class-shaped factory that is not one (``__new__`` returning
+    the backend class) is a legitimate loader and stays accepted.
+    """
+    if isinstance(loader, type) and issubclass(loader, SimEngine):
+        return loader
+    return None
+
+
 def register_backend(
     name: str,
     loader: Callable[[], type[SimEngine]],
@@ -170,6 +185,10 @@ def register_backend(
             an alias is already registered. Set True to overwrite.
 
     Raises:
+        TypeError: If *loader* is the backend class itself rather than a
+            callable returning it. Calling a class produces an *instance*,
+            and the backend is instantiated later by ``create_simulation``,
+            so the mistake is refused here rather than at that later call.
         ValueError: If ``name`` or an alias conflicts with an existing
             registration and ``force`` is False.
 
@@ -184,6 +203,19 @@ def register_backend(
         )
         sim = create_simulation("bullet")
     """
+    if engine_class := _engine_class_passed_as_loader(loader):
+        # The registry calls the loader and treats the result as the class, so
+        # a class passed here yields an instance that is never recognised as
+        # one: the failure surfaces inside create_simulation, naming neither
+        # this parameter nor the call that supplied it. Refuse at the door.
+        raise TypeError(
+            f"register_backend(name={name!r}) loader must be a zero-arg callable that returns "
+            f"the backend class, not the class itself; got the SimEngine subclass "
+            f"{engine_class.__name__!r}. Calling it would build an instance, and create_simulation "
+            f"instantiates the class it loads. Pass `lambda: {engine_class.__name__}` instead, "
+            f"which also keeps the backend's import deferred until first use."
+        )
+
     if not force:
         # Check name against ALL existing identifiers (backends + aliases)
         if name in _runtime_registry or name in _BUILTIN_BACKENDS:

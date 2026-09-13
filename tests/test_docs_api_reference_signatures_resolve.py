@@ -11,6 +11,12 @@ after a filter that does not exist and describes what it would return.
 So the spans are graded against :func:`inspect.signature` rather than reviewed.
 A row whose callable takes ``**kwargs`` is not graded on absent names: such a
 callable accepts any spelling, so the doc cannot be wrong about one.
+
+*Every* code span on a table line is graded, not just the leading one. A cell
+that pairs two related callables -- ``list_backends()`` beside
+``register_backend(name, loader)`` -- puts the second signature where a
+leading-span reader never looks, and the reader who copies it is no better off
+for the row having started with something correct.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ import pytest
 DOC = Path(__file__).resolve().parents[1] / "docs" / "api-reference.md"
 
 _HEADING = re.compile(r"^#+ `([A-Za-z_][\w.]*)`\s*$")
-_ROW_SPAN = re.compile(r"^\|\s*`([^`]+)`")
+_ROW_SPANS = re.compile(r"`([^`]+)`")
 _CALL = re.compile(r"^([A-Za-z_][\w.]*)\((.*)\)$")
 _PARAM = re.compile(r"^([A-Za-z_]\w*)\s*(?:=|$)")
 
@@ -51,8 +57,8 @@ def _sections() -> list[tuple[str, list[str], list[str]]]:
             continue
         if in_fence:
             fence += re.findall(r"[A-Za-z_]\w*", line)
-        elif span := _ROW_SPAN.match(line):
-            spans.append(span.group(1))
+        elif line.lstrip().startswith("|"):
+            spans += _ROW_SPANS.findall(line)
     if module:
         out.append((module, fence, spans))
     return out
@@ -129,9 +135,18 @@ def test_every_documented_parameter_is_a_name_its_callable_accepts() -> None:
 def test_the_reference_grades_the_rows_it_is_written_for() -> None:
     """The parser reaches the table; a grader that resolves nothing passes vacuously."""
     rows = _graded_rows()
-    assert len(rows) >= 20, f"only {len(rows)} rows resolved -- the parser or the reference moved"
+    assert len(rows) >= 30, f"only {len(rows)} rows resolved -- the parser or the reference moved"
     graded = {row[1].split("(")[0] for row in rows}
-    for expected in ("list_robots", "register_robot", "run_policy", "start_task", "recorder.add_frame"):
+    expected_names = (
+        "list_robots",
+        "register_robot",
+        "run_policy",
+        "start_task",
+        "recorder.add_frame",
+        # Second span in its cell: reached only because whole lines are read.
+        "register_backend",
+    )
+    for expected in expected_names:
         assert expected in graded, f"{expected} is documented with parameters but was not graded"
 
 

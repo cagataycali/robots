@@ -7,6 +7,7 @@ import importlib.util
 import pytest
 
 from strands_robots.simulation import factory
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.factory import (
     DEFAULT_BACKEND,
     create_simulation,
@@ -38,6 +39,11 @@ class _FakeSim:
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+
+
+class _EngineSubclass(SimEngine):
+    """A real ``SimEngine`` subclass -- what a caller passes when they read
+    ``register_backend(name, cls)`` and hand over the class itself."""
 
 
 class TestListBackends:
@@ -103,6 +109,46 @@ class TestRegisterBackend:
         register_backend("fake_sim", lambda: _OtherSim, aliases=["fk"], force=True)
         sim = create_simulation("fake_sim")
         assert type(sim).__name__ == "_OtherSim"
+
+
+class TestLoaderIsACallableNotTheClass:
+    """``loader`` returns the backend class; the class itself is refused here.
+
+    The registry calls the loader and treats the result as the class, so a
+    ``SimEngine`` subclass passed directly registers without complaint and then
+    fails inside ``create_simulation`` -- with a report that names neither this
+    parameter nor the registration that supplied it. The mistake is refused at
+    the door instead, and the message names the remedy (``lambda: MyEngine``).
+    """
+
+    def test_passing_the_backend_class_is_refused(self):
+        with pytest.raises(TypeError, match=r"lambda: _EngineSubclass"):
+            register_backend("bad_sim", _EngineSubclass)
+        assert "bad_sim" not in factory._runtime_registry
+
+    def test_force_does_not_bypass_the_refusal(self):
+        """``force`` waives name conflicts, not the shape of the loader."""
+        with pytest.raises(TypeError, match="zero-arg callable"):
+            register_backend("bad_sim", _EngineSubclass, force=True)
+        assert "bad_sim" not in factory._runtime_registry
+
+    def test_aliases_are_not_registered_by_a_refused_call(self):
+        with pytest.raises(TypeError):
+            register_backend("bad_sim", _EngineSubclass, aliases=["bad"])
+        assert "bad" not in factory._runtime_aliases
+
+    @pytest.mark.parametrize(
+        ("label", "loader"),
+        [
+            ("lambda returning the engine class", lambda: _EngineSubclass),
+            ("lambda returning a plain class", lambda: _FakeSim),
+            ("a class-shaped factory that is not a SimEngine", _FakeSim),
+        ],
+    )
+    def test_a_callable_loader_is_accepted(self, label, loader):
+        """Only a ``SimEngine`` subclass is refused; other callables still register."""
+        register_backend("ok_sim", loader)
+        assert factory._runtime_registry["ok_sim"] is loader
 
 
 @pytest.mark.skipif(

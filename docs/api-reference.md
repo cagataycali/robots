@@ -74,7 +74,7 @@ from strands_robots.simulation.base import SimEngine
 | `Simulation` | MuJoCo backend - 60+ agent actions. |
 | `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` | Shared dataclasses. |
 | `create_simulation(backend='mujoco')` | Factory for non-`Robot()` construction. |
-| `list_backends()` / `register_backend(name, cls)` | Backend registry. |
+| `list_backends()` / `register_backend(name, loader)` | Backend registry. `loader` is a zero-arg callable returning the class (`lambda: MyEngine`), so the import stays deferred. |
 | `SimEngine` | ABC custom backends implement. |
 
 Selected actions:
