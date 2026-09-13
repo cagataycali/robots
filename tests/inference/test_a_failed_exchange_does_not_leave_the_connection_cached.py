@@ -60,8 +60,9 @@ PARK_HOLD = 10.0
 #: generous value costs one nothing - it buys immunity from the scheduling stalls
 #: a loaded runner adds to a loopback round trip, which are what a tight budget
 #: here measures instead of the behaviour under test. Generous but bounded: a
-#: genuinely hung call must still report ``TimeoutError`` from this client rather
-#: than be killed by the suite's ``--timeout=120``, which reports nothing useful.
+#: genuinely hung call must still report a ``ConnectionError`` from this client -
+#: naming the budget that expired, over a ``TimeoutError`` cause - rather than be
+#: killed by the suite's ``--timeout=120``, which reports nothing useful.
 ROUND_TRIP_TIMEOUT = 5.0
 
 #: Deadline for the one read per scenario that must *miss* its reply. Unlike
@@ -145,8 +146,11 @@ def _strand(client: RemotePolicy, policy: TaggedPolicy) -> Any:
     client.request_timeout = PARKED_READ_TIMEOUT
     try:
         started = time.monotonic()
-        with pytest.raises(TimeoutError):
+        with pytest.raises(ConnectionError) as expired:
             client.get_actions_sync({"marker": "OBS-A"}, "")
+        # The client converts the expiry into a report naming the budget; the
+        # cause is what says it was an expiry and not some other wire failure.
+        assert isinstance(expired.value.__cause__, TimeoutError)
         # The read expired on its own deadline, not because the server stopped
         # parking: past PARK_HOLD the reply is delivered and there is no missed
         # read left for these scenarios to be about.
@@ -439,17 +443,46 @@ class TestTheDiscardCoversMoreThanAnExceptionWould:
         undelivered reply behind as a timeout does, and an ``except Exception``
         would step over it. Written as ``except BaseException`` this would also
         join the tree's ``py/catch-base-exception`` census for no gain.
+
+        The bookkeeping is what has to live in the ``finally``, so that is what
+        is asserted here rather than the absence of handlers: a handler may
+        report - the expiry is turned into a ``ConnectionError`` naming the
+        budget - as long as it re-raises and leaves the discard alone.
         """
         tree = ast.parse(textwrap.dedent(inspect.getsource(RemotePolicy._request)))
         tries = [node for node in ast.walk(tree) if isinstance(node, ast.Try)]
         assert len(tries) == 1
-        assert tries[0].handlers == []
-        assert tries[0].finalbody
+        self._assert_only_the_finally_discards(tries[0])
 
     def test_the_connect_discard_is_a_finally_not_an_except(self) -> None:
         tree = ast.parse(textwrap.dedent(inspect.getsource(RemotePolicy._connect)))
-        guards = [node for node in ast.walk(tree) if isinstance(node, ast.Try) and not node.handlers and node.finalbody]
+        guards = [node for node in ast.walk(tree) if isinstance(node, ast.Try) and self._discards(node.finalbody)]
         assert len(guards) == 1
+        self._assert_only_the_finally_discards(guards[0])
+
+    @staticmethod
+    def _discards(body: list[ast.stmt]) -> bool:
+        """Does ``body`` call ``self._discard_connection()``?"""
+        return any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_discard_connection"
+            for statement in body
+            for node in ast.walk(statement)
+        )
+
+    def _assert_only_the_finally_discards(self, guard: ast.Try) -> None:
+        """The discard is in the ``finally``, and every handler only reports."""
+        assert guard.finalbody, "the guard has no finally"
+        assert self._discards(guard.finalbody), "the bookkeeping left the finally"
+        for handler in guard.handlers:
+            assert not self._discards(handler.body), (
+                f"except {ast.unparse(handler.type) if handler.type else ''} discards the "
+                "connection, so a BaseException would step over the bookkeeping"
+            )
+            assert any(isinstance(node, ast.Raise) for node in ast.walk(handler)), (
+                f"except {ast.unparse(handler.type) if handler.type else ''} does not re-raise"
+            )
 
     def test_the_discard_does_not_take_the_lock_its_callers_hold(self) -> None:
         """Taking it would deadlock: ``_lock`` is a plain ``Lock``.
@@ -543,7 +576,8 @@ class TestAConcurrentCallerSurvivesADiscardByAnotherThread:
 
         # Thread B timed out (expected).
         assert "B" in errors, f"thread B should have timed out, got result: {results.get('B')}"
-        assert isinstance(errors["B"], TimeoutError)
+        assert isinstance(errors["B"], ConnectionError)
+        assert isinstance(errors["B"].__cause__, TimeoutError)
 
         # Thread A must NOT crash - it should reconnect and get its own chunk.
         assert "A" not in errors, f"thread A crashed: {errors.get('A')}"

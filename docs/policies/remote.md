@@ -21,6 +21,14 @@ policy = create_policy("ws://gpu-box:8765")
 | `connect_timeout` | `10.0`        | Seconds to wait for the WebSocket handshake      |
 | `request_timeout` | `60.0`        | Seconds to wait for each inference reply         |
 
+Both budgets are deadlines on a read, so a server that accepted the connection
+and then went quiet - a checkpoint still loading onto the GPU, a wedged forward
+pass - returns control to the caller instead of holding it. That case is
+reported apart from an absent server, because the remedies differ: an absent
+server is told to start one, while a listening one names the read that expired,
+the budget that expired and the parameter carrying it, so the choice between
+reading the server's log and raising the budget is the operator's to make.
+
 The client mirrors the server policy's `requires_images`, `execution_horizon`,
 `actions_per_step`, `supports_rtc` and `required_bodies`, and forwards the
 Real-Time Chunking observed-delay count on every request, so a remote rollout

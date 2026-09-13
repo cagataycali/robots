@@ -36,6 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
+from strands_robots.policies._ws_wire import silent_server_error
 from strands_robots.policies.base import Policy, chunk_count_error, required_bodies_error
 from strands_robots.utils import (
     dial_host_error,
@@ -53,6 +54,9 @@ logger = logging.getLogger(__name__)
 #: this is generous; override via the ``request_timeout`` kwarg.
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_CONNECT_TIMEOUT = 10.0
+
+#: What the reports call the service, so "absent" and "silent" name one server.
+_SERVER_NAME = "PolicyServer"
 
 
 #: Metadata fields the ``ready`` handshake advertises as a per-inference chunk
@@ -264,7 +268,16 @@ class RemotePolicy(Policy):
     # -- connection lifecycle -------------------------------------------------
 
     def _connect(self) -> None:
-        """Open the WebSocket, read the handshake, and flush pending config."""
+        """Open the WebSocket, read the handshake, and flush pending config.
+
+        Raises:
+            ConnectionError: When the server cannot be reached, or when it
+                accepted the connection and then sent no handshake within
+                ``connect_timeout``. Those are separate reports on purpose: the
+                second server is listening, so telling the operator to start
+                one names the only thing that is not wrong. The read itself is
+                bounded, so a peer that never answers cannot hold the caller.
+        """
         from websockets.sync.client import connect
 
         try:
@@ -312,6 +325,21 @@ class RemotePolicy(Policy):
                 self._apply_metadata(reply.get("metadata", {}))
                 self._reset_pending = False
             established = True
+        except TimeoutError as exc:
+            # Before any ``OSError`` clause, because a ``TimeoutError`` is one:
+            # this server accepted the connection and then did not answer, so
+            # the connect-side "start one first" hint above names the one thing
+            # that is not wrong. ``established`` is still False, so the
+            # ``finally`` below discards the connection either way.
+            raise ConnectionError(
+                silent_server_error(
+                    server=_SERVER_NAME,
+                    uri=self.uri,
+                    what=f"{protocol.MSG_READY!r} handshake",
+                    timeout=self.connect_timeout,
+                    budget_param="connect_timeout",
+                )
+            ) from exc
         finally:
             if not established:
                 self._discard_connection()
@@ -442,6 +470,15 @@ class RemotePolicy(Policy):
         The bookkeeping is a ``finally`` rather than an ``except`` so a
         ``BaseException`` - a cancellation between the send and the receive
         leaves the same undelivered reply behind - discards the connection too.
+        The ``TimeoutError`` clause sits beside that ``finally`` rather than in
+        place of it, so a reply that expired is both reported and discarded.
+
+        Raises:
+            ConnectionError: When the reply does not arrive within
+                ``request_timeout``. The connection is live, so this names a
+                server that is still loading or wedged and the budget that
+                expired, not an absent one.
+            RuntimeError: When the server marshals a dispatch failure back.
         """
         if self._ws is None:
             # Reachable from a caller that does not re-check under the lock: a
@@ -456,6 +493,21 @@ class RemotePolicy(Policy):
             self._ws.send(protocol.dumps(message))
             reply = protocol.loads(self._ws.recv(timeout=self.request_timeout))
             exchanged = True
+        except TimeoutError as exc:
+            # Same distinction as the handshake read, on the other budget: the
+            # connection is live, so this is a server still loading or wedged,
+            # not an absent one. An ``except`` beside the ``finally`` rather
+            # than instead of it - ``exchanged`` is still False, so the
+            # connection is discarded here too.
+            raise ConnectionError(
+                silent_server_error(
+                    server=_SERVER_NAME,
+                    uri=self.uri,
+                    what="reply",
+                    timeout=self.request_timeout,
+                    budget_param="request_timeout",
+                )
+            ) from exc
         finally:
             if not exchanged:
                 self._discard_connection()
