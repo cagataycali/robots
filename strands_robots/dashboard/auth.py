@@ -568,7 +568,22 @@ def known_rp_ids(store: dict | None = None) -> set:
 
 
 def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -> tuple:
-    """Decide the rp_id for a ceremony: ``(rp_id, reason)``, or ``(None, reason)``."""
+    """Decide the rp_id for a ceremony: ``(rp_id, reason)``, or ``(None, reason)``.
+
+    Args:
+        host_rp_id: The host half of the authority the request was reached at,
+            or ``""`` when the request carried no ``Host`` header. Empty is a
+            missing reading, never a hostname: it is refused rather than read
+            as any particular host, because the one host this function trusts
+            unconditionally is loopback and a caller must not reach that
+            verdict by omitting a header.
+        forced: ``STRANDS_DASH_AUTH_RP_ID``, or ``""``.
+        known: The enrolled rp_ids; :func:`known_rp_ids` when omitted.
+
+    Returns:
+        ``(rp_id, reason)`` with the rp_id to bind, or ``(None, reason)`` when
+        no rp_id can be bound.
+    """
     # Loopback outranks even the pin, and that ordering is deliberate: a browser at
     # http://localhost:8090 CANNOT use 'robots.cagatay.my' as an rp_id -- the spec requires the
     # rp_id to be a registrable suffix of the page's origin, so honouring the pin here would make
@@ -578,6 +593,14 @@ def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -
         return (host_rp_id, "loopback")
     if forced:
         return (forced, "forced by STRANDS_DASH_AUTH_RP_ID")
+    # A caller that sent no Host header supplied no rp_id, and the rungs below
+    # decide one by comparing the host to the enrolled set. Reading absence as a
+    # host skips that comparison: it is the only way into this function that
+    # answers without consulting the store, and it answers with the deployment's
+    # own name. Refused here so the operator reads which reading was missing,
+    # rather than a ceremony being bound to a name nobody sent.
+    if not host_rp_id:
+        return (None, "the request carried no Host header, so no relying-party id was offered")
     known = known_rp_ids() if known is None else known
     if host_rp_id in known:
         return (host_rp_id, "matches an enrolled credential")
@@ -587,7 +610,11 @@ def rp_id_verdict(host_rp_id: str, forced: str = "", known: set | None = None) -
 
 
 def _derive_rp_id(request_or_ws: Any) -> str:
-    host = _host_only(_headers(request_or_ws).get("host", "localhost"))
+    # "" when the request sent no Host header, which rp_id_verdict refuses. The
+    # value this used to stand in -- "localhost" -- is the one host that outranks
+    # both the pin and the enrolled set, so omitting the header was a way to be
+    # read as a browser on this machine.
+    host = _host_only(_headers(request_or_ws).get("host", ""))
     rp_id, reason = rp_id_verdict(host, _forced_rp_id())
     if rp_id is None:
         logger.warning("refused WebAuthn ceremony: %s", reason)
@@ -679,14 +706,39 @@ def _served_origin(request_or_ws: Any) -> str:
     The ``Host`` header supplies the authority half, which is the same source
     :func:`_derive_rp_id` already binds through :func:`rp_id_verdict` -- so the two
     expectations agree by construction, and a host a stranger made up is refused
-    there rather than reappearing here as a different answer.
+    there rather than reappearing here as a different answer. A request that sent
+    no ``Host`` header supplies no authority, and the two doors agree about that
+    too: neither stands one in.
+
+    Raises:
+        HTTPException: 400 when no origin is configured and the request carried
+            no ``Host`` header, so the origin cannot be determined.
     """
     forced = _forced_origin()
     if forced:
         # Normalised because WebAuthn compares origins byte-for-byte: a trailing
         # slash in the env var would otherwise fail every ceremony.
         return forced.rstrip("/")
-    return f"{_connection_scheme(request_or_ws)}://{_headers(request_or_ws).get('host', 'localhost:8090')}"
+    authority = str(_headers(request_or_ws).get("host", "")).strip()
+    if not authority:
+        # Standing in an authority here would state where this deployment is
+        # reachable on the strength of a header that never arrived, and
+        # :func:`origin_verdict` then compares the caller's Origin against that
+        # invention -- a comparison the caller passes by offering the invented
+        # value, which is the tautology that function exists to refuse. Refused
+        # for the same reason :func:`_connection_scheme` refuses a transport
+        # with no scheme: an expectation is refused rather than guessed.
+        logger.warning("refused WebAuthn ceremony: request carried no Host header")
+        raise HTTPException(
+            400,
+            {
+                "error": "this connection cannot be used for a passkey ceremony",
+                "detail": "the request carried no Host header, so the origin a ceremony must be "
+                "verified against cannot be determined",
+                "hint": "set STRANDS_DASH_AUTH_ORIGIN to the origin the dashboard is served at",
+            },
+        )
+    return f"{_connection_scheme(request_or_ws)}://{authority}"
 
 
 def _derive_origin(request_or_ws: Any) -> str:
