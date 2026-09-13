@@ -603,13 +603,11 @@ def peer_is_physical(peer: Mapping[str, Any] | None) -> tuple[bool, str]:
 
 
 _PEERS: dict[str, PeerInfo] = {}
-_PEERS_VERSION: int = 0
 _PEERS_LOCK = threading.Lock()
 
 
 def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any]) -> bool:
     """Insert or update a peer.  Returns ``True`` when the peer is new."""
-    global _PEERS_VERSION  # noqa: PLW0603 - module-level singleton by design
     with _PEERS_LOCK:
         is_new = peer_id not in _PEERS
         # When a NEW peer would push us over the cap, evict the oldest
@@ -621,7 +619,6 @@ def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any
             while len(_PEERS) >= cap and _PEERS:
                 oldest_id = min(_PEERS, key=lambda pid: _PEERS[pid].last_seen_mono)
                 del _PEERS[oldest_id]
-                _PEERS_VERSION += 1
                 logger.warning(
                     "Mesh: peer registry at cap (%d); evicted oldest peer %s",
                     cap,
@@ -634,8 +631,6 @@ def update_peer(peer_id: str, peer_type: str, hostname: str, caps: dict[str, Any
             last_seen_mono=time.monotonic(),
             caps=caps,
         )
-        if is_new:
-            _PEERS_VERSION += 1
         return is_new
 
 
@@ -663,7 +658,6 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
     Returns:
         List of pruned peer IDs (may be empty).
     """
-    global _PEERS_VERSION  # noqa: PLW0603
     # Argument order is load-bearing: max() keeps its FIRST operand when a
     # comparison answers False, so with the timeout first a nan that somehow
     # reached this line degrades to the timeout instead of to never-pruned.
@@ -676,7 +670,6 @@ def prune_peers(timeout: float = PEER_TIMEOUT) -> list[str]:
         stale = [pid for pid, p in _PEERS.items() if now - p.last_seen_mono > cutoff]
         for pid in stale:
             del _PEERS[pid]
-            _PEERS_VERSION += 1
             pruned.append(pid)
     for pid in pruned:
         # Under retention this fires at retention expiry, potentially long
@@ -734,10 +727,8 @@ def peer_count() -> int:
 
 def clear_peers() -> None:
     """Remove **all** peers.  Intended for tests only."""
-    global _PEERS_VERSION  # noqa: PLW0603
     with _PEERS_LOCK:
         _PEERS.clear()
-        _PEERS_VERSION += 1
 
 
 # Session lifecycle

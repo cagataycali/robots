@@ -71,8 +71,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_VALID_MODES = ("sim", "real", "auto")
-
 
 def _normalize_mode(mode: Any) -> str:
     """Lowercase + strip a mode value if it's a string. Pass non-str through unchanged
