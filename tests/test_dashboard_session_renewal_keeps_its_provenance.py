@@ -130,6 +130,22 @@ def test_a_renewal_extends_without_shortening_or_passing_the_cap():
 # reason a session is handed no fresh token -> a token in exactly that state.
 # The verb answers None for all of them; the reason is what distinguishes a
 # login problem (sign in again) from a renewal that simply is not due yet.
+#
+# Only the *names* are known at collection. The tokens are minted inside the
+# test, under ``isolated_store``: a ``parametrize`` argument is evaluated when
+# pytest imports this module, which it does while collecting every suite run,
+# and ``auth.issue_token`` signs with ``_jwt_secret()``, which reads - and on a
+# missing or unparseable file, writes - the store at the unredirected path.
+NO_RENEWAL_STATES = (
+    "nothing presented",
+    "not a token at all",
+    "signed with another secret",
+    "already expired",
+    "still fresh",
+    "past its maximum age",
+)
+
+
 def _no_renewal_cases(now: float) -> dict[str, str]:
     ttl, max_age = auth._token_ttl(), auth._session_max_age()
     return {
@@ -144,7 +160,9 @@ def _no_renewal_cases(now: float) -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("state", list(_no_renewal_cases(time.time())))
+@pytest.mark.parametrize("state", NO_RENEWAL_STATES)
 def test_no_fresh_token_for_a_session_that_cannot_or_need_not_renew(state):
     now = time.time()
-    assert auth.renew_if_due(_no_renewal_cases(now)[state], now=now) is None
+    cases = _no_renewal_cases(now)
+    assert set(cases) == set(NO_RENEWAL_STATES), "a state was added on one side only"
+    assert auth.renew_if_due(cases[state], now=now) is None
