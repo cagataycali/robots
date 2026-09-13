@@ -681,8 +681,8 @@ recorder = DatasetRecorder.create(
     # The names must be the observation's own keys: for the so100 sim these
     # are Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw - i.e.
     # `list(sim.get_observation()["so100"].keys())`. A declared name that a
-    # frame's observation (or action) does not carry makes `add_frame` raise;
-    # nothing is ever recorded as a stand-in 0.0.
+    # frame's observation (or action) does not carry - absent, or present as
+    # `None` - makes `add_frame` raise; nothing is recorded as a stand-in 0.0.
     camera_keys=["default"],
     joint_names=["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"],
     task="pick up the red cube",

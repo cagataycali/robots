@@ -723,8 +723,16 @@ def unrecordable_action_columns_error(
     outside it (in a shared scene, the robots this rollout does not drive) are
     not this frame's to supply and are left alone.
 
+    A required column is unrecordable whether the action dict omits the key or
+    carries it as ``None``: neither is a command that was issued, and the two
+    arrive from the same places - a policy that produced no value for a joint,
+    a wire payload whose reading was ``null``, a dict built by zipping names
+    against a shorter sequence of values. This is the same reading
+    :func:`unrecordable_state_columns_error` applies to a state column.
+
     Args:
         action: The frame's action dict, keyed as the dataset schema spells it.
+            A key mapped to ``None`` counts as absent.
         declared: Action column names declared by the dataset schema.
         required: Column names this frame must supply, or ``None`` to skip the
             check. :meth:`DatasetRecorder.add_frame` no longer passes ``None``
@@ -734,12 +742,12 @@ def unrecordable_action_columns_error(
 
     Returns:
         An actionable message naming the missing columns, or ``None`` when every
-        required column is present.
+        required column carries a value.
     """
     if required is None:
         return None
     declared_set = set(declared)
-    missing = [key for key in required if key in declared_set and key not in action]
+    missing = [key for key in required if key in declared_set and action.get(key) is None]
     if not missing:
         return None
     return (
@@ -1717,7 +1725,9 @@ class DatasetRecorder:
                     # Only reachable for a column OUTSIDE an explicitly scoped
                     # ``required_action_keys`` (a shared scene: the robots this
                     # rollout does not drive). Every column this frame must
-                    # supply was checked above.
+                    # supply was checked above - by value, so a required column
+                    # present as ``None`` was refused there rather than filled
+                    # here.
                     action_vals.append(0.0)
                 elif isinstance(v, (int, float)):
                     action_vals.append(float(v))

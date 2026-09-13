@@ -22,7 +22,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from strands_robots.dataset_recorder import DatasetRecorder, unrecordable_action_columns_error
+from strands_robots.dataset_recorder import (
+    DatasetRecorder,
+    unrecordable_action_columns_error,
+    unrecordable_state_columns_error,
+)
 from strands_robots.policies import Policy
 
 from .test_dataset_recorder import _CapturingDataset, _state_action_features
@@ -150,6 +154,97 @@ class TestAddFrameRefusesToFabricateAColumn:
             required_action_keys=DECLARED,
         )
         np.testing.assert_allclose(ds.frames[-1]["action"], [0.4, 0.5, 0.6], atol=1e-6)
+
+
+class TestAColumnPresentAsNoneCarriesNoCommand:
+    """``None`` in an action dict is the absence of a command, not a command.
+
+    A required column can be unsupplied two ways, and they arrive from the same
+    places - a policy that produced no value for one joint, a wire payload whose
+    reading was ``null``, a dict built by zipping names against a shorter
+    sequence of values. Only one of them used to be refused: the guard asked
+    whether the KEY was there, so a key mapped to ``None`` passed, reached the
+    fill below it, and was recorded as ``0.0`` - the exact "travel to zero"
+    command this module exists to keep out of a dataset, written under
+    ``status="success"``.
+    """
+
+    def _recorder(self):
+        ds = _CapturingDataset(_state_action_features(["shoulder", "elbow", "grip"], DECLARED))
+        return DatasetRecorder(dataset=ds, task="t"), ds
+
+    @pytest.mark.parametrize(
+        ("action", "why"),
+        [
+            ({"a_shoulder": 0.4, "a_grip": 0.6}, "the key is absent"),
+            ({"a_shoulder": 0.4, "a_elbow": None, "a_grip": 0.6}, "the key is present as None"),
+        ],
+    )
+    def test_both_spellings_of_an_unsupplied_column_are_refused(self, action, why):
+        msg = unrecordable_action_columns_error(action, DECLARED, DECLARED)
+        assert msg is not None, why
+        assert "'a_elbow'" in msg
+        # The columns that did carry a command are not blamed.
+        assert "a_shoulder" not in msg and "a_grip" not in msg
+
+    def test_the_action_door_reads_a_column_the_way_the_state_door_does(self):
+        """The two doors grade the same shape, so neither is the soft way in.
+
+        ``unrecordable_state_columns_error`` has always read the value. An
+        action column is the stricter of the two - a state column at least has
+        a measurable truth the fill misstates, while no substitute for an
+        un-issued command is truthful at all - so the action door reading only
+        the key made the weaker rule the enforced one.
+        """
+        action_msg = unrecordable_action_columns_error(
+            dict.fromkeys(DECLARED[:2], 0.4) | {"a_grip": None}, DECLARED, DECLARED
+        )
+        state_msg = unrecordable_state_columns_error(
+            {"shoulder": 0.1, "elbow": 0.2, "grip": None}, ["shoulder", "elbow", "grip"]
+        )
+        assert action_msg is not None
+        assert state_msg is not None
+        assert "'a_grip'" in action_msg and "'grip'" in state_msg
+
+    def test_add_frame_refuses_rather_than_recording_a_zero(self):
+        rec, ds = self._recorder()
+        with pytest.raises(ValueError, match=r"action column\(s\) \['a_elbow'\]"):
+            rec.add_frame(
+                observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
+                action={"a_shoulder": 0.4, "a_elbow": None, "a_grip": 0.6},
+                required_action_keys=DECLARED,
+            )
+        # Pre-fix this wrote [0.4, 0.0, 0.6] and returned normally.
+        assert ds.frames == []
+
+    def test_the_unscoped_direct_api_refuses_it_too(self):
+        """A recorder fed by hand requires every declared column of its schema."""
+        rec, ds = self._recorder()
+        with pytest.raises(ValueError, match=r"\['a_elbow', 'a_grip'\]"):
+            rec.add_frame(
+                observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
+                action={"a_shoulder": 0.4, "a_elbow": None, "a_grip": None},
+            )
+        assert ds.frames == []
+
+    def test_a_none_outside_the_required_set_still_takes_the_shared_scene_fill(self):
+        """The scoping this tightens is the required set only.
+
+        A shared scene declares columns for robots this rollout does not drive.
+        Those are not this frame's to supply however the frame spells their
+        absence, and the documented ``0.0`` fill still covers them - otherwise
+        every multi-robot recording would now be refused.
+        """
+        declared = [*DECLARED, "bob__a_shoulder"]
+        ds = _CapturingDataset(_state_action_features(["shoulder", "elbow", "grip"], declared))
+        rec = DatasetRecorder(dataset=ds, task="t")
+        rec.add_frame(
+            observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
+            action={"a_shoulder": 0.4, "a_elbow": 0.5, "a_grip": 0.6, "bob__a_shoulder": None},
+            required_action_keys=DECLARED,
+        )
+        assert len(ds.frames) == 1
+        np.testing.assert_allclose(ds.frames[0]["action"], [0.4, 0.5, 0.6, 0.0], atol=1e-6)
 
 
 class TestEveryRecordingHookDeclaresItsActionColumns:
