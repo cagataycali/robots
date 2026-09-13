@@ -15,7 +15,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from strands_robots.dataset_recorder import DatasetRecorder
+from strands_robots.dataset_recorder import (
+    DatasetRecorder,
+    unrecordable_camera_columns_error,
+)
 
 
 class _FakeDatasetWithClear:
@@ -1310,14 +1313,15 @@ def test_create_builds_features_from_joints_and_cameras(monkeypatch, tmp_path):
     assert features["observation.images.top"]["shape"] == (240, 320, 3)
 
 
-# camera_key_map remap + camera-key-mismatch diagnostic
+# camera_key_map remap + the declared-image-column refusal
 #
-# Regression coverage for the silent data-loss mode where a policy declares
-# image_keys (e.g. "image"/"wrist_image") that never match the names the
-# sim/hardware camera streams emit (e.g. "front_camera"/"wrist_camera"): every
-# image frame is stripped and the dataset records zero video columns with no
-# error. The recorder now (a) accepts a camera_key_map remap and (b) warns once
-# when all observed cameras are dropped.
+# Regression coverage for the mode where a policy declares image_keys (e.g.
+# "image"/"wrist_image") that do not match the names the sim/hardware camera
+# streams emit (e.g. "front_camera"/"wrist_camera"). The recorder (a) accepts a
+# camera_key_map remap and (b) refuses a frame that leaves a declared
+# observation.images.* column empty, naming both camera names and the remedy -
+# LeRobot's validate_frame rejects such a frame as "Missing features", so the
+# only choice is which report the caller gets.
 
 
 def test_add_frame_camera_key_map_remaps_observed_to_declared():
@@ -1351,40 +1355,117 @@ def test_add_frame_camera_key_map_accepts_fully_qualified_keys():
     assert "observation.images.wrist_camera" not in frame
 
 
-def test_add_frame_warns_once_when_no_camera_matches(caplog):
-    """All observed cameras stripped (none declared) -> one loud diagnostic."""
-    feats = {"observation.images.image": {"dtype": "video"}}
-    ds = _CapturingDataset(feats)
-    rec = DatasetRecorder(dataset=ds)
+class TestADeclaredImageColumnCarriesAnImage:
+    """A declared ``observation.images.*`` column the frame leaves empty is refused.
 
-    img = np.zeros((2, 2, 3), dtype=np.uint8)
-    with caplog.at_level(logging.WARNING):
-        rec.add_frame(observation={"front_camera": img}, action={}, task="t")
-        rec.add_frame(observation={"front_camera": img}, action={}, task="t")
+    LeRobot's ``validate_frame`` grades a frame against the schema in both
+    directions: ``Extra features`` (which this recorder already absorbs by
+    stripping an undeclared camera) and ``Missing features`` (which it cannot,
+    and which kills the write). So the split between the quiet path and the
+    loud one is drawn on whether every DECLARED camera got an image - not on
+    how many observed streams happened to match, which left the likeliest
+    mistake, a near miss on one name of several, entirely silent.
+    """
 
-    mismatch = [r for r in caplog.records if "match the declared image features" in r.message]
-    assert len(mismatch) == 1  # warned once, not per frame
-    # The message names the offending observed and declared keys + the remedy.
-    assert "front_camera" in mismatch[0].getMessage()
-    assert "image" in mismatch[0].getMessage()
-    assert "camera_key_map" in mismatch[0].getMessage()
-    # The image data was still dropped (no remap supplied).
-    assert "observation.images.front_camera" not in ds.frames[0]
+    IMG = np.zeros((2, 2, 3), dtype=np.uint8)
 
+    def test_an_extra_observed_camera_beside_a_full_declared_set_is_accepted(self, caplog):
+        """The blessed path: a debug view alongside every declared camera, still quiet."""
+        ds = _CapturingDataset({"observation.images.declared": {"dtype": "video"}})
+        rec = DatasetRecorder(dataset=ds)
 
-def test_add_frame_no_mismatch_warning_on_partial_strip(caplog):
-    """A partial strip (one camera matches) is the normal 'ignore extra' path."""
-    feats = {"observation.images.declared": {"dtype": "video"}}
-    ds = _CapturingDataset(feats)
-    rec = DatasetRecorder(dataset=ds)
+        with caplog.at_level(logging.WARNING):
+            rec.add_frame(observation={"declared": self.IMG, "ghost": self.IMG}, action={}, task="t")
 
-    img = np.zeros((2, 2, 3), dtype=np.uint8)
-    with caplog.at_level(logging.WARNING):
-        rec.add_frame(observation={"declared": img, "ghost": img}, action={}, task="t")
+        assert "observation.images.declared" in ds.frames[0]
+        assert "observation.images.ghost" not in ds.frames[0]
+        assert not [r for r in caplog.records if "image column" in r.message]
 
-    assert not [r for r in caplog.records if "match the declared image features" in r.message]
-    assert "observation.images.declared" in ds.frames[0]
-    assert "observation.images.ghost" not in ds.frames[0]
+    def test_a_near_miss_on_one_of_several_camera_names_is_refused(self):
+        """Two names right and one wrong records nothing; it used to say nothing either."""
+        feats = {
+            "observation.images.front": {"dtype": "video"},
+            "observation.images.top": {"dtype": "video"},
+            "observation.images.wrist": {"dtype": "video"},
+        }
+        ds = _CapturingDataset(feats)
+        rec = DatasetRecorder(dataset=ds)
+
+        with pytest.raises(ValueError) as excinfo:
+            rec.add_frame(
+                observation={"front": self.IMG, "top": self.IMG, "wrist_cam": self.IMG},
+                action={},
+                task="t",
+            )
+
+        message = str(excinfo.value)
+        assert "'wrist'" in message  # the declared column left empty
+        assert "'wrist_cam'" in message  # the observed stream that was dropped
+        assert "camera_key_map={'wrist_cam': 'wrist'}" in message  # the remedy, spelled out
+        assert ds.frames == []  # nothing was written
+
+    def test_every_declared_camera_left_empty_is_refused(self):
+        """The all-mismatch case reports the refusal, not a survivable 'no video'."""
+        ds = _CapturingDataset({"observation.images.image": {"dtype": "video"}})
+        rec = DatasetRecorder(dataset=ds)
+
+        with pytest.raises(ValueError, match="carry no image in this frame"):
+            rec.add_frame(observation={"front_camera": self.IMG}, action={}, task="t")
+
+        assert ds.frames == []
+
+    def test_a_remap_that_resolves_the_names_is_accepted(self):
+        """camera_key_map is the documented remedy, so it has to clear the refusal."""
+        ds = _CapturingDataset({"observation.images.image": {"dtype": "video"}})
+        rec = DatasetRecorder(dataset=ds, camera_key_map={"front_camera": "image"})
+
+        rec.add_frame(observation={"front_camera": self.IMG}, action={}, task="t")
+
+        assert "observation.images.image" in ds.frames[0]
+
+    @pytest.mark.parametrize(
+        ("frame_keys", "declared", "stripped", "expected"),
+        [
+            pytest.param(["front", "top"], ["front", "top"], [], None, id="every column filled"),
+            pytest.param(["front"], [], ["front"], None, id="no camera declared at all"),
+            pytest.param([], [], [], None, id="no cameras either side"),
+            pytest.param(["front"], ["front", "wrist"], ["wrist_cam"], "'wrist'", id="one column short"),
+            pytest.param([], ["image"], [], "'image'", id="no image arrived at all"),
+        ],
+    )
+    def test_the_gap_is_named_only_where_a_declared_column_is_empty(self, frame_keys, declared, stripped, expected):
+        """One behaviour, one table: the refusal keys on unfilled DECLARED columns."""
+        prefix = "observation.images."
+        gap = unrecordable_camera_columns_error(
+            [prefix + k for k in frame_keys],
+            [prefix + k for k in declared],
+            [prefix + k for k in stripped],
+        )
+        if expected is None:
+            assert gap is None
+        else:
+            assert gap is not None and expected in gap
+
+    def test_a_gap_with_nothing_to_remap_from_does_not_suggest_a_remap(self):
+        """No dropped stream means camera_key_map has no source; say the other remedy."""
+        gap = unrecordable_camera_columns_error([], ["observation.images.image"], [])
+        assert gap is not None
+        assert "camera_key_map" not in gap
+        assert "Declare only cameras this observation carries" in gap
+
+    def test_lerobot_really_refuses_a_frame_that_leaves_a_declared_column_empty(self):
+        """The premise the refusal rests on, read from lerobot rather than assumed.
+
+        Without this cell the refusal above could be defending against a rule
+        LeRobot does not have, and a future LeRobot that tolerated an absent
+        column would leave it refusing frames that would in fact record.
+        """
+        pytest.importorskip("lerobot")
+        from lerobot.datasets.feature_utils import validate_frame
+
+        features = {"observation.images.image": {"dtype": "video", "shape": (3, 2, 2), "names": None}}
+        with pytest.raises(ValueError, match="Missing features"):
+            validate_frame({"task": "t"}, features)
 
 
 def test_add_frame_no_mismatch_warning_when_remap_resolves_it(caplog):

@@ -26,7 +26,7 @@ import importlib.util
 import logging
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -795,6 +795,68 @@ def unrecordable_state_columns_error(
     )
 
 
+def unrecordable_camera_columns_error(
+    frame_camera_keys: Iterable[str],
+    declared: Iterable[str],
+    stripped: Iterable[str],
+) -> str | None:
+    """Reject a frame that leaves a declared image column with no image.
+
+    The camera sibling of :func:`unrecordable_state_columns_error` and
+    :func:`unrecordable_action_columns_error`, and it exists for the same
+    reason: LeRobot refuses the frame either way, and this is the only place
+    that knows WHY.
+
+    LeRobot's ``validate_frame`` grades a frame's feature set against the
+    schema's in both directions - ``Missing features`` and ``Extra features``
+    are two branches of one check. This recorder already defends the extra
+    half, dropping an observed camera the schema does not declare so an extra
+    debug view cannot fail the write. The missing half is not survivable and
+    was not defended: a declared ``observation.images.<name>`` the frame does
+    not carry fails ``validate_frame``, so the frame is refused, and with it
+    every frame of the episode - the camera names do not change between steps.
+
+    The usual cause is a name that nearly matches: a policy declaring
+    ``wrist_image`` against a scene streaming ``wrist_cam`` records nothing at
+    all, and LeRobot's report names the dataset column rather than the two
+    camera names or the ``camera_key_map`` that reconciles them.
+
+    Args:
+        frame_camera_keys: ``observation.images.*`` keys this frame carries,
+            after remapping and normalization.
+        declared: ``observation.images.*`` keys the schema declares.
+        stripped: ``observation.images.*`` keys dropped from this frame because
+            the schema does not declare them - the observed names a remap would
+            most likely come from.
+
+    Returns:
+        An actionable message naming the unfilled columns, the observed names
+        that were dropped, and the remedy; or ``None`` when every declared
+        image column carries an image.
+    """
+    prefix = "observation.images."
+
+    def bare(keys: Iterable[str]) -> list[str]:
+        return sorted(k.removeprefix(prefix) for k in keys)
+
+    unfilled = bare(set(declared) - set(frame_camera_keys))
+    if not unfilled:
+        return None
+    dropped = bare(stripped)
+    remedy = (
+        f"Pass camera_key_map={{{dropped[0]!r}: {unfilled[0]!r}}} to remap, or declare "
+        "cameras whose names match the streams"
+        if dropped
+        else "Declare only cameras this observation carries, or supply an image for each declared camera"
+    )
+    return (
+        f"Recorded image column(s) {unfilled} carry no image in this frame"
+        + (f", while the observed camera stream(s) {dropped} are not declared" if dropped else "")
+        + ". LeRobot refuses a frame that leaves a declared feature empty, so this frame - and "
+        f"every later one, the camera names do not change - cannot be recorded. {remedy}."
+    )
+
+
 def _frame_shape_error(
     camera_dims: Any,
     camera_keys: Sequence[str] | None,
@@ -986,7 +1048,6 @@ class DatasetRecorder:
         self.camera_key_map = self._normalize_camera_key_map(camera_key_map)
         # One-shot guard so the camera-key-mismatch diagnostic is logged once
         # per recorder instead of every control step (50Hz would flood logs).
-        self._warned_camera_mismatch = False
 
     @staticmethod
     def _normalize_camera_key_map(camera_key_map: dict[str, str] | None) -> dict[str, str]:
@@ -1627,7 +1688,11 @@ class DatasetRecorder:
                 ``observation`` or a declared action column is absent from
                 ``action`` - nothing is written as 0.0 in place of a value
                 the frame did not carry. With an explicit scope, a scoped
-                action column absent from ``action``.
+                action column absent from ``action``. Also when a declared
+                ``observation.images.*`` column carries no image, whatever the
+                scope: LeRobot refuses that frame either way, and this is the
+                only place that can name the camera-name mismatch behind it
+                (see :func:`unrecordable_camera_columns_error`).
             RecordingFrameError: The dataset write failed and this recorder is
                 ``strict`` (the default). With ``strict=False`` the frame is
                 counted in ``dropped_frame_count`` and a warning is logged
@@ -1772,40 +1837,25 @@ class DatasetRecorder:
                 frame[normalized] = frame.pop(cam_key)
 
         # Strip undeclared cameras (keys present in obs but not registered in
-        # _build_features). This avoids LeRobot's "Extra features" error.
-        # Declared-but-missing cameras (e.g. when a render fails) are left alone -
-        # LeRobot tolerates absent columns and the episode simply won't have that
-        # camera's data.
+        # _build_features). This avoids LeRobot's "Extra features" error. The
+        # mirror case is NOT tolerated: "Missing features" is the other branch
+        # of the same LeRobot check, so a declared camera this frame leaves
+        # empty is refused below rather than written.
         frame_cam_keys_final = {k for k in frame if k.startswith("observation.images.")}
         stripped_cam_keys = frame_cam_keys_final - declared_cam_keys
         for extra in stripped_cam_keys:
             del frame[extra]
 
-        # Surface the silent data-loss case: camera frames arrived but NONE of
-        # them matched a declared schema key, so every image is being dropped
-        # and the dataset will record zero image columns. This is the
-        # "image_keys never match the streams" failure mode that otherwise
-        # produces episodes with no video and no error. Warn once per recorder
-        # (50Hz would flood) with the observed-vs-declared keys and the
-        # camera_key_map remedy. A PARTIAL strip (some cameras matched) is left
-        # quiet - that is the normal "ignore an extra debug camera" path.
-        if (
-            not self._warned_camera_mismatch
-            and stripped_cam_keys
-            and declared_cam_keys
-            and not (frame_cam_keys_final & declared_cam_keys)
-        ):
-            self._warned_camera_mismatch = True
-            logger.warning(
-                "DatasetRecorder: none of the observed camera streams %s match the "
-                "declared image features %s - all image frames are being dropped and "
-                "this dataset will have no video. Pass camera_key_map={observed: declared} "
-                "to remap (e.g. {%r: %r}), or declare cameras with names matching the streams.",
-                sorted(k[len("observation.images.") :] for k in stripped_cam_keys),
-                sorted(k[len("observation.images.") :] for k in declared_cam_keys),
-                next(iter(sorted(stripped_cam_keys)))[len("observation.images.") :],
-                next(iter(sorted(declared_cam_keys)))[len("observation.images.") :],
-            )
+        # A declared image column this frame leaves empty is refused, not
+        # warned about: LeRobot's "Missing features" branch rejects the write,
+        # so the choice is between its report - which names the dataset column
+        # only - and one that names the two camera names and the remedy. The
+        # check is on the columns the schema declares, not on how many observed
+        # streams happened to match: an EXTRA debug view alongside a full set of
+        # declared cameras is the normal path and stays silent, while the near
+        # miss that drops one of three names is the case that used to.
+        if gap := unrecordable_camera_columns_error(frame_cam_keys_final, declared_cam_keys, stripped_cam_keys):
+            raise ValueError(gap)
 
         # Add to dataset
         try:

@@ -930,6 +930,37 @@ reported success; and every non-empty string is truthy, so `strict="false"` - th
 spelling reached for to opt out - selected fail-fast and then named `strict=True`
 in the message above whatever the caller wrote.
 
+### A declared camera every frame leaves empty is refused by name
+
+A frame is graded against the schema in both directions. An observed camera the
+schema does **not** declare is dropped, so an extra debug view cannot fail the
+write. The mirror case is not survivable: LeRobot's `validate_frame` reports a
+declared feature a frame omits as `Missing features` and rejects the frame, and
+because camera names do not change between steps it rejects **every** frame of
+the episode - nothing is recorded at all.
+
+That is refused at `add_frame`, naming the declared column left empty, the
+observed stream that was dropped, and the remedy:
+
+```
+Recorded image column(s) ['wrist'] carry no image in this frame, while the
+observed camera stream(s) ['wrist_cam'] are not declared. LeRobot refuses a
+frame that leaves a declared feature empty, so this frame - and every later
+one, the camera names do not change - cannot be recorded. Pass
+camera_key_map={'wrist_cam': 'wrist'} to remap, or declare cameras whose names
+match the streams.
+```
+
+The condition is *a declared column with no image*, not *how many observed
+streams matched*. Getting two camera names of three right is the likeliest
+version of this mistake and used to be the quiet one - the recording died on
+LeRobot's report, which names the dataset column but neither camera name nor the
+remap that reconciles them. A scene streaming an extra camera alongside a full
+set of declared ones is unaffected and stays silent.
+
+This is the camera sibling of the state and action column refusals: a declared
+column is a promise the frame has to keep, whatever kind of column it is.
+
 ### An episode the recorder cannot flush stops a recorded evaluation
 
 `save_episode` is the episode-level counterpart, and a failed flush is worse than
