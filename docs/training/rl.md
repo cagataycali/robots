@@ -39,7 +39,22 @@ observation vector from named `get_observation` keys and the step reward from
 any reward terms you pass (each a `Callable[[SimEngine], float]`). It uses the holosoma
 `actor_obs_keys` / `critic_obs_keys` split: the actor sees only deployable
 observations, while the critic may additionally see privileged simulation-only
-keys (asymmetric actor-critic).
+keys (asymmetric actor-critic). The critic observation is `actor_obs_keys`
+followed by each `critic_obs_keys` entry not already among them, so naming a
+privileged key adds to what the critic sees rather than replacing it, repeating
+an actor key adds nothing, and both `None` and `[]` leave the critic symmetric:
+
+```python
+env = SimEnv(
+    engine,
+    actor_obs_keys=["Elbow", "Elbow.vel"],   # what the deployed policy sees
+    critic_obs_keys=["Jaw"],                 # privileged, sim-only, additional
+    reward_terms=[elbow_reach_reward],
+    action_dim=6,
+)
+assert env.actor_obs_keys == ["Elbow", "Elbow.vel"]           # num_actor_obs  == 2
+assert env.critic_obs_keys == ["Elbow", "Elbow.vel", "Jaw"]   # num_critic_obs == 3
+```
 
 ```python
 import strands_robots as sr

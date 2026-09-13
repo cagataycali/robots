@@ -10,9 +10,12 @@ trainer code is shaped the same way it would be for a future vectorized backend
 The observation contract is the holosoma ``actor_obs_keys`` / ``critic_obs_keys``
 split: the actor sees ``actor_obs_keys`` (deployable on hardware), the critic may
 additionally see privileged simulation-only keys via ``critic_obs_keys``
-(asymmetric actor-critic). Each key is a scalar entry of
-``SimEngine.get_observation`` (e.g. a joint position ``"Elbow"`` or velocity
-``"Elbow.vel"``); the vector is the keys concatenated in the given order.
+(asymmetric actor-critic). Additionally is literal - the critic observation is
+``actor_obs_keys`` followed by each ``critic_obs_keys`` entry not already among
+them, so naming a privileged key never costs the critic the state the actor
+sees. Each key is a scalar entry of ``SimEngine.get_observation`` (e.g. a joint
+position ``"Elbow"`` or velocity ``"Elbow.vel"``); the vector is the keys
+concatenated in the given order.
 
 The action contract is the other half: ``step`` sends a numeric vector, which
 ``SimEngine.send_action`` binds positionally to
@@ -81,6 +84,40 @@ _NUMERIC_DOMAINS: dict[str, Callable[[Any, str, str], str | None]] = {
 }
 
 
+def _critic_observation_keys(actor_keys: list[str], privileged: Sequence[str] | None) -> list[str]:
+    """Compose the critic's observation keys from the actor's plus privileged ones.
+
+    The asymmetric actor-critic split is additive: the critic sees everything the
+    actor sees and *may* see more - privileged simulation-only quantities the
+    deployed policy cannot read. So the composed list is ``actor_keys`` in order,
+    then each privileged key not already among them. A critic that saw only the
+    privileged keys would have lost the state it is estimating a value for, which
+    is strictly worse than the symmetric default.
+
+    A repeat is dropped rather than appended because the observation is the keys
+    concatenated: naming an actor key again would widen the critic observation
+    with a second copy of a scalar it already holds, and that width sizes the
+    trainers' value/Q heads and is stamped into a checkpoint as
+    ``num_critic_obs``.
+
+    Args:
+        actor_keys: The actor's observation keys, in the order it sees them.
+        privileged: Extra keys for the critic, or ``None`` for a symmetric
+            critic. An empty sequence means the same thing as ``None``: there is
+            nothing to add, not "the critic observes nothing".
+
+    Returns:
+        The critic's observation keys, in order.
+    """
+    keys = list(actor_keys)
+    seen = set(keys)
+    for key in privileged or ():
+        if key not in seen:
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
 class SimEnv:
     """Single-environment RL wrapper around a :class:`SimEngine`.
 
@@ -98,9 +135,12 @@ class SimEnv:
             integer.
         robot_name: Robot to observe / drive. Defaults to the engine's first
             registered robot.
-        critic_obs_keys: Optional privileged keys appended to the critic
-            observation (asymmetric actor-critic). Defaults to ``actor_obs_keys``
-            (symmetric).
+        critic_obs_keys: Optional privileged simulation-only keys the critic
+            sees in addition to the actor's (asymmetric actor-critic). The
+            critic observation is ``actor_obs_keys`` followed by these, so a key
+            the actor already sees adds nothing and ``None`` - or an empty
+            sequence - leaves the critic symmetric. Each must be a scalar
+            ``get_observation`` key, like the actor's.
         max_episode_steps: Steps before the episode is truncated (time-out).
             Must be a positive whole number; ``0`` reports a time-out on the
             first step, so every episode is over before it begins.
@@ -163,7 +203,7 @@ class SimEnv:
                 raise ValueError(problem)
         self.engine = engine
         self.actor_obs_keys = list(actor_obs_keys)
-        self.critic_obs_keys = list(critic_obs_keys) if critic_obs_keys is not None else list(actor_obs_keys)
+        self.critic_obs_keys = _critic_observation_keys(self.actor_obs_keys, critic_obs_keys)
         self.reward_terms = list(reward_terms)
         # The conversions below normalize, they do not validate. Each domain above
         # deliberately admits more spellings than the field annotation names (an

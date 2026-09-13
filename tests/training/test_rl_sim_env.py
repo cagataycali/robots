@@ -6,7 +6,9 @@ lifecycle hooks (custom ``reset_fn``, stateful reward-term ``reset``), plus the
 ``close`` no-op contract that keeps ``SimEnv`` interface-compatible with
 ``VecSimEnv`` / ``GymSimEnv``. These are behaviors the RL trainers rely on: a
 typo in obs keys or a missing action dim must fail loudly at construction, not
-mid-rollout.
+mid-rollout. Also pins the asymmetric actor-critic observation contract: the
+critic sees the actor's keys plus any privileged ones, so a privileged key never
+costs the critic the state it is valuing.
 """
 
 from __future__ import annotations
@@ -45,6 +47,17 @@ class _OneJointEngine:
 
     def send_action(self, action, robot_name=None, n_substeps: int = 1) -> dict:
         return {"status": "success"}
+
+
+class _PrivilegedEngine(_OneJointEngine):
+    """``_OneJointEngine`` plus ``cube_dist`` - a key only the simulator can read.
+
+    That is the shape ``critic_obs_keys`` exists for: a quantity available while
+    training in sim but not to the policy once it is deployed on hardware.
+    """
+
+    def get_observation(self, robot_name=None, *, skip_images: bool = False) -> dict:
+        return {"J": 0.0, "J.vel": 1.0, "cube_dist": 2.0}
 
 
 class _NoRobotEngine(_OneJointEngine):
@@ -209,3 +222,58 @@ def test_step_truncation_boundary_is_exact() -> None:
     _, _, done2, info2 = env.step(torch.zeros(1, 1))
     assert float(done2.reshape(-1)[0]) == 1.0  # step 2 == limit -> time-out
     assert info2["time_out"] is True
+
+
+class TestCriticObservationComposition:
+    """The critic observes the actor's keys plus the privileged ones, not instead.
+
+    ``critic_obs_keys`` names the *extra*, simulation-only keys of an asymmetric
+    actor-critic. Reading it as the critic's whole observation silently costs the
+    critic every actor key the moment one privileged key is named: the value/Q
+    head is then sized for, and fed, a vector that no longer contains the state
+    whose value it is estimating, and training runs to completion reporting a
+    loss either way.
+    """
+
+    @staticmethod
+    def _env(critic_obs_keys: object = "unset") -> SimEnv:
+        kwargs = {} if critic_obs_keys == "unset" else {"critic_obs_keys": critic_obs_keys}
+        return SimEnv(
+            _engine(_PrivilegedEngine()),
+            actor_obs_keys=["J", "J.vel"],
+            reward_terms=[lambda e: 1.0],
+            action_dim=1,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    def test_a_privileged_key_is_added_to_the_actor_keys(self) -> None:
+        env = self._env(["cube_dist"])
+        assert env.critic_obs_keys == ["J", "J.vel", "cube_dist"]
+        assert env.num_critic_obs == 3
+        assert env.num_actor_obs == 2
+
+    def test_the_critic_vector_carries_the_actor_values_and_then_the_privileged_one(self) -> None:
+        # The values, not just the key list: the vector is what reaches the head.
+        obs = self._env(["cube_dist"]).reset()
+        assert obs["actor_obs"].reshape(-1).tolist() == [0.0, 1.0]
+        assert obs["critic_obs"].reshape(-1).tolist() == [0.0, 1.0, 2.0]
+
+    def test_repeating_an_actor_key_does_not_widen_the_critic_observation(self) -> None:
+        # A second copy of a scalar the critic already holds is not information,
+        # and the width it would add is stamped into a checkpoint.
+        env = self._env(["J", "cube_dist"])
+        assert env.critic_obs_keys == ["J", "J.vel", "cube_dist"]
+        assert env.num_critic_obs == 3
+
+    def test_an_empty_privileged_list_leaves_the_critic_symmetric(self) -> None:
+        # "nothing to add", not "the critic observes nothing" - a zero-width
+        # critic observation is not a configuration any caller can want.
+        env = self._env([])
+        assert env.critic_obs_keys == ["J", "J.vel"]
+        assert env.num_critic_obs == 2
+
+    def test_omitting_the_privileged_keys_leaves_the_critic_symmetric(self) -> None:
+        # Control: the documented default was already correct and is unchanged.
+        env = self._env()
+        assert env.critic_obs_keys == ["J", "J.vel"]
+        assert env.num_critic_obs == 2

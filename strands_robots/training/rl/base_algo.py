@@ -64,9 +64,11 @@ class RLTrainSpec(TrainSpec):
             :class:`~strands_robots.training.rl.env.SimEnv` enforces them. Kept
             on the spec so a plan advisor can echo the observation contract
             without constructing the env.
-        critic_obs_keys: Privileged simulation-only keys appended to the critic
-            observation (asymmetric actor-critic), defaulting to
-            ``actor_obs_keys``. Same source of truth as that field.
+        critic_obs_keys: Privileged simulation-only keys the critic sees in
+            addition to ``actor_obs_keys`` (asymmetric actor-critic). Same
+            source of truth as that field, including the composition: the critic
+            observation is the actor's keys followed by these, so the empty
+            default is the symmetric spelling.
         gamma: Discount factor.
         lam: GAE-lambda.
         clip_param: PPO clip range (also clips the value loss).
