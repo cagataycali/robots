@@ -423,6 +423,10 @@ be driven. Only a boolean names either posture - `ros2_bridge` and
 `"false"` is refused rather than reading as the truthy value it is and opening
 the surface it asks to close. A daemon thread spins the node so inbound commands are serviced
 concurrently with publishing, and it is torn down cleanly on `cleanup()`/`stop()`.
+That teardown is best-effort: a node destroyed on a context another
+component already shut down is reported at WARNING and `cleanup()` carries
+on to disconnect the motors bus and the cameras, because a bridge that will
+not release must not leave the serial port held or the arm energised.
 
 Because the inbound `joint_command` topic drives the physical arm, two guards
 harden it (both threaded through `Robot()`):

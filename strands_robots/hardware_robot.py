@@ -3159,7 +3159,23 @@ class Robot(TeleopMixin, AgentTool):
                     )
 
             # Tear down the ROS 2 telemetry bridge if one was created.
-            self._shutdown_ros_bridge()
+            # Guarded like the mesh and teleop steps above, and for a stronger
+            # reason: this is the last step before the devices close, so a
+            # ``destroy_node()`` on a context another component already shut
+            # down would reach the handler at the bottom of this method and
+            # skip the disconnect entirely -- leaving the serial port held and
+            # the arm energised at its last commanded position, with nothing
+            # left that would close either. The sim engine already suppresses
+            # this same call; a software resource that will not release must
+            # not decide whether the physical ones do.
+            try:
+                self._shutdown_ros_bridge()
+            except Exception as ros_exc:  # noqa: BLE001
+                logger.warning(
+                    "%s: ROS 2 bridge shutdown raised during cleanup: %s",
+                    self.tool_name_str,
+                    ros_exc,
+                )
 
             # Close the devices last, once every source of commands is down.
             # ``send_action`` re-opens the robot lazily on a command that finds

@@ -42,6 +42,9 @@ What these tests pin:
     - a half-open robot (``is_connected`` False with the port still open) still
       gets that port closed, which is the state no other entry point can reach;
     - a driver exposing no ``disconnect`` at all is not an error;
+    - a ROS bridge whose shutdown raises does not keep the devices open either:
+      it is the last step before the disconnect, so an unguarded one skipped the
+      disconnect altogether and the port stayed held for the life of the process;
     - the devices close *last*, after the mesh and the ROS bridge, and after the
       executor has drained -- ``send_action`` re-opens the robot lazily, so a
       port closed while any command source is still live gets re-opened behind
@@ -218,13 +221,21 @@ class _Mesh:
 
 
 class _Bridge:
-    """ROS 2 bridge double, torn down by ``_shutdown_ros_bridge()``."""
+    """ROS 2 bridge double, torn down by ``_shutdown_ros_bridge()``.
 
-    def __init__(self, log: list[str]) -> None:
+    ``raises`` models a ``destroy_node()`` on a context another component
+    already shut down, which is what ``HardwareRosBridge.shutdown()`` lets
+    through: its own ``try/finally`` clears the handle but adds no ``except``.
+    """
+
+    def __init__(self, log: list[str], *, raises: bool = False) -> None:
         self.log = log
+        self.raises = raises
 
     def shutdown(self) -> None:
         self.log.append("ros_bridge.shutdown")
+        if self.raises:
+            raise RuntimeError("failed to destroy node /strands_robots: invalid handle")
 
 
 def _make_robot(driver: Any) -> HwRobot:
@@ -445,3 +456,64 @@ class TestTheDevicesCloseLast:
         assert driver.commands == [{"j0.pos": 2.0}]
         assert driver.bus.connect_calls == 1  # never re-opened
         assert driver.bus.is_connected is False
+
+
+class TestABridgeThatWillNotShutDownCannotKeepTheDevicesOpen:
+    """The ROS bridge is the last teardown step before the devices close.
+
+    Every other best-effort step in ``cleanup()`` -- the teleop loop, the
+    running task, the mesh client -- is guarded where it is called, because a
+    software resource that will not release must not decide whether the
+    physical ones do. The bridge shutdown was the one step that was not, and
+    it sits immediately before the only step that frees the serial port, so a
+    ``destroy_node()`` on an already-shut context reached ``cleanup()``'s outer
+    handler and skipped the disconnect entirely: port held, arm energised at
+    its last commanded position, and nothing left that would close it. The sim
+    engine already suppresses the same call -- the guard was missing on the one
+    path where the consequence is physical.
+    """
+
+    def test_the_devices_still_close(self) -> None:
+        """The port is free and every camera is shut, through the driver's own
+        ``disconnect()`` -- which is where torque disable and gripper release
+        live, and the reason a skipped teardown leaves the arm powered.
+
+        The robot stays referenced for the assertions, which is what a caller
+        does: hold it in a fleet, tear it down, keep the handle. Dropping it
+        instead would let ``__del__`` call ``cleanup()`` a second time, and that
+        repeat finds ``_ros_bridge`` already cleared and so reaches the
+        disconnect the first call skipped -- the leak recovers only for a robot
+        nobody holds, and only once the collector runs.
+        """
+        port = _Port()
+        log: list[str] = []
+        driver = _arm(port, log=log)
+        hw = _make_robot(driver)
+        hw.mesh = _Mesh(log)
+        hw._ros_bridge = _Bridge(log, raises=True)
+        asyncio.run(hw._connect_robot())
+
+        hw.cleanup()
+
+        assert log.index("ros_bridge.shutdown") < log.index("robot.disconnect")
+        assert driver.disconnect_calls == 1
+        assert driver.bus.disconnect_calls == [True]
+        assert driver.cameras["wrist"].is_connected is False
+        assert port.held_by is None
+
+    def test_the_bridge_failure_is_warned_and_the_handle_cleared(self, caplog: pytest.LogCaptureFixture) -> None:
+        """The failure is reported at WARNING, like the sibling mesh and teleop
+        steps, rather than swallowed -- and the handle is still cleared, so a
+        repeat ``cleanup()`` does not shut the same bridge twice."""
+        port = _Port()
+        log: list[str] = []
+        hw = _make_robot(_arm(port, log=log))
+        hw._ros_bridge = _Bridge(log, raises=True)
+        asyncio.run(hw._connect_robot())
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.hardware_robot"):
+            hw.cleanup()
+
+        assert any("ROS 2 bridge shutdown raised during cleanup" in r.getMessage() for r in caplog.records)
+        assert hw._ros_bridge is None
+        assert log.count("ros_bridge.shutdown") == 1
