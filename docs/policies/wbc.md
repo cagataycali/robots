@@ -268,7 +268,11 @@ policy = CompositePolicy(
 
 Each child contributes only its own joint group; a genuine ownership conflict
 is raised, never silently resolved, and the merged chunk length is the shorter
-of the two so the per-tick controller is never starved. `lower_obs_keys` /
+of the two so the per-tick controller is never starved. An explicit group is
+exclusive either way round - the child it names is the only one allowed to
+command those joints, so a whole-body manipulation policy paired with
+`lower_joints=WBC_G1_LEG_WAIST_JOINTS` is refused rather than allowed to drive
+the waist on the ticks the balance controller happens not to command it. `lower_obs_keys` /
 `upper_obs_keys` optionally narrow what each child is queried with, and a subset
 sharing no key with the observation is refused - a balance controller reading
 nothing runs open-loop. Run the composite like a bare policy; the torque shim is
