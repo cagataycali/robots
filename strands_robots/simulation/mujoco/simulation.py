@@ -792,6 +792,21 @@ class MuJoCoSimEngine(
         Callers must NOT mutate the model without holding self._lock.
         Use action methods (set_gravity, set_timestep, etc.) instead.
 
+        Read this property again after every scene mutation; do not cache the
+        object across one. Every op that recompiles the MJCF - ``add_object``,
+        ``add_camera``, ``add_robot``, the ``remove_*`` family, ``load_scene``
+        - goes through ``spec.recompile``, which ALLOCATES a new model and data
+        and installs them in place of these. A handle taken beforehand is not
+        momentarily stale, it is detached for good: it keeps its own sizes, its
+        own state and its own clock, accepts writes and ``mj_step`` without
+        error, and nothing written into it or read out of it ever reaches this
+        engine again. Measured on ``so101`` plus one ``add_object`` - the held
+        model reports ``nq`` 6 against the live 13, and a ``qpos`` written
+        through the held data reads back 0.0 from ``get_observation``. The
+        mj_step race below is the momentary one; reading between steps is no
+        remedy for this, because there is no moment at which the detached pair
+        agrees again.
+
         Warning: reads also race with a running PolicyRunner worker's mj_step
         (which mutates model arrays in-place for warm-start caches). For agent
         flows via stream()/dispatch, serialization is handled automatically.
@@ -806,6 +821,13 @@ class MuJoCoSimEngine(
 
         Callers must NOT mutate data without holding self._lock.
         Use action methods (send_action, step, etc.) instead.
+
+        Read this property again after every scene mutation; do not cache the
+        object across one. ``add_object``, ``add_camera``, ``add_robot``, the
+        ``remove_*`` family and ``load_scene`` each recompile the MJCF through
+        ``spec.recompile``, which ALLOCATES a new data and installs it in place
+        of this one, so a handle taken beforehand is detached rather than stale
+        - see :attr:`mj_model` for the measurement.
 
         Warning: reads race with a running PolicyRunner worker's mj_step.
         For agent flows via stream()/dispatch, the lock is held automatically.
