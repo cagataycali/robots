@@ -37,6 +37,7 @@ import strands_robots.hardware_rtps_bridge as rtps_mod
 from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.utils import positive_finite_number_error
+from tests._blocked_module import blocked
 
 #: Values that cannot pace a loop, one per way of failing to name a cadence.
 UNUSABLE_PERIODS: list[Any] = [
@@ -308,7 +309,7 @@ class TestARefusedPeriodReachesNoTransport:
             HardwareRosBridge(spin_period=value)
 
     def test_a_usable_period_still_reaches_the_rclpy_probe(self) -> None:
-        with pytest.raises(ImportError, match="rclpy"):
+        with blocked("rclpy"), pytest.raises(ImportError, match="rclpy"):
             HardwareRosBridge(spin_period=0.02)
 
 
@@ -334,7 +335,7 @@ class TestARefusedSpinPeriodLeavesTheProcessEnvironmentAlone:
         monkeypatch.setenv("ROS_DOMAIN_ID", "7")
         import os
 
-        with pytest.raises(ImportError):
+        with blocked("rclpy"), pytest.raises(ImportError):
             HardwareRosBridge(domain_id=11, spin_period=0.02)
         assert os.environ["ROS_DOMAIN_ID"] == "11"
 

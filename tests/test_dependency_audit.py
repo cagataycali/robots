@@ -163,6 +163,8 @@ import pytest  # noqa: E402
 from packaging.requirements import Requirement  # noqa: E402
 from packaging.version import Version  # noqa: E402
 
+from tests._blocked_module import blocked  # noqa: E402
+
 
 def _lerobot_extra_requirement() -> Requirement:
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
@@ -1710,26 +1712,14 @@ def test_the_rclpy_refusals_name_the_step_that_supplies_it() -> None:
     """Both rclpy refusals must point at sourcing a distro, not at installing it.
 
     Asserted on the messages the two production sites really raise, with the
-    import forced to fail so the check holds whether or not the interpreter
-    running the suite happens to have a ROS 2 distro sourced.
+    import made to fail so the check holds whether or not the interpreter
+    running the suite has a ROS 2 distro sourced. That takes ``blocked``, not a
+    ``sys.meta_path`` finder: an import consults ``sys.modules`` first and only
+    reaches the finders when it misses, so a finder refusing ``rclpy`` is
+    bypassed entirely once anything in the session has imported it, and the
+    refusal under test never runs.
     """
-    from strands_robots import utils
-
-    class _BlockRclpy:
-        """Meta-path finder that makes ``import rclpy`` fail."""
-
-        def find_spec(self, name: str, path: object = None, target: object = None) -> None:
-            """Refuse ``rclpy`` and defer every other name to the real finders."""
-            if name == "rclpy" or name.startswith("rclpy."):
-                raise ImportError("rclpy blocked for this test")
-            return None
-
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(sys, "meta_path", [_BlockRclpy(), *sys.meta_path])
-        # A fresh cache, restored on exit: require_optional short-circuits on a
-        # module it has already resolved.
-        patch.setattr(utils, "_lazy_modules", {})
-
+    with blocked("rclpy"):
         from strands_robots.hardware_robot import Robot
         from strands_robots.ros_telemetry import RosTelemetryBridge
 

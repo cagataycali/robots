@@ -63,6 +63,7 @@ from strands_robots.ros_telemetry import (
     RosTelemetryBridge,
     _qos_history_depth_error,
 )
+from tests._blocked_module import blocked
 
 #: Values that cannot name a KEEP_LAST history depth, one per way of missing it.
 UNUSABLE_DEPTHS: list[Any] = [
@@ -242,7 +243,7 @@ class TestARefusedDepthLeavesTheProcessEnvironmentAlone:
         monkeypatch.setenv("ROS_DOMAIN_ID", "7")
         # rclpy is optional; the pin lands before it is imported, which is
         # exactly why the guard has to run first.
-        with pytest.raises(ImportError):
+        with blocked("rclpy"), pytest.raises(ImportError):
             RosTelemetryBridge(domain_id=11, qos_depth=10)
         assert os.environ["ROS_DOMAIN_ID"] == "11"
 

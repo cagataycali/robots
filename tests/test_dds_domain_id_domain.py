@@ -42,6 +42,7 @@ from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.ros_telemetry import RosTelemetryBridge
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import MAX_DDS_DOMAIN_ID, dds_domain_id_error
+from tests._blocked_module import blocked
 
 #: Values that cannot name a DDS domain, one per way of missing the domain.
 UNUSABLE_DOMAINS: list[Any] = [
@@ -206,7 +207,7 @@ class TestARefusedDomainLeavesTheProcessEnvironmentAlone:
 
         # rclpy is optional; the pin lands before it is imported, which is
         # exactly why the guard has to run first.
-        with pytest.raises(ImportError):
+        with blocked("rclpy"), pytest.raises(ImportError):
             RosTelemetryBridge(domain_id=11)
         assert os.environ["ROS_DOMAIN_ID"] == "11"
 
