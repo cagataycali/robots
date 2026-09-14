@@ -51,6 +51,9 @@ from strands_robots.simulation.models import SimWorld  # noqa: E402
 from strands_robots.simulation.mujoco import scene_ops  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
+# Resolve at module scope: mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5.
+_SO3_TRN = getattr(mj.mjtTrn, "mjTRN_SO3", None)
+
 _LOGGER = "strands_robots.simulation.mujoco.scene_ops"
 
 # One named body with a named freejoint, and one of each with no name at all.
@@ -250,15 +253,18 @@ class TestActuatorsWithNoUsableHandle:
     def test_an_unresolvable_target_yields_no_key(self, world: SimWorld, break_key: str) -> None:
         model = world._model
         if break_key == "unkeyed transmission":
-            model.actuator_trntype[0] = int(mj.mjtTrn.mjTRN_SO3)
+            if _SO3_TRN is None:
+                pytest.skip("mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5")
+            model.actuator_trntype[0] = int(_SO3_TRN)
         else:
             unnamed = [j for j in range(int(model.njnt)) if not mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, j)]
             assert unnamed, "premise: the scene carries an unnamed joint to re-point at"
             model.actuator_trnid[0][0] = unnamed[0]
         assert scene_ops._actuator_key(model, 0, mj) is None
 
+    @pytest.mark.skipif(_SO3_TRN is None, reason="mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5")
     def test_scene_snapshot_reports_the_actuator_it_cannot_key(self, world: SimWorld, caplog) -> None:
-        world._model.actuator_trntype[0] = int(mj.mjtTrn.mjTRN_SO3)
+        world._model.actuator_trntype[0] = int(_SO3_TRN)
         world._data.ctrl[0] = 0.42
         with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             snapshot = scene_ops._snapshot_scene_state(world)
@@ -376,8 +382,10 @@ class TestUnkeyedTransmissionsAreRefused:
         members = {name: int(getattr(mj.mjtTrn, name)) for name in dir(mj.mjtTrn) if name.startswith("mjTRN")}
         assert len(members) >= 7, "premise: the enum was read, not missed"
         unmapped = {name for name, value in members.items() if scene_ops._actuator_target_kind(value, mj) is None}
-        assert unmapped == {"mjTRN_UNDEFINED", "mjTRN_SO3"}
+        expected = {"mjTRN_UNDEFINED", "mjTRN_SO3"} if _SO3_TRN is not None else {"mjTRN_UNDEFINED"}
+        assert unmapped == expected
 
+    @pytest.mark.skipif(_SO3_TRN is None, reason="mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5")
     def test_an_so3_actuator_is_refused_before_it_can_be_keyed(self) -> None:
         model = mj.MjModel.from_xml_string(
             """
