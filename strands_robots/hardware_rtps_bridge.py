@@ -241,10 +241,13 @@ class HardwareRtpsBridge(RosTelemetryBase):
             self._participant = DomainParticipant(self._domain_id)
 
         self._robot_name = self._safe(self._resolve_robot_name(robot) if robot is not None else "robot")
-        # One writer per robot, as in ``_image_writers`` below and in the rclpy
+        # One writer per TOPIC, as in ``_image_writers`` below and in the rclpy
         # transport's ``_joint_pubs``: ``robot`` is a per-call argument that
         # selects the topic, so caching a single writer would publish every
-        # later robot's state on the first one's topic.
+        # later robot's state on the first one's topic - and keying on the name
+        # rather than on the topic it selects reintroduces exactly that, because
+        # the name -> topic map is neither injective nor, once ``robot`` and
+        # ``camera`` are joined by ``/``, unambiguous.
         self._joint_writers: dict[str, Any] = {}
         self._image_writers: dict[str, Any] = {}
 
@@ -308,13 +311,14 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
         Signature matches ``RosTelemetryBridge.publish_joint_states`` so the
         hardware ``Robot`` telemetry path is transport-agnostic - including the
-        writer being resolved per ``robot``. The writers are lazy, so a bridge
-        only ever advertises the robots it was actually asked to publish.
+        writer being resolved per topic. The writers are lazy, so a bridge only
+        ever advertises the topics it was actually asked to publish on.
         """
-        writer = self._joint_writers.get(robot)
+        topic = self.joint_states_topic(robot)
+        writer = self._joint_writers.get(topic)
         if writer is None:
-            writer = self._make_writer(self.joint_states_topic(robot), self._JointState)
-            self._joint_writers[robot] = writer
+            writer = self._make_writer(topic, self._JointState)
+            self._joint_writers[topic] = writer
         msg = self._JointState(
             header=self._header(self._safe(robot)),
             name=list(names),
@@ -328,11 +332,11 @@ class HardwareRtpsBridge(RosTelemetryBase):
         """Publish one RGB ``Image`` on ``/<robot>/<camera>/image_raw``."""
         if image.ndim != 3 or image.shape[2] != 3:
             return
-        key = f"{robot}/{camera}"
-        writer = self._image_writers.get(key)
+        topic = self.image_topic(robot, camera)
+        writer = self._image_writers.get(topic)
         if writer is None:
-            writer = self._make_writer(self.image_topic(robot, camera), self._Image)
-            self._image_writers[key] = writer
+            writer = self._make_writer(topic, self._Image)
+            self._image_writers[topic] = writer
         height, width = int(image.shape[0]), int(image.shape[1])
         msg = self._Image(
             header=self._header(f"{self._safe(robot)}/{self._safe(camera, fallback='camera')}"),

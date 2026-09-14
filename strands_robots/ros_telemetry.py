@@ -583,18 +583,38 @@ class RosTelemetryBridge(RosTelemetryBase):
         return self._node.get_clock().now().to_msg()
 
     def _joint_publisher(self, robot: str) -> Any:
-        pub = self._joint_pubs.get(robot)
+        """The one publisher advertising ``robot``'s ``joint_states`` topic.
+
+        Cached under the topic, not under *robot*: a publisher is identified by
+        the topic it publishes on, and :meth:`_safe` is documented as not
+        injective, so two robot names can select one topic. Keyed on the name
+        instead, each spelling advertised its own publisher on that shared
+        topic - one bridge appearing twice in ``ros2 topic info`` for one robot.
+        """
+        topic = self.joint_states_topic(robot)
+        pub = self._joint_pubs.get(topic)
         if pub is None:
-            pub = self._node.create_publisher(self._JointState, self.joint_states_topic(robot), self._qos_depth)
-            self._joint_pubs[robot] = pub
+            pub = self._node.create_publisher(self._JointState, topic, self._qos_depth)
+            self._joint_pubs[topic] = pub
         return pub
 
     def _image_publisher(self, robot: str, camera: str) -> Any:
-        key = f"{robot}/{camera}"
-        pub = self._image_pubs.get(key)
+        """The one publisher advertising ``robot``/``camera``'s image topic.
+
+        Cached under the topic for the reason in :meth:`_joint_publisher`, and
+        for a second one that is a wrong answer rather than a duplicate: the
+        former key joined the two names with ``/``, which is a character both
+        may contain, so ``("arm", "wrist/rgb")`` and ``("arm/wrist", "rgb")``
+        produced one key for two different topics. The second caller was handed
+        the first's publisher and its frames went out on ``/arm/wrist_rgb`` -
+        a topic it never named, silently, because DDS matching is by topic name
+        and the reader it expected simply never appeared.
+        """
+        topic = self.image_topic(robot, camera)
+        pub = self._image_pubs.get(topic)
         if pub is None:
-            pub = self._node.create_publisher(self._Image, self.image_topic(robot, camera), self._qos_depth)
-            self._image_pubs[key] = pub
+            pub = self._node.create_publisher(self._Image, topic, self._qos_depth)
+            self._image_pubs[topic] = pub
         return pub
 
     def publish_joint_states(self, robot: str, names: list[str], positions: list[float]) -> None:

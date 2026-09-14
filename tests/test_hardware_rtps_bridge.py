@@ -530,6 +530,149 @@ def test_the_rtps_and_rclpy_transports_advertise_the_same_per_robot_topics(
     assert rtps_topics == sorted(dds_topic_name(topic) for topic in created)
 
 
+#: Call sequences in which the caller-supplied names and the topics they select
+#: do not correspond one-to-one, which is the only place a cache keyed on the
+#: names can disagree with one keyed on the topic. Both are reachable: a scene
+#: may hold cameras named ``arm0/wrist`` and ``arm0__wrist`` (both forms are
+#: documented as legal, and ``camera_schema_key`` names that very pair as the
+#: collision its dataset-side guard exists for), and ``robot``/``camera`` may
+#: each contain the ``/`` the former cache key joined them with.
+_AMBIGUOUS_IMAGE_CALLS = (
+    pytest.param(
+        [("so101", "arm0/wrist"), ("so101", "arm0__wrist"), ("so101", "default")],
+        id="two_camera_spellings_naming_one_topic",
+    ),
+    pytest.param(
+        [("arm", "wrist/rgb"), ("arm/wrist", "rgb")],
+        id="one_slash_joined_key_naming_two_topics",
+    ),
+)
+
+
+def _rclpy_cache_stub() -> Any:
+    """A ``RosTelemetryBridge`` whose publishers record the topic they were made for.
+
+    Subclassed with the rclpy-dependent constructor replaced, so the real
+    ``publish_joint_states`` / ``publish_image`` and their real publisher caches
+    run with no ROS 2 distro installed.
+    """
+    from types import SimpleNamespace
+
+    from strands_robots.ros_telemetry import RosTelemetryBridge
+
+    class _Pub:
+        def __init__(self, topic: str) -> None:
+            self.topic = topic
+            self.samples: list[Any] = []
+
+        def publish(self, msg: Any) -> None:
+            self.samples.append(msg)
+
+    class _Node:
+        def __init__(self) -> None:
+            self.pubs: list[_Pub] = []
+
+        def create_publisher(self, _msg_type: Any, topic: str, _depth: int) -> _Pub:
+            pub = _Pub(topic)
+            self.pubs.append(pub)
+            return pub
+
+    class _StubBridge(RosTelemetryBridge):
+        def __init__(self) -> None:
+            self._node = _Node()
+            self._joint_pubs = {}
+            self._image_pubs = {}
+            self._qos_depth = 10
+            self._JointState = lambda: SimpleNamespace(header=_Header(), name=[], position=[])
+            self._Image = lambda: SimpleNamespace(header=_Header())
+
+        def _now(self) -> Any:
+            return None
+
+    return _StubBridge()
+
+
+def _samples_per_topic(entities: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entity in entities:
+        counts[entity.topic] = counts.get(entity.topic, 0) + len(entity.samples)
+    return counts
+
+
+@pytest.mark.parametrize("calls", _AMBIGUOUS_IMAGE_CALLS)
+def test_both_transports_hold_one_image_publisher_per_topic(
+    fake_cyclonedds: dict[str, Any], calls: list[tuple[str, str]]
+) -> None:
+    """A publisher is identified by its topic, so the cache must be keyed on it.
+
+    Keyed on the caller's spelling instead, the name -> topic map's two failures
+    each produced a wrong graph. It is not injective, so two camera spellings of
+    one topic advertised two publishers on it - one bridge appearing twice in
+    ``ros2 topic info`` for one camera. And the key joined ``robot`` and
+    ``camera`` with ``/``, a character both may contain, so two pairs naming two
+    different topics shared one key: the second caller was handed the first's
+    publisher and its frames went out on a topic it never named, silently,
+    because DDS matching is by topic name and the reader it expected never
+    appeared.
+
+    Both claims reduce to one measurement, made on both transports so they
+    cannot come to disagree: every frame lands on the topic its own call names,
+    and there is exactly one publisher per distinct topic named.
+    """
+    from strands_robots.ros_telemetry import RosTelemetryBridge
+    from strands_robots.rtps.mangling import dds_topic_name
+
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    expected = {RosTelemetryBridge.image_topic(robot, camera): 0 for robot, camera in calls}
+    for robot, camera in calls:
+        expected[RosTelemetryBridge.image_topic(robot, camera)] += 1
+    assert len(expected) < len(calls) or len({f"{r}/{c}" for r, c in calls}) < len(calls), (
+        "premise: this sequence must exercise a name/topic mismatch"
+    )
+
+    bridge = _bridge(enable_commands=False)
+    for robot, camera in calls:
+        bridge.publish_image(robot, camera, frame)
+    rtps = _samples_per_topic(fake_cyclonedds["writers"])
+    assert rtps == {dds_topic_name(topic): n for topic, n in expected.items()}
+    assert len(fake_cyclonedds["writers"]) == len(expected)
+
+    stub = _rclpy_cache_stub()
+    for robot, camera in calls:
+        stub.publish_image(robot, camera, frame)
+    assert _samples_per_topic(stub._node.pubs) == expected
+    assert len(stub._node.pubs) == len(expected)
+
+
+def test_both_transports_hold_one_joint_publisher_per_topic(fake_cyclonedds: dict[str, Any]) -> None:
+    """Two robot names selecting one ``joint_states`` topic share its publisher.
+
+    The joint cache has only the non-injectivity half of the problem above - it
+    keys on one name, so there is no join to be ambiguous - but the consequence
+    is the same duplicated advertisement, and the fix is the same key.
+    """
+    from strands_robots.ros_telemetry import RosTelemetryBridge
+    from strands_robots.rtps.mangling import dds_topic_name
+
+    calls = ["front cam", "front-cam"]
+    topic = RosTelemetryBridge.joint_states_topic(calls[0])
+    assert {RosTelemetryBridge.joint_states_topic(r) for r in calls} == {topic}, (
+        "premise: both names must select one topic"
+    )
+
+    bridge = _bridge(enable_commands=False)
+    for robot in calls:
+        bridge.publish_joint_states(robot, ["j0"], [0.0])
+    assert _samples_per_topic(fake_cyclonedds["writers"]) == {dds_topic_name(topic): len(calls)}
+    assert len(fake_cyclonedds["writers"]) == 1
+
+    stub = _rclpy_cache_stub()
+    for robot in calls:
+        stub.publish_joint_states(robot, ["j0"], [0.0])
+    assert _samples_per_topic(stub._node.pubs) == {topic: len(calls)}
+    assert len(stub._node.pubs) == 1
+
+
 def test_shutdown_drops_every_robots_joint_writer(fake_cyclonedds: dict[str, Any]) -> None:
     """Shutdown releases the DDS entities for all robots, not just one.
 
