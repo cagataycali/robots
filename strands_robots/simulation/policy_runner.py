@@ -356,6 +356,72 @@ def success_at_reset_warning(
     )
 
 
+def failure_at_reset_warning(
+    *,
+    surface: str,
+    episodes_completed: int,
+    episodes_failed_at_reset: int,
+) -> str | None:
+    """Warn that episodes were already failed before the policy acted.
+
+    The exact mirror of :func:`success_at_reset_warning`, sampled at the same
+    pre-episode probe and reported the same way. A benchmark spec's ``failure``
+    clause is evaluated only AFTER an applied action, so one that already holds
+    at reset ends the episode on its first step no matter what the policy
+    commands, and ``success_rate`` reports a hard ``0.0`` for every such episode.
+    That is the third route to the hard ``0.0`` this module already reasons about
+    - the other two are a missing criterion (``success_measured=False``) and a
+    ``success`` clause pinned to a constant, both already warned about - and it is
+    the only one reachable through a clause that is entirely well-formed, so no
+    compile-time or name-resolution check can see it: it is a fact about the
+    initial state rather than about the clause.
+
+    It costs more than the success mirror, for a reason particular to where the
+    two clauses are read. The eval loop samples ``is_failure`` BEFORE
+    ``is_success``, so a failure clause true at reset also pre-empts a success the
+    policy would have earned on that step: the episode is scored a failure
+    without the success criterion ever being consulted. In the report it is
+    indistinguishable from a policy that did something catastrophic immediately,
+    which is a legitimate outcome an early-terminating failure clause exists to
+    catch.
+
+    Almost always a threshold on the wrong side of the scene's initial state - a
+    "the object fell" clause whose height sits ABOVE where the object already
+    rests, or a "the base collapsed" clause whose height sits above the robot's
+    spawned stance. The shipped humanoid benchmarks pair a ``base_below_z``
+    collapse line with a per-robot standing height for exactly this reason.
+
+    Deliberately a warning and a reported count rather than a refusal, the same
+    posture as :func:`success_at_reset_warning`: domain randomisation legitimately
+    draws initial states per episode (``on_episode_start``), so a partial count is
+    a fact about those draws rather than a broken spec, and the count is what
+    distinguishes the two. Every reported figure is left as measured.
+
+    Args:
+        surface: Public entry point the warning is reported through, e.g.
+            ``"evaluate_benchmark"`` - so the message points at the call the
+            reader made.
+        episodes_completed: Episodes that ran to a verdict, for the ratio.
+        episodes_failed_at_reset: Episodes among them whose failure criterion
+            already held at reset, before any action was applied.
+
+    Returns:
+        The warning text, or ``None`` when no episode was already failed.
+    """
+    if episodes_failed_at_reset <= 0 or episodes_completed <= 0:
+        return None
+    every = episodes_failed_at_reset >= episodes_completed
+    return (
+        f"{surface}: {episodes_failed_at_reset} of {episodes_completed} episode(s) already "
+        "satisfied the failure criterion at reset, before any action was applied, so "
+        f"{'the' if every else 'that part of the'} reported success_rate / pass_hat_k describes the "
+        "scene's initial state rather than the policy - each such episode ended on its first step "
+        "with the success criterion never consulted. Check the criterion against the initial state "
+        "(e.g. a fall threshold above the object's resting height); the returned json reports this "
+        "as episodes_failed_at_reset."
+    )
+
+
 def stop_when_true_at_reset_warning(*, surface: str) -> str:
     """Warn that a ``stop_when`` clause already held before the policy acted.
 
@@ -4314,6 +4380,7 @@ class PolicyRunner:
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
         episodes_successful_at_reset = 0
+        episodes_failed_at_reset = 0
 
         # #191 - global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
@@ -4444,6 +4511,19 @@ class PolicyRunner:
                     logger.debug("%s.is_success at reset raised %s; not sampled", spec_name, e)
                 if success_at_reset:
                     episodes_successful_at_reset += 1
+                # And the failure criterion, at the same probe and for the same
+                # reason - see :func:`failure_at_reset_warning`. The loop below
+                # reads ``is_failure`` BEFORE ``is_success``, so one that already
+                # holds here ends the episode on its first step with the success
+                # criterion never consulted. Diagnostic only, and not fatal on a
+                # raise, for the reason the success probe above is not.
+                failure_at_reset = False
+                try:
+                    failure_at_reset = bool(spec.is_failure(self.sim))
+                except Exception as e:  # noqa: BLE001 - diagnostic, never fatal
+                    logger.debug("%s.is_failure at reset raised %s; not sampled", spec_name, e)
+                if failure_at_reset:
+                    episodes_failed_at_reset += 1
 
                 success = False
                 failure = False
@@ -4633,6 +4713,7 @@ class PolicyRunner:
                         "info": last_info,
                         "actions_applied": actions_applied,
                         "success_at_reset": success_at_reset,
+                        "failure_at_reset": failure_at_reset,
                     }
                 )
                 # #708 - same per-episode recorder boundary as evaluate().
@@ -4690,6 +4771,13 @@ class PolicyRunner:
         )
         if reset_success_warning is not None:
             logger.warning("%s", reset_success_warning)
+        reset_failure_warning = failure_at_reset_warning(
+            surface="evaluate_benchmark",
+            episodes_completed=n_completed,
+            episodes_failed_at_reset=episodes_failed_at_reset,
+        )
+        if reset_failure_warning is not None:
+            logger.warning("%s", reset_failure_warning)
         # Averaged over the attempts that actually scored a step. An attempt that
         # ended before ``on_step`` ran carries ``None`` and is excluded rather than
         # counted as 0.0, which would drag the peak toward zero for a reason that has
@@ -4715,6 +4803,7 @@ class PolicyRunner:
                         + f" | Actions applied: {total_actions}/{total_steps}"
                         + (f"\n{uncommanded_error}" if uncommanded_error is not None else "")
                         + (f"\n{reset_success_warning}" if reset_success_warning is not None else "")
+                        + (f"\n{reset_failure_warning}" if reset_failure_warning is not None else "")
                     )
                 },
                 {
@@ -4733,6 +4822,12 @@ class PolicyRunner:
                         # measured and the count is what qualifies it.
                         "episodes_successful_at_reset": episodes_successful_at_reset,
                         "reset_success_warning": reset_success_warning,
+                        # Episodes whose FAILURE criterion already held at reset, so
+                        # they ended on their first step with the success criterion
+                        # never consulted. See :func:`failure_at_reset_warning`; the
+                        # rate is left as measured and the count is what qualifies it.
+                        "episodes_failed_at_reset": episodes_failed_at_reset,
+                        "reset_failure_warning": reset_failure_warning,
                         "n_episodes": n_episodes,
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,

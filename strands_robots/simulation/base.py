@@ -4927,6 +4927,24 @@ class SimEngine(ABC):
             episode. ``episodes_successful_at_reset`` and
             ``reset_success_warning`` report the same fact :meth:`eval_policy`
             reports under those names.
+
+            ``episodes_failed_at_reset`` (int) is its mirror for the spec's
+            ``failure`` clause, sampled at the same probe and reported the same
+            way: a clause already satisfied at reset ends the episode on its
+            first step whatever the policy commands, so ``success_rate`` reports
+            a hard 0.0 for it. It costs more than the success mirror, because the
+            eval loop reads ``is_failure`` BEFORE ``is_success`` - such an episode
+            is scored a failure with the success criterion never consulted, and in
+            the report it is indistinguishable from a policy that immediately did
+            something catastrophic. Usually a threshold on the wrong side of the
+            initial state (a fall height above where the object already rests, or
+            a base-collapse height above the robot's spawned stance). Every
+            reported figure is left as measured; ``reset_failure_warning`` carries
+            the qualifying text (``None`` when the count is zero) and each
+            per-episode record carries its own ``failure_at_reset``. A partial
+            count is not an error, for the reason the success mirror's is not.
+            Only this route reports it: :meth:`eval_policy` takes a ``success_fn``
+            and has no failure criterion to sample.
         """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
