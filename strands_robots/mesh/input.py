@@ -42,7 +42,11 @@ from strands_robots.mesh.security import (
     validate_mesh_identifier,
 )
 from strands_robots.mesh.session import hz_from_env
-from strands_robots.utils import partial_construction_repr, positive_finite_number_error
+from strands_robots.utils import (
+    partial_construction_repr,
+    positive_finite_number_error,
+    teleoperator_contract_error,
+)
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -212,6 +216,8 @@ class InputPublisher:
         ValidationError: ``device_name`` is not a valid mesh identifier
             (see :func:`~strands_robots.mesh.security.validate_mesh_identifier`);
             it is interpolated into the published key expression.
+        ValueError: ``hz`` is not a rate this loop can honor, or
+            ``teleoperator`` cannot be polled for an action.
     """
 
     def __init__(
@@ -226,7 +232,8 @@ class InputPublisher:
 
         Args:
             mesh: Live mesh used as the single publish chokepoint.
-            teleoperator: Any object exposing ``get_action() -> dict``.
+            teleoperator: Any object exposing a callable
+                ``get_action() -> dict``.
             device_name: Input-stream name; becomes the last topic segment.
             method: Input-method label ("arm", "gamepad", "keyboard", "phone").
             hz: Publish rate. Must be a positive finite number - the loop
@@ -235,13 +242,21 @@ class InputPublisher:
                 unthrottled, flooding every subscribed peer.
 
         Raises:
-            ValueError: If ``hz`` is not a positive finite number. Refusing at
-                construction is what keeps the rate a contract:
-                :meth:`_publish_loop` runs on a background thread, where the
-                same mistake would surface as a dead publisher that still
-                reports ``running``.
+            ValueError: If ``hz`` is not a positive finite number, or if
+                ``teleoperator`` has no callable ``get_action``. Refusing both at
+                construction is what keeps them contracts:
+                :meth:`_publish_loop` runs on a background thread, where either
+                mistake would surface as a dead publisher that still reports
+                ``running`` - the rate as a loop that never completes a tick, the
+                device as a loop that counts an ``AttributeError`` per tick and
+                falls silent once its logging budget is spent. The device shares
+                :func:`~strands_robots.utils.teleoperator_contract_error` with
+                the local attach door and the mesh publish entry point above it.
         """
         error = positive_finite_number_error(hz, "hz", "InputPublisher")
+        if error:
+            raise ValueError(error)
+        error = teleoperator_contract_error(teleoperator, "teleoperator", "InputPublisher")
         if error:
             raise ValueError(error)
         self.mesh = mesh

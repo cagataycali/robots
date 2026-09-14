@@ -143,7 +143,7 @@ def test_attach_non_teleop_rejected():
     class NoAction:
         pass
 
-    with pytest.raises(ValueError, match="no callable get_action"):
+    with pytest.raises(ValueError, match="must expose a callable get_action"):
         host.attach_teleop(NoAction(), name="bad")
 
 

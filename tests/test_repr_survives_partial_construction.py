@@ -187,6 +187,13 @@ def _fake_mesh() -> Any:
     return _Mesh()
 
 
+class _PollableTeleop:
+    """Satisfies the teleoperator contract - the loop's poll is not under test."""
+
+    def get_action(self) -> dict[str, float]:
+        return {"a.pos": 0.0}
+
+
 class _Robot:
     tool_name_str = "arm"
 
@@ -230,7 +237,7 @@ REFUSALS: list[tuple[type, type[Exception], Any, str]] = [
     (
         InputPublisher,
         ValueError,
-        lambda: InputPublisher(_fake_mesh(), object(), device_name="leader", hz=0),
+        lambda: InputPublisher(_fake_mesh(), _PollableTeleop(), device_name="leader", hz=0),
         "_running",
     ),
     (InputReceiver, ValidationError, lambda: InputReceiver(_fake_mesh(), object(), source_peer_id="**"), "_running"),
@@ -256,7 +263,11 @@ BUILDABLE: list[tuple[str, Any, str]] = [
     ("Mesh", lambda: Mesh(_Robot(), peer_id="arm", peer_type="robot"), "arm"),
     ("PeerInfo", lambda: PeerInfo(peer_id="arm", peer_type="robot", last_seen_mono=0.0), "arm"),
     ("DatasetRecorder", lambda: DatasetRecorder(dataset=_Dataset()), "user/dataset"),
-    ("InputPublisher", lambda: InputPublisher(_fake_mesh(), object(), device_name="leader", hz=50.0), "leader"),
+    (
+        "InputPublisher",
+        lambda: InputPublisher(_fake_mesh(), _PollableTeleop(), device_name="leader", hz=50.0),
+        "leader",
+    ),
     (
         "InputReceiver",
         lambda: InputReceiver(_fake_mesh(), object(), source_peer_id="peer", device_name="leader"),

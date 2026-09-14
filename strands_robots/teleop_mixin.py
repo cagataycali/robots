@@ -50,7 +50,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from strands_robots.utils import name_list_error, positive_finite_number_error
+from strands_robots.utils import (
+    name_list_error,
+    positive_finite_number_error,
+    teleoperator_contract_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -349,11 +353,11 @@ class TeleopMixin:
             device = device_or_spec
             derived_type = getattr(device, "name", None) or type(device).__name__
 
-        if not callable(getattr(device, "get_action", None)):
-            raise ValueError(
-                f"Attached teleoperator {device!r} has no callable get_action(); "
-                "it does not satisfy the teleoperator contract."
-            )
+        # One domain with the mesh publish path: the contract this door has
+        # always graded is the same one ``start_teleop_publish`` and
+        # ``InputPublisher`` consume, so it is stated once.
+        if error := teleoperator_contract_error(device, "device_or_spec", "attach_teleop"):
+            raise ValueError(error)
 
         # Resolve a stable name: explicit > lerobot id > lerobot type > 'leader'.
         resolved = name or getattr(device, "id", None) or getattr(device, "name", None) or "leader"

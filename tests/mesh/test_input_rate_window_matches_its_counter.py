@@ -66,6 +66,13 @@ class _MonotonicClock:
         return 1_700_000_000.0 + self._elapsed
 
 
+class _PollableTeleop:
+    """Satisfies the teleoperator contract - the loop's poll is not under test."""
+
+    def get_action(self) -> dict[str, float]:
+        return {"a.pos": 0.0}
+
+
 class _StubTransport:
     """Mesh stand-in that declares and drops subscriptions like the real one."""
 
@@ -96,12 +103,12 @@ def _build(kind: str, monkeypatch: pytest.MonkeyPatch, clock: _MonotonicClock) -
     if kind == "publisher":
         side = mesh_input.InputPublisher(
             mesh=transport,  # type: ignore[arg-type]
-            teleoperator=object(),
+            teleoperator=_PollableTeleop(),
             device_name="leader",
             hz=TARGET_HZ,
         )
-        # The publish loop is not under test; without this its thread would
-        # poll a teleoperator that has no get_action().
+        # The publish loop is not under test; the counters it fills are driven
+        # directly below, so its thread never has to run.
         monkeypatch.setattr(side, "_publish_loop", lambda: None)
     else:
         side = mesh_input.InputReceiver(

@@ -352,6 +352,13 @@ def test_a_wall_clock_step_does_not_move_the_lidar_state_period(lidar_clock: Ste
 # Input stats: hz_actual
 
 
+class _PollableTeleop:
+    """Satisfies the teleoperator contract - the loop's poll is not under test."""
+
+    def get_action(self) -> dict[str, float]:
+        return {"a.pos": 0.0}
+
+
 class _StubMesh:
     peer_id = "test-peer"
 
@@ -362,7 +369,7 @@ class _StubMesh:
 def _publisher(monkeypatch: pytest.MonkeyPatch) -> Any:
     pub = mesh_input.InputPublisher(
         mesh=_StubMesh(),  # type: ignore[arg-type]
-        teleoperator=object(),
+        teleoperator=_PollableTeleop(),
         device_name="leader",
         hz=50.0,
     )

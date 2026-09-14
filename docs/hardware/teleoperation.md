@@ -312,6 +312,12 @@ The actuation stream rides the documented [`Mesh.publish()`](../mesh.md)
 chokepoint via `start_teleop_publish`. Remote followers consume it with
 `start_teleop_receive` (see [Mesh teleop](robot-control.md#mesh-teleop)).
 
+Every door that accepts a teleoperator grades one contract - a callable
+`get_action()` - whether the device is attached locally, handed to
+`start_teleop_publish`, or used to build an `InputPublisher` directly. A device
+without it is refused at the call rather than starting a session that reports
+running and publishes nothing.
+
 ### Time-boxed / clean teardown
 
 ```python

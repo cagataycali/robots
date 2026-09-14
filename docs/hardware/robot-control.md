@@ -140,6 +140,12 @@ robot.get_teleop_status()
 robot.stop_teleop()   # stop all sessions
 ```
 
+`teleoperator` must expose a callable `get_action()` - the same contract
+`attach_teleop()` grades - because the publish loop polls it every tick. A device
+that does not is refused here, before the publisher already registered under that
+`device_name` is torn down, so a device that could never be polled cannot cost you
+a working stream.
+
 ## Sim vs real
 
 | Feature | Simulation | HardwareRobot |

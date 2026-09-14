@@ -146,10 +146,10 @@ class TestARefusedRateNeverReachesTheMeshPublisher:
     def test_input_publisher_refuses_it_at_construction(self, hz):
         """The publish loop divides by hz on a background thread."""
         with pytest.raises(ValueError, match="hz must be > 0"):
-            InputPublisher(mesh=object(), teleoperator=object(), hz=hz)
+            InputPublisher(mesh=object(), teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
 
     def test_input_publisher_accepts_a_usable_rate(self):
-        pub = InputPublisher(mesh=object(), teleoperator=object(), hz=np.float32(12.5))
+        pub = InputPublisher(mesh=object(), teleoperator=FakeTeleop({"a.pos": 1.0}), hz=np.float32(12.5))
         assert float(pub.hz) == pytest.approx(12.5)
 
 
@@ -287,7 +287,7 @@ class TestTheHardwarePublishEntryPointSharesTheRateDomain:
         result = hw.start_teleop_publish(teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
         entry_refused = result["status"] == "error"
         try:
-            InputPublisher(mesh=_FakeMesh(), teleoperator=object(), hz=hz)
+            InputPublisher(mesh=_FakeMesh(), teleoperator=FakeTeleop({"a.pos": 1.0}), hz=hz)
         except ValueError:
             constructor_refused = True
         else:

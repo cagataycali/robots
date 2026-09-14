@@ -133,16 +133,23 @@ class TestReceiverSourceScoping:
         recv.stop()
 
 
+class _PollableTeleop:
+    """Satisfies the teleoperator contract - the loop's poll is not under test."""
+
+    def get_action(self) -> dict[str, float]:
+        return {"a.pos": 0.0}
+
+
 class TestPublisherDeviceName:
     """A publisher cannot advertise actuator data on a wildcard key either."""
 
     @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
     def test_bad_device_name_rejected(self, bad: str) -> None:
         with pytest.raises(ValidationError, match="InputPublisher.device_name"):
-            InputPublisher(_FakeMesh(), object(), device_name=bad)  # type: ignore[arg-type]
+            InputPublisher(_FakeMesh(), _PollableTeleop(), device_name=bad)  # type: ignore[arg-type]
 
     def test_clean_device_name_keeps_canonical_topic(self) -> None:
-        pub = InputPublisher(_FakeMesh(peer_id="leader-1"), object(), device_name="gamepad")  # type: ignore[arg-type]
+        pub = InputPublisher(_FakeMesh(peer_id="leader-1"), _PollableTeleop(), device_name="gamepad")  # type: ignore[arg-type]
         assert pub.topic == "strands/leader-1/input/gamepad"
 
 

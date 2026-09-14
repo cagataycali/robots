@@ -69,6 +69,7 @@ from strands_robots.utils import (
     refusal_repr,
     require_optional,
     tcp_port_error,
+    teleoperator_contract_error,
 )
 
 if TYPE_CHECKING:
@@ -3412,9 +3413,12 @@ class Robot(TeleopMixin, AgentTool):
         have its hardware follow along.
 
         Args:
-            teleoperator: Any object with a ``get_action() -> dict`` method.
+            teleoperator: Any object with a callable ``get_action() -> dict``.
                 Typically a lerobot Teleoperator (SOLeader, GamepadTeleop,
-                KeyboardTeleop, Phone).
+                KeyboardTeleop, Phone). The publish loop polls it every tick, so
+                a device that does not satisfy that contract is refused here
+                rather than on the loop thread - the same domain
+                :meth:`attach_teleop` grades a locally attached device against.
             device_name: Name for this input stream (e.g. "leader", "gamepad").
             method: Input method label ("arm", "gamepad", "keyboard", "phone").
             hz: Publishing frequency in Hz. Must be a positive finite number;
@@ -3422,27 +3426,34 @@ class Robot(TeleopMixin, AgentTool):
 
         Returns:
             Status dict with topic and peer_id for the receiver to use, or an
-            error dict when the mesh is inactive, ``device_name`` is not a
-            valid mesh identifier, or ``hz`` is not a rate the publish loop
-            can honor.
+            error dict when the mesh is inactive, ``teleoperator`` cannot be
+            polled, ``device_name`` is not a valid mesh identifier, or ``hz`` is
+            not a rate the publish loop can honor.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
 
         from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 
-        # Both arguments are validated up front, before the teardown of any
+        # All three arguments are validated up front, before the teardown of any
         # publisher already registered under this device name: a rejected call
         # must not stop a live stream. ``device_name`` becomes a segment of the
-        # published key expression and a key in ``_input_publishers``, and
-        # ``hz`` sets the publish loop's ``1 / hz`` period. Report through the
-        # tool envelope rather than raising.
+        # published key expression and a key in ``_input_publishers``, ``hz``
+        # sets the publish loop's ``1 / hz`` period, and ``teleoperator`` is what
+        # that loop polls for every frame - a device with no callable
+        # ``get_action`` cannot produce one, so it replaces a working stream with
+        # a session that reports running and publishes nothing. Report through
+        # the tool envelope rather than raising.
         try:
             validate_mesh_identifier(device_name, "start_teleop_publish.device_name")
         except ValidationError as exc:
             return {"status": "error", "content": [{"text": str(exc)}]}
 
         error = positive_finite_number_error(hz, "hz", "start_teleop_publish")
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
+
+        error = teleoperator_contract_error(teleoperator, "teleoperator", "start_teleop_publish")
         if error:
             return {"status": "error", "content": [{"text": error}]}
 

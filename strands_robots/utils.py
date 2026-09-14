@@ -3491,6 +3491,53 @@ def optional_callable_error(value: Any, param: str, context: str) -> str | None:
     return f"{context}: {param} must be callable or None, got {refusal_repr(value)}."
 
 
+def teleoperator_contract_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot serve as a teleoperator.
+
+    The domain for the one collaborator every teleop surface consumes the same
+    way: a device polled for a joint command once per tick. A callable
+    ``get_action`` is the whole contract checked here - what it returns is
+    normalised by the loop that reads it (a dict, an array or a bare scalar all
+    resolve to a flat action), and no signature is inspected, for the reason
+    :func:`optional_callable_error` gives.
+
+    It lives here rather than beside one of its callers because those callers sit
+    in different layers - :mod:`strands_robots.teleop_mixin` holds the local
+    attach door, :class:`strands_robots.hardware_robot.Robot` the mesh publish
+    entry point, and :class:`strands_robots.mesh.input.InputPublisher` the
+    directly-drivable loop underneath it - and the accepted domain must not
+    diverge between them: a device one door turns away cannot be started by the
+    next.
+
+    Every one of those loops polls on a BACKGROUND thread, which is what makes
+    this worth refusing at the door rather than on first poll. A device with no
+    ``get_action`` raises inside the loop body, where the handler counts an error
+    and moves on to the next tick: the session reports ``running``, publishes
+    nothing at all, and falls silent once its logging budget is spent. On the
+    publish entry point the refusal also has to precede the teardown of a
+    publisher already registered under the same device name, or a device that can
+    never be polled costs the caller the working stream it was replacing.
+
+    Args:
+        value: The caller-supplied teleoperator.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            normally the public method name.
+
+    Returns:
+        An error message, or ``None`` when the device can be polled.
+    """
+    if callable(getattr(value, "get_action", None)):
+        return None
+    return (
+        f"{context}: {param} must expose a callable get_action(), got "
+        f"{refusal_repr(value)} - it does not satisfy the teleoperator contract. "
+        "The loop that drives it polls get_action() once per tick on a background "
+        "thread, so a device without one yields a stream that reports running "
+        "while putting no frame on the wire."
+    )
+
+
 def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
     """Return an error message unless *value* is a python or numpy boolean.
 
