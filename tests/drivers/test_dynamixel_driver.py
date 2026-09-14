@@ -1,17 +1,29 @@
 """Tests for :mod:`strands_robots.drivers.dynamixel`.
 
-Two subjects, kept apart so a failure in one does not obscure the other:
+The codec and the driver are graded apart, so a failure in one does not
+obscure the other.
+
+The codec:
 
 * :class:`TestProtocol` grades the wire format against expected bytes. Every
   case works from a known-good frame (either hand-computed from the manual or
   a fixture recorded from the Robotis SDK), so a passing test says the codec
   round-trips a real packet, not that it round-trips itself.
+* :class:`TestByteStuffing` grades the escape the protocol requires around the
+  reserved ``FF FF FD`` run, against the Robotis SDK's own framing.
+* :class:`TestSixteenBitFrameFields` grades the boundary of each two-byte
+  frame field, where a value the field cannot hold would otherwise be
+  truncated into one it can.
+
+The driver:
+
 * :class:`TestDriver` grades the driver's surface, its stub behaviour, and
   its refusal envelopes. Nothing here opens a port; every path is exercised
   by construction, agent-tool invocation, and direct method calls.
+* :class:`TestRegistration` grades which robots resolve to this driver.
 
-Both suites are hardware-free by construction: the codec is pure and the
-driver's I/O paths are the stubs this PR ships.
+Every suite is hardware-free by construction: the codec is pure and the
+driver's I/O paths are stubs.
 """
 
 from __future__ import annotations
@@ -44,6 +56,7 @@ from strands_robots.drivers.dynamixel.protocol import (
     BROADCAST_ID,
     HEADER,
     MAX_UNICAST_ID,
+    RESERVED_RUN,
 )
 
 # ============================================================================
@@ -752,3 +765,160 @@ class TestByteStuffing:
         """Over-reach control for the broadcast path."""
         packet = sync_write_packet(116, 4, [(1, bytes(4)), (2, bytes([0xFF, 0x03, 0x00, 0x00]))])
         assert packet.hex() == "fffffd00fe11008374000400010000000002ff030000ef40"
+
+
+# ============================================================================
+# The frame's 16-bit fields.
+# ============================================================================
+
+
+#: The largest value a Protocol 2.0 ``LEN`` or register address can hold. Both
+#: are two little-endian bytes, so a value above this is not "large" on the
+#: wire - it is a different value, and the codec writes it as one.
+_FIELD_MAX = 0xFFFF
+
+#: The longest ``params`` :func:`build_packet` accepts: ``LEN`` counts ``INST``
+#: plus the parameters plus the two CRC bytes, so this lands ``LEN`` on
+#: :data:`_FIELD_MAX` exactly.
+_LONGEST_PARAMS = _FIELD_MAX - 3
+
+#: Eight reserved runs, padded so escaping them lands ``LEN`` on
+#: :data:`_FIELD_MAX` exactly. Stuffing happens after ``LEN`` is computed, so
+#: this is the largest payload the escape can still fit - and one byte more is
+#: a frame :func:`build_packet` accepts and :func:`_stuff` cannot.
+_ESCAPES_TO_THE_LIMIT = RESERVED_RUN * 8 + bytes(_LONGEST_PARAMS - 8 - 3 * 8)
+
+#: A ``data_length`` whose single-entry parameter block (address 2 + length 2 +
+#: id 1 + data) is the longest :func:`sync_write_packet` can frame.
+_LONGEST_SYNC_DATA_LENGTH = _LONGEST_PARAMS - 5
+
+#: An address :data:`CONTROL_TABLE` does not name, so the register-width gate
+#: has nothing to say about it and the length checks are what answer.
+_UNLISTED_ADDRESS = 0x0100
+
+
+class TestSixteenBitFrameFields:
+    """A value too wide for a frame field is refused, not truncated into it.
+
+    ``LEN`` and the sync-write register address are two little-endian bytes
+    each, and the codec writes them with ``& 0xFF`` / ``>> 8``. Truncation is
+    therefore the default behaviour of every one of these writes, and it is
+    silent in the way that matters most on this bus: a servo answers a
+    ``SYNC_WRITE`` with nothing at all, and a unicast reply that never arrives
+    is indistinguishable from a servo that is powered off.
+
+    Three separate functions compute a ``LEN`` and each refuses its own
+    overflow - :func:`build_packet` from the parameter count,
+    :func:`sync_write_packet` from the parameter block, and :func:`_stuff` from
+    the bytes the escape inserted, which is the one door a caller cannot
+    anticipate because the frame it is handed was already legal. The cells
+    below pin all three at the boundary, from both sides, plus the address
+    field's own domain.
+    """
+
+    # ------------------------------- LEN ------------------------------------
+
+    def test_the_longest_frame_the_field_can_declare_is_accepted(self) -> None:
+        """Over-reach control for the three refusals below.
+
+        ``LEN`` is INST-inclusive, so the largest frame the field can describe
+        carries ``_FIELD_MAX - 3`` parameters. Pinning that it is accepted, and
+        that the field really does read back full, is what makes the refusals
+        a boundary rather than a cap somewhere below it.
+        """
+        packet = build_packet(1, Instruction.WRITE, bytes(_LONGEST_PARAMS))
+        assert packet[5] | (packet[6] << 8) == _FIELD_MAX
+        assert len(packet) == 7 + _FIELD_MAX
+
+    def test_one_parameter_byte_past_the_field_is_refused(self) -> None:
+        """The refusal counts the parameters, which is the number the caller
+        controls; ``LEN`` is derived from it and reporting the derived value
+        would send them looking for a field they never set.
+        """
+        with pytest.raises(ValueError, match=r"params too long \(65533 bytes\)"):
+            build_packet(1, Instruction.WRITE, bytes(_LONGEST_PARAMS + 1))
+
+    def test_a_payload_the_escape_fills_the_field_with_is_accepted(self) -> None:
+        """Stuffing rewrites ``LEN`` upward, and reaching the maximum exactly is
+        still a frame the servo can read.
+        """
+        packet = build_packet(1, Instruction.WRITE, _ESCAPES_TO_THE_LIMIT)
+        assert packet.count(RESERVED_RUN + b"\xfd") == 8, "the payload must really be escaped"
+        assert packet[5] | (packet[6] << 8) == _FIELD_MAX
+        assert len(packet) == 7 + _FIELD_MAX
+
+    def test_an_escape_that_pushes_the_field_over_is_refused(self) -> None:
+        """The one overflow a caller cannot see coming.
+
+        These parameters are shorter than :func:`build_packet` refuses, so its
+        own length check passes and the frame handed to :func:`_stuff` is legal.
+        The escape bytes are what overflow the field, and the count of escaped
+        runs is in the message because that is the part of the frame the caller
+        did not put there.
+        """
+        with pytest.raises(ValueError, match=r"_stuff: escaping 8 reserved run\(s\) overflows"):
+            build_packet(1, Instruction.WRITE, _ESCAPES_TO_THE_LIMIT + b"\x00")
+
+    def test_the_longest_sync_write_the_field_can_declare_is_accepted(self) -> None:
+        """Over-reach control for the broadcast path's own length check."""
+        packet = sync_write_packet(
+            _UNLISTED_ADDRESS,
+            _LONGEST_SYNC_DATA_LENGTH,
+            [(1, bytes(_LONGEST_SYNC_DATA_LENGTH))],
+        )
+        assert packet[4] == BROADCAST_ID
+        assert packet[5] | (packet[6] << 8) == _FIELD_MAX
+
+    def test_a_sync_write_parameter_block_past_the_field_is_refused(self) -> None:
+        """The broadcast's parameter block grows with both ``data_length`` and
+        the entry count, so the refusal reports the block it built rather than
+        either input: a caller writing 300 servos and a caller writing one wide
+        register arrive at the same limit from different directions.
+        """
+        with pytest.raises(ValueError, match=r"parameter block too long \(65533 bytes\)"):
+            sync_write_packet(
+                _UNLISTED_ADDRESS,
+                _LONGEST_SYNC_DATA_LENGTH + 1,
+                [(1, bytes(_LONGEST_SYNC_DATA_LENGTH + 1))],
+            )
+
+    # --------------------------- register address ---------------------------
+
+    @pytest.mark.parametrize(
+        "register_address",
+        [
+            pytest.param(_FIELD_MAX + 1, id="one-past-the-field"),
+            pytest.param(0x10074, id="aliases-onto-goal-position"),
+            pytest.param(-1, id="negative"),
+        ],
+    )
+    def test_a_register_address_outside_the_field_is_refused(self, register_address: int) -> None:
+        """An address the field cannot hold is refused before the packet is
+        framed, because the two bytes it would be written as address a real
+        register and a broadcast draws no reply to contradict them.
+        """
+        with pytest.raises(ValueError, match=r"register_address must be 0\.\.0xFFFF"):
+            sync_write_packet(register_address, 2, [(1, bytes(2))])
+
+    def test_the_widest_address_the_field_holds_is_accepted(self) -> None:
+        """Over-reach control: the refusal is about the field's width, not about
+        high addresses, and the top of the range is framed as itself.
+        """
+        packet = sync_write_packet(_FIELD_MAX, 2, [(1, bytes(2))])
+        assert packet[8] | (packet[9] << 8) == _FIELD_MAX
+
+    def test_the_refused_address_aliases_onto_a_register_the_table_names(self) -> None:
+        """Why truncation is worse here than a wrong number usually is.
+
+        ``0x10074`` is not a register at all, but the low two bytes of it are
+        ``GOAL_POSITION``. Truncation would frame a broadcast command to a
+        motion register on every servo on the bus, and it would do so at a
+        ``data_length`` the register-width gate never saw: that gate looks the
+        caller's address up in :data:`CONTROL_TABLE` unmasked, so a value above
+        the field misses the table, is treated as an unlisted register, and
+        carries whatever width the caller asked for onto a register the table
+        does declare a width for.
+        """
+        assert 0x10074 & _FIELD_MAX == CONTROL_TABLE["GOAL_POSITION"][0]
+        assert CONTROL_TABLE["GOAL_POSITION"][1] == 4
+        assert 0x10074 not in {address for address, _, _ in CONTROL_TABLE.values()}
