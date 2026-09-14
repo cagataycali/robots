@@ -173,8 +173,8 @@ def _module_available(name: str) -> bool:
 # built from ``config.use_relative_actions`` and saved into the checkpoint's
 # pre/post processors). Discovered live per policy type off the config class
 # (see :func:`_policy_supports_relative_actions`); the static set is the offline
-# FALLBACK. Currently the pi0 family, groot, and vla_jepa expose the field.
-_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot", "vla_jepa"})
+# FALLBACK. Currently the pi0 family and groot expose the field.
+_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot"})
 
 # LeRobot policy types whose config exposes ``train_expert_only`` (freeze the
 # (V)LM backbone, train only the action expert - the cheap VLA finetune recipe).

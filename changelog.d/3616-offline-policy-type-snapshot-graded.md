@@ -6,8 +6,7 @@ live `PreTrainedConfig` registry, and falls back to a static snapshot in
 where training cannot run but preflight should still say something useful.
 That snapshot had fallen nine types behind the installed lerobot
 (`eo1`, `evo1`, `fastwam`, `gaussian_actor`, `lingbot_va`, `molmoact2`,
-`multi_task_dit`, `vla_jepa`, `wall_x`), and the relative-action snapshot was
-missing `vla_jepa`, so an offline preflight told a caller that a policy lerobot
+`multi_task_dit`, `vla_jepa`, `wall_x`), so an offline preflight told a caller that a policy lerobot
 ships "is not LeRobot-native" and listed a ten-name set as the alternatives.
 
 For `molmoact2` the same `validate()` call contradicted itself: it denied the
