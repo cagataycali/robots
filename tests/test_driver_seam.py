@@ -83,7 +83,12 @@ class _CompleteDriver:
 
     Records the keywords the factory forwarded, which is what the constructor
     contract in :mod:`strands_robots.drivers.base` promises a driver receives.
+    ``cameras`` is part of that contract only for a driver that declares it opens
+    them, so this one declares it - a driver that does not is handed a refusal
+    instead of a config it would drop.
     """
+
+    reads_cameras = True
 
     def __init__(self, tool_name: str, cameras: Any = None, data_config: Any = None, **kwargs: Any) -> None:
         self.forwarded = {"tool_name": tool_name, "cameras": cameras, "data_config": data_config, **kwargs}

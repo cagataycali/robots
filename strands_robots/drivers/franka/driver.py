@@ -404,7 +404,11 @@ class FrankaDriver:
         **kwargs: Any,
     ) -> None:
         self._tool_name = tool_name
-        self._cameras = cameras
+        # Discarded, not stored: this driver never opens a caller-supplied
+        # camera, and the factory refuses a non-empty ``cameras=`` for a driver
+        # that does not declare ``reads_cameras``. An attribute nothing reads
+        # only suggests otherwise.
+        del cameras
         self._data_config = data_config
         # The arm's own vocabulary, resolved once: an FR3 names its joints
         # differently from a Panda (:data:`JOINT_PREFIXES`), and every read and

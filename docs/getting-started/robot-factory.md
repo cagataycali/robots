@@ -22,7 +22,7 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `mode` | str | `"sim"` | `"sim"` / `"real"` / `"auto"`. Overridden by `STRANDS_ROBOT_MODE`. |
 | `backend` | str | `"mujoco"` | Sim backend. Ignored when `mode="real"`. |
 | `urdf_path` | str | `None` | Explicit MJCF/URDF path - bypasses registry. Ignored when `mode="real"` (reported at debug level). |
-| `cameras` | dict | `None` | Real-hardware camera config. **Rejected in `mode="sim"`** - raises `ValueError`. |
+| `cameras` | dict | `None` | Real-hardware camera config, attached by the lerobot driver. **Rejected in `mode="sim"`**, and rejected for a native driver that does not open cameras - both raise `ValueError`. |
 | `position` | list | `None` | Robot position `[x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
 | `data_config` | str | `None` | GR00T data_config name. Honoured in both modes: `mode="sim"` defaults it to the canonical robot name, `mode="real"` forwards it to the hardware driver, which carries it into the `policy_config` a policy is built with. |
 | `mesh` | bool \| None | `None` | Join the Zenoh fleet mesh. `None` consults `STRANDS_MESH`, which leaves it **off** unless set to `true`/`1`/`yes` - pass `mesh=True` to opt in per robot. |
@@ -77,6 +77,27 @@ listing the registered ones. `fps`, `width` and `height` are common to every
 backend and default to 30/640/480 when unset - a vendor SDK the backend needs
 (`pyrealsense2` for `intelrealsense`) is required when the device is opened, not
 when the config is built.
+
+Cameras are attached by the **lerobot** driver. A native driver
+(`driver="strands"`) addresses its cameras through its own SDK, so it does not
+take a caller-supplied config - and none of the drivers shipped here does. Rather
+than accept the keyword and hand back a robot with no cameras, the factory
+refuses it by name:
+
+```python
+>>> Robot("unitree_go2", mode="real", cameras={"front": {"type": "opencv", "index_or_path": 0}})
+ValueError: Go2Driver does not open cameras, so cameras= cannot be honored for
+'unitree_go2'. Forwarding it would return a robot with no cameras at all under
+status=success. Use driver='lerobot', which attaches them through lerobot's
+camera backends, or capture the frames outside the driver.
+```
+
+This reaches robots that never mention `driver=`: eight shipped robots declare
+`driver="strands"` in the registry (see [Choosing a
+driver](#choosing-a-driver)). A driver that does open the cameras it is given
+declares `reads_cameras = True` on the class and receives the dict verbatim - the
+opt-in is that one attribute, described with the rest of the constructor contract
+in `strands_robots.drivers.base`.
 
 `control_frequency` (Hz) sets the control loop's per-action period,
 `1 / control_frequency` - the only throttle between two servo commands. It must be a

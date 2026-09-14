@@ -200,7 +200,8 @@ def _build_native_driver(
 
     Args:
         canonical: Canonical robot name, already known to be registered.
-        cameras: Camera configuration, forwarded verbatim.
+        cameras: Camera configuration, forwarded verbatim to a driver that
+            declares it opens them, and refused for one that does not.
         data_config: Data-config name, forwarded verbatim.
         kwargs: The caller's remaining keyword arguments, forwarded verbatim -
             ``port=`` among them, which stays polymorphic (a serial path, an IP
@@ -213,6 +214,8 @@ def _build_native_driver(
         ValueError: If no native driver is registered for this robot. Named
             rather than silently falling back to lerobot: a caller who asked for
             a native driver and got the lerobot one would debug the wrong robot.
+            Also if ``cameras`` is non-empty and this driver does not declare
+            that it opens cameras.
     """
     driver_cls = get_native_driver_class(canonical)
     if driver_cls is None:
@@ -222,6 +225,32 @@ def _build_native_driver(
             f"build it. Robots with a native driver: {available}. Either use driver='lerobot' "
             "(today's default, which builds it through lerobot) or register one with "
             "strands_robots.drivers.register_native_driver()."
+        )
+
+    # A camera dict the driver will not open is refused rather than forwarded
+    # into a sink. No driver shipped here reads ``cameras``: nine discard it on
+    # the first line of ``__init__`` and three stored it under a private
+    # attribute nothing ever read, so the keyword was accepted, the build
+    # reported success, and the caller was handed a robot with no cameras at
+    # all. That omission is invisible at the call - it surfaces as a recording
+    # with no image columns, or a visual policy asked to act on a frame nobody
+    # captured. ``mode="sim"`` already refuses this same keyword and names the
+    # door that does attach cameras, and the spawn arguments this branch cannot
+    # honour are at least reported; a dropped camera is the one the caller
+    # cannot see, so it is the one that must be refused.
+    #
+    # Read off the class rather than a list kept here, because drivers grow: one
+    # that really does open the cameras it is given declares
+    # ``reads_cameras = True`` (the constructor contract in
+    # strands_robots.drivers.base) and receives them verbatim, with nothing here
+    # to update. An empty ``cameras`` declares no camera and is honoured by
+    # doing nothing, so only a non-empty one is refused.
+    if cameras and not getattr(driver_cls, "reads_cameras", False):
+        raise ValueError(
+            f"{driver_cls.__name__} does not open cameras, so cameras= cannot be honored for "
+            f"{canonical!r}. Forwarding it would return a robot with no cameras at all under "
+            "status=success. Use driver='lerobot', which attaches them through lerobot's camera "
+            "backends, or capture the frames outside the driver."
         )
 
     # The constructor contract documented on strands_robots.drivers.base: the
