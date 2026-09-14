@@ -1232,7 +1232,8 @@ class LerobotTrainer(Trainer):
         """Policy-training preflight (the default, ``cfg.policy`` path)."""
         problems: list[str] = []
         ptype = self._resolve_policy_type(spec)
-        if ptype not in _lerobot_policy_types():
+        ptype_is_native = ptype in _lerobot_policy_types()
+        if not ptype_is_native:
             problems.append(
                 f"policy_type '{ptype}' is not LeRobot-native (expected one of {sorted(_lerobot_policy_types())})"
             )
@@ -1242,7 +1243,22 @@ class LerobotTrainer(Trainer):
         if spec.method == "lora" and spec.tune.get("expert_only"):
             problems.append("lora and expert_only are mutually exclusive (both freeze the VLM)")
 
-        if self._relative_actions(spec) and not _policy_supports_relative_actions(ptype):
+        # Only a type that RESOLVED has a config class whose fields can be
+        # described. For one that did not, every capability probe below falls
+        # through to its offline fallback set, which a name lerobot does not
+        # register is never in - so each answers "not supported" and the gate
+        # describes the config of a policy this very response says does not
+        # exist, naming the types that DO expose the field (a list that contains
+        # the corrected spelling). Worse, each such problem prescribes dropping
+        # the knob, and for a typo of a policy that supports it - 'pi5' for
+        # 'pi05', 'grot' for 'groot' - a caller who acts on that advice deletes a
+        # legitimate setting while fixing the name. The type problem above
+        # already names the only fault, so the capability checks are scoped to a
+        # resolved type, the way :meth:`_validate_reward_model` scopes its field
+        # check. Checks that do not depend on the type - the method spelling
+        # above, the tune key spelling and value domains, sample_weighting - stay
+        # unconditional: they are just as true for a misspelled policy.
+        if ptype_is_native and self._relative_actions(spec) and not _policy_supports_relative_actions(ptype):
             supported = sorted(t for t in _lerobot_policy_types() if _policy_supports_relative_actions(t))
             problems.append(
                 f"relative_actions is not supported by policy_type '{ptype}' "
@@ -1250,7 +1266,7 @@ class LerobotTrainer(Trainer):
                 "drop extra['relative_actions'] or pick a supporting policy"
             )
 
-        if spec.method == "expert_only" and not _policy_supports_expert_only(ptype):
+        if ptype_is_native and spec.method == "expert_only" and not _policy_supports_expert_only(ptype):
             supported = sorted(t for t in _lerobot_policy_types() if _policy_supports_expert_only(t))
             problems.append(
                 f"method 'expert_only' is not supported by policy_type '{ptype}' "
@@ -1282,9 +1298,10 @@ class LerobotTrainer(Trainer):
                     "SampleWeightingConfig)."
                 )
 
-        problems.extend(self._embodiment_problems(spec, ptype))
-        problems.extend(self._tune_component_problems(spec, ptype))
-        problems.extend(self._quantile_stats_problems(spec, ptype))
+        problems.extend(self._tune_component_problems(spec, ptype, ptype_is_native))
+        if ptype_is_native:
+            problems.extend(self._embodiment_problems(spec, ptype))
+            problems.extend(self._quantile_stats_problems(spec, ptype))
         return problems
 
     def _embodiment_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
@@ -1306,7 +1323,7 @@ class LerobotTrainer(Trainer):
             "supporting policy"
         ]
 
-    def _tune_component_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
+    def _tune_component_problems(self, spec: TrainSpec, ptype: str, ptype_is_native: bool) -> list[str]:
         """Preflight ``tune``: the spelling, the policy's own toggles, the values.
 
         Two ways a component toggle goes quiet, and both end the same way - the
@@ -1323,6 +1340,18 @@ class LerobotTrainer(Trainer):
         freeze would train. Graded here by the flag's own name, the way
         ``resume`` and ``streaming`` are graded through
         :meth:`_resume_problems` / :meth:`_streaming_problems`.
+
+        The spelling and the value are properties of the request, so they are
+        graded whatever the policy type is. Only the middle check - which
+        components THIS policy exposes - describes a config class, so it is
+        scoped to a policy type that resolved, as :meth:`_validate_policy`
+        explains.
+
+        Args:
+            spec: The spec whose ``tune`` mapping is graded.
+            ptype: The resolved lerobot ``policy.type`` name.
+            ptype_is_native: Whether ``ptype`` is a type lerobot registers.
+                False suppresses the per-policy support check only.
         """
         requested = {k for k in spec.tune if k != "expert_only"}
         if not requested:
@@ -1336,7 +1365,7 @@ class LerobotTrainer(Trainer):
                 "mutual-exclusion check)"
             )
         unsupported = sorted((requested & set(_TUNE_COMPONENT_FIELDS)) - _policy_tune_components(ptype))
-        if unsupported:
+        if unsupported and ptype_is_native:
             supported = sorted(t for t in _lerobot_policy_types() if _policy_tune_components(t))
             problems.append(
                 f"tune component(s) {unsupported} are not supported by policy_type '{ptype}' "
