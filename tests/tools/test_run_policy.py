@@ -410,15 +410,20 @@ class TestDecoratorSurface:
 
 
 class TestFinalizeResilience:
-    """The per-episode parquet boundary must never abort an in-flight rollout.
+    """Being unable to REACH the parquet boundary must not abort the rollout.
 
     When recording is active, ``run_policy`` delegates the per-episode
     ``save_episode`` boundary to ``PolicyRunner._finalize_recorder_episode``.
-    That delegation is best-effort by contract: a missing ``PolicyRunner``
-    import, a construction failure, or a save error must be logged and
-    swallowed so a transient recorder fault never tears down an N-episode
-    rollout mid-way. These tests pin that the loop still completes all N
-    episodes and the dataset is still closed in each failure mode.
+    Not reaching that helper at all - a missing ``PolicyRunner`` import, a
+    construction failure, or (against its documented contract) a raise - is
+    logged and swallowed: no episode was flushed, so no recorder is poisoned,
+    and the parquet-truth gate reports whatever count results. These tests pin
+    that the loop still completes all N episodes and the dataset is still
+    closed in each of those modes.
+
+    A flush that RAN and FAILED is the opposite case and is pinned by
+    :class:`TestLostRecordingEpisodeStopsTheRollout` below - the helper reports
+    that by returning a reason, not by raising.
     """
 
     def test_finalize_swallows_policyrunner_import_error(self, tmp_path: Path, monkeypatch: Any) -> None:
@@ -457,7 +462,14 @@ class TestFinalizeResilience:
         assert len(sim.stop_recording_calls) == 1
         assert result["status"] == "success"
 
-    def test_finalize_swallows_save_episode_error(self, tmp_path: Path, monkeypatch: Any) -> None:
+    def test_finalize_swallows_an_unexpected_raise(self, tmp_path: Path, monkeypatch: Any) -> None:
+        """A raise from the boundary carries no reason to report, so it is absorbed.
+
+        ``_finalize_recorder_episode`` documents that it returns a save failure
+        rather than raising it, so a raise here means the helper itself broke,
+        not that a flush failed. There is nothing to attribute an episode to,
+        and the parquet-truth gate still reports the count on disk.
+        """
         import strands_robots.simulation.policy_runner as pr_mod
 
         sim = _FakeSim()
@@ -469,15 +481,157 @@ class TestFinalizeResilience:
                 pass
 
             def _finalize_recorder_episode(self) -> None:
-                raise RuntimeError("save_episode failed: disk full")
+                raise RuntimeError("the boundary helper itself broke")
 
         monkeypatch.setattr(pr_mod, "PolicyRunner", _FlakyRunner)
 
         result = run_policy(sim, n_episodes=1, n_steps=5, dataset_root=str(ds))
 
-        # A per-episode save error is swallowed; the rollout still completes.
         assert len(sim.run_policy_calls) == 1
         assert len(sim.stop_recording_calls) == 1
+        assert result["status"] == "success"
+        assert result["content"][1]["json"]["recording_save_error"] is None
+
+
+# --------------------------------------------------------------------------
+# A flush that ran and failed
+# --------------------------------------------------------------------------
+
+
+class _StubRecorder:
+    """Recorder stand-in on the surface ``_finalize_recorder_episode`` reads.
+
+    It reads ``episode_frame_count`` to decide whether there is anything to
+    flush and calls ``save_episode``, which reports a failure by *returning* an
+    error envelope. A real
+    :class:`~strands_robots.dataset_recorder.DatasetRecorder` then marks itself
+    closed, and ``add_frame`` returns on a closed recorder without writing a
+    frame or counting a drop - so the buffer never refills. Mirrored here,
+    because that is what makes every later episode unrecordable.
+    """
+
+    def __init__(self, *, fail: bool) -> None:
+        self._fail = fail
+        self.episode_frame_count = 12
+        self.saves = 0
+        self.closed = False
+
+    def save_episode(self) -> dict[str, Any]:
+        self.saves += 1
+        if not self._fail:
+            return _ok_rollout("episode saved")
+        self.closed = True
+        self.episode_frame_count = 0
+        return {
+            "status": "error",
+            "content": [{"text": "flush failed"}],
+            "message": "LeRobot save_episode failed: No space left on device",
+        }
+
+
+class _RecordingSim(_FakeSim):
+    """``_FakeSim`` carrying the recorder where the real backends keep it.
+
+    ``_finalize_recorder_episode`` reads
+    ``sim._world._backend_state['dataset_recorder']``, so a sim shaped like
+    this drives the real helper rather than a stand-in for it. Each rollout
+    also writes the MP4 it was asked for, so the tool's video reporting can be
+    read against the episodes that actually ran.
+    """
+
+    def __init__(self, recorder: _StubRecorder) -> None:
+        super().__init__()
+        self._world = type("_World", (), {"_backend_state": {"dataset_recorder": recorder}})()
+
+    def run_policy(self, **kwargs: Any) -> dict[str, Any]:
+        video = kwargs.get("video")
+        if video and video.get("path"):
+            Path(video["path"]).write_bytes(b"\x00" * 64)
+        return super().run_policy(**kwargs)
+
+
+class TestLostRecordingEpisodeStopsTheRollout:
+    """A failed flush stops the loop and is reported, as every sibling does.
+
+    ``save_episode`` failing is worse than a lost frame: the recorder closes
+    itself because the LeRobot episode buffer is undefined after a partial
+    write, and ``add_frame`` then returns on it without writing or counting a
+    drop. Every later episode is discarded in silence. So
+    ``PolicyRunner.evaluate`` breaks on the reason and reports it as
+    ``recording_save_error``, ``save_episode`` / ``stop_recording`` drop the
+    poisoned recorder, and ``reset`` surfaces the failure. This tool owns the
+    ``n_episodes`` loop for exactly the episodes those siblings would abort, so
+    it takes the same posture.
+    """
+
+    def test_the_loop_stops_at_the_episode_whose_flush_failed(self, tmp_path: Path) -> None:
+        recorder = _StubRecorder(fail=True)
+        sim = _RecordingSim(recorder)
+        ds = tmp_path / "ds"
+        # What a recorder that flushed nothing leaves behind.
+        _write_info_json(ds, total_episodes=0, total_frames=0)
+
+        result = run_policy(
+            sim,
+            n_episodes=3,
+            n_steps=5,
+            dataset_root=str(ds),
+            video={"path": str(tmp_path / "roll.mp4"), "fps": 30},
+        )
+        payload = result["content"][1]["json"]
+
+        # The budget is not spent recording into a closed recorder.
+        assert len(sim.run_policy_calls) == 1
+        assert recorder.saves == 1
+        assert result["status"] == "error"
+
+        # The reason the recorder gave is reported, attributed to its episode.
+        assert payload["recording_save_error"] is not None
+        assert payload["recording_save_error"].startswith("episode 0: ")
+        assert "No space left on device" in payload["recording_save_error"]
+        # Named in its own leading warning, not only inside the count-mismatch
+        # guard below it - the reason is the cause, and reads first.
+        assert payload["warnings"][0].startswith("the recorder could not flush an episode")
+        assert "No space left on device" in payload["warnings"][0]
+        assert "The remaining episodes of 3 were not run" in payload["warnings"][0]
+
+        # And only the episode that ran claims a video.
+        assert payload["video_paths"] == [str(tmp_path / "roll_ep0.mp4")]
+
+        # The dataset is still closed on the way out.
+        assert len(sim.stop_recording_calls) == 1
+
+    def test_the_count_mismatch_names_the_flush_rather_than_an_absent_boundary(self, tmp_path: Path) -> None:
+        """The guard must not send a reader after wiring when the disk was full.
+
+        The boundary DID fire; it reported why it failed. Naming it absent
+        would describe a defect in this tool instead of the reason it holds.
+        """
+        sim = _RecordingSim(_StubRecorder(fail=True))
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=0, total_frames=0)
+
+        result = run_policy(sim, n_episodes=3, n_steps=5, dataset_root=str(ds))
+        guard = next(w for w in result["content"][1]["json"]["warnings"] if "FABRICATION GUARD" in w)
+
+        assert "did not fire as expected" not in guard
+        assert "boundary failed:" in guard
+        assert "No space left on device" in guard
+
+    def test_a_flush_that_succeeds_reports_no_error_and_runs_every_episode(self, tmp_path: Path) -> None:
+        """The control: nothing above fires on a healthy recording rollout."""
+        recorder = _StubRecorder(fail=False)
+        sim = _RecordingSim(recorder)
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=3, total_frames=36)
+
+        result = run_policy(sim, n_episodes=3, n_steps=5, dataset_root=str(ds))
+        payload = result["content"][1]["json"]
+
+        assert len(sim.run_policy_calls) == 3
+        assert recorder.saves == 3
+        assert payload["recording_save_error"] is None
+        assert payload["warnings"] == []
         assert result["status"] == "success"
 
 

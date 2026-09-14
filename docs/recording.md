@@ -1000,7 +1000,10 @@ leaving no trace even in the recorder's own accounting.
 
 So every flush refuses rather than continues. `save_episode()` and
 `stop_recording()` drop the poisoned recorder and return `status="error"`,
-`run_policy(n_episodes=N)` aborts its remaining episodes, `reset()` surfaces the
+`run_policy(n_episodes=N)` aborts its remaining episodes - both the
+`Simulation.run_policy` facade and the `run_policy` **tool**, which owns that
+loop on the facade's behalf and reports the reason as `recording_save_error`
+beside its parquet-truth counts - `reset()` surfaces the
 failure instead of resetting into an undefined state, and a recorded
 `eval_policy` / `evaluate_benchmark` - one driven with an `on_frame` hook that
 calls `add_frame`, which is the only way those two feed a recorder - stops at the
@@ -1014,7 +1017,11 @@ if payload["recording_save_error"]:      # None on every healthy evaluation
 ```
 
 `episodes_completed` and `success_rate` then cover only the episodes that ran, so
-an aggregate is never reported over episodes whose frames reached no dataset.
+an aggregate is never reported over episodes whose frames reached no dataset. The
+`run_policy` tool reports the same way: `n_episodes_ok` counts the rollouts that
+happened rather than the ones requested, only their MP4s appear in `video_paths`,
+and its `FABRICATION GUARD` warning names the flush that failed rather than
+reporting the boundary as one that never fired.
 
 ## Instance methods
 
