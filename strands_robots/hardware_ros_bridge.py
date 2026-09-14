@@ -114,7 +114,10 @@ class HardwareRosBridge(RosTelemetryBridge):
             transport can carry, if ``spin_period``
             is not a positive finite number, or if ``joint_limits`` is not a
             ``{"<motor>.pos": (min, max)}`` mapping of finite numeric pairs with
-            ``min <= max``.
+            ``min <= max``. Every one of them is answered before the base
+            constructor writes the process-wide ``ROS_DOMAIN_ID``, initializes
+            the rclpy context and creates the node, so a refused bridge leaves
+            the environment as it found it and leaks neither.
     """
 
     default_node_name = "strands_hardware"
@@ -151,13 +154,23 @@ class HardwareRosBridge(RosTelemetryBridge):
         if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
             raise ValueError(error)
 
+        # Optional {"<motor>.pos": (min, max)} clamp ranges enforced on inbound
+        # commands by RosTelemetryBase._command_action. Validated alongside the
+        # two guards above rather than after the base constructor, for the third
+        # time and the same reason: the base writes the process-wide
+        # ``ROS_DOMAIN_ID``, initializes the rclpy context when nothing else has,
+        # and creates the node. A refusal raised past that point returns no
+        # object, so the ``shutdown`` that would release the context and destroy
+        # the node is unreachable - and a corrected retry finds the context
+        # already up, records ``_owns_context`` False, and so cannot release it
+        # either. The pure-RTPS sibling,
+        # :class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`,
+        # already answers the same mapping before it builds its participant.
+        self._joint_limits = self._validate_joint_limits(joint_limits)
+
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)
 
         self._robot = robot
-        # Optional {"<motor>.pos": (min, max)} clamp ranges enforced on inbound
-        # commands
-        # by RosTelemetryBase._command_action (validated up front, fail fast).
-        self._joint_limits = self._validate_joint_limits(joint_limits)
         # Commands require a robot to drive; a pure-publisher bridge (robot
         # None) is telemetry-only and stays symmetric with the sim sibling.
         self._enable_commands = bool(enable_commands) and robot is not None

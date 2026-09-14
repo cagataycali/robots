@@ -20,6 +20,7 @@ bridge tests use. They assert that:
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -632,3 +633,70 @@ def test_start_spin_is_idempotent(fake_ros: dict[str, Any]) -> None:
     assert bridge._spin_thread is first
     assert _live_command_threads() == 1
     bridge.shutdown()
+
+
+# --- a refused construction costs the process nothing ------------------------
+
+#: Every constructor argument :class:`HardwareRosBridge` documents a
+#: ``ValueError`` for, paired with a value from outside its domain. That the
+#: refusal happens is already pinned elsewhere; what these cells pin is where it
+#: happens - the base constructor writes the process-wide ``ROS_DOMAIN_ID``,
+#: initializes the rclpy context when nothing else has, and creates the node, so
+#: a guard placed after it charges a rejected caller for state no one can
+#: release: ``__init__`` raised, so there is no bridge to call ``shutdown`` on.
+_REFUSED_CONSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
+    ("domain_id", {"domain_id": 233}),
+    ("qos_depth", {"qos_depth": 0}),
+    ("spin_period", {"spin_period": 0.0}),
+    ("enable_commands", {"enable_commands": "false"}),
+    ("joint_limits/order", {"joint_limits": {"j0.pos": (1.0, -1.0)}}),
+    ("joint_limits/non-finite", {"joint_limits": {"j0.pos": (1.0, float("nan"))}}),
+]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [kwargs for _, kwargs in _REFUSED_CONSTRUCTIONS],
+    ids=[param for param, _ in _REFUSED_CONSTRUCTIONS],
+)
+def test_a_refused_bridge_leaves_the_process_as_it_found_it(
+    fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, Any]
+) -> None:
+    """No refusal writes ROS_DOMAIN_ID, starts rclpy, or creates a node.
+
+    Each cell asks for a bridge on domain 42 with one argument outside its
+    domain, from a process whose shell pointed at domain 7. A refusal that lands
+    after the base constructor leaves 42 behind for every later participant to
+    inherit, the rclpy context up, and a live node in the graph.
+    """
+    monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+    with pytest.raises(ValueError):
+        HardwareRosBridge(_FakeDrivableRobot(), **{"domain_id": 42, **kwargs})  # type: ignore[arg-type]
+
+    assert os.environ["ROS_DOMAIN_ID"] == "7"
+    assert fake_ros["inited"] is False
+    assert fake_ros["nodes"] == []
+
+
+def test_a_refused_bridge_does_not_strand_the_rclpy_context(
+    fake_ros: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A corrected retry can still release the context, because nothing took it.
+
+    ``_owns_context`` is recorded from ``rclpy.ok()``, so whichever bridge starts
+    the context is the only one that will shut it down. When a refused
+    construction starts it, that bridge is never returned: the retry sees the
+    context already up, declines ownership, and its ``shutdown`` releases the
+    node it made but not the context or the node the refusal left behind.
+    """
+    monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+    with pytest.raises(ValueError, match="min .* > max"):
+        HardwareRosBridge(_FakeDrivableRobot(), joint_limits={"j0.pos": (1.0, -1.0)})  # type: ignore[arg-type]
+
+    bridge = HardwareRosBridge(_FakeDrivableRobot(), joint_limits={"j0.pos": (-1.0, 1.0)})  # type: ignore[arg-type]
+    assert bridge._owns_context is True
+    bridge.shutdown()
+
+    assert fake_ros["shutdown"] is True
+    assert fake_ros["inited"] is False
+    assert [node.name for node in fake_ros["nodes"] if not node.destroyed] == []
