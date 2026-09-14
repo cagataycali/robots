@@ -22,6 +22,7 @@ https://github.com/amazon-far/holosoma), re-homed onto the strands-robots
 
 from __future__ import annotations
 
+import logging
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
     from strands_robots.training.rl.env import SimEnv
     from strands_robots.training.rl.vec_env import VecSimEnv
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -381,13 +384,33 @@ class BaseRLAlgo(Trainer):
                     "max_return": float,
                     "mean_length": float,
                     "success_rate": float,   # fraction terminated via success_fn
+                    "success_measured": bool,             # was success scored at all
+                    "episodes_successful_at_reset": int,  # already solved before acting
                     "returns": list[float],  # per-episode
                 }
 
             ``success_rate`` is the fraction of episodes that ended on a genuine
             terminal (``info["terminated"]`` -> the env's ``success_fn``), not a
-            time-out. When the env has no ``success_fn`` every episode times out
-            and ``success_rate`` is ``0.0``.
+            time-out.
+
+            Read ``success_measured`` and ``episodes_successful_at_reset`` before
+            trusting that rate. Both flag a rate the policy did not earn, and each
+            reports the constant it degenerates to:
+
+            - ``success_measured`` is ``False`` when the env has no ``success_fn``.
+              Nothing can then terminate, so every episode times out and
+              ``success_rate`` is a hard ``0.0`` - indistinguishable from a policy
+              that was scored and failed. A warning is logged too.
+            - ``episodes_successful_at_reset`` counts episodes whose ``success_fn``
+              already held at reset, before any action was applied. The env samples
+              the predicate only after a step, so such an episode terminates on its
+              first step whatever the policy commands, contributing a hard ``1.0``
+              - the mirror of the case above. A partial count is a fact about the
+              per-episode ``reset_fn`` draws rather than a broken predicate, so it
+              is reported and warned about, not refused, and every returned figure
+              is left exactly as measured. Almost always a threshold on the wrong
+              side of the initial state (a placement predicate the object's own
+              spawn satisfies).
 
         Raises:
             ValueError: ``num_episodes`` is not a positive integer, or the
@@ -449,6 +472,17 @@ class BaseRLAlgo(Trainer):
         returns: list[float] = []
         lengths: list[int] = []
         successes = 0
+        # Episodes whose success predicate already held at reset. Counted so the
+        # caller can tell a rate the policy earned from one the scene handed it;
+        # see :func:`~strands_robots.simulation.policy_runner.success_at_reset_warning`,
+        # which states this rule for the two simulation evaluation routes. This is
+        # the third route publishing the same ``success_rate``, so it reuses that
+        # helper rather than restating the reasoning. Imported in the function body
+        # for the reason ``torch`` and ``VecSimEnv`` are: the RL package
+        # deliberately keeps its heavy imports off module scope.
+        from strands_robots.simulation.policy_runner import success_at_reset_warning
+
+        episodes_successful_at_reset = 0
         # The eval-mode window is closed in ``finally``, not after the loop: the
         # modes flipped above are trainer state that outlives a raise, and this
         # method documents itself as side-effect-free. ``actor_norm`` is the half
@@ -461,8 +495,37 @@ class BaseRLAlgo(Trainer):
         # rest of the run, with nothing reporting that it had stopped.
         try:
             eval_env = self.env.envs[0] if isinstance(self.env, VecSimEnv) else self.env
+            # Nothing can terminate an env with no predicate, so every episode
+            # times out and ``success_rate`` is a hard 0.0 that a reader cannot
+            # distinguish from a policy that was scored and failed everything.
+            # Flagged in the returned metrics and warned about here, the same
+            # posture ``PolicyRunner.evaluate`` takes for its own ``success_fn=None``
+            # default.
+            success_measured = eval_env.success_fn is not None
+            if not success_measured:
+                logger.warning(
+                    "evaluate() called on an env with no success_fn: success_rate will be 0.0 "
+                    "for every episode regardless of what the policy does and does NOT measure "
+                    "task success. Pass success_fn= to SimEnv to measure it; the returned "
+                    "metrics flag this as success_measured=False."
+                )
             for _ in range(num_episodes):
                 obs = eval_env.reset()
+                # Sample the predicate ONCE before the policy acts. ``SimEnv.step``
+                # samples it only after an applied action, so a predicate that
+                # already holds here terminates the episode on its first step
+                # whatever the policy commands. Diagnostic only: it decides no
+                # reported figure, so - unlike the per-step call inside ``step`` -
+                # it is deliberately not fatal on a raise (a predicate reading
+                # state that a first step would have established has not had one).
+                success_at_reset = False
+                if eval_env.success_fn is not None:
+                    try:
+                        success_at_reset = bool(eval_env.success_fn(eval_env.engine))
+                    except Exception as e:  # noqa: BLE001 - diagnostic, never fatal
+                        logger.debug("success_fn at reset raised %s; not sampled", e)
+                if success_at_reset:
+                    episodes_successful_at_reset += 1
                 ep_return = 0.0
                 ep_len = 0
                 terminated = False
@@ -486,6 +549,17 @@ class BaseRLAlgo(Trainer):
             if actor_norm is not None:
                 actor_norm.train(_norm_was_training)
 
+        reset_success_warning = success_at_reset_warning(
+            surface="evaluate",
+            episodes_completed=num_episodes,
+            episodes_successful_at_reset=episodes_successful_at_reset,
+            # This route reports no pass_hat_k, so the warning must not send the
+            # reader looking for one.
+            reported="success_rate",
+        )
+        if reset_success_warning is not None:
+            logger.warning("%s", reset_success_warning)
+
         returns_t = torch.tensor(returns, dtype=torch.float32)
         return {
             "num_episodes": num_episodes,
@@ -495,6 +569,11 @@ class BaseRLAlgo(Trainer):
             "max_return": float(returns_t.max().item()),
             "mean_length": float(sum(lengths) / len(lengths)),
             "success_rate": float(successes / num_episodes),
+            # Both left as measured: they qualify ``success_rate``, they do not
+            # correct it. Silently adjusting a rate would hide the misconfigured
+            # predicate that produced it.
+            "success_measured": success_measured,
+            "episodes_successful_at_reset": episodes_successful_at_reset,
             "returns": returns,
         }
 

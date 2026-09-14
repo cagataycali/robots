@@ -245,6 +245,54 @@ class RosTelemetryBase:
         """ROS 2 topic inbound ``joint_command`` messages are read from."""
         return f"/{cls._safe(robot)}/joint_command"
 
+    @staticmethod
+    def _command_namespace_error(name: Any, context: str) -> str | None:
+        """Return an error message if ``command_robot_name`` cannot name a topic.
+
+        The hardware bridges let a caller override the namespace their inbound
+        ``joint_command`` topic is read from. That override is the only
+        caller-supplied value this module renders into a topic through
+        :meth:`_safe` - every other name reaching it is derived internally, from
+        the bound robot (:meth:`_resolve_robot_name`) or from an observation key.
+        So it is the one place where a value from outside is handed to a
+        ``re.sub`` that assumes a string, and both non-string outcomes are worse
+        than a refusal:
+
+        * **A truthy non-``str``** raised out of :meth:`_safe` - ``TypeError:
+          expected string or bytes-like object, got 'int'``, or, for ``bytes``,
+          ``cannot use a string pattern on a bytes-like object``. Neither names
+          the parameter. Worse, it raised from *after* the transport was built:
+          on the rclpy bridge the process-wide ``ROS_DOMAIN_ID`` had been
+          rewritten, the context started and the node created; on the RTPS
+          bridge the ``DomainParticipant`` existed. ``__init__`` raising returns
+          no object, so the ``shutdown`` that releases them is unreachable.
+        * **A falsy non-``str``** (``0``, ``[]``, ``False``) was worse still: it
+          is filtered by the ``command_robot_name or <derived>`` fallback, so the
+          bridge reported success and subscribed under the bound robot's own
+          name - a namespace the caller never asked for, silently.
+
+        ``None`` is the documented "derive it from the bound robot" input and is
+        accepted, as is ``""``, which selects the same fallback. A ``str``
+        subclass is accepted: it is a string to every operation that follows.
+
+        Args:
+            name: The caller's ``command_robot_name``.
+            context: Calling context, used in error text (the bridge class name).
+
+        Returns:
+            ``None`` when *name* can name a topic, otherwise the message to
+            raise as :class:`ValueError`.
+        """
+        if name is None or isinstance(name, str):
+            return None
+        return (
+            f"{context}: 'command_robot_name' must be a string or None, got "
+            f"{refusal_repr(name)} ({type(name).__name__}); it is rendered into "
+            "the '/<name>/joint_command' topic this bridge reads commands from, "
+            "which only a string can name. Pass None to read them under the "
+            "bound robot's own name."
+        )
+
     # -- security / safety gate (shared by both hardware bridges) ---------
 
     @staticmethod

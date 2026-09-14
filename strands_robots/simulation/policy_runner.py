@@ -306,6 +306,7 @@ def success_at_reset_warning(
     surface: str,
     episodes_completed: int,
     episodes_successful_at_reset: int,
+    reported: str = "success_rate / pass_hat_k",
 ) -> str | None:
     """Warn that episodes were already successful before the policy acted.
 
@@ -339,6 +340,12 @@ def success_at_reset_warning(
         episodes_completed: Episodes that ran to a verdict, for the ratio.
         episodes_successful_at_reset: Episodes among them whose success criterion
             already held at reset, before any action was applied.
+        reported: The figures this surface publishes that the count casts doubt on,
+            named so the warning points at fields the reader can actually look up.
+            Defaults to the pair both simulation routes report; a surface that
+            reports only a rate (:meth:`BaseRLAlgo.evaluate`, which has no
+            ``pass_hat_k``) narrows it, because a remedy naming a figure the
+            result does not carry sends the reader looking for nothing.
 
     Returns:
         The warning text, or ``None`` when no episode was already successful.
@@ -349,10 +356,57 @@ def success_at_reset_warning(
     return (
         f"{surface}: {episodes_successful_at_reset} of {episodes_completed} episode(s) already "
         "satisfied the success criterion at reset, before any action was applied, so "
-        f"{'the' if every else 'that part of the'} reported success_rate / pass_hat_k describes the "
+        f"{'the' if every else 'that part of the'} reported {reported} describes the "
         "scene's initial state rather than the policy. Check the criterion against the initial "
-        "state (e.g. a lift threshold below the object's resting height); the returned json "
+        "state (e.g. a lift threshold below the object's resting height); the result "
         "reports this as episodes_successful_at_reset."
+    )
+
+
+def stop_when_true_at_reset_warning(*, surface: str) -> str:
+    """Warn that a ``stop_when`` clause already held before the policy acted.
+
+    The clause is evaluated only AFTER an applied action, so one that already
+    holds when the rollout starts fires on the first step no matter what the
+    policy commands. The rollout then reports ``stopped_reason="predicate"``
+    after one step - the field an agent reads to tell "the world reached the
+    goal state" from "the step budget ran out" - and it is indistinguishable
+    from a rollout that actually drove the world there. This is the mirror of
+    the never-fires case guarded at the same pre-rollout probe site, where a
+    clause pinned to a constant ``False`` burns the whole budget reporting
+    ``stopped_reason="budget"``, indistinguishable from an honest miss.
+
+    Almost always a threshold on the wrong side of the scene's initial state -
+    a ``body_above_z`` whose height sits below where the object already rests,
+    or a ``contact_any`` on a body that starts out resting on its support.
+
+    The cost lands hardest on a collection loop, where ``stop_when`` is a
+    per-episode success gate: every episode ends after one step, so the
+    recorded dataset is one frame per episode, each episode tagged as having
+    reached the condition.
+
+    Deliberately a warning and a reported flag rather than a refusal, the same
+    posture as :func:`success_at_reset_warning`. A clause is evaluated against
+    whatever state the caller handed the rollout, and domain randomisation
+    legitimately draws a different initial state per episode, so a clause true
+    for one draw is a fact about that draw rather than a broken clause. It also
+    leaves every reported figure untouched: surface the corruption without
+    changing a returned value.
+
+    Args:
+        surface: Public entry point the warning is reported through, e.g.
+            ``"run_policy"`` - so the message points at the call the reader made.
+
+    Returns:
+        The warning text.
+    """
+    return (
+        f"{surface}: the stop_when clause already held before any action was applied, so the "
+        "rollout ended on its first step and stopped_reason='predicate' describes the scene's "
+        "initial state rather than the policy - indistinguishable from a rollout that drove the "
+        "world to the condition. Check the clause against the initial state (e.g. a body_above_z "
+        "threshold below the object's resting height); the returned json reports this as "
+        "stop_when_true_at_reset."
     )
 
 
@@ -1917,6 +1971,8 @@ class PolicyRunner:
             ``policy``, ``instruction``, ``n_steps``, ``steps_used`` (the
             control steps actually executed, equal to ``n_steps``),
             ``elapsed_s``, ``stopped_early``, ``stopped_reason``
+                (``"predicate"`` / ``"budget"`` / ``"cancelled"`` / ``"error"``),
+                ``stop_when_true_at_reset`` (bool) and ``stop_when_reset_warning``
             (``"predicate"`` - the ``stop_when`` condition fired; ``"budget"``
             - the step/duration horizon was exhausted; ``"cancelled"`` - a
             cooperative stop, e.g. ``stop_policy``; on ``status="error"``
@@ -2126,6 +2182,10 @@ class PolicyRunner:
         # and every error return reports "error".
         stopped_reason: StoppedReason = "budget"
         stop_predicate_fired = False
+        # Whether the caller's stop_when clause ALREADY held before the policy
+        # acted. Sampled once below, beside the per-step check it qualifies; see
+        # :func:`stop_when_true_at_reset_warning`.
+        stop_when_true_at_reset = False
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
         # Named-body poses the policy declared it needs (mimic trackers read an
@@ -2708,6 +2768,22 @@ class PolicyRunner:
                         logger.info("stop_when fired at step %d; ending rollout early", step_count)
                     return fired
 
+                # Sample the clause ONCE before the policy acts. The loop below
+                # evaluates it only after an applied action, so a clause that
+                # already holds here fires on the first step whatever the policy
+                # commands - see :func:`stop_when_true_at_reset_warning`.
+                # Diagnostic only: it decides no reported figure and re-tags no
+                # rollout, so unlike the per-step call it is deliberately NOT
+                # fatal on a raise. A clause reading state that the first applied
+                # action would have established has not had one yet, and refusing
+                # the rollout over a probe the rollout never needed would turn a
+                # diagnostic into an outage.
+                if stop_when is not None:
+                    try:
+                        stop_when_true_at_reset = bool(stop_when(self.sim))
+                    except Exception as e:  # noqa: BLE001 - diagnostic, never fatal
+                        logger.debug("stop_when at reset raised %s; not sampled", e)
+
                 # ONE chunk-acquisition seam for the whole module, so a fix to
                 # chunk resolution or to the RTC delay contract lands on every
                 # rollout entry point at once.
@@ -2826,11 +2902,18 @@ class PolicyRunner:
             prefix = "Policy stopped early (stop_when condition met)"
         else:
             prefix = "Policy stopped"
+        _stop_when_reset_warning = (
+            stop_when_true_at_reset_warning(surface="run_policy") if stop_when_true_at_reset else None
+        )
+        if _stop_when_reset_warning is not None:
+            logger.warning("%s", _stop_when_reset_warning)
         text = (
             f"{prefix} on '{robot_name}'\n{type(policy).__name__} | {instruction}\n{elapsed:.1f}s | {step_count} steps"
         )
         if sim_time is not None:
             text += f" | sim_t={sim_time:.3f}s"
+        if _stop_when_reset_warning is not None:
+            text += f"\n{_stop_when_reset_warning}"
         if vwriter is not None:
             assert video is not None
             video_path = vwriter.path
@@ -2876,6 +2959,14 @@ class PolicyRunner:
             "elapsed_s": round(elapsed, 3),
             "stopped_early": stopped_early,
             "stopped_reason": stopped_reason,
+            # True when the stop_when clause already held before any action was
+            # applied, so stopped_reason="predicate" after one step describes the
+            # scene's initial state rather than the policy. Always present (False
+            # when no clause was given) so callers can rely on the key;
+            # stop_when_reset_warning carries the qualifying text, None otherwise.
+            # Every other reported figure is left as measured.
+            "stop_when_true_at_reset": stop_when_true_at_reset,
+            "stop_when_reset_warning": _stop_when_reset_warning,
             "action_errors": _action_errors,
             "video_path": None,
             "video_frames": 0,

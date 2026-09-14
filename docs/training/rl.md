@@ -269,7 +269,33 @@ and observation normalization frozen, so its numbers are what a deployed
 `policy.pt` would produce. It returns `num_episodes`, `mean_return`,
 `std_return`, `min_return`, `max_return`, `mean_length`, `success_rate` (the
 fraction of episodes that ended on a genuine terminal via the env's
-`success_fn`, not a time-out) and the per-episode `returns`.
+`success_fn`, not a time-out), the per-episode `returns`, and two fields that say
+whether that rate measured the policy at all.
+
+`success_rate` degenerates to a constant from two opposite directions, and neither
+is visible in the number:
+
+| field | value | what it means | rate it forces |
+| --- | --- | --- | --- |
+| `success_measured` | `False` | the env has no `success_fn`, so nothing can terminate and every episode times out | hard `0.0` |
+| `episodes_successful_at_reset` | `> 0` | the predicate already held at reset, so those episodes terminate on their first step whatever the policy commands | hard `1.0` each |
+
+Both are logged as warnings as well. Read them before trusting `success_rate`: a
+hard `0.0` is indistinguishable from a policy that was scored and failed
+everything, and a hard `1.0` is a rate a policy commanding its own current pose
+earns identically. The second is almost always a threshold on the wrong side of
+the initial state - a placement predicate the object's own spawn satisfies, or a
+lift height below where the object already rests. `SimEnv.step` samples
+`success_fn` only after an applied action, so `evaluate()` samples it once per
+episode at reset to count this; that sample is diagnostic and never fatal, so a
+predicate reading state only a first step establishes is simply not counted.
+
+Neither field changes a returned figure. Domain randomisation legitimately draws
+initial states per episode through `reset_fn`, so a partial
+`episodes_successful_at_reset` is a fact about those draws rather than a broken
+predicate, and silently correcting the rate would hide the misconfiguration that
+produced it. `PolicyRunner.evaluate` and `PolicyRunner.evaluate_benchmark` report
+the same two facts for the same `success_rate`.
 
 `num_episodes` must be a positive integer, checked against the same shared count
 domain as `total_timesteps` / `rollout_steps` / `num_envs`: it is the `range()`

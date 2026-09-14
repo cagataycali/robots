@@ -2808,7 +2808,18 @@ class SimEngine(ABC):
                 callers may pass a callable ``(sim) -> bool`` instead of a
                 dict (the tool surface accepts dicts only). ``None`` (default)
                 keeps the pure step-budget horizon. The result json reports
-                why the rollout ended via ``stopped_reason``.
+                why the rollout ended via ``stopped_reason``. A clause the
+                scene's initial state ALREADY satisfies is the mirror of the
+                typo above: evaluated only after an applied action, it fires on
+                the first step whatever the policy commands, and the resulting
+                ``stopped_reason="predicate"`` after one step is
+                indistinguishable from a rollout that drove the world to the
+                condition. That is reported rather than refused -
+                ``stop_when_true_at_reset`` (bool, always present) and
+                ``stop_when_reset_warning`` (the qualifying text, ``None``
+                otherwise) in the result json, plus a logged warning - because a
+                randomised initial state legitimately satisfies a clause on some
+                draws, and every other reported figure is left as measured.
             observer: Optional read-only rollout observer, forwarded verbatim to
                 :meth:`PolicyRunner.run`. Receives one
                 :class:`~strands_robots.simulation.observers.RunPolicyStarted`,
@@ -2880,6 +2891,17 @@ class SimEngine(ABC):
             horizon was exhausted; ``"cancelled"`` - a cooperative stop, e.g.
             ``stop_policy``; ``"error"`` on error results - so an agent
             deciding whether to retry knows WHY the rollout ended).
+            ``stop_when_true_at_reset`` (bool, always present) qualifies that
+            attribution: the clause is evaluated only AFTER an applied action,
+            so one the scene's initial state already satisfies fires on the
+            first step whatever the policy commands, making
+            ``stopped_reason="predicate"`` after one step indistinguishable
+            from a rollout that drove the world to the condition - the mirror
+            of the never-fires case the pre-rollout entity probe refuses.
+            ``stop_when_reset_warning`` carries the qualifying text (``None``
+            when the flag is ``False``). Reported rather than refused, and
+            every other figure is left as measured: domain randomisation
+            legitimately draws an initial state that satisfies a clause.
 
             Action health: ``action_errors`` (steps where the backend reported
             an error), ``action_resolution_rate`` (an
