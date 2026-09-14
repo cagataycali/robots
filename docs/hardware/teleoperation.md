@@ -112,7 +112,14 @@ Every hardware `Robot` and `Simulation` host exposes:
   repeated name is refused rather than polling that device twice per tick, and a
   one-shot iterator is refused rather than being consumed before the loop can
   poll it. Every one of these is refused before any device is connected.
-- **`robot_name`** - target robot in a multi-robot simulation world.
+- **`robot_name`** - target robot in a multi-robot simulation world. Read
+  only inside the loop (`send_action(merged, robot_name=...)`, every tick),
+  so it is graded at the door like `hz` and `duration`: a name the host
+  cannot route to is **refused** - with the same close-match message
+  `send_action` would have given - before any device is connected, rather
+  than starting a session whose every frame the follower refuses. A
+  hardware `Robot` wraps one device and ignores the argument, so nothing
+  is unroutable there.
 - **`hz`** - control-loop rate (default `50.0`).
 - **`publish`** - also publish each device to the mesh via the host's
   `start_teleop_publish` so remote peers can follow. Requires a hardware

@@ -4,7 +4,10 @@ Shared by :class:`strands_robots.hardware_robot.Robot` and the MuJoCo
 :class:`strands_robots.simulation.Simulation`. The only contract a host
 class must satisfy is a ``send_action(action: dict, robot_name: str | None
 = None) -> dict`` method (both already have it) and, for mesh publishing,
-the ``mesh`` / ``peer_id`` attributes (both already have them).
+the ``mesh`` / ``peer_id`` attributes (both already have them). A host that
+holds more than one robot also overrides ``_teleop_target_error`` so the
+``robot_name`` a session will hand ``send_action`` on every tick is graded
+once, at the door, instead of per frame on the loop thread.
 
 Design
 ------
@@ -118,11 +121,16 @@ class TeleopMixin:
             device_name: Input stream name to subscribe to.
             apply_fn: Optional custom ``(robot, action_dict) -> None``.
             robot_name: Sim only - which robot in the world receives the
-                actions. Ignored on hardware hosts.
+                actions. Ignored on hardware hosts. Graded here through
+                :meth:`_teleop_target_error`, with the two mesh identifiers and
+                ahead of the same teardown: a name the host cannot route to is
+                refused instead of replacing the receiver already following this
+                leader with one that refuses every frame.
 
         Returns:
-            Status dict; error when the mesh is inactive or an identifier is
-            not a valid mesh identifier.
+            Status dict; error when the mesh is inactive, an identifier is not a
+            valid mesh identifier, or ``robot_name`` is not a robot this host can
+            route to. Nothing is subscribed or torn down when it is an error.
         """
         mesh = getattr(self, "mesh", None)
         if not mesh or not getattr(mesh, "alive", False):
@@ -135,6 +143,15 @@ class TeleopMixin:
             validate_mesh_identifier(device_name, "start_teleop_receive.device_name")
         except ValidationError as exc:
             return {"status": "error", "content": [{"text": str(exc)}]}
+
+        # The third identifier this call takes. Graded here with the other two,
+        # and for the same reason they are graded ahead of the teardown below: a
+        # refused call must not stop a live stream. A ``robot_name`` the host
+        # cannot route to was accepted, replaced the receiver already following
+        # this leader, and then refused every frame that arrived - so a typo
+        # ended a working session and reported success.
+        if error := self._teleop_target_error(robot_name):
+            return {"status": "error", "content": [{"text": error}]}
 
         from strands_robots.mesh import InputReceiver
 
@@ -211,6 +228,33 @@ class TeleopMixin:
                 {"json": {"publishers": publishers, "receivers": receivers}},
             ],
         }
+
+    def _teleop_target_error(self, robot_name: str | None) -> str | None:
+        """Refusal text when this host cannot route actions to ``robot_name``.
+
+        Part of the host contract, beside :meth:`send_action`, and read by both
+        doors that start a loop. A session's ``robot_name`` is consumed only
+        *inside* the loop - handed to ``send_action`` on every tick - so a name
+        the host cannot resolve is otherwise discovered once per frame, on the
+        loop thread, after the verb that accepted it has already reported a
+        started session. This hook asks the question once, at the door, in the
+        host's own words.
+
+        Returns ``None`` by default, meaning there is nothing to resolve: a host
+        that wraps exactly one device accepts ``robot_name`` for mixin parity and
+        ignores it (see
+        :meth:`strands_robots.hardware_robot.Robot.send_action`), so no value is
+        unroutable there. A host that holds several robots overrides this and
+        answers with the same message its ``send_action`` would have produced.
+
+        Args:
+            robot_name: The session's target robot, or ``None`` for the host's
+                default.
+
+        Returns:
+            The refusal text, or ``None`` when the name is routable.
+        """
+        return None
 
     def send_action(self, action: ActionDict, robot_name: str | None = None) -> dict[str, Any]:
         """Apply ``action`` to the host robot/sim. Implemented by the host."""
@@ -475,7 +519,12 @@ class TeleopMixin:
                 reinterpreted.
             robot_name: Target robot for ``send_action``. ``None`` -> the
                 host's default (single hardware robot, or first sim robot).
-                In a multi-robot sim, name the specific robot.
+                In a multi-robot sim, name the specific robot. Read only inside
+                the loop, so - like ``hz`` and ``duration`` - it is graded here
+                rather than reported as a started session: a name this host
+                cannot route to is refused before any device is connected,
+                instead of driving a session whose every frame the follower
+                refuses.
             hz: Local control-loop frequency. Must be a positive finite
                 number - the loop period is ``1 / hz``.
             publish: Also publish each selected device to the mesh via the
@@ -503,8 +552,9 @@ class TeleopMixin:
             units the bound does not expect cannot look like a clean run while
             moving nothing. An ``hz`` or ``duration`` the loop cannot honor is
             refused here rather than reported as a started session, as is a
-            ``names`` that does not name a usable subset - both are refused
-            before any device is connected.
+            ``names`` that does not name a usable subset, and a ``robot_name``
+            the host cannot route to - all of them are refused before any device
+            is connected.
         """
         self._ensure_teleop_state()
 
@@ -520,6 +570,20 @@ class TeleopMixin:
             error = positive_finite_number_error(value, param, "teleoperate")
             if error:
                 return {"status": "error", "content": [{"text": error}]}
+
+        # ``robot_name`` is the third knob this loop reads only from inside
+        # itself - ``send_action(merged, robot_name=...)``, every tick - so it is
+        # graded here for the reason the two above it are. A name the host cannot
+        # route to was reported as a started session and then refused every
+        # frame: in background mode nothing said so until ``stop_teleoperate``
+        # derived it from the counters, and by then the leader had been connected
+        # and polled for the whole session while the follower was never
+        # commanded. Graded before any device is connected, so a refused call
+        # energises nothing and needs no rollback. The host answers in its own
+        # words, which for a simulation is the close-match message
+        # ``send_action`` would have produced on each of those frames.
+        if error := self._teleop_target_error(robot_name):
+            return {"status": "error", "content": [{"text": error}]}
 
         if not self._teleops:
             return {

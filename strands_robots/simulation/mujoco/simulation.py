@@ -1838,6 +1838,30 @@ class MuJoCoSimEngine(
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg
 
+    def _teleop_target_error(self, robot_name: str | None) -> str | None:
+        """Refuse a teleop ``robot_name`` that is not a robot in this world.
+
+        Overrides the :class:`~strands_robots.teleop_mixin.TeleopMixin` default
+        (a single-device host has nothing to resolve). Reads the world the way
+        :meth:`send_action` does and answers in the same words, so the door a
+        teleop session opens refuses an unknown name once instead of the loop
+        refusing it on every frame.
+
+        Args:
+            robot_name: The session's target robot, or ``None`` for the world's
+                single robot.
+
+        Returns:
+            :meth:`_unknown_robot_msg` text, or ``None`` when the name is one of
+            this world's robots (or ``None``, which the loop resolves itself).
+        """
+        if robot_name is None:
+            return None
+        robots = self._world.robots if self._world is not None else {}
+        if registered(robots, robot_name):
+            return None
+        return self._unknown_robot_msg(robot_name)
+
     def _unknown_action_msg(self, requested: str) -> str:
         """Actionable 'unknown action' message: name it, offer a close-match over
         the published enum, and point at where that enum is written - consistent
