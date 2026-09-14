@@ -24,6 +24,14 @@ These tests pin the invariant against whatever lerobot is installed (they read
 its live registry rather than hardcoding type names), so they hold across
 lerobot versions and fail on the pre-fix hardcoded gates whenever the registry
 contains a type outside the stale sets.
+
+Offline the static snapshots ARE the gates' answers, so ``TestOfflineFallback``
+pins that each one is consulted and ``TestOfflineFallbackContent`` pins what is
+in it: equal to the live registry (so a lerobot release that moves a type fails
+here instead of drifting), and - with no lerobot needed - a subset of the
+native-type snapshot, because a capability snapshot naming a type the native
+snapshot omits makes two offline gates contradict each other about the same
+policy.
 """
 
 from __future__ import annotations
@@ -35,16 +43,40 @@ import pytest
 
 from strands_robots.training import TrainSpec
 from strands_robots.training.lerobot import (
+    _EMBODIMENT_TAG_POLICY_TYPES_FALLBACK,
     _EXPERT_ONLY_POLICY_TYPES_FALLBACK,
     _LEROBOT_POLICY_TYPES_FALLBACK,
     _QUANTILE_NORM_POLICY_TYPES_FALLBACK,
     _RELATIVE_ACTION_POLICY_TYPES_FALLBACK,
+    _TUNE_COMPONENT_POLICY_TYPES_FALLBACK,
     LerobotTrainer,
     _lerobot_policy_types,
     _policy_registry,
+    _policy_supports_embodiment_tag,
     _policy_supports_expert_only,
     _policy_supports_relative_actions,
+    _policy_tune_components,
     _policy_uses_quantile_norm,
+)
+
+#: Each per-capability offline snapshot with the live probe that answers the same
+#: question when lerobot IS importable. The probe consults the live registry for
+#: any type the registry holds, so ``{t for t in registry if probe(t)}`` is the
+#: live truth the snapshot stands in for offline.
+_CAPABILITY_SNAPSHOTS = (
+    (
+        "_RELATIVE_ACTION_POLICY_TYPES_FALLBACK",
+        _RELATIVE_ACTION_POLICY_TYPES_FALLBACK,
+        _policy_supports_relative_actions,
+    ),
+    ("_EXPERT_ONLY_POLICY_TYPES_FALLBACK", _EXPERT_ONLY_POLICY_TYPES_FALLBACK, _policy_supports_expert_only),
+    ("_EMBODIMENT_TAG_POLICY_TYPES_FALLBACK", _EMBODIMENT_TAG_POLICY_TYPES_FALLBACK, _policy_supports_embodiment_tag),
+    (
+        "_TUNE_COMPONENT_POLICY_TYPES_FALLBACK",
+        _TUNE_COMPONENT_POLICY_TYPES_FALLBACK,
+        lambda ptype: bool(_policy_tune_components(ptype)),
+    ),
+    ("_QUANTILE_NORM_POLICY_TYPES_FALLBACK", _QUANTILE_NORM_POLICY_TYPES_FALLBACK, _policy_uses_quantile_norm),
 )
 
 
@@ -230,6 +262,73 @@ class TestOfflineFallback:
             assert _policy_uses_quantile_norm(ptype) is True
         assert _policy_uses_quantile_norm("act") is False
         assert _policy_uses_quantile_norm("definitely_not_a_policy") is False
+
+
+class TestOfflineFallbackContent:
+    """The static snapshots hold what the live registry holds.
+
+    ``TestOfflineFallback`` above pins the WIRING - that each gate consults its
+    snapshot when the registry is gone - by comparing the gate's answer to the
+    same constant it returns. That is true of any content, so it cannot catch a
+    snapshot that has fallen behind lerobot, and offline the snapshot is the only
+    answer a caller gets.
+    """
+
+    def test_native_snapshot_matches_the_live_registry(self):
+        """A type lerobot registers must not be called "not LeRobot-native" offline."""
+        reg = _policy_registry()
+        if reg is None:
+            pytest.skip("lerobot not installed; nothing to compare the snapshot against")
+        assert set(_LEROBOT_POLICY_TYPES_FALLBACK) == set(reg), (
+            "_LEROBOT_POLICY_TYPES_FALLBACK drifted from lerobot's policy registry: "
+            f"snapshot-only={sorted(set(_LEROBOT_POLICY_TYPES_FALLBACK) - set(reg))} "
+            f"registry-only={sorted(set(reg) - set(_LEROBOT_POLICY_TYPES_FALLBACK))}"
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "snapshot", "probe"), _CAPABILITY_SNAPSHOTS, ids=[r[0] for r in _CAPABILITY_SNAPSHOTS]
+    )
+    def test_capability_snapshot_matches_the_live_registry(self, name, snapshot, probe):
+        reg = _policy_registry()
+        if reg is None:
+            pytest.skip("lerobot not installed; nothing to compare the snapshot against")
+        live = {ptype for ptype in reg if probe(ptype)}
+        assert set(snapshot) == live, (
+            f"{name} drifted from lerobot's configs: "
+            f"snapshot-only={sorted(set(snapshot) - live)} live-only={sorted(live - set(snapshot))}"
+        )
+
+    @pytest.mark.parametrize(
+        ("name", "snapshot", "probe"), _CAPABILITY_SNAPSHOTS, ids=[r[0] for r in _CAPABILITY_SNAPSHOTS]
+    )
+    def test_capability_snapshot_names_only_native_types(self, name, snapshot, probe):
+        """Two offline gates may not disagree about whether a type is a lerobot policy.
+
+        Needs no lerobot: a capability snapshot names lerobot-native types by
+        definition, so any member the native snapshot omits is a contradiction
+        inside the module.
+        """
+        assert set(snapshot) <= set(_LEROBOT_POLICY_TYPES_FALLBACK), (
+            f"{name} names types _LEROBOT_POLICY_TYPES_FALLBACK omits: "
+            f"{sorted(set(snapshot) - set(_LEROBOT_POLICY_TYPES_FALLBACK))}"
+        )
+
+    def test_offline_validate_grades_a_type_it_calls_native(self, dataset_root, tmp_path, monkeypatch):
+        """The contradiction at the surface a caller reads.
+
+        Pre-fix an offline ``validate()`` of a molmoact2 spec returned BOTH
+        "policy_type 'molmoact2' is not LeRobot-native" and the quantile-stats
+        preflight's lerobot-specific remedy for that same type - one call denying
+        the policy exists and prescribing how to train it.
+        """
+        monkeypatch.setattr("strands_robots.training.lerobot._policy_registry", lambda: None)
+        graded = set().union(*(set(snapshot) for _, snapshot, _ in _CAPABILITY_SNAPSHOTS))
+        assert graded, "premise: the capability snapshots name at least one type"
+        trainer = LerobotTrainer(device="cpu")
+        for ptype in sorted(graded):
+            problems = trainer.validate(_spec(dataset_root, tmp_path, policy_type=ptype))
+            denied = [p for p in problems if "not LeRobot-native" in p]
+            assert not denied, f"{ptype!r} is graded by a capability gate yet refused as non-native: {denied}"
 
 
 class TestQuantileNormRegistryProbe:

@@ -81,14 +81,46 @@ logger = logging.getLogger(__name__)
 # list: the live set is read from lerobot's ``PreTrainedConfig`` draccus
 # ChoiceRegistry (see :func:`_lerobot_policy_types`) - the same zero-maintenance
 # discovery reward models / robots / teleops / cameras already use. Any policy
-# lerobot ships (act, smolvla, the pi0 family, groot, xvla, and newer additions
-# such as eo1, evo1, lingbot_va, molmoact2, wall_x, ...) or a plugin registers is
-# reachable with no change here. The static set below is the FALLBACK used ONLY
-# when lerobot's registry is unavailable (lerobot not importable), where training
-# cannot run anyway but ``validate()`` should still produce a useful offline
-# message.
+# lerobot ships or a plugin registers is reachable with no change here. The
+# static set below is the FALLBACK used ONLY when lerobot's registry is
+# unavailable (lerobot not importable), where training cannot run anyway but
+# ``validate()`` should still produce a useful offline message - which means the
+# snapshot has to name every type the installed lerobot registers, or the
+# offline message says a policy lerobot ships "is not LeRobot-native".
+#
+# Two invariants keep it honest, both pinned by the test suite so a lerobot
+# release that adds or removes a policy type fails there rather than drifting
+# silently (same posture as :data:`_LEROBOT_CODEBASE_VERSION_FALLBACK` and
+# :data:`_SAMPLE_WEIGHTING_KEYS_FALLBACK`):
+#
+#   1. This set EQUALS the live ``PreTrainedConfig`` registry of the installed
+#      lerobot.
+#   2. Every per-capability snapshot below is a SUBSET of this set. A capability
+#      set names lerobot-native types by definition, so a type this set omits
+#      while a capability set names it would make one offline gate contradict
+#      another about the same policy.
 _LEROBOT_POLICY_TYPES_FALLBACK = frozenset(
-    {"act", "diffusion", "vqbet", "tdmpc", "smolvla", "pi0", "pi05", "pi0_fast", "groot", "xvla"}
+    {
+        "act",
+        "diffusion",
+        "eo1",
+        "evo1",
+        "fastwam",
+        "gaussian_actor",
+        "groot",
+        "lingbot_va",
+        "molmoact2",
+        "multi_task_dit",
+        "pi0",
+        "pi05",
+        "pi0_fast",
+        "smolvla",
+        "tdmpc",
+        "vla_jepa",
+        "vqbet",
+        "wall_x",
+        "xvla",
+    }
 )
 
 _SUPPORTED_METHODS = {"full", "lora", "expert_only"}
@@ -141,8 +173,8 @@ def _module_available(name: str) -> bool:
 # built from ``config.use_relative_actions`` and saved into the checkpoint's
 # pre/post processors). Discovered live per policy type off the config class
 # (see :func:`_policy_supports_relative_actions`); the static set is the offline
-# FALLBACK. Currently the pi0 family and groot expose the field.
-_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot"})
+# FALLBACK. Currently the pi0 family, groot, and vla_jepa expose the field.
+_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot", "vla_jepa"})
 
 # LeRobot policy types whose config exposes ``train_expert_only`` (freeze the
 # (V)LM backbone, train only the action expert - the cheap VLA finetune recipe).
