@@ -17,6 +17,12 @@ ellipsoid's cross-section as well, so a value written into the spec's ``size``
 row for one of those components never survives a compile. Such a change is
 refused rather than reported, and the tests below pin both halves - the refusal,
 and that the components the ``fromto`` leaves alone still apply durably.
+
+One call carries several properties, so a refusal has to be about the call rather
+than the parameter it names. A resize can be refused on evidence that only exists
+once the new size is known - a shrink whose body would weigh less than MuJoCo's
+minimum no longer compiles - and the last class pins that such a refusal leaves
+none of its own call applied, in the model and in the spec alike.
 """
 
 from __future__ import annotations
@@ -108,6 +114,14 @@ FROMTO_SQUARE_CASES = [
     ("ell", "ellipsoid", "y semi-axis", [0.05, 0.04, 0.07], 0.05),
 ]
 FROMTO_SQUARE_IDS = [case[1] for case in FROMTO_SQUARE_CASES]
+
+
+# A shrink small enough that the density-derived body would weigh less than
+# MuJoCo's mjMINVAL, so the resized spec no longer compiles. This is the refusal
+# that can only be discovered AFTER the new size is recorded, which is what makes
+# it the case where a multi-property call has already written something.
+UNCOMPILABLE_SIZE = [1e-9, 1e-9, 1e-9]
+HONORED_SIZE = [0.04, 0.04, 0.04]
 
 
 @pytest.fixture
@@ -390,6 +404,96 @@ class TestFromtoFixedSizeIsRefused:
                 # component a fixed one copies must itself be settable - if it
                 # were fixed too, no size could satisfy both.
                 assert follows not in fixed, f"{gtype} component {index} copies a component that is fixed too"
+
+
+class TestARefusedResizeAppliesNothingFromItsOwnCall:
+    """A resize refused after the spec write leaves no property from that call applied.
+
+    ``set_geom_properties`` accepts ``color``, ``friction`` and ``size`` together -
+    the shape ``docs/simulation/domain-randomization.md`` shows for perturbing one
+    manipuland - and records all three in the spec before it touches the model, so
+    the reported values survive the next recompile. A resize is then refused on
+    evidence that only exists once the new size is recorded: the body's inertial
+    row is re-derived from a compile of the persisted spec, and a shrink whose
+    body would weigh less than ``mjMINVAL`` does not compile at all.
+
+    A caller reading ``status="error"`` about that resize has no reason to go
+    looking for the colour it asked for in the same call, so the refusal has to
+    leave the geom as it was in BOTH representations - the model read back now,
+    and the spec the next scene mutation restores it from.
+    """
+
+    NEW_COLOR = [0.0, 0.0, 1.0, 1.0]
+    NEW_FRICTION = [0.9, 0.02, 0.003]
+
+    def _state(self, engine, model=None):
+        """The geom's colour / friction / size as the model and the spec hold them."""
+        model = engine._world._model if model is None else model
+        geom_id = _geom(model, "derived_geom")
+        spec_geom = engine._world._backend_state["spec"].geoms[geom_id]
+        return {
+            "model_color": model.geom_rgba[geom_id].copy(),
+            "model_friction": model.geom_friction[geom_id].copy(),
+            "model_size": model.geom_size[geom_id].copy(),
+            "spec_color": np.array(spec_geom.rgba, dtype=float),
+            "spec_friction": np.array(spec_geom.friction, dtype=float),
+            "spec_size": np.array(spec_geom.size, dtype=float),
+        }
+
+    def _refuse(self, engine, size=UNCOMPILABLE_SIZE):
+        return engine.set_geom_properties(
+            geom_name="derived_geom", color=self.NEW_COLOR, friction=self.NEW_FRICTION, size=size
+        )
+
+    def test_the_shrink_is_refused_and_names_why(self, dual_sim):
+        """The premise: this size is refused by the compile, not by a value check."""
+        text = self._refuse(dual_sim)["content"][0]["text"]
+        assert text.startswith("set_geom_properties: ")
+        assert "does not compile, so the body's inertia cannot be re-derived" in text
+        # Nothing failed to be undone, so the refusal says only what was refused.
+        assert "could not be undone" not in text
+
+    def test_no_property_from_the_refused_call_is_applied(self, dual_sim):
+        """Colour and friction shared the refused call, so neither is applied."""
+        before = self._state(dual_sim)
+        assert self._refuse(dual_sim)["status"] == "error"
+        after = self._state(dual_sim)
+
+        # The premise of the whole class: the call really did ask to change these.
+        assert not np.allclose(before["model_color"], self.NEW_COLOR)
+        assert not np.allclose(before["model_friction"], self.NEW_FRICTION)
+        for key, value in before.items():
+            assert np.allclose(after[key], value), key
+
+    def test_the_next_recompile_restores_the_geom_the_refusal_reported(self, dual_sim):
+        """The spec is what a recompile reads, so a leak there outlives the call."""
+        before = self._state(dual_sim)
+        assert self._refuse(dual_sim)["status"] == "error"
+        model = _recompile(dual_sim)
+        after = self._state(dual_sim, model=model)
+        for key, value in before.items():
+            assert np.allclose(after[key], value), key
+
+    def test_a_size_only_refusal_is_unchanged(self, dual_sim):
+        """The single-property path this shares was already correct; keep it so."""
+        before = self._state(dual_sim)
+        result = dual_sim.set_geom_properties(geom_name="derived_geom", size=UNCOMPILABLE_SIZE)
+        assert result["status"] == "error", result
+        after = self._state(dual_sim)
+        for key, value in before.items():
+            assert np.allclose(after[key], value), key
+
+    def test_a_size_the_scene_can_compile_applies_all_three_durably(self, dual_sim):
+        """The refusal is the size, not the call shape: an honorable one still applies."""
+        assert self._refuse(dual_sim, size=HONORED_SIZE)["status"] == "success"
+        model = _recompile(dual_sim)
+        after = self._state(dual_sim, model=model)
+        assert np.allclose(after["model_color"], self.NEW_COLOR)
+        assert np.allclose(after["model_friction"], self.NEW_FRICTION)
+        assert np.allclose(after["model_size"], HONORED_SIZE)
+        assert np.allclose(after["spec_color"], self.NEW_COLOR)
+        assert np.allclose(after["spec_friction"], self.NEW_FRICTION)
+        assert np.allclose(after["spec_size"], HONORED_SIZE)
 
 
 class TestRefusedWhenTheChangeCannotBeRecorded:

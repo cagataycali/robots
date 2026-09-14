@@ -2207,6 +2207,15 @@ class PhysicsMixin:
         rather than silently corrupting the solver or broadphase bounds, or
         applying a shape/appearance the caller never asked for.
 
+        That holds for the call as a whole, not one parameter at a time. A single
+        call can carry ``color``, ``friction`` and ``size`` together, and a resize
+        can be refused on evidence that only appears once the new size is known -
+        a shrink whose body would weigh less than MuJoCo's minimum no longer
+        compiles. Such a refusal leaves NONE of the call applied: a caller told
+        the resize could not be honored does not find the geom wearing the color
+        and contact model from that same call, in either the model or the spec the
+        next recompile restores it from.
+
         Args:
             geom_name: Name of the geom to modify. The owning object's name is
                 accepted as an alias for an ``add_object`` geom (``"<name>"`` for
@@ -2359,11 +2368,47 @@ class PhysicsMixin:
             # geom silently reverts after this call reported the new value.
             # Record it in the spec first, so a scene that cannot carry the
             # change is refused before either representation is touched.
-            # Kept so a refresh that cannot be honored restores the spec to the
-            # size the model is still compiled with, leaving the two in step.
+            #
+            # Every property the caller supplied is captured, not just the size:
+            # a resize can still be refused AFTER the spec write below, and a
+            # caller told its call was refused must not find the geom wearing a
+            # color or a contact model from that same call. These are read from
+            # the model, which a refusal leaves compiled as it was, so restoring
+            # the spec from them leaves the two representations in step.
+            prior_color = None if color is None else model.geom_rgba[gid].tolist()
+            prior_friction = None if friction is None else model.geom_friction[gid].tolist()
             prior_size = None if size is None else model.geom_size[gid, : len(size)].tolist()
             if reason := persist_geom_properties(self._world, gid, color=color, friction=friction, size=size):
                 return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
+
+            if size is not None:
+                # A resize changes the shape the owning body's inertial row was
+                # integrated from. Re-derive that row from the spec, which now
+                # carries the new size, BEFORE touching the model: a scene whose
+                # resized geometry cannot be compiled is refused with both
+                # representations restored rather than left describing different
+                # shapes. The reported result is then the one the next recompile
+                # reproduces, so the resize does not depend on what follows it.
+                #
+                # This is the last thing that can refuse the call, so no model
+                # write happens until it has passed. That is what makes a refusal
+                # leave the model untouched however many properties one call
+                # carries, rather than only the resize the refusal names.
+                if reason := refresh_body_inertial_from_geometry(self._world, gid):
+                    # The spec still carries the whole requested change. Undoing
+                    # it can itself fail - on a spec that no longer agrees with
+                    # the compiled model - and that leaves the two describing
+                    # different shapes, which is the outcome this path exists to
+                    # prevent. Report it with the refusal rather than dropping it.
+                    if restore_reason := persist_geom_properties(
+                        self._world, gid, color=prior_color, friction=prior_friction, size=prior_size
+                    ):
+                        reason = (
+                            f"{reason}. The requested change could not be undone in the scene spec"
+                            f" either, so it still carries values the compiled model does not:"
+                            f" {restore_reason}"
+                        )
+                    return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
 
             if color is not None:
                 # Already coerced to 4 components (RGB got an opaque alpha).
@@ -2376,17 +2421,6 @@ class PhysicsMixin:
                 changes.append(f"friction -> {friction}")
 
             if size is not None:
-                # A resize changes the shape the owning body's inertial row was
-                # integrated from. Re-derive that row from the spec, which now
-                # carries the new size, BEFORE touching the model: a scene whose
-                # resized geometry cannot be compiled is refused with both
-                # representations restored rather than left describing different
-                # shapes. The reported result is then the one the next recompile
-                # reproduces, so the resize does not depend on what follows it.
-                if reason := refresh_body_inertial_from_geometry(self._world, gid):
-                    persist_geom_properties(self._world, gid, size=prior_size)
-                    return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
-
                 # Validated as exactly the component count this geom's type
                 # defines; the unused tail of the 3-wide row stays as compiled.
                 model.geom_size[gid, : len(size)] = size
