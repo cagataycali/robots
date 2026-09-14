@@ -76,7 +76,16 @@ def test_peers_lists_local_and_remote(fake_local_mesh):
 
 
 def test_peers_no_local_no_remote(fake_no_local):
-    out = _strands_call(action="peers")
+    """A listening process that heard nothing keeps the standing remedy.
+
+    The robot-less gateway is what such a process hears the fleet through, so it
+    is stood up here: an empty list only means "no peers" once something
+    listened. The report for a gateway that never came up is pinned in
+    ``tests/mesh/test_gateway_mesh_kill_switch.py``.
+    """
+    gateway = MagicMock(name="Gateway")
+    with patch("strands_robots.tools.robot_mesh._gateway_mesh", return_value=gateway):
+        out = _strands_call(action="peers")
     assert out["status"] == "success"
     assert "No peers" in out["content"][0]["text"]
 

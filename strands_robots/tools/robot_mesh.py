@@ -849,6 +849,37 @@ def _gateway_mesh() -> Any | None:
             return None
 
 
+def _undiscovered_peers_reason() -> str:
+    """Explain why a robot-less process heard no presence at all.
+
+    A process with no local :class:`~strands_robots.mesh.core.Mesh` hears the
+    fleet only through the gateway :func:`_gateway_mesh` brings up. When that
+    gateway does not come up, ``get_peers()`` returns an empty list because
+    nothing ever listened -- not because the fleet is empty. Reporting that as
+    ``0 remote`` answers a question nobody asked: it is byte-identical to a real
+    discovery that found nothing, so an operator cannot tell a killed mesh from
+    a quiet one, and ``peers``' standing remedy ("create a Robot()") is advice
+    the kill switch would refuse in turn.
+
+    Returns:
+        A sentence naming the reason, for a read-only action to append to its
+        report. Names ``STRANDS_MESH`` when the kill switch is what stopped the
+        gateway -- the one knob the generic remedy cannot stand in for -- and
+        otherwise points at the debug log, which holds the bring-up failure
+        :func:`_gateway_mesh` swallowed.
+    """
+    if mesh_disabled_by_env():
+        return (
+            f"no discovery ran: STRANDS_MESH={os.getenv('STRANDS_MESH', '')!r} is a hard kill "
+            "switch, so no Zenoh session was opened and no presence was heard. Unset it (or set "
+            "it to true) to discover peers."
+        )
+    return (
+        "no discovery ran: the robot-less gateway mesh did not start, so no presence was heard. "
+        "Enable DEBUG logging on strands_robots.tools.robot_mesh for the bring-up failure."
+    )
+
+
 def _resolve_mesh(target: str) -> Any | None:
     """Return a local Mesh in this process to use as the gateway for RPC.
 
@@ -1515,12 +1546,20 @@ def robot_mesh(
         return _err(f"mesh module unavailable: {exc}")
 
     locals_ = get_local_robots()
+    gateway = None
     if not locals_:
         # #10: robot-less process - bring up the gateway BEFORE reading peers
         # so presence subscription populates session peer tracking. The
         # gateway itself waits one heartbeat period on first bring-up.
-        _gateway_mesh()
+        gateway = _gateway_mesh()
     peers = get_peers()
+    # Whether the peer count below is a measurement at all: a robot-less process
+    # whose gateway never came up listened to nothing, and the read-only actions
+    # say so rather than reporting an empty fleet they did not observe.
+    undiscovered = None if (locals_ or gateway is not None) else _undiscovered_peers_reason()
+    observed = f"local={len(locals_)} remote={len(peers)}"
+    if undiscovered:
+        observed = f"{observed} discovery=none"
 
     # ── action: peers ─────────────────────────────────────────────────────
     if action == "peers":
@@ -1541,20 +1580,24 @@ def robot_mesh(
                 ts = p.get("task_status")
                 if ts:
                     lines.append(f"      task: {ts} - {p.get('instruction', '')}")
-        elif not locals_:
+        if undiscovered:
+            lines.append("")
+            lines.append(undiscovered)
+        elif not peers and not locals_:
             lines.append("")
             lines.append("No peers. Create a Robot() or Simulation() to auto-join the mesh.")
         # #322: audit read-only observation actions too, so the audit log is a
         # complete record of agent mesh access (not just actuation). Closes the
         # forensic gap where peers/status/inbox/unsubscribe left no trail.
-        _audit_tool_action(action, target, True, f"local={len(locals_)} remote={len(peers)}")
+        _audit_tool_action(action, target, True, observed)
         return _ok("\n".join(lines))
 
     # ── action: status ────────────────────────────────────────────────────
     if action == "status":
         # #322: read-only status is audited too (see peers branch above).
-        _audit_tool_action(action, target, True, f"local={len(locals_)} remote={len(peers)}")
-        return _ok(f"[mesh] local={len(locals_)} remote={len(peers)} peers={[p['peer_id'] for p in peers]}")
+        _audit_tool_action(action, target, True, observed)
+        text = f"[mesh] local={len(locals_)} remote={len(peers)} peers={[p['peer_id'] for p in peers]}"
+        return _ok(f"{text}\n{undiscovered}" if undiscovered else text)
 
     # All remaining actions need an outbound mesh.
     mesh = _resolve_mesh(target)

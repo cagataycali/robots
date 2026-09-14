@@ -372,6 +372,10 @@ agent("E-STOP all peers")
 !!! warning "A single-peer stop is graded by the answer, not by delivery"
     `robot_mesh(action="stop", target=...)` reads the envelope `Mesh.send` returns rather than whether the send raised. A peer whose handler reports it did not stop (the same rule `emergency_stop` grades with), a peer-level `type: error` (a lockout, replay or authorization rejection), a `send` precondition error, or no answer inside the budget (the caller's `timeout`, capped at 5s) each make the result `status="error"` naming the peer and its answer, audit the verdict as a failure, and log at `CRITICAL`. A response that reports no verdict either way is not read as a refusal. The timeout reading is deliberately this action's own: a fleet-wide `emergency_stop` keeps counting a silent peer as a gap in its count rather than a refusal.
 
+!!! warning "An empty peer list is not the same as no discovery"
+    `robot_mesh(action="peers")` and `action="status"` answer from any process, including one with no local `Robot()`/`Simulation()` - such a process hears the fleet only through a robot-less gateway peer the tool brings up on demand. When that gateway does not come up, both actions report `no discovery ran` beside the count rather than an empty fleet nothing listened for, and name `STRANDS_MESH` when the kill switch is why: the standing "create a `Robot()`" remedy would be refused by that same switch. The audit record for the call carries `discovery=none`. A gateway that did come up and heard nothing keeps the plain `0 remote` - that zero is a measurement.
+
+
 ## Mesh teleop
 
 ```python

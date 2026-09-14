@@ -334,3 +334,93 @@ class TestTheToolNamesTheVariable:
 
         assert out["status"] == "error"
         assert "no local mesh found" in out["content"][0]["text"]
+
+
+class TestAReadOnlyActionSaysWhetherItDiscovered:
+    """``peers`` and ``status`` report what they heard, not an unheard empty fleet.
+
+    Both actions answer before the outbound-mesh gate above, so a robot-less
+    process whose gateway the switch refused got ``0 local, 0 remote`` with
+    ``status="success"`` -- byte-identical to a real discovery that found
+    nothing, and followed by a remedy ("create a Robot()") the same switch would
+    refuse. Every other action names the variable; these two reported a fleet
+    they never listened for.
+    """
+
+    @staticmethod
+    def _text(action: str) -> str:
+        out = rmt.robot_mesh(action=action, tool_context=MagicMock())
+        # Read-only observation stays an observation: the local listing is still
+        # worth having, so the verdict rides along with it instead of replacing
+        # the answer with a refusal.
+        assert out["status"] == "success"
+        return str(out["content"][0]["text"])
+
+    @pytest.mark.parametrize("action", ("peers", "status"))
+    def test_a_killed_gateway_is_reported_as_no_discovery(self, monkeypatch, action) -> None:
+        monkeypatch.setenv("STRANDS_MESH", "false")
+
+        text = self._text(action)
+
+        assert "no discovery ran" in text
+        assert "STRANDS_MESH='false'" in text
+        # Premise: the misleading count is still shown -- the fix adds the
+        # verdict beside it rather than hiding what the process knows.
+        assert "remote=0" in text or "0 remote" in text
+
+    def test_the_remedy_the_switch_would_refuse_is_not_offered(self, monkeypatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH", "false")
+
+        assert "Create a Robot()" not in self._text("peers")
+
+    @pytest.mark.parametrize("action", ("peers", "status"))
+    def test_a_gateway_that_failed_for_another_reason_still_says_so(self, monkeypatch, action) -> None:
+        monkeypatch.delenv("STRANDS_MESH", raising=False)
+        # Mesh enabled, bring-up failed anyway (no zenoh, refused posture): the
+        # count is just as unmeasured, but this switch is not why.
+        monkeypatch.setattr(rmt, "_gateway_mesh", lambda: None)
+
+        text = self._text(action)
+
+        assert "no discovery ran" in text
+        assert "STRANDS_MESH" not in text
+
+    def test_the_audit_record_says_no_discovery_ran(self, monkeypatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH", "false")
+        details: list[str] = []
+        monkeypatch.setattr(rmt, "_audit_tool_action", lambda a, t, ok, detail: details.append(detail))
+
+        self._text("peers")
+        self._text("status")
+
+        assert details == ["local=0 remote=0 discovery=none"] * 2
+
+    def test_a_gateway_that_came_up_reports_a_real_measurement(self, monkeypatch) -> None:
+        monkeypatch.delenv("STRANDS_MESH", raising=False)
+        gateway = _FakeMesh(None, peer_id="gateway-test", peer_type="gateway")
+        gateway.start()
+        monkeypatch.setattr(rmt, "_gateway_mesh", lambda: gateway)
+        details: list[str] = []
+        monkeypatch.setattr(rmt, "_audit_tool_action", lambda a, t, ok, detail: details.append(detail))
+
+        text = self._text("peers")
+
+        # Control: a listening process that heard nothing keeps the pre-existing
+        # answer, standing remedy included.
+        assert "no discovery ran" not in text
+        assert "No peers. Create a Robot() or Simulation() to auto-join the mesh." in text
+        assert details == ["local=0 remote=0"]
+
+    def test_a_process_with_its_own_mesh_reports_a_real_measurement(self, monkeypatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH", "false")
+        local = _FakeMesh(object(), peer_id="robot-a", peer_type="robot")
+        local.start()
+        monkeypatch.setattr("strands_robots.mesh.get_local_robots", lambda: {"robot-a": local})
+
+        text = self._text("peers")
+
+        # Control: the switch does not unmake a mesh that is already in this
+        # process, so its peer view is measured and needs no verdict.
+        assert "no discovery ran" not in text
+        assert "1 local" in text
+        assert "robot-a (robot)" in text

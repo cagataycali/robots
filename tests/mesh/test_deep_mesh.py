@@ -1099,14 +1099,21 @@ class TestRobotMeshTool:
     """The agent-facing robot_mesh tool."""
 
     def test_peers_action_no_mesh(self):
-        """peers action when no local mesh exists."""
+        """peers action when no local mesh exists reports that nothing listened.
+
+        The suite runs with ``STRANDS_MESH=false`` (see ``tests/conftest.py``),
+        so the gateway this robot-less call needs is refused and the zero is not
+        a measurement. Pinned here so the plain count alone stops reading as one.
+        """
         from unittest.mock import MagicMock as _MM
 
         from strands_robots.tools.robot_mesh import robot_mesh
 
         result = robot_mesh(action="peers", tool_context=_MM())
         assert result["status"] == "success"
-        assert "0 local" in result["content"][0]["text"]
+        text = result["content"][0]["text"]
+        assert "0 local" in text
+        assert "no discovery ran" in text
 
     def test_tell_without_target_errors(self, mock_session):
         """tell action without target returns error."""
