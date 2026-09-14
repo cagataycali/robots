@@ -174,9 +174,14 @@ on any policy other than `pi0` / `pi05` / `pi0_fast`.
 selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
 `reward_classifier`) with that type's own fields, and
 `extra["sample_weighting"]` (`type`, `progress_path`, `head_mode`, `kappa`,
-`epsilon`) weights a policy run by RA-BC progress. Both dicts are refused before
-launch for a field the chosen type has no home for, for a `type` lerobot does not
-ship, and for the pipeline-ordering mistake of weighting a reward-model run.
+`epsilon`, plus `extra_params` for a scheme's own knobs) weights a policy run by
+RA-BC progress. Neither field list is written down in this trainer: both are read
+off the installed lerobot - the reward type's own config fields, and
+`SampleWeightingConfig`'s fields - so a field lerobot adds is configurable the day
+it lands and the refusal below names the surface as it actually is. Both dicts are
+refused before launch for a field the chosen type has no home for, for a `type`
+lerobot does not ship, and for the pipeline-ordering mistake of weighting a
+reward-model run.
 The progress parquet between the two runs is lerobot's to produce:
 
 ```bash

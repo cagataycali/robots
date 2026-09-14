@@ -6,7 +6,8 @@ different - the trainers read them by name and ``validate()`` / ``build_config``
 refuse them with a message that spells the key, e.g.::
 
     extra['sample_weighting'] does not support field(s) ['kapa'];
-    accepted keys are ['epsilon', 'head_mode', 'kappa', 'progress_path', 'type']
+    accepted keys are ['epsilon', 'extra_params', 'head_mode', 'kappa',
+    'progress_path', 'type'] (the fields of lerobot's SampleWeightingConfig)
 
 A caller who reads that message needs somewhere to look up what the accepted
 fields mean, and the Training overview is that page. A refusal naming a key the

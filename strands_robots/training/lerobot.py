@@ -227,8 +227,20 @@ _V21_TO_V30_CONVERTER = "lerobot.scripts.convert_dataset_v21_to_v30"
 # (``cfg.sample_weighting``), replacing the flat ``use_rabc`` / ``rabc_*``
 # fields of earlier 0.5.x. The friendly keys map 1:1 onto that config's fields,
 # so the validated dict is forwarded to ``SampleWeightingConfig(**dict)``.
-# ``type`` selects the scheme: lerobot ships ``rabc`` and ``uniform``.
-_SAMPLE_WEIGHTING_KEYS = {"type", "progress_path", "head_mode", "kappa", "epsilon"}
+#
+# Because that is a 1:1 mapping, the accepted keys are read off the installed
+# dataclass by :func:`_sample_weighting_fields` and this set is only the offline
+# fallback - the same live-then-fallback shape ``extra['reward_model']`` uses
+# through :func:`_reward_friendly_fields`. Written down instead, the set had
+# drifted from the dataclass: ``extra_params`` - the field the config's own
+# docstring names as where "additional type-specific parameters" go - was
+# missing, so the one key that carries a scheme's own knobs was refused as
+# unsupported.
+_SAMPLE_WEIGHTING_KEYS_FALLBACK = frozenset({"type", "progress_path", "head_mode", "kappa", "epsilon", "extra_params"})
+
+# ``type`` selects the scheme: lerobot ships ``rabc`` and ``uniform``. Unlike the
+# field set there is no live surface to read this from - ``make_sample_weighter``
+# dispatches on an if-chain rather than a registry - so it stays written down.
 _SAMPLE_WEIGHTING_TYPES = {"rabc", "uniform"}
 
 # LeRobot reward-model types (``--reward_model.type`` / make_reward_model_config
@@ -552,6 +564,35 @@ def _reward_friendly_fields(rtype: str) -> set[str]:
     base = {f.name for f in dataclasses.fields(RewardModelConfig)}
     own = {f.name for f in dataclasses.fields(reg[rtype]) if f.init}
     return own - base
+
+
+def _sample_weighting_fields() -> set[str]:
+    """Accepted ``extra['sample_weighting']`` keys (live dataclass, else fallback).
+
+    The friendly keys map 1:1 onto ``SampleWeightingConfig``'s fields - the
+    validated dict is forwarded as ``SampleWeightingConfig(**dict)`` - so the
+    accepted set IS that dataclass's constructor fields, read off the installed
+    lerobot rather than written down beside it. This is the shape
+    :func:`_reward_friendly_fields` already uses for the module's other
+    ``extra`` dict, and it costs the same zero maintenance: a field lerobot adds
+    is configurable the day it lands, and one it removes is refused by name
+    instead of being forwarded into a ``TypeError``.
+
+    Falls back to :data:`_SAMPLE_WEIGHTING_KEYS_FALLBACK` when the installed
+    lerobot has no ``lerobot.utils.sample_weighting`` (lerobot < 0.6.0), where
+    sample weighting cannot run anyway - the fallback exists so ``validate()``
+    still names the surface offline rather than accepting anything.
+
+    Returns:
+        The constructor (``init=True``) field names, ``type`` included: it is a
+        real field of this config, not a registry selector as it is for a reward
+        model, so the caller does not have to add it back.
+    """
+    try:
+        from lerobot.utils.sample_weighting import SampleWeightingConfig
+    except ImportError:
+        return set(_SAMPLE_WEIGHTING_KEYS_FALLBACK)
+    return {f.name for f in dataclasses.fields(SampleWeightingConfig) if f.init}
 
 
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
@@ -903,9 +944,11 @@ class LerobotTrainer(Trainer):
 
         RA-BC (Reward-Aligned Behavior Cloning) per-sample loss weighting is
         surfaced through the ``extra`` escape hatch as a single
-        ``sample_weighting`` dict with friendly keys (``type``,
-        ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``). lerobot
-        >= 0.6.0 configures it via a nested ``SampleWeightingConfig`` on
+        ``sample_weighting`` dict whose keys are the fields of lerobot's
+        ``SampleWeightingConfig`` (``type``, ``progress_path``, ``head_mode``,
+        ``kappa``, ``epsilon``, ``extra_params``), read off the installed
+        dataclass by :func:`_sample_weighting_fields` rather than listed here.
+        lerobot >= 0.6.0 configures it via a nested ``SampleWeightingConfig`` on
         ``TrainPipelineConfig`` (``cfg.sample_weighting``); the friendly keys map
         1:1 onto that config's fields. Example::
 
@@ -1192,6 +1235,20 @@ class LerobotTrainer(Trainer):
             for k, v in sw.items():
                 if isinstance(v, str) and v.startswith("-"):
                     problems.append(f"sample_weighting['{k}'] must not start with '-' (would parse as a stray flag)")
+            # Grade the keys HERE, the way the reward-model dict above is graded.
+            # Both consumers filter on this same set, so a key it does not name
+            # is not forwarded by either: unnamed, ``build_command`` left it out
+            # of the argv and the run trained with the field's default while
+            # reporting success, and ``build_config`` raised from a method the
+            # preflight is supposed to have cleared. One gate, both paths.
+            accepted = _sample_weighting_fields()
+            unknown = sorted(k for k in sw if k not in accepted)
+            if unknown:
+                problems.append(
+                    f"extra['sample_weighting'] does not support field(s) {unknown}; "
+                    f"accepted keys are {sorted(accepted)} (the fields of lerobot's "
+                    "SampleWeightingConfig)."
+                )
 
         problems.extend(self._embodiment_problems(spec, ptype))
         problems.extend(self._tune_component_problems(spec, ptype))
@@ -1502,9 +1559,15 @@ class LerobotTrainer(Trainer):
                 cmd.append(f"--policy.{field_name}={'true' if enabled else 'false'}")
             sw = self._sample_weighting_dict(spec)
             if sw is not None:
-                for key in ("type", "progress_path", "head_mode", "kappa", "epsilon"):
-                    if key in sw:
-                        cmd.append(f"--sample_weighting.{key}={sw[key]}")
+                # Same live field set validate() graded, and the same
+                # ``_render_extra_value`` every other extra flag goes through, so
+                # a dict-valued field (``extra_params``) renders as the token
+                # draccus decodes back to it. A hand-written tuple here listed
+                # five of the six fields and dropped anything else in silence.
+                accepted = _sample_weighting_fields()
+                for key, value in sorted(sw.items()):
+                    if key in accepted:
+                        cmd.append(f"--sample_weighting.{key}={_render_extra_value(value)}")
         if spec.resume:
             ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
@@ -1920,11 +1983,13 @@ class LerobotTrainer(Trainer):
                     "or drop extra['sample_weighting']."
                 ) from exc
 
-            unsupported = sorted(k for k in sw if k not in _SAMPLE_WEIGHTING_KEYS)
+            accepted = _sample_weighting_fields()
+            unsupported = sorted(k for k in sw if k not in accepted)
             if unsupported:
                 raise ValueError(
                     f"extra['sample_weighting'] does not support field(s) "
-                    f"{unsupported}; accepted keys are {sorted(_SAMPLE_WEIGHTING_KEYS)}."
+                    f"{unsupported}; accepted keys are {sorted(accepted)} (the fields of "
+                    "lerobot's SampleWeightingConfig)."
                 )
             sw_type = sw.get("type", "rabc")
             if sw_type not in _SAMPLE_WEIGHTING_TYPES:

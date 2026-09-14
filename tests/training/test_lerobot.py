@@ -17,7 +17,11 @@ from types import SimpleNamespace
 import pytest
 
 from strands_robots.training import TrainSpec, create_trainer
-from strands_robots.training.lerobot import LerobotTrainer
+from strands_robots.training.lerobot import (
+    _SAMPLE_WEIGHTING_KEYS_FALLBACK,
+    LerobotTrainer,
+    _sample_weighting_fields,
+)
 
 
 @pytest.fixture
@@ -1133,7 +1137,8 @@ class TestSampleWeightingRABC:
     Regression for the folding recipe's headline ablation (HQ + RA-BC + relative
     actions). lerobot >= 0.6.0 configures RA-BC through a NESTED
     ``SampleWeightingConfig`` on ``TrainPipelineConfig`` (``cfg.sample_weighting``,
-    fields ``type`` / ``progress_path`` / ``head_mode`` / ``kappa`` / ``epsilon``),
+    whose fields :class:`TestSampleWeightingFieldsFollowTheDataclass` reads off
+    the installed lerobot rather than listing here),
     replacing the flat ``use_rabc`` / ``rabc_*`` fields of earlier 0.5.x. The
     trainer forwards the friendly ``sample_weighting`` dict (whose keys match
     those fields 1:1) into that config. Before this migration the trainer set the
@@ -1246,6 +1251,97 @@ class TestSampleWeightingRABC:
         spec.extra["sample_weighting"] = {"type": "rabc", "progress_path": "-x"}
         problems = LerobotTrainer().validate(spec)
         assert any("must not start with '-'" in p for p in problems)
+
+
+class TestSampleWeightingFieldsFollowTheDataclass:
+    """The accepted ``extra['sample_weighting']`` keys are the config's own fields.
+
+    The friendly dict is forwarded as ``SampleWeightingConfig(**dict)``, so the
+    accepted keys ARE that dataclass's constructor fields. Written down beside it
+    instead, the set drifted: ``extra_params`` - which the config's own docstring
+    names as where "additional type-specific parameters" go, i.e. the only place a
+    scheme's own knobs can be spelled - was missing from the list, and the two
+    consumers disagreed about what to do with a key the list did not name.
+    ``build_config`` raised, and ``build_command`` left the flag out of the argv
+    and let the run train with the field's default while reporting success.
+
+    These tests pin the domain to the live dataclass and pin both consumers to it,
+    so neither a lerobot field addition nor a re-hardcoded list can reopen either
+    half.
+    """
+
+    def _spec(self, dataset_root, tmp_path, sw):
+        return TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"policy_type": "act", "sample_weighting": sw},
+        )
+
+    def test_the_accepted_set_is_the_installed_dataclasss_fields(self):
+        """No written-down list: the domain is read off the installed lerobot."""
+        sample_weighting = pytest.importorskip("lerobot.utils.sample_weighting")
+        live = {f.name for f in dataclasses.fields(sample_weighting.SampleWeightingConfig) if f.init}
+        assert _sample_weighting_fields() == live
+        # The offline fallback stands in for exactly that set, so it cannot drift
+        # into refusing a field the installed lerobot accepts either.
+        assert set(_SAMPLE_WEIGHTING_KEYS_FALLBACK) == live
+
+    def test_extra_params_is_accepted_on_every_path(self, dataset_root, tmp_path):
+        """The config's own extension point reaches lerobot, not a refusal."""
+        pytest.importorskip("lerobot.utils.sample_weighting")
+        spec = self._spec(dataset_root, tmp_path, {"type": "rabc", "extra_params": {"alpha": 2.0}})
+        trainer = LerobotTrainer(device="cpu")
+        assert trainer.validate(spec) == []
+        assert trainer.build_config(spec).sample_weighting.extra_params == {"alpha": 2.0}
+        cmd = trainer.build_command(spec)
+        assert any(c.startswith("--sample_weighting.extra_params=") for c in cmd), cmd
+
+    def test_the_argv_and_the_in_process_config_are_the_same_run(self, dataset_root, tmp_path):
+        """Every accepted field survives the argv, so neither path drops one.
+
+        The subprocess path is graded by parsing the flags it emits with lerobot's
+        own decoder and comparing the result to the config the in-process path
+        builds. A field the argv omits - or renders as a token draccus reads back
+        as something else - shows up here as a mismatch rather than as a run that
+        silently trained with the default.
+        """
+        draccus = pytest.importorskip("draccus")
+        sample_weighting = pytest.importorskip("lerobot.utils.sample_weighting")
+        sw = {
+            "type": "rabc",
+            "progress_path": str(tmp_path / "progress.parquet"),
+            "head_mode": "dense",
+            "kappa": 0.02,
+            "epsilon": 1e-05,
+            "extra_params": {"alpha": 2.0, "mode": "soft"},
+        }
+        # Every accepted field is exercised, so the comparison covers the whole
+        # surface rather than whichever fields this case happened to name.
+        assert set(sw) == _sample_weighting_fields()
+        trainer = LerobotTrainer(device="cpu")
+        spec = self._spec(dataset_root, tmp_path, sw)
+        flags = [c for c in trainer.build_command(spec) if c.startswith("--sample_weighting.")]
+        from_argv = draccus.parse(
+            config_class=sample_weighting.SampleWeightingConfig,
+            args=[f.replace("--sample_weighting.", "--", 1) for f in flags],
+        )
+        assert from_argv == trainer.build_config(spec).sample_weighting
+        assert from_argv == sample_weighting.SampleWeightingConfig(**sw)
+
+    @pytest.mark.parametrize("unknown", ["kapa", "bogus_field"])
+    def test_validate_refuses_a_key_the_dataclass_has_no_field_for(self, dataset_root, tmp_path, unknown):
+        """The preflight owns the key domain, so no consumer decides it alone.
+
+        Ungraded here, a typo passed ``validate()`` and then either raised from
+        ``build_config`` - past the preflight that is supposed to have cleared the
+        spec - or was dropped from the argv without a word.
+        """
+        pytest.importorskip("lerobot.utils.sample_weighting")
+        spec = self._spec(dataset_root, tmp_path, {"type": "rabc", unknown: 0.02})
+        problems = LerobotTrainer().validate(spec)
+        assert any(unknown in p and "does not support field" in p for p in problems), problems
 
 
 class TestRewardModelTraining:
