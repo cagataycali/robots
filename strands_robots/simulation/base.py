@@ -4553,7 +4553,7 @@ class SimEngine(ABC):
             keep (see ``recording_save_error`` below) and an evaluation in
             which the policy never commanded the robot at all (see
             ``uncommanded_error``). Read
-            ``success_measured`` first - it is ``False`` when no
+            ``success_measured`` and ``episodes_successful_at_reset`` first - it is ``False`` when no
             ``success_fn`` / benchmark spec was supplied, in which case
             ``success_rate`` is ``0.0`` for every policy regardless of what it
             did and measures nothing.
@@ -4563,6 +4563,21 @@ class SimEngine(ABC):
             Outcome: ``success_rate``, ``n_success``, ``success_measured``,
             ``episodes_completed``, ``episodes`` (the per-episode records) and
             ``avg_steps``.
+
+            ``episodes_successful_at_reset`` (int) counts episodes whose success
+            criterion already held at reset, before any action was applied. The
+            criterion is sampled only after an applied action, so such an episode
+            succeeds on its first step whatever the policy commands and its
+            contribution to ``success_rate`` / ``pass_hat_k`` describes the scene's
+            initial state rather than the policy - the mirror of
+            ``success_measured=False``, which reports a hard 0.0 for the same kind
+            of reason. Usually a threshold on the wrong side of the initial state
+            (a lift height below where the object already rests). Every reported
+            figure is left as measured; ``reset_success_warning`` carries the
+            qualifying text (``None`` when the count is zero) and each per-episode
+            record carries its own ``success_at_reset``. A partial count is not an
+            error: domain randomisation legitimately draws initial states per
+            episode.
 
             Commanded actions: ``actions_applied`` (actions actually handed to
             ``send_action``) beside ``steps_advanced`` (control steps the
@@ -4873,6 +4888,23 @@ class SimEngine(ABC):
             never commanded the robot, ``success_rate`` / ``avg_reward``
             describe the scene's initial state rather than the policy, and
             ``status`` is ``"error"``.
+
+            ``episodes_successful_at_reset`` (int) counts episodes whose success
+            criterion already held at reset, before any action was applied. The
+            criterion is sampled only after an applied action, so such an episode
+            succeeds on its first step whatever the policy commands and its
+            contribution to ``success_rate`` / ``pass_hat_k`` describes the scene's
+            initial state rather than the policy - the mirror of
+            ``success_measured=False``, which reports a hard 0.0 for the same kind
+            of reason. Usually a threshold on the wrong side of the initial state
+            (a lift height below where the object already rests). Every reported
+            figure is left as measured; ``reset_success_warning`` carries the
+            qualifying text (``None`` when the count is zero) and each per-episode
+            record carries its own ``success_at_reset``. A partial count is not an
+            error: domain randomisation legitimately draws initial states per
+            episode. ``episodes_successful_at_reset`` and
+            ``reset_success_warning`` report the same fact :meth:`eval_policy`
+            reports under those names.
         """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark

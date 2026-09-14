@@ -301,6 +301,61 @@ def uncommanded_eval_error(
     )
 
 
+def success_at_reset_warning(
+    *,
+    surface: str,
+    episodes_completed: int,
+    episodes_successful_at_reset: int,
+) -> str | None:
+    """Warn that episodes were already successful before the policy acted.
+
+    Both evaluation routes sample the success criterion only AFTER an applied
+    action, so an episode whose criterion already holds at reset succeeds on its
+    first step no matter what the policy commands. ``success_rate`` then reports a
+    hard 1.0 for every such episode regardless of what the policy does - the
+    mirror of the ``success_measured=False`` case, where a missing criterion
+    reports a hard 0.0 and is warned about for the same reason. A rate that a
+    policy commanding its own current pose earns identically is not a measurement
+    of the policy, and in the report it is indistinguishable from one that was
+    exercised and solved the task.
+
+    This is the sibling of :func:`uncommanded_eval_error`, which covers the other
+    route to the same harm: there the policy never commands, here the criterion
+    never needed it. Almost always a threshold on the wrong side of the scene's
+    initial state - a lift predicate whose height sits below where the object
+    already rests, or a placement predicate satisfied by the object's spawn.
+
+    Deliberately a warning and a reported count rather than a refusal. Domain
+    randomisation legitimately draws initial states per episode
+    (``on_episode_start``), so a partial count is a fact about those draws, not a
+    broken spec, and the count is what distinguishes the two. It also leaves
+    every reported figure untouched, the posture :func:`_warn_unresolved` states
+    for a criterion that degrades to a constant: surface the corruption without
+    changing a returned value.
+
+    Args:
+        surface: Public entry point the warning is reported through, e.g.
+            ``"eval_policy"`` - so the message points at the call the reader made.
+        episodes_completed: Episodes that ran to a verdict, for the ratio.
+        episodes_successful_at_reset: Episodes among them whose success criterion
+            already held at reset, before any action was applied.
+
+    Returns:
+        The warning text, or ``None`` when no episode was already successful.
+    """
+    if episodes_successful_at_reset <= 0 or episodes_completed <= 0:
+        return None
+    every = episodes_successful_at_reset >= episodes_completed
+    return (
+        f"{surface}: {episodes_successful_at_reset} of {episodes_completed} episode(s) already "
+        "satisfied the success criterion at reset, before any action was applied, so "
+        f"{'the' if every else 'that part of the'} reported success_rate / pass_hat_k describes the "
+        "scene's initial state rather than the policy. Check the criterion against the initial "
+        "state (e.g. a lift threshold below the object's resting height); the returned json "
+        "reports this as episodes_successful_at_reset."
+    )
+
+
 def _criterion_verdict(
     check: Callable[[Any], bool],
     subject: Any,
@@ -3520,6 +3575,21 @@ class PolicyRunner:
             altogether when no success criterion was in force, since every attempt
             then counts as a failure for a reason unrelated to the policy.
 
+            ``episodes_successful_at_reset`` (int) counts episodes whose success
+            criterion already held at reset, before any action was applied. The
+            criterion is sampled only after an applied action, so such an episode
+            succeeds on its first step whatever the policy commands and its
+            contribution to ``success_rate`` / ``pass_hat_k`` describes the scene's
+            initial state rather than the policy - the mirror of
+            ``success_measured=False``, which reports a hard 0.0 for the same kind
+            of reason. Usually a threshold on the wrong side of the initial state
+            (a lift height below where the object already rests). Every reported
+            figure is left as measured; ``reset_success_warning`` carries the
+            qualifying text (``None`` when the count is zero) and each per-episode
+            record carries its own ``success_at_reset``. A partial count is not an
+            error: domain randomisation legitimately draws initial states per
+            episode.
+
             Every payload carries ``success_measured`` (bool): ``True`` when a
             success criterion was in force (a ``spec`` or a non-``None``
             ``success_fn``), ``False`` when neither was given. When ``False`` the
@@ -3728,6 +3798,7 @@ class PolicyRunner:
         )
 
         results: list[dict[str, Any]] = []
+        episodes_successful_at_reset = 0
         # #191 - monotonic global step index handed to ``on_frame`` so a
         # synchronous recorder/telemetry hook sees a continuous count across
         # episode boundaries, exactly like the spec eval path and ``run()``.
@@ -3774,6 +3845,23 @@ class PolicyRunner:
         try:
             for ep in range(n_episodes):
                 self.sim.reset()
+                # Sample the success criterion ONCE before the policy acts. The
+                # loop below samples it only after an applied action, so a criterion
+                # that already holds here makes the episode succeed on its first step
+                # whatever the policy commands - see
+                # :func:`success_at_reset_warning`. Diagnostic only: it decides no
+                # reported figure, so unlike the per-step call it is deliberately not
+                # fatal on a raise (a criterion reading state that a first ``on_step``
+                # would have set has not had one yet).
+                success_at_reset = False
+                if resolved_check is not None:
+                    try:
+                        success_at_reset = bool(resolved_check(_observation_fn()))
+                    except Exception as e:  # noqa: BLE001 - diagnostic, never fatal
+                        logger.debug("success_fn at reset raised %s; not sampled", e)
+                if success_at_reset:
+                    episodes_successful_at_reset += 1
+
                 success = False
                 steps = 0
                 # Actions that actually reached ``send_action``. ``steps`` counts
@@ -3894,6 +3982,7 @@ class PolicyRunner:
                         "success": success,
                         "seed": episode_seed,
                         "actions_applied": actions_applied,
+                        "success_at_reset": success_at_reset,
                     }
                 )
                 # #708 - roll the attached recorder over to a new episode so the
@@ -3949,6 +4038,13 @@ class PolicyRunner:
             steps_advanced=total_steps,
             actions_applied=total_actions,
         )
+        reset_success_warning = success_at_reset_warning(
+            surface="eval_policy",
+            episodes_completed=n_completed,
+            episodes_successful_at_reset=episodes_successful_at_reset,
+        )
+        if reset_success_warning is not None:
+            logger.warning("%s", reset_success_warning)
         _n_infer = len(inference_ms)
         rtc_telemetry = _with_prefetch_keys(
             {
@@ -3981,6 +4077,7 @@ class PolicyRunner:
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
                         + f" | Actions applied: {total_actions}/{total_steps}"
                         + (f"\n{uncommanded_error}" if uncommanded_error is not None else "")
+                        + (f"\n{reset_success_warning}" if reset_success_warning is not None else "")
                     )
                 },
                 {
@@ -3994,6 +4091,12 @@ class PolicyRunner:
                         "actions_applied": total_actions,
                         "steps_advanced": total_steps,
                         "uncommanded_error": uncommanded_error,
+                        # Episodes whose success criterion already held at reset, so
+                        # their success was decided before the policy acted. See
+                        # :func:`success_at_reset_warning`; the rate is left as
+                        # measured and the count is what qualifies it.
+                        "episodes_successful_at_reset": episodes_successful_at_reset,
+                        "reset_success_warning": reset_success_warning,
                         "n_episodes": n_episodes,
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,
@@ -4126,6 +4229,7 @@ class PolicyRunner:
         spec_name = type(spec).__name__
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
+        episodes_successful_at_reset = 0
 
         # #191 - global step counter passed to ``on_frame``. Crosses
         # episode boundaries so consumers that don't track ep ↔ step
@@ -4240,6 +4344,22 @@ class PolicyRunner:
                         "status": "error",
                         "content": [{"text": f"on_episode_start failed in {spec_name}: {e}"}],
                     }
+
+                # Sample the success criterion ONCE before the policy acts. The
+                # loop below samples it only after an applied action, so a criterion
+                # that already holds here makes the episode succeed on its first step
+                # whatever the policy commands - see
+                # :func:`success_at_reset_warning`. Diagnostic only: it decides no
+                # reported figure, so unlike the per-step call it is deliberately not
+                # fatal on a raise (a criterion reading state that a first ``on_step``
+                # would have set has not had one yet).
+                success_at_reset = False
+                try:
+                    success_at_reset = bool(spec.is_success(self.sim))
+                except Exception as e:  # noqa: BLE001 - diagnostic, never fatal
+                    logger.debug("%s.is_success at reset raised %s; not sampled", spec_name, e)
+                if success_at_reset:
+                    episodes_successful_at_reset += 1
 
                 success = False
                 failure = False
@@ -4428,6 +4548,7 @@ class PolicyRunner:
                         "seed": episode_seed,
                         "info": last_info,
                         "actions_applied": actions_applied,
+                        "success_at_reset": success_at_reset,
                     }
                 )
                 # #708 - same per-episode recorder boundary as evaluate().
@@ -4478,6 +4599,13 @@ class PolicyRunner:
             steps_advanced=total_steps,
             actions_applied=total_actions,
         )
+        reset_success_warning = success_at_reset_warning(
+            surface="evaluate_benchmark",
+            episodes_completed=n_completed,
+            episodes_successful_at_reset=episodes_successful_at_reset,
+        )
+        if reset_success_warning is not None:
+            logger.warning("%s", reset_success_warning)
         # Averaged over the attempts that actually scored a step. An attempt that
         # ended before ``on_step`` ran carries ``None`` and is excluded rather than
         # counted as 0.0, which would drag the peak toward zero for a reason that has
@@ -4502,6 +4630,7 @@ class PolicyRunner:
                         f"Avg reward: {avg_reward:.2f} | Avg steps: {avg_steps:.0f}/{max_steps}"
                         + f" | Actions applied: {total_actions}/{total_steps}"
                         + (f"\n{uncommanded_error}" if uncommanded_error is not None else "")
+                        + (f"\n{reset_success_warning}" if reset_success_warning is not None else "")
                     )
                 },
                 {
@@ -4514,6 +4643,12 @@ class PolicyRunner:
                         "actions_applied": total_actions,
                         "steps_advanced": total_steps,
                         "uncommanded_error": uncommanded_error,
+                        # Episodes whose success criterion already held at reset, so
+                        # their success was decided before the policy acted. See
+                        # :func:`success_at_reset_warning`; the rate is left as
+                        # measured and the count is what qualifies it.
+                        "episodes_successful_at_reset": episodes_successful_at_reset,
+                        "reset_success_warning": reset_success_warning,
                         "n_episodes": n_episodes,
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,
