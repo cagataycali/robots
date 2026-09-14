@@ -306,6 +306,7 @@ def success_at_reset_warning(
     surface: str,
     episodes_completed: int,
     episodes_successful_at_reset: int,
+    reported: str = "success_rate / pass_hat_k",
 ) -> str | None:
     """Warn that episodes were already successful before the policy acted.
 
@@ -339,6 +340,12 @@ def success_at_reset_warning(
         episodes_completed: Episodes that ran to a verdict, for the ratio.
         episodes_successful_at_reset: Episodes among them whose success criterion
             already held at reset, before any action was applied.
+        reported: The figures this surface publishes that the count casts doubt on,
+            named so the warning points at fields the reader can actually look up.
+            Defaults to the pair both simulation routes report; a surface that
+            reports only a rate (:meth:`BaseRLAlgo.evaluate`, which has no
+            ``pass_hat_k``) narrows it, because a remedy naming a figure the
+            result does not carry sends the reader looking for nothing.
 
     Returns:
         The warning text, or ``None`` when no episode was already successful.
@@ -349,9 +356,9 @@ def success_at_reset_warning(
     return (
         f"{surface}: {episodes_successful_at_reset} of {episodes_completed} episode(s) already "
         "satisfied the success criterion at reset, before any action was applied, so "
-        f"{'the' if every else 'that part of the'} reported success_rate / pass_hat_k describes the "
+        f"{'the' if every else 'that part of the'} reported {reported} describes the "
         "scene's initial state rather than the policy. Check the criterion against the initial "
-        "state (e.g. a lift threshold below the object's resting height); the returned json "
+        "state (e.g. a lift threshold below the object's resting height); the result "
         "reports this as episodes_successful_at_reset."
     )
 
