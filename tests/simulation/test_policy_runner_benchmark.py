@@ -1541,7 +1541,11 @@ class TestDegeneratePolicyInBenchmarkLoop:
 
     Covers the ``if not actions:`` branch in ``_evaluate_with_spec``: physics
     is advanced once per step, ``on_step`` still runs, cumulative reward
-    accrues, and success / failure / done all terminate the episode.
+    accrues, and success / failure / done all terminate the episode. The
+    per-step tolerance keeps the loop moving; a benchmark whose every call came
+    back empty is refused in aggregate, since it never reached ``send_action``
+    and its ``success_rate`` / ``avg_reward`` describe the scene rather than
+    the policy.
     """
 
     def test_empty_actions_still_advance_and_run_on_step(self):
@@ -1555,11 +1559,15 @@ class TestDegeneratePolicyInBenchmarkLoop:
 
         result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
 
-        assert result["status"] == "success"
+        assert result["status"] == "error"
         payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["actions_applied"] == 0
+        assert payload["steps_advanced"] == 8
+        assert payload["uncommanded_error"] is not None
         ep = payload["episodes"][0]
         # max_steps=8, +1 reward/step, no early termination → 8 steps, reward 8.
         assert ep["steps"] == 8
+        assert ep["actions_applied"] == 0
         assert ep["cumulative_reward"] == pytest.approx(8.0)
         assert ep["success"] is False
         assert ep["failure"] is False

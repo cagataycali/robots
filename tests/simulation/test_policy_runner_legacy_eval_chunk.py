@@ -274,3 +274,137 @@ def test_legacy_and_benchmark_paths_agree_on_success_rate():
     assert legacy_json["success_rate"] == bench_json["success_rate"] == 1.0
     # Both detect success on the same applied action -> identical step counts.
     assert legacy_json["avg_steps"] == bench_json["avg_steps"]
+
+
+class _SilentPolicy(_ChunkPolicy):
+    """Policy whose every call returns an EMPTY chunk - a misconfigured decoder.
+
+    The shape both evaluation loops tolerate per step (advance one physics step
+    so a degenerate policy cannot hang the episode) and which ``run()`` refuses
+    outright on the first occurrence.
+    """
+
+    async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any):
+        self.call_count += 1
+        return []
+
+
+class _StallingPolicy(_ChunkPolicy):
+    """Policy that returns an empty chunk on odd calls and a real one on even calls.
+
+    A PARTIAL shortfall: some steps advance uncommanded, most are commanded.
+    That is real policy behaviour, so it must be reported as a count rather
+    than refused.
+    """
+
+    async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any):
+        self.call_count += 1
+        if self.call_count % 2:
+            return []
+        return [{k: 0.0 for k in self._keys} for _ in range(self._chunk_size)]
+
+
+def _eval_legacy(sim, policy, **kw):
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+    return PolicyRunner(sim).evaluate("fake_robot", policy, n_episodes=2, max_steps=8, action_horizon=8, **kw)
+
+
+def _eval_spec(sim, policy, **kw):
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+    return PolicyRunner(sim).evaluate(
+        "fake_robot", policy, n_episodes=2, spec=_ClockBenchmark(success_at=10**9), action_horizon=8, **kw
+    )
+
+
+def test_eval_policy_refuses_an_evaluation_that_commanded_nothing():
+    """A success_fn eval whose every policy call came back empty is refused.
+
+    Pre-fix the loop advanced physics for every step, never reached
+    ``send_action``, and still reported ``success_rate`` / ``pass_hat_k`` over
+    the episodes - figures describing the scene's initial state, not the policy.
+    """
+    sim = _ClockSim()
+    result = _eval_legacy(sim, _SilentPolicy(chunk_size=8))
+
+    assert sim.send_count == 0
+    assert result["status"] == "error"
+    payload = result["content"][1]["json"]
+    assert payload["actions_applied"] == 0
+    assert payload["steps_advanced"] > 0
+    assert payload["uncommanded_error"] is not None
+    text = result["content"][0]["text"]
+    assert "never commanded 'fake_robot'" in text
+    assert "empty action chunk" in text
+
+
+def test_evaluate_benchmark_refuses_an_evaluation_that_commanded_nothing():
+    """The spec route refuses the same condition, and for the same reason.
+
+    Its published figures include ``avg_reward`` on top of ``success_rate``, so
+    a benchmark table is exactly where an unexercised policy is least visible.
+    """
+    sim = _ClockSim()
+    result = _eval_spec(sim, _SilentPolicy(chunk_size=8))
+
+    assert sim.send_count == 0
+    assert result["status"] == "error"
+    payload = result["content"][1]["json"]
+    assert payload["actions_applied"] == 0
+    assert payload["steps_advanced"] > 0
+    assert payload["uncommanded_error"] is not None
+    assert "never commanded 'fake_robot'" in result["content"][0]["text"]
+
+
+def test_all_three_rollout_routes_refuse_an_all_empty_chunk_policy():
+    """``run``, the success_fn eval and the spec eval agree on the same policy.
+
+    This is the drift this module exists to pin: ``run()`` already refused an
+    empty chunk on the first occurrence while both evaluation routes reported a
+    success verdict over a rollout that commanded nothing.
+    """
+    statuses = []
+    for driver in (_eval_legacy, _eval_spec):
+        sim = _ClockSim()
+        statuses.append(driver(sim, _SilentPolicy(chunk_size=8))["status"])
+
+    sim = _ClockSim()
+    policy = _SilentPolicy(chunk_size=8)
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+    run_result = PolicyRunner(sim).run("fake_robot", policy, n_steps=8, fast_mode=True)
+    statuses.append(run_result["status"])
+
+    assert statuses == ["error", "error", "error"]
+
+
+def test_an_evaluation_that_commands_is_reported_unchanged():
+    """A policy that emits actions still succeeds, and its count equals its steps.
+
+    The over-reach control: the refusal must not touch an evaluation that
+    exercised the policy, whatever it scored.
+    """
+    for driver in (_eval_legacy, _eval_spec):
+        sim = _ClockSim()
+        result = driver(sim, _ChunkPolicy(chunk_size=8))
+
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        assert payload["uncommanded_error"] is None
+        assert payload["actions_applied"] == payload["steps_advanced"] == sim.send_count
+        assert sim.send_count > 0
+
+
+def test_a_partial_shortfall_is_reported_as_a_count_not_refused():
+    """Some empty calls are policy behaviour: report the count, do not refuse.
+
+    Refusing a partial shortfall would contradict the per-step tolerance the
+    loops deliberately keep, so only a total absence of commanded actions is
+    an error.
+    """
+    for driver in (_eval_legacy, _eval_spec):
+        sim = _ClockSim()
+        result = driver(sim, _StallingPolicy(chunk_size=4))
+
+        assert result["status"] == "success"
+        payload = result["content"][1]["json"]
+        assert payload["uncommanded_error"] is None
+        assert 0 < payload["actions_applied"] < payload["steps_advanced"]

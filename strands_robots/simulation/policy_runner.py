@@ -245,6 +245,62 @@ def pass_hat_k(n_completed: int, n_success: int, k_max: int = _PASS_HAT_K_MAX) -
     }
 
 
+def uncommanded_eval_error(
+    *,
+    surface: str,
+    robot_name: str,
+    episodes_completed: int,
+    steps_advanced: int,
+    actions_applied: int,
+) -> str | None:
+    """Refuse an evaluation that advanced physics without ever commanding the robot.
+
+    Both evaluation routes tolerate a policy call that returns an empty action
+    chunk: they advance one physics step so a degenerate policy cannot hang the
+    episode. That per-step tolerance is right - a policy may legitimately stall
+    for a step. What it does not decide is the aggregate: when EVERY call of an
+    entire evaluation comes back empty, ``send_action`` is never reached, and the
+    reported ``success_rate`` / ``avg_reward`` / ``pass_hat_k`` describe the
+    scene's initial state rather than the policy. Those figures are published
+    into a results table, where they are indistinguishable from a policy that was
+    exercised and scored zero.
+
+    :meth:`PolicyRunner.run` already refuses this condition on the first empty
+    chunk, and :meth:`PolicyRunner.replay` refuses the aggregate of the same
+    condition for a recorded episode whose frames carry no action. This is the
+    rule those two share, stated once for the evaluation routes.
+
+    Args:
+        surface: Public entry point the refusal is reported through, e.g.
+            ``"eval_policy"`` - the caller names itself so the message points at
+            the call the reader made rather than at an internal method.
+        robot_name: Robot the evaluation resolved and never commanded.
+        episodes_completed: Episodes that ran to a verdict. Zero means the
+            evaluation never started an episode, which is a different report
+            (there is no metric to distrust), so it is not refused here.
+        steps_advanced: Control steps the evaluation advanced across those
+            episodes. Zero likewise leaves nothing to have been silent about.
+        actions_applied: Actions actually handed to ``send_action``. The
+            refusal fires only when this is zero: a PARTIAL shortfall is real
+            policy behaviour and is reported as a count, not refused, since
+            refusing it would contradict the per-step tolerance above.
+
+    Returns:
+        The refusal text, or ``None`` when the evaluation commanded the robot at
+        least once (or ran no scored step at all).
+    """
+    if actions_applied or not episodes_completed or not steps_advanced:
+        return None
+    return (
+        f"{surface} aborted: the policy never commanded '{robot_name}'. Across "
+        f"{episodes_completed} episode(s) and {steps_advanced} advanced control step(s), every "
+        "policy call returned an empty action chunk, so no action reached the robot and the "
+        "reported metrics describe the scene's initial state rather than the policy. Check that "
+        "the policy decodes an action chunk for this robot's action keys (run_policy refuses the "
+        "same condition on the first empty chunk)."
+    )
+
+
 def _criterion_verdict(
     check: Callable[[Any], bool],
     subject: Any,
@@ -3704,6 +3760,11 @@ class PolicyRunner:
                 self.sim.reset()
                 success = False
                 steps = 0
+                # Actions that actually reached ``send_action``. ``steps`` counts
+                # advanced control steps, which the empty-chunk branch below
+                # increments without commanding anything - so one number cannot
+                # carry both facts. See :func:`uncommanded_eval_error`.
+                actions_applied = 0
 
                 # Per-episode MP4 (foo_ep{i}.mp4). Validation + camera probe happen
                 # here; a bad path/camera fails the eval up-front (on ep 0) instead
@@ -3758,6 +3819,7 @@ class PolicyRunner:
                             self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
                             _fire_on_frame(_observation, action_dict, steps)
                             steps += 1
+                            actions_applied += 1
                             # Check success against the LIVE post-action observation
                             # (mirrors the synchronous path / _evaluate_with_spec).
                             if resolved_check is not None and _criterion_verdict(
@@ -3794,6 +3856,7 @@ class PolicyRunner:
                             self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
                             _fire_on_frame(observation, action_dict, steps)
                             steps += 1
+                            actions_applied += 1
                             # Check success against the LIVE post-action observation,
                             # not the stale pre-action obs. Checking the pre-action
                             # obs detects success one step late and never records a
@@ -3808,7 +3871,15 @@ class PolicyRunner:
                         if success:
                             break
 
-                results.append({"episode": ep, "steps": steps, "success": success, "seed": episode_seed})
+                results.append(
+                    {
+                        "episode": ep,
+                        "steps": steps,
+                        "success": success,
+                        "seed": episode_seed,
+                        "actions_applied": actions_applied,
+                    }
+                )
                 # #708 - roll the attached recorder over to a new episode so the
                 # dataset records per-episode boundaries rather than collapsing
                 # every rollout into one mega-episode.
@@ -3853,6 +3924,15 @@ class PolicyRunner:
         n_success = sum(1 for r in results if r["success"])
         success_rate = n_success / max(n_completed, 1)
         avg_steps = sum(r["steps"] for r in results) / max(n_completed, 1)
+        total_steps = sum(r["steps"] for r in results)
+        total_actions = sum(r["actions_applied"] for r in results)
+        uncommanded_error = uncommanded_eval_error(
+            surface="eval_policy",
+            robot_name=robot_name,
+            episodes_completed=n_completed,
+            steps_advanced=total_steps,
+            actions_applied=total_actions,
+        )
         _n_infer = len(inference_ms)
         rtc_telemetry = _with_prefetch_keys(
             {
@@ -3867,7 +3947,7 @@ class PolicyRunner:
         )
 
         return {
-            "status": "error" if recording_save_error is not None else "success",
+            "status": "error" if recording_save_error is not None or uncommanded_error is not None else "success",
             "content": [
                 {
                     "text": (
@@ -3883,12 +3963,21 @@ class PolicyRunner:
                         + ("" if success_measured else " [no success criterion - not measured]")
                         + "\n"
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
+                        + f" | Actions applied: {total_actions}/{total_steps}"
+                        + (f"\n{uncommanded_error}" if uncommanded_error is not None else "")
                     )
                 },
                 {
                     "json": {
                         "success_rate": round(success_rate, 4),
                         "success_measured": success_measured,
+                        # Reported beside ``avg_steps`` because they are different
+                        # facts: a step the empty-chunk branch advanced counts as an
+                        # advanced step and commands nothing. A shortfall short of
+                        # zero is partial, so it is reported rather than refused.
+                        "actions_applied": total_actions,
+                        "steps_advanced": total_steps,
+                        "uncommanded_error": uncommanded_error,
                         "n_episodes": n_episodes,
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,
@@ -4139,6 +4228,11 @@ class PolicyRunner:
                 success = False
                 failure = False
                 steps = 0
+                # Actions that actually reached ``send_action``, kept apart from
+                # ``steps`` for the reason ``evaluate`` keeps them apart: the
+                # degenerate-policy branch below advances a step and commands
+                # nothing. See :func:`uncommanded_eval_error`.
+                actions_applied = 0
                 cumulative_reward = 0.0
                 # Peak single-step reward, kept beside the running total because the
                 # two answer different questions on a failed attempt: the total says
@@ -4204,6 +4298,7 @@ class PolicyRunner:
                                 break
                             action_applied = dict(action_in_chunk)
                             self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
+                            actions_applied += 1
                             # #191 - synchronous on_frame hook fires on the
                             # eval thread, after send_action + before
                             # on_step's reward bookkeeping. Use this for
@@ -4316,6 +4411,7 @@ class PolicyRunner:
                         "max_step_reward": (None if max_step_reward is None else round(max_step_reward, 4)),
                         "seed": episode_seed,
                         "info": last_info,
+                        "actions_applied": actions_applied,
                     }
                 )
                 # #708 - same per-episode recorder boundary as evaluate().
@@ -4357,6 +4453,15 @@ class PolicyRunner:
         success_rate = n_success / max(n_completed, 1)
         avg_steps = sum(r["steps"] for r in results) / max(n_completed, 1)
         avg_reward = sum(r["cumulative_reward"] for r in results) / max(n_completed, 1)
+        total_steps = sum(r["steps"] for r in results)
+        total_actions = sum(r["actions_applied"] for r in results)
+        uncommanded_error = uncommanded_eval_error(
+            surface="evaluate_benchmark",
+            robot_name=robot_name,
+            episodes_completed=n_completed,
+            steps_advanced=total_steps,
+            actions_applied=total_actions,
+        )
         # Averaged over the attempts that actually scored a step. An attempt that
         # ended before ``on_step`` ran carries ``None`` and is excluded rather than
         # counted as 0.0, which would drag the peak toward zero for a reason that has
@@ -4365,7 +4470,7 @@ class PolicyRunner:
         avg_max_step_reward = round(sum(_peaks) / len(_peaks), 4) if _peaks else None
 
         return {
-            "status": "error" if recording_save_error is not None else "success",
+            "status": "error" if recording_save_error is not None or uncommanded_error is not None else "success",
             "content": [
                 {
                     "text": (
@@ -4379,12 +4484,20 @@ class PolicyRunner:
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
                         + f" | Success: {n_success} | Failure: {n_failure} ({success_rate:.1%} success)\n"
                         f"Avg reward: {avg_reward:.2f} | Avg steps: {avg_steps:.0f}/{max_steps}"
+                        + f" | Actions applied: {total_actions}/{total_steps}"
+                        + (f"\n{uncommanded_error}" if uncommanded_error is not None else "")
                     )
                 },
                 {
                     "json": {
                         "success_rate": round(success_rate, 4),
                         "success_measured": True,
+                        # Same split as ``evaluate``: an advanced step is not a
+                        # commanded action, and the difference is what tells a
+                        # scored zero apart from an unexercised policy.
+                        "actions_applied": total_actions,
+                        "steps_advanced": total_steps,
+                        "uncommanded_error": uncommanded_error,
                         "n_episodes": n_episodes,
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,

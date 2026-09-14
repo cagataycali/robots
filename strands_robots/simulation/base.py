@@ -4540,8 +4540,10 @@ class SimEngine(ABC):
             ``status`` reports whether the evaluation RAN, not whether the
             policy succeeded: an evaluation in which every episode failed is
             still ``status="success"`` with ``success_rate=0.0``. The one
-            thing that makes it ``"error"`` is a recording it could not keep:
-            see ``recording_save_error`` below. Read
+            two things that make it ``"error"`` are a recording it could not
+            keep (see ``recording_save_error`` below) and an evaluation in
+            which the policy never commanded the robot at all (see
+            ``uncommanded_error``). Read
             ``success_measured`` first - it is ``False`` when no
             ``success_fn`` / benchmark spec was supplied, in which case
             ``success_rate`` is ``0.0`` for every policy regardless of what it
@@ -4552,6 +4554,22 @@ class SimEngine(ABC):
             Outcome: ``success_rate``, ``n_success``, ``success_measured``,
             ``episodes_completed``, ``episodes`` (the per-episode records) and
             ``avg_steps``.
+
+            Commanded actions: ``actions_applied`` (actions actually handed to
+            ``send_action``) beside ``steps_advanced`` (control steps the
+            evaluation advanced), and ``uncommanded_error`` - ``None`` on every
+            evaluation that commanded the robot at least once, and the reason
+            string when it never did. A policy call that returns an empty
+            action chunk is tolerated per step (physics advances so a
+            degenerate policy cannot hang the episode), so the two counts
+            differ whenever any call came back empty and ``avg_steps`` alone
+            cannot tell a scored zero from an unexercised policy. When
+            ``actions_applied`` is ``0`` the outcome figures describe the
+            scene's initial state rather than the policy and ``status`` is
+            ``"error"``; a PARTIAL shortfall is reported as a count rather than
+            refused, since some empty calls are real policy behaviour. Each
+            per-episode record in ``episodes`` carries its own
+            ``actions_applied``.
 
             Horizon: ``n_episodes``, ``max_steps`` (the values the evaluation
             ran with) and ``stopped_early``.
@@ -4835,6 +4853,17 @@ class SimEngine(ABC):
             which case the benchmark stops at that episode and ``status`` is
             ``"error"`` - see :meth:`eval_policy`, which reports it the same
             way.
+
+            ``actions_applied`` (actions actually handed to ``send_action``),
+            ``steps_advanced`` (control steps the benchmark advanced) and
+            ``uncommanded_error`` report the same fact :meth:`eval_policy`
+            reports under those names, and each per-episode record carries its
+            own ``actions_applied``. A policy call returning an empty action
+            chunk is tolerated per step, so the counts differ whenever any call
+            came back empty; when ``actions_applied`` is ``0`` the benchmark
+            never commanded the robot, ``success_rate`` / ``avg_reward``
+            describe the scene's initial state rather than the policy, and
+            ``status`` is ``"error"``.
         """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark

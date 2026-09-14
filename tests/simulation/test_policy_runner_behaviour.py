@@ -207,7 +207,12 @@ class TestPolicyRunnerEvaluate:
     def test_evaluate_degenerate_policy_advances_and_terminates(self, sim_with_robot):
         """An empty-chunk policy must not hang: each query advances exactly one
         physics step, the episode ends at max_steps, and with no success
-        predicate the run reports zero successes instead of spinning forever."""
+        predicate the run reports zero successes instead of spinning forever.
+
+        The per-step tolerance is what keeps the loop moving; the AGGREGATE is
+        refused, because an evaluation whose every call came back empty never
+        reached ``send_action`` and its outcome figures describe the scene
+        rather than the policy."""
         policy = _EmptyActionPolicy()
         policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
         runner = PolicyRunner(sim_with_robot)
@@ -219,16 +224,24 @@ class TestPolicyRunnerEvaluate:
             max_steps=4,
             success_fn=None,
         )
-        assert result["status"] == "success"
+        assert result["status"] == "error"
         payload = result["content"][-1]["json"]
         assert payload["success_rate"] == 0.0
         assert payload["episodes"][0]["steps"] == 4
         assert payload["episodes"][0]["success"] is False
+        # The loop advanced its whole budget and commanded nothing.
+        assert payload["actions_applied"] == 0
+        assert payload["steps_advanced"] == 4
+        assert payload["uncommanded_error"] is not None
 
-    def test_evaluate_degenerate_policy_succeeds_on_post_step_obs(self, sim_with_robot):
+    def test_evaluate_degenerate_policy_marks_success_from_the_post_step_obs(self, sim_with_robot):
         """Even with an empty action chunk, a success predicate that holds on
         the post-step observation marks the episode solved on the first query
-        and stops early (steps == 1)."""
+        and stops early (steps == 1).
+
+        The episode record is unchanged, and the evaluation is still refused:
+        this is the sharpest form of the harm, a published ``success_rate`` of
+        ``1.0`` for a policy that never commanded the robot once."""
         policy = _EmptyActionPolicy()
         policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
         runner = PolicyRunner(sim_with_robot)
@@ -246,12 +259,15 @@ class TestPolicyRunnerEvaluate:
             max_steps=5,
             success_fn=always_success,
         )
-        assert result["status"] == "success"
         payload = result["content"][-1]["json"]
         assert payload["success_rate"] == 1.0
         assert payload["episodes"][0]["steps"] == 1
         assert payload["episodes"][0]["success"] is True
         assert seen, "success_fn must be evaluated on the post-step observation"
+        # A 100% success rate over a rollout that commanded nothing is refused.
+        assert result["status"] == "error"
+        assert payload["actions_applied"] == 0
+        assert payload["uncommanded_error"] is not None
 
 
 # require_default_robot / _maybe_sim_time
