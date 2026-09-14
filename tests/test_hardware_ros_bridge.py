@@ -651,6 +651,8 @@ _REFUSED_CONSTRUCTIONS: list[tuple[str, dict[str, Any]]] = [
     ("enable_commands", {"enable_commands": "false"}),
     ("joint_limits/order", {"joint_limits": {"j0.pos": (1.0, -1.0)}}),
     ("joint_limits/non-finite", {"joint_limits": {"j0.pos": (1.0, float("nan"))}}),
+    ("command_robot_name/truthy-non-str", {"command_robot_name": 7}),
+    ("command_robot_name/falsy-non-str", {"command_robot_name": 0}),
 ]
 
 
@@ -700,3 +702,55 @@ def test_a_refused_bridge_does_not_strand_the_rclpy_context(
     assert fake_ros["shutdown"] is True
     assert fake_ros["inited"] is False
     assert [node.name for node in fake_ros["nodes"] if not node.destroyed] == []
+
+
+# --- the command namespace is the one caller-supplied name in a topic --------
+
+#: ``command_robot_name`` values that cannot name a topic segment, paired with
+#: how each one failed before it was graded. A truthy value reached the
+#: sanitiser's ``re.sub`` and raised ``TypeError`` naming no parameter; a falsy
+#: one was filtered by the ``command_robot_name or <derived>`` default and never
+#: raised at all, so the bridge read commands under a namespace the caller had
+#: not asked for.
+_UNNAMEABLE_COMMAND_NAMESPACES: list[Any] = [7, ["left_arm"], b"left_arm", 0, [], False]
+
+
+@pytest.mark.parametrize("name", _UNNAMEABLE_COMMAND_NAMESPACES, ids=repr)
+def test_a_command_namespace_that_cannot_name_a_topic_is_refused(fake_ros: dict[str, Any], name: Any) -> None:
+    """The refusal names the parameter and the input that restores the default.
+
+    The old failures named neither: ``TypeError: expected string or bytes-like
+    object, got 'int'`` came out of the sanitiser, and the falsy values produced
+    no message because the default-selecting ``or`` swallowed them.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        HardwareRosBridge(_FakeDrivableRobot(), command_robot_name=name)  # type: ignore[arg-type]
+
+    message = str(excinfo.value)
+    assert "'command_robot_name'" in message
+    assert type(name).__name__ in message
+    assert "Pass None" in message
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_topic"),
+    [
+        (None, "/so101/joint_command"),
+        ("", "/so101/joint_command"),
+        ("left_arm", "/left_arm/joint_command"),
+    ],
+    ids=["derive/None", "derive/empty", "override"],
+)
+def test_an_accepted_command_namespace_selects_the_topic_it_names(
+    fake_ros: dict[str, Any], name: Any, expected_topic: str
+) -> None:
+    """Both documented ways of asking for the default still get it.
+
+    ``None`` and ``""`` select the bound robot's own name - the namespace this
+    bridge publishes ``joint_states`` under - and a string overrides it. Pinned
+    alongside the refusals so the guard cannot be satisfied by refusing more than
+    it should.
+    """
+    bridge = HardwareRosBridge(_FakeDrivableRobot(), command_robot_name=name)  # type: ignore[arg-type]
+    assert [sub.topic for sub in fake_ros["nodes"][0].subscriptions] == [expected_topic]
+    bridge.shutdown()

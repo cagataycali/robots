@@ -88,7 +88,13 @@ class HardwareRosBridge(RosTelemetryBridge):
         command_robot_name: Topic namespace for the inbound command topic.
             Defaults to the bound robot's name (matching the namespace this
             bridge *publishes* ``joint_states`` under), so a controller can echo
-            our own joint names straight back to drive the arm.
+            our own joint names straight back to drive the arm. Only a string
+            names a topic segment, so only a string (or ``None`` for the
+            default) is accepted: this is the one caller-supplied name rendered
+            into a topic, and a non-string one reached the sanitiser's ``re.sub``
+            - raising ``TypeError`` naming no parameter when truthy, and, when
+            falsy, being filtered by the default-selecting ``or`` so the bridge
+            read commands under the robot's own name instead.
         spin_period: Seconds between ``spin_once`` calls on the command thread.
             Only a positive finite number paces a loop. The value is handed
             straight to ``Event.wait`` on the backoff path, where ``0``,
@@ -112,7 +118,8 @@ class HardwareRosBridge(RosTelemetryBridge):
         ValueError: If ``enable_commands`` is not a boolean, if ``domain_id`` is
             outside ``[0, 232]``, if ``qos_depth`` is not a positive ``int`` the
             transport can carry, if ``spin_period``
-            is not a positive finite number, or if ``joint_limits`` is not a
+            is not a positive finite number, if ``command_robot_name`` is neither
+            a string nor ``None``, or if ``joint_limits`` is not a
             ``{"<motor>.pos": (min, max)}`` mapping of finite numeric pairs with
             ``min <= max``. Every one of them is answered before the base
             constructor writes the process-wide ``ROS_DOMAIN_ID``, initializes
@@ -167,6 +174,19 @@ class HardwareRosBridge(RosTelemetryBridge):
         # :class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`,
         # already answers the same mapping before it builds its participant.
         self._joint_limits = self._validate_joint_limits(joint_limits)
+
+        # The command namespace is the one caller-supplied value this bridge
+        # renders into a topic, and it is answered in the same place as the three
+        # guards above for the same reason. A non-string reached ``_safe``'s
+        # ``re.sub`` and raised ``TypeError: expected string or bytes-like
+        # object`` naming no parameter - from after the base had rewritten
+        # ``ROS_DOMAIN_ID``, started the context and created the node, none of
+        # which a caller holding no bridge can release. A falsy non-string did
+        # not even raise: the ``or`` fallback below filtered it out and the
+        # bridge subscribed under the bound robot's name, a namespace the caller
+        # never asked for.
+        if error := self._command_namespace_error(command_robot_name, type(self).__name__):
+            raise ValueError(error)
 
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)
 

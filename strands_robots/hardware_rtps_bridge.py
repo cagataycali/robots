@@ -120,7 +120,13 @@ class HardwareRtpsBridge(RosTelemetryBase):
             ``"false"`` cannot select the surface it asks to close.
         command_robot_name: Topic namespace for the command topic; defaults to
             the bound robot's name (the namespace we publish ``joint_states``
-            under).
+            under). Only a string names a topic segment, so only a string (or
+            ``None`` for the default) is accepted: this is the one
+            caller-supplied name rendered into a topic, and a non-string one
+            reached the sanitiser's ``re.sub`` - raising ``TypeError`` naming no
+            parameter when truthy, and, when falsy, being filtered by the
+            default-selecting ``or`` so the bridge read commands under the
+            robot's own name instead.
         poll_period: Seconds between inbound command reads on the poll thread.
             Only a positive finite number paces a loop. It is the sole pacing
             of ``_poll_loop``, handed to ``Event.wait``, where ``0``, a
@@ -151,8 +157,9 @@ class HardwareRtpsBridge(RosTelemetryBase):
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
         ValueError: If ``enable_commands`` is not a boolean, ``domain_id`` is
-            outside ``[0, 232]`` or ``poll_period`` is not a positive finite
-            number (all three checked before the ``cyclonedds`` probe, so the
+            outside ``[0, 232]``, ``poll_period`` is not a positive finite
+            number, or ``command_robot_name`` is neither a string nor ``None``
+            (all four checked before the ``cyclonedds`` probe, so the
             same caller mistake reports identically on an install without the
             extra), if ``joint_limits`` /
             ``dds_security_config`` is malformed, or if commands are enabled
@@ -192,6 +199,17 @@ class HardwareRtpsBridge(RosTelemetryBase):
         # above, so the refusal lands before any DDS state exists and reports
         # identically with and without the [ros2] extra.
         if error := boolean_flag_error(enable_commands, "enable_commands", type(self).__name__):
+            raise ValueError(error)
+
+        # The command namespace is the one caller-supplied value this bridge
+        # renders into a topic, so it is graded alongside the three guards above
+        # rather than where ``_safe`` consumes it, which is past the
+        # ``DomainParticipant``. A non-string raised ``TypeError`` out of
+        # ``_safe``'s ``re.sub``, naming no parameter, having already built a
+        # participant that the caller - holding no bridge - cannot shut down; a
+        # falsy non-string was filtered by the ``or`` fallback below and read
+        # commands under the bound robot's name instead, silently.
+        if error := self._command_namespace_error(command_robot_name, type(self).__name__):
             raise ValueError(error)
 
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.

@@ -545,3 +545,63 @@ def test_shutdown_drops_every_robots_joint_writer(fake_cyclonedds: dict[str, Any
     b.shutdown()
     assert b._joint_writers == {}
     assert b._image_writers == {}
+
+
+# --- the command namespace is the one caller-supplied name in a topic --------
+
+#: ``command_robot_name`` values that cannot name a topic segment. A truthy one
+#: reached the sanitiser's ``re.sub`` and raised ``TypeError`` naming no
+#: parameter; a falsy one was filtered by the ``command_robot_name or <derived>``
+#: default and never raised, so the bridge read commands under a namespace the
+#: caller had not asked for. Both happened past the ``DomainParticipant``.
+_UNNAMEABLE_COMMAND_NAMESPACES: list[Any] = [7, ["left_arm"], 0, []]
+
+
+@pytest.mark.parametrize("name", _UNNAMEABLE_COMMAND_NAMESPACES, ids=repr)
+def test_a_command_namespace_that_cannot_name_a_topic_builds_no_participant(
+    fake_cyclonedds: dict[str, Any], name: Any
+) -> None:
+    """The refusal names the parameter and leaves no DDS state behind.
+
+    ``__init__`` raising returns no bridge, so a participant built before the
+    refusal has no ``shutdown`` that can reach it. The namespace is therefore
+    graded where ``domain_id``, ``poll_period`` and ``enable_commands`` are.
+    """
+    with pytest.raises(ValueError) as excinfo:
+        _bridge(_FakeRobot(), command_robot_name=name)
+
+    assert "'command_robot_name'" in str(excinfo.value)
+    assert fake_cyclonedds["participants"] == []
+    assert fake_cyclonedds["readers"] == []
+
+
+def test_a_command_namespace_is_graded_before_the_cyclonedds_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same mistake reports identically on an install without the extra.
+
+    With no ``cyclonedds`` importable, a value that cannot name a topic must
+    still be refused for the value - not reported as a missing dependency - which
+    is what the other three constructor guards already promise.
+    """
+    monkeypatch.setitem(sys.modules, "cyclonedds", None)
+    monkeypatch.setattr(utils_mod, "_lazy_modules", {}, raising=False)
+
+    with pytest.raises(ValueError, match="'command_robot_name'"):
+        _bridge(_FakeRobot(), command_robot_name=7)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_topic"),
+    [
+        (None, "rt/test_arm/joint_command"),
+        ("", "rt/test_arm/joint_command"),
+        ("left_arm", "rt/left_arm/joint_command"),
+    ],
+    ids=["derive/None", "derive/empty", "override"],
+)
+def test_an_accepted_command_namespace_selects_the_topic_it_names(
+    fake_cyclonedds: dict[str, Any], name: Any, expected_topic: str
+) -> None:
+    """``None`` and ``""`` derive the bound robot's name; a string overrides it."""
+    b = _bridge(_FakeRobot(), command_robot_name=name)
+    assert [r.topic for r in fake_cyclonedds["readers"]] == [expected_topic]
+    b.shutdown()
