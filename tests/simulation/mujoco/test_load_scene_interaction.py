@@ -383,3 +383,65 @@ def test_load_scene_render_returns_real_geometry_immediately(sim: Simulation, sc
         f"(col_std={col_std:.2f}); expected real geometry (col_std > 5). "
         f"This indicates load_scene didn't call mj_forward, regressing #168 round 15."
     )
+
+
+# remove_robot rebuilds from the registry, which holds none of a loaded scene
+
+
+class TestRemoveRobotRefusesToRebuildALoadedScene:
+    """``remove_robot`` is refused on a loaded scene instead of dropping it.
+
+    Removing a robot does not delete its bodies from the live spec (that
+    segfaults MuJoCo at shutdown); it rebuilds the base scene from the
+    ``robots`` / ``objects`` / ``cameras`` registry and re-attaches the
+    survivors. A ``load_scene`` world is not in that registry, so the rebuild
+    omitted every body, light and constraint the scene file compiled and still
+    answered ``"success"``: measured on this two-body scene, ``scene_block`` and
+    ``scene_cylinder`` both left the model. An object added through
+    ``add_object`` survived the same call, because the registry did hold that
+    one, which is what makes the loss silent rather than obvious.
+
+    The additive direction has no such gap - it mutates the loaded spec in
+    place, pinned by ``test_add_robot_then_add_object_after_load_scene`` above -
+    and removal from a registry-built world is pinned by
+    ``test_multi_robot_eject.py``. Only this combination is refused.
+    """
+
+    def test_the_scene_is_left_exactly_as_it_was_found(
+        self, sim: Simulation, scene_path: str, robot_for_injection_path: str
+    ) -> None:
+        """The refusal precedes every mutation: scene, counts and registry all stand."""
+        assert sim.load_scene(scene_path)["status"] == "success"
+        for name in ("arm_a", "arm_b"):
+            assert sim.add_robot(name=name, urdf_path=robot_for_injection_path)["status"] == "success"
+
+        mj = sim._mj
+        before_nbody = int(_world(sim)._model.nbody)
+        before_njnt = int(_world(sim)._model.njnt)
+
+        result = sim.remove_robot("arm_b")
+        assert result["status"] == "error", result
+
+        model = _world(sim)._model
+        for body in ("scene_block", "scene_cylinder"):
+            assert mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body) >= 0, (
+                f"{body} left the model on a call that was refused"
+            )
+        assert int(model.nbody) == before_nbody
+        assert int(model.njnt) == before_njnt
+        # The registry pop happens inside the removal, so a refusal that ran too
+        # late would leave the robot gone from the registry but still in the scene.
+        assert sim.list_robots() == ["arm_a", "arm_b"]
+
+    def test_the_refusal_names_the_cause_and_the_way_forward(
+        self, sim: Simulation, scene_path: str, robot_for_injection_path: str
+    ) -> None:
+        """A refusal a caller cannot act on is a dead end, so it names both."""
+        sim.load_scene(scene_path)
+        sim.add_robot(name="arm_a", urdf_path=robot_for_injection_path)
+
+        text = sim.remove_robot("arm_a")["content"][0]["text"]
+        assert "remove_robot" in text
+        assert "load_scene" in text, "the caller cannot tell which of its calls made the scene foreign"
+        assert "registry" in text, "the message must say what the rebuild is faithful to"
+        assert "add_robot" in text and "replace_scene_mjcf" in text, "no way forward is offered"

@@ -128,6 +128,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     install_compiled_model,
     patch_scene_mjcf,
     persist_world_option,
+    registry_rebuild_loss_error,
     replace_scene_mjcf,
     reposition_body_in_scene,
     torque_only_actuation,
@@ -1238,10 +1239,13 @@ class MuJoCoSimEngine(
 
         Notes:
 
-        * ``_backend_state["scene_loaded"] = True`` stays as a marker for
-          introspection (and for downstream callers that still check it,
-          though the scene_ops path is now uniform across both entry
-          points).
+        * ``_backend_state["scene_loaded"] = True`` marks the live spec as one
+          this engine did not author. The additive verbs need no gate - they
+          mutate the loaded spec in place and so preserve it - but
+          :meth:`remove_robot` rebuilds the scene from the registry, which
+          holds none of the loaded scene, and reads this marker to refuse
+          instead (see
+          :func:`~strands_robots.simulation.mujoco.scene_ops.registry_rebuild_loss_error`).
         * ``_backend_state["scene_base_dir"]`` is recorded in case any
           consumer needs the original source directory (e.g. for mesh path
           resolution in followup inject operations on files with relative
@@ -2732,6 +2736,12 @@ class MuJoCoSimEngine(
         """Remove a robot and every element it injected (bodies, actuators,
         sensors, equality/tendon refs) from the MJCF scene, then recompile.
 
+        Only on a scene this engine authored. The recompile rebuilds the base
+        scene from the ``robots`` / ``objects`` / ``cameras`` registry, which
+        does not hold what :meth:`load_scene` compiled, so a loaded scene is
+        refused rather than rebuilt without its own bodies (see
+        :func:`~strands_robots.simulation.mujoco.scene_ops.registry_rebuild_loss_error`).
+
         Previously remove_robot only popped the Python-side dict entry,
         leaving the robot's MJCF in place. That blocked re-adding a robot
         with the same name (MuJoCo rejects duplicates on compile) and left
@@ -2745,6 +2755,13 @@ class MuJoCoSimEngine(
         """
         if self._world is None or not registered(self._world.robots, name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(name)}]}
+
+        # Ahead of every mutation below - the cooperative policy stop, the
+        # registry pop and the rebuild itself - because the rebuild reconstructs
+        # the scene from the registry and a scene this engine did not author is
+        # not in it. Refusing here leaves the world exactly as it was found.
+        if text := registry_rebuild_loss_error(self._world, "remove_robot"):
+            return {"status": "error", "content": [{"text": text}]}
 
         # Step 1: cooperatively stop THIS robot's policy if running.
         # Has to happen before the global check so remove_robot works even

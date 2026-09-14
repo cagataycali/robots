@@ -674,6 +674,16 @@ local pose and its tracking. Removing the robot the camera is mounted ON leaves
 it with no mount point, so that camera is dropped (with a warning naming it)
 rather than blocking the removal.
 
+That rebuild is faithful to the registry, and only to the registry, which is why
+`remove_robot` is refused on a world built by `load_scene`. A loaded scene's
+bodies, lights, tendons and equality constraints live only in the compiled spec,
+so rebuilding from `robots` / `objects` / `cameras` would drop all of them; the
+refusal comes before anything is touched, so the scene is left exactly as it was.
+To get the same world without one robot, `load_scene` again and `add_robot` only
+the robots you want, or swap the scene wholesale with `replace_scene_mjcf`. The
+additive verbs need no such gate - `add_robot`, `add_object` and `add_camera`
+mutate the loaded spec in place and preserve it.
+
 ## Multi-robot policies
 
 ```python

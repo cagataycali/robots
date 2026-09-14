@@ -21,6 +21,9 @@ Public API:
 * :func:`reposition_body_in_scene` - edit a body's spec ``pos``/``quat`` + recompile.
 * :func:`eject_robot_from_scene` - walk the spec, delete everything namespaced
   under ``{robot_name}/``, then recompile.
+* :func:`registry_rebuild_loss_error` - why that rebuild cannot be performed on
+  a scene this engine did not author, so the caller is refused instead of
+  losing the scene.
 * :func:`refresh_body_inertial_from_geometry` - re-derive a body's mass /
   center of mass / inertia after one of its geoms was resized at runtime.
 * :func:`fromto_fixed_size_components` - which ``geom_size`` components a geom's
@@ -2108,6 +2111,50 @@ def _resolve_joint_key(model: Any, key: _JointKey, mj: Any) -> int:
     return jid if int(model.jnt_type[jid]) == mj.mjtJoint.mjJNT_FREE else -1
 
 
+def registry_rebuild_loss_error(world: SimWorld, method: str) -> str | None:
+    """Why ``method`` cannot rebuild this scene from the registry, else ``None``.
+
+    :func:`eject_robot_from_scene` does not delete the departing robot from the
+    live spec - deleting an ``spec.attach()``-ed body segfaults MuJoCo at
+    interpreter shutdown - so it rebuilds the base scene with
+    ``SpecBuilder.build(world)`` and re-attaches the survivors. That rebuild is
+    faithful only to what the registry holds: ``world.robots``,
+    ``world.objects``, ``world.cameras``, the lights and the ground.
+
+    A scene installed by ``load_scene`` is not in the registry. Its bodies,
+    joints, lights, tendons and equality constraints exist only in the compiled
+    spec, so the rebuild silently omits every one of them - measured on a
+    two-prop scene, ``remove_robot`` reported ``"success"`` while both props
+    left the model, and a ``cube`` added afterwards through ``add_object``
+    survived because the registry did hold that one. The additive path has the
+    opposite property: ``add_object`` / ``add_camera`` / ``add_robot`` mutate the
+    loaded spec in place and preserve it, which is what ``load_scene``
+    documents.
+
+    So the rebuild is refused here, before the caller's registry entry is
+    popped and while the scene is still exactly as it was found. This is the
+    one consumer of the ``scene_loaded`` marker ``load_scene`` records.
+
+    Args:
+        world: The scene the rebuild would be performed on.
+        method: Public method name, used to prefix the message.
+
+    Returns:
+        The refusal text, or ``None`` when the registry can reproduce this
+        scene.
+    """
+    if not world._backend_state.get("scene_loaded", False):
+        return None
+    return (
+        f"{method}: this scene came from load_scene, and removing a robot rebuilds the scene from "
+        "the registry of robots/objects/cameras this engine authored - which does not hold the "
+        "bodies, lights, tendons or equality constraints the loaded MJCF compiled. The rebuild "
+        "would drop all of them and still report success, so it is refused with the scene exactly "
+        "as it was. To get the same world without this robot, call load_scene again and add_robot "
+        "only the robots you want; to change the scene wholesale, use replace_scene_mjcf."
+    )
+
+
 def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     """Remove every spec element namespaced under ``{robot_name}/``.
 
@@ -2117,6 +2164,11 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     we REBUILD the scene spec from scratch using the post-remove
     ``world.robots`` / ``world.objects`` / ``world.cameras`` state, then
     re-attach the remaining robots.
+
+    Scope: the rebuild reproduces the scene from the registry, so it can only
+    be run on a scene this engine authored. A ``load_scene`` world is refused by
+    :func:`registry_rebuild_loss_error` at the calling verb, before its registry
+    entry is popped - see that function for what the rebuild would drop.
 
     State preservation: the fresh compile below allocates a fresh ``MjData``,
     so every buffer starts at its reset value. Before the rebuild we snapshot
