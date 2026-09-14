@@ -293,6 +293,45 @@ class RosTelemetryBase:
             "bound robot's own name."
         )
 
+    # -- outbound payload gate (shared by both transports) -----------------
+
+    @staticmethod
+    def _joint_state_arrays_error(names: list[str], positions: list[float], context: str) -> str | None:
+        """Return an error message if a ``JointState``'s arrays name different joints.
+
+        ``sensor_msgs/JointState`` pairs ``name`` and ``position`` BY INDEX, so
+        the two arrays are one table with two columns and only agree on which
+        joint a value belongs to while they are the same length. A consumer
+        reads them with ``zip(msg.name, msg.position)`` - that is what
+        ``robot_state_publisher`` and every plotter do - so an array shorter by
+        one does not drop one joint: it shifts every joint after the gap onto
+        its neighbour's value, and the tail falls off the end unreported. The
+        arm is then published in a pose it is not in, under a well-formed
+        message DDS delivers and no subscriber can tell is wrong.
+
+        Refused whole, for the reason :meth:`_command_action` refuses a
+        malformed inbound command whole rather than applying part of it: a
+        partial state is not a state.
+
+        Args:
+            names: ``JointState.name`` the caller supplied.
+            positions: ``JointState.position`` the caller supplied.
+            context: Class name of the calling bridge, for the message.
+
+        Returns:
+            ``None`` when the two arrays describe the same joints, else the
+            reason they cannot be published together.
+        """
+        if len(names) == len(positions):
+            return None
+        return (
+            f"{context}: publish_joint_states got {len(names)} joint name(s) and "
+            f"{len(positions)} position(s). A JointState pairs the two arrays by index, so "
+            "publishing them would report every joint after the first gap under its "
+            "neighbour's name. Pass one position per name - build the pair together, "
+            "so a joint the observation does not carry drops its name too."
+        )
+
     # -- security / safety gate (shared by both hardware bridges) ---------
 
     @staticmethod
@@ -666,7 +705,15 @@ class RosTelemetryBridge(RosTelemetryBase):
         return pub
 
     def publish_joint_states(self, robot: str, names: list[str], positions: list[float]) -> None:
-        """Publish one ``JointState`` for ``robot`` on ``/<robot>/joint_states``."""
+        """Publish one ``JointState`` for ``robot`` on ``/<robot>/joint_states``.
+
+        A ``names``/``positions`` pair of differing length is dropped whole with
+        a warning rather than published misaligned - see
+        :meth:`RosTelemetryBase._joint_state_arrays_error`.
+        """
+        if error := self._joint_state_arrays_error(list(names), list(positions), type(self).__name__):
+            logger.warning("%s Whole JointState dropped, no partial publication.", error)
+            return
         msg = self._JointState()
         msg.header.stamp = self._now()
         msg.header.frame_id = self._safe(robot)

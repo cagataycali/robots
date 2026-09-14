@@ -331,7 +331,14 @@ class HardwareRtpsBridge(RosTelemetryBase):
         hardware ``Robot`` telemetry path is transport-agnostic - including the
         writer being resolved per topic. The writers are lazy, so a bridge only
         ever advertises the topics it was actually asked to publish on.
+
+        A ``names``/``positions`` pair of differing length is dropped whole with
+        a warning rather than published misaligned - see
+        :meth:`RosTelemetryBase._joint_state_arrays_error`.
         """
+        if error := self._joint_state_arrays_error(list(names), list(positions), type(self).__name__):
+            logger.warning("%s Whole JointState dropped, no partial publication.", error)
+            return
         topic = self.joint_states_topic(robot)
         writer = self._joint_writers.get(topic)
         if writer is None:

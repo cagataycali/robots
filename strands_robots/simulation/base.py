@@ -811,8 +811,16 @@ class SimEngine(ABC):
             try:
                 obs = self.get_observation(robot, skip_images=skip_images)
                 names = self.robot_joint_names(robot)
-                positions = [obs[j] for j in names if j in obs and isinstance(obs[j], (int, float))]
-                bridge.publish_joint_states(robot, names, positions)
+                # Build the (name, position) pair together. A JointState's two
+                # arrays are one table read by index, so a joint the observation
+                # does not carry has to drop its NAME as well as its value:
+                # filtering only the positions compacts that column, publishing
+                # every later joint under the name of the one before it. A
+                # floating-base robot hits this on every step - the root
+                # freejoint is joint 0 of robot_joint_names() and is not an
+                # observation key - which shifted the whole body by one.
+                reported = [(j, float(obs[j])) for j in names if j in obs and isinstance(obs[j], (int, float))]
+                bridge.publish_joint_states(robot, [j for j, _ in reported], [v for _, v in reported])
                 if skip_images:
                     continue
                 for key, value in obs.items():

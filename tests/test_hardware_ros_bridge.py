@@ -20,6 +20,7 @@ bridge tests use. They assert that:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -249,6 +250,57 @@ def test_hardware_bridge_publishes_identically_to_sim(fake_ros: dict[str, Any]) 
     (sim_msg,) = sim_pub.messages
     assert hw_msg.name == sim_msg.name == ["shoulder_pan", "elbow"]
     assert hw_msg.position == sim_msg.position == [0.1, 0.2]
+
+
+class TestJointStateArraysAreRefusedWhenTheyDisagree:
+    """A ``JointState`` whose two arrays name different joints never reaches the wire.
+
+    ``name`` and ``position`` are paired by index, so a caller that supplies a
+    different number of each has no pose to publish: a consumer's
+    ``zip(name, position)`` reports every joint after the gap under its
+    neighbour's name and the tail unreported. Dropped whole, with the reason
+    logged, for the reason :meth:`_command_action` refuses a malformed inbound
+    command whole rather than applying part of it.
+    """
+
+    @pytest.mark.parametrize(
+        ("names", "positions"),
+        [
+            (["hip", "knee", "ankle"], [0.1, 0.2]),  # a value column short by one
+            (["hip", "knee"], [0.1, 0.2, 0.3]),  # a name column short by one
+            (["hip"], []),  # every value missing
+        ],
+    )
+    def test_a_mismatched_pair_publishes_nothing(
+        self, fake_ros: dict[str, Any], caplog: pytest.LogCaptureFixture, names: list[str], positions: list[float]
+    ) -> None:
+        bridge = HardwareRosBridge()
+        with caplog.at_level(logging.WARNING):
+            bridge.publish_joint_states("so101", names, positions)
+
+        assert [m for pub in fake_ros["nodes"][0].publishers for m in pub.messages] == []
+        # The reason names both counts, so the caller can see which column is short.
+        assert f"{len(names)} joint name(s) and {len(positions)} position(s)" in caplog.text
+        assert "no partial publication" in caplog.text
+
+    def test_a_matching_pair_still_publishes(self, fake_ros: dict[str, Any]) -> None:
+        # Control: the guard refuses no more than the mismatch.
+        bridge = HardwareRosBridge()
+        bridge.publish_joint_states("so101", ["hip", "knee"], [0.1, 0.2])
+
+        (pub,) = fake_ros["nodes"][0].publishers
+        (msg,) = pub.messages
+        assert msg.name == ["hip", "knee"]
+        assert msg.position == [0.1, 0.2]
+
+    def test_two_empty_arrays_are_a_valid_empty_state(self, fake_ros: dict[str, Any]) -> None:
+        # Control: JointState allows empty arrays; equal lengths agree.
+        bridge = HardwareRosBridge()
+        bridge.publish_joint_states("so101", [], [])
+
+        (pub,) = fake_ros["nodes"][0].publishers
+        (msg,) = pub.messages
+        assert msg.name == [] and msg.position == []
 
 
 def test_hardware_bridge_sets_domain_env(fake_ros: dict[str, Any]) -> None:

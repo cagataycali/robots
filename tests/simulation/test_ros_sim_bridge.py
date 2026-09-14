@@ -242,15 +242,23 @@ def test_shutdown_reports_a_context_it_could_not_release(
 class _FakeEngine(SimEngine):
     """Minimal concrete engine exercising the telemetry helper only."""
 
-    def __init__(self, observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
+    def __init__(
+        self,
+        observation: dict[str, Any],
+        *,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
+        joint_names: list[str] | None = None,
+    ) -> None:
         self._obs = observation
+        self._joint_names = ["shoulder_pan", "elbow"] if joint_names is None else joint_names
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
 
     def list_robots(self) -> list[str]:
         return ["so101"]
 
     def robot_joint_names(self, robot_name: str) -> list[str]:
-        return ["shoulder_pan", "elbow"]
+        return list(self._joint_names)
 
     def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
         return self._obs
@@ -304,6 +312,63 @@ def test_publish_telemetry_forwards_joint_state(fake_ros: dict[str, Any]) -> Non
     js = topics["/so101/joint_states"].messages[0]
     assert js.position == [0.5, -0.25]
     assert "/so101/front/image_raw" in topics
+
+
+class TestJointStateArraysNameTheSameJoints:
+    """A published ``JointState``'s two arrays must describe the same joints.
+
+    ``sensor_msgs/JointState`` pairs ``name`` and ``position`` by index, so the
+    telemetry helper cannot filter one column and not the other. Every
+    floating-base robot in the registry reaches this: the root freejoint is
+    element 0 of ``robot_joint_names()`` and is not an observation key, so a
+    positions-only filter compacted the value column and published every later
+    joint under the name of the one before it.
+    """
+
+    #: A floating-base robot's joint list: the root joint carries no observation.
+    FLOATING_BASE = ["freejoint", "hip", "knee", "ankle"]
+
+    @staticmethod
+    def _published(fake_ros: dict[str, Any]) -> Any:
+        node = fake_ros["nodes"][0]
+        topics = {p.topic: p for p in node.publishers}
+        assert "/so101/joint_states" in topics, sorted(topics)
+        return topics["/so101/joint_states"].messages[0]
+
+    def test_a_joint_absent_from_the_observation_drops_its_name_too(self, fake_ros: dict[str, Any]) -> None:
+        obs = {"hip": 0.1, "knee": 0.2, "ankle": 0.3}
+        engine = _FakeEngine(obs, ros2_bridge=True, joint_names=self.FLOATING_BASE)
+        engine._publish_ros_telemetry()
+
+        js = self._published(fake_ros)
+        # Premise: the fixture really does exercise a gap.
+        assert "freejoint" not in obs
+        assert len(js.name) == len(js.position), (js.name, js.position)
+        # Every reported joint carries ITS OWN value, not its neighbour's.
+        assert dict(zip(js.name, js.position, strict=True)) == obs
+        assert "freejoint" not in js.name
+
+    def test_no_joint_is_reported_under_its_neighbours_name(self, fake_ros: dict[str, Any]) -> None:
+        # Distinct values so a one-place shift cannot pass by coincidence.
+        obs = {"hip": -0.75, "knee": 0.5, "ankle": 1.25}
+        engine = _FakeEngine(obs, ros2_bridge=True, joint_names=self.FLOATING_BASE)
+        engine._publish_ros_telemetry()
+
+        wire = dict(zip(self._published(fake_ros).name, self._published(fake_ros).position, strict=True))
+        for joint, truth in obs.items():
+            assert wire[joint] == truth, f"{joint} published as {wire[joint]}, truth {truth}"
+        # The tail joint is reported at all, rather than falling off the end.
+        assert "ankle" in wire
+
+    def test_a_fully_observed_robot_reports_every_joint(self, fake_ros: dict[str, Any]) -> None:
+        # Control: no gap, so nothing is dropped and the name column is full.
+        obs = {"shoulder_pan": 0.5, "elbow": -0.25}
+        engine = _FakeEngine(obs, ros2_bridge=True)
+        engine._publish_ros_telemetry()
+
+        js = self._published(fake_ros)
+        assert js.name == ["shoulder_pan", "elbow"]
+        assert js.position == [0.5, -0.25]
 
 
 def test_publish_telemetry_is_noop_when_disabled(fake_ros: dict[str, Any]) -> None:

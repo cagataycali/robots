@@ -20,6 +20,7 @@ trivial fakes so the tests stay ROS-free.
 
 from __future__ import annotations
 
+import logging
 import sys
 from types import ModuleType
 from typing import Any, cast
@@ -204,6 +205,57 @@ def test_publish_joint_states_uses_mangled_topic_and_fields(fake_cyclonedds: dic
     assert msg.name == ["a", "b"]
     assert msg.position == [0.1, 0.2]
     assert msg.header.frame_id == "test_arm"
+
+
+class TestJointStateArraysAreRefusedWhenTheyDisagree:
+    """A ``JointState`` whose two arrays name different joints never reaches the wire.
+
+    ``name`` and ``position`` are paired by index, so a caller that supplies a
+    different number of each has no pose to publish: a consumer's
+    ``zip(name, position)`` reports every joint after the gap under its
+    neighbour's name and the tail unreported. Dropped whole, with the reason
+    logged, for the reason :meth:`_command_action` refuses a malformed inbound
+    command whole rather than applying part of it.
+    """
+
+    @pytest.mark.parametrize(
+        ("names", "positions"),
+        [
+            (["hip", "knee", "ankle"], [0.1, 0.2]),
+            (["hip", "knee"], [0.1, 0.2, 0.3]),
+            (["hip"], []),
+        ],
+    )
+    def test_a_mismatched_pair_writes_nothing(
+        self,
+        fake_cyclonedds: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
+        names: list[str],
+        positions: list[float],
+    ) -> None:
+        b = _bridge(enable_commands=False)
+        with caplog.at_level(logging.WARNING):
+            b.publish_joint_states("test_arm", names, positions)
+
+        assert [s for w in fake_cyclonedds["writers"] for s in w.samples] == []
+        assert f"{len(names)} joint name(s) and {len(positions)} position(s)" in caplog.text
+        assert "no partial publication" in caplog.text
+
+    def test_a_refused_pair_advertises_no_writer(self, fake_cyclonedds: dict[str, Any]) -> None:
+        # The refusal is before the lazy writer, so a topic nothing can be
+        # published on is never advertised either.
+        b = _bridge(enable_commands=False)
+        b.publish_joint_states("test_arm", ["hip", "knee"], [0.1])
+        assert [w.topic for w in fake_cyclonedds["writers"]] == []
+
+    def test_a_matching_pair_still_writes(self, fake_cyclonedds: dict[str, Any]) -> None:
+        # Control: the guard refuses no more than the mismatch.
+        b = _bridge(enable_commands=False)
+        b.publish_joint_states("test_arm", ["hip", "knee"], [0.1, 0.2])
+        writer = next(w for w in fake_cyclonedds["writers"] if w.topic == "rt/test_arm/joint_states")
+        (msg,) = writer.samples
+        assert msg.name == ["hip", "knee"]
+        assert msg.position == [0.1, 0.2]
 
 
 def test_publish_image_fields(fake_cyclonedds: dict[str, Any]) -> None:

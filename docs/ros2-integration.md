@@ -318,6 +318,15 @@ internal `rclpy` node that publishes, per robot, after every `step()`:
 | `/<robot>/joint_states` | `sensor_msgs/msg/JointState` | joint names + positions |
 | `/<robot>/<camera>/image_raw` | `sensor_msgs/msg/Image` (`rgb8`) | one frame per attached camera. `<robot>`/`<camera>` are sanitised into ROS 2 name tokens, so a camera named `0` publishes on `/<robot>/camera_0/image_raw` - ROS 2 forbids a token starting with a digit |
 
+`name` and `position` are one table read by index. A robot whose observation
+does not carry every joint of `robot_joint_names()` - every floating-base
+humanoid, quadruped and mobile base, whose root freejoint is joint 0 and is not
+an observation key - publishes only the joints it observed, so the two arrays
+stay the same joints. A caller that hands `publish_joint_states` a differing
+number of names and positions has no pose to publish: the message is dropped
+whole with a warning naming both counts, rather than published with every joint
+after the gap under its neighbour's name.
+
 ```python
 from strands_robots.simulation import Simulation
 
@@ -362,6 +371,15 @@ the ROS 2 graph:
 | `/<robot>/joint_states` | published | `sensor_msgs/msg/JointState` | joint names + positions, every control step |
 | `/<robot>/<camera>/image_raw` | published | `sensor_msgs/msg/Image` (`rgb8`) | one frame per camera |
 | `/<robot>/joint_command` | **subscribed** | `sensor_msgs/msg/JointState` | inbound `name`/`position` -> `send_action`, drives the real arm |
+
+`name` and `position` are one table read by index. A robot whose observation
+does not carry every joint of `robot_joint_names()` - every floating-base
+humanoid, quadruped and mobile base, whose root freejoint is joint 0 and is not
+an observation key - publishes only the joints it observed, so the two arrays
+stay the same joints. A caller that hands `publish_joint_states` a differing
+number of names and positions has no pose to publish: the message is dropped
+whole with a warning naming both counts, rather than published with every joint
+after the gap under its neighbour's name.
 
 The first two are **outbound telemetry** (shared, byte-identical, with the sim
 bridge). The third is the **inbound command** surface that makes the hardware
