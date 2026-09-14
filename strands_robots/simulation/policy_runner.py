@@ -2944,8 +2944,16 @@ class PolicyRunner:
             ``"error"`` status when a recorded frame cannot actually be applied
             (unresolvable action keys, or a recorded vector whose width does not
             match the action-key map), reporting how many frames were applied
-            before the abort. A successful status therefore means every frame
-            reached the actuators.
+            before the abort. It aborts for the same reason when NO recorded
+            frame of the episode carried an ``action`` value at all - every
+            frame then takes the tolerated no-action branch, so the loop
+            advances physics and commands nothing, and that named the observed
+            columns rather than reporting a full-fidelity replay. A successful
+            status therefore means at least one recorded action reached the
+            actuators and every frame that carried one was applied; the
+            ``json`` block reports ``frames_with_action`` beside
+            ``frames_applied`` so a caller reads the two counts rather than
+            assuming they are equal.
         """
         # ``speed`` is a playback-rate multiplier used as the divisor in
         # ``frame_interval = 1 / (dataset_fps * speed)`` and, once computed,
@@ -3069,6 +3077,16 @@ class PolicyRunner:
         # frame, so it is deliberately excluded here.
         n_substeps = self._control_substeps(dataset_fps)
         frames_applied = 0
+        # A frame that ADVANCED and a frame that COMMANDED are two different
+        # counts, and only the second one is a replay. The tolerated
+        # no-action frame below increments the first, so counting only it made
+        # "Frames: N/N | status=success" the report for an episode that
+        # commanded nothing at all - see the refusal after the loop.
+        frames_with_action = 0
+        # The columns a frame without an action DID carry, kept for that
+        # refusal: the usual cause is a differently spelled action column, and
+        # that is the only place the observed names can be named.
+        actionless_frame_columns: list[str] = []
         # The replayed episode's own duration, on the same clock as the pacer
         # below for the same reason: it is measured, not recorded.
         start_mono = time.monotonic()
@@ -3109,6 +3127,10 @@ class PolicyRunner:
             if action_vals is None:
                 # No action at this index - advance physics one full control
                 # period so the frame still occupies its recorded time slice.
+                # Tolerated per frame, refused for the whole episode: see the
+                # ``frames_with_action`` check after the loop.
+                if not actionless_frame_columns and isinstance(frame, dict):
+                    actionless_frame_columns = sorted(str(k) for k in frame)
                 self.sim.step(n_steps=n_substeps)
                 frames_applied += 1
             else:
@@ -3197,19 +3219,58 @@ class PolicyRunner:
                         ],
                     }
                 frames_applied += 1
+                frames_with_action += 1
 
             sleep_time = frame_interval - (time.monotonic() - step_start_mono)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
         duration = time.monotonic() - start_mono
+
+        # An episode in which NO frame carried an action is not a replay: every
+        # frame took the tolerated no-action branch above, so the loop only
+        # advanced physics and the recorded trajectory never reached an
+        # actuator. Reported as a full-fidelity success it was the same reading
+        # as a replay that worked, which is the degenerate-success shape this
+        # module refuses everywhere else (an unresolvable key, a width
+        # mismatch). A dataset's column schema is fixed for the whole episode,
+        # so this is a property of the dataset and not of one frame - and the
+        # usual cause is an action column under another name, which is why the
+        # observed column names are quoted.
+        if episode_length and not frames_with_action:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Replay aborted: none of the {episode_length} recorded frames of episode "
+                            f"{episode} in '{repo_id}' carried an 'action' value, so nothing was sent to "
+                            f"'{resolved_robot}' - the {frames_applied} frames advanced physics only. "
+                            + (f"The frames carry {actionless_frame_columns}. " if actionless_frame_columns else "")
+                            + "Replay a dataset whose frames carry an 'action' column."
+                        )
+                    },
+                    {
+                        "json": {
+                            "episode": episode,
+                            "robot_name": resolved_robot,
+                            "frames_applied": frames_applied,
+                            "frames_with_action": 0,
+                            "total_frames": episode_length,
+                            "recorded_columns": actionless_frame_columns,
+                        }
+                    },
+                ],
+            }
+
         return {
             "status": "success",
             "content": [
                 {
                     "text": (
                         f"Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
-                        f"Frames: {frames_applied}/{episode_length} | "
+                        f"Frames: {frames_applied}/{episode_length} "
+                        f"(actions applied: {frames_with_action}) | "
                         f"Duration: {duration:.1f}s | Speed: {speed}x"
                     )
                 },
@@ -3218,6 +3279,7 @@ class PolicyRunner:
                         "episode": episode,
                         "robot_name": resolved_robot,
                         "frames_applied": frames_applied,
+                        "frames_with_action": frames_with_action,
                         "total_frames": episode_length,
                         "duration_s": round(duration, 2),
                         "speed": speed,

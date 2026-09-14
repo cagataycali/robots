@@ -1068,16 +1068,32 @@ equals the recorded action vector's width. A bare string (consumed one key per
 character), a non-string entry, a duplicate key, or a width mismatch is rejected
 with an actionable error before the dataset is fetched — never truncated to fit.
 
-A `"success"` status means **every** frame reached the actuators. If a recorded
-action cannot be applied — e.g. the mapped keys resolve to no actuator on this
-robot — the replay aborts at that frame and returns `status="error"` with the
-frame index, how many frames were applied, and the unresolved keys:
+A `"success"` status means at least one recorded action reached the actuators and
+**every** frame that carried one was applied; `frames_with_action` reports how
+many of `frames_applied` commanded the robot rather than only advancing physics.
+If a recorded action cannot be applied — e.g. the mapped keys resolve to no
+actuator on this robot — the replay aborts at that frame and returns
+`status="error"` with the frame index, how many frames were applied, and the
+unresolved keys:
 
 ```python
 result = sim.replay_episode("user/my_dataset", robot_name="so101", action_key_map=["wrong"] * 6)
 result["status"]                                  # "error"
 result["content"][1]["json"]["unresolved_keys"]   # ['wrong', ...]
 result["content"][1]["json"]["frames_applied"]    # 0
+```
+
+An episode whose frames carry **no** `action` column aborts for the same reason —
+every frame would take the tolerated no-action branch, advancing physics while
+commanding nothing, and `Frames: N/N` would read exactly like a replay that
+worked. The refusal names the columns the frames do carry, which is the signal
+when the recorded actions live under another name:
+
+```python
+result = sim.replay_episode("user/observations_only", robot_name="so101")
+result["status"]                                     # "error"
+result["content"][1]["json"]["frames_with_action"]    # 0
+result["content"][1]["json"]["recorded_columns"]      # ['observation.state', 'task']
 ```
 
 ## Stream back (no full download)

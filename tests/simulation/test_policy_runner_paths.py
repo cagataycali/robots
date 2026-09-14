@@ -15,6 +15,9 @@ Covers:
   non-dict result all resolve to False without propagating
 * ``_maybe_sim_time`` cached ``_sim_time`` path without backend I/O
 * ``evaluate()`` "never-succeeds" default path (no success_fn)
+* ``replay()`` refuses an episode whose frames carry no ``action`` at all -
+  while still advancing physics for each of them - and a per-frame gap in an
+  otherwise commanding episode still succeeds, reporting both counts
 """
 
 from __future__ import annotations
@@ -367,31 +370,6 @@ def test_replay_frame_read_failure_returns_error_dict(monkeypatch):
     assert "corrupt frame" in r["content"][0]["text"]
 
 
-def test_replay_action_none_advances_physics(monkeypatch):
-    """Dataset frames with no 'action' key → physics step, still advance."""
-
-    class _MissingActionDataset:
-        fps = 30
-
-        def __len__(self):
-            return 2
-
-        def __getitem__(self, idx):
-            return {"observation.state": [0, 0, 0]}  # no 'action'
-
-    def loader(repo_id, episode, root):
-        return _MissingActionDataset(), 0, 2
-
-    sim = _MinimalSim(robots=["r0"])
-
-    import strands_robots.dataset_recorder as dr
-
-    monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
-
-    r = PolicyRunner(sim).replay(repo_id="fake/noaction", speed=100.0)
-    assert r["status"] == "success"
-
-
 # ── _extract_frame_ndarray edge cases ───────────────────────────────
 
 
@@ -618,3 +596,92 @@ def test_contact_success_fn_false_on_non_dict_result():
     sim = _ListResultSim(robots=["r0"])
     fn = PolicyRunner(sim)._resolve_success_fn("contact")
     assert fn({}) is False
+
+
+class _ColumnDataset:
+    """A dataset stub whose rows carry exactly the columns it is given.
+
+    Replay reads the recorded action out of a frame mapping, so the column set
+    is the whole input: a row without an ``action`` key is what an
+    observation-only dataset - or one whose actions live under another name -
+    hands the loop.
+    """
+
+    fps = 30
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def __len__(self):
+        return len(self._rows)
+
+    def __getitem__(self, idx):
+        return self._rows[idx]
+
+
+def _replay_rows(monkeypatch, rows):
+    """Replay ``rows`` as one episode on a 3-joint sim, returning (sim, result)."""
+    import strands_robots.dataset_recorder as dr
+
+    sim = _MinimalSim(robots=["r0"])
+    monkeypatch.setattr(
+        dr, "load_lerobot_episode", lambda repo_id, episode, root: (_ColumnDataset(rows), 0, len(rows)), raising=False
+    )
+    return sim, PolicyRunner(sim).replay(repo_id="fake/columns", speed=1000.0)
+
+
+def test_replay_refuses_an_episode_whose_frames_carry_no_action(monkeypatch):
+    """An episode that commands nothing is refused, not reported as N/N success.
+
+    A frame without a recorded action is tolerated per frame: replay advances
+    physics for its control period so the frame still occupies its recorded time
+    slice. Counting that as an APPLIED frame made the whole degenerate case
+    invisible - an observation-only episode (or one whose actions are stored
+    under another column name) returned ``status="success"`` with ``Frames:
+    N/N``, byte-identical to a replay that reproduced the trajectory, while
+    ``send_action`` was never called once and the robot only sagged under
+    gravity. A dataset's column schema is fixed for the whole episode, so this
+    is a property of the dataset rather than of one frame, and the refusal names
+    the columns the frames do carry - the signal for the near-miss column name
+    behind it.
+    """
+    rows = [{"observation.state": [0.1, 0.2, 0.3], "task": "pick"} for _ in range(4)]
+    sim, result = _replay_rows(monkeypatch, rows)
+
+    assert result["status"] == "error", result
+    text = result["content"][0]["text"]
+    assert "none of the 4 recorded frames" in text
+    # The observed columns are named: that is what identifies a renamed action.
+    assert "observation.state" in text and "task" in text
+    payload = result["content"][1]["json"]
+    assert payload["frames_with_action"] == 0
+    assert payload["total_frames"] == 4
+    assert payload["recorded_columns"] == ["observation.state", "task"]
+    # Nothing was commanded - the claim the success status used to make.
+    assert not [c for c in sim.calls if c[0] == "send_action"]
+    # The tolerated branch is unchanged: every frame still advanced physics for
+    # its recorded control period, and the refusal reports those frames.
+    assert len([c for c in sim.calls if c[0] == "step"]) == 4
+    assert payload["frames_applied"] == 4
+
+
+def test_replay_still_succeeds_when_only_some_frames_carry_an_action(monkeypatch):
+    """Control: a per-frame gap is still tolerated, and both counts are reported.
+
+    The refusal above is about an episode that commands NOTHING, not about a
+    single missing frame: an episode with one gap still replays, and the two
+    counts are reported separately so the gap is readable instead of hidden
+    behind one ``frames_applied`` number.
+    """
+    rows = [
+        {"action": [0.1, 0.2, 0.3]},
+        {"observation.state": [0.0, 0.0, 0.0]},
+        {"action": [0.4, 0.5, 0.6]},
+    ]
+    sim, result = _replay_rows(monkeypatch, rows)
+
+    assert result["status"] == "success", result
+    payload = result["content"][1]["json"]
+    assert payload["frames_applied"] == 3
+    assert payload["frames_with_action"] == 2
+    assert len([c for c in sim.calls if c[0] == "send_action"]) == 2

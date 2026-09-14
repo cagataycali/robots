@@ -4381,9 +4381,13 @@ class SimEngine(ABC):
         of unique strings whose length matches the recorded action width; a bare
         string, a non-string entry, a duplicate key or a width mismatch is
         rejected rather than truncated to fit. A ``"success"`` status therefore
-        means every recorded frame actually reached the actuators - a frame that
-        ``send_action`` could not apply aborts the replay with the frame index,
-        the frames applied so far and the unresolved keys.
+        means at least one recorded action actually reached the actuators and
+        every frame that carried one was applied - a frame that ``send_action``
+        could not apply aborts the replay with the frame index, the frames
+        applied so far and the unresolved keys, and an episode whose frames
+        carry no ``action`` value at all aborts naming the columns they do
+        carry rather than reporting a replay that commanded nothing. The
+        ``json`` block reports ``frames_with_action`` beside ``frames_applied``.
 
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
