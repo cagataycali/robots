@@ -11,6 +11,8 @@ publisher wiring with NO ROS 2 installed. They assert that:
 * Enabling the bridge with no ``rclpy`` raises a clear :class:`ImportError`.
 * :meth:`SimRosBridge.shutdown` releases the node handle *and* the rclpy context
   it initialized, so a failure destroying one does not leak the other.
+* A ``MuJoCoSimEngine`` constructor argument that is refused leaves no rclpy
+  node or context behind, whichever argument it is.
 """
 
 from __future__ import annotations
@@ -456,3 +458,87 @@ def test_shutdown_ros_bridge_tears_down_active_bridge_idempotently(fake_ros: dic
 
     engine._shutdown_ros_bridge()  # idempotent: must not raise, handle stays None
     assert engine._ros_bridge is None
+
+
+# -- a refused constructor argument must not leave the bridge behind ---------
+#
+# ``MuJoCoSimEngine.__init__`` builds the optional bridge part-way through, so
+# every argument it can refuse has to be answered above that point. These pin
+# the consequence rather than the ordering: ``__init__`` raising returns no
+# object, so the ``cleanup()`` that would call ``_shutdown_ros_bridge`` is
+# unreachable, and anything the refused call built is leaked for the life of the
+# process.
+
+REFUSED_ARGUMENTS = [
+    ({"default_width": 0}, ValueError, "default_width"),
+    ({"default_height": -1}, ValueError, "default_height"),
+    ({"ros2_domain": 233}, ValueError, "ros2_domain"),
+    ({"mesh": True}, TypeError, "mesh="),
+]
+
+
+@pytest.mark.parametrize(("kwargs", "exc", "match"), REFUSED_ARGUMENTS)
+def test_a_refused_constructor_argument_leaves_no_ros_node_behind(
+    kwargs: dict[str, Any], exc: type[BaseException], match: str, fake_ros: dict[str, Any]
+) -> None:
+    """Every refusable ``MuJoCoSimEngine`` argument is answered before the bridge.
+
+    ``mesh=True`` is the documented "not a mesh client" refusal, and it was
+    raised *after* ``_init_ros_bridge`` had created the ``strands_sim`` node and
+    initialized the rclpy context. The other three rows are the arguments whose
+    guards already precede the bridge, so they hold either way and say that this
+    is one placement rule rather than one special case.
+    """
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+
+    with pytest.raises(exc, match=match):
+        MuJoCoSimEngine(ros2_bridge=True, **kwargs)
+
+    assert fake_ros["nodes"] == []
+    assert fake_ros["inited"] is False
+
+
+def test_a_retry_after_a_refusal_still_releases_the_context_it_initialized(
+    fake_ros: dict[str, Any],
+) -> None:
+    """A corrected second call leaves the process as it found it.
+
+    This is why the guard has to precede the bridge rather than clean up after
+    it. A bridge records ``_owns_context`` only when it is the one that called
+    ``rclpy.init``, so a bridge leaked by a refused construction keeps that
+    ownership: the corrected retry finds the context already up, declines it,
+    and on teardown destroys only its own node - leaving the leaked node alive
+    and the context initialized with nobody left to shut it down.
+    """
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+
+    with pytest.raises(TypeError, match="mesh="):
+        MuJoCoSimEngine(ros2_bridge=True, mesh=True)
+
+    engine = MuJoCoSimEngine(ros2_bridge=True)
+    engine.cleanup()
+
+    assert [node.destroyed for node in fake_ros["nodes"]] == [True]
+    assert fake_ros["shutdown"] is True
+    assert fake_ros["inited"] is False
+
+
+def test_a_mesh_client_the_engine_can_stop_is_still_accepted(fake_ros: dict[str, Any]) -> None:
+    """The guard moved, it did not tighten: a stoppable client is stored and stopped.
+
+    Anti-vacuity companion to the rows above - a guard that refused everything
+    would satisfy them all - and it pins that resolving the handle earlier does
+    not change where it lands or who stops it.
+    """
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+
+    stopped: list[bool] = []
+    client = type("_MeshClient", (), {"stop": lambda _self: stopped.append(True)})()
+
+    engine = MuJoCoSimEngine(ros2_bridge=True, mesh=client)
+    assert engine.mesh is client
+
+    engine.cleanup()
+
+    assert stopped == [True]
+    assert [node.destroyed for node in fake_ros["nodes"]] == [True]

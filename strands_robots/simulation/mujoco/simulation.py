@@ -630,7 +630,9 @@ class MuJoCoSimEngine(
                 keeps the Simulation standalone - all mesh code paths are
                 no-ops. A truthy value that is not stoppable (notably
                 ``mesh=True``) is rejected with a ``TypeError``: it is not a
-                boolean opt-in switch, and the engine has nothing to stop.
+                boolean opt-in switch, and the engine has nothing to stop. The
+                refusal is answered before the optional ROS 2 bridge is built,
+                so it leaves no rclpy node or context behind.
                 To join a mesh, use ``Robot(name, mode="sim", mesh=True)``,
                 which resolves the ``STRANDS_MESH`` kill switch and attaches a
                 client. The attribute is plain (not a property), so consumers
@@ -700,6 +702,19 @@ class MuJoCoSimEngine(
         for _param, _value in (("default_width", default_width), ("default_height", default_height)):
             if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
                 raise ValueError(dim_err)
+        # ``mesh`` is resolved here, above ``_init_ros_bridge``, for the reason
+        # stated immediately above: it is the one remaining constructor argument
+        # that can be refused, and ``_validated_mesh_handle``'s ``TypeError``
+        # used to be raised after the bridge was built. A ``mesh=`` no
+        # ``cleanup()`` could stop therefore left a live ``strands_sim`` node and
+        # the rclpy context that bridge initialized behind it - and ``__init__``
+        # raising returns no object, so the ``cleanup()`` that would call
+        # ``_shutdown_ros_bridge`` is unreachable by construction. A corrected
+        # retry cannot release it either: the leaked bridge recorded
+        # ``_owns_context``, so the retry's bridge finds the context already up,
+        # declines ownership, and on teardown releases only its own node. The
+        # resolved handle is stored below, where its own contract comment lives.
+        mesh_handle = _validated_mesh_handle(mesh)
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
@@ -711,7 +726,7 @@ class MuJoCoSimEngine(
         # downstream code can swap in a real mesh client after
         # construction without a setter dance. See the ``mesh`` /
         # ``peer_id`` docstring entries above for the contract.
-        self.mesh: Any = _validated_mesh_handle(mesh)
+        self.mesh: Any = mesh_handle
         self.peer_id: str | None = peer_id
 
         # Additive sensor-noise config + reproducible RNG (set_obs_noise).
