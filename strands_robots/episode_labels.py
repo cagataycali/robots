@@ -72,6 +72,7 @@ See ``docs/data/episode-labels.md`` for the full schema documentation and
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import json
 import os
@@ -118,6 +119,33 @@ FAILURE_MODES = (
     "incomplete",
     "other",
 )
+
+
+def _constant_answer_baseline(human_values: list[Any]) -> float | None:
+    """The agreement the best single constant answer earns on one holdout column.
+
+    An agreement fraction is an accuracy over a column with a class balance, so
+    a judge that emits ONE label for every episode already scores the frequency
+    of that column's most common value - 0.95 on a holdout where 19 of 20
+    episodes carry no failure mode, having read nothing. That is the score to
+    beat, and it is what makes the fraction beside it answerable: an agreement
+    at or below this baseline says the judge is indistinguishable from a
+    constant answerer, however high the fraction reads.
+
+    Args:
+        human_values: The human's value for every episode actually compared,
+            in any order. ``None`` is a value like any other (an explicit "no
+            failure mode observed" is a real opinion the judge can match), so
+            it is counted rather than skipped.
+
+    Returns:
+        The most common value's frequency, in [0, 1]; ``None`` for an empty
+        column, matching the agreement fraction it accompanies (agreement over
+        nothing is not a measurement, and neither is a baseline over nothing).
+    """
+    if not human_values:
+        return None
+    return collections.Counter(human_values).most_common(1)[0][1] / len(human_values)
 
 
 def labels_path(root: str | Path) -> Path:
@@ -637,9 +665,27 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
     Returns:
         Dict with ``episodes_compared``, ``quality_agreement`` and
         ``failure_mode_agreement`` (fractions in [0, 1]; the failure-mode
-        fraction is ``None`` when no holdout entry carries one), and
-        ``disagreements`` - one ``{episode, field, judge, human}`` row per
-        mismatch, so the calibration report names what to look at.
+        fraction is ``None`` when no holdout entry carries one), the
+        ``quality_baseline`` / ``failure_mode_baseline`` each fraction has to
+        beat, and ``disagreements`` - one ``{episode, field, judge, human}``
+        row per mismatch, so the calibration report names what to look at.
+
+        Each baseline is the score the best single CONSTANT answer earns on
+        that column of this same holdout, over exactly the episodes compared.
+        It is reported because an agreement fraction alone cannot answer the
+        question this function exists to answer: both fractions are accuracies
+        over columns with a class balance, and a recorded dataset is mostly
+        clean, so a judge that emitted one label for every episode scores the
+        majority-class frequency having read nothing - measured 0.95 on a
+        20-episode holdout with one tagged episode, and 1.0 on one with none.
+        A high fraction is evidence about the judge only insofar as it exceeds
+        its baseline; at or below it, the judge is indistinguishable from a
+        constant answerer and should not be filtering training data. The two
+        earlier corrections to this measurement both moved a fraction in the
+        direction that makes a sound judge look UNSOUND (an unreadable grade
+        and an out-of-vocabulary holdout tag, each scored as a disagreement);
+        this is the other direction, where an unsound judge looks sound, and
+        it needs no malformed input to happen - a clean holdout is enough.
 
     Raises:
         FileNotFoundError: If no sidecar exists yet.
@@ -656,6 +702,12 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
     quality_hits = 0
     mode_compared = 0
     mode_hits = 0
+    # The human's value for every episode actually compared, which is the
+    # population the baseline must be taken over: a baseline computed over the
+    # whole holdout would describe a different set of episodes than the
+    # agreement beside it whenever part of the holdout carries no annotation.
+    quality_column: list[Any] = []
+    mode_column: list[Any] = []
     disagreements: list[dict[str, Any]] = []
     for index, human in human_labels.items():
         if msg := non_negative_whole_number_error(index, "human_labels episode index", "measure_agreement"):
@@ -686,6 +738,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
         if not judge:
             continue
         compared += 1
+        quality_column.append(human["quality"])
         if judge["quality"] == human["quality"]:
             quality_hits += 1
         else:
@@ -694,6 +747,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
             )
         if "failure_mode" in human:
             mode_compared += 1
+            mode_column.append(human_mode)
             if judge.get("failure_mode") == human["failure_mode"]:
                 mode_hits += 1
             else:
@@ -714,6 +768,8 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
     return {
         "episodes_compared": compared,
         "quality_agreement": quality_hits / compared,
+        "quality_baseline": _constant_answer_baseline(quality_column),
         "failure_mode_agreement": (mode_hits / mode_compared) if mode_compared else None,
+        "failure_mode_baseline": _constant_answer_baseline(mode_column),
         "disagreements": disagreements,
     }

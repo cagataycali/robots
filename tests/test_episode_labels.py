@@ -567,3 +567,104 @@ class TestMeasureAgreement:
     def test_a_malformed_holdout_entry_is_refused(self, judged_root):
         with pytest.raises(ValueError, match="'quality'"):
             measure_agreement(judged_root, {0: {"grade": "high"}})
+
+
+class TestAgreementIsReportedAgainstItsOwnBaseline:
+    """A constant answerer must not clear the bar this measurement sets.
+
+    :func:`measure_agreement` exists to answer "should this judge be deciding
+    what a policy trains on". Both of its fractions are accuracies over a
+    column with a class balance, and a recorded dataset is mostly clean, so a
+    judge that emits ONE label for every episode already scores the
+    majority-class frequency having read nothing. Two earlier corrections to
+    this function moved a fraction in the direction that makes a SOUND judge
+    look unsound (an unreadable grade, an out-of-vocabulary holdout tag - each
+    scored as a disagreement). This is the other direction, and unlike those
+    two it needs no malformed input: a clean holdout of clean episodes is
+    enough. The baseline reported beside each fraction is what makes the
+    fraction answerable.
+    """
+
+    def _judged(self, root, count, *, quality, failure_mode):
+        """``count`` episodes carrying one constant judge label each."""
+        record_deterministic_verdicts(root, [{"episode": i, "success": True} for i in range(count)])
+        for index in range(count):
+            annotate_episode(root, index, quality=quality, failure_mode=failure_mode, model="constant")
+        return root
+
+    @pytest.mark.parametrize("tagged", [10, 8, 4, 2, 1])
+    def test_a_constant_answerer_never_exceeds_its_baseline(self, dataset_root, tagged):
+        """The score is the holdout's class balance, not a reading of the frames.
+
+        The judge is byte-identical across every row of this table; only the
+        holdout's balance moves. ``failure_mode_agreement`` rises to 0.95 at
+        one tagged episode in twenty, which reads as a well-calibrated judge
+        and is a green light to let it filter training data.
+        """
+        root = self._judged(dataset_root, 20, quality="high", failure_mode=None)
+        holdout = {
+            i: {"quality": "low" if i < tagged else "high", "failure_mode": "jerky_motion" if i < tagged else None}
+            for i in range(20)
+        }
+        report = measure_agreement(root, holdout)
+        expected = (20 - tagged) / 20
+        assert report["quality_agreement"] == expected
+        assert report["failure_mode_agreement"] == expected
+        # The point of the pin: the fraction is exactly what one constant
+        # answer earns, so it is not evidence about the judge.
+        assert report["quality_baseline"] == expected
+        assert report["failure_mode_baseline"] == expected
+
+    def test_a_judge_that_reads_the_holdout_exceeds_its_baseline(self, dataset_root):
+        """The contrast row, without which the baseline could just track the fraction.
+
+        Same holdout balance as the 4-of-20 row above, where a constant
+        answerer scores 0.8; a judge that labels every episode correctly
+        scores 1.0 against that same 0.8.
+        """
+        record_deterministic_verdicts(dataset_root, [{"episode": i, "success": True} for i in range(20)])
+        holdout = {}
+        for index in range(20):
+            tagged = index < 4
+            grade, mode = ("low", "jerky_motion") if tagged else ("high", None)
+            annotate_episode(dataset_root, index, quality=grade, failure_mode=mode, model="reads-the-frames")
+            holdout[index] = {"quality": grade, "failure_mode": mode}
+        report = measure_agreement(dataset_root, holdout)
+        assert report["quality_agreement"] == 1.0
+        assert report["failure_mode_agreement"] == 1.0
+        assert report["quality_baseline"] == 0.8
+        assert report["failure_mode_baseline"] == 0.8
+
+    def test_the_baseline_describes_the_episodes_compared(self, dataset_root):
+        """Not the whole holdout - the two would describe different sets.
+
+        An unannotated holdout episode is skipped by the agreement (it is not
+        a comparison), so a baseline taken over the whole holdout would be the
+        balance of a population the fraction beside it never scored. Here the
+        holdout is 4 clean of 6 while the ANNOTATED half is 2 clean of 4.
+        """
+        root = self._judged(dataset_root, 4, quality="high", failure_mode=None)
+        holdout = {
+            0: {"quality": "high", "failure_mode": None},
+            1: {"quality": "high", "failure_mode": None},
+            2: {"quality": "low", "failure_mode": "drift"},
+            3: {"quality": "low", "failure_mode": "collision"},
+            4: {"quality": "high", "failure_mode": None},
+            5: {"quality": "high", "failure_mode": None},
+        }
+        report = measure_agreement(root, holdout)
+        assert report["episodes_compared"] == 4
+        assert report["quality_baseline"] == 0.5
+        assert report["failure_mode_baseline"] == 0.5
+
+    def test_a_holdout_that_carries_no_tag_reports_no_failure_mode_baseline(self, dataset_root):
+        """``None`` in step with the fraction it accompanies.
+
+        A baseline over nothing is no more a measurement than an agreement
+        over nothing, so the two fields go absent together.
+        """
+        root = self._judged(dataset_root, 2, quality="high", failure_mode=None)
+        report = measure_agreement(root, {0: {"quality": "high"}, 1: {"quality": "low"}})
+        assert report["failure_mode_agreement"] is None
+        assert report["failure_mode_baseline"] is None
+        assert report["quality_baseline"] == 0.5

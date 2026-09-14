@@ -261,9 +261,24 @@ def main() -> int:
         2: {"quality": "medium", "failure_mode": None},
     }
     agreement = measure_agreement(args.root, human_holdout)
+
+    def _against_baseline(field: str) -> str:
+        """One agreement fraction beside the score a constant answer earns.
+
+        The fraction alone cannot say whether the judge read anything: it is an
+        accuracy over a column with a class balance, so a judge emitting one
+        label for every episode scores the majority-class frequency. The gap
+        over the baseline is the calibration.
+        """
+        got, base = agreement[f"{field}_agreement"], agreement[f"{field}_baseline"]
+        if got is None:
+            return "n/a (no holdout entry carries one)"
+        verdict = "beats" if got > base else "does not beat"
+        return f"{got:.0%} ({verdict} the {base:.0%} a constant answer earns)"
+
     print(f"  episodes compared      : {agreement['episodes_compared']}")
-    print(f"  quality agreement      : {agreement['quality_agreement']:.0%}")
-    print(f"  failure-mode agreement : {agreement['failure_mode_agreement']:.0%}")
+    print(f"  quality agreement      : {_against_baseline('quality')}")
+    print(f"  failure-mode agreement : {_against_baseline('failure_mode')}")
 
     print("\n[5/6] Filtering for training (deterministic success + judge quality >= medium):")
     chosen = filter_episodes(args.root, require_success=True, min_quality="medium")

@@ -204,8 +204,37 @@ report = measure_agreement("/data/pick_place", {
     3: {"quality": "high", "failure_mode": None},
     7: {"quality": "low", "failure_mode": "jerky_motion"},
 })
-print(report["quality_agreement"], report["disagreements"])
+print(report["quality_agreement"], report["quality_baseline"], report["disagreements"])
 ```
+
+Read each agreement fraction against the baseline reported beside it, never on
+its own. Both fractions are accuracies over a column with a class balance, and
+a recorded dataset is mostly clean, so a judge that emitted one label for every
+episode already scores the majority-class frequency having read nothing: on a
+20-episode holdout with a single tagged episode, a judge answering
+`quality="high", failure_mode=None` every time measures
+`quality_agreement 0.95` / `failure_mode_agreement 0.95`, and on a holdout
+where nothing is tagged it measures 1.0. `quality_baseline` and
+`failure_mode_baseline` are what that constant answer earns on the same
+holdout, over exactly the episodes compared, so a fraction at or below its
+baseline says the judge is indistinguishable from one that read nothing -
+however high the fraction reads. A judge is calibrated by the gap, not by the
+fraction. Both baselines are `None` in step with the fraction they accompany.
+
+The gap is also per-tag advice rather than one verdict, because the taxonomy is
+not uniformly legible: measured on a 16-episode two-camera recording with
+disjoint physically-induced ground truth (4 clean, 4 that never reach the
+object, 4 with 30x the commanded jerk, 4 with one camera fully blocked), an
+open-weights VLM asked for the `failure_mode` tag emitted `None` for all 16
+episodes and scored `failure_mode_agreement 0.25` - the exact base rate of the
+4 untagged episodes, and 0.25 was also its baseline. The same model on the same
+payload, asked instead whether a plain-English description of each tag was true
+of the recording, separated the blocked-camera episodes perfectly (0.42-0.67 on
+the four blocked, 0.00 on all twelve others) and the never-reached episodes
+well, and did not separate the jerky ones at all - four evenly spaced stills
+cannot show jitter, and the recorded `rms_state_jerk` moved only 1.8x where the
+commanded jerk moved 30x. So calibrate per tag and filter on the tags whose gap
+is real.
 
 ## Filtering and re-training
 
