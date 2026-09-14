@@ -52,6 +52,11 @@ from strands_robots.drivers.feetech import protocol
 # stopped by the header scan: ID 1, LEN 2, error 0, additive checksum.
 _WELL_FORMED = b"\xff\xff\x01\x02\x00\xfc"
 
+# The same, carrying the two param bytes a position read answers with, so a cell
+# holding one wire field wrong can pass ``expected_param_count=2`` with a frame
+# that actually satisfies it: ID 1, LEN 4, error 0, 1024 little-endian, checksum.
+_WELL_FORMED_TWO_PARAMS = b"\xff\xff\x01\x04\x00\x00\x04\xf6"
+
 # (public name, args, the class a caller receives). Every entry is measured, and
 # the ones that come out of a helper rather than the function's own body are the
 # reason this file calls instead of reading the syntax tree.
@@ -154,6 +159,130 @@ class TestEveryPublicRefusalIsDocumented:
         """A block that does not exist leaves the tree-wide guard's population."""
         missing = sorted(name for name, func in _public_callables().items() if not _has_raises_block(func))
         assert not missing, f"public callables with no Raises: block, so ungraded tree-wide: {missing}"
+
+
+#: A value each codec parameter accepts, keyed by parameter name because the
+#: codec spells one wire field the same way in every builder that writes it.
+#: A cell holds exactly one field out of domain and every other field right, so
+#: what it grades is that field's guard and not an unrelated one upstream of it.
+_ACCEPTED: dict[str, Any] = {
+    "motor_id": 1,
+    "motor_ids": [1],
+    "motor_count": 6,
+    "motor_data": [(1, b"\x01\x02")],
+    "address": 0x38,
+    "length": 2,
+    "per_motor_length": 2,
+    "data": b"\x01\x02",
+    "raw": _WELL_FORMED_TWO_PARAMS,
+    "expected_id": 1,
+    "expected_param_count": 2,
+}
+
+#: The wire fields whose width the frame layout fixes, a value outside that
+#: width, and the token the refusal must carry. ``address`` is one byte in every
+#: instruction that names a register; the count fields are bounded by the one-byte
+#: ``LEN`` they are written into, so zero is as unsendable as 0x1FF is.
+_WIRE_FIELD_DOMAIN: tuple[tuple[str, Any, str], ...] = (
+    ("address", 0x1FF, "address"),
+    ("length", 0, "length"),
+    # Not zero: ``sync_write_packet`` also refuses a data block that is not
+    # ``per_motor_length`` bytes, and that guard's message names the same field,
+    # so a zero here would be graded by whichever of the two fired. Too wide for
+    # the byte is refusable only by the domain check. The zero is graded on its
+    # own below, where the blocks are sized to match it.
+    ("per_motor_length", 0x1FF, "per_motor_length"),
+    ("expected_param_count", 0x1FF, "expected_param_count"),
+)
+
+
+def _doors_taking(field: str) -> list[str]:
+    """Public callables whose signature names ``field``, in export order.
+
+    Derived rather than listed so a builder added to the codec is held to the
+    same domain without editing this file - which is the gap
+    :class:`TestEveryDoorHoldsTheSameWireFieldDomain` closes:
+    :func:`~strands_robots.drivers.feetech.protocol.read_packet` was the only
+    door whose out-of-range ``address`` was pinned, and it has three siblings
+    that write the same byte.
+    """
+    return [name for name, func in _public_callables().items() if field in inspect.signature(func).parameters]
+
+
+def _call_with(name: str, **overrides: Any) -> Any:
+    """Call the public callable ``name`` with accepted args and ``overrides``."""
+    func = _public_callables()[name]
+    accepted = {p: _ACCEPTED[p] for p in inspect.signature(func).parameters if p in _ACCEPTED}
+    return func(**{**accepted, **overrides})
+
+
+class TestEveryDoorHoldsTheSameWireFieldDomain:
+    """A field too wide for its slot is refused wherever it is written.
+
+    ``address`` is one byte in ``READ``, ``WRITE``, ``SYNC_WRITE`` and
+    ``SYNC_READ``; the count fields are bounded by the one-byte ``LEN`` that
+    carries them. Only ``read_packet`` had its ``address`` domain pinned, and it
+    has three siblings that write the same byte.
+
+    A door that skipped the check does not fail loudly. Measured with each guard
+    neutralised in turn, the six reach three different wrong answers:
+
+    * **A frame goes out.** ``sync_read_packet(0x38, 0, [1, 2])`` framed
+      ``fffffe0682380001023e``, a complete, correctly checksummed ``SYNC_READ``
+      asking each servo for nothing, and
+      ``sync_write_packet(0x2A, 0, [(1, b"")])`` framed ``fffffe05832a00014e``,
+      a ``SYNC_WRITE`` telling every servo to carve zero-byte slices. A servo
+      answers both, so the caller is told the command they asked for went out.
+    * **The wrong layer is blamed.** The three ``address`` doors do raise, with
+      ``bytes must be in range(0, 256)`` out of the ``bytes()`` constructor,
+      naming neither the parameter nor the wire field.
+    * **A caller bug is reported as a wire fault.**
+      ``parse_status_packet(frame, 1, 0x1FF)`` raised
+      ``ProtocolError("status packet truncated: got 8 bytes after header, need
+      517")`` - and :class:`TestTheDocumentedHandlerIsWritable` exists because
+      that is the class a bus reads as "retry the read" rather than "this is my
+      bug", so the retry loops on a frame the servo sent correctly.
+    """
+
+    @pytest.mark.parametrize(
+        ("field", "bad", "token", "name"),
+        [
+            pytest.param(field, bad, token, name, id=f"{name}-{field}")
+            for field, bad, token in _WIRE_FIELD_DOMAIN
+            for name in _doors_taking(field)
+        ],
+    )
+    def test_a_field_outside_its_slot_is_refused_naming_the_field(
+        self, field: str, bad: Any, token: str, name: str
+    ) -> None:
+        with pytest.raises(ValueError, match=token):
+            _call_with(name, **{field: bad})
+
+    @pytest.mark.parametrize("name", sorted({n for f, _, _ in _WIRE_FIELD_DOMAIN for n in _doors_taking(f)}))
+    def test_the_same_call_with_every_field_in_domain_succeeds(self, name: str) -> None:
+        """The control: each cell above fails for the one field it changed."""
+        assert _call_with(name) is not None
+
+    @pytest.mark.parametrize(("field", "bad", "token"), _WIRE_FIELD_DOMAIN)
+    def test_every_field_names_at_least_one_door(self, field: str, bad: Any, token: str) -> None:
+        """Renaming a parameter must not silently empty this table's population."""
+        assert _doors_taking(field), f"no public callable takes {field!r}; the domain table has gone vacuous"
+
+    def test_a_zero_width_sync_write_is_refused_rather_than_framed(self) -> None:
+        """The one case the derived row above cannot reach, and the worst outcome.
+
+        With blocks sized to match, nothing downstream of the domain check
+        objects: unguarded this returns ``fffffe05832a00014e``, a ``SYNC_WRITE``
+        whose ``per_motor_length`` of 0 tells every listed servo to carve a
+        zero-byte slice out of a packet that carries none.
+        """
+        with pytest.raises(ValueError, match="per_motor_length out of range"):
+            protocol.sync_write_packet(0x2A, 0, [(1, b"")])
+
+    def test_a_zero_width_sync_read_is_refused_rather_than_framed(self) -> None:
+        """Its read-side twin, refused before it asks six servos for nothing."""
+        with pytest.raises(ValueError, match="length out of range"):
+            protocol.sync_read_packet(0x38, 0, [1, 2])
 
 
 class TestTheDocumentedHandlerIsWritable:

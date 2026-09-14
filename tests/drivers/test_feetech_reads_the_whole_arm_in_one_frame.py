@@ -17,7 +17,10 @@ Three things are graded here, in the order a caller meets them:
 2. the arm being asked *once* - one frame, one settle, no window waited out;
 3. what a servo that does not answer costs, which is itself and not the arm:
    it is absent from the reading, its neighbours are present, and a retry
-   re-asks only the servos still missing.
+   re-asks only the servos still missing;
+4. what a tail the framer cannot cut costs, which is nothing: trailing noise,
+   a truncated frame and the host's own leftover 0xFF run each end the walk
+   where they start, and every servo that did answer is still read.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ import strands_robots.drivers.feetech.bus as bus_module
 from strands_robots.drivers.feetech.bus import MotorSpec
 from strands_robots.drivers.feetech.protocol import (
     Instruction,
+    decode_word,
+    parse_sync_read_replies,
     sync_read_packet,
     sync_read_reply_size,
 )
@@ -280,3 +285,57 @@ class TestABusNamingOneServoTwiceAsksForItOnce:
 
         assert reading == {"pan": pytest.approx(0.0, abs=0.1), "pan_alias": pytest.approx(0.0, abs=0.1)}
         assert list(port.writes[0][7:-1]) == [1], "one ID, listed once - a servo cannot answer twice"
+
+
+#: Tails a reply stream can carry that the framer cannot cut a frame out of, led
+#: by the empty tail as the control. A half-duplex bus leaves the host's own echo
+#: and a partial next frame in the buffer, so each of the four arrives in service.
+UNFRAMEABLE_TAILS = [
+    pytest.param(b"", id="nothing-the-exact-stream"),
+    pytest.param(b"\x00\x01\x02", id="noise-carrying-no-header"),
+    pytest.param(b"\xff\xff\x02", id="header-with-no-room-for-id-and-len"),
+    pytest.param(b"\xff\xff", id="a-0xff-run-reaching-the-end"),
+    pytest.param(b"\xff\xff\x03\x04", id="a-frame-that-stops-mid-body"),
+]
+
+
+class TestATailTheFramerCannotCutCostsNoServo:
+    """A stream the walk cannot finish still yields every servo that answered.
+
+    :func:`~strands_robots.drivers.feetech.protocol.parse_sync_read_replies`
+    walks a ``SYNC_READ`` reply stream frame by frame, and the walk can run out
+    of stream three ways: no header left, a header with fewer than the four bytes
+    ID and LEN need, and a LEN declaring more body than remains. All three end
+    the walk rather than raise, for the reason a mute servo does not fail the
+    read either - the six positions already framed are measurements, and
+    discarding them because of two bytes of echo would report a healthy arm as
+    unreadable. The fourth shape is the host's own trailing ``0xFF`` run, which
+    the header scan must not mistake for a frame start.
+
+    The header scan's own end-of-run exit is defence in depth rather than a
+    branch that decides an outcome: a run reaching the end of the buffer can only
+    yield an index within two bytes of it, so the ID-and-LEN check absorbs it
+    either way. Made explicit because the cells below cannot distinguish the two
+    - they pin the answer, which is what a caller sees.
+    """
+
+    #: Two servos that answered, ahead of whatever tail the row appends.
+    _ANSWERED = {1: 1024, 2: 1023}
+
+    def _stream(self, tail: bytes) -> bytes:
+        return b"".join(FakeServoPort._status_frame(i, v) for i, v in self._ANSWERED.items()) + tail
+
+    @pytest.mark.parametrize("tail", UNFRAMEABLE_TAILS)
+    def test_every_servo_that_answered_is_still_read(self, tail: bytes) -> None:
+        replies = parse_sync_read_replies(self._stream(tail), [1, 2], 2)
+
+        assert {motor_id: decode_word(params) for motor_id, params in replies.items()} == self._ANSWERED
+
+    @pytest.mark.parametrize("tail", UNFRAMEABLE_TAILS)
+    def test_the_tail_contributes_no_servo_of_its_own(self, tail: bytes) -> None:
+        """A guessed frame would report a position no servo sent."""
+        assert set(parse_sync_read_replies(self._stream(tail), [1, 2, 3, 4], 2)) == set(self._ANSWERED)
+
+    def test_a_stream_that_is_only_a_0xff_run_reads_as_no_joints(self) -> None:
+        """The run is the host's echo, not a frame whose ID byte is 0xFF."""
+        assert parse_sync_read_replies(b"\xff\xff\xff", [1, 2], 2) == {}
