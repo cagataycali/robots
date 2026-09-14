@@ -1451,7 +1451,8 @@ class LerobotTrainer(Trainer):
         problems: list[str] = []
         rtype = self._reward_model_type(rm)
         valid_types = _reward_model_types()
-        if rtype not in valid_types:
+        type_is_native = rtype in valid_types
+        if not type_is_native:
             problems.append(
                 f"reward_model type '{rtype}' is not LeRobot-native (expected one of {sorted(valid_types)})"
             )
@@ -1459,13 +1460,24 @@ class LerobotTrainer(Trainer):
         # registry), so each reward type is configurable with its own knobs and
         # cross-type fields (e.g. SARM's annotation_mode on robometer) are
         # rejected with a clear message. Falls back to SARM's keys offline.
-        friendly = _reward_friendly_fields(rtype)
-        unknown = sorted(k for k in rm if k != "type" and k not in friendly)
-        if unknown:
-            problems.append(
-                f"reward_model type '{rtype}' does not support field(s) {unknown}; "
-                f"its configurable fields are {sorted(friendly)}."
-            )
+        #
+        # Only a type that RESOLVED has fields to grade a key against. For one
+        # that did not there is no config class, so _reward_friendly_fields
+        # answers with the offline fallback - SARM's keys - and grading against
+        # those states the "configurable fields" of a type this very gate just
+        # said does not exist, while refusing knobs that become valid the moment
+        # the type name is corrected (num_layers is a real SARM field). The type
+        # problem above already names the only fault there, so this check is
+        # scoped to a resolved type, the same way the annotation_mode check
+        # below is scoped to the type that declares that field.
+        if type_is_native:
+            friendly = _reward_friendly_fields(rtype)
+            unknown = sorted(k for k in rm if k != "type" and k not in friendly)
+            if unknown:
+                problems.append(
+                    f"reward_model type '{rtype}' does not support field(s) {unknown}; "
+                    f"its configurable fields are {sorted(friendly)}."
+                )
         if rtype == "sarm":
             am = rm.get("annotation_mode")
             if am is not None and am not in _SARM_ANNOTATION_MODES:

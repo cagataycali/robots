@@ -376,3 +376,68 @@ class TestRewardModelConfigParity:
         msg = str(excinfo.value)
         assert "reward_output" in msg
         assert "could not be constructed" not in msg
+
+
+class TestUnresolvedRewardTypeGradesNoFields:
+    """A reward type that does not resolve gets no claim about its fields.
+
+    ``_reward_friendly_fields`` answers with the offline fallback - SARM's
+    documented keys - for a type the registry does not hold, because offline
+    that IS the honest answer. The preflight must not grade a key against it:
+    doing so states the "configurable fields" of a type the same call just
+    declared non-native, and refuses knobs that are real once the type name is
+    corrected. The type problem is the only fault to report there.
+    """
+
+    @pytest.mark.parametrize(
+        ("rtype", "field", "value"),
+        [
+            # A one-letter typo of sarm, carrying a field that IS SARM's.
+            ("sram", "num_layers", 4),
+            # A plugin name lerobot does not register, same shape.
+            ("my_reward", "hidden_dim", 128),
+        ],
+    )
+    def test_only_the_type_is_reported(self, rtype, field, value, dataset_root, tmp_path):
+        """The single problem names the type; nothing describes its fields."""
+        pytest.importorskip("lerobot.rewards")
+        # The field is real on the type the caller meant, so refusing it would
+        # send them to delete a legitimate knob.
+        assert field in _reward_friendly_fields("sarm")
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=100,
+            extra={"reward_model": {"type": rtype, field: value}},
+        )
+
+        problems = LerobotTrainer(device="cpu").validate(spec)
+
+        assert len(problems) == 1, problems
+        assert f"reward_model type '{rtype}' is not LeRobot-native" in problems[0]
+        assert "does not support field(s)" not in problems[0]
+        assert "configurable fields" not in problems[0]
+
+    def test_a_resolved_type_still_grades_its_fields(self, dataset_root, tmp_path):
+        """Scoping the check to a resolved type does not weaken it.
+
+        The control for the pin above: a type that DOES resolve keeps refusing a
+        key it has no field for, and keeps naming its real field set - which is
+        the whole per-type friendly surface, not SARM's three fallback keys.
+        """
+        pytest.importorskip("lerobot.rewards")
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=100,
+            extra={"reward_model": {"type": "sarm", "definitely_not_a_field": 1}},
+        )
+
+        problems = LerobotTrainer(device="cpu").validate(spec)
+
+        assert len(problems) == 1, problems
+        assert "does not support field(s) ['definitely_not_a_field']" in problems[0]
+        # Named from the live config class, so a caller can act on the list.
+        assert "num_layers" in problems[0]

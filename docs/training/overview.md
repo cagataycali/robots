@@ -181,7 +181,9 @@ off the installed lerobot - the reward type's own config fields, and
 it lands and the refusal below names the surface as it actually is. Both dicts are
 refused before launch for a field the chosen type has no home for, for a `type`
 lerobot does not ship, and for the pipeline-ordering mistake of weighting a
-reward-model run.
+reward-model run. A `type` lerobot does not ship is reported on its own: an
+unresolved type has no config class, so nothing is claimed about which fields it
+takes - correct the name and the field check runs against the real one.
 The progress parquet between the two runs is lerobot's to produce:
 
 ```bash
