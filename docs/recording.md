@@ -1064,7 +1064,12 @@ print(len(ds), ds[0].keys())
 plays a recorded episode back through the sim: each recorded frame is one
 control step, applied via `send_action` and integrated for a full control period
 derived from the dataset fps, so a position-servo robot reproduces the recorded
-trajectory. `speed` scales only the wall-clock playback rate.
+trajectory. `speed` scales only the wall-clock playback rate. `robot_name`
+follows the rule `run_policy`, `eval_policy` and `evaluate_benchmark` share:
+omit it in a sole-robot scene, name it in a scene holding several (an omitted
+name there is refused with the candidate list rather than replayed onto the
+first robot), and a name the scene does not hold - the empty string included -
+is reported by name rather than replaced.
 
 `root` is resolved from `repo_id` exactly as recording resolves it, so whatever
 id `start_recording` was given replays with nothing restated:

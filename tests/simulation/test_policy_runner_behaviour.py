@@ -321,19 +321,6 @@ class TestHelpers:
 
         assert PolicyRunner(fake)._maybe_sim_time() is None
 
-    def test_require_default_robot_empty_raises(self):
-        fake = MagicMock()
-        fake.list_robots.return_value = []
-        runner = PolicyRunner(fake)
-        with pytest.raises(ValueError, match="No robots"):
-            runner._require_default_robot()
-
-    def test_require_default_robot_returns_first(self):
-        fake = MagicMock()
-        fake.list_robots.return_value = ["alpha", "beta"]
-        runner = PolicyRunner(fake)
-        assert runner._require_default_robot() == "alpha"
-
 
 # replay() error paths (no lerobot -> clean error)
 

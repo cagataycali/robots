@@ -1,7 +1,7 @@
 """Targeted coverage for ``PolicyRunner`` error paths and edge cases.
 
 Covers:
-* ``replay()`` when no robots exist (``_require_default_robot`` ValueError)
+* ``replay()`` when no robots exist (the shared robot resolver's ValueError)
 * ``replay()`` when the dataset loader raises (opaque upstream error)
 * ``replay()`` rejects a non-positive / non-numeric ``speed`` before the
   dataset loader (no ZeroDivisionError, no silent full-speed playback)

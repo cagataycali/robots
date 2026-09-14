@@ -6,9 +6,13 @@ concrete facades on :class:`strands_robots.simulation.base.SimEngine` promise:
 * ``eval_policy`` accepts a pre-built ``policy_object`` and runs it.
 * ``evaluate_benchmark`` returns structured error dicts (never raises) when the
   sim has no robots or when the robot is ambiguous in a multi-robot scene.
-* ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` resolve ``robot_name``
-  by presence rather than truthiness, so a supplied name the scene does not hold
-  is reported by name at every one of them instead of being treated as "omitted".
+* ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` / ``replay_episode``
+  resolve ``robot_name`` by presence rather than truthiness, so a supplied name
+  the scene does not hold is reported by name at every one of them instead of
+  being treated as "omitted".
+* ``replay_episode`` refuses an omitted ``robot_name`` in a multi-robot scene
+  the way its siblings do, listing the candidates, rather than replaying the
+  recorded actions onto whichever robot the scene lists first.
 * ``register_benchmark_from_file`` validates its arguments and converts loader
   exceptions into structured error dicts rather than propagating them.
 * ``start_policy`` transparently passes through to ``run_policy``.
@@ -169,8 +173,18 @@ def test_evaluate_benchmark_explicit_unknown_robot_reports_not_found(monkeypatch
     assert "ghost" in text and "not found" in text
 
 
+def _refuse_to_load_a_dataset(monkeypatch) -> None:
+    """Make reaching the dataset loader a failure: the refusal must precede it."""
+    import strands_robots.dataset_recorder as dr
+
+    def _must_not_load(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("load_lerobot_episode reached before the robot was resolved")
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+
+
 @pytest.mark.parametrize("robots", [("solo",), ("arm_a", "arm_b")], ids=["sole-robot", "multi-robot"])
-@pytest.mark.parametrize("surface", ["run_policy", "eval_policy", "evaluate_benchmark"])
+@pytest.mark.parametrize("surface", ["run_policy", "eval_policy", "evaluate_benchmark", "replay_episode"])
 def test_a_supplied_robot_name_the_scene_lacks_is_reported_by_name(surface, robots, monkeypatch):
     """Every policy surface resolves ``robot_name`` by presence, not truthiness.
 
@@ -181,20 +195,89 @@ def test_a_supplied_robot_name_the_scene_lacks_is_reported_by_name(surface, robo
     read it that way: in a sole-robot scene it substituted the only loaded robot
     and published a ``success_rate`` for a robot the caller never named, and in
     a multi-robot scene it refused the supplied argument as "'robot_name' is
-    required", naming the one thing that had been passed.
+    required", naming the one thing that had been passed. ``replay_episode``
+    kept a third copy (``robot_name or <first robot>``) that substituted a robot
+    in both scene shapes and then drove it with the recorded actions.
     """
     import strands_robots.simulation.benchmark as bench
 
     monkeypatch.setattr(bench, "get_benchmark", lambda name: object())
-    args: tuple[Any, ...] = ("any_bench",) if surface == "evaluate_benchmark" else ()
+    _refuse_to_load_a_dataset(monkeypatch)
+    args: tuple[Any, ...] = ()
+    if surface == "evaluate_benchmark":
+        args = ("any_bench",)
+    elif surface == "replay_episode":
+        args = ("any/dataset",)
     kwargs: dict[str, Any] = {"robot_name": ""}
-    if surface != "evaluate_benchmark":
+    if surface in ("run_policy", "eval_policy"):
         kwargs["policy_object"] = MockPolicy()
 
     result = getattr(FakeSim(robots=robots), surface)(*args, **kwargs)
 
     assert result["status"] == "error", result
     assert "not found" in result["content"][0]["text"], result
+
+
+class _ActuatedSim(FakeSim):
+    """``FakeSim`` that records which robot every ``send_action`` reached."""
+
+    def __init__(self, robots: tuple[str, ...]) -> None:
+        super().__init__(robots)
+        self.commanded: list[str | None] = []
+
+    def send_action(self, action, robot_name=None, n_substeps=1):
+        self.commanded.append(robot_name)
+        return {"status": "success"}
+
+
+class _TwoFrameEpisode:
+    """The smallest dataset ``replay`` will drive: two frames, one action each."""
+
+    fps = 30
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return {"action": [0.1, 0.2, 0.3]}
+
+
+def test_replay_episode_ambiguous_multi_robot_refuses_before_commanding_anything(monkeypatch):
+    """An omitted ``robot_name`` in a two-robot scene is refused, and nothing moves.
+
+    Replay is the one policy surface that drives the actuators from a recording
+    rather than from a policy, so the substitution the other surfaces refuse is
+    a robot being moved here. Before the shared resolver owned this resolution
+    the recorded actions went to whichever robot ``list_robots()`` put first and
+    the call reported ``success`` naming it - a robot the caller never chose.
+    The loader is left reachable so the cell grades the refusal on its own: a
+    resolution that still substituted would replay the two frames onto
+    ``arm_a`` and fail on the commanded list, not on a stubbed import.
+    """
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", lambda *a, **k: (_TwoFrameEpisode(), 0, 2), raising=False)
+    sim = _ActuatedSim(robots=("arm_a", "arm_b"))
+
+    result = sim.replay_episode("any/dataset", speed=1000.0)
+
+    assert result["status"] == "error", result
+    text = result["content"][0]["text"]
+    assert "arm_a" in text and "arm_b" in text, text
+    assert sim.commanded == [], sim.commanded
+
+
+def test_replay_episode_resolves_the_sole_robot_when_name_omitted(monkeypatch):
+    """Control: ``None`` in a sole-robot scene still resolves and replays."""
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", lambda *a, **k: (_TwoFrameEpisode(), 0, 2), raising=False)
+    sim = _ActuatedSim(robots=("solo",))
+
+    result = sim.replay_episode("any/dataset", speed=1000.0)
+
+    assert result["status"] == "success", result
+    assert sim.commanded == ["solo", "solo"], sim.commanded
 
 
 def test_evaluate_benchmark_unknown_name_lists_registered():

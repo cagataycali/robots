@@ -4362,6 +4362,15 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Replay a LeRobotDataset episode via ``PolicyRunner.replay``.
 
+        ``robot_name`` is resolved by the rule :meth:`run_policy`,
+        :meth:`eval_policy` and :meth:`evaluate_benchmark` share: ``None``
+        picks the sole loaded robot, a scene holding several of them returns
+        an error listing the candidates, and a name that IS supplied - the
+        empty string included - is never re-resolved, so one the scene does
+        not hold is reported by name. Replay is the one policy surface that
+        drives the actuators from a recording rather than a policy, so a
+        substituted robot here is a robot the caller never chose being moved.
+
         ``episode`` must be a non-negative whole number - the shared domain the
         ``replay_episode`` teleop knob uses - and is rejected with a structured
         error before the dataset is downloaded. A bool is refused rather than

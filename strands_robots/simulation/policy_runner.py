@@ -2962,10 +2962,15 @@ class PolicyRunner:
 
         Args:
             repo_id: HuggingFace dataset id (e.g. ``lerobot/pusht``).
-            robot_name: Target robot. Defaults to the first robot in the sim
-                when omitted; an explicit name not present in the sim is
-                rejected with a structured error (no silent replay onto a
-                non-existent robot).
+            robot_name: Target robot, resolved by the rule
+                :meth:`~strands_robots.simulation.base.SimEngine.run_policy`
+                and its siblings apply: ``None`` picks the sole loaded robot,
+                and a scene holding several of them returns an error listing
+                the candidates rather than replaying onto the first. A name
+                that IS supplied is never re-resolved, so one the sim does not
+                hold - including an empty string - is rejected with a
+                structured error naming it (no silent replay onto a
+                non-existent robot, or onto one the caller did not choose).
             episode: Episode index in the dataset. Must be a non-negative
                 whole number; any real scalar with an integral value is
                 accepted (including a NumPy scalar such as ``np.int64(2)``),
@@ -3084,15 +3089,26 @@ class PolicyRunner:
         except ImportError:
             return {"status": "error", "content": [{"text": "lerobot not installed"}]}
 
+        # Resolve by the rule every policy surface shares - ``None`` picks the
+        # sole robot, a scene holding several is refused listing the candidates,
+        # and a name that IS supplied is never re-resolved. The private copy this
+        # replaces read ``robot_name or <first robot>``, so ``""`` (the shape an
+        # unset config value arrives in) was treated as omitted, and a
+        # two-robot scene replayed the recorded actions onto whichever robot
+        # ``list_robots()`` happened to put first - a success naming a robot the
+        # caller never chose, on the one surface here that actuates it.
         try:
-            resolved_robot = robot_name or self._require_default_robot()
+            resolved_robot = self.sim._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": f"{e}"}]}
 
         # Validate the target robot is actually in the sim before applying any
-        # actions. Without this an explicit ``robot_name`` that does not exist
-        # silently "replays" onto a phantom robot (send_action no-ops), mirroring
-        # neither run_policy nor eval_policy, both of which reject unknown robots.
+        # actions. A supplied name reaches this check unchanged, so one the
+        # scene does not hold - the empty string included - is reported by name
+        # rather than replaced. Without this an explicit ``robot_name`` that
+        # does not exist silently "replays" onto a phantom robot (send_action
+        # no-ops), mirroring neither run_policy nor eval_policy, both of which
+        # reject unknown robots.
         robots = self.sim.list_robots()
         if resolved_robot not in robots:
             return {
@@ -4577,12 +4593,6 @@ class PolicyRunner:
                 if math.isfinite(numeric):
                     return numeric
         return None
-
-    def _require_default_robot(self) -> str:
-        robots = self.sim.list_robots()
-        if not robots:
-            raise ValueError("No robots in sim. Add one first.")
-        return robots[0]
 
     def _resolve_success_fn(self, success_fn: SuccessFn | str | None) -> SuccessFn | None:
         if success_fn is None:
