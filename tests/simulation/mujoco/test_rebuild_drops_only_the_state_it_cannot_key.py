@@ -264,7 +264,9 @@ class TestActuatorsWithNoUsableHandle:
 
     @pytest.mark.skipif(_SO3_TRN is None, reason="mjTRN_SO3 arrived in mujoco 3.12; the manifest floor is 3.5")
     def test_scene_snapshot_reports_the_actuator_it_cannot_key(self, world: SimWorld, caplog) -> None:
-        world._model.actuator_trntype[0] = int(_SO3_TRN)
+        so3 = _SO3_TRN
+        assert so3 is not None, "the skipif above admits only a build that defines mjTRN_SO3"
+        world._model.actuator_trntype[0] = int(so3)
         world._data.ctrl[0] = 0.42
         with caplog.at_level(logging.DEBUG, logger=_LOGGER):
             snapshot = scene_ops._snapshot_scene_state(world)
