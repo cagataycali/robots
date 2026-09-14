@@ -47,6 +47,12 @@ class FakeGripper:
             socket times out. The other way a live controller fails: it holds
             the connection open and stops replying, which a driver must report
             rather than block on.
+        raw_reply: While set, every request is answered with these exact bytes
+            and the connection is then held open. Not a 2F-85 behaviour: this is
+            what is listening when the driver has the wrong address - a
+            controller's web endpoint, another service on port 502 - and it
+            answers a frame whose MBAP header this codec has to refuse rather
+            than read by.
     """
 
     def __init__(
@@ -82,6 +88,7 @@ class FakeGripper:
         self._current = current
         self.exception_code = exception_code
         self.stall = False
+        self.raw_reply: bytes | None = None
         self._never_activates = never_activates
 
         self.activated = starts_activated
@@ -161,6 +168,12 @@ class FakeGripper:
                 transaction, _protocol, _length, unit = struct.unpack(">HHHB", header)
                 if self.stall:
                     continue  # read and dropped: a controller that stopped replying
+                if self.raw_reply is not None:
+                    try:
+                        conn.sendall(self.raw_reply)
+                    except OSError:
+                        return
+                    continue  # answered, and the connection stays open
                 try:
                     conn.sendall(self._answer(transaction, unit, body))
                 except OSError:

@@ -3,8 +3,8 @@
 :mod:`strands_robots.drivers.robotiq.protocol` sits between a gripper tool call
 and a socket, so it is the last place a bad field can be caught before it
 becomes wire bytes -- and the first place a bad reply can be caught before it
-becomes a position the gripper never reported. It has two refusal halves and
-this pins both:
+becomes a position the gripper never reported. It has three refusal doors and
+this pins all of them:
 
 * the **request builders** refuse a field they cannot encode, ahead of
   ``struct.pack``. Unguarded, six of these produce either a ``struct.error``
@@ -21,6 +21,14 @@ this pins both:
   still carry half a register block, which decodes to a position the gripper
   never reported.
 
+* the **header reader** refuses a header that cannot size a read. It is the
+  earliest of the three and the only one that runs *before* the transport has
+  the frame: a reply is read by the length its header declares, so an ungraded
+  value there lets the peer decide how many bytes this client waits for, and
+  every reason the parser would give arrives only once that wait is over. Its
+  refusals are therefore graded on what they prevent as much as on what they
+  say - no accepted header may ask for more than one PDU.
+
 The already-pinned arms (a Modbus exception reply, a stale transaction id, a
 non-Modbus protocol id, a byte count that disagrees with the request) live in
 ``test_robotiq_protocol_frames.py`` beside the byte-exact golden frames.
@@ -35,11 +43,15 @@ import pytest
 
 from strands_robots.drivers.robotiq.protocol import (
     INPUT_BASE,
+    MAX_MBAP_LENGTH,
+    MAX_PDU_SIZE,
     MBAP_SIZE,
+    MIN_MBAP_LENGTH,
     REGISTER_COUNT,
     FunctionCode,
     ProtocolError,
     aperture_mm_to_counts,
+    mbap_body_size,
     parse_response,
     read_input_registers_frame,
     read_registers_payload,
@@ -130,6 +142,52 @@ UNTRUSTWORTHY_REPLIES: tuple[tuple[str, Callable[[], object], str], ...] = (
 )
 
 
+def _header(length: int, *, protocol_id: int = 0) -> bytes:
+    """An MBAP header declaring ``length``, with nothing after it.
+
+    The transport has only these seven bytes when it decides how many more to
+    read, so a header is the whole input to that decision.
+    """
+    return struct.pack(">HHHB", 1, protocol_id, length, 9)
+
+
+# A header that cannot size a read. Modbus TCP allows the length field a unit id
+# plus at most a 253-byte PDU; a value outside that is not a short frame to be
+# read and then rejected, it is a peer this client must not wait on.
+HEADERS_THAT_CANNOT_SIZE_A_READ: tuple[tuple[str, bytes, str], ...] = (
+    (
+        "a header cut short carries no length to read by",
+        _header(9)[:-1],
+        rf"MBAP header must be {MBAP_SIZE} bytes, got {MBAP_SIZE - 1}",
+    ),
+    (
+        "an http endpoint answering on the gripper's port",
+        b"HTTP/1.",
+        r"protocol id must be 0, got 21584 - this is not Modbus TCP",
+    ),
+    (
+        "a length of zero leaves no room for the unit id",
+        _header(0),
+        rf"MBAP length must be in {MIN_MBAP_LENGTH}\.\.{MAX_MBAP_LENGTH}",
+    ),
+    (
+        "a length of one leaves no room for a function code",
+        _header(MIN_MBAP_LENGTH - 1),
+        rf"MBAP length must be in {MIN_MBAP_LENGTH}\.\.{MAX_MBAP_LENGTH}",
+    ),
+    (
+        "a length one past a whole PDU is more than Modbus can carry",
+        _header(MAX_MBAP_LENGTH + 1),
+        rf"MBAP length must be in {MIN_MBAP_LENGTH}\.\.{MAX_MBAP_LENGTH}",
+    ),
+    (
+        "a length filling the field would hold the connection for 64KB",
+        _header(0xFFFF),
+        rf"MBAP length must be in {MIN_MBAP_LENGTH}\.\.{MAX_MBAP_LENGTH} .* got 65535",
+    ),
+)
+
+
 @pytest.mark.parametrize(
     ("build", "match"),
     [pytest.param(build, match, id=label) for label, build, match in UNSENDABLE_REQUESTS],
@@ -154,3 +212,76 @@ def test_the_refusal_tables_are_not_empty() -> None:
     """Guard against a table that silently becomes zero rows."""
     assert len(UNSENDABLE_REQUESTS) == 6
     assert len(UNTRUSTWORTHY_REPLIES) == 5
+    assert len(HEADERS_THAT_CANNOT_SIZE_A_READ) == 6
+
+
+@pytest.mark.parametrize(
+    ("header", "match"),
+    [pytest.param(header, match, id=label) for label, header, match in HEADERS_THAT_CANNOT_SIZE_A_READ],
+)
+def test_a_header_that_cannot_size_a_read_is_refused_before_the_body(header: bytes, match: str) -> None:
+    """The length is graded at the door that reads by it, not after the read.
+
+    Every row here is a frame the parser would also refuse - but only once the
+    body it declared had arrived, which for the last two rows means never. The
+    refusal has to happen while the header is the only thing in hand.
+    """
+    with pytest.raises(ProtocolError, match=match):
+        mbap_body_size(header)
+
+
+@pytest.mark.parametrize(
+    ("length", "expected"),
+    [
+        pytest.param(MIN_MBAP_LENGTH, 1, id="the shortest legal reply is a bare function code"),
+        pytest.param(MAX_MBAP_LENGTH, MAX_PDU_SIZE, id="the longest legal reply is one whole PDU"),
+    ],
+)
+def test_the_edges_of_the_length_field_are_accepted_and_sized(length: int, expected: int) -> None:
+    """Both ends of the domain are read, so the refusal is a domain and not a cap.
+
+    A boundary asserted from one side only cannot tell a domain check from a
+    limit that happens to sit somewhere below it.
+    """
+    assert mbap_body_size(_header(length)) == expected
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(lambda: read_input_registers_frame(1, 9, INPUT_BASE, REGISTER_COUNT), id="a read request"),
+        pytest.param(lambda: write_registers_frame(1, 9, INPUT_BASE, (1, 2, 3)), id="a write request"),
+        pytest.param(lambda: _reply(struct.pack(">BB", READ, 6) + b"\x00" * 6), id="a read reply"),
+    ],
+)
+def test_the_size_reported_is_the_body_a_real_frame_carries(build: Callable[[], bytes]) -> None:
+    """Graded against this module's own framing, so the unit-id offset is pinned.
+
+    The declared length counts the unit id, which the header already carries, so
+    the bytes still to read are one fewer. Asserting that against a frame built
+    here means an off-by-one cannot pass by agreeing with itself.
+    """
+    frame = build()
+
+    assert mbap_body_size(frame[:MBAP_SIZE]) == len(frame) - MBAP_SIZE
+
+
+def test_no_header_can_ask_the_transport_for_more_than_one_pdu() -> None:
+    """Exhaustive over the field: an accepted header sizes a bounded read.
+
+    This is the property the refusals exist for, and it is worth stating over
+    all 65536 values rather than at the edges: the read this sizes runs under
+    the client's lock, and a socket timeout applies per ``recv``, not to the
+    loop. So a length no larger than a PDU is what actually bounds the
+    exchange - without it a peer that keeps dribbling bytes holds the
+    connection for as long as it likes, whatever timeout the caller configured.
+    """
+    accepted = 0
+    for length in range(0x10000):
+        try:
+            size = mbap_body_size(_header(length))
+        except ProtocolError:
+            continue
+        accepted += 1
+        assert 1 <= size <= MAX_PDU_SIZE, f"a header declaring {length} sized a read of {size} bytes"
+    assert accepted == MAX_MBAP_LENGTH - MIN_MBAP_LENGTH + 1, "the accepted band is not the documented domain"

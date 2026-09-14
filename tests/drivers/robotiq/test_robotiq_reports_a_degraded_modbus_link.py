@@ -15,6 +15,11 @@ operator reading the wrong fault:
   was rejected; the second means nothing arrived. The driver spells them
   differently, and a caller chasing a dead cable should not be sent to read the
   manual's exception codes.
+* **A peer that is not a gripper is neither of those.** It answers immediately,
+  with bytes that are not a Modbus frame. Reported as a timeout it sends an
+  operator to look for a dead cable, when what is wrong is the address; and
+  because a reply is read *by* the length its header declares, an ungraded
+  length is what turns an instant wrong answer into a wait.
 * **A read that fails is not a robot with no joints.**
   :meth:`~strands_robots.drivers.robotiq.RobotiqDriver.get_observation` is the
   mesh's joint source for this driver
@@ -32,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 from collections.abc import Callable
 
 import pytest
@@ -49,6 +55,16 @@ _STALL_TIMEOUT = 0.2
 #: A port nothing listens on. Privileged and unbound, so the connection is
 #: refused rather than accepted by whatever else the machine happens to run.
 _CLOSED_PORT = 1
+
+
+def _mbap_reply(length: int) -> bytes:
+    """A frame whose MBAP header declares ``length``, followed by a real PDU.
+
+    The bytes after the header are a well-formed read reply, so the only thing
+    wrong with the frame is the length it declares - which is the field the
+    transport sizes its read by.
+    """
+    return struct.pack(">HHHB", 1, 0, length, 9) + struct.pack(">BB", 0x04, 6) + b"\x00" * 6
 
 
 def _text(envelope: dict[str, object]) -> str:
@@ -246,3 +262,56 @@ def test_a_gripper_reports_no_task_in_flight_which_is_not_a_failure() -> None:
     payload = envelope["content"][0]["json"]
     assert payload["in_flight"] is False
     assert "send_action" in payload["reason"], "the answer must name the path that does command the fingers"
+
+
+#: Bytes a peer that is not a 2F-85 answers with, and the field of its header
+#: that gives it away. Each is refused from the seven header bytes alone: the
+#: body such a header declares is one this client would otherwise wait for, and
+#: for the last two rows that wait never ends, because those bytes never come.
+_NOT_A_MODBUS_PEER: tuple[tuple[str, bytes, str], ...] = (
+    (
+        "an http endpoint on the gripper's port",
+        b"HTTP/1.1 400 Bad Request\r\n\r\n",
+        "protocol id must be 0",
+    ),
+    (
+        "a length below the Modbus minimum",
+        _mbap_reply(0),
+        "MBAP length must be in 2..254",
+    ),
+    (
+        "a length filling the whole field",
+        _mbap_reply(0xFFFF),
+        "MBAP length must be in 2..254",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [pytest.param(reply, expected, id=label) for label, reply, expected in _NOT_A_MODBUS_PEER],
+)
+def test_a_peer_that_is_not_a_gripper_is_named_rather_than_waited_out(
+    gripper: Gripper, reply: bytes, expected: str
+) -> None:
+    """The wrong address is reported as the wrong address, not as a dead wire.
+
+    The peer answers the moment the request lands, so nothing here is slow and
+    nothing is missing - the reply simply is not a Modbus frame. The reason has
+    to say which field gave it away, because that is what distinguishes "this
+    port is not the gripper" from the timeout a stalled controller produces, and
+    the two send an operator to opposite ends of the setup.
+    """
+    fake = gripper()
+    fake.raw_reply = reply
+    driver = RobotiqDriver(port="127.0.0.1", tcp_port=fake.port, timeout=_STALL_TIMEOUT)
+
+    try:
+        reason = driver.connect_eagerly()
+
+        assert reason is not None, "a peer that is not a gripper reported a working link"
+        assert expected in reason, f"the reason must name the field that gave the peer away: {reason!r}"
+        assert "timed out" not in reason, f"an instant wrong answer must not be reported as silence: {reason!r}"
+        assert not driver.is_connected
+    finally:
+        driver.cleanup()

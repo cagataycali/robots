@@ -67,6 +67,17 @@ MBAP_SIZE: Final[int] = 7
 PROTOCOL_ID: Final[int] = 0
 """The only protocol id Modbus TCP defines. A frame carrying anything else is not Modbus."""
 
+MAX_PDU_SIZE: Final[int] = 253
+"""Widest PDU Modbus defines: the 256-byte RTU frame less its slave id and CRC.
+Modbus TCP inherits the limit so the same PDUs travel over either transport,
+which is what bounds how many bytes a reply can legitimately declare."""
+
+MIN_MBAP_LENGTH: Final[int] = 2
+"""Smallest the length field can declare: the unit id plus a function code."""
+
+MAX_MBAP_LENGTH: Final[int] = MAX_PDU_SIZE + 1
+"""Widest the length field can declare: the unit id plus a whole PDU."""
+
 DEFAULT_UNIT_ID: Final[int] = 9
 """Slave id Robotiq ships the gripper with (0x09), documented in the manual's
 Modbus section. A gripper behind a Universal Robots controller commonly answers
@@ -384,6 +395,44 @@ def closed_fraction_to_counts(fraction: float) -> int:
 # --------------------------------------------------------------------------- #
 # Modbus TCP framing.                                                          #
 # --------------------------------------------------------------------------- #
+def mbap_body_size(header: bytes) -> int:
+    """Return how many bytes still follow *header*, from the length it declares.
+
+    A Modbus TCP reply is read *by* this field, so it sizes a read before
+    anything else here has seen the frame: whatever it says decides how many
+    bytes the transport waits for, and every reason :func:`parse_response` would
+    give arrives only once that wait is over. So the field is graded at the door
+    that consumes it. The protocol id is graded with it, for the same reason - a
+    peer that is not a Modbus server declares a length out of whatever its
+    greeting spells, and naming it now beats waiting out a read for a body it
+    will never send. :func:`parse_response` grades the same field again against
+    the frame it already holds; this is the earlier door, not a substitute.
+
+    Args:
+        header: The first :data:`MBAP_SIZE` bytes of a frame.
+
+    Returns:
+        Bytes left to read: the declared length less the unit id, which is the
+        last header byte and therefore already in hand.
+
+    Raises:
+        ProtocolError: If *header* is short, carries a protocol id that is not
+            :data:`PROTOCOL_ID`, or declares a length outside
+            :data:`MIN_MBAP_LENGTH`..:data:`MAX_MBAP_LENGTH`.
+    """
+    if len(header) < MBAP_SIZE:
+        raise ProtocolError(f"MBAP header must be {MBAP_SIZE} bytes, got {len(header)}")
+    _transaction_id, protocol_id, length, _unit_id = struct.unpack(">HHHB", header[:MBAP_SIZE])
+    if protocol_id != PROTOCOL_ID:
+        raise ProtocolError(f"protocol id must be {PROTOCOL_ID}, got {protocol_id} - this is not Modbus TCP")
+    if not MIN_MBAP_LENGTH <= length <= MAX_MBAP_LENGTH:
+        raise ProtocolError(
+            f"MBAP length must be in {MIN_MBAP_LENGTH}..{MAX_MBAP_LENGTH} (the unit id plus at most a "
+            f"{MAX_PDU_SIZE}-byte PDU), got {length} - this is not a Modbus TCP frame"
+        )
+    return int(length) - 1
+
+
 def _validate_transaction_id(transaction_id: int) -> int:
     if not isinstance(transaction_id, int) or isinstance(transaction_id, bool):
         raise ProtocolError(f"transaction_id must be an int, got {transaction_id!r}")

@@ -37,7 +37,6 @@ from __future__ import annotations
 import enum
 import logging
 import socket
-import struct
 import threading
 import time
 from collections.abc import AsyncGenerator
@@ -61,6 +60,7 @@ from strands_robots.drivers.robotiq.protocol import (
     closed_fraction_to_counts,
     command_registers,
     counts_to_aperture_mm,
+    mbap_body_size,
     parse_response,
     parse_status,
     read_input_registers_frame,
@@ -112,8 +112,9 @@ class _ModbusTcpClient:
     Modbus TCP runs over a byte stream, so a reply must be read by its declared
     length rather than by whatever one ``recv`` returns - a short read that is
     parsed as a whole frame decodes a position the gripper never sent. The
-    header is read first, its length field consulted, then exactly that many
-    further bytes.
+    header is read first, its length field graded by the codec, then exactly
+    that many further bytes: an ungraded length is a peer deciding how long
+    this client waits.
 
     Writes and their replies are serialised under one lock so two threads
     cannot interleave request and response on the same socket; the transaction
@@ -164,10 +165,7 @@ class _ModbusTcpClient:
         with self._lock:
             sock.sendall(request)
             header = self._read_exactly(sock, MBAP_SIZE)
-            # The MBAP length counts the unit id plus the PDU, and the unit id
-            # is the last header byte already in hand.
-            (length,) = struct.unpack(">H", header[4:6])
-            body = self._read_exactly(sock, length - 1)
+            body = self._read_exactly(sock, mbap_body_size(header))
         return header + body
 
     def write_registers(self, address: int, values: tuple[int, ...]) -> None:
