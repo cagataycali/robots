@@ -1040,6 +1040,16 @@ class DatasetRecordingMixin:
         ``replay_episode`` and bare ``step`` loops do not, so recording around
         those produces zero frames and is reported as an error.
 
+        The frames a ``strict=False`` recorder dropped are reported here too,
+        because this is where the recorder is released - a count left unread
+        here is a loss no caller can measure afterwards. It reaches the caller
+        two ways. When every write failed the dataset is empty for that reason
+        and the refusal names it, rather than the loop classification above,
+        which would prescribe the recipe the caller already followed. When only
+        some failed the session stays a success (``strict=False`` documents
+        dropping a failed write and completing) that reports how short it is,
+        in the text and in ``dropped_frame_count``.
+
         Takes no destination. The dataset root is chosen once, at
         ``start_recording(root=...)``, and the recorder has been writing there
         for the whole episode, so nothing is left here to redirect - an
@@ -1069,9 +1079,12 @@ class DatasetRecordingMixin:
             ``parquet_episode_count`` (the dataset's ``meta.total_episodes``, or
             ``None`` when the recorder exposes no dataset handle, that layout
             carries no such attribute, or the value cannot be read as an int -
-            an unreadable count is reported as no reading, never as a zero) and
+            an unreadable count is reported as no reading, never as a zero),
             ``episode_count_mismatch`` (the two counts were both read and
-            disagreed, so the on-disk one won).
+            disagreed, so the on-disk one won) and ``dropped_frame_count``
+            (frames the recorder was fed and could not write, swallowed by
+            ``strict=False``; ``frame_count`` plus this is what the session
+            attempted).
         """
         # ``push_to_hub`` selects whether the finished dataset is published, so
         # it is checked before it is read - by the idle path just below and by
@@ -1110,6 +1123,12 @@ class DatasetRecordingMixin:
         #      dataset with only meta/info.json (no parquet/video).
         pending = getattr(recorder, "episode_frame_count", 0)
         captured = getattr(recorder, "frame_count", 0)
+        # Frames the recorder was fed and could not write. A ``strict=False``
+        # recorder drops those and counts them here instead of raising, so they
+        # are the only record that the session lost data - and this method is
+        # where the recorder is released, so a count not reported here is a
+        # count no caller can ever read.
+        dropped = getattr(recorder, "dropped_frame_count", 0)
         if pending > 0:
             save_result = recorder.save_episode()
             if isinstance(save_result, dict) and save_result.get("status") == "error":
@@ -1127,6 +1146,31 @@ class DatasetRecordingMixin:
                         }
                     ],
                 }
+        elif captured == 0 and dropped > 0:
+            # The recorder WAS fed and every write failed, so the loop
+            # classification below is the one cause that cannot apply: it would
+            # prescribe the recipe this caller already followed and never
+            # mention the drops. ``strict=False`` chose to swallow them, so the
+            # rollout reported success and this is the first refusal.
+            state["dataset_recorder"] = None
+            state["trajectory"] = []
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"stop_recording: all {dropped} frame(s) the recorder was fed failed "
+                            "to write, so the dataset holds 0 frames. The recorder was built with "
+                            "strict=False, which drops a failed write and counts it in "
+                            "dropped_frame_count instead of raising - which is why the rollout "
+                            "reported success. Fix the write failure (the per-drop warnings from "
+                            "strands_robots.dataset_recorder name it) or record with strict=True, "
+                            "the default, so the first lost frame fails the rollout at the frame "
+                            "that lost it."
+                        )
+                    }
+                ],
+            }
         elif captured == 0:
             state["dataset_recorder"] = None
             state["trajectory"] = []
@@ -1231,10 +1275,28 @@ class DatasetRecordingMixin:
         else:
             text_episode_note = ""
 
+        # A partial best-effort loss is reported rather than refused:
+        # ``strict=False`` documents dropping a failed write and completing, so
+        # the session is a success that is short by a measured amount.
+        if dropped:
+            logger.warning(
+                "stop_recording: %d frame(s) were dropped by this session (strict=False); "
+                "the dataset holds %d of the %d frames the recorder was fed",
+                dropped,
+                frame_count,
+                frame_count + dropped,
+            )
+            text_dropped_note = (
+                f"\n{dropped} frame(s) failed to write and were dropped (strict=False): "
+                f"the dataset holds {frame_count} of the {frame_count + dropped} frames recorded"
+            )
+        else:
+            text_dropped_note = ""
+
         text = (
             f"Episode saved to LeRobotDataset\n"
             f"{repo_id} -- {frame_count} frames, {episode_count} episode(s)"
-            f"{text_episode_note}\n"
+            f"{text_episode_note}{text_dropped_note}\n"
             f"Local: {root}{extra}"
         )
 
@@ -1249,6 +1311,7 @@ class DatasetRecordingMixin:
                         "episode_count": episode_count,
                         "parquet_episode_count": parquet_episode_count,
                         "episode_count_mismatch": episode_count_mismatch,
+                        "dropped_frame_count": dropped,
                         "root": root,
                     }
                 },

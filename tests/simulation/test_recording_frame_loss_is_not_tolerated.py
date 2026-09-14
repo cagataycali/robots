@@ -14,6 +14,11 @@ the declared ``fps``.
 These tests pin the split: a lost recording frame is fatal, a caller's telemetry
 failure keeps its tolerance.
 
+They also pin what a ``strict=False`` session, which keeps the tolerance and
+counts its losses, tells the caller at ``stop_recording`` - the call that
+releases the recorder and so the last one that can report
+``dropped_frame_count``. See :class:`TestStopRecordingReportsWhatWasDropped`.
+
 They also pin the split's *documentation*. The exemption is invisible in the
 signature, so the only place a caller can learn it is the docstring of the
 surface they call, and every such docstring named ``CooperativeStop`` alone -
@@ -478,3 +483,79 @@ def f():
         graded = _posture_blocks(planted)
         assert len(graded) == 1, graded
         assert "RecordingFrameError" not in graded[0][1]
+
+
+class TestStopRecordingReportsWhatWasDropped:
+    """The drops a ``strict=False`` session swallowed reach the caller.
+
+    ``dropped_frame_count`` lives on the recorder, and ``stop_recording``
+    releases the recorder (``state["dataset_recorder"] = None``) as it returns -
+    so a count it does not report is a loss no caller can measure afterwards.
+    Two shapes, and the difference between them is the posture: a partial loss
+    is reported because ``strict=False`` documents dropping a failed write and
+    completing, while a session whose every write failed produced an empty
+    dataset and is already refused - by the wrong cause.
+    """
+
+    @staticmethod
+    def _session(fail_every: int) -> tuple[dict[str, Any], DatasetRecorder, _FlakyDataset]:
+        """Record 20 frames through a ``strict=False`` recorder and stop."""
+        ds = _FlakyDataset(fail_every=fail_every)
+        recorder = DatasetRecorder(dataset=ds, task="t", strict=False)
+        sim = _recording_sim(recorder)
+        try:
+            assert (
+                sim.run_policy(
+                    robot_name="arm",
+                    policy_object=_policy(sim),
+                    n_steps=20,
+                    control_frequency=50.0,
+                    fast_mode=True,
+                )["status"]
+                == "success"
+            )
+            result = sim.stop_recording()
+        finally:
+            sim.cleanup()
+        return result, recorder, ds
+
+    def test_an_all_dropped_session_is_refused_by_the_cause_that_applies(self) -> None:
+        """Every write failing is why the dataset is empty - so say that.
+
+        Pre-fix this session was refused with the loop classification: it told a
+        caller who had just run ``start_recording -> run_policy ->
+        stop_recording`` that frames come from ``run_policy`` and to run
+        ``start_recording -> run_policy -> stop_recording`` - the recipe already
+        followed - and never mentioned the 20 writes that failed.
+        """
+        result, recorder, ds = self._session(fail_every=1)
+        assert (ds.attempts, ds.written, recorder.dropped_frame_count) == (20, 0, 20)
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "20" in text and "strict=False" in text, text
+        # The loop recipe is the cause that cannot apply here: run_policy DID
+        # feed this recorder.
+        assert "start_recording -> run_policy" not in text, text
+
+    def test_a_partial_loss_is_reported_by_the_session_that_completed(self) -> None:
+        """Half the writes failing stays a success that says how short it is."""
+        result, recorder, ds = self._session(fail_every=2)
+        assert (ds.attempts, ds.written, recorder.dropped_frame_count) == (20, 10, 10)
+        assert result["status"] == "success", result
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert (payload["frame_count"], payload["dropped_frame_count"]) == (10, 10)
+        assert "dropped" in result["content"][0]["text"]
+
+    def test_a_session_that_lost_nothing_reports_no_loss(self) -> None:
+        """The control: nothing lost, so the report gains no loss note.
+
+        The text is byte-identical to what it always was; the count is reported
+        as the zero it is rather than omitted, so a caller reads one field for
+        the answer in both directions.
+        """
+        result, recorder, ds = self._session(fail_every=0)
+        assert (ds.attempts, ds.written, recorder.dropped_frame_count) == (20, 20, 0)
+        assert result["status"] == "success", result
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert (payload["frame_count"], payload["dropped_frame_count"]) == (20, 0)
+        assert "dropped" not in result["content"][0]["text"]

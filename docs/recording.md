@@ -914,6 +914,33 @@ recording: a failed write is counted in `dropped_frame_count`, warned about at
 `WARNING` (on the 1st, 2nd, 4th, 8th ... failure so a 50 Hz loop cannot flood the
 log), and the rollout continues.
 
+`stop_recording` is where those counted drops reach the caller, and it is the
+last chance: it releases the recorder as it returns, so a count it does not
+report is a loss nothing can measure afterwards. It reports them two ways.
+
+Some writes failed - the session stays a success (`strict=False` chose to
+complete) that says how short it is, in the text and in `dropped_frame_count`
+beside `frame_count`:
+
+```
+Episode saved to LeRobotDataset
+local/flaky -- 10 frames, 1 episode(s)
+10 frame(s) failed to write and were dropped (strict=False): the dataset holds
+10 of the 20 frames recorded
+```
+
+Every write failed - the dataset is empty *for that reason*, so the
+empty-dataset refusal below names it instead of the loop classification, which
+would prescribe the `start_recording` -> `run_policy` -> `stop_recording` recipe
+this caller had just followed:
+
+```
+stop_recording: all 20 frame(s) the recorder was fed failed to write, so the
+dataset holds 0 frames. The recorder was built with strict=False, which drops a
+failed write and counts it in dropped_frame_count instead of raising - which is
+why the rollout reported success. ...
+```
+
 `strict` must be a boolean - it selects a posture, so it is checked on the same
 domain as `use_videos` / `streaming_encoding` / `overwrite` rather than read by
 truthiness, and a value outside it is a `ValueError` from the constructor:
