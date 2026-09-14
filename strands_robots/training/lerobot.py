@@ -450,9 +450,9 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
     Reads ``meta/stats.json`` (lerobot's ``STATS_PATH``, the aggregate stats
     ``load_stats`` feeds to normalization). Returns ``True`` when quantile keys
     are present, ``False`` when the file exists but lacks them, and ``None`` when
-    the file is absent or unreadable (unknown - e.g. a Hub dataset with no
-    materialized local cache), so a definite miss can be flagged without false
-    positives on the unknown case.
+    the file is absent, unreadable, or holds a document that is not a JSON object
+    (unknown - e.g. a Hub dataset with no materialized local cache), so a
+    definite miss can be flagged without false positives on the unknown case.
 
     Unreadable is ``ValueError`` and not the narrower ``json.JSONDecodeError``:
     a partially-synced file carries bytes the declared encoding does not
@@ -466,6 +466,13 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
         with open(stats_path, encoding="utf-8") as fh:
             stats = json.load(fh)
     except (OSError, ValueError):
+        return None
+    if not isinstance(stats, dict):
+        # A document that parses but is not a JSON object carries no per-feature
+        # stats to look in, so it is the same UNKNOWN as an unreadable file.
+        # ``_stats_have_quantiles`` answers ``False`` for it - correct for a
+        # predicate over a mapping, and the DEFINITE miss here, which refuses a
+        # QUANTILES-normalizing run on evidence that was never gathered.
         return None
     return _stats_have_quantiles(stats)
 
@@ -503,8 +510,9 @@ def _dataset_codebase_version(dataset_root: str) -> str | None:
 
     Reads ``meta/info.json`` (the file lerobot's ``load_info`` reads, and the one
     :meth:`LerobotTrainer._dataset_total_episodes` already reads for the episode
-    count). Returns ``None`` when the file is absent, unreadable, or carries no
-    string ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
+    count). Returns ``None`` when the file is absent, unreadable, holds a
+    document that is not a JSON object, or carries no string
+    ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
     materialized local cache - so a DEFINITE mismatch can be reported without
     false positives on the unknown one. Unreadable is graded by ``ValueError``
     for the reason :func:`_dataset_quantile_stats_present` carries.
@@ -512,9 +520,15 @@ def _dataset_codebase_version(dataset_root: str) -> str | None:
     info_path = os.path.join(dataset_root, "meta", "info.json")
     try:
         with open(info_path, encoding="utf-8") as fh:
-            declared = json.load(fh).get("codebase_version")
+            document = json.load(fh)
     except (OSError, ValueError):
         return None
+    # A document that parses but is not a JSON object declares no version, the
+    # same unknown as an unreadable file; reading it as a mapping raised
+    # ``AttributeError`` out of this documented ``None`` and aborted the whole
+    # ``validate()`` preflight. The sibling episode-count readers in this module
+    # already name that failure in their own handlers.
+    declared = document.get("codebase_version") if isinstance(document, dict) else None
     return declared if isinstance(declared, str) else None
 
 

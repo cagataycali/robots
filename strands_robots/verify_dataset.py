@@ -12,7 +12,10 @@ Checks performed against a dataset root (the dir containing ``meta/``):
   2. every episode has at least ``--min-frames`` frames (default 1) - flags any
      zero-length episode (``--min-frames 0`` disables this one check);
   3. ``meta/info.json`` ``total_episodes`` / ``total_frames`` (when present)
-     agree with the parquet ground truth - flags metadata/parquet drift;
+     agree with the parquet ground truth - flags metadata/parquet drift, a
+     header that declares something which is not a count, and a file that
+     holds no JSON object at all (a partially-synced or foreign document
+     carries no headers to compare, and is reported as corrupt metadata);
   4. when ``--expected N`` is given, the parquet holds exactly N episodes -
      flags the "wanted N, got M" mismatch.
   5. every per-episode video file referenced by the dataset (one MP4 per
@@ -42,7 +45,9 @@ Usage:
 A corrupt ``meta/episodes`` parquet is itself reported rather than raised: each
 unreadable file is named as a problem and the remaining checks still run against
 the readable files, so partial corruption (one truncated file out of twenty)
-localises the damage instead of collapsing the whole report to "0 episodes".
+localises the damage instead of collapsing the whole report to "0 episodes". The
+same holds for ``meta/info.json``, whether it cannot be read or holds a document
+that is not a JSON object.
 
 Exit code is 0 when every check passes, 1 otherwise - so it drops straight into
 CI as a dataset-integrity gate.
@@ -225,6 +230,52 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
     }
 
 
+def _info_json_document(root_path: Path) -> tuple[dict[str, Any], str | None]:
+    """The mapping ``meta/info.json`` holds, and the problem when it holds none.
+
+    One owner for reading this file, because both readers here need the same
+    three-way answer and each grades it once: the drift check REPORTS an
+    unusable file (that is the corruption it exists to find), and the video
+    check discards the problem so one broken header is not reported twice.
+
+    A document that parses but is not a JSON object carries no headers at all -
+    the same "nothing to verify against" as a file that cannot be read, and the
+    same partially-synced / foreign-file damage. It is answered here rather than
+    used as a mapping, because ``.get`` on a list, a string or ``null`` raises
+    ``AttributeError``: a type no reader of this file names, so it escaped
+    ``verify_dataset`` as a traceback and took the whole report with it - every
+    problem already found included - on exactly the corruption being looked for.
+    ``strands_robots.tools.run_policy`` already grades the parsed document this
+    way for its own envelope; this is the same verdict at the checker.
+
+    "Unreadable" is ``ValueError`` and not the narrower ``json.JSONDecodeError``
+    because reading this file has more ways to fail than holding something that
+    is not JSON: bytes the declared encoding does not describe raise
+    ``UnicodeDecodeError``, and a number longer than
+    ``sys.get_int_max_str_digits`` raises a plain ``ValueError``.
+
+    Args:
+        root_path: Dataset root directory (the dir that contains ``meta/``).
+
+    Returns:
+        ``(document, problem)``. ``document`` is the mapping the file holds, or
+        an empty one when the file is absent or unusable - so a caller can read
+        headers off it either way. ``problem`` is ``None`` when there is nothing
+        to report, which includes an ABSENT file: a dataset need not carry
+        ``meta/info.json``, and the parquet is then the sole truth.
+    """
+    info_path = root_path / "meta" / "info.json"
+    if not info_path.is_file():
+        return {}, None
+    try:
+        document = json.loads(info_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {}, f"could not read meta/info.json: {e}"
+    if not isinstance(document, dict):
+        return {}, (f"meta/info.json holds a JSON {type(document).__name__}, not an object - metadata is corrupt")
+    return document, None
+
+
 def verify_dataset(
     root: str | Path,
     expected: int | None = None,
@@ -266,7 +317,8 @@ def verify_dataset(
             broken file named in ``problems``).
           - ``expected``: the requested count (or ``None``).
           - ``info_total_episodes`` / ``info_total_frames``: values declared in
-            ``meta/info.json`` (``None`` when the file is absent or lacks them).
+            ``meta/info.json`` (``None`` when the file is absent, unreadable,
+            holds no JSON object, or lacks them).
           - ``video_files_checked``: number of distinct per-episode video
             files resolved and checked (``0`` when ``check_videos`` is False
             or the dataset declares no video features).
@@ -363,44 +415,42 @@ def verify_dataset(
     # ``meta/info.json``, read once. Check 3 compares its counts against the
     # parquet truth; check 6 reads its per-feature ``names`` to split a control
     # vector into the per-robot blocks the recorder declared.
-    declared: dict[str, Any] = {}
-
-    # Check 3: meta/info.json vs parquet ground truth (drift detection).
-    info_json_path = root_path / "meta" / "info.json"
-    if info_json_path.is_file():
-        try:
-            declared = json.loads(info_json_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            problems.append(f"could not read meta/info.json: {e}")
-        # Both headers are graded by their one owner rather than an inline type
-        # test, and a declaration that is not a count is REPORTED rather than
-        # passed over: a header no writer could have produced is exactly the
-        # metadata drift this check exists to find, and the inline test skipped
-        # it silently (``true`` even compared equal to a one-episode parquet).
-        raw_eps = declared.get("total_episodes")
-        raw_frames = declared.get("total_frames")
-        decl_eps = declared_count(raw_eps)
-        decl_frames = declared_count(raw_frames)
-        report["info_total_episodes"] = decl_eps
-        report["info_total_frames"] = decl_frames
-        for key, raw, decl in (("total_episodes", raw_eps, decl_eps), ("total_frames", raw_frames, decl_frames)):
-            if key in declared and decl is None:
-                problems.append(f"meta/info.json {key}={raw!r} is not a count - metadata is corrupt")
-        if decl_eps is not None and decl_eps != info["total_episodes"]:
-            problems.append(
-                f"meta/info.json total_episodes={decl_eps} disagrees with parquet "
-                f"({info['total_episodes']} distinct episode(s)) - metadata/parquet drift"
-            )
-        # Frame totals only meaningful when parquet carries per-episode lengths,
-        # and that availability is ``frames_per_episode`` rather than the total
-        # being non-zero: a parquet whose every episode recorded 0 frames sums
-        # to 0, so gating on the total read the worst dataset in this class as
-        # one carrying no lengths and dropped the comparison on exactly the
-        # header that claims frames the dataset does not hold.
-        if decl_frames is not None and info["frames_per_episode"] and decl_frames != info["total_frames"]:
-            problems.append(
-                f"meta/info.json total_frames={decl_frames} disagrees with parquet ({info['total_frames']} frame(s))"
-            )
+    # Check 3: meta/info.json vs parquet ground truth (drift detection). The
+    # file is graded by its one owner, which answers an absent, unreadable or
+    # non-object document with an empty mapping, so the header comparisons below
+    # are no-ops for all three and the checker still produces a report.
+    declared, info_problem = _info_json_document(root_path)
+    if info_problem is not None:
+        problems.append(info_problem)
+    # Both headers are graded by their one owner rather than an inline type
+    # test, and a declaration that is not a count is REPORTED rather than
+    # passed over: a header no writer could have produced is exactly the
+    # metadata drift this check exists to find, and the inline test skipped
+    # it silently (``true`` even compared equal to a one-episode parquet).
+    raw_eps = declared.get("total_episodes")
+    raw_frames = declared.get("total_frames")
+    decl_eps = declared_count(raw_eps)
+    decl_frames = declared_count(raw_frames)
+    report["info_total_episodes"] = decl_eps
+    report["info_total_frames"] = decl_frames
+    for key, raw, decl in (("total_episodes", raw_eps, decl_eps), ("total_frames", raw_frames, decl_frames)):
+        if key in declared and decl is None:
+            problems.append(f"meta/info.json {key}={raw!r} is not a count - metadata is corrupt")
+    if decl_eps is not None and decl_eps != info["total_episodes"]:
+        problems.append(
+            f"meta/info.json total_episodes={decl_eps} disagrees with parquet "
+            f"({info['total_episodes']} distinct episode(s)) - metadata/parquet drift"
+        )
+    # Frame totals only meaningful when parquet carries per-episode lengths,
+    # and that availability is ``frames_per_episode`` rather than the total
+    # being non-zero: a parquet whose every episode recorded 0 frames sums
+    # to 0, so gating on the total read the worst dataset in this class as
+    # one carrying no lengths and dropped the comparison on exactly the
+    # header that claims frames the dataset does not hold.
+    if decl_frames is not None and info["frames_per_episode"] and decl_frames != info["total_frames"]:
+        problems.append(
+            f"meta/info.json total_frames={decl_frames} disagrees with parquet ({info['total_frames']} frame(s))"
+        )
 
     # Check 4: exact expected episode count.
     if expected is not None and info["total_episodes"] != expected:
@@ -505,23 +555,11 @@ def _verify_video_files(root_path: Path, *, known_unreadable: frozenset[str] = f
         files (empty when the dataset declares no video features or all files
         are present and non-empty).
     """
-    info_path = root_path / "meta" / "info.json"
-    if not info_path.is_file():
-        return 0, []
-    try:
-        info = json.loads(info_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # An unreadable info.json is already surfaced by the info.json drift
-        # check; do not double-report it here. "Unreadable" is that check's
-        # ``ValueError`` and not the narrower ``json.JSONDecodeError``, because
-        # reading this file has more ways to fail than holding something that is
-        # not JSON: bytes the declared encoding does not describe raise
-        # ``UnicodeDecodeError``, and a number longer than
-        # ``sys.get_int_max_str_digits`` raises a plain ``ValueError``. Both are
-        # exactly the truncated / partially-synced file this checker exists to
-        # report, and naming only the JSON one aborted the whole report - every
-        # problem already found included - on the corruption it was looking for.
-        return 0, []
+    # An absent, unreadable or non-object info.json is already surfaced by the
+    # drift check, so the problem this owner returns is discarded here: one
+    # broken header is reported once. The empty mapping then declares no video
+    # features, which is the same "nothing to check" the absent file was always.
+    info, _reported_by_check_3 = _info_json_document(root_path)
 
     features = info.get("features")
     if not isinstance(features, dict):
