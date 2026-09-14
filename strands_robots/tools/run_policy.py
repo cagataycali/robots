@@ -299,7 +299,18 @@ def run_policy(
             unknown predicate name is rejected with the valid list while
             nothing has been set up yet. Each rollout's ``stopped_reason``
             (``'predicate'`` | ``'budget'`` | ``'cancelled'`` | ``'error'``)
-            is reported per episode.
+            is reported per episode, as is ``stop_when_true_at_reset``: a
+            clause the scene's initial state already satisfies is evaluated
+            only AFTER an applied action, so it fires on the episode's first
+            step whatever the policy commands - one recorded frame for that
+            episode, tagged ``stopped_reason='predicate'`` and
+            indistinguishable from an episode that reached the condition.
+            Usually a threshold on the wrong side of the initial state (a
+            ``body_above_z`` below where the object already rests). The
+            payload aggregates ``episodes_stop_when_true_at_reset`` with
+            ``stop_when_reset_warning``; it is deliberately not a ``warnings``
+            entry, which would flip ``status`` to ``"error"``, because domain
+            randomisation legitimately satisfies a clause on some draws.
 
     Returns:
         Standard ``{status, content}`` payload. On success the payload
@@ -311,6 +322,8 @@ def run_policy(
                 "n_frames_actual": int,        # parquet-truth, -1 if unread
                 "dataset_root": str | None,
                 "warnings": [str, ...],        # mismatch flags
+            "episodes_stop_when_true_at_reset": int,
+            "stop_when_reset_warning": str | None,
                 "episodes": [
                     {"index": int, "status": "success" | "error", ...},
                     ...
@@ -549,6 +562,13 @@ def run_policy(
             if isinstance(rollout_json, dict) and "stopped_reason" in rollout_json:
                 ep_record["stopped_reason"] = rollout_json["stopped_reason"]
                 ep_record["steps_used"] = rollout_json.get("steps_used")
+                # A clause that already held at this episode's reset makes the
+                # episode end after one step with stopped_reason="predicate" -
+                # a one-frame episode tagged as having reached the condition.
+                # Carried through per episode because a randomised initial state
+                # makes it an EPISODE-level fact, not a run-level one.
+                ep_record["stop_when_true_at_reset"] = bool(rollout_json.get("stop_when_true_at_reset", False))
+                ep_record["stop_when_reset_warning"] = rollout_json.get("stop_when_reset_warning")
             episodes.append(ep_record)
 
             # Per-episode parquet boundary. This helper is wired inside
@@ -616,11 +636,26 @@ def run_policy(
 
     # ---- 6. Build payload ----------------------------------------------
     n_ok = sum(1 for e in episodes if e["status"] == "success")
+    # Episodes whose stop_when clause already held at reset, so they ended after
+    # one step whatever the policy commanded. Reported beside the counts rather
+    # than appended to ``warnings_``, which flips ``status`` to "error": a
+    # randomised initial state legitimately satisfies a clause on some draws, so
+    # this qualifies the episodes it names without failing the collection. Same
+    # posture as PolicyRunner.evaluate's episodes_successful_at_reset.
+    n_reset_true = sum(1 for e in episodes if e.get("stop_when_true_at_reset"))
+    # Carried up from the rollout that reported it rather than re-derived here:
+    # one source of truth for the text, and no import of the simulation
+    # package - which this tool must keep working without.
+    stop_when_reset_warning = next(
+        (e["stop_when_reset_warning"] for e in episodes if e.get("stop_when_reset_warning")), None
+    )
     summary_line = f"run_policy: {n_ok}/{n_episodes} episodes ok" + (
         f" | parquet-truth: total_episodes={n_actual_eps}, total_frames={n_actual_frames}"
         if dataset_root is not None
         else ""
     )
+    if n_reset_true:
+        summary_line += f" | stop_when_true_at_reset={n_reset_true}/{n_episodes}"
     if warnings_:
         summary_line += f" | warnings={len(warnings_)}"
 
@@ -629,6 +664,8 @@ def run_policy(
         "n_episodes_actual": n_actual_eps,
         "n_frames_actual": n_actual_frames,
         "n_episodes_ok": n_ok,
+        "episodes_stop_when_true_at_reset": n_reset_true,
+        "stop_when_reset_warning": stop_when_reset_warning,
         "dataset_root": dataset_root,
         "warnings": warnings_,
         "episodes": episodes,
