@@ -8,6 +8,8 @@ everything but the login screen.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -224,3 +226,54 @@ class TestAuthRoutes:
         assert r.status_code == 200
         assert access.COOKIE in r.headers.get("set-cookie", "")
         assert "Max-Age=0" in r.headers["set-cookie"] or "expires" in r.headers["set-cookie"].lower()
+
+
+class TestThePreSignInRouteSaysOnlyWhatTheLoginScreenNeeds:
+    """``/api/auth/status`` answers whoever the socket lets through, so what it
+    carries is a routing decision like any other. On a sealed dashboard the
+    callers that reach it include a page the operator's own browser was told to
+    load - a rebound name arrives on the loopback socket - so the enrolled
+    passkeys are not among the fields it publishes.
+    """
+
+    @staticmethod
+    def _seal_with_two_passkeys(isolated) -> None:
+        """An owner who has already enrolled: the store decides the posture."""
+        (isolated / "auth.json").write_text(
+            json.dumps(
+                {
+                    "credentials": [
+                        {"id": "cred-touchid", "name": "macbook touchid", "created": 1789500000},
+                        {"id": "cred-yubikey", "name": "yubikey 5c nano", "created": 1789500900},
+                    ]
+                }
+            )
+        )
+
+    def test_the_enrolled_passkeys_are_not_published_to_a_caller_with_no_session(self, client, isolated):
+        self._seal_with_two_passkeys(isolated)
+        rebound = {"host": "evil.example:8090", "origin": "http://evil.example:8090"}
+        body = client.get("/api/auth/status", headers=rebound).json()
+        assert "credentials" not in body
+        # The one bit the login screen reads survives, and the route that does
+        # serve the list still refuses the same caller.
+        assert body["setup_required"] is False
+        assert client.get("/api/auth/credentials", headers=rebound).status_code == 401
+
+    def test_the_login_screen_still_gets_every_field_it_renders(self, client):
+        body = client.get("/api/auth/status").json()
+        assert body["setup_required"] is True
+        assert body["bootstrap_source"] == "file"
+        assert body["authenticated"] is False
+        assert body["open_posture"] is True
+        assert body["enabled"] is False
+
+    def test_a_field_added_to_the_status_helper_is_not_public_until_it_is_named(self, client, monkeypatch):
+        """The fields are named, not subtracted: growing the helper cannot widen
+        this route by accident."""
+        monkeypatch.setattr(
+            auth, "status", lambda request=None: {"setup_required": True, "recovery_phrase": "correct horse"}
+        )
+        body = client.get("/api/auth/status").json()
+        assert "recovery_phrase" not in body
+        assert body["setup_required"] is True

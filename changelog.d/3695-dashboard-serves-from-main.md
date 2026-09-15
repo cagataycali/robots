@@ -19,7 +19,17 @@ hostname, and a cross-site `fetch` arrives on it carrying the attacker's
 `Origin`. A state-changing request from another origin is refused before any
 credential is read, and a write must say it is JSON, so the no-preflight
 cross-site POST is not a caller of any write route. A query-string token is
-never read. The
+never read.
+
+The public route the login screen reads publishes named fields, not whatever the
+auth module returns. `/api/auth/status` answers before anyone has signed in, so
+its callers on a sealed dashboard include the page a rebound name delivered; it
+had been passing on the enrolled passkey list - ids, the labels the owner typed,
+enrolment times - that `/api/auth/credentials` refuses to the same caller.
+`setup_required` is that list reduced to the one bit the login screen reads, so
+the screen loses nothing.
+
+The
 CLI binds `127.0.0.1:8090` and refuses any other address until a passkey or a
 static token exists, naming the remedy.
 

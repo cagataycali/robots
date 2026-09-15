@@ -6,7 +6,9 @@ decisions and live here because they concern which route is open:
 
 * ``/api/auth/status`` is public. The login screen reads it before anyone is
   signed in; it says whether setup is required and which proof it needs, never
-  the proof itself.
+  the proof itself and never the enrolled passkeys - a route that answers
+  whoever the socket lets through publishes the named fields below, not
+  whatever the auth module happens to return.
 * A second enrolment needs a session; the first needs the bootstrap proof the
   auth module checks (``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`` or the ``0600``
   file it minted beside the store).
@@ -26,6 +28,23 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from strands_robots.dashboard import access, auth
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+#: What a caller with no session may learn from ``/api/auth/status``: whether
+#: setup is required, which proof the first enrolment needs, and the login
+#: screen's relying-party hints. Named rather than subtracted, so a field added
+#: to :func:`auth.status` is private until someone puts it here on purpose.
+PUBLIC_STATUS_FIELDS = frozenset(
+    {
+        "enabled",
+        "setup_required",
+        "bootstrap_required",
+        "bootstrap_source",
+        "rp_id",
+        "secure_context",
+        "rpid_usable",
+        "warning",
+    }
+)
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
@@ -65,8 +84,15 @@ def _set_session_cookie(response: Response, request: Request, token: str) -> Non
 
 @router.get("/status")
 async def status(request: Request) -> dict[str, Any]:
-    """What the login screen may know before sign-in, plus whether THIS caller is in."""
-    out = auth.status(request)
+    """What the login screen may know before sign-in, plus whether THIS caller is in.
+
+    The enrolled passkeys are not part of it. ``/api/auth/credentials`` serves
+    those to a session; this route answers whoever the socket lets through, and
+    on a sealed dashboard that includes a page the operator's own browser was
+    told to load. ``setup_required`` is that same list reduced to the one bit the
+    login screen reads, so the screen loses nothing by not seeing the list.
+    """
+    out = {k: v for k, v in auth.status(request).items() if k in PUBLIC_STATUS_FIELDS}
     out["authenticated"] = access.session_claims(request) is not None
     out["open_posture"] = access.open_posture(request)
     return out

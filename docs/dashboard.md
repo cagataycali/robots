@@ -27,6 +27,8 @@ until a passkey guards it.
    (or the `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` you set). Paste it, name the key,
    let the browser create the passkey. From that moment the API is sealed: every
    route but the login screen and `/api/health` answers `401` without a session.
+   The login screen's own route says whether setup is required and which proof
+   it needs - never the enrolled passkeys, which only a session may list.
 3. **Bind a LAN address if you want to.** `--host 0.0.0.0` is refused until a
    passkey or a static `DASHBOARD_AUTH_TOKEN` exists, and says so.
 
