@@ -3,9 +3,9 @@
 """Shared media utilities for render pipelines.
 
 One MP4/GIF encoder (:func:`encode_clip`), its join (:func:`concat_clips`)
-and one MJPEG live-stream generator (:func:`mjpeg_frames`), consolidating the several hand-rolled
-``imageio`` writers that previously lived in the recording mixins and the
-GS-demo examples (issue #1537).
+and one MJPEG live-stream generator (:func:`mjpeg_frames`), consolidating the
+several hand-rolled ``imageio`` writers that previously lived in the recording
+mixins and the GS-demo examples (issue #1537).
 """
 
 from __future__ import annotations
@@ -273,6 +273,30 @@ def encode_clip(
     return out
 
 
+def _declared_rate(path: Path, meta: Mapping[str, Any]) -> float | None:
+    """The playback rate ``path``'s header declares, in frames per second.
+
+    An MP4 header carries ``fps`` directly. A GIF carries no rate at all: the
+    format stores a per-frame delay in milliseconds, which is exactly what
+    :func:`encode_clip` writes for a GIF (``duration=1000/fps``), so the rate is
+    read back through the inverse of that conversion. The delay is what the
+    format keeps, and GIF quantises it to 10 ms, so a GIF's rate is the one its
+    delay implies rather than the ``fps`` its writer was handed: 30 fps is
+    stored as 30 ms and reads back as 33.3.
+
+    Returns:
+        The rate, or ``None`` when the header declares neither - which
+        :func:`concat_clips` refuses unless the caller passes one.
+    """
+    declared = meta.get("fps")
+    if isinstance(declared, int | float) and declared > 0:
+        return float(declared)
+    delay_ms = meta.get("duration")
+    if path.suffix.lower() == _GIF_SUFFIX and isinstance(delay_ms, int | float) and delay_ms > 0:
+        return 1000.0 / float(delay_ms)
+    return None
+
+
 def _clip_frames(path: Path, imageio: Any) -> tuple[list[Any], float | None]:
     """Read every frame of the clip at ``path`` and the rate its header declares."""
     reader = imageio.get_reader(str(path))
@@ -281,8 +305,7 @@ def _clip_frames(path: Path, imageio: Any) -> tuple[list[Any], float | None]:
         frames = [np.asarray(frame) for frame in reader]
     finally:
         reader.close()
-    declared = meta.get("fps")
-    return frames, float(declared) if isinstance(declared, int | float) and declared > 0 else None
+    return frames, _declared_rate(path, meta)
 
 
 def concat_clips(
@@ -310,7 +333,10 @@ def concat_clips(
         fps: Playback rate for the joined clip. ``None`` reads it from the first
             clip's header, which is what a caller who wants the join to play at
             the rate its segments were written at should pass; refused when that
-            header declares no rate.
+            header declares no rate. A GIF header declares a per-frame delay
+            rather than a rate, so a GIF segment's rate is the one its delay
+            implies - the format quantises the delay to 10 ms, so a clip written
+            at 30 fps joins at the 33.3 fps it actually plays at.
         quality: Passed to :func:`encode_clip`.
         macro_block_size: Passed to :func:`encode_clip`.
 
