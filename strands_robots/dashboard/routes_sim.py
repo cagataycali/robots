@@ -21,9 +21,9 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
-from strands_robots.dashboard import access, safety_state
+from strands_robots.dashboard import access, safety_state, scene
 from strands_robots.dashboard.log_redaction import one_line
 from strands_robots.dashboard.sim_session import SessionStore, SimSession
 from strands_robots.utils import finite_number_error
@@ -225,12 +225,47 @@ async def stream(
     return StreamingResponse(frames_iter, media_type="multipart/x-mixed-replace; boundary=frame")
 
 
+# -- the twin's geometry ----------------------------------------------------
+
+
+def _model_of(request: Request, session_id: str) -> Any:
+    model = _session(request, session_id).model
+    if model is None:
+        raise HTTPException(409, "session has no model yet")
+    return model
+
+
+@router.get("/api/sim/{session_id}/scene")
+async def scene_description(
+    request: Request, session_id: str, _: dict = Depends(access.require_session)
+) -> dict[str, Any]:
+    """Geoms, meshes and cameras of the compiled model - what the browser twin draws."""
+    return scene.describe(_model_of(request, session_id))
+
+
+@router.get("/api/sim/{session_id}/mesh/{index}")
+async def mesh(request: Request, session_id: str, index: int, _: dict = Depends(access.require_session)) -> Response:
+    """One compiled mesh as ``SRM1`` bytes. Read from ``MjModel``; no file is opened."""
+    model = _model_of(request, session_id)
+    try:
+        body = await asyncio.to_thread(scene.mesh_bytes, model, index)
+    except IndexError:
+        raise HTTPException(404, f"no mesh {index}")
+    return Response(body, media_type="application/octet-stream", headers={"Cache-Control": "private, max-age=3600"})
+
+
 # -- telemetry --------------------------------------------------------------
 
 
 @router.websocket("/ws/telemetry/{session_id}")
-async def telemetry(ws: WebSocket, session_id: str) -> None:
-    """Snapshots at ~15 Hz. Same admission as every other route; a stranger is closed with 4401."""
+async def telemetry(ws: WebSocket, session_id: str, poses: bool = False) -> None:
+    """Snapshots at ~15 Hz. Same admission as every other route; a stranger is closed with 4401.
+
+    With ``?poses=1`` every JSON snapshot is followed by one binary frame: the
+    geom world poses as ``ngeom`` rows of 12 little-endian float32 (see
+    :mod:`strands_robots.dashboard.scene`). The joint strip never asks; the
+    twin always does.
+    """
     try:
         access.caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers/cookies/client like a Request
     except HTTPException:
@@ -247,6 +282,8 @@ async def telemetry(ws: WebSocket, session_id: str) -> None:
             snap = session.snapshot.as_dict()
             snap["lockout"] = ws.app.state.safety.lockout.as_fields()
             await ws.send_json(snap)
+            if poses and session.snapshot.poses:
+                await ws.send_bytes(session.snapshot.poses)
             if snap["state"] in ("stopped", "error"):
                 break
             await asyncio.sleep(1.0 / _TELEMETRY_HZ)

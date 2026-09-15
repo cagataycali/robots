@@ -46,8 +46,10 @@ def _hits(pattern: re.Pattern[str]) -> list[str]:
 class TestTheStaticPagesRenderDataAsText:
     def test_the_scan_has_something_to_read(self) -> None:
         """Both cells below pass vacuously on an empty roster."""
-        assert [p.name for p in SCRIPTS] == ["app.js"]
+        assert [p.name for p in SCRIPTS] == ["app.js", "twin.js"]
         assert "createElement" in (STATIC / "app.js").read_text(encoding="utf-8")
+        # twin.js draws into a canvas through three.js; it owns no DOM text at all.
+        assert "document." not in (STATIC / "twin.js").read_text(encoding="utf-8")
 
     def test_no_script_writes_markup(self) -> None:
         assert _hits(MARKUP_SINKS) == []
