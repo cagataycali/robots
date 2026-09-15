@@ -120,6 +120,69 @@ async function saveSettings(ev) {
   } catch (e) { $("#settings-msg").textContent = e.message; }
 }
 
+
+/* ---- sim ---- */
+const sockets = new Map();
+
+function lockoutLine(l) {
+  const el = $("#lockout");
+  el.className = `lockout ${l.state}`;
+  el.textContent = l.state === "locked" ? `e-stop engaged · ${l.by || "dashboard"} · ${l.reason}` : l.state === "unknown" ? `lockout unknown · ${l.reason}` : `clear · ${l.reason}`;
+}
+
+async function loadSim() {
+  const sel = $("#sim-robot");
+  if (!sel.options.length) {
+    const f = await api("/api/fleet?mode=sim");
+    for (const r of f.robots.filter(r => r.model_local)) {
+      const o = document.createElement("option"); o.value = r.name; o.textContent = `${r.name} · ${r.joints} dof`; sel.appendChild(o);
+    }
+    sel.value = "so101";
+  }
+  lockoutLine((await api("/api/safety")).lockout);
+  const { sessions } = await api("/api/sim");
+  const box = $("#sessions");
+  for (const el of [...box.children]) if (!sessions.some(s => s.id === el.dataset.id)) { sockets.get(el.dataset.id)?.close(); sockets.delete(el.dataset.id); el.remove(); }
+  for (const s of sessions) if (!box.querySelector(`[data-id="${s.id}"]`)) mountSession(s);
+  if (!sessions.length) box.innerHTML = '<p class="muted">No session yet. Pick a robot and press Start - it steps in this process and streams here.</p>';
+  else box.querySelector("p.muted")?.remove();
+}
+
+function mountSession(s) {
+  const el = document.createElement("article"); el.className = "session"; el.dataset.id = s.id;
+  el.innerHTML = `<div class="head"><span class="name">${s.robot}</span><span class="pill mono">${s.id}</span><span class="pill state">${s.state}</span></div>
+    <div class="view"><img alt="${s.robot} camera" src="/api/sim/${s.id}/stream.mjpg"></div>
+    <div class="joints">${s.joint_names.map(n => `<div class="joint"><span class="label">${n}</span><span class="val">0.000</span><span class="bar"><i></i></span></div>`).join("")}</div>
+    <div class="foot"><span class="t">t=0.00s</span><span class="fps"></span><button data-act="reset">Reset</button><button data-act="stop">Stop</button></div>`;
+  $("#sessions").appendChild(el);
+  el.querySelector('[data-act="stop"]').onclick = async () => { await api(`/api/sim/${s.id}`, { method: "DELETE" }); loadSim(); };
+  el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); } catch (e) { lockoutLine({ state: "locked", reason: e.message }); } };
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/telemetry/${s.id}`);
+  sockets.set(s.id, ws);
+  const vals = el.querySelectorAll(".joint .val"), bars = el.querySelectorAll(".joint .bar i");
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    el.classList.toggle("frozen", m.state === "frozen");
+    el.querySelector(".state").textContent = m.state;
+    el.querySelector(".t").textContent = `t=${m.sim_time.toFixed(2)}s`;
+    el.querySelector(".fps").textContent = m.fps ? `${m.fps} fps` : "";
+    m.qpos.forEach((q, i) => { if (vals[i]) { vals[i].textContent = q.toFixed(3); bars[i].style.transform = `translateX(${Math.max(-1, Math.min(1, q / Math.PI)) * 40}px)`; } });
+    lockoutLine(m.lockout);
+    if (m.state === "stopped" || m.state === "error") ws.close();
+  };
+}
+
+$("#sim-new").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try { await api("/api/sim", { method: "POST", body: JSON.stringify({ robot: $("#sim-robot").value }) }); await loadSim(); }
+  catch (e) { lockoutLine({ state: "locked", reason: e.message }); }
+});
+$("#estop").addEventListener("click", async () => {
+  const l = $("#lockout").className.includes("locked");
+  const r = await api(l ? "/api/safety/resume" : "/api/safety/estop", { method: "POST" });
+  lockoutLine(r.lockout); $("#estop").textContent = r.lockout.state === "locked" ? "RESUME" : "E-STOP";
+});
+
 /* ---- ceremonies ---- */
 $("#enrol").addEventListener("submit", async (ev) => {
   ev.preventDefault(); $("#login-error").textContent = "";
@@ -146,6 +209,7 @@ $("#tabs").addEventListener("click", (ev) => {
   if (!authenticated) return showLogin();
   show(v);
   if (v === "fleet") loadFleet();
+  if (v === "sim") loadSim();
   if (v === "settings") loadSettings();
 });
 $("#settings-form").addEventListener("submit", saveSettings);
@@ -159,6 +223,7 @@ async function boot() {
   const v = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : "fleet";
   show(v);
   if (v === "fleet") loadFleet();
+  if (v === "sim") loadSim();
   if (v === "settings") loadSettings();
 }
 boot();

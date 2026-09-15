@@ -76,3 +76,31 @@ button.primary:hover, form button[type=submit]:hover, #login:hover { filter: bri
   .who { margin-left: auto; }
   .grid { grid-template-columns: 1fr; }
 }
+
+/* ---- sim ---- */
+.wrap { flex-wrap: wrap; }
+.danger { font: inherit; font-weight: 700; letter-spacing: 0.08em; color: #fff; background: var(--red); border: 0; border-radius: 8px;
+  padding: 0.55rem 1rem; cursor: pointer; box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.5); transition: box-shadow var(--t); }
+.danger:hover { box-shadow: 0 0 0 4px rgba(255, 77, 79, 0.25); }
+.lockout { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); margin: 0.25rem 0 0.75rem; min-height: 1.2em; }
+.lockout.locked { color: var(--red); }
+.lockout.unknown { color: var(--amber); }
+.lockout.clear { color: var(--green); }
+.sessions { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 0.75rem; }
+.session { background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r); overflow: hidden; display: grid; grid-template-rows: auto auto 1fr auto; }
+.session.frozen { border-color: rgba(255, 77, 79, 0.5); }
+.session .head { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--hair); }
+.session .head .name { font-weight: 600; }
+.session .head .state { margin-left: auto; }
+.session .view { aspect-ratio: 4 / 3; background: #000; display: grid; place-items: center; animation: none; }
+.session .view img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.session .view .placeholder { color: var(--ink-3); font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.joints { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0.4rem 0.6rem; padding: 0.6rem 0.8rem; }
+.joint { display: grid; gap: 0.15rem; }
+.joint .label { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+.joint .val { font-family: var(--mono); font-size: 0.8rem; }
+.joint .bar { height: 3px; background: var(--hair); border-radius: 2px; position: relative; overflow: hidden; }
+.joint .bar i { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: var(--cyan); transition: transform 80ms linear; }
+.session .foot { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.8rem; border-top: 1px solid var(--hair); font-family: var(--mono); font-size: 0.7rem; color: var(--ink-2); }
+.session .foot button { margin-left: auto; font: inherit; color: var(--ink-2); background: transparent; border: 1px solid var(--hair); border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; }
+.session .foot button:hover { color: var(--ink); border-color: var(--ink-2); }
