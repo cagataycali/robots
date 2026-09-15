@@ -18,8 +18,11 @@ honestly run.
 Run::
 
     export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
-    python examples/microduck/agent_policy_hotswap.py \
-        --policy-dir "$PWD/../microduck/policies"
+    python examples/microduck/agent_policy_hotswap.py
+
+Both weights are fetched from Pollen's Hub repository
+``pollen-robotics/microduck-policies`` on first use; ``--policy-dir`` points at
+a directory that already holds them instead.
 
 Dependencies:
   pip install "strands-robots[sim-mujoco,microduck]" strands-agents
@@ -40,16 +43,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--policy-dir",
-        default=os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../../microduck/policies")
-        ),
-        help="Directory holding alpha_walking.onnx and alpha_stand.onnx",
+        default=None,
+        help="directory holding alpha_walking.onnx and alpha_stand.onnx; omit to have the "
+        "provider fetch both from pollen-robotics/microduck-policies on first use",
     )
     ap.add_argument("--steps", type=int, default=120, help="control steps per phase")
     args = ap.parse_args()
 
-    walk = os.path.join(args.policy_dir, "alpha_walking.onnx")
-    stand = os.path.join(args.policy_dir, "alpha_stand.onnx")
+    walk, stand = "alpha_walking.onnx", "alpha_stand.onnx"
+    if args.policy_dir:
+        walk = os.path.join(args.policy_dir, walk)
+        stand = os.path.join(args.policy_dir, stand)
 
     sim = Robot("microduck", mesh=False)
     agent = Agent(tools=[sim])

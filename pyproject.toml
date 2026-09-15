@@ -232,11 +232,16 @@ microduck = [
     # Pollen Microduck locomotion policies - ONNX actors with the input
     # normaliser fused into the exported graph. onnxruntime runs the graph;
     # the provider self-configures from the ONNX metadata, so nothing else is
-    # needed to load a weight file. Weights are NOT bundled - they ship in
-    # Pollen's microduck repo under policies/*.onnx. A MuJoCo rollout uses the
-    # separate [sim-mujoco] extra. See strands_robots/policies/microduck/ and
-    # docs/policies/microduck.md.
+    # needed to load a weight file. Weights are NOT bundled - Pollen publishes
+    # them on the Hub at pollen-robotics/microduck-policies (the policies/
+    # directory of their git repo is gone), and huggingface_hub fetches a bare
+    # weight name from there. A MuJoCo rollout uses the separate [sim-mujoco]
+    # extra. See strands_robots/policies/microduck/ and docs/policies/microduck.md.
     "onnxruntime>=1.17.0,<2.0.0",
+    # Floor 1.5 for the same reason as [wbc]: hf_hub_download is old, but every
+    # other extra that reads the Hub already pins this window, so one resolver
+    # window for the whole install.
+    "huggingface_hub>=1.5,<2.0.0",
 ]
 # Bitcraze client library for the Crazyflie 2.x native driver: CRTP over a
 # Crazyradio dongle (or the USB cable), the commander/high-level-commander

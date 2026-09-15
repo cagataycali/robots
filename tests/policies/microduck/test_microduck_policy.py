@@ -20,13 +20,29 @@ import pytest
 from strands_robots.policies.microduck import (
     MICRODUCK_DEFAULT_POSE,
     MICRODUCK_JOINT_NAMES,
+    MICRODUCK_POLICIES_HF_REPO,
     MicroduckPolicy,
     MicroduckPolicyBundle,
 )
 from strands_robots.policies.microduck.observation import build_observation, decode_action
 
-# Path to Pollen's shipped walking weights, relative to the repo root.
-_ONNX = Path(__file__).resolve().parents[3].parent / "microduck" / "policies" / "alpha_walking.onnx"
+
+def _cached_walking_weight() -> Path:
+    """Pollen's ``alpha_walking.onnx`` if an earlier run fetched it from the Hub.
+
+    Read from the ``huggingface_hub`` cache only - no network - so the real-weight
+    layer runs where a rollout already happened and skips everywhere else.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return Path("/nonexistent/alpha_walking.onnx")
+    hit = try_to_load_from_cache(MICRODUCK_POLICIES_HF_REPO, "alpha_walking.onnx")
+    return Path(hit) if isinstance(hit, str) else Path("/nonexistent/alpha_walking.onnx")
+
+
+# Pollen's shipped walking weights, from the Hub cache (see ``_cached_walking_weight``).
+_ONNX = _cached_walking_weight()
 
 
 class _Meta:
@@ -224,7 +240,7 @@ class TestRegistry:
         assert import_policy_class("microduck") is MicroduckPolicy
 
 
-@pytest.mark.skipif(not _ONNX.exists(), reason="Pollen alpha_walking.onnx not present")
+@pytest.mark.skipif(not _ONNX.exists(), reason="Pollen alpha_walking.onnx not in the Hub cache")
 class TestRealWeights:
     def test_byte_compat_with_raw_session(self):
         ort = pytest.importorskip("onnxruntime")
