@@ -41,6 +41,9 @@
       <h1>Sim</h1>
       <form id="sim-new" class="row">
         <select name="robot" id="sim-robot" aria-label="robot"></select>
+        <select name="source" id="sim-source" aria-label="source" title="Simulate, or mirror the real arm on a serial port (read-only: the bus is never written)">
+          <option value="">simulate</option>
+        </select>
         <button type="submit" class="primary">Start</button>
       </form>
       <button id="estop" class="danger" title="Freeze every session and latch the lockout">E-STOP</button>

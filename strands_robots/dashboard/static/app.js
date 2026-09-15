@@ -141,6 +141,14 @@ async function loadSim() {
       const o = document.createElement("option"); o.value = r.name; o.textContent = `${r.name} · ${r.joints} dof`; sel.appendChild(o);
     }
     sel.value = "so101";
+    try {
+      const { ports } = await api("/api/sim/ports");
+      for (const p of ports) {
+        const o = document.createElement("option"); o.value = p.port;
+        o.textContent = `mirror ${p.port.replace(/^\/dev\//, "")}${p.likely_servo_bus ? " · servo bus" : ""}`;
+        $("#sim-source").appendChild(o);
+      }
+    } catch (e) { console.warn("ports", e); }
   }
   lockoutLine((await api("/api/safety")).lockout);
   const { sessions } = await api("/api/sim");
@@ -153,14 +161,15 @@ async function loadSim() {
 
 function mountSession(s) {
   const el = document.createElement("article"); el.className = "session"; el.dataset.id = s.id;
-  el.innerHTML = `<div class="head"><span class="name">${s.robot}</span><span class="pill mono">${s.id}</span><span class="pill state">${s.state}</span></div>
+  const mirror = s.source && s.source.startsWith("real:");
+  el.innerHTML = `<div class="head"><span class="name">${s.robot}</span><span class="pill mono">${s.id}</span><span class="pill state">${s.state}</span>${mirror ? `<span class="pill mirror" title="Reads the servo bus at ${s.source.slice(5)}; never writes it">mirror · read-only</span>` : ""}</div>
     <div class="view"><canvas class="twin"></canvas><img class="cam" alt="${s.robot} camera" hidden>
       <div class="viewsel" role="tablist"><button class="on" data-view="twin">Twin</button><button data-view="cam">Camera</button></div></div>
     <div class="joints">${s.joint_names.map(n => `<div class="joint"><span class="label">${n}</span><span class="val">0.000</span><span class="bar"><i></i></span></div>`).join("")}</div>
-    <div class="foot"><span class="t">t=0.00s</span><span class="fps"></span><button data-act="reset">Reset</button><button data-act="stop">Stop</button></div>`;
+    <div class="foot"><span class="t">t=0.00s</span><span class="fps"></span><span class="bus mono"></span>${mirror ? "" : '<button data-act="reset">Reset</button>'}<button data-act="stop">Stop</button></div>`;
   $("#sessions").appendChild(el);
   el.querySelector('[data-act="stop"]').onclick = async () => { await api(`/api/sim/${s.id}`, { method: "DELETE" }); loadSim(); };
-  el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); } catch (e) { lockoutLine({ state: "locked", reason: e.message }); } };
+  if (el.querySelector('[data-act="reset"]')) el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); } catch (e) { lockoutLine({ state: "locked", reason: e.message }); } };
   const twin = new Twin(el.querySelector("canvas.twin"), s.id);
   twins.set(s.id, twin);
   twin.load().catch((e) => console.warn("twin", e));
@@ -179,8 +188,10 @@ function mountSession(s) {
     if (ev.data instanceof ArrayBuffer) { twin.poses(ev.data); return; }
     const m = JSON.parse(ev.data);
     el.classList.toggle("frozen", m.state === "frozen");
+    el.classList.toggle("stale", m.state === "stale" || m.state === "error");
     el.querySelector(".state").textContent = m.state;
-    el.querySelector(".t").textContent = `t=${m.sim_time.toFixed(2)}s`;
+    el.querySelector(".t").textContent = m.bus ? `${m.bus.hz} Hz bus` : `t=${m.sim_time.toFixed(2)}s`;
+    if (m.bus) el.querySelector(".bus").textContent = m.bus.error ? m.bus.error : m.bus.age_ms == null ? "waiting for the bus" : `read ${m.bus.age_ms} ms ago · torque untouched`;
     el.querySelector(".fps").textContent = m.fps ? `${m.fps} fps` : "";
     m.qpos.forEach((q, i) => { if (vals[i]) { vals[i].textContent = q.toFixed(3); bars[i].style.transform = `translateX(${Math.max(-1, Math.min(1, q / Math.PI)) * 40}px)`; } });
     lockoutLine(m.lockout);
@@ -190,7 +201,10 @@ function mountSession(s) {
 
 $("#sim-new").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  try { await api("/api/sim", { method: "POST", body: JSON.stringify({ robot: $("#sim-robot").value }) }); await loadSim(); }
+  const port = $("#sim-source").value;
+  const body = { robot: $("#sim-robot").value };
+  if (port) body.mirror = { port };
+  try { await api("/api/sim", { method: "POST", body: JSON.stringify(body) }); await loadSim(); }
   catch (e) { lockoutLine({ state: "locked", reason: e.message }); }
 });
 $("#estop").addEventListener("click", async () => {
