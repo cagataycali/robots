@@ -4863,9 +4863,28 @@ class MuJoCoSimEngine(
                 self._world.step_count += batch
             remaining -= batch
         self._publish_ros_telemetry()
+        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        # A dataset recording is fed by run_policy's per-step hook and by
+        # nothing else. A caller scripting a demonstration with
+        # set_joint_positions + step under an active recording therefore
+        # captures nothing, and until now learned that only from
+        # stop_recording's empty-dataset refusal - after the whole scripted
+        # motion had run. Say it here, on the call that does not record, while
+        # the motion is still ahead. A rollout in flight IS recording (its hook
+        # runs on the executor thread), so the note stays silent then. The note
+        # LEADS the line: appended after the step summary it was read past
+        # three times in a row by an agent that then reported "all three poses
+        # captured" - the first token of a success result is what gets read.
+        if self._world._backend_state.get("recording") and not any(
+            r.policy_running for r in self._world.robots.values()
+        ):
+            summary = (
+                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
+                "run_policy feeds the recorder (start_recording -> run_policy -> stop_recording) | " + summary
+            )
         return {
             "status": "success",
-            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [{"text": summary}],
         }
 
     def reset(self) -> dict[str, Any]:
