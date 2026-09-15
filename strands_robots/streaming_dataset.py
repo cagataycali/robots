@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -248,6 +249,8 @@ class StreamingDatasetReader:
         ds = StreamingCls(**kwargs)
         if drop_videos:
             _hide_video_features(ds)
+        elif getattr(getattr(ds, "meta", None), "video_keys", None):
+            _warn_if_video_decode_will_fail()
         if delta_timestamps and validate_deltas:
             from lerobot.datasets.feature_utils import check_delta_timestamps
 
@@ -293,6 +296,20 @@ class StreamingDatasetReader:
 
     def __iter__(self) -> Any:
         return iter(self.dataset)
+
+
+def _warn_if_video_decode_will_fail() -> None:
+    """Say the dyld remedy now, once, if this process cannot decode video.
+
+    The import-time shim (:mod:`strands_robots._dyld`) records the remedy when
+    it could not re-exec an interactive host; this is the point where video is
+    actually about to be decoded, so it is where the warning belongs.
+    """
+    from strands_robots._dyld import video_decode_hint
+
+    hint = video_decode_hint()
+    if hint:
+        warnings.warn(hint, RuntimeWarning, stacklevel=3)
 
 
 def _hide_video_features(ds: Any) -> None:

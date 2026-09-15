@@ -3,6 +3,7 @@
 import io
 import logging
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1907,6 +1908,60 @@ class RenderingMixin:
             cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, getattr(registered, "name", None))
         return int(cam_id)
 
+    def _one_name_per_camera(self, names: Iterable[str]) -> list[str]:
+        """Drop each name that repeats a camera an earlier name already named.
+
+        A camera answers to more than one name: ``add_robot`` registers a
+        robot's MJCF cameras under their short alias (``wrist``) while the
+        compiled model holds them namespaced (``arm0/wrist``), and
+        :meth:`_camera_id` -- which owns that rule for every camera surface on
+        this backend -- resolves both spellings to one ``mjOBJ_CAMERA`` id.
+        Enumerating a scene by name therefore yields the same camera twice, so
+        the surfaces that capture "every camera" captured it twice:
+        :meth:`render_all` returned two pixel-identical frames under two
+        labels, and :meth:`start_cameras_recording` ran a second encoder to
+        write a second MP4 of one view.
+
+        That is the outcome two sibling guards already refuse --
+        :func:`~strands_robots.simulation.recording.camera_clip_name_collision_error`
+        for two cameras naming one clip, and
+        :func:`~strands_robots.utils.name_list_error` for a caller who names
+        one camera twice, because "a repeated name opened a second encoder on
+        the one output path". Neither could see this one: two spellings of one
+        camera are two distinct names, and they name two distinct clips.
+
+        The first spelling wins, which keeps a caller's own ordering and, for
+        the scene-wide list, prefers the namespaced model name -- unique per
+        robot by construction, and the spelling these surfaces have always
+        captured under.
+
+        Args:
+            names: Camera names, in the order they were resolved.
+
+        Returns:
+            ``names`` without any repeat of an already-named camera. A name no
+            camera in the compiled model answers for cannot be shown to repeat
+            another, so every such name is kept for its caller to report.
+        """
+        first_named_by: dict[int, str] = {}
+        kept: list[str] = []
+        for name in names:
+            cam_id = self._camera_id(name)
+            if cam_id < 0:
+                kept.append(name)
+                continue
+            if (already := first_named_by.get(cam_id)) is not None:
+                logger.debug(
+                    "Camera %r is camera id %d, already listed as %r; not capturing it twice",
+                    name,
+                    cam_id,
+                    already,
+                )
+                continue
+            first_named_by[cam_id] = name
+            kept.append(name)
+        return kept
+
     def _list_camera_names(self) -> list[str]:
         """helper to list all camera names (model-defined + SimCamera aliases)
         for error messages when an unknown camera_name is requested."""
@@ -2132,10 +2187,17 @@ class RenderingMixin:
         Handles namespaced camera names (e.g. 'arm0/wrist_cam') by also
         checking the short suffix form ('wrist_cam').
 
+        Each camera is named once: a scene holds a robot camera under both its
+        namespaced and its short spelling, and the callers of this method
+        capture one frame or open one encoder per name returned, so
+        :meth:`_one_name_per_camera` drops a name that repeats a camera an
+        earlier name already named.
+
         Returns
         -------
         resolved : list[str]
-            Camera names that resolved to real model cameras.
+            Camera names that resolved to real model cameras, each camera
+            appearing once.
         unresolved_inputs : list[str]
             User-supplied camera names that could NOT be resolved (empty
             list when cameras is None or when every input matched).
@@ -2149,7 +2211,7 @@ class RenderingMixin:
         py_side = list(self._world.cameras.keys()) if self._world else []
         all_cams = list(dict.fromkeys(from_model + py_side))
         if cameras is None:
-            return all_cams, []
+            return self._one_name_per_camera(all_cams), []
         # Try to resolve unknown names via namespace prefix matching.
         resolved: list[str] = []
         unresolved: list[str] = []
@@ -2169,7 +2231,7 @@ class RenderingMixin:
                         c,
                         ", ".join(all_cams) or "(none)",
                     )
-        return resolved, unresolved
+        return self._one_name_per_camera(resolved), unresolved
 
     def render_all(self, cameras=None, width=None, height=None):
         """Render every (or a subset of) camera in one call.
