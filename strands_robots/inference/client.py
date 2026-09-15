@@ -267,16 +267,63 @@ class RemotePolicy(Policy):
 
     # -- connection lifecycle -------------------------------------------------
 
+    def _parse(self, frame: str | bytes, what: str) -> dict[str, Any]:
+        """Decode one inbound frame, or report a peer that does not speak this protocol.
+
+        Every other malformation a peer can send is already a
+        ``ConnectionError`` naming the peer: a first frame that is not
+        ``ready``, a protocol version this client does not speak, a metadata
+        field outside its domain. A frame the *codec* cannot read was the one
+        that was not - :func:`~strands_robots.inference.protocol.loads` raises
+        a ``ValueError`` (a ``UnicodeDecodeError`` for non-UTF-8 bytes, a
+        ``JSONDecodeError`` for text that is not JSON), and it escaped from
+        methods documented to raise ``ConnectionError``, naming neither the URI
+        nor the frame. It is the ordinary report for an ordinary mistake: this
+        package also serves policies over a WebSocket in msgpack
+        (:mod:`strands_robots.policies.cosmos3`), so dialling that server, or
+        any other endpoint on the host, answered ``invalid start byte`` and
+        named no URI.
+
+        The other end of this same conversation already answers this way -
+        :class:`~strands_robots.inference.server.PolicyServer` marshals an
+        unreadable frame back as an ``error`` message and carries on serving -
+        so this is the client half of a rule the protocol already has.
+
+        Args:
+            frame: The raw WebSocket frame as received.
+            what: Which read it answered (``"handshake"`` / ``"reply"``), so a
+                report names the exchange that failed rather than the codec.
+
+        Returns:
+            The decoded message dict.
+
+        Raises:
+            ConnectionError: If the frame cannot be read as a protocol message.
+                The codec failure is kept as the cause.
+        """
+        try:
+            return protocol.loads(frame)
+        except ValueError as exc:
+            raise ConnectionError(
+                f"{_SERVER_NAME} at {self.uri} sent a {what} frame this client cannot read as a "
+                f"protocol message ({type(exc).__name__}: {exc}); the frame begins {frame[:60]!r}. "
+                "A peer that answers here in another wire format is not a PolicyServer: check the "
+                "port serves python -m strands_robots.inference.server and not another WebSocket "
+                "policy server."
+            ) from exc
+
     def _connect(self) -> None:
         """Open the WebSocket, read the handshake, and flush pending config.
 
         Raises:
-            ConnectionError: When the server cannot be reached, or when it
+            ConnectionError: When the server cannot be reached, when it
                 accepted the connection and then sent no handshake within
-                ``connect_timeout``. Those are separate reports on purpose: the
-                second server is listening, so telling the operator to start
-                one names the only thing that is not wrong. The read itself is
-                bounded, so a peer that never answers cannot hold the caller.
+                ``connect_timeout``, or when the handshake it did send cannot be
+                read as a protocol message (:meth:`_parse`). Those are separate
+                reports on purpose: the second and third servers are listening,
+                so telling the operator to start one names the only thing that
+                is not wrong. The read itself is bounded, so a peer that never
+                answers cannot hold the caller.
         """
         from websockets.sync.client import connect
 
@@ -303,7 +350,7 @@ class RemotePolicy(Policy):
         # raising the mismatch once and then serving on it silently.
         established = False
         try:
-            ready = protocol.loads(self._ws.recv(timeout=self.connect_timeout))
+            ready = self._parse(self._ws.recv(timeout=self.connect_timeout), "handshake")
             if ready.get("type") != protocol.MSG_READY:
                 raise ConnectionError(f"expected a '{protocol.MSG_READY}' handshake, got {ready.get('type')!r}")
             server_version = ready.get("protocol_version")
@@ -475,7 +522,8 @@ class RemotePolicy(Policy):
 
         Raises:
             ConnectionError: When the reply does not arrive within
-                ``request_timeout``. The connection is live, so this names a
+                ``request_timeout``, or when it arrives unreadable (see
+                :meth:`_parse`). The connection is live, so this names a
                 server that is still loading or wedged and the budget that
                 expired, not an absent one.
             RuntimeError: When the server marshals a dispatch failure back.
@@ -491,7 +539,7 @@ class RemotePolicy(Policy):
         exchanged = False
         try:
             self._ws.send(protocol.dumps(message))
-            reply = protocol.loads(self._ws.recv(timeout=self.request_timeout))
+            reply = self._parse(self._ws.recv(timeout=self.request_timeout), "reply")
             exchanged = True
         except TimeoutError as exc:
             # Same distinction as the handshake read, on the other budget: the

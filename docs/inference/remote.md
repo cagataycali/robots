@@ -209,6 +209,14 @@ re-raised on the client as a `RuntimeError` carrying the server traceback - the
 client never silently substitutes a zero action. An unreachable server raises a
 `ConnectionError` with a hint on how to start one.
 
+A peer that answers on the URI in another wire format is refused the same way: a
+frame the client cannot read as a protocol message raises a `ConnectionError`
+naming the endpoint, which read it answered (handshake or reply), the codec
+failure and the frame's opening bytes - so dialling, say, a msgpack policy
+server reports what it reached instead of `invalid start byte`. The other end
+follows the same rule: a frame the server cannot parse comes back as an `error`
+message and the connection keeps serving.
+
 ## Non-goals (v1)
 
 - **Auth / TLS**: the transport is plaintext. Run it over tailscale / wireguard
