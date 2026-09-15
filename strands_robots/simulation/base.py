@@ -700,6 +700,24 @@ _BOOLEAN_STATE_REASON = (
 )
 
 
+def _bundled_benchmark_roster() -> str:
+    """Name every bundled benchmark and the robot it defaults to.
+
+    Read from :func:`~strands_robots.simulation.builtin_benchmarks.builtin_benchmark_specs`
+    so no discovery text hand-maintains the roster. A newly bundled benchmark
+    is named by :meth:`SimEngine.describe` without an edit, which is how
+    ``go2_strafe_left`` and ``go2_turn_left`` came to be missing from it.
+
+    Returns:
+        ``"g1_walk_forward (unitree_g1), go2_strafe_left (unitree_go2), ..."``,
+        sorted by benchmark name.
+    """
+    from strands_robots.simulation.builtin_benchmarks import builtin_benchmark_specs
+
+    specs = builtin_benchmark_specs()
+    return ", ".join(f"{name} ({specs[name]['default_robot']})" for name in sorted(specs))
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -5708,9 +5726,9 @@ class SimEngine(ABC):
                 ),
                 "register_builtin_benchmarks": (
                     "() -> dict  # register the shipped built-in velocity-tracking "
-                    "locomotion benchmarks - the go2_walk_forward quadruped task and "
-                    "the g1_walk_forward / t1_walk_forward humanoid tasks - so they "
-                    "appear in list_benchmarks and can be run via evaluate_benchmark"
+                    "locomotion benchmarks for the quadruped and humanoid robots - "
+                    f"{_bundled_benchmark_roster()} - so they appear in "
+                    "list_benchmarks and can be run via evaluate_benchmark"
                 ),
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, "
