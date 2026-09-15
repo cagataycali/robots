@@ -1,6 +1,8 @@
 /* strands robots dashboard - app shell. ES modules, no bundler.
    Every request goes through api(); a 401 anywhere routes to the login view. */
 
+import { Twin } from "./twin.js";
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const views = ["fleet", "sim", "agent", "settings"];
 let authenticated = false;
@@ -123,6 +125,7 @@ async function saveSettings(ev) {
 
 /* ---- sim ---- */
 const sockets = new Map();
+const twins = new Map();
 
 function lockoutLine(l) {
   const el = $("#lockout");
@@ -142,7 +145,7 @@ async function loadSim() {
   lockoutLine((await api("/api/safety")).lockout);
   const { sessions } = await api("/api/sim");
   const box = $("#sessions");
-  for (const el of [...box.children]) if (!sessions.some(s => s.id === el.dataset.id)) { sockets.get(el.dataset.id)?.close(); sockets.delete(el.dataset.id); el.remove(); }
+  for (const el of [...box.children]) if (!sessions.some(s => s.id === el.dataset.id)) { sockets.get(el.dataset.id)?.close(); sockets.delete(el.dataset.id); twins.get(el.dataset.id)?.dispose(); twins.delete(el.dataset.id); el.remove(); }
   for (const s of sessions) if (!box.querySelector(`[data-id="${s.id}"]`)) mountSession(s);
   if (!sessions.length) box.innerHTML = '<p class="muted">No session yet. Pick a robot and press Start - it steps in this process and streams here.</p>';
   else box.querySelector("p.muted")?.remove();
@@ -151,16 +154,29 @@ async function loadSim() {
 function mountSession(s) {
   const el = document.createElement("article"); el.className = "session"; el.dataset.id = s.id;
   el.innerHTML = `<div class="head"><span class="name">${s.robot}</span><span class="pill mono">${s.id}</span><span class="pill state">${s.state}</span></div>
-    <div class="view"><img alt="${s.robot} camera" src="/api/sim/${s.id}/stream.mjpg"></div>
+    <div class="view"><canvas class="twin"></canvas><img class="cam" alt="${s.robot} camera" hidden>
+      <div class="viewsel" role="tablist"><button class="on" data-view="twin">Twin</button><button data-view="cam">Camera</button></div></div>
     <div class="joints">${s.joint_names.map(n => `<div class="joint"><span class="label">${n}</span><span class="val">0.000</span><span class="bar"><i></i></span></div>`).join("")}</div>
     <div class="foot"><span class="t">t=0.00s</span><span class="fps"></span><button data-act="reset">Reset</button><button data-act="stop">Stop</button></div>`;
   $("#sessions").appendChild(el);
   el.querySelector('[data-act="stop"]').onclick = async () => { await api(`/api/sim/${s.id}`, { method: "DELETE" }); loadSim(); };
   el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); } catch (e) { lockoutLine({ state: "locked", reason: e.message }); } };
-  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/telemetry/${s.id}`);
+  const twin = new Twin(el.querySelector("canvas.twin"), s.id);
+  twins.set(s.id, twin);
+  twin.load().catch((e) => console.warn("twin", e));
+  const img = el.querySelector("img.cam");
+  for (const b of el.querySelectorAll(".viewsel button")) b.onclick = () => {
+    el.querySelectorAll(".viewsel button").forEach(x => x.classList.toggle("on", x === b));
+    const cam = b.dataset.view === "cam";
+    img.hidden = !cam; el.querySelector("canvas.twin").hidden = cam;
+    img.src = cam ? `/api/sim/${s.id}/stream.mjpg` : ""; // only stream while shown
+  };
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/telemetry/${s.id}?poses=1`);
+  ws.binaryType = "arraybuffer";
   sockets.set(s.id, ws);
   const vals = el.querySelectorAll(".joint .val"), bars = el.querySelectorAll(".joint .bar i");
   ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) { twin.poses(ev.data); return; }
     const m = JSON.parse(ev.data);
     el.classList.toggle("frozen", m.state === "frozen");
     el.querySelector(".state").textContent = m.state;
