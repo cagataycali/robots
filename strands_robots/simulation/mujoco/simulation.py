@@ -117,7 +117,7 @@ from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesM
 from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
-from strands_robots.simulation.mujoco.rendering import RenderingMixin
+from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     eject_camera_from_scene,
@@ -602,6 +602,7 @@ class MuJoCoSimEngine(
         peer_id: str | None = None,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
+        render_dir: str | os.PathLike[str] | None = None,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -652,6 +653,19 @@ class MuJoCoSimEngine(
                 with a :class:`ValueError` during construction whether or not
                 ``ros2_bridge`` is set, so a backend that only publishes later
                 still rejects it up front. Defaults to ``0``.
+            render_dir: Directory that ``render(output_path=...)`` may write
+                into for THIS Simulation - its render sandbox. The model
+                supplies ``output_path`` and cannot move the sandbox; the
+                developer constructing the Simulation can, here, without an
+                environment variable set before the process started. A bare
+                filename lands in this directory; an absolute path outside it
+                is refused as before. Created on the first render if absent.
+                ``None`` (the default) keeps the process-wide sandbox
+                (``STRANDS_ROBOTS_RENDER_ROOT``, else
+                ``~/.strands_robots/renders``). Reaches here from
+                ``Robot(name, mode="sim", render_dir=...)`` through the factory's
+                ``**kwargs``. A value that cannot name a directory (a non-path
+                type, an empty string) is refused with a :class:`ValueError`.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -702,6 +716,10 @@ class MuJoCoSimEngine(
         for _param, _value in (("default_width", default_width), ("default_height", default_height)):
             if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
                 raise ValueError(dim_err)
+        # Same rule as the dimensions: a constructor argument that cannot mean
+        # what it says is refused here, before any ROS 2 node exists.
+        if render_dir is not None and (dir_err := render_dir_error(render_dir)) is not None:
+            raise ValueError(f"MuJoCoSimEngine: {dir_err}")
         # ``mesh`` is resolved here, above ``_init_ros_bridge``, for the reason
         # stated immediately above: it is the one remaining constructor argument
         # that can be refused, and ``_validated_mesh_handle``'s ``TypeError``
@@ -721,6 +739,9 @@ class MuJoCoSimEngine(
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
+        #: This Simulation's render sandbox, or ``None`` for the process default.
+        #: Resolved once here so ``render`` confines against the on-disk location.
+        self.render_dir: Path | None = resolve_render_dir(render_dir) if render_dir is not None else None
 
         # Mesh attributes are stored plainly (no property wrapper) so
         # downstream code can swap in a real mesh client after
