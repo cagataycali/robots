@@ -83,6 +83,7 @@ in sim runs on the metal by changing `mode`.
 | **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](docs/simulation/overview.md) |
 | **Mesh** every robot as a Zenoh peer: `tell()` another robot what to do, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](docs/mesh.md) |
 | **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](docs/ros2-integration.md) |
+| **Watch it** from one browser tab: the fleet, a simulated robot with a live 3D twin, an e-stop, and a Strands Agent that asks before it moves anything | [Dashboard](docs/dashboard.md) |
 | **Configure** every environment variable the package reads, with its default and its guard | [Configuration](docs/reference/configuration.md) |
 
 <p align="center">
