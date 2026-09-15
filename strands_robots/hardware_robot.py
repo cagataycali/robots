@@ -2901,7 +2901,8 @@ class Robot(TeleopMixin, AgentTool):
                 "degrees + raw ticks, torque on/off, voltage; list_cameras; render = save one camera frame "
                 "(camera_name, optional output_path). "
                 "Motion (asks the operator first, then reads back): set_joint_positions {positions: {joint: "
-                "target}} in the unit get_state reports, at most 20° per joint per call unless the config declares "
+                "target}} in the unit get_state reports for that joint, at most 20 of that unit per joint per call "
+                "unless the config declares "
                 "max_relative_target (raw=true for encoder ticks); set_gripper {position}; set_torque {enabled, "
                 "joints?} (false releases the arm and is never gated); execute (blocking policy rollout, instruction "
                 "required); start (same, async). status = task state; stop = cancel the rollout. "
@@ -2936,14 +2937,18 @@ class Robot(TeleopMixin, AgentTool):
                         "positions": {
                             "type": "object",
                             "description": (
-                                "set_joint_positions: {joint name: target} in the unit get_state reports (degrees; "
-                                "0-100 for a calibrated gripper). Each joint may travel at most the per-call cap."
+                                "set_joint_positions: {joint name: target} in the unit get_state reports for that "
+                                "joint - degrees, or a normalised percentage of its calibrated range (get_state and "
+                                "the result text name it). Each joint may travel at most the per-call cap."
                             ),
                             "additionalProperties": {"type": "number"},
                         },
                         "position": {
                             "type": "number",
-                            "description": "set_gripper: target for the gripper joint (0-100 on a calibrated arm).",
+                            "description": (
+                                "set_gripper: target for the gripper joint, in the unit get_state reports for it "
+                                "(0-100 on a calibrated arm)."
+                            ),
                         },
                         "raw": {
                             "type": "boolean",
@@ -3153,11 +3158,18 @@ class Robot(TeleopMixin, AgentTool):
             }
         positions = self._positions_for(action, tool_input)
         plan = hardware_motion.plan_joint_targets(self.robot, positions, raw=bool(tool_input.get("raw", False)))
-        unit = " ticks" if plan["frame"] == "ticks" else "°"
+        # Each joint's unit comes from the plan, which read it from the arm:
+        # lerobot normalises a joint per its MotorNormMode, so a target is in
+        # degrees, 0-100 or -100..100 depending on the joint - and an operator
+        # shown "12°" for a normalised joint approves travel that is not what
+        # the servo will do.
         travel = "; ".join(
-            f"{j}: {plan['current'][j]:.1f} → {plan['targets'][j]:.1f}{unit} ({plan['deltas'][j]:+.1f})"
+            f"{j}: {plan['current'][j]:.1f} → {plan['targets'][j]:.1f}{plan['units'][j]} ({plan['deltas'][j]:+.1f})"
             for j in plan["targets"]
         )
+        normalised = [f"{j} in {plan['unit_labels'][j]}" for j in plan["targets"] if plan["units"][j] == "%"]
+        if normalised:
+            travel += ". Units: " + "; ".join(normalised) + " - not degrees"
         frame = "" if plan["calibrated"] else " (arm NOT calibrated: encoder frame, joint limits unknown)"
         return {
             "gated": True,

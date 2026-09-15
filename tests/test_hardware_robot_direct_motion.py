@@ -38,7 +38,7 @@ from strands_robots import hardware_robot as hardware_robot_module
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
 from tests._daemon_executor import DaemonThreadExecutor
-from tests.test_hardware_robot_observe_actions import FakeBus, FakeLeRobot
+from tests.test_hardware_robot_observe_actions import FakeBus, FakeLeRobot, _Mode
 
 # The autouse fixture below stubs ``time.sleep`` (the module attribute the motion
 # code reads); the hardware test needs the real one for a real settle.
@@ -87,9 +87,30 @@ class MotionBus(FakeBus):
             self.ticks[name] -= 3
 
 
-def _robot(*, calibrated: bool) -> FakeLeRobot:
-    robot = FakeLeRobot(calibrated=calibrated)
-    robot.bus = MotionBus(calibrated=calibrated)
+class MotionRobot(FakeLeRobot):
+    """The fake arm carrying the write-recording bus, which is what a move reads back."""
+
+    bus: MotionBus
+
+    def __init__(self, *, calibrated: bool) -> None:
+        super().__init__(calibrated=calibrated)
+        self.bus = MotionBus(calibrated=calibrated)
+
+
+def _robot(*, calibrated: bool) -> MotionRobot:
+    return MotionRobot(calibrated=calibrated)
+
+
+def _normalised_body(robot: MotionRobot) -> MotionRobot:
+    """The arm shape lerobot's ``koch``/``omx`` follower has by default.
+
+    Their config's ``use_degrees`` is false, so every body joint is normalised
+    to ``-100..100`` percent of its calibrated range instead of degrees - the
+    gripper is already ``0-100``. Nothing but the servo's declared mode changes.
+    """
+    for motor in robot.bus.motors.values():
+        if motor.norm_mode is _Mode.DEGREES:
+            motor.norm_mode = _Mode.RANGE_M100_100
     return robot
 
 
@@ -144,7 +165,7 @@ def _stream(hw: HwRobot, state: dict[str, Any], **tool_input: Any) -> list:
 
 def _result(events: list) -> dict[str, Any]:
     assert isinstance(events[-1], ToolResultEvent), events[-1]
-    return events[-1].tool_result
+    return dict(events[-1].tool_result)
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -379,6 +400,91 @@ class TestUnits:
         assert hardware_motion.DIRECT_MOTION_ACTIONS <= hardware_robot_module.MOTION_ACTIONS
         assert "set_torque" in hardware_robot_module.MOTION_ACTIONS
         assert "stop" not in hardware_robot_module.MOTION_ACTIONS
+
+
+class TestEveryTextQuotesTheUnitTheJointReportsIn:
+    """A target is quoted in the unit the ARM reports that joint in, in every text.
+
+    lerobot normalises each joint per its ``MotorNormMode``, so "degrees" is one
+    of three answers: a calibrated gripper is ``0-100``, and every body joint of
+    a ``koch``/``omx`` arm is ``-100..100`` (their ``use_degrees`` defaults to
+    false). ``read_joint_state`` is the only thing that knows which, so the
+    operator's warning, the over-cap refusal and the read-back all ask it.
+    """
+
+    @pytest.mark.parametrize(
+        ("normalised_body", "joint", "target", "symbol", "mode"),
+        [
+            (False, "gripper", 52.0, "%", "range_0_100"),
+            (False, "elbow_flex", 95.0, "°", None),
+            (True, "elbow_flex", 95.0, "%", "range_m100_100"),
+        ],
+    )
+    def test_the_operator_approves_travel_in_that_unit(
+        self, normalised_body: bool, joint: str, target: float, symbol: str, mode: str | None
+    ) -> None:
+        robot = _robot(calibrated=True)
+        if normalised_body:
+            _normalised_body(robot)
+        hw = _make_hw(robot)
+
+        events = _stream(hw, _state(None), action="set_joint_positions", positions={joint: target})
+
+        reason = str(events[-1].interrupts[0].reason)
+        assert f"→ {target:.1f}{symbol}" in reason, reason
+        if mode is not None:
+            # A number the operator would read as degrees is the motion they did not approve.
+            assert f"{target:.1f}°" not in reason
+            assert mode in reason and "not degrees" in reason
+        assert robot.bus.writes == []
+
+    def test_the_gate_the_refusal_and_the_read_back_agree_on_one_joint(self) -> None:
+        robot = _robot(calibrated=True)
+        hw = _make_hw(robot)
+
+        gate = str(_stream(hw, _state(None), action="set_gripper", position=52.0)[-1].interrupts[0].reason)
+        refusal = _text(_result(_stream(hw, _state(None), action="set_gripper", position=99.0)))
+        read_back = _text(_result(_stream(hw, _state("y"), action="set_gripper", position=52.0)))
+
+        for text in (gate, refusal, read_back):
+            assert "%" in text and "°" not in text, text
+
+    def test_a_degrees_joint_reads_in_degrees_and_carries_no_units_note(self) -> None:
+        hw = _make_hw(_robot(calibrated=True))
+        text = _text(_result(_stream(hw, _state("y"), action="set_joint_positions", positions={"elbow_flex": 96.0})))
+        assert "within 2° after" in text
+        assert "elbow_flex: 91.0° → target 96.0°" in text
+        assert "Units:" not in text and "%" not in text
+
+    def test_a_mixed_call_gives_each_joint_its_own_unit(self) -> None:
+        hw = _make_hw(_robot(calibrated=True))
+        text = _text(
+            _result(
+                _stream(hw, _state("y"), action="set_joint_positions", positions={"elbow_flex": 96.0, "gripper": 52.0})
+            )
+        )
+        assert "within 2, each in its own unit" in text
+        assert "elbow_flex: 91.0° → target 96.0°" in text
+        assert "gripper: 42.0% → target 52.0%" in text
+        assert "Units: gripper in 0-100 percent of the calibrated range (range_0_100) - not degrees." in text
+
+    @pytest.mark.parametrize(
+        ("entry", "raw", "symbol", "label"),
+        [
+            ({"degrees": 1.0, "degrees_source": "calibration"}, False, "°", "degrees"),
+            ({"degrees": 1.0, "degrees_source": "encoder_estimate"}, False, "°", "degrees"),
+            ({"normalized": 42.0, "normalized_unit": "range_0_100"}, False, "%", "0-100 percent"),
+            ({"normalized": 1.0, "normalized_unit": "range_m100_100"}, False, "%", "-100 to +100 percent"),
+            ({"normalized": 1.0, "normalized_unit": "whatever_lerobot_adds_next"}, False, "%", "normalised"),
+            ({"degrees": 1.0, "degrees_source": "calibration"}, True, " ticks", "encoder ticks"),
+        ],
+    )
+    def test_unit_of_answers_from_the_state_entry(
+        self, entry: dict[str, Any], raw: bool, symbol: str, label: str
+    ) -> None:
+        got_symbol, got_label = hardware_motion.unit_of(entry, raw=raw)
+        assert got_symbol == symbol
+        assert label in got_label
 
 
 @pytest.mark.hardware

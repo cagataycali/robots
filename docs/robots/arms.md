@@ -182,7 +182,7 @@ arm back** so the answer is where the joint arrived, not what was sent:
 
 | action | what it does |
 |---|---|
-| `set_joint_positions {positions: {joint: target}}` | targets in the unit `get_state` reports; at most **20° per joint per call** (or the config's `max_relative_target`) - more is refused before anyone is asked; `raw: true` for encoder ticks |
+| `set_joint_positions {positions: {joint: target}}` | targets in the unit `get_state` reports **for that joint** - degrees, or a normalised percentage of the calibrated range (lerobot's `MotorNormMode`; a gripper is `0-100`, and a `koch`/`omx` arm normalises every joint); at most **20 of that unit per joint per call** (or the config's `max_relative_target`) - more is refused before anyone is asked; `raw: true` for encoder ticks |
 | `set_gripper {position}` | the same, for the gripper |
 | `set_torque {enabled, joints?}` | `true` holds position (gated); `false` releases the arm - **never gated** |
 

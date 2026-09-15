@@ -9,7 +9,7 @@ module is the direct path, shaped by three facts about real arms:
 * **Every write is gated and bounded.** The caller runs the operator gate
   before anything here is reached; this module then refuses any joint asked
   to travel more than a per-call cap (``config.max_relative_target`` when the
-  arm declares one, else :data:`DEFAULT_STEP_CAP_DEG`) - refuses, rather than
+  arm declares one, else :data:`DEFAULT_STEP_CAP`) - refuses, rather than
   clamping the way lerobot's ``send_action`` does, because a clamped motion
   is a motion the operator did not approve.
 * **The arm may be uncalibrated.** lerobot's normalised write needs the
@@ -22,6 +22,13 @@ module is the direct path, shaped by three facts about real arms:
   bus is read again and each joint reports its target, where it arrived, and
   the error. A servo that stalled on an obstacle is then visible as an error,
   not hidden behind an echoed command.
+* **The unit is the arm's answer, not the joint's name.** lerobot normalises
+  each joint per its ``MotorNormMode``, so a calibrated joint reports degrees,
+  ``0-100`` (a gripper) or ``-100..100`` (every body joint of a ``koch``/``omx``
+  arm, whose ``use_degrees`` defaults to false).
+  :func:`~strands_robots.hardware_observe.read_joint_state` is the one place
+  that knows which, and :func:`unit_of` is how every text asks it - a target
+  quoted in the wrong unit is a motion the operator did not approve.
 
 Torque is enabled on the commanded joints (a servo cannot hold a goal
 otherwise) and LEFT ON, which the text states; ``set_torque enabled=false``
@@ -49,9 +56,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "DIRECT_MOTION_ACTIONS",
-    "DEFAULT_STEP_CAP_DEG",
-    "REACHED_TOLERANCE_DEG",
+    "DEFAULT_STEP_CAP",
+    "REACHED_TOLERANCE",
     "degrees_to_ticks",
+    "unit_of",
     "step_cap_for",
     "plan_joint_targets",
     "move_joints",
@@ -64,12 +72,14 @@ __all__ = [
 DIRECT_MOTION_ACTIONS: frozenset[str] = frozenset({"set_joint_positions", "set_gripper"})
 
 #: Largest travel one call may ask of one joint when the arm declares no
-#: ``max_relative_target``. In the unit the joint reports in (degrees, or
-#: percent for a 0-100 gripper).
-DEFAULT_STEP_CAP_DEG = 20.0
+#: ``max_relative_target``, in the unit that joint reports in: degrees on a
+#: joint lerobot normalises to degrees, else percent of its calibrated range
+#: (so 20 is a fraction of the range, not 20 degrees) - which is why the texts
+#: quote the cap with the joint's own unit rather than naming one.
+DEFAULT_STEP_CAP = 20.0
 
-#: A joint within this many units of its target is reported ``reached``.
-REACHED_TOLERANCE_DEG = 2.0
+#: A joint within this many of its target, in that joint's own unit, is ``reached``.
+REACHED_TOLERANCE = 2.0
 
 #: How long the servos are given before the read-back, and its ceiling.
 DEFAULT_SETTLE_S = 0.5
@@ -86,15 +96,51 @@ def degrees_to_ticks(degrees: float) -> int:
     return max(0, min(TICKS_PER_REV - 1, ticks))
 
 
+#: What a normalised joint's ``MotorNormMode`` means, for the text that quotes a
+#: target in it. lerobot reports the mode; only its wording lives here.
+_NORMALISED_UNITS: dict[str, str] = {
+    "range_0_100": "0-100 percent of the calibrated range",
+    "range_m100_100": "-100 to +100 percent of the calibrated range",
+}
+
+
+def unit_of(joint_state: Mapping[str, Any], *, raw: bool = False) -> tuple[str, str]:
+    """The symbol and the label of the unit one joint's state entry is quoted in.
+
+    The single owner of "what unit is this number":
+    :func:`~strands_robots.hardware_observe.read_joint_state` reports either
+    ``degrees`` or ``normalized`` per the servo's ``MotorNormMode``, and every
+    text that quotes a current, a target or a cap asks here rather than
+    guessing from the joint's name - a gripper is not the only joint an arm
+    normalises (a ``koch``/``omx`` arm normalises all of them by default), and a
+    joint named ``gripper`` is not normalised on every arm.
+
+    Args:
+        joint_state: One entry of ``read_joint_state(...)["joints"]``.
+        raw: The call commands encoder ticks, so nothing was normalised.
+
+    Returns:
+        ``(symbol, label)`` - the suffix a number carries (``"°"``, ``"%"``,
+        ``" ticks"``) and the phrase that says what it means.
+    """
+    if raw:
+        return " ticks", "raw encoder ticks"
+    if "degrees" in joint_state:
+        return "°", "degrees"
+    mode = str(joint_state.get("normalized_unit") or "").lower()
+    label = _NORMALISED_UNITS.get(mode, "lerobot normalised units")
+    return "%", f"{label} ({mode})" if mode else label
+
+
 def step_cap_for(robot: Any, joint: str) -> float:
     """The per-call travel cap for ``joint``: the arm's declared limit, else the default."""
     declared = getattr(getattr(robot, "config", None), "max_relative_target", None)
     if isinstance(declared, Mapping):
         value = declared.get(joint)
-        return float(value) if value is not None else DEFAULT_STEP_CAP_DEG
+        return float(value) if value is not None else DEFAULT_STEP_CAP
     if isinstance(declared, (int, float)) and not isinstance(declared, bool):
         return float(declared)
-    return DEFAULT_STEP_CAP_DEG
+    return DEFAULT_STEP_CAP
 
 
 def _finite(value: Any, *, label: str) -> float:
@@ -115,10 +161,11 @@ def plan_joint_targets(
 ) -> dict[str, Any]:
     """Read the arm and decide, joint by joint, what one call may write. Writes nothing.
 
-    Returns ``{"calibrated", "frame", "current", "targets", "deltas", "cap"}``
-    where ``frame`` is ``"calibration"``, ``"encoder_estimate"`` or ``"ticks"``
-    and ``targets`` maps joint name to the value the write will carry (in
-    ``frame``'s unit).
+    Returns ``{"calibrated", "frame", "current", "targets", "deltas", "cap",
+    "units", "unit_labels"}`` where ``frame`` is ``"calibration"``,
+    ``"encoder_estimate"`` or ``"ticks"``, ``targets`` maps joint name to the
+    value the write will carry, and ``units``/``unit_labels`` say - per joint,
+    from :func:`unit_of` - what that value is quoted in.
 
     Raises:
         ValueError: An empty request, an unknown joint (the real names are
@@ -146,9 +193,12 @@ def plan_joint_targets(
     targets: dict[str, float] = {}
     deltas: dict[str, float] = {}
     caps: dict[str, float] = {}
+    units: dict[str, str] = {}
+    unit_labels: dict[str, str] = {}
     for name, value in positions.items():
         name = str(name)
         joint = joints[name]
+        unit, unit_label = unit_of(joint, raw=raw)
         target = _finite(value, label=f"positions[{name!r}]")
         if raw:
             now = float(joint["ticks"])
@@ -163,7 +213,6 @@ def plan_joint_targets(
             cap = step_cap_for(robot, name)
         delta = target - now
         if abs(delta) > cap + 1e-9:
-            unit = "ticks" if raw else ("%" if "normalized" in joint else "°")
             raise ValueError(
                 f"{name}: asked to travel {delta:+.1f}{unit} (from {now:.1f} to {target:.1f}) but one call may move a "
                 f"joint at most {cap:.1f}{unit}. Split the move into steps of {cap:.1f}{unit} or less, or declare a "
@@ -173,6 +222,8 @@ def plan_joint_targets(
         targets[name] = target
         deltas[name] = delta
         caps[name] = cap
+        units[name] = unit
+        unit_labels[name] = unit_label
     return {
         "calibrated": calibrated,
         "frame": frame,
@@ -180,6 +231,8 @@ def plan_joint_targets(
         "targets": targets,
         "deltas": deltas,
         "cap": caps,
+        "units": units,
+        "unit_labels": unit_labels,
         "port": state.get("port"),
     }
 
@@ -243,13 +296,13 @@ def move_joints(
         joint = after[n]
         if raw:
             got = float(joint["ticks"])
-            tol = REACHED_TOLERANCE_DEG * TICKS_PER_REV / 360.0
+            tol = REACHED_TOLERANCE * TICKS_PER_REV / 360.0
         elif "degrees" in joint:
             got = float(joint["degrees"])
-            tol = REACHED_TOLERANCE_DEG
+            tol = REACHED_TOLERANCE
         else:
             got = float(joint["normalized"])
-            tol = REACHED_TOLERANCE_DEG
+            tol = REACHED_TOLERANCE
         actual[n] = got
         error[n] = round(got - plan["targets"][n], 2)
         reached[n] = abs(error[n]) <= tol
@@ -288,29 +341,32 @@ def set_torque(robot: Any, enabled: bool, joints: Sequence[str] | None = None) -
     }
 
 
-def _unit(frame: str, joint: str, plan: Mapping[str, Any]) -> str:
-    if frame == "ticks":
-        return " ticks"
-    return "%" if joint == "gripper" and plan.get("calibrated") else "°"
-
-
 def format_move(tool_name: str, plan: Mapping[str, Any]) -> str:
     """The text an agent reads after a move: per joint target → actual, then torque and frame."""
     frame = plan["frame"]
+    units: Mapping[str, str] = plan["units"]
     n_reached = sum(1 for v in plan["reached"].values() if v)
     n = len(plan["targets"])
-    head = f"{tool_name}: moved {n} joint(s), {n_reached}/{n} reached target within {REACHED_TOLERANCE_DEG:g}"
-    head += " ticks" if frame == "ticks" else "°"
+    distinct = set(units.values())
+    tolerance = (
+        f"{REACHED_TOLERANCE:g}{distinct.pop()}"
+        if len(distinct) == 1
+        else f"{REACHED_TOLERANCE:g}, each in its own unit"
+    )
+    head = f"{tool_name}: moved {n} joint(s), {n_reached}/{n} reached target within {tolerance}"
     head += f" after {plan['settle_s']:g} s."
     lines = [head]
     for j in plan["targets"]:
-        u = _unit(frame, j, plan)
+        u = units[j]
         mark = "reached" if plan["reached"][j] else f"NOT reached (error {plan['error'][j]:+.1f}{u})"
         lines.append(
             f"  {j}: {plan['current'][j]:.1f}{u} → target {plan['targets'][j]:.1f}{u}, "
             f"actual {plan['actual'][j]:.1f}{u} - {mark}"
         )
     lines.append(f"Torque is ON on {', '.join(plan['torque_left_on'])} (holding); set_torque enabled=false releases.")
+    normalised = [f"{j} in {plan['unit_labels'][j]}" for j in plan["targets"] if units[j] == "%"]
+    if normalised:
+        lines.append("Units: " + "; ".join(normalised) + " - not degrees.")
     if frame == "encoder_estimate":
         lines.append(
             "Frame: encoder estimate (arm NOT calibrated; 2048 ticks = 0°). Joint limits are unknown to the tool - "

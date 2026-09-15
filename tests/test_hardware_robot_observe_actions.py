@@ -50,6 +50,9 @@ from tests._daemon_executor import DaemonThreadExecutor
 class _Mode(Enum):
     DEGREES = "degrees"
     RANGE_0_100 = "range_0_100"
+    # lerobot's third normalisation mode: what every body joint of a koch or omx
+    # arm reports, whose ``use_degrees`` config defaults to false.
+    RANGE_M100_100 = "range_m100_100"
 
 
 class _Motor:
@@ -167,6 +170,9 @@ class _CamConfig:
 class _RobotConfig:
     def __init__(self, cameras: dict[str, Any]) -> None:
         self.cameras = cameras
+        # lerobot's robot configs declare this: a per-call travel limit, either one
+        # number for every joint or a mapping. Absent means "no declared limit".
+        self.max_relative_target: float | dict[str, float] | None = None
 
 
 class FakeLeRobot:
