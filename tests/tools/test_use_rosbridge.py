@@ -9,6 +9,7 @@ structured error contract are exercised with nothing installed.
 
 from __future__ import annotations
 
+import logging
 import sys
 import types as _types
 from typing import Any
@@ -436,6 +437,69 @@ def test_list_topics_formats_sorted_pairs(fake_roslibpy: _types.ModuleType) -> N
     lines = _texts(result).splitlines()
     assert lines[0] == "/curiosity_mars_rover/odom [nav_msgs/Odometry]"  # sorted
     assert "/zeta [std_msgs/String]" in lines[1]
+
+
+class TestListTopicsWhenRosapiNamesFewerTypes:
+    """Every topic rosapi reports is listed, typed or not.
+
+    ``rosapi/Topics`` answers with ``topics`` and ``types`` as index-paired
+    arrays, but only ``topics`` is guaranteed - roslibpy's own client asserts
+    ``"topics" in result`` and reads that array alone
+    (``roslibpy.Ros.get_topics``, roslibpy 1.8.1). So a reply may name fewer
+    types than topics, or no types at all, and the count of topics is still the
+    answer a caller asking which topics exist came for.
+    """
+
+    TOPICS = ["/rosout", "/curiosity_mars_rover/odom", "/tf", "/cmd_vel", "/joint_states"]
+    TYPES = [
+        "rosgraph_msgs/Log",
+        "nav_msgs/Odometry",
+        "tf2_msgs/TFMessage",
+        "geometry_msgs/Twist",
+        "sensor_msgs/JointState",
+    ]
+
+    def _reply(self, fake: _types.ModuleType, types: list[str] | None) -> dict[str, Any]:
+        resp: dict[str, Any] = {"topics": list(self.TOPICS)}
+        if types is not None:
+            resp["types"] = list(types)
+        fake.Ros.scripted_responses["/rosapi/topics"] = resp  # type: ignore[attr-defined]
+        return resp
+
+    @pytest.mark.parametrize("n_types", [0, 2, 5], ids=["types_absent", "types_short", "types_agree"])
+    def test_every_topic_rosapi_named_is_listed(self, fake_roslibpy: _types.ModuleType, n_types: int) -> None:
+        self._reply(fake_roslibpy, None if n_types == 0 else self.TYPES[:n_types])
+        result = use_rosbridge(action="list_topics")
+        assert result["status"] == "success"
+        listed = [line.split(" [")[0] for line in _texts(result).splitlines()]
+        assert sorted(listed) == sorted(self.TOPICS)
+
+    def test_a_type_rosapi_named_is_kept_and_a_missing_one_says_so(self, fake_roslibpy: _types.ModuleType) -> None:
+        # rosapi paired types with the first two topics only, in wire order.
+        self._reply(fake_roslibpy, self.TYPES[:2])
+        lines = _texts(use_rosbridge(action="list_topics")).splitlines()
+        assert "/rosout [rosgraph_msgs/Log]" in lines
+        assert "/curiosity_mars_rover/odom [nav_msgs/Odometry]" in lines
+        assert f"/tf [{rb_mod.TYPE_NOT_REPORTED}]" in lines
+
+    def test_a_count_mismatch_is_named_in_a_warning(
+        self, fake_roslibpy: _types.ModuleType, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._reply(fake_roslibpy, self.TYPES[:2])
+        with caplog.at_level(logging.WARNING, logger=rb_mod.__name__):
+            use_rosbridge(action="list_topics")
+        warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 1
+        assert "reported 5 topic(s) and 2 type(s)" in warnings[0]
+
+    def test_agreeing_counts_warn_nothing(
+        self, fake_roslibpy: _types.ModuleType, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._reply(fake_roslibpy, self.TYPES)
+        with caplog.at_level(logging.WARNING, logger=rb_mod.__name__):
+            result = use_rosbridge(action="list_topics")
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+        assert rb_mod.TYPE_NOT_REPORTED not in _texts(result)
 
 
 def test_list_services_sorted(fake_roslibpy: _types.ModuleType) -> None:

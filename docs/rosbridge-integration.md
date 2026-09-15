@@ -51,7 +51,7 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 | Action | Required args | Returns |
 |--------|---------------|---------|
 | `status` | - | roslibpy availability + connectivity to host:port |
-| `list_topics` | - | Topics with their types (rosapi /rosapi/topics) |
+| `list_topics` | - | Every topic rosapi reports, with its type where rosapi reports one (rosapi /rosapi/topics) |
 | `list_services` | - | Services (rosapi /rosapi/services) |
 | `echo` | `topic` (type auto-resolved) | N samples as JSON |
 | `publish` | `topic`, `type` | Publishes N messages built from `fields` |

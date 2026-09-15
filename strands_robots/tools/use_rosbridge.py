@@ -22,7 +22,8 @@ plain JSON dicts, exactly as rosbridge transmits them.
 
 Actions:
     status         - roslibpy availability + connectivity to host:port.
-    list_topics    - topics with their types (rosapi /rosapi/topics).
+    list_topics    - every topic rosapi reports, with its type where rosapi
+                     reports one (rosapi /rosapi/topics).
     list_services  - services (rosapi /rosapi/services).
     echo           - subscribe and return up to N messages as JSON. Type
                      auto-resolved via rosapi when omitted.
@@ -257,6 +258,10 @@ class _RosbridgeBackend:
 _backend = _RosbridgeBackend()
 
 
+# Rendered in place of a topic's type when rosapi's reply named none for it.
+TYPE_NOT_REPORTED = "type not reported by rosapi"
+
+
 def _ok(text: str) -> dict[str, Any]:
     return {"status": "success", "content": [{"text": text}]}
 
@@ -280,8 +285,29 @@ def _rosapi_call(ros: Any, service: str, srv_type: str, values: dict[str, Any], 
 
 
 def _list_topics(ros: Any, timeout: float) -> str:
+    """List every topic rosapi reports, with its type where rosapi reports one.
+
+    ``rosapi/Topics`` answers with ``topics`` and ``types`` as index-paired
+    arrays, but only ``topics`` is guaranteed: roslibpy's own client asserts
+    ``"topics" in result`` and reads that array alone
+    (:meth:`roslibpy.Ros.get_topics`). Pairing the two by index would drop
+    every topic past the end of a short ``types``, and drop all of them when
+    ``types`` is absent - reporting an empty graph to a caller who asked which
+    topics exist. The count of topics is the answer, so each one is listed
+    either way and a topic rosapi gave no type for says so.
+    """
     resp = _rosapi_call(ros, "/rosapi/topics", "rosapi/Topics", {}, timeout)
-    pairs = sorted(zip(resp.get("topics", []), resp.get("types", [])))
+    names = list(resp.get("topics", []))
+    types = list(resp.get("types", []))
+    if len(types) != len(names):
+        logger.warning(
+            "rosapi /rosapi/topics reported %d topic(s) and %d type(s); every topic is listed "
+            "and the ones rosapi named no type for read as [%s]",
+            len(names),
+            len(types),
+            TYPE_NOT_REPORTED,
+        )
+    pairs = sorted((name, types[i] if i < len(types) else TYPE_NOT_REPORTED) for i, name in enumerate(names))
     return "\n".join(f"{name} [{type_}]" for name, type_ in pairs)
 
 
