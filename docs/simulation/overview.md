@@ -96,6 +96,15 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 !!! note "Get a numpy frame"
     `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
 
+!!! note "Where `render(output_path=...)` may write"
+    `output_path` is model-supplied, so it is confined to a render sandbox: a
+    bare filename (`"frame.png"`) lands there and an absolute path outside it
+    is refused. The sandbox is `~/.strands_robots/renders` by default,
+    `STRANDS_ROBOTS_RENDER_ROOT` process-wide, or - per Simulation, without an
+    environment variable - `Robot("so101", render_dir="./shots")` /
+    `Simulation(render_dir=...)`. Set `render_dir` to the directory you want the
+    files in and the agent can hand them to you there.
+
 !!! tip "Discover the render surface"
     `render`, `render_depth`, `render_all`, and `get_world_point` are all
     listed in `sim.describe()["methods"]`, so an agent can enumerate the full
