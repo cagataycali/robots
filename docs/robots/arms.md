@@ -173,7 +173,7 @@ readable: the degrees are then an estimate from the encoder centre
 (`2048 ticks = 0°`, `4096 ticks/rev`) and the text says so, naming
 `lerobot-calibrate` - which is also why `execute`/`start` refuse on that arm
 until it has run. The motion actions (`execute`, `start`) stop for operator
-approval as before; see [security](../security.md#ros-2--dds-bridge-command-surface).
+approval as before; see [security](../security.md#ros-2-dds-bridge-command-surface).
 
 ## Calibrating a Feetech SO arm
 
