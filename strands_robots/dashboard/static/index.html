@@ -37,8 +37,16 @@
   </section>
 
   <section id="view-sim" class="view" hidden>
-    <h1>Sim</h1>
-    <p class="muted">Arrives with the next slice: a MuJoCo robot stepping in this process, streamed here.</p>
+    <div class="row between wrap">
+      <h1>Sim</h1>
+      <form id="sim-new" class="row">
+        <select name="robot" id="sim-robot" aria-label="robot"></select>
+        <button type="submit" class="primary">Start</button>
+      </form>
+      <button id="estop" class="danger" title="Freeze every session and latch the lockout">E-STOP</button>
+    </div>
+    <p id="lockout" class="lockout" role="status"></p>
+    <div id="sessions" class="sessions"></div>
   </section>
 
   <section id="view-agent" class="view" hidden>
