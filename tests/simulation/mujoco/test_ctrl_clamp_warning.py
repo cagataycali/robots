@@ -63,7 +63,7 @@ def model():
 def _apply(model, action, mixin=None):
     data = mujoco.MjData(model)
     mixin = mixin or RenderingMixin()
-    mixin._apply_action_by_name(model, data, action, "", mujoco)
+    mixin._apply_action_by_name(model, data, action, "", mujoco, "")
     return mixin, data
 
 

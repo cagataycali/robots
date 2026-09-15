@@ -320,7 +320,7 @@ class _SubstepBurstController:
 
     def apply(self, action_dict, model, data, robot_name):  # noqa: ANN001, ANN201
         robot = self.sim._world.robots[robot_name]
-        self.sim._apply_action_by_name(model, data, action_dict, robot.namespace or "", mj)
+        self.sim._apply_action_by_name(model, data, action_dict, robot.namespace or "", mj, robot_name)
         if not self.owns_stepping:
             return
         for _ in range(self.physics_substeps_per_control):

@@ -135,7 +135,7 @@ def test_apply_action_by_name_drives_tendon_gripper(model):
     """
     data = mujoco.MjData(model)
     mixin = RenderingMixin()
-    mixin._apply_action_by_name(model, data, {"finger_joint1": 1.0}, "", mujoco)
+    mixin._apply_action_by_name(model, data, {"finger_joint1": 1.0}, "", mujoco, "")
     grip = _aid(model, "grip_act")
     assert data.ctrl[grip] == pytest.approx(255.0)
 
@@ -144,7 +144,7 @@ def test_apply_action_by_name_direct_joint_unscaled(model):
     """End-to-end: a direct joint key writes the raw command."""
     data = mujoco.MjData(model)
     mixin = RenderingMixin()
-    mixin._apply_action_by_name(model, data, {"arm_joint": 0.5}, "", mujoco)
+    mixin._apply_action_by_name(model, data, {"arm_joint": 0.5}, "", mujoco, "")
     arm = _aid(model, "arm_act")
     assert data.ctrl[arm] == pytest.approx(0.5)
 
@@ -222,8 +222,8 @@ def test_apply_action_warns_once_on_unresolved_key(model, caplog):
     data = mujoco.MjData(model)
     mixin = RenderingMixin()
     with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.rendering"):
-        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco)
+        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco, "")
         # Second call with the same key must NOT add another warning.
-        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco)
+        mixin._apply_action_by_name(model, data, {"nonexistent_joint": 1.0}, "", mujoco, "")
     warns = [r.getMessage() for r in caplog.records if "nonexistent_joint" in r.getMessage()]
     assert len(warns) == 1, f"expected exactly one warn-once for the unresolved key, got {warns}"

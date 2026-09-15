@@ -968,7 +968,7 @@ class MuJoCoSimEngine(
         if unresolved:
             # Surface the actual valid actuator names so the user can
             # self-correct without inspecting the MJCF by hand.
-            valid_keys = self._get_valid_action_keys(self._world.robots[robot_name].namespace or "")
+            valid_keys = self._get_valid_action_keys(robot_name)
             hint = f" Valid keys: {valid_keys}" if valid_keys else ""
             return {
                 "status": "error",
@@ -2908,14 +2908,17 @@ class MuJoCoSimEngine(
         * a tendon-driven gripper is an *actuator* with no matching joint name.
 
         Keying a policy by :meth:`robot_joint_names` in those cases makes the
-        affected DOFs silently no-op. The namespace short-names are produced by
-        :meth:`_get_valid_action_keys`, which strips the trailing-slash
-        namespace prefix (e.g. ``"xarm7/"``).
+        affected DOFs silently no-op. The keys are produced by
+        :meth:`_get_valid_action_keys`, which reads the robot's resolved
+        actuator ownership and strips the trailing-slash namespace prefix
+        (e.g. ``"xarm7/"``) from the actuators that carry one. An actuator that
+        carries no prefix -- the ``"<robot>_act_<joint>"`` position servos
+        :meth:`actuate_robot` injects -- is reported verbatim, so an actuated
+        URDF arm advertises the keys that drive it rather than none.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
             return []
-        namespace = self._world.robots[robot_name].namespace or ""
-        return self._get_valid_action_keys(namespace)
+        return self._get_valid_action_keys(robot_name)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
@@ -5235,7 +5238,16 @@ class MuJoCoSimEngine(
                 return [n for n in pool if n.startswith(prefix)]
 
             joint_names = robot.joint_names or _scoped(all_joint_names)
-            actuator_names = _scoped(all_actuator_names)
+            # Ownership, not prefix spelling -- the same rule ``n_actuators``
+            # below already reports. ``actuate_robot``'s injected position
+            # servos are named ``"<robot>_act_<joint>"`` and carry no namespace,
+            # so ``_scoped`` dropped every one of them and this line read
+            # "Actuators (14): " with nothing after the colon.
+            actuator_names = [
+                name
+                for act_id in robot.actuator_ids
+                if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id))
+            ]
             camera_names = _scoped(all_camera_names)
 
             robots_info = {
@@ -6508,7 +6520,7 @@ class MuJoCoSimEngine(
                             # after every robot's ctrl is set.
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
-                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj)
+                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
                         mj.mj_step(self._world._model, self._world._data)
                         # Kinematic attachments (attach_bodies mode="kinematic")
                         # follow their parent every physics step, on this
