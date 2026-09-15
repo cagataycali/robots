@@ -490,7 +490,10 @@ def test_dyld_shim_noop_without_torchcodec(monkeypatch):
 def test_dyld_shim_sets_env_and_skips_reexec_when_unsafe(monkeypatch, tmp_path):
     """When torchcodec + ffmpeg are present but it's NOT safe to re-exec
     (e.g. under pytest), the shim sets DYLD for child procs and does NOT
-    re-exec — it warns instead."""
+    re-exec — it keeps the remedy for the first video-decoding open instead
+    of warning at import."""
+    import warnings
+
     from strands_robots import _dyld
 
     monkeypatch.setattr(_dyld.sys, "platform", "darwin")
@@ -499,14 +502,18 @@ def test_dyld_shim_sets_env_and_skips_reexec_when_unsafe(monkeypatch, tmp_path):
     monkeypatch.delenv(_dyld._DYLD_VAR, raising=False)
     monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: True)
     monkeypatch.setattr(_dyld, "_find_ffmpeg_lib_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(_dyld, "_pending_hint", None)
     # Under pytest, _is_safe_to_reexec() is False → must NOT call os.execv.
     called = {"execv": False}
     monkeypatch.setattr(_dyld.os, "execv", lambda *a: called.__setitem__("execv", True))
 
-    with pytest.warns(RuntimeWarning):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         result = _dyld.ensure_ffmpeg_on_dyld_path()
 
     assert result is False
+    assert not caught
+    assert str(tmp_path) in (_dyld.video_decode_hint() or "")
     assert called["execv"] is False  # never re-exec under pytest
     # but child-process env IS set
     assert str(tmp_path) in os.environ[_dyld._DYLD_VAR]
@@ -678,3 +685,60 @@ def test_reader_exposes_metadata_and_iterates(monkeypatch):
     assert r.meta == {"stats": {"action": {"mean": [0.0]}}}
     frames = list(r)
     assert frames == [{"observation.state": [0.0], "action": [0.0], "task": "t"}]
+
+
+class _FakeStreamingWithVideo(_FakeStreaming):
+    """A fake whose metadata says it carries a video key."""
+
+    def __init__(self, repo_id, **kw):
+        super().__init__(repo_id, **kw)
+        self.meta = type("Meta", (), {"video_keys": ["observation.images.cam"], "info": {"features": {}}})()
+
+
+def test_open_with_video_keys_says_the_dyld_remedy_once_this_process_needs_it(monkeypatch):
+    """The ffmpeg/dyld remedy moved from import time to the first video-decoding
+    open: a process the shim could not fix hears it here, not on ``import``."""
+    import warnings
+
+    import strands_robots._dyld as _dyld
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreamingWithVideo, raising=False)
+    monkeypatch.setattr(_dyld, "_pending_hint", "export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sd.StreamingDatasetReader.open("org/ds", validate_deltas=False)
+    assert [str(w.message) for w in caught if issubclass(w.category, RuntimeWarning)] == [
+        "export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib"
+    ]
+
+
+def test_open_with_drop_videos_never_says_the_dyld_remedy(monkeypatch):
+    """Proprio-only streaming decodes no video, so the remedy is not its business."""
+    import warnings
+
+    import strands_robots._dyld as _dyld
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreamingWithVideo, raising=False)
+    monkeypatch.setattr(_dyld, "_pending_hint", "export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sd.StreamingDatasetReader.open(
+            "org/ds",
+            delta_timestamps={"observation.state": [0.0]},
+            drop_videos=True,
+            validate_deltas=False,
+        )
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+
+
+def test_open_with_video_keys_is_quiet_when_this_process_is_fine(monkeypatch):
+    import warnings
+
+    import strands_robots._dyld as _dyld
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreamingWithVideo, raising=False)
+    monkeypatch.setattr(_dyld, "_pending_hint", None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        sd.StreamingDatasetReader.open("org/ds", validate_deltas=False)
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]

@@ -158,19 +158,35 @@ def test_ensure_swallows_execv_failure(monkeypatch, tmp_path):
     assert _dyld.ensure_ffmpeg_on_dyld_path() is False
 
 
-def test_ensure_warns_without_reexec_when_unsafe(monkeypatch, tmp_path):
-    """Unsafe context (e.g. Jupyter): warn with the export hint, do not re-exec."""
+def test_ensure_is_silent_without_reexec_when_unsafe_and_keeps_the_hint(monkeypatch, tmp_path):
+    """Unsafe context (``-c``, REPL, Jupyter): no re-exec, no import-time warning.
+
+    The remedy is kept for :func:`video_decode_hint`, so it is said when video
+    decode is asked for rather than to everyone who imports the package.
+    """
     _arm_macos_ffmpeg(monkeypatch, tmp_path)
     monkeypatch.setattr(_dyld, "_is_safe_to_reexec", lambda: False)
     monkeypatch.setattr(_dyld.os, "execv", lambda *a: pytest.fail("execv must not run when unsafe"))
+    monkeypatch.setattr(_dyld, "_pending_hint", None)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         result = _dyld.ensure_ffmpeg_on_dyld_path()
 
     assert result is False
-    assert any(issubclass(w.category, RuntimeWarning) for w in caught)
-    assert any(_dyld._DYLD_VAR in str(w.message) for w in caught)
+    assert not caught, [str(w.message) for w in caught]
+    hint = _dyld.video_decode_hint()
+    assert hint is not None
+    assert _dyld._DYLD_VAR in hint
+    assert "drop_videos=True" in hint
+
+
+def test_video_decode_hint_is_none_when_nothing_went_wrong(monkeypatch, tmp_path):
+    """A process the shim fixed (or never needed to) has no pending remedy."""
+    monkeypatch.setattr(_dyld, "_pending_hint", None)
+    monkeypatch.setattr(_dyld.sys, "platform", "linux")
+    assert _dyld.ensure_ffmpeg_on_dyld_path() is False
+    assert _dyld.video_decode_hint() is None
 
 
 def test_is_safe_to_reexec_false_in_interactive_repl(monkeypatch):

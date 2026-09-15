@@ -34,6 +34,12 @@ Re-exec is gated tightly: it only fires when torchcodec is importable, ffmpeg is
 present, and the var was missing - i.e. exactly the case where video streaming
 would otherwise crash. Headless/Linux/Jetson and torchcodec-less installs never
 re-exec. Opt out entirely with ``STRANDS_ROBOTS_NO_DYLD_SHIM=1``.
+
+Where re-exec is unsafe (``python -c``, the REPL, Jupyter, pytest) the import
+stays silent: the remedy is kept and :func:`video_decode_hint` hands it to the
+first video-decoding open (``stream_dataset`` with video keys), which warns
+there. A new user's ``import strands_robots`` is not the place to talk about
+decoding video they have not asked for.
 """
 
 from __future__ import annotations
@@ -48,6 +54,11 @@ _DYLD_VAR = "DYLD_FALLBACK_LIBRARY_PATH"
 
 # Homebrew lib dirs to probe, in priority order (Apple Silicon, then Intel).
 _CANDIDATE_LIB_DIRS = ("/opt/homebrew/lib", "/usr/local/lib")
+
+#: The remedy for a process the shim could not fix (an interactive host it
+#: refused to re-exec); ``None`` when the process is fine or the question never
+#: arose. Read through :func:`video_decode_hint`.
+_pending_hint: str | None = None
 
 
 def _find_ffmpeg_lib_dir() -> str | None:
@@ -156,16 +167,31 @@ def ensure_ffmpeg_on_dyld_path() -> bool:
         except Exception:
             return False  # fall through; children still benefit
     else:
-        # Interactive/embedded: don't nuke the host. Warn once with the fix.
-        import warnings
-
-        warnings.warn(
+        # Interactive/embedded: don't nuke the host. Remember the fix and say it
+        # when video decode is actually asked for (:func:`video_decode_hint`),
+        # not at import - ``python -c "import strands_robots"`` is the first
+        # thing a new user types, and a warning about decoding video they never
+        # requested is the wrong first impression. The hint is still logged at
+        # debug level for anyone tracing the shim.
+        global _pending_hint
+        _pending_hint = (
             "strands_robots: torchcodec needs Homebrew ffmpeg on the dyld path "
-            f"to decode video. Set it before launching Python:\n"
+            f"to decode video in this process. Set it before launching Python:\n"
             f"    export {_DYLD_VAR}={ffmpeg_dir}\n"
             "(child processes already inherit it; proprio-only streaming via "
-            "drop_videos=True needs no ffmpeg).",
-            RuntimeWarning,
-            stacklevel=2,
+            "drop_videos=True needs no ffmpeg)."
         )
+        import logging
+
+        logging.getLogger(__name__).debug(_pending_hint)
     return False
+
+
+def video_decode_hint() -> str | None:
+    """The dyld remedy for THIS process if it will not be able to decode video, else ``None``.
+
+    Callers about to decode video (a streaming dataset with video keys) surface
+    this as a warning at that point, so the person who asked for video hears
+    about ffmpeg and the person who only imported the package does not.
+    """
+    return _pending_hint
