@@ -198,7 +198,7 @@ the encoder estimate `get_state` reports, and the tool knows no joint limits -
 it says that too. A servo that stalls is reported `NOT reached (error …)`. There
 is no `move_to`/IK on the hardware class - that is the simulation's. Pre-approve
 by name for a headless script with `STRANDS_ROBOT_COMMAND_ALLOW=set_joint_positions`;
-see [security](../security.md#ros-2--dds-bridge-command-surface).
+see [security](../security.md#ros-2-dds-bridge-command-surface).
 
 ## Calibrating a Feetech SO arm
 

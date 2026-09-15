@@ -2737,8 +2737,11 @@ class LerobotLocalPolicy(Policy):
             + _state_key_cause(self.robot_state_keys)
             + " "
             # Remedy chosen from the observation, so the advice cannot name an
-            # embodiment whose state_keys would land back on this same guard.
-            + state_key_remedy(scalar_keys)
+            # embodiment whose state_keys would land back on this same guard -
+            # and, once a declared embodiment has already been rejected at load
+            # time, no embodiment at all, since re-passing that one is the same
+            # loop reached through obs_rename rather than state_keys.
+            + state_key_remedy(scalar_keys, embodiment_rejected=self._embodiment_config_failed)
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -2812,7 +2815,11 @@ class LerobotLocalPolicy(Policy):
                 f"observation: {shown}{ellipsis}. Present joints keep their index and the "
                 "missing dims are zero-filled in place, but the sim/robot does not report "
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
-                "from the observation's finger-joint names. " + state_key_remedy(observed_state_keys(observation_dict))
+                "from the observation's finger-joint names. "
+                + state_key_remedy(
+                    observed_state_keys(observation_dict),
+                    embodiment_rejected=self._embodiment_config_failed,
+                )
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.
             )
