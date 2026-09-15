@@ -2000,6 +2000,12 @@ class MuJoCoSimEngine(
         model's own offset beside it whenever the two differ, so a spawn that
         did not land where it was asked is visible in the result instead of
         having to be measured with :meth:`get_body_state`.
+
+        The summary's last line names the next step THIS robot can take, which
+        is ``run_policy`` only when the model compiled with actuators. A model
+        with none (a bare URDF arm, or a registry pack whose only document
+        declares no ``<actuator>``) is offered :meth:`actuate_robot` instead --
+        see :meth:`_next_step_after_add`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2311,7 +2317,7 @@ class MuJoCoSimEngine(
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
-                            f"Run policy: action='run_policy', robot_name='{name}'"
+                            f"{self._next_step_after_add(name, robot)}"
                             f"{hint_line}"
                         )
                     }
@@ -2322,6 +2328,46 @@ class MuJoCoSimEngine(
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+
+    def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
+        """Name the next step the robot just added can actually take.
+
+        An actuated robot is invited to ``run_policy``, which is what the
+        summary has always offered. A model that compiles with NO actuators
+        cannot take that step: ``send_action`` has no key to resolve, so a
+        policy bound to it can only ever emit an empty action, and the two
+        surfaces that consume one already refuse exactly that -- the
+        all-unresolved abort in :meth:`PolicyRunner.run` and
+        :func:`uncommanded_eval_error` for :meth:`eval_policy`. Both reach the
+        verdict only AFTER a full rollout has been paid for, so repeating the
+        ``run_policy`` invitation here sends the caller down a path this door
+        already knows ends in a refusal.
+
+        Such a model is still worth adding -- rendering, IK and forward
+        kinematics need no actuator -- so it is offered
+        :meth:`actuate_robot` instead, the in-tree remedy that adds a position
+        servo per hinge/slide joint and makes ``run_policy`` the right next
+        step. A bare URDF arm loads this way by construction (URDF has no
+        actuator concept), which is the case ``actuate_robot`` was written for.
+
+        Args:
+            name: Instance label the robot was registered under, so the
+                offered call is copy-pasteable rather than a shape to fill in.
+            robot: The robot just added, read for its resolved actuator
+                ownership (:attr:`SimRobot.actuator_ids`) -- the same count the
+                ``Actuators:`` line above reports, so the two cannot disagree.
+
+        Returns:
+            One summary line naming an action and its ``robot_name``.
+        """
+        if robot.actuator_ids:
+            return f"Run policy: action='run_policy', robot_name='{name}'"
+        return (
+            f"No actuators: nothing can drive '{name}' yet -- send_action has no key to "
+            f"resolve, so run_policy would advance physics without commanding it. "
+            f"Rendering and IK work as-is; to drive it, add a position servo per joint "
+            f"first: action='actuate_robot', robot_name='{name}'"
+        )
 
     def _keyframe_home_state(
         self, resolved_path: str, keyframe: str | int
