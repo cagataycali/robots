@@ -37,7 +37,7 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
-from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error
+from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error, refusal_repr
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,41 @@ _RENDER_ALLOW_ABS_ENV = "STRANDS_ROBOTS_RENDER_ALLOW_ABS"
 _CAMS_REC_JOIN_TIMEOUT_S = 5.0
 
 
-def _validate_render_output_path(output_path: str) -> Path:
+def render_dir_error(value: Any) -> str | None:
+    """Return why ``value`` cannot be a Simulation's render sandbox root, else ``None``.
+
+    The constructor's ``render_dir`` is set by the developer, not the model, so
+    the only things refused are the ones that cannot name a directory at all:
+    a non-path type (``True``, ``0``, a list) and an empty or blank string. A
+    directory that does not exist yet is fine - the first ``render`` creates it,
+    the same way the default sandbox is created on first use.
+
+    The refused value is rendered through
+    :func:`~strands_robots.utils.refusal_repr`, like every other guard in the
+    package: a third-party type's ``__repr__`` may raise anything at all, and
+    the message describing an unusable argument must not be the thing that
+    fails to build.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, os.PathLike)):
+        return (
+            f"render_dir must be a directory path (str or PathLike), got {type(value).__name__} {refusal_repr(value)}"
+        )
+    if not os.fspath(value).strip():
+        return "render_dir must name a directory, got an empty path"
+    return None
+
+
+def resolve_render_dir(value: str | os.PathLike[str]) -> Path:
+    """Resolve a constructor ``render_dir`` the way the default sandbox root is resolved.
+
+    ``~`` expanded, ``..`` normalized, symlinks followed - so confinement
+    compares true on-disk locations, matching
+    :func:`strands_robots.simulation.safe_output.resolve_sandbox_root`.
+    """
+    return Path(os.fspath(value)).expanduser().resolve(strict=False)
+
+
+def _validate_render_output_path(output_path: str, sandbox_root: Path | None = None) -> Path:
     """Validate an LLM-supplied render path, confined to the render sandbox.
 
     Thin render-specific binding over
@@ -192,26 +226,34 @@ def _validate_render_output_path(output_path: str) -> Path:
     opts in. That variable's name is passed down as well as read, so a
     confinement refusal quotes the spelling the caller must set.
 
+    Args:
+        output_path: The model-supplied destination.
+        sandbox_root: The Simulation's own sandbox (its ``render_dir``), or
+            ``None`` for the process default (``STRANDS_ROBOTS_RENDER_ROOT`` /
+            ``~/.strands_robots/renders``).
+
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
     """
     return validate_output_path(
         output_path,
-        sandbox_root=_render_sandbox_root(),
+        sandbox_root=sandbox_root if sandbox_root is not None else _render_sandbox_root(),
         allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
         allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
 
-def _save_render_png(output_path: str, png_bytes: bytes) -> str:
+def _save_render_png(output_path: str, png_bytes: bytes, sandbox_root: Path | None = None) -> str:
     """Validate ``output_path``, enforce the size cap, and atomically persist ``png_bytes``.
 
-    Returns the resolved saved path as a string.
+    Returns the resolved saved path as a string. ``sandbox_root`` is the
+    Simulation's own render sandbox when its constructor set one, else ``None``
+    for the process default.
 
     Raises:
         ValueError: On an unsafe path or an oversized payload.
     """
-    safe = _validate_render_output_path(output_path)
+    safe = _validate_render_output_path(output_path, sandbox_root)
     max_bytes = _max_render_bytes()
     if len(png_bytes) > max_bytes:
         raise ValueError(f"png is {len(png_bytes)} bytes, exceeds limit {max_bytes}")
@@ -1243,8 +1285,9 @@ class RenderingMixin:
         for independent verification instead of only receiving the bytes inline.
 
         ``output_path`` is treated as untrusted (LLM-callable tool): writes are
-        confined to the render sandbox (``STRANDS_ROBOTS_RENDER_ROOT``, default
-        ``~/.strands_robots/renders``); paths with shell metacharacters,
+        confined to the render sandbox - this Simulation's ``render_dir`` when
+        its constructor set one, else ``STRANDS_ROBOTS_RENDER_ROOT``, default
+        ``~/.strands_robots/renders``; paths with shell metacharacters,
         backslash separators, ``..`` escapes, or a symlinked target, and PNGs
         larger than ``STRANDS_ROBOTS_RENDER_MAX_BYTES`` (default 50 MB) are
         rejected with ``status=error``. A bare filename (``"frame.png"``) is
@@ -1351,7 +1394,7 @@ class RenderingMixin:
                 # output_path is LLM-supplied: validate against traversal /
                 # symlink / oversize and write atomically (see _save_render_png).
                 try:
-                    saved_path = _save_render_png(output_path, png_bytes)
+                    saved_path = _save_render_png(output_path, png_bytes, getattr(self, "render_dir", None))
                 except ValueError as e:
                     return {"status": "error", "content": [{"text": f"render: {e}"}]}
 

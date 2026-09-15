@@ -117,7 +117,7 @@ from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesM
 from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
-from strands_robots.simulation.mujoco.rendering import RenderingMixin
+from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     eject_camera_from_scene,
@@ -602,6 +602,7 @@ class MuJoCoSimEngine(
         peer_id: str | None = None,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
+        render_dir: str | os.PathLike[str] | None = None,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -652,6 +653,19 @@ class MuJoCoSimEngine(
                 with a :class:`ValueError` during construction whether or not
                 ``ros2_bridge`` is set, so a backend that only publishes later
                 still rejects it up front. Defaults to ``0``.
+            render_dir: Directory that ``render(output_path=...)`` may write
+                into for THIS Simulation - its render sandbox. The model
+                supplies ``output_path`` and cannot move the sandbox; the
+                developer constructing the Simulation can, here, without an
+                environment variable set before the process started. A bare
+                filename lands in this directory; an absolute path outside it
+                is refused as before. Created on the first render if absent.
+                ``None`` (the default) keeps the process-wide sandbox
+                (``STRANDS_ROBOTS_RENDER_ROOT``, else
+                ``~/.strands_robots/renders``). Reaches here from
+                ``Robot(name, mode="sim", render_dir=...)`` through the factory's
+                ``**kwargs``. A value that cannot name a directory (a non-path
+                type, an empty string) is refused with a :class:`ValueError`.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -702,6 +716,10 @@ class MuJoCoSimEngine(
         for _param, _value in (("default_width", default_width), ("default_height", default_height)):
             if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
                 raise ValueError(dim_err)
+        # Same rule as the dimensions: a constructor argument that cannot mean
+        # what it says is refused here, before any ROS 2 node exists.
+        if render_dir is not None and (dir_err := render_dir_error(render_dir)) is not None:
+            raise ValueError(f"MuJoCoSimEngine: {dir_err}")
         # ``mesh`` is resolved here, above ``_init_ros_bridge``, for the reason
         # stated immediately above: it is the one remaining constructor argument
         # that can be refused, and ``_validated_mesh_handle``'s ``TypeError``
@@ -721,6 +739,9 @@ class MuJoCoSimEngine(
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
+        #: This Simulation's render sandbox, or ``None`` for the process default.
+        #: Resolved once here so ``render`` confines against the on-disk location.
+        self.render_dir: Path | None = resolve_render_dir(render_dir) if render_dir is not None else None
 
         # Mesh attributes are stored plainly (no property wrapper) so
         # downstream code can swap in a real mesh client after
@@ -4912,9 +4933,35 @@ class MuJoCoSimEngine(
                 self._world.step_count += batch
             remaining -= batch
         self._publish_ros_telemetry()
+        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        # A dataset recording is fed by run_policy's per-step hook and by
+        # nothing else. A caller scripting a demonstration with
+        # set_joint_positions + step under an active recording therefore
+        # captures nothing, and until now learned that only from
+        # stop_recording's empty-dataset refusal - after the whole scripted
+        # motion had run. Say it here, on the call that does not record, while
+        # the motion is still ahead. A rollout in flight IS recording (its hook
+        # runs on the executor thread), so the note stays silent then - and
+        # ``policy_running``, the flag this guard reads, is raised for every
+        # rollout that records: ``_announce_rollout`` for run_policy and
+        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
+        # which feeds the recorder by calling add_frame directly. So the note
+        # says "a policy rollout" rather than naming run_policy alone, and
+        # start_recording's advice names all three. The note
+        # LEADS the line: appended after the step summary it was read past
+        # three times in a row by an agent that then reported "all three poses
+        # captured" - the first token of a success result is what gets read.
+        if self._world._backend_state.get("recording") and not any(
+            r.policy_running for r in self._world.robots.values()
+        ):
+            summary = (
+                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
+                "a policy rollout feeds the recorder (start_recording -> run_policy or start_policy "
+                "-> stop_recording) | " + summary
+            )
         return {
             "status": "success",
-            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [{"text": summary}],
         }
 
     def reset(self) -> dict[str, Any]:
