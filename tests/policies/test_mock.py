@@ -6,6 +6,9 @@ evaluate test in the suite.
 """
 
 import asyncio
+import logging
+
+import pytest
 
 from strands_robots.policies import (
     MockPolicy,
@@ -77,3 +80,42 @@ class TestMockPolicy:
         actions = p.get_actions_sync({"observation.state": [0, 0]}, "move")
         assert len(actions) == 8
         assert all(isinstance(a, dict) for a in actions)
+
+
+class TestMockPolicyStaysInsideTheActuatorRange:
+    """The mock commands what the actuator can do, so the engine has nothing to warn about.
+
+    ``examples/01_sim_hello_world.py`` printed three ctrlrange clamp warnings
+    before its one line of expected output, because the mock's ±0.5 sinusoid
+    did not fit the SO-100 ``Pitch`` / ``Jaw`` / ``Elbow`` ranges. The engine
+    hands an opted-in policy the model through ``set_sim_context``; the mock
+    now uses it to clip.
+    """
+
+    def test_hello_world_scene_emits_no_clamp_warning(self, caplog):
+        pytest.importorskip("mujoco")
+        from strands_robots import Robot
+
+        sim = Robot("so100", mesh=False)
+        try:
+            with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.rendering"):
+                result = sim.run_policy(robot_name="so100", policy_object=MockPolicy(), instruction="x", n_steps=50)
+            assert result["status"] == "success"
+            clamps = [r for r in caplog.records if "outside its ctrlrange" in r.getMessage()]
+            assert clamps == [], [r.getMessage()[:80] for r in clamps]
+        finally:
+            sim.destroy()
+
+    def test_values_are_clipped_to_the_learned_bounds(self):
+        p = MockPolicy()
+        p.set_robot_state_keys(["a", "b"])
+        p._ctrl_bounds = {"a": (-0.1, 0.1)}
+        actions = p.get_actions_sync({}, "x")
+        assert all(-0.1 <= a["a"] <= 0.1 for a in actions)
+        assert any(abs(a["b"]) > 0.1 for a in actions), "an unbounded key keeps the full sinusoid"
+
+    def test_set_sim_context_without_a_matching_actuator_changes_nothing(self):
+        p = MockPolicy()
+        p.set_robot_state_keys(["nope"])
+        p.set_sim_context(object(), "ghost/")  # not an MjModel: read fails, policy untouched
+        assert p._ctrl_bounds == {}

@@ -2972,8 +2972,8 @@ class MuJoCoSimEngine(
         Enables zero-config IK for an eef/cartesian-delta policy: the policy
         auto-discovers its end-effector frame from the model scoped to this
         robot's namespace. No-op for policies without ``set_sim_context``, which
-        is every shipped provider today; never fails a rollout on a binding
-        error.
+        is every shipped provider but ``MockPolicy`` - it reads the ctrlranges it
+        must command inside; never fails a rollout on a binding error.
         """
         ctx = getattr(policy, "set_sim_context", None)
         if not callable(ctx):
