@@ -123,7 +123,8 @@ def _body_gap_m(mj: Any, model: Any, data: Any, parent_id: int, child_id: int) -
     A gripper's finger pads usually live on child links of the body a caller
     names (``Fixed_Jaw`` / ``Moving_Jaw`` under the wrist), so the parent side
     is the whole subtree below ``parent_id``. Returns ``None`` when either side
-    has no geoms, or when this MuJoCo build cannot measure geom distances.
+    has no geoms, or when this MuJoCo build cannot measure geom distances - an
+    unknown gap is left unknown rather than reported as a number.
     """
     geom_distance = getattr(mj, "mj_geomDistance", None)
     if geom_distance is None:
@@ -141,7 +142,11 @@ def _body_gap_m(mj: Any, model: Any, data: Any, parent_id: int, child_id: int) -
     best = float("inf")
     for pg in parent_geoms:
         for cg in child_geoms:
-            dist = float(geom_distance(model, data, pg, cg, 1.0, fromto))
+            # The search is unbounded: mj_geomDistance returns its distmax
+            # unchanged when the true distance is larger, so any finite bound
+            # would publish every wider gap as that one number - two bodies 2 m
+            # and 10 m apart would both read as the bound.
+            dist = float(geom_distance(model, data, pg, cg, math.inf, fromto))
             if dist < best:
                 best = dist
     if not np.isfinite(best):
@@ -268,9 +273,15 @@ class ManipulationMixin:
                 (MuJoCo ``torquescale``). Must be finite and > 0.
 
         Returns:
-            ``{status, content}`` tool result; ``status="error"`` when no world
-            exists, a policy is running, a name does not resolve, the child is
-            already attached, the mode is unknown, or the recompile fails.
+            ``{status, content}`` tool result. On success the text names the
+            closest surface distance between the parent's subtree and the child
+            when they do not touch - a body welded from a distance rides along
+            floating at that offset - and the json payload carries ``parent``,
+            ``child``, ``mode``, ``relpos``, ``gap_m`` and ``touching``
+            (``gap_m`` and ``touching`` are ``None`` when the build cannot
+            measure geom distances). ``status="error"`` when no world exists, a
+            policy is running, a name does not resolve, the child is already
+            attached, the mode is unknown, or the recompile fails.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
