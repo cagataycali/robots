@@ -33,7 +33,7 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
-from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error
+from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error, refusal_repr
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +135,17 @@ def render_dir_error(value: Any) -> str | None:
     a non-path type (``True``, ``0``, a list) and an empty or blank string. A
     directory that does not exist yet is fine - the first ``render`` creates it,
     the same way the default sandbox is created on first use.
+
+    The refused value is rendered through
+    :func:`~strands_robots.utils.refusal_repr`, like every other guard in the
+    package: a third-party type's ``__repr__`` may raise anything at all, and
+    the message describing an unusable argument must not be the thing that
+    fails to build.
     """
     if isinstance(value, bool) or not isinstance(value, (str, os.PathLike)):
-        return f"render_dir must be a directory path (str or PathLike), got {type(value).__name__} {value!r}"
+        return (
+            f"render_dir must be a directory path (str or PathLike), got {type(value).__name__} {refusal_repr(value)}"
+        )
     if not os.fspath(value).strip():
         return "render_dir must name a directory, got an empty path"
     return None

@@ -48,6 +48,26 @@ def test_render_dir_error_refuses_only_what_cannot_name_a_directory(tmp_path):
     assert "empty path" in render_dir_error("   ")
 
 
+def test_render_dir_error_describes_a_value_whose_repr_raises():
+    """The message about an unusable argument must not be the thing that fails.
+
+    ``refusal_repr`` is how every guard in the package renders a refused value,
+    for this reason: a third-party type owes a guard nothing beyond the type
+    test it failed, and rendering it must not raise on the one path that exists
+    to answer a bad value with text.
+    """
+    from strands_robots.simulation.mujoco.rendering import render_dir_error
+
+    class Unprintable:
+        def __repr__(self):
+            raise RuntimeError("repr is not available")
+
+    message = render_dir_error(Unprintable())
+    assert message is not None
+    assert "render_dir must be a directory path" in message
+    assert "Unprintable" in message
+
+
 def test_resolve_render_dir_expands_and_normalizes(tmp_path, monkeypatch):
     from strands_robots.simulation.mujoco.rendering import resolve_render_dir
 
