@@ -268,6 +268,12 @@ class RecordingMixin(DatasetRecordingMixin):
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
         self._world._backend_state["push_to_hub"] = push_to_hub
+        # ``step`` feeds the recording at this rate and labels its frames with
+        # this task (see ``Simulation._record_step_frame``); the due-time clock
+        # starts fresh with every session.
+        self._world._backend_state["recording_fps"] = fps
+        self._world._backend_state["recording_task"] = task
+        self._world._backend_state.pop("step_recording_due", None)
 
         # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
         # Delegates to the same resolver DatasetRecorder.create() uses so the
@@ -534,7 +540,9 @@ class RecordingMixin(DatasetRecordingMixin):
                             f"Recording to LeRobotDataset: {repo_id}\n"
                             f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
-                            f"Run policies to capture frames, then stop_recording to save episode"
+                            f"Run policies to capture frames - or step through a scripted motion "
+                            f"(set_joint_positions(hold=True) + step records one frame per 1/{fps}s of sim "
+                            f"time) - then stop_recording to save episode"
                         )
                     }
                 ],
