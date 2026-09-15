@@ -142,8 +142,30 @@ def _emit_insecure_tls_warning(kind: str) -> None:
 # ── REST API ─────────────────────────────────────────────────────
 
 
-def api(host: str, port: int, path: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Call Reachy Mini daemon REST API."""
+def api(host: str, port: int, path: str, method: str = "GET", data: dict[str, Any] | None = None) -> Any:
+    """Call Reachy Mini daemon REST API.
+
+    Args:
+        host: Daemon host.
+        port: Daemon port.
+        path: Request path, e.g. ``/api/daemon/status``.
+        method: HTTP method.
+        data: JSON body, or ``None``.
+
+    Returns:
+        The decoded body, unreshaped. ``json.loads`` decodes any JSON value, so
+        this is whatever the daemon answered with: an object for most
+        endpoints, an array for a catalogue read, and a scalar for a daemon (or
+        an interposed proxy) that answered with one. The return type is
+        therefore ``Any`` rather than ``dict``, which is what lets a caller that
+        needs an object judge that shape - see
+        :meth:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver._transport_failure`
+        for the rule and :meth:`strands_robots.drivers.reachy.ReachyDriver._daemon_get`
+        for the native driver's door.
+
+        Every HTTP and connection failure is reported as ``{"error": ...}``
+        instead of raising, so no caller needs a ``try``.
+    """
     import urllib.error
     import urllib.request
 

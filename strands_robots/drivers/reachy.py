@@ -183,6 +183,11 @@ def _resolve_transport() -> Any:
 #: measurement supports.
 _BATTERY_KEYS: tuple[str, ...] = ("battery_level", "battery_pct", "battery", "soc")
 
+#: How much of an unreadable daemon body a refusal quotes. Enough to recognise a
+#: proxy's error page or a bare scalar, short enough that a large array does not
+#: fill the log line the refusal ends up on.
+_BODY_PREVIEW_CHARS = 60
+
 
 class ReachyDriver:
     """Native driver for the Pollen Reachy Mini.
@@ -1096,12 +1101,25 @@ class ReachyDriver:
             The decoded body, or ``{"error": ...}`` - the shape
             :func:`~strands_robots.device_connect.reachy_transport.api` returns
             for every failure, which is why no call here needs a ``try``.
+
+            A body that decodes to something other than a JSON object is
+            reported as that same shape. ``api`` hands the decoded body back
+            unreshaped, so a daemon - or an interposed proxy - answering with an
+            array, a string or ``null`` reached every caller here typed as a
+            mapping, and the ``result.get("error")`` each one opens with raised
+            ``AttributeError`` out of a driver whose contract is to report a
+            reason and stay usable. Judging the shape here is the rule
+            :meth:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver._transport_failure`
+            states for this transport: the callers that require an object are
+            the ones that judge it.
         """
         transport = _resolve_transport()
         if isinstance(transport, str):
             return {"error": transport}
 
-        result: dict[str, Any] = transport.api(self._host, self._api_port, path)
+        result = transport.api(self._host, self._api_port, path)
+        if not isinstance(result, dict):
+            return _body_shape_error("GET", path, "an object", result)
         return result
 
     def _daemon_get_list(self, path: str) -> list[Any] | dict[str, Any]:
@@ -1123,14 +1141,24 @@ class ReachyDriver:
             path: Request path, one of this module's ``_PATH_*`` constants.
 
         Returns:
-            The decoded array on success, or ``{"error": ...}``.
+            The decoded array on success, or ``{"error": ...}``. A body that is
+            neither - a scalar, or an object that is not the transport's failure
+            envelope - is reported as the shape it arrived as, which is what
+            makes ":meth:`list_moves`' only dict is the transport's error
+            envelope" true by construction rather than by assumption. Left
+            unjudged, a scalar body was returned to the caller as the
+            catalogue.
         """
         transport = _resolve_transport()
         if isinstance(transport, str):
             return {"error": transport}
 
-        result: list[Any] | dict[str, Any] = transport.api(self._host, self._api_port, path)
-        return result
+        result = transport.api(self._host, self._api_port, path)
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "error" in result:
+            return result
+        return _body_shape_error("GET", path, "an array", result)
 
     def _daemon_post(self, path: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """Call the daemon's REST API with POST.
@@ -1140,13 +1168,17 @@ class ReachyDriver:
             data: JSON body, or ``None``.
 
         Returns:
-            The decoded body, or ``{"error": ...}``.
+            The decoded body, or ``{"error": ...}`` - including for a body that
+            decodes to something other than a JSON object, on the reasoning
+            :meth:`_daemon_get` gives.
         """
         transport = _resolve_transport()
         if isinstance(transport, str):
             return {"error": transport}
 
-        result: dict[str, Any] = transport.api(self._host, self._api_port, path, method="POST", data=data)
+        result = transport.api(self._host, self._api_port, path, method="POST", data=data)
+        if not isinstance(result, dict):
+            return _body_shape_error("POST", path, "an object", result)
         return result
 
     def _send_cmd(self, command: dict[str, Any]) -> str | None:
@@ -1340,6 +1372,58 @@ def _split_host_port(port: str | None, api_port: int) -> tuple[str, int]:
     if (reason := tcp_port_error(resolved, "api_port", "ReachyDriver")) is not None:
         raise ValueError(reason)
     return host, resolved
+
+
+def _json_kind(body: Any) -> str:
+    """Name the JSON type a decoded daemon body arrived as.
+
+    Args:
+        body: A value :func:`~strands_robots.device_connect.reachy_transport.api`
+            handed back.
+
+    Returns:
+        The JSON type name - ``"object"``, ``"array"``, ``"string"``,
+        ``"number"``, ``"boolean"`` or ``"null"`` - so a refusal names the shape
+        in the daemon's own vocabulary rather than Python's. ``bool`` is tested
+        before ``int`` because it is a subclass of it, and a stray non-JSON value
+        falls back to its Python type name rather than being mislabelled.
+    """
+    if body is None:
+        return "null"
+    if isinstance(body, bool):
+        return "boolean"
+    if isinstance(body, int | float):
+        return "number"
+    if isinstance(body, str):
+        return "string"
+    if isinstance(body, list):
+        return "array"
+    if isinstance(body, dict):
+        return "object"
+    return type(body).__name__
+
+
+def _body_shape_error(method: str, path: str, expected: str, body: Any) -> dict[str, Any]:
+    """Report a daemon body that decoded to the wrong JSON shape.
+
+    Args:
+        method: HTTP method, so a reason names the call.
+        path: Request path, one of this module's ``_PATH_*`` constants.
+        expected: The shape the caller needs, worded for the message - e.g.
+            ``"an object"``.
+        body: What the daemon answered with instead.
+
+    Returns:
+        The ``{"error": ...}`` envelope every caller here already branches on,
+        so a body of the wrong shape refuses by the same path as an unreachable
+        daemon. The value is previewed rather than named by type alone: an
+        interposed proxy's JSON error page and a daemon answering ``null`` are
+        both "not an object", and only the preview tells them apart.
+    """
+    preview = repr(body)
+    if len(preview) > _BODY_PREVIEW_CHARS:
+        preview = preview[:_BODY_PREVIEW_CHARS] + "..."
+    return {"error": f"{method} {path}: daemon answered a JSON {_json_kind(body)}, not {expected}: {preview}"}
 
 
 def _refuse(reason: str) -> dict[str, Any]:
