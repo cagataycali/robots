@@ -232,7 +232,10 @@ arm = Robot(
 The credentials are wired into the cyclonedds `DomainParticipant` QoS together
 with the builtin DDS-Security plugins, so **both** the outbound telemetry and the
 inbound command surface ride an authenticated, access-controlled graph. A
-half-filled config is rejected at construction.
+half-filled config is rejected at construction: every credential supplied -
+required or optional - must be a non-empty string, and a `None`, `0` or `bytes`
+value is refused naming the key and the type received, rather than reaching the
+participant with that credential silently absent.
 
 `dds_security_config` is RTPS-specific: passing it with `ros2_transport="rclpy"`
 raises, because the rclpy backend gets its DDS Security from the ROS 2 RMW

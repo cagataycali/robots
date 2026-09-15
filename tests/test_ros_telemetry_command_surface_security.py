@@ -111,7 +111,7 @@ def test_dds_security_config_missing_any_required_key_is_rejected(missing_key: s
         RosTelemetryBase._validate_dds_security_config(cfg)
 
 
-def test_dds_security_config_empty_credential_counts_as_missing() -> None:
+def test_dds_security_config_blank_credential_is_refused() -> None:
     cfg = {
         "identity_ca": "file:/ca.pem",
         "certificate": "   ",  # whitespace-only is not a credential
@@ -119,7 +119,7 @@ def test_dds_security_config_empty_credential_counts_as_missing() -> None:
         "governance": "file:/gov.p7s",
         "permissions": "file:/perm.p7s",
     }
-    with pytest.raises(ValueError, match="certificate"):
+    with pytest.raises(ValueError, match=r"certificate.*must be a non-empty string"):
         RosTelemetryBase._validate_dds_security_config(cfg)
 
 

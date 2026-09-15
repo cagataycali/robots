@@ -28,7 +28,13 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+import strands_robots.hardware_rtps_bridge as rtps_mod
 import strands_robots.utils as utils_mod
+from strands_robots.ros_telemetry import (
+    _DDS_SECURITY_OPTIONAL_KEYS,
+    _DDS_SECURITY_REQUIRED_KEYS,
+    ROS2_INSECURE_ENV,
+)
 
 
 class _FakeWriter:
@@ -425,6 +431,99 @@ def test_security_config_wires_plugins_and_credentials_into_participant_qos(
     # Optional permissions_ca absent -> property not set.
     assert "dds.sec.access.permissions_ca" not in props
     b.shutdown()
+
+
+class TestEveryCredentialTheQosCarriesIsGradedAsAString:
+    """A ``dds_security_config`` value the validator accepts is one the participant carries.
+
+    The validator promised each required credential was "a non-empty string" but
+    graded ``str(value).strip()``, which ``str(None) == "None"`` satisfies, so
+    ``None`` / ``0`` / ``False`` passed. ``_build_security_qos`` then read the same
+    credentials by truthiness and set nothing for those keys, so an accepted config
+    reached ``DomainParticipant`` with the DDS-Security auth plugin wired and no
+    private key or governance - while the inbound arm-driving surface opened,
+    because ``_require_secure_command_surface`` is satisfied by any non-empty dict.
+    A truthy non-string degraded differently and just as quietly: ``bytes`` was
+    carried stringified, as the literal path ``b'file:/etc/dds/participant_key.pem'``.
+
+    So the two halves are pinned together: the validator owns the domain, and the
+    QoS carries every key the validator accepted.
+    """
+
+    # Every value that is not a credential, whichever way it used to degrade:
+    # the first five vanished from the QoS, the next two were carried as a
+    # stringified non-path, the last two were already refused.
+    not_a_credential = pytest.mark.parametrize(
+        "value",
+        [None, 0, False, [], {}, b"file:/etc/dds/participant_key.pem", 3.5, "", "   "],
+        ids=["none", "zero", "false", "empty-list", "empty-dict", "bytes", "float", "empty", "blank"],
+    )
+
+    @not_a_credential
+    def test_a_required_credential_that_is_not_a_string_is_refused(
+        self, fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch, value: Any
+    ) -> None:
+        monkeypatch.delenv(ROS2_INSECURE_ENV, raising=False)
+        built = len(fake_cyclonedds["participants"])
+        with pytest.raises(ValueError, match=r"private_key.*must be a non-empty string"):
+            _bridge(_FakeRobot(), dds_security_config=dict(_VALID_SECURITY, private_key=value))
+        # Refused before any DDS state exists, so no participant ever joined the
+        # domain under a half-secured QoS and there is nothing to tear down.
+        assert len(fake_cyclonedds["participants"]) == built
+
+    @not_a_credential
+    def test_an_optional_credential_that_is_not_a_string_is_refused(
+        self, fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch, value: Any
+    ) -> None:
+        # permissions_ca is optional, but a key in hand is a key the QoS carries,
+        # so it is graded by the same domain rather than left to truthiness.
+        monkeypatch.delenv(ROS2_INSECURE_ENV, raising=False)
+        with pytest.raises(ValueError, match=r"permissions_ca.*must be a non-empty string"):
+            _bridge(_FakeRobot(), dds_security_config=dict(_VALID_SECURITY, permissions_ca=value))
+
+    def test_the_refusal_names_the_key_and_the_type_received(
+        self, fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A caller reading a path out of a binary config sees which key it was and
+        # what arrived, not a participant failing later on an opaque DDS error.
+        monkeypatch.delenv(ROS2_INSECURE_ENV, raising=False)
+        with pytest.raises(ValueError) as refusal:
+            _bridge(_FakeRobot(), dds_security_config=dict(_VALID_SECURITY, governance=None))
+        assert "'governance'" in str(refusal.value)
+        assert "NoneType" in str(refusal.value)
+
+    def test_every_credential_the_validator_accepts_reaches_the_participant_qos(
+        self, fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(ROS2_INSECURE_ENV, raising=False)
+        config = dict(_VALID_SECURITY, permissions_ca="file:/etc/dds/permissions_ca.pem")
+        b = _bridge(_FakeRobot(), dds_security_config=config)
+        props = {p.name: p.value for p in fake_cyclonedds["participants"][-1].qos.policies}
+        carried = {prop: props.get(prop) for prop in rtps_mod._DDS_SECURITY_PROPERTY.values()}
+        # Nothing dropped and nothing invented: exactly the supplied credentials.
+        assert carried == {rtps_mod._DDS_SECURITY_PROPERTY[k]: v for k, v in config.items()}
+        b.shutdown()
+
+    def test_the_qos_carries_what_it_is_given_rather_than_grading_again(self, fake_cyclonedds: dict[str, Any]) -> None:
+        # Credentials are graded once, in the validator. Were a falsy one ever to
+        # reach the QoS anyway, the participant now carries it as an empty
+        # property - which real cyclonedds refuses out loud - instead of dropping
+        # it and authenticating with a credential silently absent.
+        b = _bridge(enable_commands=False)
+        qos = b._build_security_qos(dict(_VALID_SECURITY, private_key=""))
+        props = {p.name: p.value for p in qos.policies}
+        assert props["dds.sec.auth.private_key"] == ""
+        b.shutdown()
+
+    def test_the_graded_keys_are_exactly_the_keys_the_qos_maps(self) -> None:
+        # The guarantee above holds for every credential only while the two
+        # declarations agree, so a key added to one module and not the other -
+        # a credential the QoS would carry ungraded, or one graded and dropped -
+        # fails here rather than on a deployment.
+        assert set(rtps_mod._DDS_SECURITY_PROPERTY) == {
+            *_DDS_SECURITY_REQUIRED_KEYS,
+            *_DDS_SECURITY_OPTIONAL_KEYS,
+        }
 
 
 def test_telemetry_only_participant_has_no_security_qos(fake_cyclonedds: dict[str, Any]) -> None:

@@ -296,14 +296,19 @@ class HardwareRtpsBridge(RosTelemetryBase):
         with the operator-supplied credentials, mapped to their ``dds.sec.*``
         property names (:data:`_DDS_SECURITY_PROPERTY`). Optional keys absent
         from ``config`` (e.g. ``permissions_ca``) are simply not set.
+
+        Every key PRESENT is carried, rather than every truthy one, so the
+        participant cannot silently drop a credential
+        :meth:`~strands_robots.ros_telemetry.RosTelemetryBase._validate_dds_security_config`
+        accepted: that validator is the single place a credential is graded, and
+        what it accepts is by definition a non-empty string this QoS must carry.
         """
         from cyclonedds.qos import Policy, Qos
 
         properties = dict(_DDS_SECURITY_PLUGINS)
         for key, prop in _DDS_SECURITY_PROPERTY.items():
-            value = config.get(key)
-            if value:
-                properties[prop] = str(value)
+            if key in config:
+                properties[prop] = config[key]
         return Qos(*[Policy.Property(name, value) for name, value in properties.items()])
 
     # -- helpers ----------------------------------------------------------

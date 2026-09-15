@@ -159,6 +159,13 @@ _DDS_SECURITY_REQUIRED_KEYS = (
     "permissions",
 )
 
+# Credentials a participant may carry but does not require. Declared beside the
+# required keys because both are validated by the same domain, and every key
+# either tuple names is one the participant QoS must carry - see
+# ``strands_robots.hardware_rtps_bridge._DDS_SECURITY_PROPERTY``, which maps
+# exactly these keys to their ``dds.sec.*`` property names.
+_DDS_SECURITY_OPTIONAL_KEYS = ("permissions_ca",)
+
 
 class RosTelemetryBase:
     """Transport-agnostic ROS 2 wire contract shared by every telemetry bridge.
@@ -391,22 +398,45 @@ class RosTelemetryBase:
         (:data:`_DDS_SECURITY_REQUIRED_KEYS`) are the credentials a DDS Security
         participant cannot authenticate or be governed without; each must be a
         non-empty string (a path, ``file:`` / ``data:`` URI per the DDS Security
-        spec). Validated at construction so a half-filled config refuses the
-        bridge rather than silently degrading wire security.
+        spec), and so must an optional key that is present
+        (:data:`_DDS_SECURITY_OPTIONAL_KEYS`). Validated at construction so a
+        half-filled config refuses the bridge rather than silently degrading
+        wire security.
 
         Raises:
-            ValueError: If ``config`` is not a dict or a required key is missing
-                or empty.
+            ValueError: If ``config`` is not a dict, a required key is absent, or
+                a credential in hand is not a non-empty string.
         """
         if not isinstance(config, dict):
             raise ValueError(f"dds_security_config must be a dict, got {type(config).__name__}")
-        missing = [k for k in _DDS_SECURITY_REQUIRED_KEYS if not str(config.get(k, "")).strip()]
+        missing = [k for k in _DDS_SECURITY_REQUIRED_KEYS if k not in config]
         if missing:
             raise ValueError(
                 f"dds_security_config is missing required keys: {missing}. "
                 f"All of {list(_DDS_SECURITY_REQUIRED_KEYS)} must be supplied "
                 "(identity CA, participant certificate + private key, governance, permissions)."
             )
+        # A credential in hand must be a string this docstring's contract can be
+        # met with. The type check is what makes the emptiness check meaningful:
+        # grading ``str(value).strip()`` accepted every non-string, because
+        # ``str(None)`` is ``"None"``, and the participant QoS then reads the same
+        # credentials by truthiness - so a ``None``, ``0`` or ``False`` private
+        # key passed this validator and was dropped from the QoS, wiring the auth
+        # plugin with no key at all. A truthy non-string is no better: ``bytes``
+        # reached the QoS stringified as ``b'file:/key.pem'``, naming a path that
+        # cannot exist. Both are the silent-degrade this validator exists to
+        # prevent, so the domain is stated once here for required and optional
+        # keys alike.
+        for key in (*_DDS_SECURITY_REQUIRED_KEYS, *_DDS_SECURITY_OPTIONAL_KEYS):
+            if key not in config:
+                continue
+            value = config[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"dds_security_config[{key!r}] must be a non-empty string "
+                    f"(a path or file:/data: URI per the DDS Security spec), "
+                    f"got {type(value).__name__} {value!r}."
+                )
         return config
 
     @staticmethod
