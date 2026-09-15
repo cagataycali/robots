@@ -85,6 +85,38 @@ class TestTheDashboardLogsThroughIt:
         assert len(caplog.records) == 1
         assert "\n" not in caplog.records[0].getMessage()
 
+    def test_a_forwarded_address_cannot_forge_the_challenge_cap_entry(self, caplog, monkeypatch) -> None:
+        """X-Forwarded-For is quoted with %s, so its bytes reach the line as they arrived.
+
+        The refusal reasons above are built with `!r`, which escapes its own control
+        characters; this is the header site where nothing did, and the entry a flooding
+        client provokes is the one an operator reads while being flooded.
+        """
+        monkeypatch.setattr(auth, "_challenges", {})
+        monkeypatch.setattr(auth, "_CHAL_MAX_PER_IP", 1)
+        ip = "203.0.113.9\r\n" + FORGED_SECOND_LINE
+        with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.auth"):
+            auth._stash_challenge("reg", b"c", {}, ip=ip)
+            auth._stash_challenge("reg", b"c", {}, ip=ip)
+        (message,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("challenge cap")]
+        assert message.splitlines() == [message]
+        assert "203.0.113.9\\r\\n" + FORGED_SECOND_LINE in message
+
+    @pytest.mark.parametrize(("header", "door"), [("host", "_derive_rp_id"), ("origin", "_derive_origin")])
+    def test_a_refused_ceremony_cannot_fill_the_log_file(self, header, door, caplog, monkeypatch) -> None:
+        """A header is bounded by the cut, not by whatever the caller decided to send."""
+        monkeypatch.delenv("STRANDS_DASH_AUTH_ORIGIN", raising=False)
+        monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
+        monkeypatch.setattr(auth, "known_rp_ids", lambda store=None: {"good.example"})
+        # The pad precedes the CRLF because _host_only cuts the Host at its first colon.
+        value = "evil.example" + "x" * 500 + "\r\n" + FORGED_SECOND_LINE
+        request = _Req(host=value) if header == "host" else _Req(host="localhost:8090", origin="http://" + value)
+        with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.auth"), pytest.raises(HTTPException):
+            getattr(auth, door)(request)
+        (message,) = [r.getMessage() for r in caplog.records]
+        assert message.splitlines() == [message]
+        assert len(message) <= len("refused WebAuthn ceremony: ") + 200
+
 
 CRED_ID = bytes_to_base64url(b"\x01" * 16)
 
