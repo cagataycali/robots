@@ -41,7 +41,7 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 | Tab | What it shows | Where the rules live |
 |---|---|---|
 | Fleet | every robot the registry knows, sim and real, and the mesh peers when the `[mesh]` extra is installed | `strands_robots.registry` |
-| Sim | a MuJoCo robot stepping in this process - an MJPEG stream and the same model in your browser | `strands_robots.simulation` |
+| Sim | a MuJoCo robot stepping in this process - an MJPEG stream and the same model in your browser. Or a **mirror**: that twin posed from the real arm's servo bus, read and never written | `strands_robots.simulation`, `dashboard.mirror` |
 | Agent | a Strands Agent whose tools are the simulations on this page; anything that moves a robot pauses on a consent card | `dashboard.agent_console`, `dashboard.agent_hitl`, `dashboard.consent` |
 | Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |
 
@@ -87,6 +87,25 @@ every telemetry frame, and in the answer to the button itself - so a page opened
 under an e-stop engaged elsewhere shows RESUME, and a button that reads E-STOP
 stops. A refused request is shown as a message beside the line, not painted as
 an e-stop.
+
+## The twin follows the real arm
+
+Pick a robot, change **simulate** to the serial port the arm is on (the list
+is `GET /api/sim/ports`, servo buses first) and press **Start**. The session
+that appears is marked **mirror · read-only**: a thread reads
+`Present_Position` from every motor at ~20 Hz and the model is posed from the
+readings - no physics steps, no `Reset`, and `joints` answers `400`, because
+the arm decides. Move the arm by hand and the twin moves.
+
+What it will not do is write. lerobot's bus is opened for the handshake (a
+ping and a firmware read) and closed with `disable_torque=False`, since the
+default close writes `Torque_Enable=0` to every motor. Torque stays exactly as
+you left it and the footer says so. Angles are `(ticks - 2048) · 2π / 4096`
+with no calibration applied - right up to the offset a calibration would
+record, and labelled `estimate` in the snapshot's `bus` field along with the
+raw ticks, the read rate and the age of the last reading. A bus that stops
+answering shows **stale**, then **error** with the reason; a port that will
+not open is a `502` naming it, and nothing is left holding the device.
 
 ## Configuration
 
