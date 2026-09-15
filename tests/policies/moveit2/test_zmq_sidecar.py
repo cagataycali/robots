@@ -564,6 +564,63 @@ def test_plan_already_guarded_statuses_are_unchanged() -> None:
     )
 
 
+# A plan that serialises to nothing commandable is reported as a failure.
+#
+# ``not plan_result`` only sees a falsy plan object. A truthy plan can still
+# carry zero waypoints, or waypoints with no ``positions``, and the pre-fix
+# sidecar reported both as ``success=True, status="ok"`` - handing the client a
+# plan that moves no joint. The kind stays ``planner_returned_empty`` so a
+# client already matching it needs no change.
+@pytest.mark.parametrize(
+    ("points", "expected_detail"),
+    [
+        pytest.param([], "no_waypoints", id="truthy_plan_with_zero_waypoints"),
+        pytest.param(
+            [_FakePoint(sec=0, nanosec=0, positions=[]), _FakePoint(sec=1, nanosec=0, positions=[])],
+            "2_of_2_waypoints_carry_no_joint_position",
+            id="every_waypoint_positionless",
+        ),
+        pytest.param(
+            [
+                _FakePoint(sec=0, nanosec=0, positions=[0.1]),
+                _FakePoint(sec=1, nanosec=0, positions=[]),
+                _FakePoint(sec=2, nanosec=0, positions=[0.2]),
+            ],
+            "1_of_3_waypoints_carry_no_joint_position",
+            id="one_positionless_waypoint_among_good_ones",
+        ),
+    ],
+)
+def test_plan_serialising_to_nothing_commandable_is_a_failure(points: list[_FakePoint], expected_detail: str) -> None:
+    """The reply refuses, names the kind an operator matches, and carries no rows."""
+    component = _FakeComponent(plan_points=points)
+
+    result = _plan_or_fail(_FakeMoveItPy(component=component), target_joints={"j0": 0.1})
+
+    assert result["success"] is False
+    assert result["status"] == f"planner_returned_empty:{expected_detail}"
+    assert result["trajectory"] == []
+
+
+def test_plan_empty_kind_is_the_one_clients_already_match() -> None:
+    """Every no-commandable-waypoint reply shares the documented kind.
+
+    The kind is the part before the colon; a client matching it handles the
+    falsy-plan case and the two serialisation cases alike, which is why this
+    guard adds no new status kind to the wire contract.
+    """
+    replies = [
+        _plan_or_fail(_FakeMoveItPy(component=_FakeComponent(plan_points=None)), target_joints={"j0": 0.1}),
+        _plan_or_fail(_FakeMoveItPy(component=_FakeComponent(plan_points=[])), target_joints={"j0": 0.1}),
+        _plan_or_fail(
+            _FakeMoveItPy(component=_FakeComponent(plan_points=[_FakePoint(sec=0, nanosec=0, positions=[])])),
+            target_joints={"j0": 0.1},
+        ),
+    ]
+    assert [r["success"] for r in replies] == [False, False, False]
+    assert all(r["status"].split(":")[0] == "planner_returned_empty" for r in replies), [r["status"] for r in replies]
+
+
 def test_plan_happy_path_still_serialises_rows() -> None:
     """A plan that succeeds is unaffected by the new guards."""
     component = _StageFailingComponent(positions=[0.1, 0.2])

@@ -486,17 +486,65 @@ class TestMoveIt2PolicyWireRoundTrip:
         for step in actions:
             assert set(step.keys()) == {"joint_0", "joint_1", "joint_2"}
 
-    def test_empty_trajectory_returns_empty_list(self):
+    # A plan that commands nothing is refused, not returned as a no-op.
+    #
+    # The sidecar is a separate process, so the client cannot assume it grades
+    # its own reply: these pin the refusal on the reply as received. Rows are
+    # ``[time_from_start, q0, ..., qN]``, so a row shorter than two columns
+    # carries no joint position.
+    @pytest.mark.parametrize(
+        ("reply_trajectory", "expected_message"),
+        [
+            pytest.param([], "returned no waypoint", id="no_waypoint_at_all"),
+            pytest.param([[0.0], [0.1]], "waypoint 0 carries no joint position", id="every_waypoint_positionless"),
+            pytest.param(
+                [[0.0, 0.1, 0.2], [0.5], [1.0, 0.3, 0.4]],
+                "waypoint 1 carries no joint position",
+                id="one_positionless_waypoint_among_good_ones",
+            ),
+        ],
+    )
+    def test_success_reply_commanding_nothing_is_refused(self, reply_trajectory, expected_message):
+        """``success=True`` over a plan with no commandable waypoint raises.
+
+        The pre-fix client returned these as actions: an empty trajectory as
+        ``[]``, and a positionless waypoint as ``{}`` - an action dict the
+        caller counts as a waypoint while it moves no joint, which every
+        downstream "empty action chunk" guard lets through because the list is
+        not empty.
+        """
         p = self._make_policy()
-        _capture_send_decode_recv(p, {"trajectory": [], "success": True, "status": "ok"})
+        _capture_send_decode_recv(p, {"trajectory": reply_trajectory, "success": True, "status": "ok"})
+
+        with pytest.raises(RuntimeError, match=expected_message):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 6},
+                    "",
+                    target_joints={"j0": 0.5},
+                )
+            )
+
+    def test_every_returned_action_commands_at_least_one_joint(self):
+        """The returned list never carries an action dict that commands nothing.
+
+        The property the refusals above exist for, stated once over the healthy
+        plan: a caller can count the actions it got and know each one moves a
+        joint.
+        """
+        p = self._make_policy()
+        p.set_robot_state_keys(["j0", "j1"])
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=3, ndof=2))
+
         actions = asyncio.run(
             p.get_actions(
-                {"observation.state": [0.0] * 6},
+                {"observation.state": [0.0, 0.0]},
                 "",
                 target_joints={"j0": 0.5},
             )
         )
-        assert actions == []
+        assert len(actions) == 3
+        assert all(step for step in actions), f"an action dict commands no joint: {actions}"
 
     def test_failed_plan_raises_runtime_error(self):
         """``success=False`` from the sidecar surfaces as a RuntimeError
@@ -726,9 +774,16 @@ class TestMoveIt2TrajectoryDecode:
     def _make_policy(self) -> MoveIt2Policy:
         return MoveIt2Policy(host="127.0.0.1", port=19999, planning_group="arm")
 
-    def test_empty_trajectory_row_is_skipped(self):
-        """An empty waypoint row from the sidecar is skipped, not emitted as
-        an empty action dict that the runner would have to special-case."""
+    def test_unusable_waypoint_row_refuses_the_plan_rather_than_dropping_it(self):
+        """An unusable waypoint row refuses the plan; it is not silently dropped.
+
+        Skipping the row returned two actions for a three-waypoint plan without
+        telling the caller a waypoint was discarded. The waypoints of a
+        collision-aware plan are what make the path avoid the obstacles the
+        planner routed around, so executing the plan minus one of them can cut a
+        corner the planner deliberately did not cut. Refusing names the row and
+        leaves the caller to re-plan.
+        """
         p = self._make_policy()
         response = {
             "trajectory": [[0.0, 0.1, 0.2], [], [0.1, 0.3, 0.4]],
@@ -736,10 +791,9 @@ class TestMoveIt2TrajectoryDecode:
             "status": "ok",
         }
         _capture_send_decode_recv(p, response)
-        actions = asyncio.run(p.get_actions({"observation.state": [0.0, 0.0]}, "", target_joints={"j0": 0.5}))
-        # Two non-empty rows -> two actions; the empty row produced nothing.
-        assert len(actions) == 2
-        assert all(set(step.keys()) == {"joint_0", "joint_1"} for step in actions)
+
+        with pytest.raises(RuntimeError, match="waypoint 1 carries no joint position"):
+            asyncio.run(p.get_actions({"observation.state": [0.0, 0.0]}, "", target_joints={"j0": 0.5}))
 
 
 class TestClientTeardownNonBlocking:

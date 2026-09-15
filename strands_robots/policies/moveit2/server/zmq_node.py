@@ -156,7 +156,11 @@ def _plan(
       not have, an unresolvable pose link, or a ``target_pose`` that is
       not 7 values.
     * ``planner_exception`` / ``planner_returned_empty`` - planning ran
-      and failed.
+      and failed. ``planner_returned_empty`` also covers a plan that
+      serialised to no waypoint, or to waypoints carrying no joint
+      position: a plan that commands nothing is a planning failure, not a
+      successful plan. Those two carry a ``:detail`` suffix naming which
+      of the two it was.
     * ``trajectory_error`` - the result did not serialise.
     """
     from geometry_msgs.msg import PoseStamped
@@ -224,6 +228,17 @@ def _plan(
     except Exception as e:  # noqa: BLE001 - report the failing stage structurally
         logger.exception("Serialising the planned trajectory failed: %s", e)
         return {"trajectory": [], "success": False, "status": f"trajectory_error:{e}"}
+
+    # ``not plan_result`` above only sees a falsy plan object. A truthy plan can
+    # still serialise to zero waypoints, or to waypoints holding only the time
+    # column, and reporting either as success=True hands the client a plan that
+    # moves no joint. The kind is unchanged, so a client already matching
+    # ``planner_returned_empty`` needs no change to handle these.
+    short = [i for i, row in enumerate(rows) if len(row) < 2]
+    if not rows or short:
+        detail = "no_waypoints" if not rows else f"{len(short)}_of_{len(rows)}_waypoints_carry_no_joint_position"
+        logger.warning("The plan serialised to nothing commandable (%s); reporting it as a planning failure.", detail)
+        return {"trajectory": [], "success": False, "status": f"planner_returned_empty:{detail}"}
 
     return {"trajectory": rows, "success": True, "status": "ok"}
 

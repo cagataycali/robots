@@ -250,13 +250,15 @@ class MoveIt2Policy(Policy):
             List of action dicts; one entry per trajectory waypoint (the
             time column from the sidecar is dropped - :class:`Robot`
             consumes per-step joint targets, the runner schedules the
-            timing).
+            timing). Never empty: a plan carrying no commandable waypoint
+            is refused rather than returned as a no-op.
 
         Raises:
             ValueError: If neither ``target_pose`` nor ``target_joints``
                 is provided.
             RuntimeError: If the sidecar returns ``success=False`` or an
-                ``error`` field.
+                ``error`` field, or reports success for a plan that
+                carries no waypoint or a waypoint with no joint position.
         """
         target_pose = kwargs.get("target_pose")
         target_joints = kwargs.get("target_joints")
@@ -297,8 +299,8 @@ class MoveIt2Policy(Policy):
             world_update=world_update,
         )
 
+        status = response.get("status", "unknown")
         if not response.get("success", False):
-            status = response.get("status", "unknown")
             raise RuntimeError(
                 f"MoveIt2 planning failed: status={status!r}, "
                 f"target_pose={target_pose!r}, target_joints={target_joints!r}, "
@@ -306,6 +308,20 @@ class MoveIt2Policy(Policy):
             )
 
         trajectory = response.get("trajectory", [])
+        if not trajectory:
+            # The sidecar said the plan succeeded, so the RuntimeError above did
+            # not fire, and an empty trajectory unpacks to zero actions - a
+            # no-op plan reported as a successful one. A plan that commands
+            # nothing is a planning failure, which is what the reference sidecar
+            # reports as ``planner_returned_empty``; a sidecar that reports it
+            # as success is refused here so the caller is not handed a plan that
+            # moves no joint. Same refusal the other service-mode policy makes
+            # for an empty action chunk.
+            raise RuntimeError(
+                "MoveIt2 planning reported success but returned no waypoint: "
+                f"status={status!r}, planning_group={planning_group!r}. "
+                "A plan that commands nothing is a planning failure, not a no-op plan."
+            )
         return self._unpack_trajectory(trajectory)
 
     # Helpers
@@ -341,18 +357,25 @@ class MoveIt2Policy(Policy):
         timing. If ``set_robot_state_keys`` was called, joint names come
         from there; otherwise we emit ``"joint_<i>"`` keys derived from
         the row width.
-        """
-        if not trajectory:
-            return []
 
+        Raises:
+            RuntimeError: If a row carries no joint position, which would
+                otherwise unpack into an action dict that commands nothing.
+        """
         actions: list[dict[str, Any]] = []
-        for row in trajectory:
-            if not row:
-                continue
-            # Drop the leading time column. ``len(row) >= 2`` is enforced
-            # implicitly: if the row only has the time column the per-
-            # joint slice below is empty and we emit an empty dict, which
-            # the runner skips.
+        for index, row in enumerate(trajectory):
+            # Rows are ``[time_from_start, q0, ..., qN]``, so a row shorter than
+            # two columns carries no joint position. Emitting it as an empty
+            # action dict would report a waypoint that commands nothing, and the
+            # caller counts the actions it got - so refuse the plan instead of
+            # returning one that silently moves no joint.
+            if len(row) < 2:
+                raise RuntimeError(
+                    f"MoveIt2 trajectory waypoint {index} carries no joint position ({list(row)!r}); "
+                    "rows are [time_from_start, q0, ..., qN]. A waypoint without a position "
+                    "commands nothing, so the plan is not executable."
+                )
+            # Drop the leading time column - the runner schedules the timing.
             joint_values = list(row[1:])
             keys = self._resolve_joint_keys(len(joint_values))
             actions.append({k: float(v) for k, v in zip(keys, joint_values)})
