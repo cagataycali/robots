@@ -108,7 +108,9 @@ class TestTheEncoderIsTheReleases:
 
         _load()._encode_gif(_frames(w=64, h=36), str(gif), 10, 32)
 
-        assert Image.open(gif).info.get("loop") == 0
+        with Image.open(gif) as image:
+            loop = image.info.get("loop")
+        assert loop == 0
 
     def test_a_frame_rate_the_encoder_refuses_is_named_up_front(self, tmp_path: Path) -> None:
         pytest.importorskip("imageio.v2")

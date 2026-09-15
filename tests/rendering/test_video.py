@@ -34,7 +34,9 @@ def test_encode_clip_gif_loops(tmp_path) -> None:
     Image = pytest.importorskip("PIL.Image")
     out = encode_clip(_frames(), tmp_path / "clip.gif", fps=10)
     # Pillow reports the Netscape looping block as ``loop``; 0 means forever.
-    assert Image.open(out).info.get("loop") == 0
+    with Image.open(out) as image:
+        loop = image.info.get("loop")
+    assert loop == 0
 
 
 def test_encode_clip_mp4_round_trip(tmp_path) -> None:
