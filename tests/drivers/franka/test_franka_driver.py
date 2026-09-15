@@ -15,6 +15,7 @@ to know what a Franka command must satisfy should not have to open nine.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import threading
 import time
@@ -438,6 +439,20 @@ class TestDecodeRobotState:
         state = SimpleNamespace(q=_Q, dq=_DQ, tau_J=_TAU)
         reason = decode_robot_state(state, joint_names_for("panda"), SimpleNamespace(width=float("inf")))
         assert isinstance(reason, str) and "gripper" in reason
+
+    def test_a_hand_attribute_the_binding_does_not_carry_is_left_unset(self) -> None:
+        """Only a width that is *there* and not a number is a refusal.
+
+        The decode cannot tell a renamed attribute from an absent Hand, and
+        refusing the whole state read over one would cost the joints - which are
+        what the consumer came for.
+        """
+        state = SimpleNamespace(q=_Q, dq=_DQ, tau_J=_TAU)
+        snapshot = decode_robot_state(state, joint_names_for("panda"), SimpleNamespace(width=0.037))
+        assert isinstance(snapshot, dict)
+        assert snapshot["gripper_width"] == pytest.approx(0.037)
+        assert snapshot["gripper_max_width"] is None
+        assert len(snapshot["joints"]) == DOF
 
 
 # ============================================================================
@@ -921,3 +936,267 @@ class TestTheMotionsVerdictIsRead:
         result = driver.send_action({GRIPPER_KEY: 0.04})
         assert result["status"] == "error"
         assert "did not reach 0.04 m" in result["content"][0]["text"]
+
+
+# ============================================================================
+# Shutdown. Every door on this path answers instead of raising.
+# ============================================================================
+
+
+class _HandThatWillNotHalt:
+    """A Hand whose own motion refuses to stop. The rest of the surface answers."""
+
+    def __init__(self, hostname: str) -> None:
+        self.hostname = hostname
+        self.closed = False
+        self.state: Any = SimpleNamespace(width=0.037, max_width=0.08)
+
+    def read_once(self) -> Any:
+        return self.state
+
+    def move(self, width: float, speed: float) -> bool:  # noqa: ARG002 - libfranka signature
+        return True
+
+    def stop(self) -> None:
+        raise RuntimeError("the fingers are still closing")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _HandThatWillNotClose(_HandThatWillNotHalt):
+    """A Hand that halts but cannot be released - the first device cleanup closes."""
+
+    def stop(self) -> None:
+        return None
+
+    def close(self) -> None:
+        raise OSError("the Hand did not release its FCI socket")
+
+
+class _ArmThatWillNotClose(FakePanda):
+    """An arm that cannot be released - the other side of the same failure."""
+
+    def close(self) -> None:
+        raise OSError("the arm did not release its FCI session")
+
+
+class _HandWithNoClose:
+    """A binding whose Gripper exposes no ``close`` at all."""
+
+    def __init__(self, hostname: str) -> None:
+        self.hostname = hostname
+        self.state: Any = SimpleNamespace(width=0.037, max_width=0.08)
+
+    def read_once(self) -> Any:
+        return self.state
+
+    def move(self, width: float, speed: float) -> bool:  # noqa: ARG002 - libfranka signature
+        return True
+
+    def stop(self) -> None:
+        return None
+
+
+class _HandParkedInClose(_HandThatWillNotHalt):
+    """A Hand whose ``close()`` parks, holding cleanup's window open.
+
+    Cleanup closes the gripper first and holds both locks across the whole loop,
+    so a Hand parked in ``close`` is a shutdown caught mid-flight: the handles are
+    still set, and the next caller to read them will read them after they are not.
+    """
+
+    def __init__(self, hostname: str) -> None:
+        super().__init__(hostname)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def stop(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.entered.set()
+        assert self.release.wait(timeout=10), "the parked close was never released"
+        self.closed = True
+
+
+def _with_hand(monkeypatch: pytest.MonkeyPatch, hand: Any) -> tuple[FrankaDriver, FakePanda]:
+    """Connect a driver whose Hand is *hand* rather than the cooperative fake."""
+    arm = FakePanda(_HOST)
+    _install_fake_panda_py(monkeypatch, panda=arm)
+    sys.modules["panda_py"].libfranka.Gripper = lambda host: hand  # noqa: ARG005
+    driver = FrankaDriver(tool_name="panda", port=_HOST)
+    assert driver.connect_eagerly() is None
+    return driver, arm
+
+
+def _raced_by_shutdown(monkeypatch: pytest.MonkeyPatch, call: Any) -> Any:
+    """Run *call* inside the window :meth:`_live_handles` documents, and return it.
+
+    The window is between a verb's ``is_connected`` gate and its handle read: both
+    are outside the state lock, so a ``cleanup`` that lands between them leaves the
+    verb holding ``None`` for an arm its own gate just called live. Reproduced
+    without a sleep, from two facts about the real code: cleanup holds the state
+    lock across its whole close loop and clears the handles inside it, and a Hand
+    parked in ``close`` therefore pins the driver in the pre-clear state.
+
+    ``is_connected`` is wrapped in a barrier that delegates to the real property
+    and only records that it answered ``True``, so the interleaving is observed
+    rather than arranged: the caller is known to have passed its gate on a live
+    link before shutdown is allowed to finish, which is what makes the refusal it
+    returns the post-gate one and not the gate's own.
+    """
+    hand = _HandParkedInClose(_HOST)
+    driver, arm = _with_hand(monkeypatch, hand)
+
+    gate_passed = threading.Event()
+    live = FrankaDriver.__dict__["is_connected"].fget
+
+    def _observed(self: FrankaDriver) -> bool:
+        answer = bool(live(self))
+        if answer:
+            gate_passed.set()
+        return answer
+
+    monkeypatch.setattr(FrankaDriver, "is_connected", property(_observed))
+
+    shutdown = threading.Thread(target=driver.cleanup, name="cleanup")
+    shutdown.start()
+    assert hand.entered.wait(timeout=10), "cleanup never reached the Hand it closes first"
+
+    answered: list[Any] = []
+    caller = threading.Thread(target=lambda: answered.append(call(driver)), name="caller")
+    caller.start()
+    assert gate_passed.wait(timeout=10), "the caller never passed its gate on the live link"
+
+    hand.release.set()  # cleanup now clears the handles the caller is about to read
+    shutdown.join(timeout=10)
+    caller.join(timeout=10)
+    assert not shutdown.is_alive() and not caller.is_alive()
+    assert hand.closed and arm.closed, "shutdown itself completed"
+    return answered[0]
+
+
+class TestAHaltThatFailsIsAReasonAtEveryDoor:
+    """``_halt`` answers with a reason, and each caller reports it in its own voice.
+
+    A halt is reached from the agent ``stop`` verb, from a task stop and from
+    shutdown, and every one of those is a place where a raise would replace a
+    stopped arm with a traceback. The reason is one string; what differs is what
+    each door can do with it.
+    """
+
+    @pytest.mark.parametrize(
+        "failure",
+        [OSError("FCI link went away"), RuntimeError("control box is busy"), AttributeError("no stop() here")],
+        ids=lambda exc: type(exc).__name__,
+    )
+    def test_stop_task_refuses_naming_what_the_binding_said(
+        self, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """``AttributeError`` is caught with the link errors on purpose: a binding
+        whose surface differs from the measured one must be reported, because a
+        halt verb that raises is worse than one that says why it could not halt."""
+        driver, _ = _connected(monkeypatch, panda=FakePanda(_HOST, fail=failure))
+        result = driver.stop_task()
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == f"stop_task: FCI stop failed: {failure}"
+
+    def test_a_hand_that_will_not_halt_is_a_failed_halt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An arm that stopped while the fingers keep closing is a partial halt,
+        and a partial halt is reported as a failure rather than a success."""
+        driver, arm = _with_hand(monkeypatch, _HandThatWillNotHalt(_HOST))
+        result = driver.stop_task()
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == "stop_task: FCI stop failed: the fingers are still closing"
+        assert arm.robot.stops == 1, "the arm was halted - it is the Hand that refused"
+
+    def test_the_lifecycle_stop_logs_the_reason_and_leaves_the_link_open(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``stop`` is the lifecycle half and has no envelope to refuse with, so the
+        reason goes to the log; the link stays open because a failed halt closed
+        nothing."""
+        driver, _ = _connected(monkeypatch, panda=FakePanda(_HOST, fail=OSError("link down")))
+        with caplog.at_level(logging.WARNING, logger="strands_robots.drivers.franka.driver"):
+            asyncio.run(driver.stop())
+        assert "Franka stop failed on 'panda'" in caplog.text
+        assert "link down" in caplog.text
+        assert driver.is_connected, "the halt failed; nothing about the link changed"
+
+    def test_a_halt_that_succeeds_says_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Control: the same call on a cooperative arm logs no warning."""
+        driver, arm = _connected(monkeypatch)
+        with caplog.at_level(logging.WARNING, logger="strands_robots.drivers.franka.driver"):
+            asyncio.run(driver.stop())
+        assert arm.robot.stops == 1
+        assert caplog.text == ""
+
+
+class TestCleanupReleasesWhatItCanClose:
+    """The control box admits one session, so every device is closed even if one
+    cannot be - and the handles are dropped either way."""
+
+    @pytest.mark.parametrize("refuser", ["gripper", "arm"])
+    def test_a_device_that_will_not_close_does_not_strand_the_other(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, refuser: str
+    ) -> None:
+        """One device's failure ending the loop would leave the other's FCI session
+        open with no reference left to close it - that device unreachable to the
+        next process until the control box times the session out, which is the
+        outcome this method exists to prevent. Asserted from both sides so the
+        guarantee does not rest on which device is closed first."""
+        if refuser == "gripper":
+            driver, arm = _with_hand(monkeypatch, _HandThatWillNotClose(_HOST))
+        else:
+            driver, arm = _connected(monkeypatch, panda=_ArmThatWillNotClose(_HOST))
+        hand = driver._gripper
+
+        with caplog.at_level(logging.WARNING, logger="strands_robots.drivers.franka.driver"):
+            driver.cleanup()
+
+        assert f"Franka {refuser} close failed on 'panda'" in caplog.text
+        assert "did not release its FCI s" in caplog.text
+        survivor = arm if refuser == "gripper" else hand
+        assert survivor.closed, "the device that could be released was released anyway"
+        assert not driver.is_connected
+        assert driver._panda is None and driver._gripper is None
+
+    def test_a_device_with_no_close_is_skipped_rather_than_probed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A binding whose Gripper exposes no ``close`` is a surface difference,
+        not a leak: there is no session of its own to end, and the arm's still is."""
+        driver, arm = _with_hand(monkeypatch, _HandWithNoClose(_HOST))
+        driver.cleanup()
+        assert arm.closed
+        assert not driver.is_connected
+        assert driver._gripper is None
+
+
+class TestACallerRacingShutdownIsRefused:
+    """The window :meth:`_live_handles` documents: a verb whose gate saw a live
+    link reads the handles after shutdown cleared them. Every verb on that path
+    answers - a refusal in its own voice, or nothing at all - because the
+    alternative is an ``AttributeError`` on ``None`` reaching the tool surface."""
+
+    def test_a_valid_command_is_refused_and_commands_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        names = joint_names_for("panda")
+        action = dict(zip(names, _Q, strict=True))
+        result = _raced_by_shutdown(monkeypatch, lambda driver: driver.send_action(action))
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == f"send_action: not connected to {_HOST}"
+
+    def test_a_task_stop_is_refused_in_its_own_voice(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result = _raced_by_shutdown(monkeypatch, lambda driver: driver.stop_task())
+        assert result["status"] == "error"
+        assert result["content"][0]["text"] == f"stop_task: not connected to {_HOST}"
+
+    def test_the_lifecycle_stop_returns_quietly(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Shutdown racing shutdown: there is nothing left to halt and nobody to
+        tell, so ``stop`` returns without a warning and without touching the arm."""
+        with caplog.at_level(logging.WARNING, logger="strands_robots.drivers.franka.driver"):
+            assert _raced_by_shutdown(monkeypatch, lambda driver: asyncio.run(driver.stop())) is None
+        assert caplog.text == ""
