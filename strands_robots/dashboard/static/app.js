@@ -220,12 +220,66 @@ $("#login").addEventListener("click", async () => {
   } catch (e) { $("#login-error").textContent = e.message; }
 });
 
+/* ---- agent ---- */
+let agentWs = null, agentTurn = null;
+function agentSocket() {
+  if (agentWs && agentWs.readyState <= 1) return agentWs;
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/agent`);
+  agentWs = ws;
+  ws.onmessage = (ev) => agentEvent(JSON.parse(ev.data));
+  ws.onclose = (ev) => { if (ev.code === 4401) showLogin(); agentIdle(); };
+  return ws;
+}
+function agentLine(cls, text) {
+  const log = $("#agent-log"), el = document.createElement("div");
+  el.className = cls; el.textContent = text; log.appendChild(el); log.scrollTop = log.scrollHeight; return el;
+}
+function agentIdle() { $("#agent-send").disabled = false; agentTurn = null; }
+function agentEvent(m) {
+  switch (m.type) {
+    case "text":
+      if (!agentTurn) agentTurn = agentLine("turn agent", "");
+      agentTurn.textContent += m.text; $("#agent-log").scrollTop = 1e9; break;
+    case "tool_use":
+      agentTurn = null; agentLine("tool", `▸ ${m.name} ${JSON.stringify(m.input)}`); break;
+    case "tool_result":
+      agentTurn = null; agentLine(`tool${m.status === "error" ? " err" : ""}`, `  ${m.text || m.status}`); break;
+    case "interrupt": {
+      agentTurn = null;
+      const r = m.reason || {}, card = document.createElement("div"); card.className = "consent";
+      card.innerHTML = `<b>The agent wants to move a robot.</b>
+        <div class="what">${r.tool} · session ${r.session_id || "?"}<br>${r.detail || JSON.stringify(r.positions)}</div>
+        <div class="row"><button class="yes" data-a="once">Allow once</button><button class="yes" data-a="always">Allow for this conversation</button><button class="no" data-a="no">Refuse</button></div>`;
+      for (const b of card.querySelectorAll("button")) b.onclick = () => {
+        card.classList.add("answered");
+        card.querySelector(".what").insertAdjacentText("beforeend", b.dataset.a === "no" ? "\n— refused" : b.dataset.a === "always" ? "\n— allowed for this conversation" : "\n— allowed once");
+        agentSocket().send(JSON.stringify({ type: "resume", id: m.id, approve: b.dataset.a !== "no", always: b.dataset.a === "always" }));
+      };
+      $("#agent-log").appendChild(card); $("#agent-log").scrollTop = 1e9; break;
+    }
+    case "done": agentIdle(); break;
+    case "error": agentLine("error", m.message); agentIdle(); break;
+  }
+}
+$("#agent-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const text = $("#agent-text").value.trim(); if (!text) return;
+  const ws = agentSocket();
+  const send = () => { agentLine("turn you", text); ws.send(JSON.stringify({ type: "say", text })); $("#agent-text").value = ""; $("#agent-send").disabled = true; agentTurn = null; };
+  ws.readyState === 1 ? send() : ws.addEventListener("open", send, { once: true });
+});
+async function loadAgent() {
+  try { const info = await api("/api/agent"); $("#agent-model").textContent = info.model; } catch (e) { $("#agent-model").textContent = ""; }
+  agentSocket();
+}
+
 $("#tabs").addEventListener("click", (ev) => {
   const v = ev.target.dataset.view; if (!v) return;
   if (!authenticated) return showLogin();
   show(v);
   if (v === "fleet") loadFleet();
   if (v === "sim") loadSim();
+  if (v === "agent") loadAgent();
   if (v === "settings") loadSettings();
 });
 $("#settings-form").addEventListener("submit", saveSettings);
@@ -240,6 +294,7 @@ async function boot() {
   show(v);
   if (v === "fleet") loadFleet();
   if (v === "sim") loadSim();
+  if (v === "agent") loadAgent();
   if (v === "settings") loadSettings();
 }
 boot();
