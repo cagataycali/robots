@@ -71,14 +71,12 @@ class _Link:
 
     async def start(self, on_joints: Any, on_imu: Any) -> None:
         """Accept the sensor callbacks and start nothing."""
-        del on_joints, on_imu
 
     async def stop(self) -> None:
         """Tear down nothing."""
 
     async def send_cmd(self, cmd: dict[str, Any]) -> None:
         """Discard one command; no cell here reads the wire."""
-        del cmd
 
 
 class _Daemon:
