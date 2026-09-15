@@ -41,7 +41,7 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 | Tab | What it shows | Where the rules live |
 |---|---|---|
 | Fleet | every robot the registry knows, sim and real, and the mesh peers when the `[mesh]` extra is installed | `strands_robots.registry` |
-| Sim | up to four MuJoCo robots stepping in this process, one thread each - the rendered camera as MJPEG and a 3D twin drawn from the compiled model, joint sliders, reset, stop | `dashboard.sim_session`, `dashboard.scene` |
+| Sim | up to four MuJoCo robots stepping in this process, one thread each - the rendered camera as MJPEG and a 3D twin drawn from the compiled model, joint sliders, reset, stop. Or a **mirror**: the same twin posed from the real arm's servo bus, read and never written | `dashboard.sim_session`, `dashboard.scene`, `dashboard.mirror` |
 | Agent | a Strands Agent whose tools are the simulations on the Sim tab; a move it wants to make pauses on a consent card until you answer | `dashboard.agent_console` |
 | Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |
 
@@ -71,6 +71,25 @@ either way the request answers `423` and the latch keeps refusing the next
 command. `POST /api/safety/resume` lifts the lockout only to `unknown`: a resume is a
 request, and the next command a session accepts is the proof.
 
+## The twin follows the real arm
+
+Pick a robot, change **simulate** to the serial port the arm is on (the list
+is `GET /api/sim/ports`, servo buses first) and press **Start**. The session
+that appears is marked **mirror · read-only**: a thread reads
+`Present_Position` from every motor at ~20 Hz and the model is posed from the
+readings - no physics steps, no `Reset`, and `joints` answers `400`, because
+the arm decides. Move the arm by hand and the twin moves.
+
+What it will not do is write. lerobot's bus is opened for the handshake (a
+ping and a firmware read) and closed with `disable_torque=False`, since the
+default close writes `Torque_Enable=0` to every motor. Torque stays exactly as
+you left it and the footer says so. Angles are `(ticks - 2048) · 2π / 4096`
+with no calibration applied - right up to the offset a calibration would
+record, and labelled `estimate` in the snapshot's `bus` field along with the
+raw ticks, the read rate and the age of the last reading. A bus that stops
+answering shows **stale**, then **error** with the reason; a port that will
+not open is a `502` naming it, and nothing is left holding the device.
+
 ## Talking to it from a script
 
 Everything the page does is a JSON route under `/api`, behind the same session
@@ -80,7 +99,8 @@ Everything the page does is a JSON route under `/api`, behind the same session
 |---|---|
 | `GET /api/fleet` · `GET /api/robots/{name}` | the registry, sim and real, plus mesh peers when `[mesh]` is installed |
 | `GET /api/sim` · `POST /api/sim {"robot": "so101"}` · `DELETE /api/sim/{id}` | list, start (`201`, `429` past four), stop |
-| `GET /api/sim/{id}` | the snapshot: `state`, `sim_time`, `steps`, `joint_names`, `qpos` (radians), `fps`, `cameras` |
+| `POST /api/sim {"robot": "so101", "mirror": {"port": "/dev/cu.usbmodem…"}}` · `GET /api/sim/ports` | start a mirror of the real arm on that port (`400` if it is not a device here, `502` with the reason if the bus will not open); the ports a mirror could read |
+| `GET /api/sim/{id}` | the snapshot: `state`, `sim_time`, `steps`, `joint_names`, `qpos` (radians), `fps`, `cameras`, `source` (`sim` or `real:<port>`) and, for a mirror, `bus` (`hz`, `age_ms`, raw `ticks`, `error`) |
 | `POST /api/sim/{id}/joints {"positions": {"2": 1.0}}` · `POST /api/sim/{id}/reset` | move (joint name or 1-based index as the key) or go home; `423` under lockout |
 | `GET /api/sim/{id}/stream.mjpg[?frames=N]` | the rendered camera, 12 fps multipart MJPEG; `frames` bounds a probe |
 | `GET /api/sim/{id}/scene` · `GET /api/sim/{id}/mesh/{index}` | the compiled model's geoms (`type`, `size`, `rgba`, `body`, `mesh`) plus cameras and lights, and each mesh's vertices and faces as binary, for the twin |
