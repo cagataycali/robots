@@ -1090,10 +1090,10 @@ class SimEngine(ABC):
         Default no-op. The MuJoCo engine overrides this to hand a policy that
         opts in - by exposing a callable ``set_sim_context`` - the compiled
         ``MjModel`` + the robot's namespace, so an eef/cartesian-delta policy can
-        auto-configure its IK end-effector frame with zero manual wiring. No
-        shipped provider opts in today; this is the extension point an
-        out-of-tree one uses. Policies that do not expose ``set_sim_context``
-        are unaffected.
+        auto-configure its IK end-effector frame with zero manual wiring.
+        ``MockPolicy`` opts in to keep its sinusoid inside each actuator's
+        ctrlrange; this is also the extension point an out-of-tree policy uses.
+        Policies that do not expose ``set_sim_context`` are unaffected.
         """
         return None
 
