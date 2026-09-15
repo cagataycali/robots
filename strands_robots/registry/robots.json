@@ -790,8 +790,8 @@
       "joints": 45,
       "asset": {
         "dir": "pal_talos",
-        "model_xml": "talos.xml",
-        "scene_xml": "scene.xml",
+        "model_xml": "talos_position.xml",
+        "scene_xml": "scene_position.xml",
         "robot_descriptions_module": "talos_mj_description"
       },
       "aliases": [
