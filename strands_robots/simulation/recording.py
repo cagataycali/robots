@@ -44,6 +44,39 @@ from strands_robots.utils import (
 logger = logging.getLogger(__name__)
 
 
+def recorded_cameras_line(joint_names: Sequence[str], camera_keys: Sequence[str], cameras: object, fps: Any) -> str:
+    """The schema line of ``start_recording``'s reply, naming the cameras.
+
+    ``"6 joints, 1 cameras @ 10fps"`` told an agent how many image columns
+    the dataset has but not which: a replayed agent read it, then asked
+    ``render`` for ``top_camera`` - the name it assumed the recording used -
+    and got "not found. Available: ['default']". The count is replaced by the
+    dataset's camera keys, so the names an agent needs next (for ``render``,
+    for ``cameras=`` on the next recording, for a policy's
+    ``input_features``) are in the reply that created them. When no camera is
+    recorded a second line says what the dataset WILL contain (joint state and
+    actions, no ``observation.images.*``) and how to get images - naming
+    ``cameras=[]`` when the caller scoped every camera out, ``add_camera(...)``
+    when the scene has none.
+    """
+    names = list(camera_keys)
+    word = "camera" if len(names) == 1 else "cameras"
+    line = f"{len(joint_names)} joints, {len(names)} {word} {names} @ {fps}fps\n"
+    if names:
+        return line
+    if cameras is not None:
+        return line + (
+            "No cameras recorded (cameras=[] scoped them all out): the dataset carries "
+            "joint state and actions only, no observation.images.*. Omit cameras= or "
+            "name the ones to keep.\n"
+        )
+    return line + (
+        "No cameras in the scene: the dataset carries joint state and actions only, "
+        "no observation.images.*. Call add_camera(...) before start_recording to record "
+        "images.\n"
+    )
+
+
 def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | None:
     """Reject a LeRobotDataset recording option no dataset can be written at.
 

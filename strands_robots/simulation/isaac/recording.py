@@ -61,6 +61,7 @@ from strands_robots.simulation.recording import (
     camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
+    recorded_cameras_line,
     undriven_robot_state,
 )
 from strands_robots.utils import camera_schema_key, name_list_error
@@ -438,7 +439,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                         {
                             "text": (
                                 f"Recording Isaac scene to LeRobotDataset: {repo_id}\n"
-                                f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
+                                f"{recorded_cameras_line(joint_names, camera_keys, cameras, fps)}"
                                 f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                                 f"Run policies to capture frames, then stop_recording to save the episode"
                             )
