@@ -110,12 +110,42 @@ have performed. Construct a new `Robot` to run another task.
 
 ## AgentTool actions
 
-| Action | Blocking? | Needs |
-|--------|-----------|-------|
-| `execute` | Yes | `instruction`; `policy_port` as the provider demands (see above) |
-| `start` | No | `instruction`; `policy_port` as the provider demands (see above) |
-| `status` | - | - |
-| `stop` | - | - |
+| Action | Gated? | Needs |
+|--------|--------|-------|
+| `get_state` / `get_robot_state` | no (read) | - : joint positions in degrees + ticks, torque, voltage |
+| `list_cameras` | no (read) | - |
+| `render` | no (read) | `camera_name` unless there is one camera; optional `output_path` |
+| `set_joint_positions` | **operator yes** | `positions` `{joint: target}`, ≤20°/joint/call (or `max_relative_target`); `raw`, `settle_s` |
+| `set_gripper` | **operator yes** | `position` |
+| `set_torque` | yes when `enabled=true`; never when `false` | `enabled`; optional `joints` |
+| `execute` (blocking) | **operator yes** | `instruction`; `policy_port` as the provider demands (see above) |
+| `start` (async) | **operator yes** | `instruction`; `policy_port` as the provider demands (see above) |
+| `status` | no | - |
+| `stop` | never | - |
+
+### What comes back when the gate fires
+
+A gated action does not run: the agent loop **pauses** and `agent(...)` returns
+with `result.stop_reason == "interrupt"` and the question in
+`result.interrupts`. `print(result)` shows that list, and each interrupt's
+`reason` carries `how_to_answer` - the line below - so a script that printed
+it is holding its own remedy.
+
+```python
+result = agent("Rotate the wrist 5 degrees.")
+if result.stop_reason == "interrupt":
+    for q in result.interrupts:
+        print(q.reason["warning"])          # what would move, joint by joint
+    answers = [{"interruptResponse": {"interruptId": q.id, "response": input("approve? [y/N] ")}}
+               for q in result.interrupts]
+    result = agent(answers)                 # 'y' approves; anything else denies and nothing moves
+print(result)
+```
+
+A script with no operator pre-approves by action name instead:
+`STRANDS_ROBOT_COMMAND_ALLOW=set_joint_positions` (or `execute,start`, or `*`).
+With neither an operator nor that variable the call is refused, naming both.
+See [security](../security.md#ros-2--dds-bridge-command-surface).
 
 ## Teleoperation
 

@@ -202,6 +202,18 @@ def _allow_exact_or_star(target: str) -> Callable[[frozenset[str]], bool]:
     return _match
 
 
+#: The resume form, carried in every interrupt's ``reason`` so a headless script
+#: that printed the interrupt is holding its own remedy. ``agent(...)`` returns
+#: the paused result with ``result.interrupts`` set and ``str(result)`` is that
+#: list's repr, which named the question but not how to reply.
+HOW_TO_ANSWER = (
+    "This call is paused, not done: result.stop_reason == 'interrupt' and result.interrupts holds this "
+    'question. Resume with agent([{"interruptResponse": {"interruptId": <this interrupt\'s id>, '
+    '"response": "y"}}]) - \'y\' approves, anything else denies and nothing moves. For a script with no '
+    "operator, pre-approve the action by name in the tool's *_COMMAND_ALLOW variable instead."
+)
+
+
 def gate_motion(
     tool: str,
     action: str,
@@ -278,6 +290,9 @@ def gate_motion(
                 "action": action,
                 "target": target,
                 "warning": f"{warning} Reply 'y' to approve, anything else to deny.",
+                # A script that prints ``agent(...)``'s result sees this dict, so the
+                # dict carries the one line that resumes it (see HOW_TO_ANSWER).
+                "how_to_answer": HOW_TO_ANSWER,
             },
         )
     except RuntimeError as exc:

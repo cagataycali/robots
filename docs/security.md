@@ -157,6 +157,20 @@ What this looks like in practice, and how to configure it:
 
 Reference: `strands_robots.tools.robot_mesh`.
 
+### Answering a gate from a script
+
+An interrupt is a paused run, not a result: `agent(...)` returns with
+`result.stop_reason == "interrupt"` and the question in `result.interrupts`,
+and nothing has moved. Every interrupt raised through the shared command gate
+(`robot`, `serial_tool`, `pose_tool`, `use_unitree`, the ROS transports) carries
+the same structured `reason`: `action`, `target`, `warning` (what would move,
+with `Reply 'y' to approve`), and `how_to_answer` - the exact resume form,
+`agent([{"interruptResponse": {"interruptId": q.id, "response": "y"}}])`, with
+what `y` means and the tool's `*_COMMAND_ALLOW` variable for a script with no
+operator. It is in the `reason` because `print(result)` on a paused run prints
+that dict: the script that hit the gate is the one holding the remedy. A worked
+loop is in [robot control](hardware/robot-control.md#what-comes-back-when-the-gate-fires).
+
 ## Refusal codes are the stable contract; prose is not
 
 Some refusals are *continuable*: the request was well formed, and an operator who accepts the risk can grant something that makes the identical request succeed. An untrusted policy provider, a repo or host or policy type outside a mesh allowlist, a teleop frame past the value envelope - each of these has an operator answer behind it. Anything that offers that answer (a UI consent card, an approval endpoint, a supervising agent) first has to recognise *which* refusal it is looking at and *what* it is about.
