@@ -5107,7 +5107,13 @@ class SimEngine(ABC):
 
         snapshot = _list()
         if not snapshot:
-            text = "No benchmarks registered. Use register_benchmark_from_file to add one."
+            from strands_robots.simulation.builtin_benchmarks import builtin_benchmark_specs
+
+            bundled = sorted(builtin_benchmark_specs())
+            text = (
+                "No benchmarks registered. register_builtin_benchmarks adds the bundled ones "
+                f"({', '.join(bundled)}); register_benchmark_from_file adds your own."
+            )
         else:
             lines = [f"Registered benchmarks ({len(snapshot)}):"]
             for name, meta in snapshot.items():
