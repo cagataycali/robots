@@ -294,15 +294,23 @@ def _build_spz(
     sh_degree: int = 0,
     sh: np.ndarray | None = None,
     flags: int = 0,
+    declared_points: int | None = None,
 ):
-    """Write a minimal gzip-compressed .spz file and return its path."""
+    """Write a minimal gzip-compressed .spz file and return its path.
+
+    ``declared_points`` overrides the header's ``num_points`` field so a file
+    can declare a count its payload does not account for - the only way to
+    reach the reader's reconciliation from here, since every other argument
+    sizes the payload it writes.
+    """
     import gzip
     import struct
 
     from strands_robots.rendering.backgrounds import _SPZ_MAGIC
 
     n = means.shape[0]
-    header = struct.pack("<iii", _SPZ_MAGIC, version, n) + struct.pack("<BBBB", sh_degree, frac_bits, flags, 0)
+    declared = n if declared_points is None else declared_points
+    header = struct.pack("<iii", _SPZ_MAGIC, version, declared) + struct.pack("<BBBB", sh_degree, frac_bits, flags, 0)
     body = (
         _pack_positions(means, frac_bits)
         + alpha.astype(np.uint8).tobytes()
@@ -438,6 +446,142 @@ class TestSpzGaussianSplatReader:
         path.write_bytes(gzip.compress(struct.pack("<iii", _SPZ_MAGIC, 9, 0) + struct.pack("<BBBB", 0, 12, 0, 0)))
         with pytest.raises(ValueError, match="unsupported SPZ version"):
             _load_spz_splats(path, device="cpu")
+
+    @staticmethod
+    def _minimal_layout(n: int, version: int, sh_degree: int = 0):
+        """The five per-point blocks a version-``version`` .spz writes for ``n`` points."""
+        rot_width = 4 if version >= 3 else 3
+        rot = (
+            np.array([_encode_spz_rotation_v3((1.0, 0.0, 0.0, 0.0))] * n, np.uint8)
+            if version >= 3
+            else np.full((n, rot_width), 128, np.uint8)
+        )
+        n_rest = (sh_degree + 1) ** 2 - 1
+        sh = np.full((n, n_rest, 3), 128, np.uint8) if n_rest else None
+        return (
+            np.zeros((n, 3), np.float32),
+            np.full(n, 255, np.uint8),
+            np.full((n, 3), 128, np.uint8),
+            np.full((n, 3), 128, np.uint8),
+            rot,
+        ), sh
+
+    def test_numpy_reads_a_negative_count_as_the_whole_buffer(self) -> None:
+        """The premise behind grading ``num_points`` for sign rather than trusting it.
+
+        ``np.frombuffer`` does not refuse a negative ``count`` - it returns the
+        whole remaining buffer, for every negative value and not just ``-1``. A
+        negative header count therefore does not fail where it is read; it makes
+        each block swallow the rest of the file while ``off += N * width`` walks
+        the offset *backwards* through the header. Pinned here so the sign check
+        beside it reads as load-bearing rather than defensive.
+        """
+        buf = b"\x00" * 8
+        assert len(np.frombuffer(buf, np.uint8, count=-1)) == 8
+        assert len(np.frombuffer(buf, np.uint8, count=-9)) == 8
+        # And the reshape that would otherwise catch the mismatch is a wildcard.
+        assert np.zeros(9, np.uint8).reshape(-1, 3).shape == (3, 3)
+
+    @pytest.mark.parametrize("declared", [0, -1, -7])
+    def test_load_rejects_a_non_positive_point_count(self, tmp_path, declared: int) -> None:
+        """A header count of zero or less describes no geometry, so it is refused.
+
+        Zero is the silent half: every block reads nothing, and an empty splat
+        set used to come back as a successfully loaded scene - a backdrop that
+        renders no gaussians at all. The negative values are the dangerous
+        half, for the ``np.frombuffer`` reason pinned above.
+        """
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        blocks, _ = self._minimal_layout(4, version=3)
+        path = _build_spz(tmp_path, *blocks, version=3, declared_points=declared)
+        with pytest.raises(ValueError, match=f"num_points={declared}") as excinfo:
+            _load_spz_splats(path, device="cpu")
+        # The sign check also owns the wording. A negative count multiplied out
+        # into a byte total is negative, so reconciling it instead would refuse
+        # the file while quoting a byte requirement no file could ever meet.
+        assert "needs -" not in str(excinfo.value)
+
+    def test_load_rejects_a_header_only_file_that_declares_no_points(self, tmp_path) -> None:
+        """A zero count over an empty payload reconciles, so only the sign check sees it.
+
+        16 header bytes and nothing after them satisfy the byte reconciliation
+        exactly - ``expected`` is just the header - which makes this the one
+        non-positive count the length test cannot catch. It used to load: an
+        empty splat set came back as a successfully loaded scene, i.e. a
+        backdrop that rasterizes no gaussians at all.
+        """
+        pytest.importorskip("torch")
+        import gzip
+        import struct
+
+        from strands_robots.rendering.backgrounds import _SPZ_MAGIC, _load_spz_splats
+
+        path = tmp_path / "header_only.spz"
+        path.write_bytes(gzip.compress(struct.pack("<iii", _SPZ_MAGIC, 3, 0) + struct.pack("<BBBB", 0, 12, 0, 0)))
+        assert len(gzip.decompress(path.read_bytes())) == 16  # the payload really is empty
+        with pytest.raises(ValueError, match="num_points=0"):
+            _load_spz_splats(path, device="cpu")
+
+    @pytest.mark.parametrize(
+        ("declared", "real"),
+        [
+            (2, 4),  # short of the payload: the trailing half is never read
+            (3, 4),  # one point short: 20 payload bytes unaccounted for
+            (5, 4),  # one point past the payload
+            (400, 4),  # far past it
+        ],
+    )
+    def test_load_rejects_a_point_count_the_payload_does_not_account_for(
+        self, tmp_path, declared: int, real: int
+    ) -> None:
+        """``num_points`` must reconcile with the payload's exact byte length.
+
+        It sizes every block below it and nothing else in the file restates
+        those lengths, so a count that disagrees cannot be noticed later. A
+        count SHORT of the payload is the silent case - each block reads its
+        declared prefix and the remaining bytes are never looked at, so a
+        partial scene loads as a whole one. A count past the payload used to
+        surface as a bare ``buffer is smaller than requested size`` naming
+        neither the file nor the field that sized the read.
+        """
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        blocks, _ = self._minimal_layout(real, version=3)
+        path = _build_spz(tmp_path, *blocks, version=3, declared_points=declared)
+        with pytest.raises(ValueError, match=f"num_points={declared}") as excinfo:
+            _load_spz_splats(path, device="cpu")
+        message = str(excinfo.value)
+        # The refusal names the file and both byte counts - a reader with a
+        # truncated cached download needs all three to act on it.
+        assert path.name in message
+        # Both byte counts, each in its own role, so a message that transposed
+        # them would not pass. v3 stride: 9 + 1 + 3 + 3 + 4 = 20 bytes per point.
+        assert f"needs {16 + declared * 20} bytes" in message
+        assert f"holds {16 + real * 20}" in message
+
+    @pytest.mark.parametrize(("version", "sh_degree"), [(2, 0), (3, 0), (2, 1), (3, 2)])
+    def test_load_accepts_the_count_a_reconciling_payload_declares(
+        self, tmp_path, version: int, sh_degree: int
+    ) -> None:
+        """The control: an honest header loads, for every block layout there is.
+
+        The per-point stride depends on both the version (3-byte vs 4-byte
+        rotations) and the SH degree, so a reconciliation computed with the
+        wrong stride would refuse a well-formed asset of some layout. This
+        holds either side of the fix and is what shows the refusals above are
+        a mismatch check rather than a cap.
+        """
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        blocks, sh = self._minimal_layout(6, version=version, sh_degree=sh_degree)
+        path = _build_spz(tmp_path, *blocks, version=version, sh_degree=sh_degree, sh=sh)
+        splats = _load_spz_splats(path, device="cpu")
+        assert splats["means"].shape == (6, 3)
+        assert splats["quats"].shape == (6, 4)
 
     def test_load_decodes_higher_order_sh_as_raw_coefficients(self, tmp_path) -> None:
         # An asset with sh_degree > 0 must come back with ``colors`` as raw SH

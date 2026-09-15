@@ -1226,7 +1226,18 @@ def _load_spz_splats(spz_path: Path, device: str) -> dict[str, Any]:
     with ``rasterize_mode="antialiased"``). ``sh_degree=0`` assets get baked
     DC color (``colors`` as ``(N, 3)`` RGB); assets with higher-order SH
     decode the trailing coefficient block into ``colors`` as ``(N, K, 3)``
-    raw SH so the rasterizer can evaluate view-dependent color."""
+    raw SH so the rasterizer can evaluate view-dependent color.
+
+    Raises:
+        ValueError: If the header's magic or version is not one this reader
+            decodes, if ``num_points`` is not positive, or if the counts it
+            declares do not account for the payload's exact byte length.
+            ``num_points`` sizes every block in the body and nothing else in
+            the file restates those lengths, so a count that disagrees with
+            the payload cannot be detected after the fact - a count short of
+            it reads each block's declared prefix and leaves the rest of the
+            scene unread, which loaded a garbage decode as a successful one.
+    """
     import gzip
     import struct
 
@@ -1246,6 +1257,35 @@ def _load_spz_splats(spz_path: Path, device: str) -> dict[str, Any]:
     smallest3 = version >= 3
     pos_bytes = 9  # 24-bit fixed point (version 1 float16 is not produced in practice)
     rot_bytes = 4 if smallest3 else 3
+    # (sh_degree + 1)^2 - 1 rest coefficients per channel; 0 at degree 0.
+    n_rest = (sh_degree + 1) ** 2 - 1
+
+    # ``num_points`` sizes every block below, and nothing else in the file
+    # restates their lengths, so it is graded here beside the magic and the
+    # version rather than left to the reads it sizes. A non-positive count is
+    # refused for the reason the .msh reader refuses one - the header describes
+    # no geometry - and because numpy reads a negative ``count`` as "the whole
+    # remaining buffer", so the blocks below would decode a prefix of the
+    # payload at offsets that run backwards through the header.
+    if num_points <= 0:
+        raise ValueError(
+            f"{spz_path}: header declares num_points={num_points}; that count sizes every block "
+            "that follows it, so a non-positive count describes no geometry to load"
+        )
+    # The declared counts must account for the payload's exact byte length -
+    # the same sizes-must-reconcile test the .msh and binary-STL readers apply.
+    # A count SHORT of the payload is the silent case: every block reads its
+    # declared prefix, the bytes past it are never looked at, and a partial
+    # scene loads as a whole one. A count past the payload walks off the buffer
+    # with a numpy message that names neither this file nor the field that
+    # sized the read.
+    expected = 16 + N * (pos_bytes + 1 + 3 + 3 + rot_bytes + n_rest * 3)
+    if expected != len(raw):
+        raise ValueError(
+            f"{spz_path}: header declares num_points={num_points} at sh_degree={sh_degree}, which "
+            f"needs {expected} bytes, but the payload holds {len(raw)} - truncated, or not an SPZ "
+            "of the declared version"
+        )
 
     off = 16
     pos = np.frombuffer(raw, np.uint8, count=N * pos_bytes, offset=off)
@@ -1262,13 +1302,9 @@ def _load_spz_splats(spz_path: Path, device: str) -> dict[str, Any]:
     # each, coefficient-major with the color channel fastest-varying (spz spec).
     sh_rest: np.ndarray | None = None
     if sh_degree > 0:
-        n_rest = (sh_degree + 1) ** 2 - 1
+        # ``n_rest`` and the reconciliation above already established that the
+        # payload holds exactly this block, so the read needs no second check.
         want = N * n_rest * 3
-        if len(raw) - off < want:
-            raise ValueError(
-                f"{spz_path}: header claims sh_degree={sh_degree} "
-                f"({want} SH bytes) but only {len(raw) - off} bytes remain"
-            )
         sh_bytes = np.frombuffer(raw, np.uint8, count=want, offset=off).reshape(N, n_rest, 3)
         # unquantizeSH: byte -> (byte - 128) / 128 (spz spec).
         sh_rest = (sh_bytes.astype(np.float32) - 128.0) / 128.0
