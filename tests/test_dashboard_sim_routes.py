@@ -411,7 +411,10 @@ def test_real_engine_session_steps_and_renders(monkeypatch):
     assert s.wait_ready(60), "engine did not start"
     if s.snapshot.state == "error":
         pytest.skip(f"no renderer here: {s.snapshot.error}")
-    time.sleep(1.0)
+    # The first render can take seconds on a loaded machine: wait for progress, don't assume it.
+    deadline = time.time() + 20
+    while s.snapshot.sim_time <= 0.2 and time.time() < deadline:
+        time.sleep(0.1)
     snap = s.snapshot
     assert snap.joint_names == ("1", "2", "3", "4", "5", "6")
     assert snap.sim_time > 0.2
