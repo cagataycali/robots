@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
-from strands_robots.simulation.models import registry_entry
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _can_render,
@@ -782,9 +782,9 @@ class RenderingMixin:
                     "name-lookup path (action may be dropped)",
                     e,
                 )
-                self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
+                self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj, robot_name)
         else:
-            self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj)
+            self._unresolved_action_keys = self._apply_action_by_name(model, data, action_dict, pfx, mj, robot_name)
 
         if not controller_handled_stepping:
             for _ in range(max(1, n_substeps)):
@@ -856,12 +856,25 @@ class RenderingMixin:
         action_dict: dict[str, Any],
         pfx: str,
         mj: Any,
+        robot_name: str,
     ) -> list[str]:
         """Default action-application: look up actuator / joint by name.
 
         Extracted from :meth:`_apply_sim_action` so the
         ``action_controller`` fast path can fall back to it on
         controller failure (the same path non-LIBERO callers use).
+
+        Args:
+            model: The compiled ``MjModel``.
+            data: Its ``MjData``.
+            action_dict: Action keys (short or raw names) to values.
+            pfx: The robot's namespace prefix, tried ahead of the raw name.
+            mj: The ``mujoco`` module.
+            robot_name: The robot being commanded, used to scope the
+                dropped-key warning to the keys THIS robot accepts. The
+                shipped action-controller contract already carries it (see
+                :meth:`_get_action_controller`). Pass ``""`` when no robot is
+                registered, which reports no keys rather than another robot's.
 
         Returns:
             List of action keys that could not be resolved to any
@@ -898,13 +911,13 @@ class RenderingMixin:
                 # a joint is silently dropped today. Silent gripper drops are
                 # exactly the failure mode #318 was filed to fix, so surface it
                 # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
-                self._warn_unresolved_action_key(pfx, key, "no actuator or joint")
+                self._warn_unresolved_action_key(robot_name, pfx, key, "no actuator or joint")
                 unresolved.append(key)
                 continue
 
             ai = self._actuator_for_joint(model, jnt_id, mj)
             if ai < 0:
-                self._warn_unresolved_action_key(pfx, key, "joint has no driving actuator")
+                self._warn_unresolved_action_key(robot_name, pfx, key, "joint has no driving actuator")
                 unresolved.append(key)
                 continue
 
@@ -954,7 +967,7 @@ class RenderingMixin:
             self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
         data.ctrl[act_id] = ctrl_value
 
-    def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
+    def _warn_unresolved_action_key(self, robot_name: str, pfx: str, key: str, reason: str) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
 
         #367: replaces the prior silent ``continue`` on unresolved action keys.
@@ -968,13 +981,17 @@ class RenderingMixin:
         if warned is None:
             warned = set()
             self._warned_unresolved_keys = warned
-        dedup = (pfx, key)
+        # Robot-scoped, because the key list below is: two robots that each
+        # carry no namespace share ``pfx=""``, so a (pfx, key) de-dup would
+        # suppress the second robot's warning and leave the operator reading
+        # the FIRST robot's valid keys for a key dropped on the second.
+        dedup = (robot_name, key)
         if dedup in warned:
             return
         warned.add(dedup)
         # Surface the valid actuator/joint names from the loaded model so
         # users can self-correct without inspecting the MJCF by hand.
-        valid_names = self._get_valid_action_keys(pfx)
+        valid_names = self._get_valid_action_keys(robot_name)
         hint = f" Valid keys for this robot: {valid_names}" if valid_names else ""
         logger.warning(
             "[sim] action key %r (prefix=%r) could not be applied: %s. The value was dropped.%s",
@@ -1037,27 +1054,49 @@ class RenderingMixin:
             hi,
         )
 
-    def _get_valid_action_keys(self, pfx: str) -> list[str]:
-        """Return actuator names available under the given namespace prefix.
+    def _get_valid_action_keys(self, robot_name: str) -> list[str]:
+        """Return the action keys :meth:`send_action` resolves for ``robot_name``.
 
-        When ``pfx`` is set (multi-robot), strips the prefix from returned
-        names so the caller sees the short form that ``send_action`` expects.
+        Membership is the robot's RESOLVED actuator ownership -
+        ``SimRobot.actuator_ids``, produced by
+        :func:`~strands_robots.simulation.mujoco.scene_ops.robot_owned_actuator_ids`
+        - and not a namespace-prefix scan of the whole model. The two disagree
+        on the position actuators
+        :func:`~strands_robots.simulation.mujoco.scene_ops.actuate_robot_in_scene`
+        injects: those are named ``"<robot>_act_<joint>"`` and deliberately
+        carry no namespace prefix, so a prefix scan reports none of them. That
+        is why ``robot_owned_actuator_ids`` recognizes them by the joint they
+        drive, and why this reads its answer instead of re-deriving one: an
+        actuated URDF arm advertised zero drivable keys while ``send_action``
+        drove all of them, so a policy keyed by ``robot_action_keys`` could
+        only ever emit an empty action.
+
+        The key FORM mirrors :meth:`_apply_action_by_name`'s lookup, which
+        tries the namespaced name and then the raw one: an actuator carrying
+        the robot's namespace is reported in the short form a multi-robot scene
+        shares across same-config robots, and one that carries no prefix is
+        reported verbatim. Both spellings resolve.
+
+        Unnamed actuators are omitted: they have no addressable key. Returns
+        ``[]`` when there is no compiled world or no such robot.
         """
         world = getattr(self, "_world", None)
         if world is None or getattr(world, "_model", None) is None:
             return []
+        robots = getattr(world, "robots", None) or {}
+        if not registered(robots, robot_name):
+            return []
+        robot = robots[robot_name]
         mj = _ensure_mujoco()
         model = world._model
-        names: list[str] = []
-        for i in range(model.nu):
-            raw = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i)
+        pfx = robot.namespace or ""
+        keys: list[str] = []
+        for act_id in robot.actuator_ids:
+            raw = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id)
             if not raw:
                 continue
-            if pfx and raw.startswith(pfx):
-                names.append(raw[len(pfx) :])
-            elif not pfx:
-                names.append(raw)
-        return names
+            keys.append(raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw)
+        return keys
 
     @staticmethod
     def _actuator_for_joint(model: Any, jnt_id: int, mj: Any) -> int:
