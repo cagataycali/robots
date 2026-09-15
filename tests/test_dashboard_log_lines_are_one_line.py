@@ -6,17 +6,23 @@ inside Host, Origin or X-Forwarded-For cannot forge a second log entry.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
+from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("fastapi")
 from fastapi import HTTPException  # noqa: E402
+from webauthn.helpers import bytes_to_base64url  # noqa: E402
 
 from strands_robots.dashboard import auth, settings  # noqa: E402
 from strands_robots.dashboard.log_redaction import one_line  # noqa: E402
 
-FORGED = "evil.example\r\nWARNING strands_robots.dashboard.auth: passkey enrolled for root"
+FORGED_SECOND_LINE = "WARNING strands_robots.dashboard.auth: passkey enrolled for root"
+FORGED = "evil.example\r\n" + FORGED_SECOND_LINE
 
 
 class TestOneLine:
@@ -78,3 +84,53 @@ class TestTheDashboardLogsThroughIt:
             settings.update({"agent": "not a mapping\r\nforged"})
         assert len(caplog.records) == 1
         assert "\n" not in caplog.records[0].getMessage()
+
+
+CRED_ID = bytes_to_base64url(b"\x01" * 16)
+
+
+def _enroll_with_label(monkeypatch, request, label: str) -> None:
+    """Enrol one passkey whose display name is `label`, verifier stubbed."""
+    begun = auth.begin_registration(request, label=label, bootstrap=auth._local_enroll_token())
+    monkeypatch.setattr(
+        auth,
+        "verify_registration_response",
+        lambda **kw: SimpleNamespace(credential_id=b"\x01" * 16, credential_public_key=b"\x02" * 32, sign_count=7),
+    )
+    auth.finish_registration(request, begun["challenge_id"], {"id": CRED_ID})
+
+
+class TestAValuePersistedInTheStoreIsStillCallerSupplied:
+    """The label an enrolling request chose is written to the credential store and
+    read back at the next login. A taint tracker loses it at the file - CodeQL
+    raised no alert for this line - but the value still arrived from outside, and
+    the self-heal log statement is the one place it is quoted.
+    """
+
+    def test_a_passkey_label_cannot_forge_the_rp_id_selfheal_entry(self, monkeypatch, tmp_path, caplog) -> None:
+        monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
+        monkeypatch.delenv("STRANDS_DASH_AUTH_RP_ID", raising=False)
+        monkeypatch.delenv("STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN", raising=False)
+        auth._cache = {}
+        request = _Req(host="localhost:8090")
+        _enroll_with_label(monkeypatch, request, "owner\r\n" + FORGED_SECOND_LINE)
+
+        # Erase the binding, as a credential enrolled before rp_ids were recorded
+        # has none - that is the only path to the self-heal statement.
+        store = tmp_path / "auth.json"
+        data = json.loads(store.read_text())
+        del data["credentials"][0]["rp_id"]
+        store.write_text(json.dumps(data))
+        os.utime(store, (time.time() + 2, time.time() + 2))
+        auth._cache = {}
+
+        begun = auth.begin_authentication(request)
+        monkeypatch.setattr(auth, "verify_authentication_response", lambda **kw: SimpleNamespace(new_sign_count=8))
+        with caplog.at_level(logging.INFO, logger="strands_robots.dashboard.auth"):
+            auth.finish_authentication(request, begun["challenge_id"], {"id": CRED_ID})
+
+        recorded = [r.getMessage() for r in caplog.records if r.getMessage().startswith("recorded rp_id")]
+        assert len(recorded) == 1
+        message = recorded[0]
+        assert message.splitlines() == [message]
+        assert FORGED_SECOND_LINE in message  # escaped, not dropped: the bytes stay legible

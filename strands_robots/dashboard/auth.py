@@ -1391,7 +1391,9 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
     # authentication VERIFIED against rec["extra"]["rp_id"], which is proof, not a guess.
     if not match.get("rp_id") and rec["extra"].get("rp_id"):
         match["rp_id"] = rec["extra"]["rp_id"]
-        logger.info("recorded rp_id %r for credential %s", match["rp_id"], match.get("name"))
+        # The credential's name is the label the enrolling request chose, kept in the
+        # store and read back here, so it arrives from outside like any header would.
+        logger.info("recorded rp_id %r for credential %s", match["rp_id"], log_redaction.one_line(match.get("name")))
     _save(store)
     token = issue_token(cast(str, cred_id), name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
