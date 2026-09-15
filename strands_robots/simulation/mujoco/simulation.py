@@ -5614,6 +5614,36 @@ class MuJoCoSimEngine(
             }
         return None
 
+    def _world_readiness_sentence(self) -> str:
+        """The opening sentence of the tool description, written from the live world.
+
+        The description is on the LLM hot path and is read before the first
+        call, so it must describe the session the agent is actually joining.
+        ``Robot("so101")`` creates the world and adds the robot before the
+        agent ever sees the tool; a description that still said "start with
+        create_world" sent the first call of every such session into a
+        refusal ("a world already exists"). Measured over eight agent sessions
+        on six embodiments, that refusal was the first tool result in all
+        eight. With a world present this names the robots it holds and the
+        joints an agent can address, and points at the actions that build on
+        it; with no world it keeps the state-machine sentence, which is then
+        true.
+        """
+        world = self._world
+        if world is None or not world.robots:
+            return "One world per instance; actions form an implicit state machine starting with create_world. "
+        robots = []
+        for robot_name, robot in world.robots.items():
+            joints = list(getattr(robot, "joint_names", ()) or ())
+            shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
+            robots.append(f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'")
+        return (
+            "One world per instance. The world is ALREADY CREATED and holds robot(s) "
+            f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
+            "start with get_robot_state, set_joint_positions, move_to, step or render, and use "
+            "reset to restart the rollout in place. "
+        )
+
     @property
     def tool_spec(self) -> ToolSpec:
         """The Strands ``ToolSpec`` (name, description, JSON input schema) the agent sees.
@@ -5628,8 +5658,7 @@ class MuJoCoSimEngine(
             "name": self.tool_name_str,
             "description": (
                 "Programmatic MuJoCo simulation environment (stateful session). "
-                "One world per instance; actions form an implicit state machine starting with "
-                "create_world. Scene mutations (add_robot, remove_robot, add_object, remove_object, "
+                f"{self._world_readiness_sentence()}Scene mutations (add_robot, remove_robot, add_object, remove_object, "
                 "move_object, add_camera, remove_camera, load_scene) are blocked while a policy "
                 "is running - stop it first. Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
