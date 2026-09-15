@@ -82,6 +82,7 @@ JetPack's torch (R38.2, torch 2.11 `+cu130`) runs on it - `strands-robots doctor
 passes on a Thor devkit with numpy 2.2.6. Do not pin `numpy < 2` first: the
 resolver replaces it on this very line, so the pin buys nothing, and a package
 that only works on numpy 1.x cannot share an environment with lerobot at all.
+
 lerobot 0.6 pulls `torchcodec` on aarch64 itself (its dependency marker now
 covers linux aarch64 and pins the torch-ABI-matched torchcodec 0.11), so the
 video decoder resolves without a strands override. If torch CUDA is needed on
