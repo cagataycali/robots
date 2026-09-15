@@ -96,6 +96,15 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 !!! note "Get a numpy frame"
     `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
 
+!!! note "Where `render(output_path=...)` may write"
+    `output_path` is model-supplied, so it is confined to a render sandbox: a
+    bare filename (`"frame.png"`) lands there and an absolute path outside it
+    is refused. The sandbox is `~/.strands_robots/renders` by default,
+    `STRANDS_ROBOTS_RENDER_ROOT` process-wide, or - per Simulation, without an
+    environment variable - `Robot("so101", render_dir="./shots")` /
+    `Simulation(render_dir=...)`. Set `render_dir` to the directory you want the
+    files in and the agent can hand them to you there.
+
 !!! tip "Discover the render surface"
     `render`, `render_depth`, `render_all`, and `get_world_point` are all
     listed in `sim.describe()["methods"]`, so an agent can enumerate the full
@@ -160,6 +169,13 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     capability: it is not in the tool schema's `action` enum, so an agent that
     calls it is refused. Reach for it from Python, and for `get_robot_state`
     from a tool call.
+
+    Some assets name joints by servo id or CAD term - the SO-101's are
+    `1`..`6`, the SO-100's `Rotation`..`Jaw`. For those, the registry entry
+    carries `joint_labels` (the `shoulder_pan` .. `gripper` the same arm's
+    driver and datasets use): `get_robot_state` prints `1 (shoulder_pan)`, and
+    the joint writers accept the label as a key - bare, `<robot>/<label>`, in
+    any case - beside the asset name. A refused key lists the labels too.
 
 !!! note "Numeric domain of the state writers"
     `set_joint_positions`, `set_joint_velocities` and the `apply_force`

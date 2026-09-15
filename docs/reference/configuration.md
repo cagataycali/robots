@@ -11,7 +11,7 @@ description: Every environment variable the package reads, the asset cache layou
 | `STRANDS_ROBOT_MODE` | `Robot()` factory mode: `sim` / `real` / `auto` | `sim` |
 | `STRANDS_ASSETS_DIR` | Robot model asset cache directory | `~/.strands_robots/assets/` |
 | `STRANDS_MEMORY_DIR` | Harness memory store (`harness_memory` tool: task solution traces + global success rules / failure models) | `~/.strands_robots/memory/` |
-| `STRANDS_ROBOTS_RENDER_ROOT` | Sandbox directory that `Simulation.render(output_path=...)` may write into | `~/.strands_robots/renders/` |
+| `STRANDS_ROBOTS_RENDER_ROOT` | Sandbox directory that `Simulation.render(output_path=...)` may write into; per instance, `Simulation(render_dir=...)` / `Robot(name, render_dir=...)` takes precedence | `~/.strands_robots/renders/` |
 | `STRANDS_ROBOTS_RENDER_ALLOW_ABS` | Set `1` to allow `render(output_path=...)` to write absolute paths outside the render sandbox | unset |
 | `STRANDS_ROBOTS_RENDER_MAX_BYTES` | Max PNG size `render(output_path=...)` will persist | `52428800` (50 MB) |
 | `STRANDS_ROBOTS_VIDEO_ROOT` | Opt-in sandbox for video/recording output paths (`run_policy(video=...)`, `start_cameras_recording`). Unset = absolute paths allowed (historic contract); set to confine writes | unset |

@@ -7,10 +7,12 @@ call any provider uses. The observation is fed RAW (the exported graph carries
 its own input normaliser), and actions decode to
 ``motor_target = DEFAULT_POSE + action * action_scale``.
 
-Run (from the repo root, weights alongside in Pollen's microduck checkout)::
+Run (from the repo root; a bare weight name is fetched from Pollen's Hub
+repository ``pollen-robotics/microduck-policies`` on first use, a path is used
+as is)::
 
-    python examples/microduck/microduck_walk_sim.py \
-        --onnx ../microduck/policies/alpha_walking.onnx --duration 8
+    python examples/microduck/microduck_walk_sim.py --duration 8
+    python examples/microduck/microduck_walk_sim.py --onnx /data/alpha_walking.onnx
 
 Pass ``--vx`` to command a forward twist. No hardware required.
 """
@@ -25,7 +27,11 @@ from strands_robots.policies.microduck import MicroduckPolicy
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--onnx", default="../microduck/policies/alpha_walking.onnx")
+    ap.add_argument(
+        "--onnx",
+        default="alpha_walking.onnx",
+        help="a local .onnx file, or the bare name of a weight in pollen-robotics/microduck-policies",
+    )
     ap.add_argument("--duration", type=float, default=8.0)
     ap.add_argument("--control-frequency", type=float, default=50.0)
     ap.add_argument("--vx", type=float, default=0.3, help="forward twist command (m/s)")

@@ -5,6 +5,7 @@ description: Five minutes from install to a robot picking up a cube.
 # Quickstart
 
 ```bash
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install "strands-robots[sim-mujoco]"
 ```
 
