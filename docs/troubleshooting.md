@@ -30,6 +30,7 @@ strands-robots doctor            # or: python -m strands_robots doctor
 | pyav build fails on Jetson/aarch64 | No prebuilt wheel for sm_110 | Use `--no-build-isolation` or install `torchcodec>=0.7` and skip pyav. See [installation](getting-started/installation.md#molmoact2-on-jetson) |
 | numpy ABI mismatch on Jetson | System pandas vs pip numpy | `uv pip install "numpy<2" "pandas==2.1.4"` then reinstall |
 | `uv pip install -e .` errors | Wrong cwd | `cd` to repo root first |
+| `uv pip install` fails with `No virtual environment found; run uv venv` | `uv pip` installs into the active venv only and none is active | `uv venv --python 3.12 && source .venv/bin/activate`, then install; or `uv pip install --system` to opt out of the venv |
 
 ## Simulation
 
