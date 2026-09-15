@@ -13,6 +13,17 @@ it as carried. ``run_multi_policy`` is the recommended path for recording
 concurrent multi-robot episodes, so those frames went into the dataset showing
 the arms moving and the "grasped" object on the ground.
 
+A fifth path reaches physics without being one of those loops: an
+``action_controller`` that declares ``owns_stepping`` runs its own ``mj_step``
+burst and ``_apply_sim_action`` skips the loop holding the re-pin. That is a
+shipped configuration - :class:`WBCTorqueController` declares the flag, and its
+own module describes carrying the upper body of a ``CompositePolicy`` (legs from
+WBC, arms from a manipulation policy), i.e. walking while holding something.
+Nothing on ``attach_bodies`` makes the follow conditional on who calls
+``mj_step``, so the same silent outcome applied there: the object stayed where
+it was for the whole episode while the attach, the controller and the policy
+loop all reported success.
+
 Pinned here:
 
 * the contract, on the multi-robot loop: a carried child stays at the relative
@@ -20,9 +31,12 @@ Pinned here:
 * the root cause, as a source-level guard: every function in the MuJoCo backend
   that calls ``mj_step`` also re-applies the follow, so a fifth stepping path
   cannot silently drop it;
-* the boundary: ``step()`` and single-robot ``run_policy`` still carry, a weld
-  attachment (solver-enforced, not hook-driven) is untouched, and a loop with
-  no attachments leaves unattached bodies falling normally.
+* the same contract on a stepping-owning ``action_controller``, where the
+  engine cannot re-pin per substep and re-pins per control step instead;
+* the boundary: ``step()`` and single-robot ``run_policy`` still carry, a
+  controller that does NOT own stepping still carries, a weld attachment
+  (solver-enforced, not hook-driven) is untouched, and a loop with no
+  attachments leaves unattached bodies falling normally.
 """
 
 from __future__ import annotations
@@ -182,9 +196,11 @@ class TestEveryBackendSteppingPathReappliesTheFollow:
 
     A source-level sweep rather than a per-path rollout, so a fifth stepping
     path added later fails here instead of silently dropping carried bodies.
-    Scoped to the MuJoCo backend, which owns the attachment registry; an
+    Scoped to the MuJoCo backend, which owns the attachment registry. An
     ``action_controller`` that takes over stepping (LIBERO, WBC torque control)
-    replaces this loop wholesale and is a separate contract.
+    replaces this loop wholesale rather than adding a call site here, so it is
+    pinned behaviourally by
+    :class:`TestASteppingOwningControllerCarriesToo` instead.
     """
 
     _BACKEND_DIR = pathlib.Path(str(next(iter(mujoco_backend.__path__))))
@@ -282,4 +298,120 @@ class TestTheOtherStepPathsAndModesAreUnchanged:
         assert not sim._world._backend_state.get("kinematic_attachments")
         z_before = _body_z(sim, _CHILD)
         _drive_multi_policy(sim, n_steps=100)
+        assert _body_z(sim, _CHILD) < z_before - 0.1, "an unattached airborne cube must fall"
+
+
+class _SubstepBurstController:
+    """The shipped stepping-owning controller's contract, minimally.
+
+    Mirrors :class:`~strands_robots.policies.wbc.sim_control.WBCTorqueController`:
+    ``apply`` writes ``data.ctrl`` for the action - by delegating to the
+    engine's own name lookup, so the arm moves exactly as it would with no
+    controller installed - and, when it declares ``owns_stepping``, advances
+    physics itself for ``physics_substeps_per_control`` steps. The two
+    parametrisations differ in one thing only: who calls ``mj_step``.
+    """
+
+    def __init__(self, sim, *, owns_stepping: bool, substeps: int = 4) -> None:
+        self.sim = sim
+        self.owns_stepping = owns_stepping
+        self.physics_substeps_per_control = substeps
+        self.mj_steps = 0
+
+    def apply(self, action_dict, model, data, robot_name):  # noqa: ANN001, ANN201
+        robot = self.sim._world.robots[robot_name]
+        self.sim._apply_action_by_name(model, data, action_dict, robot.namespace or "", mj)
+        if not self.owns_stepping:
+            return
+        for _ in range(self.physics_substeps_per_control):
+            mj.mj_step(model, data)
+            self.mj_steps += 1
+
+
+def _drive_through_controller(sim, controller, n_calls: int = 120):
+    """Install ``controller`` and swing the arm through ``send_action`` only.
+
+    Deliberately never calls ``step()`` or ``run_multi_policy``: those paths own
+    their own re-pin, and routing through them would pass whatever
+    ``_apply_sim_action`` does. Drives the same steady target as the ``step()``
+    boundary control rather than a whipping alternation, because the follow's
+    inherent one-integration-step latency scales with the parent's speed - a
+    residual from slewing the arm as fast as the servos allow would be measuring
+    that latency, not the re-pin.
+    """
+    sim._world._backend_state["action_controller"] = controller
+    try:
+        for _ in range(n_calls):
+            _ok(
+                sim.send_action({"shoulder_pan": 0.7, "elbow": -0.6}, robot_name="alpha"),
+                "send_action",
+            )
+    finally:
+        sim._world._backend_state.pop("action_controller", None)
+
+
+class TestASteppingOwningControllerCarriesToo:
+    """``owns_stepping`` skips the loop holding the re-pin, not the promise."""
+
+    def test_a_carried_body_follows_when_the_controller_owns_stepping(self, sim_arm_and_cube):
+        """The child holds the recorded offset across the controller's bursts.
+
+        Before the fix ``_apply_sim_action`` skipped its whole substep loop -
+        including the re-pin - whenever the controller declared it stepped for
+        itself, so the child simply free-fell for the episode.
+        """
+        sim = sim_arm_and_cube
+        _attach(sim)
+        assert _carry_error(sim, _PARENT, _CHILD) < _CARRY_TOL_M, "premise: attach captures the current offset"
+        controller = _SubstepBurstController(sim, owns_stepping=True)
+
+        _drive_through_controller(sim, controller)
+
+        assert controller.mj_steps > 0, "premise: the controller advanced physics itself"
+        error = _carry_error(sim, _PARENT, _CHILD)
+        assert error < _CARRY_TOL_M, (
+            f"a controller declaring owns_stepping left the carried body {error:.4f} m from the "
+            f"offset the attachment recorded; attach_bodies(mode='kinematic') does not make the "
+            f"follow conditional on who calls mj_step"
+        )
+
+    def test_the_carried_body_is_not_left_behind_on_the_floor(self, sim_arm_and_cube):
+        """The user-visible harm, read through the public body-state surface."""
+        sim = sim_arm_and_cube
+        _attach(sim)
+        assert _body_z(sim, _CHILD) > _FLOOR_Z, "premise: the cube starts airborne, held by the arm"
+
+        _drive_through_controller(sim, _SubstepBurstController(sim, owns_stepping=True))
+
+        carried_z = float(tool_json(sim.get_body_state(_CHILD))["position"][2])
+        assert carried_z > _FLOOR_Z, (
+            f"the carried body ended at z={carried_z:.4f} m, on the ground rather than with its "
+            f"parent {_PARENT!r}, while attach_bodies, the controller and send_action all "
+            f"reported success"
+        )
+
+    def test_a_controller_that_does_not_own_stepping_still_carries(self, sim_arm_and_cube):
+        """Boundary: the flag is what selects the branch, not the controller.
+
+        Same stub, same action, same delegation - only ``owns_stepping`` differs
+        - so a failure here would mean installing any controller broke the
+        carry, which is a different bug from the one above.
+        """
+        sim = sim_arm_and_cube
+        _attach(sim)
+
+        controller = _SubstepBurstController(sim, owns_stepping=False)
+        _drive_through_controller(sim, controller)
+
+        assert controller.mj_steps == 0, "premise: this parametrisation leaves stepping to the engine"
+        assert _carry_error(sim, _PARENT, _CHILD) < _CARRY_TOL_M
+
+    def test_an_unattached_body_still_falls_under_the_controller(self, sim_arm_and_cube):
+        """No-overreach: the re-pin does not freeze bodies nothing is carrying."""
+        sim = sim_arm_and_cube
+        assert not sim._world._backend_state.get("kinematic_attachments")
+        z_before = _body_z(sim, _CHILD)
+
+        _drive_through_controller(sim, _SubstepBurstController(sim, owns_stepping=True))
+
         assert _body_z(sim, _CHILD) < z_before - 0.1, "an unattached airborne cube must fall"

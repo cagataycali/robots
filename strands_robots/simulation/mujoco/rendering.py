@@ -738,6 +738,16 @@ class RenderingMixin:
         is true the outer ``mj_step`` loop here is skipped to avoid
         double-stepping. The default (flag absent / False) preserves
         the original 1-substep-per-apply contract.
+
+        Kinematic attachments are re-pinned on BOTH branches. Skipping the
+        outer loop skips its per-substep re-pin, so a body attached with
+        ``attach_bodies(mode="kinematic")`` would be left where it was while
+        this method, the controller and the policy loop all reported success -
+        the promise on ``attach_bodies`` is not conditional on who calls
+        ``mj_step``. A stepping-owning controller gets one re-pin per control
+        step instead of per substep, so the carried body is back on its
+        recorded offset before any observation, render, recorded frame or
+        predicate reads the scene.
         """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
@@ -783,6 +793,24 @@ class RenderingMixin:
                 # follow their parent every physics step, including the
                 # policy-driven path. Fast no-op when none are registered.
                 self._apply_kinematic_attachments()
+        else:
+            # The controller ran its own ``mj_step`` burst, which the loop
+            # above -- and its per-step re-pin -- never saw. ``attach_bodies``
+            # promises a ``mode="kinematic"`` child follows its parent, and
+            # nothing on that promise is conditional on who steps, so re-pin
+            # here too: without this the carried body free-falls for the whole
+            # episode while ``attach_bodies``, the controller and
+            # ``run_policy`` all report success, and the recorded frames show
+            # the arm working over an object lying on the floor. One re-pin per
+            # control step rather than per substep is the latency a
+            # stepping-owning controller imposes -- the child drifts for at
+            # most the controller's own decimation and is placed back before
+            # anything reads the scene -- and the alternative, silently dropping
+            # the carry, is not a weaker guarantee but a wrong scene. No
+            # ``mj_forward`` here: the teleport writes ``qpos``, and every
+            # reader of derived state (``get_body_state``, ``get_frame``,
+            # ``get_contacts``) runs one itself before reading.
+            self._apply_kinematic_attachments()
 
         assert self._world is not None
         self._world.sim_time = data.time

@@ -183,6 +183,11 @@ class ManipulationMixin:
           overwritten to follow the parent and its velocity zeroed - the
           example's teleport-carry, made public. Requires ``child`` to be a
           dynamic body with a freejoint (e.g. ``add_object(is_static=False)``).
+          Under an ``action_controller`` that owns stepping (e.g. WBC torque
+          control) the follow is applied once per control step rather than once
+          per substep, since the controller's ``mj_step`` burst is opaque to
+          the engine; the child is placed back on its recorded offset before
+          anything reads the scene.
 
         Data-honesty caveat: neither mode is a physical grasp - no friction or
         contact force holds the object. Downstream consumers of recorded
@@ -379,7 +384,11 @@ class ManipulationMixin:
         motion-primitive tick, and the synchronized ``run_multi_policy`` loop -
         because ``attach_bodies(mode="kinematic")`` promises the child follows
         every physics step, and a stepping path that skips this leaves the
-        carried body behind while reporting success. Callers MUST hold
+        carried body behind while reporting success. An ``action_controller``
+        that declares ``owns_stepping`` runs its own ``mj_step`` burst in place
+        of the ``_apply_sim_action`` loop, so that seam calls this once per
+        control step after the burst returns (see :meth:`_apply_sim_action`) -
+        the promise covers who steps, not only which loop. Callers MUST hold
         ``self._lock``. Uses the parent's ``xpos``/``xquat`` from the step's
         forward pass (one integration step of latency at the physics timestep,
         matching the example's carry). Entries whose bodies or freejoint no
