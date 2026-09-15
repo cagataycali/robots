@@ -1248,8 +1248,10 @@ lerobot-train --policy.type=act \
 flags are draccus `--dotted.key=value` form.)
 
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import
-> strands_robots` auto-fixes this (zero-touch); disable with
-> `STRANDS_ROBOTS_NO_DYLD_SHIM=1`.
+> strands_robots` auto-fixes this (zero-touch) for script runs; in a REPL,
+> Jupyter or `python -c` it cannot re-exec, so the import stays quiet and the
+> first video-decoding `stream_dataset` warns with the `export` line instead.
+> Disable with `STRANDS_ROBOTS_NO_DYLD_SHIM=1`.
 
 ## See also
 

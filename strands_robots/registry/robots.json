@@ -238,6 +238,14 @@
       "description": "TrossenRobotics SO-ARM100 (6-DOF, Feetech servos)",
       "category": "arm",
       "joints": 6,
+      "joint_labels": {
+        "Rotation": "shoulder_pan",
+        "Pitch": "shoulder_lift",
+        "Elbow": "elbow_flex",
+        "Wrist_Pitch": "wrist_flex",
+        "Wrist_Roll": "wrist_roll",
+        "Jaw": "gripper"
+      },
       "asset": {
         "dir": "trs_so_arm100",
         "model_xml": "so_arm100.xml",
@@ -267,6 +275,14 @@
       "description": "RobotStudio SO-101 (6-DOF, upgraded SO-100)",
       "category": "arm",
       "joints": 6,
+      "joint_labels": {
+        "1": "shoulder_pan",
+        "2": "shoulder_lift",
+        "3": "elbow_flex",
+        "4": "wrist_flex",
+        "5": "wrist_roll",
+        "6": "gripper"
+      },
       "asset": {
         "dir": "robotstudio_so101",
         "model_xml": "so101_new_calib.xml",

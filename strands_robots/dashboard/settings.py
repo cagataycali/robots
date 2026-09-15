@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard import log_redaction
 from strands_robots.utils import refusal_repr
 
 logger = logging.getLogger(__name__)
@@ -439,7 +440,7 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
                 if strict:
                     errors.append(shape)
                 else:
-                    logger.warning("ignoring settings patch: %s", shape)
+                    logger.warning("ignoring settings patch: %s", log_redaction.one_line(shape))
                 continue
             for key, raw in values.items():
                 if key not in _SCHEMA[section]:

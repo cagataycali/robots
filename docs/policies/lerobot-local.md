@@ -232,6 +232,16 @@ keys the observation does carry and the remedy; when none are present it falls
 back to the observation's own state vector. Both degradations are logged, and
 `strict_keys=True` turns them into raises.
 
+The remedy names an `embodiment=` only when a shipped one declares `state_keys`
+the observation carries, so following it cannot land back on the same mismatch.
+One exception is reported instead of recommended: if a declared embodiment was
+already **rejected** at load time - its `obs_rename` names an image feature the
+checkpoint does not declare, so the whole map including the state binding is
+discarded (see [Camera routing](#embodiment-obs_rename-and-the-pre-flight-check))
+- then re-passing it would loop. The remedy then says the embodiment was
+rejected and points at `camera_key_map=` / `obs_rename_override=` to make it
+validate, or `set_robot_state_keys([...])`.
+
 ## Camera routing
 
 Observations use bare camera names (`top`, `wrist`); the policy declares image
