@@ -735,10 +735,11 @@ def unrecordable_action_columns_error(
             A key mapped to ``None`` counts as absent.
         declared: Action column names declared by the dataset schema.
         required: Column names this frame must supply, or ``None`` to skip the
-            check. :meth:`DatasetRecorder.add_frame` no longer passes ``None``
-            for a frame that carries an action - unscoped, every declared
-            column is required - so ``None`` reaches here only from a caller
-            that deliberately makes no claim about who owes what.
+            check. :meth:`DatasetRecorder.add_frame` never passes ``None`` -
+            unscoped, every declared column is required, whether the frame's
+            action carries some of them or none - so ``None`` reaches here
+            only from a caller that deliberately makes no claim about who owes
+            what.
 
     Returns:
         An actionable message naming the missing columns, or ``None`` when every
@@ -1720,29 +1721,39 @@ class DatasetRecorder:
 
         # State → observation.state (flattened vector)
         # Use feature schema ordering to match the dataset schema declared in _build_features().
+        # The declared columns are resolved from the schema before the
+        # ``if state_keys:`` guard, so a frame carrying NO state at all (a
+        # camera-only observation against a schema that declares joints) is
+        # graded like a frame missing one column rather than walking past the
+        # door. The sorted() fallback still only runs for a non-empty state, so
+        # such a frame cannot cache an empty column list for the episode.
+        if self._cached_state_keys is None:
+            if self._state_source_keys is not None:
+                # Vector-expanded schema: read SOURCE keys (e.g. ``base_quat``);
+                # the list/ndarray branch below flattens each in schema order.
+                self._cached_state_keys = list(self._state_source_keys)
+            else:
+                feat = self.dataset.features.get("observation.state", {})
+                state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
+                if state_names:
+                    self._cached_state_keys = list(state_names)
+                elif state_keys:
+                    self._cached_state_keys = sorted(state_keys)
+
+        if required_action_keys is None and self._cached_state_keys is not None:
+            # Direct API: no scope was given, so every declared column is
+            # this frame's to supply and a missing one is refused. The
+            # backends' hooks always pass a scope; for them a bystander
+            # robot whose state read failed degrades to the fill below
+            # (see ``strands_robots.simulation.recording.undriven_robot_state``) rather
+            # than ending the driven robot's episode.
+            gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
+            if gap is not None:
+                raise ValueError(gap)
+
         if state_keys:
             state_vals = []
-            if self._cached_state_keys is None:
-                if self._state_source_keys is not None:
-                    # Vector-expanded schema: read SOURCE keys (e.g. ``base_quat``);
-                    # the list/ndarray branch below flattens each in schema order.
-                    self._cached_state_keys = list(self._state_source_keys)
-                else:
-                    feat = self.dataset.features.get("observation.state", {})
-                    state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
-                    self._cached_state_keys = state_names if state_names else sorted(state_keys)
-
-            if required_action_keys is None:
-                # Direct API: no scope was given, so every declared column is
-                # this frame's to supply and a missing one is refused. The
-                # backends' hooks always pass a scope; for them a bystander
-                # robot whose state read failed degrades to the fill below
-                # (see ``strands_robots.simulation.recording.undriven_robot_state``) rather
-                # than ending the driven robot's episode.
-                gap = unrecordable_state_columns_error(observation, self._cached_state_keys)
-                if gap is not None:
-                    raise ValueError(gap)
-            for k in self._cached_state_keys:
+            for k in self._cached_state_keys or []:
                 v = observation.get(k)
                 if v is None:
                     state_vals.append(0.0)
@@ -1775,8 +1786,15 @@ class DatasetRecorder:
         # ``None`` (the direct-API default) means every declared column is this
         # frame's to supply: a single recorder fed by hand has no other robot to
         # leave columns for. The backends' recording hooks pass the scoped set.
+        # Not conditioned on ``action`` being non-empty: an action that carries
+        # nothing omits every declared column, which is the same absence as
+        # omitting one. Left unrefused here, the frame reaches the dataset with
+        # no action column at all, and the write's own refusal is what the
+        # caller sees - a RecordingFrameError naming the dataset column, or with
+        # ``strict=False`` a dropped-and-counted frame - instead of the
+        # ValueError this method documents, which names the columns and the fix.
         declared_action_keys = self._cached_action_keys or []
-        if required_action_keys is None and action:
+        if required_action_keys is None:
             required_action_keys = declared_action_keys
         gap = unrecordable_action_columns_error(action, declared_action_keys, required_action_keys)
         if gap is not None:

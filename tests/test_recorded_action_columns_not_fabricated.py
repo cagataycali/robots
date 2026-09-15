@@ -147,13 +147,53 @@ class TestAddFrameRefusesToFabricateAColumn:
         list and silently drop every later action.
         """
         rec, ds = self._recorder()
-        rec.add_frame(observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3}, action={})
+        with pytest.raises(ValueError, match=r"\['a_shoulder', 'a_elbow', 'a_grip'\]"):
+            rec.add_frame(observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3}, action={})
+        assert ds.frames == []
         rec.add_frame(
             observation={"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
             action={"a_shoulder": 0.4, "a_elbow": 0.5, "a_grip": 0.6},
             required_action_keys=DECLARED,
         )
         np.testing.assert_allclose(ds.frames[-1]["action"], [0.4, 0.5, 0.6], atol=1e-6)
+
+    @pytest.mark.parametrize(
+        ("observation", "action", "door", "columns"),
+        [
+            (
+                {"shoulder": 0.1, "elbow": 0.2, "grip": 0.3},
+                {},
+                "action",
+                r"\['a_shoulder', 'a_elbow', 'a_grip'\]",
+            ),
+            (
+                {"cam": np.zeros((2, 2, 3), dtype=np.uint8)},
+                {"a_shoulder": 0.4, "a_elbow": 0.5, "a_grip": 0.6},
+                "state",
+                r"\['shoulder', 'elbow', 'grip'\]",
+            ),
+        ],
+        ids=["action carries nothing", "observation carries only a camera"],
+    )
+    def test_a_frame_missing_every_declared_column_is_refused_like_one_missing_one(
+        self, observation, action, door, columns
+    ):
+        """Refusal is monotonic in the damage: all columns absent is not a pass.
+
+        Both doors used to be reached only through a non-empty dict - the state
+        door sat inside ``if state_keys:``, the action door widened its scope
+        only ``if action:`` - so a frame that omitted ONE declared column was
+        refused with the documented ``ValueError`` while a frame that omitted
+        ALL of them walked past and reached the dataset with the column missing.
+        That frame is then the dataset write's to refuse, under a different
+        exception - or, with ``strict=False``, to drop and count - rather than
+        the ``ValueError`` that ``add_frame`` documents and that names the
+        columns and the remedy.
+        """
+        rec, ds = self._recorder()
+        with pytest.raises(ValueError, match=rf"Recorded {door} column\(s\) {columns}"):
+            rec.add_frame(observation=observation, action=action)
+        assert ds.frames == []
 
 
 class TestAColumnPresentAsNoneCarriesNoCommand:
