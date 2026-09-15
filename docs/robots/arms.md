@@ -172,8 +172,14 @@ a rollout and the mesh probes use. An arm with **no calibration file** is still
 readable: the degrees are then an estimate from the encoder centre
 (`2048 ticks = 0°`, `4096 ticks/rev`) and the text says so, naming
 `lerobot-calibrate` - which is also why `execute`/`start` refuse on that arm
-until it has run. The motion actions (`execute`, `start`) stop for operator
-approval as before; see [security](../security.md#ros-2-dds-bridge-command-surface).
+until it has run. A reading the arm did *not* give is reported as unread rather
+than as its opposite: a calibration flag whose own read fails (on a lerobot bus
+that read sweeps every servo) comes back `null` with the reason instead of
+`false`, and the degrees stay whatever the arm could normalise; a
+`Torque_Enable` register no motor answered is `null`, not `off`, because "torque
+off" reads as "safe to move by hand". The motion actions (`execute`, `start`)
+stop for operator approval as before; see
+[security](../security.md#ros-2-dds-bridge-command-surface).
 
 ## Calibrating a Feetech SO arm
 

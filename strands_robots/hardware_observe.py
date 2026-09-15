@@ -21,7 +21,9 @@ Three facts about real arms shape it:
   reported in degrees either from the calibration (when there is one) or as
   an estimate from the servo's own encoder (``(ticks - 2048) * 360 / 4096``
   for a 12-bit servo), labelled as such. An agent that cannot read an
-  uncalibrated arm cannot tell the operator to calibrate it.
+  uncalibrated arm cannot tell the operator to calibrate it - and an arm whose
+  calibration flag could not be read is *unread*, not uncalibrated
+  (:func:`read_calibration_flag`).
 * **Reads share the bus.** Every read takes the device's
   :func:`~strands_robots.bus_access.bus_lock`, the lock the mesh probes and a
   rollout already hold, so an observe action beside a rollout is serialised
@@ -52,6 +54,7 @@ __all__ = [
     "TICKS_CENTRE",
     "ticks_to_degrees",
     "ensure_bus_open",
+    "read_calibration_flag",
     "read_joint_state",
     "format_joint_state",
     "list_cameras",
@@ -116,6 +119,38 @@ def ensure_bus_open(robot: Any) -> bool:
     return True
 
 
+def read_calibration_flag(bus: Any) -> tuple[bool | None, str]:
+    """The bus's calibration verdict, and the reason when there is none.
+
+    Three answers, not two:
+
+    * ``True``/``False`` - the flag the bus gave.
+    * ``None`` - the bus declares ``is_calibrated`` and reading it raised. On a
+      lerobot arm that read is ``read_calibration()``, a homing-offset and range
+      sweep of every servo, so a contended or half-powered bus fails it; an
+      unanswered question is not a "no", and reporting it as one both mislabels
+      the degrees and sends the operator to ``lerobot-calibrate`` for a fault
+      that is not calibration.
+    * A bus with **no notion** of calibration answers ``True``, by lerobot's own
+      contract for the property ("should be always True if not applicable") -
+      the same reading the connect gate takes, so the read side and the motion
+      side cannot disagree about the same arm.
+
+    The write side and the read side differ deliberately on ``None``: the connect
+    gate refuses, because nothing may move on an unanswered question, while a
+    read that already has the positions in hand reports them and labels the
+    calibration unread.
+    """
+    try:
+        return bool(bus.is_calibrated), ""
+    except AttributeError as exc:
+        if hasattr(type(bus), "is_calibrated"):
+            return None, str(exc).strip()  # the property exists; its own read failed
+        return True, ""  # no notion of calibration: lerobot calls that calibrated
+    except Exception as exc:  # noqa: BLE001 - any failed sweep is "unread", not "uncalibrated"
+        return None, str(exc).strip()
+
+
 def _read_register(bus: Any, register: str, motor: str) -> Any:
     """One register of one motor, or ``None`` for a register this bus cannot answer."""
     try:
@@ -136,9 +171,15 @@ def read_joint_state(robot: Any) -> dict[str, Any]:
 
     Returns a JSON-ready dict::
 
-        {"port": ..., "calibrated": bool, "opened_bus": bool,
+        {"port": ..., "calibrated": bool | None, "opened_bus": bool,
          "joints": {name: {"id", "ticks", "degrees", "degrees_source", "torque_enabled", "voltage_v"}},
-         "torque_enabled_any": bool}
+         "torque_enabled_any": bool | None}
+
+    ``calibrated`` is ``None`` when the bus could not answer (see
+    :func:`read_calibration_flag`), and ``calibration_error`` then carries why;
+    ``torque_enabled_any`` is ``None`` when no motor answered the torque
+    register. A field nothing measured stays unset rather than defaulting to the
+    reassuring answer.
 
     ``degrees_source`` is ``"calibration"`` when lerobot normalised the reading
     and ``"encoder_estimate"`` when it is :func:`ticks_to_degrees` of the raw
@@ -154,9 +195,9 @@ def read_joint_state(robot: Any) -> dict[str, Any]:
     opened = ensure_bus_open(robot)
     with bus_lock(robot):
         raw = bus.sync_read(_POSITION_REGISTER, normalize=False)
-        calibrated = bool(getattr(bus, "is_calibrated", False))
+        calibrated, calibration_error = read_calibration_flag(bus)
         normalized: Mapping[str, Any] = {}
-        if calibrated:
+        if calibrated is not False:
             try:
                 normalized = bus.sync_read(_POSITION_REGISTER)
             except Exception as exc:  # noqa: BLE001 - the raw read already succeeded; degrees fall back to the estimate
@@ -190,27 +231,50 @@ def read_joint_state(robot: Any) -> dict[str, Any]:
             entry["voltage_v"] = round(float(volts) / 10.0, 1)
         joints[str(name)] = entry
 
-    return {
+    # A torque register no motor answered leaves the question open. ``any()``
+    # over ``None`` would close it as "off", i.e. "safe to grab" for an arm
+    # whose torque was never read.
+    answers = [j["torque_enabled"] for j in joints.values() if j.get("torque_enabled") is not None]
+    state: dict[str, Any] = {
         "port": getattr(bus, "port", None),
         "calibrated": calibrated,
         "opened_bus": opened,
         "joints": joints,
-        "torque_enabled_any": any(j.get("torque_enabled") for j in joints.values()),
+        "torque_enabled_any": any(answers) if answers else None,
     }
+    if calibration_error:
+        state["calibration_error"] = calibration_error
+    return state
 
 
 def format_joint_state(tool_name: str, state: Mapping[str, Any]) -> str:
     """The text an agent reads: one header that says what matters, one line per joint."""
     joints: Mapping[str, Mapping[str, Any]] = state.get("joints", {})
     n = len(joints)
-    torque_on = [name for name, j in joints.items() if j.get("torque_enabled")]
-    if not torque_on:
+    torque_on = [name for name, j in joints.items() if j.get("torque_enabled") is True]
+    torque_off = [name for name, j in joints.items() if j.get("torque_enabled") is False]
+    torque_unread = [name for name, j in joints.items() if j.get("torque_enabled") is None]
+    if not torque_on and not torque_off:
+        # "OFF" here would read as "safe to grab" for an arm nobody asked.
+        torque_line = "torque state UNREAD on every joint (do not assume the arm is free to move by hand)"
+    elif not torque_on and not torque_unread:
         torque_line = "torque OFF on all joints (the arm can be moved by hand)"
     elif len(torque_on) == n:
         torque_line = "torque ON on all joints (holding position)"
-    else:
+    elif not torque_unread:
         torque_line = f"torque ON on {', '.join(torque_on)}; OFF on the rest"
-    if state.get("calibrated"):
+    else:
+        parts = [f"ON on {', '.join(torque_on)}"] if torque_on else []
+        parts += [f"OFF on {', '.join(torque_off)}"] if torque_off else []
+        parts += [f"UNREAD on {', '.join(torque_unread)}"]
+        torque_line = "torque " + "; ".join(parts)
+    calibrated = state.get("calibrated")
+    if calibrated is None:
+        calib_line = (
+            f"calibration state UNREAD ({state.get('calibration_error') or 'the bus did not answer'}): "
+            "each joint below names its own source, `calibration` or `encoder_estimate`"
+        )
+    elif calibrated:
         calib_line = "calibrated"
     else:
         calib_line = (

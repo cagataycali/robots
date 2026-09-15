@@ -15,6 +15,10 @@ asked for, so they grade the observable facts without a serial port:
   torque and voltage, and never writes.
 * An UNCALIBRATED arm is readable: degrees come from the encoder centre and
   the text says so, naming ``lerobot-calibrate``.
+* A reading the arm did not give is reported as unread, not as its reassuring
+  opposite: a calibration flag whose own read raises is not "uncalibrated" (the
+  degrees stay the arm's own), and a torque register no motor answered is not
+  "off" (which reads as "safe to grab").
 * ``render`` opens the named camera lazily and saves a PNG inside the render
   sandbox; an unknown camera or an outside path is refused with the remedy.
 * ``get_status()`` on a never-connected arm is a verdict, not the degraded
@@ -63,8 +67,14 @@ class _NotConnected(Exception):
     pass
 
 
-class FakeBus:
-    """The surface of lerobot's ``MotorsBus`` an observe action touches, with a ledger."""
+class _FakeBusWithoutCalibrationNotion:
+    """The surface of lerobot's ``MotorsBus`` an observe action touches, with a ledger.
+
+    No ``is_calibrated``: lerobot's contract for that property is "should be
+    always True if not applicable", and a driver over a plain servo bus need not
+    model calibration at all. Separate class rather than a subclass override,
+    because the point is the *absence* of the attribute.
+    """
 
     def __init__(self, *, calibrated: bool, ticks: dict[str, int] | None = None) -> None:
         self.port = "/dev/fake-bus"
@@ -91,12 +101,6 @@ class FakeBus:
     def disconnect(self, disable_torque: bool = True) -> None:
         self.disconnects.append(disable_torque)
         self.is_connected = False
-
-    @property
-    def is_calibrated(self) -> bool:
-        if not self.is_connected:
-            raise _NotConnected("FakeBus is not connected. Run `.connect()` first.")
-        return self._calibrated
 
     def sync_read(self, register: str, *, normalize: bool = True, num_retry: int = 0) -> dict[str, float]:
         if not self.is_connected:
@@ -133,6 +137,51 @@ class FakeBus:
 
     def disable_torque(self, *a: Any, **k: Any) -> None:
         self.writes.append(("Torque_Enable", 0))
+
+
+class FakeBus(_FakeBusWithoutCalibrationNotion):
+    """The same bus, declaring ``is_calibrated`` the way a lerobot bus does."""
+
+    @property
+    def is_calibrated(self) -> bool:
+        if not self.is_connected:
+            raise _NotConnected("FakeBus is not connected. Run `.connect()` first.")
+        return self._calibrated
+
+
+class _BusWhoseCalibrationReadRaises(FakeBus):
+    """A bus that declares ``is_calibrated`` and cannot answer it.
+
+    ``error`` is what the read raises: an ``AttributeError`` from inside the
+    property (a driver whose flag is ``self.bus.is_calibrated`` over a lazily
+    built bus) or a serial failure of the homing-offset sweep the property runs
+    on a live arm. Either way the read failed; the arm is not "uncalibrated".
+    """
+
+    def __init__(self, *, error: Exception, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.error = error
+
+    @property
+    def is_calibrated(self) -> bool:
+        raise self.error
+
+
+class _BusWithoutTorqueRegister(FakeBus):
+    """A bus whose control table cannot answer ``Torque_Enable``.
+
+    ``answers`` names the motors that do reply, so one cell grades "no motor
+    answered" and another "some did".
+    """
+
+    def __init__(self, *, answers: tuple[str, ...] = (), **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.answers = answers
+
+    def read(self, register: str, motor: str, *, normalize: bool = True) -> int:
+        if register == "Torque_Enable" and motor not in self.answers:
+            raise KeyError(register)
+        return super().read(register, motor, normalize=normalize)
 
 
 class FakeCamera:
@@ -175,8 +224,14 @@ class FakeLeRobot:
     name = "so_follower"
     robot_type = "so_follower"
 
-    def __init__(self, *, calibrated: bool, cameras: dict[str, FakeCamera] | None = None) -> None:
-        self.bus = FakeBus(calibrated=calibrated)
+    def __init__(
+        self,
+        *,
+        calibrated: bool = True,
+        cameras: dict[str, FakeCamera] | None = None,
+        bus: Any = None,
+    ) -> None:
+        self.bus: Any = bus if bus is not None else FakeBus(calibrated=calibrated)
         self.cameras = cameras if cameras is not None else {}
         self.config = _RobotConfig({name: _CamConfig() for name in self.cameras})
         self.configure_calls = 0
@@ -401,6 +456,83 @@ class TestGetStateIsAReadAndOnlyARead:
         result = _call(hw, action="get_state")
         assert _json(result)["torque_enabled_any"] is True
         assert "torque ON on gripper; OFF on the rest" in _text(result)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            AttributeError("'FakeBus' object has no attribute '_calibration_cache'"),
+            ConnectionError("No status packet received from shoulder_pan"),
+        ],
+        ids=["raised_inside_the_property", "the_servo_sweep_failed"],
+    )
+    def test_a_calibration_flag_that_cannot_be_read_is_unread_not_uncalibrated(self, error: Exception) -> None:
+        """A failed calibration read used to demote the degrees to an estimate.
+
+        The flag was read with ``getattr(bus, "is_calibrated", False)``, which
+        answers ``False`` for an ``AttributeError`` from *inside* the property -
+        what a driver whose flag is ``self.bus.is_calibrated`` over a lazily
+        built bus raises - and propagates any other failure of the servo sweep
+        the property runs, killing a read that already had the positions. Read
+        as "not calibrated", the arm's own normalised reading was never asked
+        for: the degrees silently became encoder estimates, and the text sent the
+        operator to ``lerobot-calibrate`` for a fault that is not calibration.
+        """
+        robot = FakeLeRobot(bus=_BusWhoseCalibrationReadRaises(calibrated=True, error=error))
+
+        result = _call(_make_hw(robot), action="get_state")
+
+        state = _json(result)
+        assert state["calibrated"] is None, "unread, which is neither True nor False"
+        assert state["calibration_error"] == str(error)
+        # The arm can still normalise, so the degrees are ITS degrees, not ticks arithmetic.
+        elbow = state["joints"]["elbow_flex"]
+        assert elbow["degrees_source"] == "calibration"
+        assert elbow["degrees"] == 91.0
+        assert elbow["degrees"] != pytest.approx(hardware_observe.ticks_to_degrees(3072))
+        text = _text(result)
+        assert "calibration state UNREAD" in text
+        assert "lerobot-calibrate" not in text, "the calibration is not the fault to report"
+
+    def test_a_bus_with_no_notion_of_calibration_is_not_reported_uncalibrated(self) -> None:
+        """lerobot's contract: ``is_calibrated`` "should be always True if not applicable".
+
+        A driver that does not model calibration was reported NOT calibrated,
+        with text promising a rollout would refuse until ``lerobot-calibrate``
+        ran - while the connect gate lets exactly that driver through.
+        """
+        robot = FakeLeRobot(bus=_FakeBusWithoutCalibrationNotion(calibrated=True))
+
+        result = _call(_make_hw(robot), action="get_state")
+
+        state = _json(result)
+        assert state["calibrated"] is True
+        assert "calibration_error" not in state
+        assert "NOT calibrated" not in _text(result)
+
+    def test_an_unread_torque_register_is_not_reported_as_torque_off(self) -> None:
+        """ "the arm can be moved by hand" is a claim about a live arm.
+
+        ``any()`` over registers no motor answered used to make it for free.
+        """
+        robot = FakeLeRobot(bus=_BusWithoutTorqueRegister(calibrated=True))
+
+        result = _call(_make_hw(robot), action="get_state")
+
+        state = _json(result)
+        assert state["torque_enabled_any"] is None
+        assert all(j["torque_enabled"] is None for j in state["joints"].values())
+        text = _text(result)
+        assert "torque state UNREAD on every joint" in text
+        assert "moved by hand" not in text
+
+    def test_a_partly_unread_torque_register_names_the_unread_joints(self) -> None:
+        bus = _BusWithoutTorqueRegister(calibrated=True, answers=("gripper",))
+        bus.torque["gripper"] = 1
+
+        result = _call(_make_hw(FakeLeRobot(bus=bus)), action="get_state")
+
+        assert _json(result)["torque_enabled_any"] is True
+        assert "torque ON on gripper; UNREAD on shoulder_pan, elbow_flex" in _text(result)
 
     def test_a_bus_that_cannot_open_becomes_an_error_naming_the_port(self) -> None:
         robot = FakeLeRobot(calibrated=True)
