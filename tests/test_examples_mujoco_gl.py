@@ -31,7 +31,7 @@ Three rules are enforced over the notebooks' code cells plus every tracked
    Line-scoped and deliberately blunt: ``cgl`` cannot be a working default off
    macOS in any scope.
 2. **No unguarded windowed backend in a module-scope default**
-   (:func:`test_no_module_scope_windowed_gl_default`). Scope matters because
+   (:func:`test_no_module_scope_platform_bound_gl_default`). Scope matters because
    ``MUJOCO_GL`` is read once, at ``import mujoco``: a module-scope
    ``setdefault`` runs at import and therefore selects the backend for the
    whole file, while one inside a test function usually runs *after* the module
