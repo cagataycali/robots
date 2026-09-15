@@ -41,6 +41,32 @@ def _text(result: dict) -> str:
     return result["content"][0]["text"]
 
 
+def _recording_advice() -> str:
+    """The text ``start_recording`` can emit, from its body alone.
+
+    Scoped to that one function and with its docstring dropped: joining every
+    literal in the module made a single-word check vacuous, since the module
+    prose says "per-step capture" whatever the advice says.
+    """
+    import ast
+    import inspect
+
+    from strands_robots.simulation.mujoco import recording
+
+    tree = ast.parse(inspect.getsource(recording))
+    body = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "start_recording"
+    ).body
+    if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant):
+        body = body[1:]  # the docstring is documentation, not advice
+    return " ".join(
+        node.value
+        for statement in body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+
+
 def test_step_without_a_recording_carries_no_note(sim):
     result = sim.step(5)
     assert result["status"] == "success"
@@ -90,17 +116,8 @@ def test_start_recording_text_names_every_launcher_that_captures():
     through the same hook ``run_policy``'s does, so "``run_policy`` only" sends
     a caller who used ``start_policy`` looking for a defect that is not there.
     """
-    import ast
-    import inspect
 
-    from strands_robots.simulation.mujoco import recording
-
-    src = inspect.getsource(recording)
-    joined = " ".join(
-        node.value
-        for node in ast.walk(ast.parse(src))
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    )
+    joined = _recording_advice()
     assert "Frames are captured by a policy rollout only" in joined
     assert "do not feed the recorder" in joined
     for launcher in LAUNCHERS:
@@ -116,3 +133,58 @@ def test_every_launcher_the_rule_names_is_a_dialable_action(sim):
     """
     actions = set(sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"])
     assert LAUNCHERS <= actions, f"not dialable: {LAUNCHERS - actions}"
+
+
+# Every rollout that records, measured under one active recording on a so101
+# scene: run_multi_policy saved 15 frames and start_policy 30. Naming run_policy
+# alone was wrong about both.
+RECORDS = frozenset({"run_policy", "start_policy", "run_multi_policy"})
+
+
+def test_the_advice_names_every_rollout_that_raises_the_flag_the_guard_reads():
+    """``policy_running`` defines "a rollout is in flight", so its raisers are
+    the paths that record - and the advice has to name each of them.
+
+    Pinned as the whole set rather than one name per case: the advice named
+    ``run_policy`` alone while three sites raise the flag, and a fourth raiser
+    added later would quietly make the advertised rule false again. This fails
+    when the set changes, which is the moment to decide what the advice says.
+    """
+    import ast
+    import inspect
+
+    from strands_robots.simulation.mujoco import simulation as mujoco_sim
+
+    raisers: set[str] = set()
+    stack: list[str] = []
+
+    class Walk(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            stack.append(node.name)
+            self.generic_visit(node)
+            stack.pop()
+
+        def visit_Assign(self, node: ast.Assign) -> None:
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr == "policy_running"
+                    and getattr(node.value, "value", None) is True
+                ):
+                    raisers.add(stack[-1])
+            self.generic_visit(node)
+
+    Walk().visit(ast.parse(inspect.getsource(mujoco_sim)))
+    # ``_make_run_policy_hook`` is run_policy's own hook, not a separate entry
+    # point; ``_announce_rollout`` is shared by run_policy and start_policy.
+    assert raisers == {"_announce_rollout", "_make_run_policy_hook", "run_multi_policy"}, raisers
+
+    advice = _recording_advice()
+    for method in sorted(RECORDS):
+        assert method in advice, f"{method} launches a rollout that feeds the recorder"
+
+
+def test_the_advice_still_names_what_does_not_record():
+    advice = _recording_advice()
+    for method in ("step", "set_joint_positions", "teleoperate", "replay_episode"):
+        assert method in advice

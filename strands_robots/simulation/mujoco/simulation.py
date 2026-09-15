@@ -4921,9 +4921,12 @@ class MuJoCoSimEngine(
         # motion had run. Say it here, on the call that does not record, while
         # the motion is still ahead. A rollout in flight IS recording (its hook
         # runs on the executor thread), so the note stays silent then - and
-        # ``policy_running``, the flag this guard reads, is raised by BOTH
-        # launchers of one (``_announce_rollout``: run_policy and start_policy),
-        # so the note names both rather than run_policy alone. The note
+        # ``policy_running``, the flag this guard reads, is raised for every
+        # rollout that records: ``_announce_rollout`` for run_policy and
+        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
+        # which feeds the recorder by calling add_frame directly. So the note
+        # says "a policy rollout" rather than naming run_policy alone, and
+        # start_recording's advice names all three. The note
         # LEADS the line: appended after the step summary it was read past
         # three times in a row by an agent that then reported "all three poses
         # captured" - the first token of a success result is what gets read.

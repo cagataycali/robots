@@ -12,6 +12,10 @@ and no rollout is in flight (leading, because a trailing note was read past); a 
 was. `start_recording`'s success text states the same rule where the recording
 begins instead of the softer "Run policies to capture frames".
 
-Both launchers are named because both record: `_announce_rollout` raises the
-`policy_running` flag this guard reads for `run_policy` and for `start_policy`
-alike, and a `start_policy` rollout feeds the recorder through the same hook.
+Every rollout that records is named, because `policy_running` - the flag this
+guard reads - is raised for each of them: `_announce_rollout` for `run_policy`
+and `start_policy`, whose rollouts feed the recorder through the same per-step
+hook, and `run_multi_policy`, whose synchronized loop calls `add_frame` itself
+and which `describe()` advertises as the path for bimanual data collection.
+Naming `run_policy` alone sent a caller who used either of the other two
+looking for a defect that was not there.
