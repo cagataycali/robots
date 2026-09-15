@@ -375,7 +375,10 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
        ``SubjectProperty::Wildcard`` (matches every link); when present,
        it must be a non-empty list of non-empty strings (Zenoh rejects
        ``[]`` with ``Found empty interface value``). ``cert_common_names``
-       is OPTIONAL -- when present must be a list. Subjects with
+       is OPTIONAL -- when present must be a list of non-empty strings, since
+       Zenoh refuses a non-string entry at ``Mesh.start`` naming a column of
+       the wire JSON rather than this file, and accepts an empty one that no
+       certificate can match. Subjects with
        neither ``interfaces`` nor ``cert_common_names`` match every
        peer (effectively wildcard) and operators should use them only
        when a permissive ``default_permission: "allow"`` is desired.
@@ -442,6 +445,24 @@ def _validate_acl_shape(data: dict[str, Any], path: Path) -> None:
                 f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must be a list "
                 f"(or omitted), got {type(cns).__name__}. Common typo: cert_common_name (singular)."
             )
+        # The entries are graded here for the same reason ``interfaces`` grades
+        # its own above: this validator promises a path-prefixed refusal, and the
+        # Zenoh parser is the only other reader. A non-string entry (``null``,
+        # a number, a nested list) is refused there at ``Mesh.start`` as
+        # ``invalid type: ..., expected a string`` at a line and column of the
+        # wire JSON the operator never sees, naming neither this file nor the
+        # subject. An empty string is worse: Zenoh accepts it, a CN is matched
+        # literally, and no certificate carries an empty one, so the subject
+        # matches no peer - the silent "match nothing" outage this function
+        # exists to refuse - while ``[""]`` is truthy enough to pass the
+        # wildcard guard below as a constraint.
+        if isinstance(cns, list):
+            for k, cn in enumerate(cns):
+                if not isinstance(cn, str) or not cn:
+                    raise ValueError(
+                        f"ACL file {path}: subjects[{i}={sid!r}].cert_common_names must contain only "
+                        f"non-empty strings; entry [{k}] is {type(cn).__name__} {cn!r}."
+                    )
         # HARD-REJECT subjects
         # that constrain neither ``interfaces`` nor
         # ``cert_common_names``. A subject with only an ``id`` (or

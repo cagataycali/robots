@@ -123,6 +123,47 @@ def test_subject_cert_common_names_typo_rejected(tmp_path: Path) -> None:
         _acl_config._load_acl_file(p)
 
 
+@pytest.mark.parametrize(
+    ("entry", "shown"),
+    [
+        pytest.param(None, "NoneType None", id="null"),
+        pytest.param(7, "int 7", id="int"),
+        pytest.param(["op-1"], "list ['op-1']", id="nested-list"),
+        pytest.param("", "str ''", id="empty-string"),
+    ],
+)
+def test_subject_cert_common_names_entry_that_is_not_a_non_empty_string_rejected(
+    tmp_path: Path, entry: object, shown: str
+) -> None:
+    """An entry is graded, not just the list around it, and the refusal names which one.
+
+    Pre-fix the validator graded the container only, so each of these reached
+    ``acl_block_from`` and the Zenoh parser: the first three are refused there at
+    ``Mesh.start`` as ``invalid type: ..., expected a string`` at a column of the
+    wire JSON, naming neither the file nor the subject; the empty string is
+    accepted there and matches no certificate, the silent "match nothing" outage
+    this validator exists to refuse. The list is ``["op-1", <entry>]`` so the
+    subject still constrains and the wildcard guard is not what fires.
+    """
+    doc = _valid_skeleton()
+    doc["subjects"][0]["cert_common_names"] = ["op-1", entry]
+    p = _write(tmp_path, doc)
+    with pytest.raises(ValueError, match=r"cert_common_names must contain only non-empty strings") as info:
+        _acl_config._load_acl_file(p)
+    message = str(info.value)
+    assert str(p) in message, "the refusal is path-prefixed like every other in this validator"
+    assert f"entry [1] is {shown}" in message, message
+
+
+def test_subject_cert_common_names_of_non_empty_strings_still_accepted(tmp_path: Path) -> None:
+    """The positive side of the same guard: a list of literal CNs is held whole."""
+    doc = _valid_skeleton()
+    doc["subjects"][0]["cert_common_names"] = ["op-1", "op-2"]
+    p = _write(tmp_path, doc)
+    loaded = _acl_config._load_acl_file(p)
+    assert loaded["subjects"][0]["cert_common_names"] == ["op-1", "op-2"]
+
+
 def test_rule_missing_key_exprs_rejected(tmp_path: Path) -> None:
     doc = _valid_skeleton()
     doc["rules"][0]["key_exprs"] = []
