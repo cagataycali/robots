@@ -906,14 +906,34 @@ class PhysicsMixin:
         """``{asset joint name: label}`` for one attached robot, from the registry.
 
         Empty when the robot was added from a bare file rather than a registry
-        entry, or when its entry declares no ``joint_labels``.
+        entry, when its entry declares no ``joint_labels``, or when none of
+        those labels names a joint this model actually carries.
         """
-        data_config = getattr(robot, "data_config", None)
-        if not data_config:
+        # ``add_robot`` resolves the model from ``data_config`` when it is given
+        # and from the instance ``name`` otherwise - its documented precedence -
+        # so the registry entry a robot came from is ``data_config or name``,
+        # which is how the mesh lookup in that same call already spells it
+        # (``_ensure_meshes(resolved_path, data_config or name)``). Reading only
+        # ``data_config`` left every robot added by the short form the
+        # quickstart teaches - ``add_robot("so101")`` - unlabelled. A label map
+        # is keyed by the asset's joint name, so a ``name`` that collides with
+        # an unrelated registry entry cannot mislabel a joint: its keys simply
+        # match none of the model's joints.
+        source = getattr(robot, "data_config", None) or getattr(robot, "name", None)
+        if not source or self._world is None:
             return {}
         from strands_robots.registry import joint_labels
 
-        return joint_labels(data_config)
+        mj = _ensure_mujoco()
+        ns = robot.namespace or ""
+        # Only labels naming a joint this model actually has, so the three
+        # consumers - the state text, its ``joint_labels`` map and the refusal
+        # hint - cannot advertise a label the write path would then refuse.
+        return {
+            jnt: lbl
+            for jnt, lbl in joint_labels(source).items()
+            if self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, ns + jnt) >= 0
+        }
 
     def _resolve_joint_label(self, key: object, robot_name: str | None) -> int:
         """Resolve a joint *label* (``shoulder_pan``) or ``<robot>/<label>`` to a joint id.

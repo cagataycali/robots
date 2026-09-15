@@ -11,6 +11,8 @@ write paths accept the label (bare, ``<robot>/<label>``, any case).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("mujoco")
@@ -19,6 +21,22 @@ from strands_robots.registry import joint_labels  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 SO_LABELS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+
+
+def _asset_file(pack: str, filename: str) -> str:
+    """Path to a file in an already-downloaded asset pack, or skip.
+
+    Gated on the pack *directory* so a host without the pack skips rather than
+    reaching for the network, and the declared file is then asserted.
+    """
+    from strands_robots.utils import get_search_paths
+
+    for root in get_search_paths():
+        if (Path(root) / pack).is_dir():
+            path = Path(root) / pack / filename
+            assert path.is_file(), f"{pack} is present but does not carry {filename}"
+            return str(path)
+    pytest.skip(f"asset pack '{pack}' is not available")
 
 
 def _text(result: dict) -> str:
@@ -124,5 +142,81 @@ class TestJointWrites:
             assert result["status"] == "error"
             assert "may also be written by label" not in _text(result)
             assert "(" not in _text(sim._dispatch_action("get_robot_state", {})).split("\n")[1]
+        finally:
+            sim.destroy()
+
+
+class TestTheShortFormIsLabelledToo:
+    """``add_robot("so101")`` - what the quickstart teaches - carries the labels.
+
+    ``add_robot`` resolves the model from ``data_config`` when given and from
+    the instance ``name`` otherwise, so a robot added by the short form comes
+    from a registry entry just as much as one naming ``data_config``.
+    """
+
+    @pytest.fixture
+    def so101_short_form(self):
+        sim = Simulation()
+        sim.create_world()
+        res = sim.add_robot(name="so101")  # no data_config
+        if res["status"] != "success":
+            sim.destroy()
+            pytest.skip(f"so101 not available: {_text(res)}")
+        sim.reset()
+        yield sim
+        sim.destroy()
+
+    def test_the_state_carries_the_labels(self, so101_short_form):
+        result = so101_short_form._dispatch_action("get_robot_state", {})
+        assert "2 (shoulder_lift): pos=" in _text(result)
+        assert _json(result)["joint_labels"] == joint_labels("so101")
+
+    def test_a_label_writes_the_joint(self, so101_short_form):
+        result = so101_short_form._dispatch_action("set_joint_positions", {"positions": {"shoulder_lift": 0.3}})
+        assert result["status"] == "success", _text(result)
+        state = _json(so101_short_form._dispatch_action("get_robot_state", {}))["state"]
+        assert state["2"]["position"] == pytest.approx(0.3)
+
+    def test_a_distinct_instance_label_reads_the_data_config(self):
+        """The form ``add_robot``'s own deprecation hint recommends.
+
+        ``add_robot(name="arm0", data_config="so101")`` labels the SO-101 it
+        loaded, not the nothing that ``arm0`` names in the registry.
+        """
+        sim = Simulation()
+        sim.create_world()
+        res = sim.add_robot(name="arm0", data_config="so101")
+        if res["status"] != "success":
+            sim.destroy()
+            pytest.skip(_text(res))
+        try:
+            result = sim._dispatch_action("set_joint_positions", {"positions": {"arm0/shoulder_lift": 0.3}})
+            assert result["status"] == "success", _text(result)
+            state = sim._dispatch_action("get_robot_state", {})
+            assert _json(state)["state"]["2"]["position"] == pytest.approx(0.3)
+            assert "2 (shoulder_lift): pos=" in _text(state)
+        finally:
+            sim.destroy()
+
+    def test_a_colliding_instance_label_cannot_mislabel_a_foreign_model(self):
+        """An instance label that happens to name another registry entry.
+
+        The labels are keyed by the asset's joint name, so the mismatch can
+        only fail to match - never move the joint the label does not name.
+        """
+        so101_xml = _asset_file("robotstudio_so101", "so101_new_calib.xml")
+        sim = Simulation()
+        sim.create_world()
+        res = sim.add_robot(name="so100", urdf_path=so101_xml)
+        if res["status"] != "success":
+            sim.destroy()
+            pytest.skip(_text(res))
+        try:
+            state = sim._dispatch_action("get_robot_state", {})
+            assert "joint_labels" not in _json(state)
+            assert "(" not in _text(state).split("\n")[1]
+            result = sim._dispatch_action("set_joint_positions", {"positions": {"shoulder_lift": 0.3}})
+            assert result["status"] == "error"
+            assert "may also be written by label" not in _text(result)
         finally:
             sim.destroy()
