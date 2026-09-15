@@ -6,6 +6,13 @@ description: Install strands-robots with uv - extras matrix, platform notes, hea
 
 Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`); plain `pip install` works too.
 
+`uv pip install` installs into the active virtual environment and refuses when there is none (`No virtual environment found; run uv venv`), so create and activate one first:
+
+```bash
+uv venv --python 3.12
+source .venv/bin/activate      # Windows: .venv\Scripts\activate
+```
+
 ## Extras matrix
 
 | Extra | Pulls in | When you need it |
@@ -24,6 +31,7 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | `[dev]` | `pytest`, `pytest-cov`, `ruff`, `mypy`, `pytest-timeout` | Contributing |
 
 ```bash
+# inside the activated venv from above
 uv pip install "strands-robots[sim-mujoco]"                  # sim only
 uv pip install "strands-robots[all]"                         # the 21-extra bundle
 uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3

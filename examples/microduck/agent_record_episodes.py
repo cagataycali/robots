@@ -15,8 +15,11 @@ Run::
 
     export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib   # ffmpeg for video
     python examples/microduck/agent_record_episodes.py \
-        --onnx "$PWD/../microduck/policies/alpha_walking.onnx" \
         --episodes 2 --root /tmp/microduck_agent_ds
+
+``--onnx`` defaults to ``alpha_walking.onnx``, which the provider fetches from
+Pollen's Hub repository ``pollen-robotics/microduck-policies`` on first use;
+pass a path to use a local file.
 
 Dependencies:
   pip install "strands-robots[sim-mujoco,lerobot,microduck]" strands-agents
@@ -26,7 +29,6 @@ Dependencies:
 from __future__ import annotations
 
 import argparse
-import os
 
 from strands import Agent
 
@@ -37,10 +39,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--onnx",
-        default=os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../../microduck/policies/alpha_walking.onnx")
-        ),
-        help="Path to Pollen's alpha_walking.onnx",
+        default="alpha_walking.onnx",
+        help="a local .onnx file, or the bare name of a weight in pollen-robotics/microduck-policies",
     )
     ap.add_argument("--episodes", type=int, default=2)
     ap.add_argument("--steps", type=int, default=150, help="control steps per episode")
