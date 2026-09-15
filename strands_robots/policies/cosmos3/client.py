@@ -43,6 +43,18 @@ _READ_TIMEOUT_SECS = 600.0
 _SERVER_NAME = "Cosmos 3 policy server"
 
 
+class _UnreadableFrame(ConnectionError):
+    """A frame off the wire the vendored msgpack+NumPy codec cannot read.
+
+    A ``ConnectionError`` because that is what every other malformation on this
+    wire is reported as, and a *distinct* type because
+    :class:`Cosmos3WebsocketClient` translates ``OSError`` into the
+    start-the-server hint - and a ``ConnectionError`` is an ``OSError``, so that
+    clause would replace an already-complete report with the one remedy that is
+    not wrong here. Named at the entry points so the specific report survives.
+    """
+
+
 class _RawWebsocketTransport:
     """msgpack + NumPy wire client using ``websockets`` + a vendored packer.
 
@@ -65,6 +77,53 @@ class _RawWebsocketTransport:
         self._mnp = _mnp
         self._packer = _mnp.Packer()
 
+    def _decode(self, frame: Any, what: str) -> Any:
+        """Unpack one inbound frame, or report a peer that does not speak this wire.
+
+        Every other way this exchange can fail already names the server and the
+        endpoint: a connection that was refused carries the start-the-server
+        hint, a read that expired carries the silent-server report and the
+        budget it waited out. A frame the *codec* cannot read was the one that
+        did not - ``msgpack`` raises ``ExtraData`` (a ``ValueError``) for
+        anything that is not a msgpack document, and a ``TypeError`` for a text
+        frame - so a proxy's 502 page, a JSON server on the same port or a
+        checkpoint served by something else surfaced as ``unpack(b) received
+        extra data.``, naming neither the server, the endpoint, nor which read
+        it answered.
+
+        Both servers this package ships already answer this way at the other end
+        of their own wire: ``PolicyServer`` marshals an unreadable frame back as
+        an ``error`` message (MODULE strands_robots.inference.server) and the
+        MoveIt 2 node replies ``malformed_request`` (MODULE
+        strands_robots.policies.moveit2.server.zmq_node). This is the client
+        half of the same rule.
+
+        Args:
+            frame: The raw WebSocket frame as received, text or binary.
+            what: Which read it answered (``"metadata handshake"`` / ``"reply"``,
+                the same words the silent-server reports use), so the report
+                names the exchange that failed rather than the codec.
+
+        Returns:
+            The decoded msgpack payload.
+
+        Raises:
+            _UnreadableFrame: If the frame is not a msgpack document. The codec
+                failure is kept as the cause and the frame's opening bytes are
+                quoted, since those are what identify the peer that answered.
+        """
+        try:
+            return self._mnp.unpackb(frame)
+        except (TypeError, ValueError) as exc:
+            raise _UnreadableFrame(
+                f"{_SERVER_NAME} at {self.uri} sent a {what} frame this client cannot read as a "
+                f"msgpack message ({type(exc).__name__}: {exc}); the frame begins {frame[:60]!r}. "
+                "A peer that answers here in another wire format is not a Cosmos 3 RoboLab policy "
+                "server: check the port serves python -m "
+                "cosmos_framework.scripts.action_policy_server_robolab and not another WebSocket "
+                "policy server."
+            ) from exc
+
     def _ensure(self) -> Any:
         if self._ws is not None:
             return self._ws
@@ -82,7 +141,7 @@ class _RawWebsocketTransport:
         # strands_robots.inference.client).
         established = False
         try:
-            self._mnp.unpackb(ws.recv(timeout=self.read_timeout))  # server metadata handshake
+            self._decode(ws.recv(timeout=self.read_timeout), "metadata handshake")
             established = True
         finally:
             if not established:
@@ -126,7 +185,7 @@ class _RawWebsocketTransport:
         resp = self._exchange(observation)
         if isinstance(resp, str):
             raise RuntimeError(f"Error in inference server:\n{resp}")
-        return self._mnp.unpackb(resp)
+        return self._decode(resp, "reply")
 
     def reset(self) -> None:
         pass
@@ -224,10 +283,29 @@ class Cosmos3WebsocketClient:
         return self._client
 
     def get_server_metadata(self) -> dict[str, Any]:
-        """Return the metadata dict the server sends on connect."""
+        """Return the metadata dict the server sends on connect.
+
+        Returns:
+            The server metadata dict.
+
+        Raises:
+            ConnectionError: If the server cannot be reached, if it accepted the
+                connection and sent no handshake within ``read_timeout``, or if
+                the handshake it did send is not a msgpack document
+                (:meth:`_RawWebsocketTransport._decode`). Three separate
+                reports: the second and third servers are listening, so telling
+                the operator to start one names the only thing that is not wrong.
+        """
         client = self._ensure_client()
         try:
             return client.get_server_metadata()
+        except _UnreadableFrame:
+            # Re-raised unchanged: the seam that held the frame already named the
+            # server, the endpoint, the read and the frame itself, and the
+            # ``except OSError`` clause below - a ``ConnectionError`` is an
+            # ``OSError`` - would replace that with "start the server", the one
+            # remedy that is not wrong for a peer which just answered.
+            raise
         except TimeoutError as e:
             # Before ``OSError`` (a ``TimeoutError`` is one), because the two
             # cases have separate remedies: this server is listening and did not
@@ -248,10 +326,25 @@ class Cosmos3WebsocketClient:
         Returns:
             Response dict containing at least ``"action"`` (an ``[T, D]``
             NumPy array) and optionally ``"video"`` / ``"server_timing"``.
+
+        Raises:
+            ConnectionError: If the server cannot be reached, if it accepted the
+                connection and answered nothing within ``read_timeout``, or if
+                the frame it did send is not a msgpack document
+                (:meth:`_RawWebsocketTransport._decode`).
+            RuntimeError: If the server marshals an inference failure back as a
+                text frame, which carries the server-side traceback.
         """
         client = self._ensure_client()
         try:
             return client.infer(observation)
+        except _UnreadableFrame:
+            # Re-raised unchanged: the seam that held the frame already named the
+            # server, the endpoint, the read and the frame itself, and the
+            # ``except OSError`` clause below - a ``ConnectionError`` is an
+            # ``OSError`` - would replace that with "start the server", the one
+            # remedy that is not wrong for a peer which just answered.
+            raise
         except TimeoutError as e:
             # Before ``OSError`` (a ``TimeoutError`` is one), because the two
             # cases have separate remedies: this server is listening and did not

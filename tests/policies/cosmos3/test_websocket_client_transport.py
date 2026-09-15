@@ -279,3 +279,89 @@ def test_client_infer_wraps_connection_error(monkeypatch):
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="action_policy_server_robolab"):
         client.infer({"prompt": "x"})
+
+
+# A frame the vendored msgpack codec cannot read, and the codec's own verdict on
+# it. Every other malformation on this wire is a ConnectionError naming the
+# server and the endpoint (refused connect, silent server); these used to escape
+# as the codec's bare complaint, naming neither, and not saying which read the
+# peer had answered.
+_UNREADABLE_FRAMES = [
+    (b"<html><body>502 Bad Gateway</body></html>", "ExtraData"),
+    (b'{"action": [[0.0, 1.0]]}', "ExtraData"),
+    (b"", "ValueError"),
+]
+_DOORS = ("metadata handshake", "reply")
+#: (frame, codec error, read) - a text frame is unreadable at the handshake only,
+#: because the reply door has its own server-error-string contract (pinned by
+#: test_raw_transport_string_payload_is_server_error) that runs before the codec.
+# ``str | bytes`` because that is what a websocket delivers: a text frame arrives
+# as ``str``, a binary one as ``bytes``, and both reach the same codec.
+_UNREADABLE_CASES: list[tuple[str | bytes, str, str]] = [
+    (frame, codec, door) for frame, codec in _UNREADABLE_FRAMES for door in _DOORS
+]
+_UNREADABLE_CASES.append(("traceback: server exploded", "TypeError", "metadata handshake"))
+
+
+def _dial(monkeypatch, frame, door):
+    """Answer one read of the wire with *frame*, and return the call that made it."""
+    payloads = [frame] if door == "metadata handshake" else [mnp.packb({"meta": "hello"}), frame]
+    fake = _FakeWebsocket(payloads)
+    _patch_connect(monkeypatch, fake)
+    client = Cosmos3WebsocketClient(host="cosmos.test", port=8000)
+    if door == "metadata handshake":
+        return client, fake, client.get_server_metadata
+    return client, fake, lambda: client.infer({"prompt": "pick the cube"})
+
+
+@pytest.mark.parametrize(
+    ("frame", "codec", "door"),
+    _UNREADABLE_CASES,
+    ids=[f"{codec}-at-{door.split()[-1]}" for _, codec, door in _UNREADABLE_CASES],
+)
+def test_an_unreadable_frame_names_the_peer_the_read_and_the_frame(monkeypatch, frame, codec, door):
+    """A frame that is not msgpack reports the server, the endpoint, which read it
+    answered and its opening bytes - not the codec's bare complaint."""
+    _client, _fake, call = _dial(monkeypatch, frame, door)
+
+    with pytest.raises(ConnectionError) as ei:
+        call()
+
+    msg = str(ei.value)
+    assert "Cosmos 3 policy server" in msg, "the report must name the service that answered"
+    assert "ws://cosmos.test:8000" in msg, "the report must name the endpoint dialled"
+    assert f"a {door} frame" in msg, "the report must name which read the peer answered"
+    assert codec in msg, "the codec's verdict is the evidence and is kept"
+    assert repr(frame[:60]) in msg, "the opening bytes are what identify the peer that answered"
+    assert type(ei.value.__cause__).__name__ == codec, "the codec failure stays the cause"
+    # The start-the-server hint is written for an *absent* server, and it reaches
+    # the caller through ``except OSError`` - which a ConnectionError satisfies.
+    # It must not replace the report of a server that just answered.
+    assert "Could not reach" not in msg
+    assert "healthz" not in msg
+
+
+def test_one_frame_at_both_doors_differs_only_in_the_read(monkeypatch):
+    """The same unreadable frame at either read yields the same report bar the
+    read it names, so a caller mid-rollout can tell the two apart."""
+    frame = b"<html><body>502 Bad Gateway</body></html>"
+    reports = {}
+    for door in _DOORS:
+        _client, _fake, call = _dial(monkeypatch, frame, door)
+        with pytest.raises(ConnectionError) as ei:
+            call()
+        reports[door] = str(ei.value)
+
+    assert reports["metadata handshake"].replace("metadata handshake", "reply") == reports["reply"]
+
+
+def test_an_unreadable_handshake_discards_the_connection(monkeypatch):
+    """A handshake that could not be read leaves no cached connection: the frame
+    behind it is unread, so a later infer would have taken it for an action chunk."""
+    client, fake, call = _dial(monkeypatch, b"<html>502</html>", "metadata handshake")
+
+    with pytest.raises(ConnectionError):
+        call()
+
+    assert fake.closed is True, "the connection being abandoned must be closed"
+    assert client._client._ws is None, "a connection whose handshake failed must not be cached"

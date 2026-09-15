@@ -53,7 +53,12 @@ parse as port **80** with the configured `8000` in the path. An injected
 and finite) bounds every read off the live connection - `websockets`' `recv()`
 has no deadline, so a server that accepted the connection and then went quiet
 would otherwise hold the caller forever. An expired read is reported as a
-timeout, not as "start the server first", and discards the connection.
+timeout, not as "start the server first", and discards the connection. A frame
+that *arrives* but is not a msgpack document - a proxy's 502 page, a JSON policy
+server, this package's own `inference.server` on that port - is reported the same
+way: naming the endpoint, which read it answered (`metadata handshake` /
+`reply`) and the frame's opening bytes, rather than the codec's `unpack(b)
+received extra data.`
 
 ## Embodiments
 
