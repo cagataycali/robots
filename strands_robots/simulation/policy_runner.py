@@ -259,9 +259,15 @@ def action_commands_robot(action: Mapping[str, Any]) -> bool:
 
     Counting such an action as applied is what makes an evaluation of nothing but
     those actions indistinguishable, in every published field, from one that
-    commanded every joint. The sibling ``run`` surface separates the two through
-    its per-actuator ``action_resolution_rate``; this is the rule the evaluation
-    routes read instead.
+    commanded every joint. Both rollout surfaces read this rule, and each reports
+    the tally it backs as ``actions_applied``: the evaluation routes refuse the
+    aggregate through :func:`uncommanded_eval_error`, and :meth:`PolicyRunner.run`
+    refuses it beside the total-unresolved refusal it mirrors. ``run``'s
+    per-actuator ``action_resolution_rate`` does not cover it: that map is keyed on
+    the robot's actuators, so a robot declaring none - the shipped ``talos`` and
+    ``asimov_v0`` descriptions both compile that way - contributes an empty map
+    and a ``partial_action_failure_rate`` of ``0.0``, which is what a robot with no
+    resolution problem looks like too.
 
     Args:
         action: One action dict from a chunk, as handed to ``send_action``.
@@ -2073,7 +2079,13 @@ class PolicyRunner:
             - the step/duration horizon was exhausted; ``"cancelled"`` - a
             cooperative stop, e.g. ``stop_policy``; on ``status="error"``
             results the field is ``"error"``), ``action_errors``,
-            ``video_path`` (``None`` when
+            ``actions_applied`` (actions that commanded at least one of the
+            robot's keys - see
+            :func:`~strands_robots.simulation.policy_runner.action_commands_robot`
+            - which is NOT the number of ``send_action`` calls, since an action
+            naming no key reaches the backend like any other; a rollout whose
+            count is ``0`` never commanded the robot and is returned as
+            ``status="error"``), ``video_path`` (``None`` when
             no MP4 was written), ``video_frames``, ``video_fps`` (the rate the
             MP4 plays at - the requested ``fps`` capped to
             ``control_frequency``, since a rollout renders at most one frame
@@ -2514,6 +2526,12 @@ class PolicyRunner:
         # observer event reports it, and setup inside the try (substep derivation,
         # actuator discovery) can raise before the loop assigns it.
         _action_errors = 0  # count send_action failures (unresolved keys)
+        # Actions that commanded at least one key (see ``action_commands_robot``),
+        # NOT completed ``send_action`` calls - ``_applied_actions`` is that, and an
+        # action naming no key reaches the backend like any other. Bound out here
+        # with ``_action_errors`` so the terminal report can read it even when
+        # setup raised before the loop.
+        _actions_commanding = 0
         # Bound before the rollout so the ``except CooperativeStop`` handler and
         # the ``_apply`` closure never see an unbound name, the same reason
         # ``start_mono`` is bound above.
@@ -2642,7 +2660,15 @@ class PolicyRunner:
                     nonlocal step_count, _action_errors, consecutive_onframe_failures
                     nonlocal _total_failure_steps, _coarse_failure_steps, _last_unresolved
                     nonlocal _last_coarse_error, _applied_actions, _known_resolution_steps
+                    nonlocal _actions_commanding
 
+                    # Read BEFORE the send, off the action as the policy emitted it,
+                    # so the tally is a fact about the policy's output rather than
+                    # about a backend verdict. ``action_commands_robot`` is the
+                    # module's rule for the dict form; a numeric vector binds
+                    # positionally to every actuator, so a non-empty one commands.
+                    if action_commands_robot(action_dict) if isinstance(action_dict, Mapping) else len(action_dict) > 0:
+                        _actions_commanding += 1
                     _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
                     # ``send_action`` has returned. Count the call here rather than
                     # beside ``step_count`` below so the tally survives a legacy hook
@@ -3064,6 +3090,7 @@ class PolicyRunner:
             "stop_when_true_at_reset": stop_when_true_at_reset,
             "stop_when_reset_warning": _stop_when_reset_warning,
             "action_errors": _action_errors,
+            "actions_applied": _actions_commanding,
             "video_path": None,
             "video_frames": 0,
             # The rate the MP4 plays at, which is the requested ``fps`` capped
@@ -3161,6 +3188,47 @@ class PolicyRunner:
             # rollout may have run its full budget, but the outcome is not a
             # retryable "budget" completion.
             payload["stopped_reason"] = "error"
+            _emit_ended(outcome="error", stopped_reason="error")
+            if observer is not None:
+                payload["observer_failures"] = _obs_failures
+            return {"status": "error", "content": [{"text": text}, {"json": payload}]}
+        # The mirror of the block above. That one covers a policy that emitted
+        # keys none of which resolved; this one covers a policy that emitted no
+        # key at all. Both leave the robot uncommanded for the whole rollout, but
+        # only the first produces an unresolved key to count, so this one was
+        # reported ``success`` - and every field a caller would gate on reads
+        # healthy: ``action_errors`` is 0 because nothing was refused, and
+        # ``action_resolution_rate`` / ``partial_action_failure_rate`` are keyed on
+        # the robot's actuators, so a robot that has none contributes an empty map
+        # and a 0.0 rate, which is what a robot with no resolution problem looks
+        # like too. Refused on the AGGREGATE only: a single empty action is
+        # legitimate policy behaviour (``action_commands_robot`` states the rule,
+        # and the evaluation routes read it the same way), so the per-step
+        # tolerance is unchanged.
+        if step_count > 0 and _actions_commanding == 0:
+            _n_keys = len(_robot_actuators)
+            text += (
+                f"\n\nALL {step_count} action steps commanded no actuator "
+                f"-- the robot did not move. Every action the policy emitted named "
+                f"no key, so nothing about '{robot_name}' was commanded and every "
+                f"reported figure describes the scene under gravity rather than the "
+                f"policy. "
+                + (
+                    f"'{robot_name}' declares no actuator at all (robot_action_keys "
+                    f"reports 0 keys), so a policy bound to that list can only emit "
+                    f"empty actions: check that the robot's model has an <actuator> "
+                    f"block."
+                    if _n_keys == 0
+                    else f"'{robot_name}' declares {_n_keys} actuator(s) "
+                    f"(robot_action_keys), so check that the policy decodes an action "
+                    f"chunk for them rather than rows carrying no joint value."
+                )
+            )
+            # An error result always reports stopped_reason="error", for the same
+            # reason the sibling refusal above does: the rollout may have run its
+            # full budget, but the outcome is not a retryable "budget" completion.
+            payload["stopped_reason"] = "error"
+            payload["actions_applied"] = _actions_commanding
             _emit_ended(outcome="error", stopped_reason="error")
             if observer is not None:
                 payload["observer_failures"] = _obs_failures

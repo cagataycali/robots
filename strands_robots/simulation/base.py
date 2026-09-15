@@ -2912,7 +2912,12 @@ class SimEngine(ABC):
             legitimately draws an initial state that satisfies a clause.
 
             Action health: ``action_errors`` (steps where the backend reported
-            an error), ``action_resolution_rate`` (an
+            an error), ``actions_applied`` (actions that commanded at least one
+            of the robot's keys - NOT the number of ``send_action`` calls, since
+            an action naming no key reaches the backend like any other; a
+            rollout whose count is ``0`` never commanded the robot for a single
+            step and is returned as ``status="error"``, the mirror of the
+            all-keys-unresolved refusal), ``action_resolution_rate`` (an
             ``{actuator_name: fraction_of_resolution-known_steps_driven}`` map,
             so a joint stuck at ``0.0`` names an actuator not confirmed on any
             known step) and ``partial_action_failure_rate`` (the mean fraction
