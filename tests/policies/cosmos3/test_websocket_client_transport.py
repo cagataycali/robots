@@ -279,3 +279,163 @@ def test_client_infer_wraps_connection_error(monkeypatch):
     client = Cosmos3WebsocketClient(host="h", port=1)
     with pytest.raises(ConnectionError, match="action_policy_server_robolab"):
         client.infer({"prompt": "x"})
+
+
+class TestAnUnreadableFrameNamesThePeer:
+    """A frame the vendored codec cannot read reports the peer, not the codec.
+
+    Every other malformation this client can meet is a ``ConnectionError``
+    naming the endpoint - a server that is absent, one that accepted the
+    connection and went quiet, an unusable read budget. A frame the codec cannot
+    read was the one that was not: the codec's own error escaped, naming neither
+    the URI nor the bytes. It is the ordinary report for an ordinary mistake,
+    because this package serves policies over a WebSocket in two wire formats.
+    """
+
+    #: (frame, codec error type) - one row per failure the vendored packer can
+    #: raise on an inbound frame, so a new decode path is graded by adding a row.
+    UNREADABLE = [
+        pytest.param(b"<html>502 Bad Gateway</html>", "ExtraData", id="html-error-page"),
+        pytest.param(mnp.packb({"server": "cosmos3"})[:4], "ValueError", id="truncated-msgpack"),
+        pytest.param(mnp.packb({"a": 1}) + b"\x00\x00", "ExtraData", id="trailing-bytes"),
+        pytest.param(
+            mnp.packb(
+                {"action": {b"__ndarray__": True, b"data": b"\x00\x00\x00\x00", b"dtype": "<f4", b"shape": (7, 7)}}
+            ),
+            "ValueError",
+            id="array-shorter-than-its-shape",
+        ),
+        pytest.param(
+            mnp.packb(
+                {"action": {b"__ndarray__": True, b"data": b"\x00\x00\x00\x00", b"dtype": "nope", b"shape": (1,)}}
+            ),
+            "TypeError",
+            id="array-dtype-that-is-not-one",
+        ),
+        pytest.param(
+            mnp.packb({"action": {b"__ndarray__": True, b"data": b"\x00\x00\x00\x00", b"dtype": "<f4"}}),
+            "KeyError",
+            id="array-header-missing-shape",
+        ),
+    ]
+
+    @pytest.mark.parametrize(("frame", "codec_error"), UNREADABLE)
+    def test_the_handshake_read_names_the_peer(self, monkeypatch, frame, codec_error):
+        """The connect handshake is the first read, so it is the first door."""
+        _patch_connect(monkeypatch, _FakeWebsocket([frame]))
+
+        with pytest.raises(ConnectionError) as excinfo:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).get_server_metadata()
+
+        report = str(excinfo.value)
+        assert "ws://peer.test:4242" in report, "names no endpoint"
+        assert "metadata handshake" in report, "names no read"
+        assert codec_error in report, "does not say what the codec could not do"
+        assert repr(frame)[:24] in report, "shows none of the frame"
+
+    @pytest.mark.parametrize(("frame", "codec_error"), UNREADABLE)
+    def test_the_reply_read_names_the_peer(self, monkeypatch, frame, codec_error):
+        """A server can handshake correctly and answer ``infer`` unreadably."""
+        _patch_connect(monkeypatch, _FakeWebsocket([mnp.packb({"meta": "ok"}), frame]))
+
+        with pytest.raises(ConnectionError) as excinfo:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).infer({"prompt": "pick the cube"})
+
+        report = str(excinfo.value)
+        assert "ws://peer.test:4242" in report, "names no endpoint"
+        assert "action chunk" in report, "names no read"
+        assert codec_error in report, "does not say what the codec could not do"
+
+    def test_a_json_handshake_names_the_other_policy_server(self, monkeypatch):
+        """The mistake this report exists for: dialling the JSON server.
+
+        ``strands_robots.inference.server`` is the other WebSocket policy server
+        in this package and it speaks JSON text frames. Reaching it with this
+        client is a port mixed up between two servers on one host, and the
+        codec answered ``a bytes-like object is required, not 'str'``.
+        """
+        _patch_connect(monkeypatch, _FakeWebsocket(['{"type": "ready", "protocol_version": 1}']))
+
+        with pytest.raises(ConnectionError) as excinfo:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).get_server_metadata()
+
+        report = str(excinfo.value)
+        assert "ws://peer.test:4242" in report
+        assert "strands_robots.inference.server" in report, "names no other server to check for"
+        assert '{"type": "ready"' in report, "shows none of the frame the peer sent"
+
+    def test_a_text_reply_stays_the_server_error_contract(self, monkeypatch):
+        """The two doors differ, and only on purpose.
+
+        The Cosmos 3 server marshals a dispatch failure back as a *text* frame,
+        so a string reply is that server's own error - not an unreadable one.
+        The handshake has no such contract, which is why the same bytes are a
+        peer report there and a server traceback here.
+        """
+        _patch_connect(monkeypatch, _FakeWebsocket([mnp.packb({}), "Traceback: boom in forward()"]))
+
+        with pytest.raises(RuntimeError, match="boom in forward"):
+            Cosmos3WebsocketClient(host="peer.test", port=4242).infer({"prompt": "x"})
+
+    def test_the_two_reads_are_named_apart(self, monkeypatch):
+        """One report per read, so a caller mid-rollout knows which one failed.
+
+        The silent-server report cannot see which of the two reads expired,
+        because the first ``infer`` performs the handshake too. The decode runs
+        at each read, so it always can - and a report naming neither read would
+        satisfy every other assertion here.
+        """
+        blob = b"<html>nope</html>"
+        _patch_connect(monkeypatch, _FakeWebsocket([blob]))
+        with pytest.raises(ConnectionError) as at_handshake:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).get_server_metadata()
+
+        _patch_connect(monkeypatch, _FakeWebsocket([mnp.packb({}), blob]))
+        with pytest.raises(ConnectionError) as at_reply:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).infer({"prompt": "x"})
+
+        assert str(at_handshake.value).replace("metadata handshake", "action chunk") == str(at_reply.value)
+
+    def test_the_codec_failure_is_kept_as_the_cause(self, monkeypatch):
+        """The frame is opaque, so the codec's own error is the only detail."""
+        _patch_connect(monkeypatch, _FakeWebsocket(["not msgpack at all"]))
+        with pytest.raises(ConnectionError) as excinfo:
+            Cosmos3WebsocketClient(host="peer.test", port=4242).get_server_metadata()
+
+        assert isinstance(excinfo.value.__cause__.__cause__, TypeError)
+
+    def test_an_unreadable_handshake_is_not_cached_as_a_live_connection(self, monkeypatch):
+        """A handshake that did not decode leaves nothing to serve the next call.
+
+        The metadata frame is consumed by the handshake, so a connection cached
+        behind a failed decode would hand the next ``infer`` a frame this client
+        has already refused to read.
+        """
+        fake = _FakeWebsocket([b"<html>nope</html>"])
+        _patch_connect(monkeypatch, fake)
+        transport = _RawWebsocketTransport("peer.test", 4242)
+
+        with pytest.raises(Exception, match="unreadable metadata handshake"):
+            transport.get_server_metadata()
+
+        assert transport._ws is None, "a connection whose handshake did not decode was cached"
+        assert fake.closed, "the discarded connection was left open"
+
+    def test_an_absent_server_still_earns_the_start_it_hint(self, monkeypatch):
+        """The new clause sits ahead of ``except OSError`` without shadowing it.
+
+        A ``ConnectionError`` is an ``OSError``, so a peer report raised as one
+        from the transport - or re-raised ahead of that clause to protect it -
+        would take over the absent-server case as well, which is the one report
+        the start-the-server hint exists to replace.
+        """
+        import websockets.sync.client as wsc
+
+        monkeypatch.setattr(wsc, "connect", lambda uri, **kw: (_ for _ in ()).throw(ConnectionRefusedError(111)))
+        client = Cosmos3WebsocketClient(host="peer.test", port=4242)
+
+        for call in (client.get_server_metadata, lambda: client.infer({"prompt": "x"})):
+            with pytest.raises(ConnectionError) as excinfo:
+                call()
+            assert "Start it first" in str(excinfo.value)
+            assert "unreadable" not in str(excinfo.value)

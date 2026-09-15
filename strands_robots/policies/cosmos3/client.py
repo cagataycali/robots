@@ -43,6 +43,25 @@ _READ_TIMEOUT_SECS = 600.0
 _SERVER_NAME = "Cosmos 3 policy server"
 
 
+class _UnreadableFrame(Exception):
+    """A frame arrived that the msgpack + NumPy codec cannot read.
+
+    Deliberately *not* a ``ConnectionError``. The reports for an absent server
+    and for a dead connection are both keyed on ``except OSError``, and a
+    ``ConnectionError`` is an ``OSError``, so a report raised as one from the
+    transport would be caught by that clause and replaced with the hint to
+    start a server that is already answering. Re-raising ``ConnectionError``
+    ahead of ``OSError`` to protect it is the other way round and is ruled out
+    for the reason MODULE strands_robots.policies._ws_wire states: it would
+    hand a bare ``[Errno 111] Connection refused`` to the caller, which is the
+    one report the start-the-server hint exists to replace.
+
+    So this sits outside that tree, which lets the entry point tell the third
+    case apart by clause order the same way it already tells the first two
+    apart, and publish it as the ``ConnectionError`` its callers document.
+    """
+
+
 class _RawWebsocketTransport:
     """msgpack + NumPy wire client using ``websockets`` + a vendored packer.
 
@@ -82,7 +101,7 @@ class _RawWebsocketTransport:
         # strands_robots.inference.client).
         established = False
         try:
-            self._mnp.unpackb(ws.recv(timeout=self.read_timeout))  # server metadata handshake
+            self._decode(ws.recv(timeout=self.read_timeout), "metadata handshake")
             established = True
         finally:
             if not established:
@@ -122,11 +141,58 @@ class _RawWebsocketTransport:
             close_quietly(self._ws)
             self._ws = None
 
+    def _decode(self, frame: Any, what: str) -> Any:
+        """Unpack one inbound frame, or report a peer that does not speak this wire.
+
+        Every other malformation this client can meet is already a
+        ``ConnectionError`` naming the endpoint: a server that is absent, one
+        that accepted the connection and went quiet, an unusable read budget.
+        A frame the *codec* cannot read was the one that was not - the vendored
+        packer (MODULE strands_robots.policies.cosmos3._msgpack_numpy) raises
+        the codec's own error, and it escaped naming neither the URI nor the
+        bytes. That is the ordinary report for an ordinary mistake, because this
+        package serves policies over a WebSocket in **two** wire formats: dial
+        :class:`~strands_robots.inference.server.PolicyServer`, which speaks
+        JSON text frames, with this client and the handshake answered
+        ``TypeError: a bytes-like object is required, not 'str'``.
+
+        Args:
+            frame: The raw WebSocket frame as received, treated as opaque.
+            what: Which read it answered (``"metadata handshake"`` /
+                ``"action chunk"``), so the report names the exchange that
+                failed rather than the codec. Unlike the silent-server report,
+                which cannot see which read expired, this is called at each read
+                and so always knows.
+
+        Returns:
+            The unpacked frame.
+
+        Raises:
+            _UnreadableFrame: If the frame cannot be unpacked. ``TypeError``
+                for a text frame or an array header whose dtype or shape is not
+                one, ``ValueError`` for bytes that are not a single msgpack
+                object (``msgpack``'s ``ExtraData``, ``FormatError`` and
+                ``StackError`` are all ``ValueError``) or an array payload its
+                declared shape cannot fill, ``KeyError`` for an array header
+                missing a field. The codec failure is kept as the cause.
+        """
+        try:
+            return self._mnp.unpackb(frame)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise _UnreadableFrame(
+                f"{_SERVER_NAME} at {self.uri} sent an unreadable {what} frame: not "
+                f"msgpack+NumPy ({type(exc).__name__}: {exc}); it begins {frame[:60]!r}. "
+                "A peer that answers here in another wire format is not a Cosmos 3 RoboLab "
+                "policy server: check the port serves "
+                "cosmos_framework.scripts.action_policy_server_robolab and not another "
+                "WebSocket policy server (strands_robots.inference.server speaks JSON)."
+            ) from exc
+
     def infer(self, observation: dict[str, Any]) -> dict[str, Any]:
         resp = self._exchange(observation)
         if isinstance(resp, str):
             raise RuntimeError(f"Error in inference server:\n{resp}")
-        return self._mnp.unpackb(resp)
+        return self._decode(resp, "action chunk")
 
     def reset(self) -> None:
         pass
@@ -234,6 +300,11 @@ class Cosmos3WebsocketClient:
             # answer, so telling the operator to start it names the one thing
             # that is not wrong.
             raise ConnectionError(self._silent_server_error("metadata handshake")) from e
+        except _UnreadableFrame as e:
+            # Before ``OSError``, and for the mirror of that clause's reason:
+            # this peer is answering, on a live connection, so the hint to start
+            # a server names the one thing that is not wrong.
+            raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
 
@@ -260,6 +331,11 @@ class Cosmos3WebsocketClient:
             # first call also performs the handshake, and this clause cannot see
             # which of the two reads expired.
             raise ConnectionError(self._silent_server_error("reply")) from e
+        except _UnreadableFrame as e:
+            # Before ``OSError``, and for the mirror of that clause's reason:
+            # this peer is answering, on a live connection, so the hint to start
+            # a server names the one thing that is not wrong.
+            raise ConnectionError(str(e)) from e
         except OSError as e:
             raise ConnectionError(self._server_hint()) from e
 

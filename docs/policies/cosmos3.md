@@ -55,6 +55,15 @@ has no deadline, so a server that accepted the connection and then went quiet
 would otherwise hold the caller forever. An expired read is reported as a
 timeout, not as "start the server first", and discards the connection.
 
+A frame that *arrives* and cannot be read as msgpack+NumPy is a third case,
+reported as neither: it names the endpoint, which read it answered (metadata
+handshake or action chunk), what the codec could not do, and the frame's
+opening bytes. This package serves policies over a WebSocket in two wire
+formats, so the common cause is a port mixed up between them - dialling
+`strands_robots.inference.server`, which speaks JSON text frames, with this
+client. Telling that apart from an absent server matters because only one of
+the two is fixed by starting a server.
+
 ## Embodiments
 
 Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`, `openarm`
