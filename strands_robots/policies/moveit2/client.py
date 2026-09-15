@@ -17,6 +17,8 @@ from strands_robots.utils import coerce_zmq_timeout_ms, require_optional
 
 logger = logging.getLogger(__name__)
 
+_SERVER_NAME = "MoveIt2 sidecar"
+
 
 def _load_zmq() -> Any:
     """Load ZMQ dependency."""
@@ -55,13 +57,63 @@ class MsgSerializer:
         return msgpack.packb(data, use_bin_type=True)
 
     @staticmethod
-    def from_bytes(data: bytes) -> dict[str, Any]:
-        """Unpack msgpack bytes into a dict, decoding msgpack ``str`` back to Python ``str`` (``raw=False``)."""
+    def from_bytes(data: bytes) -> Any:
+        """Unpack msgpack bytes into the value they encode, decoding msgpack ``str`` back to Python ``str`` (``raw=False``).
+
+        Returns:
+            Whatever value *data* encodes. ``unpackb`` decodes any valid msgpack
+            value, not just a map - the single byte ``0x2a`` is the integer 42,
+            and a string, list, nil or bool decode just as cleanly - so this is
+            deliberately not annotated ``dict``. A caller that needs a map grades
+            for one; see
+            :meth:`MoveIt2InferenceClient._decode_reply`.
+
+        Raises:
+            ValueError: If *data* is not exactly one msgpack object.
+                ``msgpack``'s ``ExtraData``, ``FormatError`` and ``StackError``
+                are all ``ValueError``, so trailing bytes, a truncated frame and
+                a frame that is not msgpack at all arrive here.
+            TypeError: If *data* is not bytes-like.
+        """
         msgpack = _load_msgpack()
         # raw=False decodes msgpack ``str`` types back to Python ``str``
         # (msgpack >=1.0 default); strict_map_key=False allows
         # numeric / bytes keys but we never emit those.
         return msgpack.unpackb(data, raw=False)
+
+
+def _unreadable_reply(*, uri: str, endpoint: str, problem: str, frame: bytes) -> str:
+    """Return the report for a sidecar reply this client cannot read.
+
+    The reference sidecar refuses the mirror image of this in the request
+    direction, and refuses both of its shapes in one class, because "either way
+    the peer did not send a request" (see
+    MODULE strands_robots.policies.moveit2.server.zmq_node). The reply direction
+    is graded the same way and for the same reason: bytes that are not msgpack
+    and a value that decodes but is not a map are both "the peer did not send a
+    reply", and neither is a fact about the codec.
+
+    Args:
+        uri: The ``tcp://host:port`` this client dialled, so the report names the
+            endpoint actually in use rather than the one the caller meant.
+        endpoint: The request the reply answered (``"ping"`` / ``"plan"`` /
+            ``"reset"``), so a caller with several round-trips behind it knows
+            which one came back unreadable.
+        problem: What is wrong with the frame, in the sidecar's own vocabulary.
+        frame: The raw reply, quoted from the front so an operator can recognise
+            a wire format - an HTTP error page, JSON, a bare msgpack scalar.
+
+    Returns:
+        A message naming the peer, the endpoint, the problem, the frame's opening
+        bytes, and the remedy.
+    """
+    return (
+        f"{_SERVER_NAME} at {uri} answered {endpoint!r} with an unreadable reply: "
+        f"{problem}; it begins {frame[:60]!r}. A peer that answers here in another wire "
+        f"format is not a MoveIt2 sidecar: check the port serves "
+        f"strands_robots.policies.moveit2.server.zmq_node (msgpack REQ/REP) and not "
+        f"another policy server."
+    )
 
 
 class MoveIt2InferenceClient:
@@ -167,6 +219,65 @@ class MoveIt2InferenceClient:
             logger.debug("Ping failed: %s", exc)
             return False
 
+    def _decode_reply(self, message: bytes, endpoint: str) -> dict[str, Any]:
+        """Decode one sidecar reply into a map, or refuse it naming the peer.
+
+        Both refusals replace a report that names the codec, or no report at all,
+        with one that names the peer and the endpoint. Bytes that are not msgpack
+        raised ``ExtraData: unpack(b) received extra data.`` from inside
+        ``msgpack``, which names neither the host, the port nor the request it
+        answered. A value that decodes but is not a map was worse than that: it
+        was returned as the declared ``dict``, because ``"error" in reply`` is a
+        membership test that a list and a string answer ``False`` without
+        raising, so the caller was handed a non-map typed as a map and
+        ``response.get(...)`` failed one frame later in
+        MODULE strands_robots.policies.moveit2.policy with an ``AttributeError``
+        naming ``str``. A string that happens to contain ``"error"`` took the
+        server-error branch instead and raised ``TypeError: string indices must
+        be integers`` - a third report for one wire fault, none of them naming
+        the sidecar.
+
+        ``ConnectionError`` needs no private subclass here, unlike the WebSocket
+        clients in this package: nothing between this seam and the caller catches
+        ``OSError``, and ``zmq.Again`` is not one, so no broad clause can clobber
+        the report on its way out. :meth:`ping` still absorbs it, which is that
+        method's contract - any failure means "not reachable".
+
+        Args:
+            message: The raw reply frame, treated as opaque.
+            endpoint: The request it answered, named in the report.
+
+        Returns:
+            The decoded reply map.
+
+        Raises:
+            ConnectionError: If *message* is not exactly one msgpack object, or
+                decodes to a value that is not a map. The codec failure is kept
+                as the cause of the former.
+        """
+        uri = f"tcp://{self.host}:{self.port}"
+        try:
+            reply = MsgSerializer.from_bytes(message)
+        except (TypeError, ValueError) as exc:
+            raise ConnectionError(
+                _unreadable_reply(
+                    uri=uri,
+                    endpoint=endpoint,
+                    problem=f"not msgpack ({type(exc).__name__}: {exc})",
+                    frame=message,
+                )
+            ) from exc
+        if not isinstance(reply, dict):
+            raise ConnectionError(
+                _unreadable_reply(
+                    uri=uri,
+                    endpoint=endpoint,
+                    problem=f"expected a msgpack map, got {type(reply).__name__}",
+                    frame=message,
+                )
+            )
+        return reply
+
     def call_endpoint(self, endpoint: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a request to the server and return the parsed response.
 
@@ -178,6 +289,8 @@ class MoveIt2InferenceClient:
             Parsed response dict from the server.
 
         Raises:
+            ConnectionError: If the reply is not a msgpack map - see
+                :meth:`_decode_reply`.
             RuntimeError: If the server returns an ``error`` field.
         """
         request: dict[str, Any] = {"endpoint": endpoint}
@@ -187,7 +300,7 @@ class MoveIt2InferenceClient:
             request["api_token"] = self.api_token
         self.socket.send(MsgSerializer.to_bytes(request))
         message = self.socket.recv()
-        response = MsgSerializer.from_bytes(message)
+        response = self._decode_reply(message, endpoint)
         if "error" in response:
             raise RuntimeError(f"Server error: {response['error']}")
         return response
