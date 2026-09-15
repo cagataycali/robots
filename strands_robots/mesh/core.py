@@ -56,6 +56,35 @@ logger = logging.getLogger(__name__)
 _LOCAL_ROBOTS: dict[str, Mesh] = {}
 _LOCAL_ROBOTS_LOCK = threading.Lock()
 
+#: Startup posture warnings this process has already emitted, by kind.
+#: ``STRANDS_MESH_OVERRIDE_CODE`` and ``STRANDS_MESH_MULTICAST`` describe the
+#: process, not a peer: every :class:`Mesh` in it reads the same environment,
+#: so the second instance (a sim's per-robot child peer, a fleet of arms in
+#: one process) would only repeat the banner under another name. Emit once.
+_POSTURE_WARNINGS_EMITTED: set[str] = set()
+_POSTURE_WARNINGS_LOCK = threading.Lock()
+
+
+def _warn_posture_once(kind: str, msg: str, *args: Any) -> bool:
+    """Log ``msg`` at WARNING the first time ``kind`` is seen in this process.
+
+    Returns ``True`` when the warning was emitted, ``False`` when an earlier
+    :meth:`Mesh.start` in this process already said it.
+    """
+    with _POSTURE_WARNINGS_LOCK:
+        if kind in _POSTURE_WARNINGS_EMITTED:
+            return False
+        _POSTURE_WARNINGS_EMITTED.add(kind)
+    logger.warning(msg, *args)
+    return True
+
+
+def _reset_posture_warnings() -> None:
+    """Forget which posture warnings were emitted (tests that assert on them)."""
+    with _POSTURE_WARNINGS_LOCK:
+        _POSTURE_WARNINGS_EMITTED.clear()
+
+
 #: Why ``Mesh.start`` refuses under mTLS with a permissive ACL, and the four
 #: ways out. Logged by :meth:`Mesh._refuse_under_permissive_default_acl` and
 #: printed by ``strands-robots doctor`` for the same posture, so the two never
@@ -757,8 +786,11 @@ class Mesh(SensorLoopsMixin):
             # turns a silent operational landmine into an explicit, logged
             # decision. Operators who genuinely want no remote-resume posture
             # (e.g. physical-only recovery) see the warning and accept it.
+            # Once per process: the posture is the environment's, and a
+            # second Mesh here (a sim's child peer) reads the same one.
             if not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
-                logger.warning(
+                _warn_posture_once(
+                    "override_code",
                     "[safety:%s] No emergency-stop resume code set. If any peer "
                     "broadcasts an e-stop, this robot stays locked until you "
                     "physically restart it (one message can freeze the whole "
@@ -787,7 +819,8 @@ class Mesh(SensorLoopsMixin):
             )
 
             if _zc_bool_env("STRANDS_MESH_MULTICAST", default=False):
-                logger.warning(
+                _warn_posture_once(
+                    "multicast",
                     "[safety:%s] Multicast scouting is ON "
                     "(STRANDS_MESH_MULTICAST=true). Any device on the LAN can "
                     "discover and attract fleet robots without credentials "
