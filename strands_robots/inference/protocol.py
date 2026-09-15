@@ -75,7 +75,12 @@ def encode_ndarray(arr: np.ndarray) -> dict[str, Any]:
 
     Args:
         arr: Array to encode. Copied to C-contiguous layout so the raw buffer
-            matches the declared ``shape``/``dtype`` on decode.
+            matches the declared ``shape``/``dtype`` on decode. The declared
+            ``shape`` is ``arr``'s own: :func:`numpy.ascontiguousarray` returns
+            an array of at least one dimension, so reading the shape off the
+            copy would promote a 0-d array to ``(1,)`` and the served policy
+            would see a one-element vector where the local one sees a scalar
+            state value (``ndim == 0``).
 
     Returns:
         A dict with the base64 raw buffer plus ``dtype`` and ``shape``.
@@ -84,7 +89,7 @@ def encode_ndarray(arr: np.ndarray) -> dict[str, Any]:
     return {
         _NDARRAY_TAG: base64.b64encode(contiguous.tobytes()).decode("ascii"),
         "dtype": str(contiguous.dtype),
-        "shape": list(contiguous.shape),
+        "shape": list(arr.shape),
     }
 
 

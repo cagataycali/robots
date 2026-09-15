@@ -18,6 +18,31 @@ def test_ndarray_roundtrip_is_byte_exact():
     np.testing.assert_array_equal(restored, arr)
 
 
+def test_zero_dim_array_roundtrips_with_its_own_shape():
+    """A 0-d array is a scalar state value in-process; it must not arrive as ``(1,)``.
+
+    ``np.ascontiguousarray`` promotes a 0-d array to one dimension, so an
+    envelope that declared the copy's shape decoded ``np.array(0.7)`` as
+    ``array([0.7])``. Readers such as ``LerobotLocalPolicy._collect_state_values``
+    accept an array state value only when ``ndim == 0`` and otherwise report the
+    key missing and substitute ``0.0``, so behind ``RemotePolicy`` a real joint
+    reading became a zero-filled slot. The buffer is one element either way; only
+    the declared shape has to be the caller's.
+    """
+    scalar = np.array(0.7, dtype=np.float32)
+    envelope = protocol.encode_ndarray(scalar)
+    assert envelope["shape"] == []
+    restored = protocol.decode_ndarray(envelope)
+    assert restored.shape == ()
+    assert restored.ndim == 0
+    assert restored.dtype == scalar.dtype
+    assert float(restored) == float(scalar)
+
+    # Through the message codec the server actually reads a request with.
+    decoded = protocol.loads(protocol.dumps({"observation": {"gripper": scalar}}))
+    assert decoded["observation"]["gripper"].shape == ()
+
+
 def test_uint8_image_roundtrip():
     image = np.random.randint(0, 256, size=(48, 64, 3), dtype=np.uint8)
     restored = protocol.decode_ndarray(protocol.encode_ndarray(image))
