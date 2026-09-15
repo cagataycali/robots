@@ -1,11 +1,17 @@
 """``step`` under an active dataset recording says, on that call, that it records nothing.
 
-The recorder is fed by ``run_policy``'s per-step hook and by nothing else. A
+The recorder is fed by a policy rollout's per-step hook and by nothing else. A
 caller scripting a demonstration with ``set_joint_positions`` + ``step`` while a
 recording is active captures zero frames, and used to learn that only from
 ``stop_recording``'s empty-dataset refusal - after the whole motion had run.
 The note lands on the ``step`` result instead, while the motion is still ahead,
 and stays silent when a rollout (which does record) is in flight.
+
+Two public actions launch a rollout - ``run_policy`` and ``start_policy`` - and
+``_announce_rollout`` raises ``policy_running`` for both, which is the flag the
+note's guard reads. So the advertised rule names both: telling a caller that
+``run_policy`` is the only thing that records is wrong about ``start_policy``,
+whose rollout does feed the recorder.
 """
 
 from __future__ import annotations
@@ -17,6 +23,9 @@ pytest.importorskip("mujoco")
 from strands_robots.simulation import Simulation  # noqa: E402
 
 NOTE = "NOT RECORDED"
+# Both raise ``policy_running`` through ``_announce_rollout``, and a rollout
+# from either one feeds the recorder through the same per-step hook.
+LAUNCHERS = frozenset({"run_policy", "start_policy"})
 
 
 @pytest.fixture
@@ -48,8 +57,9 @@ def test_step_under_an_active_recording_names_what_feeds_the_recorder(sim):
     assert text.startswith(NOTE), "the note leads the line - a trailing note was read past"
     assert "+5 steps | t=" in text, "the step summary itself is still there"
     assert "captures no frames" in text
-    assert "run_policy" in text
     assert "stop_recording" in text
+    for launcher in LAUNCHERS:
+        assert launcher in text, f"{launcher} launches a rollout that records"
 
 
 def test_step_while_a_rollout_is_recording_stays_quiet(sim):
@@ -73,8 +83,13 @@ def test_zero_step_noop_is_unchanged(sim):
     assert NOTE not in _text(result)
 
 
-def test_start_recording_success_text_says_only_run_policy_captures():
-    """The rule is stated where the recording begins, not only where it fails."""
+def test_start_recording_text_names_every_launcher_that_captures():
+    """The rule is stated where the recording begins, not only where it fails.
+
+    And it names both launchers. ``start_policy``'s rollout feeds the recorder
+    through the same hook ``run_policy``'s does, so "``run_policy`` only" sends
+    a caller who used ``start_policy`` looking for a defect that is not there.
+    """
     import ast
     import inspect
 
@@ -86,5 +101,18 @@ def test_start_recording_success_text_says_only_run_policy_captures():
         for node in ast.walk(ast.parse(src))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
-    assert "Frames are captured by run_policy only" in joined
+    assert "Frames are captured by a policy rollout only" in joined
     assert "do not feed the recorder" in joined
+    for launcher in LAUNCHERS:
+        assert launcher in joined, f"{launcher} launches a rollout that records"
+    assert "captured by run_policy only" not in joined, "start_policy records too"
+
+
+def test_every_launcher_the_rule_names_is_a_dialable_action(sim):
+    """Advice a caller cannot dial is worse than no advice.
+
+    Both launchers are named in the ``step`` note and in ``start_recording``'s
+    text, so both must be reachable through the tool's own action enum.
+    """
+    actions = set(sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"])
+    assert LAUNCHERS <= actions, f"not dialable: {LAUNCHERS - actions}"
