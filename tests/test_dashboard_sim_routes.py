@@ -34,7 +34,9 @@ class FakeEngine:
     def __init__(self, robot: str, joints: int = 3):
         self.robot = robot
         self.mj_model = SimpleNamespace(opt=SimpleNamespace(timestep=0.002))
-        self.mj_data = SimpleNamespace(time=0.0, qpos=np.zeros(joints))
+        self.mj_data = SimpleNamespace(
+            time=0.0, qpos=np.zeros(joints), geom_xpos=np.zeros((2, 3)), geom_xmat=np.tile(np.eye(3).ravel(), (2, 1))
+        )
         self.steps = 0
         self.writes = 0
         self.resets = 0
@@ -62,6 +64,7 @@ class FakeEngine:
         return {"status": "success", "content": [{"text": "reset"}]}
 
     def set_joint_positions(self, positions, robot_name=None, hold=False):
+        self.last_hold = hold
         if isinstance(positions, dict) and any(k not in self.robot_joint_names(robot_name) for k in positions):
             return {"status": "error", "content": [{"text": "unknown joint"}]}
         self.writes += 1
@@ -121,6 +124,27 @@ def _create(client, robot="so101"):
     return r.json()
 
 
+class FakeModel:
+    """Two geoms (a plane and a mesh), one 4-vertex / 2-face mesh - the fields scene.py reads."""
+
+    ngeom, nmesh, ncam, nlight, nbody = 2, 1, 0, 1, 1
+    geom_type = np.array([0, 7])
+    geom_size = np.array([[5.0, 5.0, 0.01], [0.1, 0.1, 0.1]])
+    geom_rgba = np.array([[0.5, 0.5, 0.5, 1.0], [1.0, 0.0, 0.0, 0.5]])
+    geom_matid = np.array([-1, -1])
+    geom_group = np.array([0, 3])
+    geom_dataid = np.array([-1, 0])
+    geom_bodyid = np.array([0, 0])
+    mat_rgba = np.zeros((0, 4))
+    mesh_vertadr = np.array([0])
+    mesh_vertnum = np.array([4])
+    mesh_faceadr = np.array([0])
+    mesh_facenum = np.array([2])
+    mesh_vert = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+    mesh_face = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
+    cam_fovy = np.zeros(0)
+
+
 # -- session -------------------------------------------------------------------
 
 
@@ -159,6 +183,7 @@ class TestSimSession:
         s.wait_ready(5)
         assert s.command("reset")["status"] == "success"
         assert s.command("set_joints", positions={"j0": 0.1})["status"] == "success"
+        assert fake_factory[0].last_hold is True, "servo setpoints must move with the pose"
         assert s.command("set_joints", positions={"zz": 0.1})["status"] == "error"
         assert s.command("bogus")["status"] == "error"
         s.stop()
@@ -331,6 +356,72 @@ class TestSimRoutes:
         ):
             pass
         assert exc.value.code == 4401
+
+
+class TestTwinGeometry:
+    def test_scene_describes_the_compiled_model(self, monkeypatch):
+        from strands_robots.dashboard import scene
+
+        monkeypatch.setattr(scene, "_name", lambda model, kind, i: f"{kind.lower()}{i}")
+        d = scene.describe(FakeModel())
+        assert d["ngeom"] == 2 and d["pose_row_floats"] == 12
+        plane, mesh = d["geoms"]
+        assert plane["type"] == "plane" and plane["mesh"] is None and plane["rgba"] == [0.5, 0.5, 0.5, 1.0]
+        assert mesh["type"] == "mesh" and mesh["mesh"] == 0 and mesh["group"] == 3 and mesh["body"] == "body0"
+        assert d["meshes"] == [{"id": 0, "name": "mesh0", "vertices": 4, "faces": 2, "url": "mesh/0"}]
+
+    def test_mesh_bytes_round_trip(self):
+        import struct
+
+        from strands_robots.dashboard import scene
+
+        b = scene.mesh_bytes(FakeModel(), 0)
+        assert b[:4] == b"SRM1"
+        nvert, nface = struct.unpack("<II", b[4:12])
+        assert (nvert, nface) == (4, 2)
+        verts = np.frombuffer(b[12 : 12 + nvert * 12], dtype="<f4").reshape(4, 3)
+        faces = np.frombuffer(b[12 + nvert * 12 :], dtype="<u4").reshape(2, 3)
+        assert verts[3].tolist() == [0.0, 0.0, 1.0] and faces[1].tolist() == [0, 2, 3]
+        with pytest.raises(IndexError):
+            scene.mesh_bytes(FakeModel(), 1)
+
+    def test_poses_are_packed_as_12_float32_per_geom(self, fake_factory):
+        s = sim_session.SimSession("so101")
+        s.wait_ready(5)
+        time.sleep(0.15)
+        poses = np.frombuffer(s.snapshot.poses, dtype="<f4").reshape(-1, 12)
+        assert poses.shape == (2, 12)
+        assert poses[0, 3:].tolist() == [1, 0, 0, 0, 1, 0, 0, 0, 1]
+        s.stop()
+
+    def test_scene_and_mesh_routes(self, client, monkeypatch):
+        sid = _create(client)["id"]
+        monkeypatch.setattr(sim_session.SimSession, "model", property(lambda self: FakeModel()))
+        from strands_robots.dashboard import scene
+
+        monkeypatch.setattr(scene, "_name", lambda model, kind, i: None)
+        assert client.get(f"/api/sim/{sid}/scene").json()["ngeom"] == 2
+        r = client.get(f"/api/sim/{sid}/mesh/0")
+        assert r.status_code == 200 and r.headers["content-type"] == "application/octet-stream"
+        assert r.content[:4] == b"SRM1" and "max-age" in r.headers["cache-control"]
+        assert client.get(f"/api/sim/{sid}/mesh/7").status_code == 404
+        assert client.get("/api/sim/nope/scene").status_code == 404
+
+    def test_scene_before_the_engine_exists_is_409(self, client, monkeypatch):
+        sid = _create(client)["id"]
+        monkeypatch.setattr(sim_session.SimSession, "model", property(lambda self: None))
+        assert client.get(f"/api/sim/{sid}/scene").status_code == 409
+
+    def test_telemetry_sends_binary_poses_only_when_asked(self, client):
+        sid = _create(client)["id"]
+        time.sleep(0.15)
+        with client.websocket_connect(f"/ws/telemetry/{sid}?poses=1") as ws:
+            snap = ws.receive_json()
+            raw = ws.receive_bytes()
+        assert snap["id"] == sid and len(raw) == 2 * 12 * 4
+        with client.websocket_connect(f"/ws/telemetry/{sid}") as ws:
+            ws.receive_json()
+            ws.receive_json()  # two JSON frames in a row: no binary interleaved
 
 
 class TestEstop:
@@ -533,6 +624,8 @@ class TestEstop:
             ("post", "/api/sim"),
             ("get", f"/api/sim/{sid}"),
             ("get", f"/api/sim/{sid}/stream.mjpg?frames=1"),
+            ("get", f"/api/sim/{sid}/scene"),
+            ("get", f"/api/sim/{sid}/mesh/0"),
             ("post", f"/api/sim/{sid}/joints"),
             ("delete", f"/api/sim/{sid}"),
             ("get", "/api/safety"),
@@ -622,5 +715,12 @@ def test_real_engine_session_steps_and_renders(monkeypatch):
     assert _until(lambda: s.snapshot.sim_time > 0.2, timeout=15.0), s.snapshot
     snap = s.snapshot
     assert snap.joint_names == ("1", "2", "3", "4", "5", "6")
+
+    from strands_robots.dashboard import scene
+
+    d = scene.describe(s.model)
+    assert d["ngeom"] == 31 and len(d["meshes"]) == 13 and d["geoms"][0]["type"] == "plane"
+    assert len(s.snapshot.poses) == 31 * 12 * 4
+    assert scene.mesh_bytes(s.model, 0)[:4] == b"SRM1"
     assert s.command("set_joints", positions={"2": 0.3})["status"] == "success"
     s.stop()

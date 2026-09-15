@@ -58,6 +58,10 @@ class Snapshot:
     error: str | None = None
     model_path: str | None = None
     created: float = 0.0
+    #: Every geom's world pose as little-endian float32 ``[x y z | 3x3 row-major]``
+    #: rows, ``ngeom`` of them - what the browser twin needs, in the bytes it
+    #: needs, so no route re-encodes it per client. Empty until the engine exists.
+    poses: bytes = b""
 
     def as_dict(self) -> dict[str, Any]:
         """The snapshot as JSON-ready fields, floats rounded for the wire."""
@@ -99,6 +103,7 @@ class SimSession:
         self._ready = threading.Event()
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
+        self._engine: Any | None = None
         self._snapshot = Snapshot(self.id, robot, "starting", 0.0, 0, (), (), 0.0, (), created=time.time())
         self._thread = threading.Thread(target=self._run, name=f"sim-{robot}-{self.id}", daemon=True)
         self._thread.start()
@@ -110,6 +115,12 @@ class SimSession:
         """The latest immutable snapshot."""
         with self._lock:
             return self._snapshot
+
+    @property
+    def model(self) -> Any | None:
+        """The compiled ``MjModel`` (immutable after load; safe to read from any thread), or None."""
+        engine = self._engine
+        return getattr(engine, "mj_model", None) if engine is not None else None
 
     def latest_frame(self) -> np.ndarray | None:
         """The most recent rendered RGB frame, for :func:`mjpeg_frames`."""
@@ -174,6 +185,7 @@ class SimSession:
             self._ready.set()
             return
 
+        self._engine = engine
         names = tuple(str(n) for n in engine.robot_joint_names(self.robot))
         cameras = tuple(engine.list_cameras())
         dt = float(engine.mj_model.opt.timestep)
@@ -238,6 +250,7 @@ class SimSession:
                     qpos=tuple(float(q) for q in engine.mj_data.qpos),
                     fps=fps,
                     state="frozen" if self._frozen.is_set() else "running",
+                    poses=_pack_poses(engine.mj_data),
                 )
                 time.sleep(1.0 / _TELEMETRY_HZ)
         except Exception as exc:
@@ -278,12 +291,21 @@ class SimSession:
         if cmd.kind == "reset":
             return dict(engine.reset())
         if cmd.kind == "set_joints":
-            return dict(engine.set_joint_positions(cmd.payload["positions"], robot_name=self.robot))
+            # hold=True moves the position servos' setpoints with the pose; without it
+            # the actuators pull the joints straight back to where they were.
+            return dict(engine.set_joint_positions(cmd.payload["positions"], robot_name=self.robot, hold=True))
         if cmd.kind == "state":
             return dict(engine.get_robot_state(self.robot))
         if cmd.kind == "step":
             return dict(engine.step(int(cmd.payload.get("n", 1))))
         return {"status": "error", "content": [{"text": f"unknown command {cmd.kind}"}]}
+
+
+def _pack_poses(data: Any) -> bytes:
+    """``[geom_xpos | geom_xmat]`` per geom as little-endian float32 rows."""
+    xpos = np.asarray(data.geom_xpos, dtype=np.float32).reshape(-1, 3)
+    xmat = np.asarray(data.geom_xmat, dtype=np.float32).reshape(-1, 9)
+    return np.ascontiguousarray(np.hstack([xpos, xmat]), dtype="<f4").tobytes()
 
 
 def _default_factory(robot: str) -> Any:

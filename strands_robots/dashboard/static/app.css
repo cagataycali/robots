@@ -93,7 +93,13 @@ button.primary:hover, form button[type=submit]:hover, #login:hover { filter: bri
 .session .head .name { font-weight: 600; }
 .session .head .state { margin-left: auto; }
 .session .view { aspect-ratio: 4 / 3; background: #000; display: grid; place-items: center; animation: none; }
-.session .view img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.session .view { position: relative; }
+.session .view img, .session .view canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.session .view [hidden] { display: none; }
+.session .view canvas { background: radial-gradient(ellipse at 50% 40%, #131a21 0%, #07090b 80%); }
+.viewsel { position: absolute; top: 0.5rem; right: 0.5rem; display: flex; gap: 2px; background: rgba(0,0,0,0.55); border: 1px solid var(--hair); border-radius: 6px; padding: 2px; }
+.viewsel button { font: inherit; font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); background: transparent; border: 0; border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; }
+.viewsel button.on { color: var(--ink); background: var(--panel-2, #1a2027); }
 .session .view .placeholder { color: var(--ink-3); font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .joints { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 0.4rem 0.6rem; padding: 0.6rem 0.8rem; }
 .joint { display: grid; gap: 0.15rem; }
