@@ -5272,9 +5272,25 @@ class MuJoCoSimEngine(
     def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
         """Describe the simulation's joints / actuators / cameras / robots.
 
-        If ``robot_name`` is given, the joint / actuator / camera listings
-        are restricted to that robot (its namespaced MuJoCo names).  The
-        ``robots`` map is also filtered to just that entry.
+        Every count reported here counts the list it introduces, so a
+        robot-scoped listing never labels a robot's own parts with the world's
+        total - it reports the same numbers the ``robots`` map carries for that
+        robot.
+
+        Args:
+            robot_name: When set, restrict the joint / actuator / camera
+                listings and the ``robots`` map to that robot. A joint or
+                actuator is the robot's when the robot owns it. A camera is the
+                robot's when the robot brought it - registered to it by
+                ``add_robot`` from its own MJCF, wherever that MJCF declares it -
+                or when it is mounted on one of the robot's bodies, which is what
+                makes a camera added with ``add_camera(parent_body=...)`` part of
+                the robot that wears it even though its own name carries no
+                namespace.
+
+        Returns:
+            Agent-tool dict with a ``text`` summary and a ``json`` block
+            ``{"features": {...}}``.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -5315,7 +5331,33 @@ class MuJoCoSimEngine(
                 for act_id in robot.actuator_ids
                 if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id))
             ]
-            camera_names = _scoped(all_camera_names)
+            # Ownership, not the camera's own name -- the correction the
+            # actuator line above already needed, and it takes two rules for the
+            # reason ``robot_owned_actuator_ids`` needs two. A camera the robot
+            # brought in its own MJCF is registered to it by ``add_robot`` (the
+            # record ``remove_robot`` takes it away by) and may be declared
+            # outside every one of the robot's bodies, so no walk of the model
+            # finds it. A camera mounted later with
+            # ``add_camera(parent_body=...)`` rides on one of those bodies and is
+            # deliberately registered to no robot at all. The camera's own name
+            # answers neither: a caller picks it, so it carries no namespace, and
+            # filtering names by the prefix dropped every camera a robot wears --
+            # this line read "Cameras (2): none (free camera only)" for a robot
+            # with a camera on its pelvis. Mount membership is read the way
+            # :meth:`_body_is_namespaced` reads it, from the compiled name, which
+            # is the only part of a robot's identity a recompile keeps; an empty
+            # prefix matches every body, which is the whole scene, the same
+            # answer ``_scoped`` gives a robot that has no namespace.
+            declared_by = {cam.name: cam.origin_robot for cam in self._world.cameras.values() if cam.origin_robot}
+            camera_names = [
+                name
+                for cam_id in range(model.ncam)
+                if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, cam_id))
+                and (
+                    declared_by.get(name) == robot_name
+                    or self._body_is_namespaced(model, int(model.cam_bodyid[cam_id]), prefix)
+                )
+            ]
 
             robots_info = {
                 robot_name: {
@@ -5343,9 +5385,12 @@ class MuJoCoSimEngine(
 
         features = {
             "n_bodies": model.nbody,
-            "n_joints": model.njnt,
-            "n_actuators": model.nu,
-            "n_cameras": model.ncam,
+            # Each count counts the list beside it, so a robot-scoped listing
+            # cannot report the world's total for a robot's own parts: the
+            # numbers the ``robots`` map below carries for the same robot.
+            "n_joints": len(joint_names),
+            "n_actuators": len(actuator_names),
+            "n_cameras": len(camera_names),
             "timestep": model.opt.timestep,
             "joint_names": joint_names,
             "actuator_names": actuator_names,
@@ -5353,11 +5398,21 @@ class MuJoCoSimEngine(
             "robots": robots_info,
         }
 
+        # A scene with no camera at all is the free camera's, but a robot merely
+        # wearing none is not: the scene's cameras are still there to render
+        # from, and this listing is the one place that says which are the
+        # robot's own.
+        no_cameras_note = (
+            "none (free camera only)"
+            if not all_camera_names
+            else f"none mounted on '{robot_name}' (list_cameras names the scene's)"
+        )
         lines = [
             "Simulation Features",
-            f"Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
-            f"Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
-            f"Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
+            f"Joints ({len(joint_names)}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
+            f"Actuators ({len(actuator_names)}): "
+            f"{', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
+            f"Cameras ({len(camera_names)}): {', '.join(camera_names) if camera_names else no_cameras_note}",
             f"Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
