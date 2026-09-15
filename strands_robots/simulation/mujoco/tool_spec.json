@@ -86,7 +86,7 @@
     },
     "scene_path": {
       "type": "string",
-      "description": "Path to MJCF/URDF scene file"
+      "description": "Path to MJCF/URDF scene file. Read as given; a relative path that is not there is then looked for in the scenes directory (~/.strands_robots/scenes, or STRANDS_ROBOTS_SCENE_ROOT), where a relative export_xml destination lands, so exporting and reloading under one bare name round-trips."
     },
     "timestep": {
       "type": "number"

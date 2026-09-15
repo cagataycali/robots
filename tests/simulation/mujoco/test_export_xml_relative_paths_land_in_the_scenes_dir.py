@@ -23,8 +23,8 @@ import pytest
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.physics import (  # noqa: E402
-    anchor_relative_export_path,
-    scene_export_root,
+    anchor_relative_scene_path,
+    scene_root,
 )
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
@@ -62,29 +62,29 @@ def sim():
 class TestTheAnchor:
     def test_the_root_defaults_to_the_scenes_dir_beside_renders(self, monkeypatch) -> None:
         monkeypatch.delenv("STRANDS_ROBOTS_SCENE_ROOT", raising=False)
-        assert scene_export_root() == (Path.home() / ".strands_robots" / "scenes").resolve()
+        assert scene_root() == (Path.home() / ".strands_robots" / "scenes").resolve()
 
     def test_the_env_var_moves_the_root(self, scenes) -> None:
-        assert scene_export_root() == scenes.resolve()
+        assert scene_root() == scenes.resolve()
 
     def test_a_bare_name_is_anchored(self, scenes) -> None:
-        assert anchor_relative_export_path("scene.xml") == str(scenes.resolve() / "scene.xml")
+        assert anchor_relative_scene_path("scene.xml") == str(scenes.resolve() / "scene.xml")
 
     def test_a_relative_path_with_directories_is_anchored_whole(self, scenes) -> None:
-        assert anchor_relative_export_path("handoff/v2/scene.xml") == str(
+        assert anchor_relative_scene_path("handoff/v2/scene.xml") == str(
             scenes.resolve() / "handoff" / "v2" / "scene.xml"
         )
 
     def test_an_absolute_path_is_left_alone(self, scenes, tmp_path) -> None:
         target = str(tmp_path / "elsewhere" / "scene.xml")
-        assert anchor_relative_export_path(target) == target
+        assert anchor_relative_scene_path(target) == target
 
     def test_a_home_relative_path_is_absolute_after_expansion(self, scenes) -> None:
-        assert anchor_relative_export_path("~/scene.xml") == "~/scene.xml"
+        assert anchor_relative_scene_path("~/scene.xml") == "~/scene.xml"
 
     def test_an_empty_path_is_passed_through_for_the_guard_to_refuse(self, scenes) -> None:
-        assert anchor_relative_export_path("") == ""
-        assert anchor_relative_export_path("   ") == "   "
+        assert anchor_relative_scene_path("") == ""
+        assert anchor_relative_scene_path("   ") == "   "
 
 
 class TestTheSink:

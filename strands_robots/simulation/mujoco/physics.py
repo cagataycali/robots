@@ -523,32 +523,58 @@ def _geom_type_name(mj: Any, geom_type: int) -> str:
         return f"type_{int(geom_type)}"
 
 
-def scene_export_root() -> Path:
-    """Where a relative ``export_xml(output_path=...)`` lands.
+def scene_root() -> Path:
+    """The directory a relative scene path names, for both writing and reading.
 
     Defaults to ``~/.strands_robots/scenes``; override with the
     ``STRANDS_ROBOTS_SCENE_ROOT`` env var (read at call time). The sibling of
     the render sandbox (``STRANDS_ROBOTS_RENDER_ROOT``), resolved the same way.
+
+    One owner for the location, read by the sink that writes there
+    (:meth:`PhysicsMixin.export_xml`) and by the source that reads it back
+    (:meth:`~strands_robots.simulation.mujoco.simulation.Simulation.load_scene`),
+    so an exported scene and the reload of it cannot disagree about where the
+    file is.
     """
     return resolve_sandbox_root("STRANDS_ROBOTS_SCENE_ROOT", "scenes")
 
 
-def anchor_relative_export_path(output_path: str) -> str:
-    """Anchor a relative ``export_xml`` destination to :func:`scene_export_root`.
+def anchor_relative_scene_path(scene_path: str) -> str:
+    """Anchor a relative scene path to :func:`scene_root`.
 
     An absolute path (after ``~`` expansion) is returned unchanged - the
-    historic contract that ``export_xml`` writes to any absolute destination
-    holds. A relative one, bare (``"scene.xml"``) or with directories
-    (``"handoff/scene.xml"``), is joined under the scenes directory instead of
-    resolving against the process CWD. Nothing is validated here: the result
-    still goes through :func:`~strands_robots.simulation.safe_output.validate_output_path`,
-    whose traversal check scans every part of the joined path, so ``".."``
-    cannot climb back out of the anchor.
+    historic contract that ``export_xml`` writes to any absolute destination,
+    and ``load_scene`` reads any absolute source, holds. A relative one, bare
+    (``"scene.xml"``) or with directories (``"handoff/scene.xml"``), is joined
+    under the scenes directory instead of resolving against the process CWD.
+
+    Nothing is validated here. On the write path the result still goes through
+    :func:`~strands_robots.simulation.safe_output.validate_output_path`, whose
+    traversal check scans every part of the joined path, so ``".."`` cannot
+    climb back out of the anchor.
     """
-    raw = Path(output_path).expanduser()
-    if raw.is_absolute() or not output_path.strip():
-        return output_path
-    return str(scene_export_root() / raw)
+    raw = Path(scene_path).expanduser()
+    if raw.is_absolute() or not scene_path.strip():
+        return scene_path
+    return str(scene_root() / raw)
+
+
+def scene_not_found_error(scene_path: str) -> str:
+    """Say a scene file is missing, naming every directory that was searched.
+
+    A relative source is looked for as given (against the process working
+    directory) and then in the scenes directory, so a refusal that named only
+    the caller's spelling left an agent with no way to tell which of the two
+    places to fix. An absolute path has one candidate, so only it is named.
+    """
+    raw = Path(scene_path).expanduser()
+    if raw.is_absolute() or not scene_path.strip():
+        return f"Scene file not found: {scene_path}"
+    return (
+        f"Scene file not found: {scene_path} - looked in the working directory {Path.cwd()} "
+        f"and the scenes directory {scene_root()}, where a relative export_xml destination lands. "
+        "Pass an absolute scene_path, or export with the same relative name first."
+    )
 
 
 class PhysicsMixin:
@@ -2846,7 +2872,7 @@ class PhysicsMixin:
         backslash separators are rejected with ``status=error``. An absolute
         destination is accepted (the historic contract for this sink). A
         RELATIVE destination - a bare name or one with directories - lands
-        under the scenes directory (:func:`scene_export_root`:
+        under the scenes directory (:func:`scene_root`:
         ``~/.strands_robots/scenes``, or ``STRANDS_ROBOTS_SCENE_ROOT``), not the
         process working directory: an agent asked to "save the scene" used to
         drop ``scene.xml`` into whatever directory the process was started
@@ -2893,7 +2919,7 @@ class PhysicsMixin:
             # checks inspect the destination actually opened. The write is
             # atomic so a crash mid-export cannot truncate an existing file at
             # the destination.
-            destination = anchor_relative_export_path(output_path)
+            destination = anchor_relative_scene_path(output_path)
             try:
                 safe = validate_output_path(destination, sandbox_root=None, allow_abs=True)
             except ValueError as e:
