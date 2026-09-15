@@ -27,3 +27,17 @@ The UI is plain files under `dashboard/static/` served by the same process, so
 the wheel carries it and no build step exists. `docs/dashboard.md` is the one
 page that invokes the command, which
 `test_docs_module_commands_are_dispatched` now requires of a dispatched command.
+
+A settings write reports a refused value as data. The store composed each reason
+itself and then carried it out on a `CoercionError` that the write path caught
+and interpolated into the `errors` list `POST /api/settings` returns, so the text
+on the wire came off an exception object - benign only because every `raise` site
+happened to be authored, and the shape by which a stack trace or a filesystem
+path reaches a client that asked for none. `_graded` returns `(value, None)` or
+`(None, reason)` instead, the write path appends what it was handed, and no
+function on that path names an exception it caught. Every reason reads
+identically. Returning the text also puts it under the package rule that a
+returned refusal renders the value it refuses through `refusal_repr`, and that
+rule earns its place here: the store rendered a bare `{value!r}`, so a value
+whose own `__repr__` raises made `update_strict` raise - the refusal path failing
+on the one input it exists to answer.
