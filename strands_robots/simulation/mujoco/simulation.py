@@ -5686,20 +5686,48 @@ class MuJoCoSimEngine(
         joints an agent can address, and points at the actions that build on
         it; with no world it keeps the state-machine sentence, which is then
         true.
+
+        The offered actions are chosen from each robot's resolved actuator
+        ownership (:attr:`SimRobot.actuator_ids`) -- the same value
+        :meth:`_next_step_after_add` reads, so the description and the
+        ``add_robot`` summary cannot disagree in one session. A model that
+        compiles with no actuator can be posed, stepped and rendered, but
+        ``move_to`` refuses it outright ("no joint-transmission actuators to
+        drive") and ``run_policy`` can only advance physics without commanding
+        it, so naming either as the way in would send the first call of such a
+        session into the refusal this sentence exists to prevent. Those
+        sessions are offered :meth:`actuate_robot` instead, the in-tree remedy
+        both other surfaces already name.
         """
         world = self._world
         if world is None or not world.robots:
             return "One world per instance; actions form an implicit state machine starting with create_world. "
         robots = []
+        drivable = False
         for robot_name, robot in world.robots.items():
             joints = list(getattr(robot, "joint_names", ()) or ())
             shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
-            robots.append(f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'")
+            entry = f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'"
+            if getattr(robot, "actuator_ids", None):
+                drivable = True
+            else:
+                entry += " [no actuators]"
+            robots.append(entry)
+        if drivable:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, move_to, step or render, and use "
+                "reset to restart the rollout in place. "
+            )
+        else:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, step or render; nothing can drive "
+                "the robot(s) yet, so add a position servo per joint with actuate_robot before "
+                "move_to (which refuses a robot with no actuator) or run_policy. "
+            )
         return (
             "One world per instance. The world is ALREADY CREATED and holds robot(s) "
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
-            "start with get_robot_state, set_joint_positions, move_to, step or render, and use "
-            "reset to restart the rollout in place. "
+            f"{next_steps}"
         )
 
     @property

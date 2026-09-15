@@ -12,3 +12,10 @@ world exists, and points at `get_robot_state` / `set_joint_positions` /
 `move_to` / `step` / `render` / `reset`; with no world it keeps the
 state-machine sentence, which is then true. Measured with the same prompts:
 the SO-101 hello session went from 8 calls with 2 errors to 3 calls with none.
+
+The offered actions follow each robot's resolved actuator ownership. A model
+that compiles with no actuator can be posed, stepped and rendered, but `move_to`
+refuses it outright and `run_policy` can only advance physics without commanding
+it, so such a session is pointed at `actuate_robot` - the same remedy
+`add_robot` and `move_to` already name - and the robot is marked
+`[no actuators]`. A world holding one actuated robot keeps the drive verbs.
