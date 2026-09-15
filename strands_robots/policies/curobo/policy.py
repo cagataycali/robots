@@ -89,6 +89,55 @@ _JOINT_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_-]*\Z"
 # rather than silently consuming RAM.
 _MAX_TRAJECTORY_WAYPOINTS = 100_000
 
+
+def _trajectory_shape_error(trajectory: list[list[float]]) -> str | None:
+    """Grade an extracted plan as a rectangular block of joint positions.
+
+    :meth:`CuroboPolicy._next_chunk` resolves the joint key names *once* per
+    chunk, from the width of that chunk's first waypoint, and then pairs those
+    keys with every waypoint in it. Those keys are therefore a claim about the
+    first waypoint applied to all the others, so a waypoint the claim does not
+    describe is commanded partially rather than reported: a narrower one leaves
+    its trailing joints uncommanded (they hold, mid-motion), a wider one has its
+    trailing positions dropped, and a waypoint carrying no position at all
+    becomes an empty action dict - a command that moves no joint, inside a
+    non-empty chunk that every downstream ``if not actions`` guard therefore
+    passes.
+
+    A planner's degree-of-freedom count does not change mid-plan, so a plan that
+    is not rectangular is a broken plan and not an executable one. Grading it
+    when it is cached - rather than when a chunk of it is served - is what keeps
+    the refusal ahead of the motion: the offending waypoint may sit in the
+    second or tenth chunk, by which time the arm has already run the first.
+    :meth:`MoveIt2Policy._unpack_trajectory` refuses a positionless waypoint for
+    the same reason.
+
+    Args:
+        trajectory: Extracted ``[T, ndof]`` waypoint rows.
+
+    Returns:
+        A reason naming the first offending waypoint, or ``None`` when every
+        waypoint carries the same non-zero number of joint positions. An empty
+        trajectory is not this function's subject and is graded as ``None``.
+    """
+    if not trajectory:
+        return None
+    width = len(trajectory[0])
+    for index, row in enumerate(trajectory):
+        if not row:
+            return (
+                f"waypoint {index} of {len(trajectory)} carries no joint position; "
+                "a waypoint without a position commands nothing"
+            )
+        if len(row) != width:
+            return (
+                f"waypoint {index} of {len(trajectory)} carries {len(row)} joint positions "
+                f"but waypoint 0 carries {width}; joint key names are resolved from the first "
+                "waypoint, so a waypoint of a different width is commanded partially"
+            )
+    return None
+
+
 # Well-known goal fields (issue #300) an LLM may pack into the natural-language
 # instruction as a JSON object. Doubles as the pre-filter for the fallback
 # parse: an instruction that mentions neither field cannot carry a goal, so no
@@ -663,7 +712,7 @@ class CuroboPolicy(Policy):
         keys = self._resolve_joint_keys(len(rows[0]) if rows else 0)
         actions: list[dict[str, Any]] = []
         for row in rows:
-            actions.append({k: float(v) for k, v in zip(keys, row, strict=False)})
+            actions.append({k: float(v) for k, v in zip(keys, row, strict=True)})
         return actions
 
     def _plan_and_cache(
@@ -765,6 +814,11 @@ class CuroboPolicy(Policy):
                 f"CuroboPolicy got {len(trajectory)} waypoints, exceeds "
                 f"{_MAX_TRAJECTORY_WAYPOINTS} guard. Likely a misconfigured "
                 "interpolation_dt. Refusing to cache."
+            )
+        if error := _trajectory_shape_error(trajectory):
+            raise RuntimeError(
+                f"CuroboPolicy planning failed: {error}, so the plan is not executable. "
+                f"target_pose={target_pose!r}, target_joints={target_joints!r}. Refusing to cache."
             )
         self._cached_trajectory = trajectory
         self._cached_cursor = 0

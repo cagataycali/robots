@@ -103,6 +103,20 @@ the world changes mid-rollout. `world_update` is forwarded to
 `MotionPlanner.update_scene` (with a legacy `update_world` fallback) for
 per-call collision-scene refresh.
 
+Every waypoint of a plan must carry the same non-zero number of joint positions.
+The joint key names are resolved once per chunk from the width of that chunk's
+first waypoint, so a waypoint of a different width would be commanded partially -
+a narrower one leaves its trailing joints holding mid-motion, a wider one has its
+trailing positions dropped, and one carrying no position at all becomes an action
+dict that moves no joint. A planner's degree-of-freedom count does not change
+mid-plan, so a plan that is not rectangular is refused with a `RuntimeError`
+naming the waypoint and both widths, and nothing is cached. The check runs when
+the plan is cached rather than when a chunk of it is served, so the refusal
+arrives before any waypoint of a broken plan has moved the robot - and so the
+verdict does not depend on `action_horizon`, which only sets the chunk width.
+`MoveIt2Policy` refuses a positionless waypoint for the same reason: a plan that
+commands nothing is a planning failure, not a successful no-op plan.
+
 ## In simulation
 
 ```python
