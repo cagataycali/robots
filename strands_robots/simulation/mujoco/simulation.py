@@ -2140,6 +2140,19 @@ class MuJoCoSimEngine(
         # report - accusing a caller that passed data_config= correctly, and
         # naming the earlier robot.
         deprecation_hint: str | None = None
+        # The registry entry the robot was built from, when it was built from
+        # one - ``data_config`` as passed, or the instance name when the
+        # deprecated fallback below resolved it. This is what the robot's
+        # ``data_config`` records: the registry metadata keyed on it (the
+        # ``gripper`` block ``set_gripper`` resolves actuators from, the
+        # ``robot_type`` a recording declares, the ``Config:`` line of
+        # ``list_robots_info``) describes the model that was loaded, whichever
+        # argument named it. Left ``None`` on the fallback path,
+        # ``add_robot("so101")`` loaded so101's model and then ``set_gripper``
+        # reported "the registry carries no gripper metadata for this robot" -
+        # for an entry that has it - while ``Robot("so101")`` (which passes
+        # ``data_config``) worked on the same scene.
+        registry_key: str | None = data_config
         resolved_path = urdf_path
         if not resolved_path and data_config:
             resolved_path = resolve_model(data_config)
@@ -2152,6 +2165,7 @@ class MuJoCoSimEngine(
             # deprecated fallback - try registry by instance name.
             resolved_path = resolve_model(name)
             if resolved_path:
+                registry_key = name
                 logger.info(
                     "add_robot: resolved model via instance name '%s'. "
                     "Prefer: add_robot(name='<instance_label>', data_config='%s')",
@@ -2195,7 +2209,7 @@ class MuJoCoSimEngine(
             # the latter and normalized the former to plain floats.
             position=[0.0, 0.0, 0.0] if position is None else position,
             orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
-            data_config=data_config,
+            data_config=registry_key,
             namespace=f"{name}/",
         )
 
@@ -2203,7 +2217,7 @@ class MuJoCoSimEngine(
             # Propagate auto-download failure back to the agent instead of
             # silently eating it (previously this dict was discarded and
             # the next MuJoCo load threw a cryptic 'mesh not found').
-            mesh_err = self._ensure_meshes(resolved_path, data_config or name)
+            mesh_err = self._ensure_meshes(resolved_path, registry_key or name)
             if mesh_err is not None:
                 self._world.robots.pop(name, None)
                 return mesh_err
