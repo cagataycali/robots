@@ -76,7 +76,7 @@ from strands_robots.simulation.motion_primitives_base import (
     _quat_angle_error,
 )
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
-from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
+from strands_robots.simulation.mujoco.scene_ops import actuator_target_body_ids, joint_drive_map
 
 logger = logging.getLogger(__name__)
 
@@ -928,34 +928,63 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 cursor = int(model.body_parentid[cursor])
         return out
 
+    @staticmethod
+    def _root_body(model: Any, body_id: int) -> int:
+        """The top of ``body_id``'s kinematic tree - the body the world carries."""
+        cursor = int(body_id)
+        while cursor > 0 and int(model.body_parentid[cursor]) > 0:
+            cursor = int(model.body_parentid[cursor])
+        return cursor
+
     def _finger_contacts(
         self,
         model: Any,
         data: Any,
-        robot: Any,
-        gripper_joint_ids: list[int],
-    ) -> dict[str, int]:
+        gripper_acts: list[int],
+    ) -> dict[str, int] | None:
         """Bodies outside the robot that touch its fingers, with contact counts.
 
-        The fingers are the subtree of each gripper joint's body together with
-        that body's parent (a fixed jaw or a hand carries pads too). The world
-        body (ground plane) and the robot's own bodies are not "held".
+        The fingers are the bodies the gripper actuators move, resolved through
+        the shared transmission reader
+        :func:`~strands_robots.simulation.mujoco.scene_ops.actuator_target_body_ids`,
+        together with each one's subtree and its parent's (a fixed jaw or a
+        hand carries pads too). Reading the drive's joint instead would find no
+        finger on a tendon gripper - one ``ctrl`` coupling both jaws is the
+        standard MJCF two-finger idiom and how every Franka here is actuated -
+        and an unlocated finger touches nothing by construction.
+
+        The world body (ground plane) and the machine the fingers belong to are
+        not "held": the robot is the tree above them (:meth:`_root_body`), read
+        from the fingers themselves so it holds for any robot, and so that an
+        arm link folded against its own gripper is not offered as a grasp.
+
+        Returns:
+            Body name to contact count, or ``None`` when the transmission names
+            no body at all. An empty mapping says "nothing is touching the
+            fingers", which is a measurement; a caller that never located the
+            fingers has not made it, and ``None`` keeps that reply silent
+            rather than confidently wrong.
         """
         mj = self._mj
-        robot_bodies = self._subtree(model, int(robot.body_id)) if int(robot.body_id) >= 0 else set()
+        roots: set[int] = set()
+        for act_id in gripper_acts:
+            roots |= {int(b) for b in actuator_target_body_ids(model, int(act_id), mj)}
+        if not roots:
+            return None
         fingers: set[int] = set()
-        for jnt_id in gripper_joint_ids:
-            body_id = int(model.jnt_bodyid[jnt_id])
+        machine: set[int] = set()
+        for body_id in roots:
             fingers |= self._subtree(model, body_id)
             parent = int(model.body_parentid[body_id])
             if parent > 0:
                 fingers |= self._subtree(model, parent)
+            machine |= self._subtree(model, self._root_body(model, body_id))
         held: dict[str, int] = {}
         for i in range(int(data.ncon)):
             con = data.contact[i]
             b1, b2 = int(model.geom_bodyid[con.geom1]), int(model.geom_bodyid[con.geom2])
             for finger, other in ((b1, b2), (b2, b1)):
-                if finger in fingers and other != 0 and other not in robot_bodies and other not in fingers:
+                if finger in fingers and other != 0 and other not in machine:
                     name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, other) or f"body {other}"
                     held[name] = held.get(name, 0) + 1
                     break
@@ -998,6 +1027,15 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             is visible rather than silent; structured error when the gripper
             cannot be resolved or no source gives usable set-points. Never
             raises.
+
+            A ``close`` also reports what the fingers ended up touching, so a
+            grasp that missed does not read like one that landed: ``holding``
+            (body names) and ``finger_contacts`` (name to contact count) join
+            the payload, and the text names them ("Closed on 'red_cube' (11
+            contacts)") or says a lift would carry nothing. Both keys are
+            absent when the drive's transmission names no body to watch
+            (:meth:`_finger_contacts`), rather than reporting an empty grasp
+            the backend never looked for.
         """
         steps, arg_err = self._validate_set_gripper_args(state, steps)
         if arg_err is not None:
@@ -1080,8 +1118,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             # is wrong unless it hears that here.
             held: dict[str, int] | None = None
             if state == "close":
-                gripper_joints = [jnt_by_act[a] for a in gripper_acts if a in jnt_by_act]
-                held = self._finger_contacts(model, data, robot, gripper_joints)
+                held = self._finger_contacts(model, data, gripper_acts)
         return self._set_gripper_result(
             robot_name,
             state,
