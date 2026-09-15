@@ -127,8 +127,13 @@ cache["num_frames"], cache["control_dt"]
 ```
 
 `MotionPlayer` accepts that dict, an `.npz` from `MotionPlayer.save_cache_npz`,
-or a raw ProtoMotions `.pt`. Four things to know about the cache:
+or a raw ProtoMotions `.pt`. Things to know about the cache:
 
+- **The six channels are the required content.** `control_dt` and `num_frames`
+  are optional on every route: omit `control_dt` and the `control_dt=` argument
+  stands, omit `num_frames` and the channels' own row count is used. A cache
+  short of a channel is refused by naming every channel it lacks - and, when it
+  came from a file, the file.
 - **Frame counts must agree.** Every channel is `[num_frames, ...]`; trimming
   the channels and leaving `num_frames` behind is refused with both counts
   named. Drop `num_frames` (or set it) after editing:

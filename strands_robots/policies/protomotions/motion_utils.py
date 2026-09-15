@@ -33,6 +33,10 @@ played, because the frame index is clamped to that count and the tracker's
 future window reads *ahead* of the playhead. ``num_frames`` may be omitted, in
 which case the channels' own row count is used.
 
+Both scalars are optional on every route into the format - a ``dict``, an
+``.npz``, and a ``.pt`` that is already a cache all reach one reader, so none of
+them states a narrower format than this one.
+
 ``control_dt`` is the cache's other scalar and is settled on load the same way:
 it is seconds per control tick, so a value that is not positive and finite is
 not a period any reader can honor - ``1 / control_dt`` is the rate this module
@@ -160,7 +164,7 @@ def _calc_frame_blend(time_s: float, motion_length_s: float, num_frames: int, sr
     return f0, f1, blend
 
 
-def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
+def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any, source: str) -> int:
     """Resolve the one frame count every channel of a cache agrees on.
 
     The cache format documents each state channel as ``[num_frames, ...]``, so
@@ -177,6 +181,8 @@ def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
     Args:
         arrays: The state channels of one clip, keyed by name.
         declared: The cache's own ``num_frames``, or ``None`` when it omits it.
+        source: What the cache came from, used as the message prefix - see
+            :meth:`MotionPlayer._load_cache`.
 
     Returns:
         The frame count every channel agrees on.
@@ -188,7 +194,7 @@ def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
     flat = [k for k in _STATE_KEYS if arrays[k].ndim == 0]
     if flat:
         raise ValueError(
-            f"MotionPlayer cache channels {flat!r} are scalars, so they carry no frame axis. "
+            f"{source} channels {flat!r} are scalars, so they carry no frame axis. "
             f"Every channel is documented as [num_frames, ...] for one clip."
         )
     rows = {k: int(arrays[k].shape[0]) for k in _STATE_KEYS}
@@ -196,7 +202,7 @@ def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
     if len(distinct) > 1:
         detail = ", ".join(f"{k}={rows[k]}" for k in _STATE_KEYS)
         raise ValueError(
-            f"MotionPlayer cache channels disagree on the frame count ({detail}). "
+            f"{source} channels disagree on the frame count ({detail}). "
             f"Every channel is documented as [num_frames, ...] for one clip, so they all "
             f"carry the same number of frames."
         )
@@ -206,7 +212,7 @@ def _cache_frame_count(arrays: dict[str, np.ndarray], declared: Any) -> int:
     stated = int(declared)
     if stated != actual:
         raise ValueError(
-            f"MotionPlayer cache declares num_frames={stated} but its channels carry "
+            f"{source} declares num_frames={stated} but its channels carry "
             f"{actual} frames. Every channel is documented as [num_frames, ...], and a "
             f"frame index is clamped to num_frames - 1, so a declared count the channels "
             f"cannot serve reads out of range before the clip ends while a smaller one "
@@ -384,13 +390,26 @@ class MotionPlayer:
 
     # ---- Private loaders ---------------------------------------------------
 
-    def _load_cache(self, data: dict[str, Any]) -> None:
-        """Bind a pre-resampled cache dict in-place."""
+    def _load_cache(self, data: dict[str, Any], source: str = "MotionPlayer cache") -> None:
+        """Bind a pre-resampled cache in-place, whichever way it arrived.
+
+        Every route into the cache format lands here - the ``dict`` a caller
+        builds, an ``.npz``, and a ``.pt`` that is already a cache - so the two
+        documented-optional scalars are optional on all of them and a cache
+        short of a channel is refused by naming every channel it lacks. A reader
+        that indexed the keys itself would state a narrower format than the one
+        this module documents and writes.
+
+        Args:
+            data: The cache, in the documented dict-of-arrays shape.
+            source: What it came from, used as the refusal prefix so a file's
+                refusal names the file rather than only the format.
+        """
         missing = [k for k in _STATE_KEYS if k not in data]
         if missing:
-            raise KeyError(f"MotionPlayer cache is missing required keys: {missing!r}.")
+            raise KeyError(f"{source} is missing required keys: {missing!r}.")
         arrays = {key: np.asarray(data[key], dtype=np.float32) for key in _STATE_KEYS}
-        num_frames = _cache_frame_count(arrays, data.get("num_frames"))
+        num_frames = _cache_frame_count(arrays, data.get("num_frames"), source)
         self._dof_pos = arrays["dof_pos"]
         self._dof_vel = arrays["dof_vel"]
         self._body_rot = arrays["body_rot"]
@@ -401,7 +420,7 @@ class MotionPlayer:
             # Settled for the reason num_frames above it is: the cache states the
             # period, and it outranks the argument, so an unusable one here is
             # not corrected by a caller who passed a good ``control_dt=``.
-            self._control_dt = _control_period(data["control_dt"], "MotionPlayer cache")
+            self._control_dt = _control_period(data["control_dt"], source)
         self._num_frames = num_frames
         logger.info(
             "MotionPlayer loaded cache: %d frames @ %.0f Hz",
@@ -412,19 +431,8 @@ class MotionPlayer:
     def _load_file(self, path: str, motion_index: int) -> None:
         """Load an ``.npz`` cache or a raw ProtoMotions ``.pt`` file."""
         if path.endswith(".npz"):
-            data = dict(np.load(path))
-            self._load_cache(
-                {
-                    "dof_pos": data["dof_pos"],
-                    "dof_vel": data["dof_vel"],
-                    "body_rot": data["body_rot"],
-                    "body_pos": data["body_pos"],
-                    "body_vel": data["body_vel"],
-                    "body_ang_vel": data["body_ang_vel"],
-                    "control_dt": float(data["control_dt"]),
-                    "num_frames": int(data["num_frames"]),
-                }
-            )
+            with np.load(path) as npz:
+                self._load_cache(dict(npz), f"MotionPlayer cache {path}")
             return
 
         # .pt raw ProtoMotions format - needs torch to unpickle. torch is not
@@ -455,9 +463,15 @@ class MotionPlayer:
                 "as a dict of tensors, or convert it once with "
                 "MotionPlayer.save_cache_npz and load the .npz instead."
             ) from e
-        if "control_dt" in data and "body_rot" in data:
-            # A .pt that is already a cache.
-            self._load_cache({k: np.asarray(v) for k, v in data.items()})
+        if "body_rot" in data:
+            # A .pt that is already a cache. ``body_rot`` alone decides it: it is
+            # the one key no raw layout carries (a packed library spells its
+            # rotations ``grs``, a single motion ``rigid_body_rot``), so it
+            # identifies a cache without also demanding ``control_dt``, which
+            # this format documents as optional. Keying on that scalar sent a
+            # cache-shaped .pt that omitted it down the raw path instead, and a
+            # cache short of a channel is still refused by name below.
+            self._load_cache({k: np.asarray(v) for k, v in data.items()}, f"MotionPlayer cache {path}")
             return
         self._resample_raw(data, motion_index)
 
