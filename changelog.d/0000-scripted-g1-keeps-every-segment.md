@@ -1,0 +1,16 @@
+### Fixed: `scripted_g1.py` delivers every segment it records, and `concat_clips` joins recorded clips
+
+`examples/locomotion/scripted_g1.py` drove its four-segment locomotion
+schedule as four `run_policy` calls that all named the same `--mp4`, saying it
+would "append each segment to one MP4". A rollout opens its video fresh, so
+the file held only the last segment - the two-second halt - and the example's
+"reproducible demo artifact" was a video of a robot standing still.
+
+`strands_robots.rendering.concat_clips(paths, out, fps=None)` joins clips end
+to end through `encode_clip`, reading the rate from the first clip's header
+unless one is passed, and refuses an empty list, a missing clip, a segment of
+another frame size, or a clip that declares no rate - each naming the clip.
+The example records each segment to `<stem>.seg<i>.mp4`, joins them into
+`--mp4`, removes the segments unless `--keep-segments`, and says why; its
+docstring also notes that the G1 scene's `default` camera loses a walking robot
+within seconds and that `add_camera` keeps it framed.

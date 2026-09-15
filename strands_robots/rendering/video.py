@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared media utilities for render pipelines.
 
-One MP4/GIF encoder (:func:`encode_clip`) and one MJPEG live-stream
-generator (:func:`mjpeg_frames`), consolidating the several hand-rolled
+One MP4/GIF encoder (:func:`encode_clip`), its join (:func:`concat_clips`)
+and one MJPEG live-stream generator (:func:`mjpeg_frames`), consolidating the several hand-rolled
 ``imageio`` writers that previously lived in the recording mixins and the
 GS-demo examples (issue #1537).
 """
@@ -271,6 +271,94 @@ def encode_clip(
             "refusal reason."
         )
     return out
+
+
+def _clip_frames(path: Path, imageio: Any) -> tuple[list[Any], float | None]:
+    """Read every frame of the clip at ``path`` and the rate its header declares."""
+    reader = imageio.get_reader(str(path))
+    try:
+        meta = reader.get_meta_data() or {}
+        frames = [np.asarray(frame) for frame in reader]
+    finally:
+        reader.close()
+    declared = meta.get("fps")
+    return frames, float(declared) if isinstance(declared, int | float) and declared > 0 else None
+
+
+def concat_clips(
+    paths: Iterable[str | Path],
+    out: str | Path,
+    fps: int | None = None,
+    quality: float = 8,
+    macro_block_size: int = 1,
+) -> Path:
+    """Join clips end to end into one clip at ``out``.
+
+    Every writer in this package - :func:`encode_clip`, the rollout MP4 of
+    ``run_policy(video=...)`` - opens its output fresh, so a caller who records a
+    sequence as several rollouts and hands each the same path keeps only the last
+    one. This is the join such a caller needs: record each segment to its own
+    file, then concatenate.
+
+    Args:
+        paths: The clips, in playback order. Each must exist and decode to at
+            least one frame, and every frame must share one shape - a clip of a
+            different size would be silently rescaled by the container or refused
+            by the encoder, both far from the segment that caused it.
+        out: The output clip; the extension selects the container exactly as in
+            :func:`encode_clip`.
+        fps: Playback rate for the joined clip. ``None`` reads it from the first
+            clip's header, which is what a caller who wants the join to play at
+            the rate its segments were written at should pass; refused when that
+            header declares no rate.
+        quality: Passed to :func:`encode_clip`.
+        macro_block_size: Passed to :func:`encode_clip`.
+
+    Returns:
+        ``out`` as a :class:`~pathlib.Path`, naming a clip that exists.
+
+    Raises:
+        ValueError: if ``paths`` is empty, a clip is missing or holds no frames,
+            the frame shapes disagree, or no rate could be determined; the
+            message names the clip.
+        ImportError: from :func:`require_clip_encoder`, before any clip is read.
+    """
+    clip_paths = [Path(p) for p in paths]
+    if not clip_paths:
+        raise ValueError(f"concat_clips: no clips to join for {out}")
+    missing = [str(p) for p in clip_paths if not p.is_file()]
+    if missing:
+        raise ValueError(f"concat_clips: clip not found: {refusal_container_repr(missing)}")
+    # The plugin that writes a container is the one that reads it, so the output
+    # and every input are probed before any clip is opened.
+    require_clip_encoder(out, purpose="video concatenation (concat_clips)")
+    for clip in clip_paths:
+        require_clip_encoder(clip, purpose="video concatenation (concat_clips)")
+    import imageio.v2 as imageio
+
+    frames: list[Any] = []
+    declared_fps: float | None = None
+    shape: tuple[int, ...] | None = None
+    for clip in clip_paths:
+        clip_frames, clip_fps = _clip_frames(clip, imageio)
+        if not clip_frames:
+            raise ValueError(f"concat_clips: clip {clip} holds no frames")
+        if declared_fps is None:
+            declared_fps = clip_fps
+        if shape is None:
+            shape = tuple(clip_frames[0].shape)
+        for frame in clip_frames:
+            if tuple(frame.shape) != shape:
+                raise ValueError(
+                    f"concat_clips: clip {clip} has frames of shape {tuple(frame.shape)}, "
+                    f"the join so far is {shape}; every segment must share one frame size"
+                )
+        frames.extend(clip_frames)
+    if fps is None:
+        if declared_fps is None:
+            raise ValueError(f"concat_clips: {clip_paths[0]} declares no frame rate and none was passed; pass fps=")
+        fps = int(round(declared_fps))
+    return encode_clip(frames, out, fps=fps, quality=quality, macro_block_size=macro_block_size)
 
 
 # JPEG quality bounds. Pillow silently substitutes for anything outside them
