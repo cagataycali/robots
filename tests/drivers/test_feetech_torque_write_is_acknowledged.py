@@ -19,6 +19,7 @@ The bus's other traffic is graded in :mod:`test_feetech_bus`, the codec in
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import pytest
@@ -56,6 +57,30 @@ class TruncatingPort(FakeServoPort):
 
     def read(self, size: int) -> bytes:
         return super().read(size)[:-1]
+
+
+class PortThatFailsOnOneMotor(FakeServoPort):
+    """The host's own port stops working part-way through a sweep.
+
+    ``set_torque`` writes one frame per servo, so a port that raises is a
+    different failure from a servo that stays silent: nothing was put on the
+    wire for that motor at all. Both must land in the same return, because the
+    caller's question - "is this joint still driven?" - has the same answer.
+
+    Args:
+        counts: As :class:`FakeServoPort`.
+        failing_id: The motor whose frame raises ``OSError``. pyserial raises
+            ``SerialException``, a subclass, so one clause covers both.
+    """
+
+    def __init__(self, counts: dict[int, int], *, failing_id: int) -> None:
+        super().__init__(counts)
+        self.failing_id = failing_id
+
+    def write(self, data: bytes) -> int:
+        if data[2] == self.failing_id:
+            raise OSError(5, "Input/output error")
+        return super().write(data)
 
 
 class EchoingPort(FakeServoPort):
@@ -129,6 +154,26 @@ class TestASilentServoIsNamed:
         bus = open_bus(port)
         assert bus.set_torque(False) == expected
         assert len(port.writes) == len(SO_ARM_MOTORS)
+
+    def test_a_port_that_fails_mid_sweep_names_that_joint_and_keeps_going(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The twin of the mute servo above, one layer lower.
+
+        A release that gave up at the first failure would leave the joints
+        after it energized while reporting only the one it stopped on - so the
+        motors past the failure are the assertion, not the failure itself.
+        """
+        bus = open_bus(PortThatFailsOnOneMotor(MIDPOINT_COUNTS, failing_id=SO_ARM_MOTORS["elbow_flex"].motor_id))
+        with caplog.at_level(logging.ERROR):
+            assert bus.set_torque(False) == ["elbow_flex"]
+        port = bus._conn
+        assert isinstance(port, PortThatFailsOnOneMotor)
+        # Five frames for six motors: the elbow's never reached the wire, and
+        # the gripper's - the last on the bus - did.
+        assert len(port.writes) == len(SO_ARM_MOTORS) - 1
+        assert port.writes[-1][2] == SO_ARM_MOTORS["gripper"].motor_id
+        assert "failed to set torque on elbow_flex" in caplog.text
 
     def test_stop_refuses_naming_the_joint_that_may_still_be_driven(self) -> None:
         """The driver's teardown verb reports a partial release as a refusal.

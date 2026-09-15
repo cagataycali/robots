@@ -228,6 +228,21 @@ class TestLifecycle:
         assert not servo_port.is_open
         bus.disconnect()  # a second call must not raise
 
+    def test_connect_on_an_open_bus_does_not_open_a_second_port(self, servo_port: FakeServoPort) -> None:
+        """The twin of the idempotent ``disconnect`` above.
+
+        A caller who cannot cheaply tell whether the bus is already up calls
+        ``connect()`` anyway, and the arm is shared: re-entering it would drop
+        the live handle for a fresh ``serial.Serial`` on the same device, which
+        the OS grants - so the frames already in flight would answer into a
+        port nothing is reading. The early return is also what keeps this cell
+        offline; without it the call reaches ``serial.Serial("/dev/fake")``.
+        """
+        bus = open_bus(servo_port)
+        bus.connect()
+        assert bus._conn is servo_port
+        assert bus.is_connected
+
     def test_motors_may_be_narrowed_to_a_subset_of_the_arm(self) -> None:
         """A bus carrying two servos reads and writes only those two."""
         bus = open_bus(FakeServoPort({6: 4095}), motors={"gripper": SO_ARM_MOTORS["gripper"]})

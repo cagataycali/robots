@@ -184,6 +184,19 @@ class TestConstructor:
         assert "port=" in str(excinfo.value)
         assert "multi-bus" in str(excinfo.value)
 
+    def test_a_motor_id_that_is_not_on_an_so_arm_is_refused_by_name(self) -> None:
+        """The twin of narrowing the bus to a subset of the arm.
+
+        ``motor_ids`` selects joints by wire ID, and an ID this family has no
+        joint name for cannot be commanded or reported - the driver would have
+        to invent a name for it. The message names the offending ID and the map
+        it is not in, so a caller who transposed two digits sees both.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            FeetechDriver(tool_name="so101", motor_ids=(1, 9))
+        assert "motor_ids [9]" in str(excinfo.value)
+        assert "shoulder_pan" in str(excinfo.value)
+
     def test_baud_rate_default_is_the_feetech_default(self) -> None:
         """The STS3215's factory default baud rate is 1_000_000."""
         driver = FeetechDriver(tool_name="so101")

@@ -349,6 +349,20 @@ class TestTheDriverReachesIt:
         bare = asyncio.run(FeetechDriver(tool_name="so101", port="/dev/fake").get_status())
         assert bare["content"][0]["json"]["calibration_source"] is None
 
+    def test_records_handed_over_directly_are_credited_to_the_caller(self) -> None:
+        """The twin of the path form above: same records, no file.
+
+        A caller who already holds the records - read from a fleet config, or
+        carried over the mesh - has no file to name, and ``calibration_source``
+        is what tells an operator which travel the reported degrees were
+        measured against. Reporting a path it never saw, or ``None`` as though
+        the arm were uncalibrated, both misdescribe a calibrated arm.
+        """
+        driver = FeetechDriver(tool_name="so101", port="/dev/fake", calibration=_records())
+        assert driver.bus.calibration == _records()
+        status = asyncio.run(driver.get_status())
+        assert status["content"][0]["json"]["calibration_source"] == "caller"
+
     def test_a_calibration_that_is_neither_a_path_nor_records_is_refused(self) -> None:
         with pytest.raises(ValueError, match="must be a path to the JSON"):
             FeetechDriver(tool_name="so101", port="/dev/fake", calibration=7)
