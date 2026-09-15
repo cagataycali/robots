@@ -28,7 +28,7 @@ strands-robots doctor            # or: python -m strands_robots doctor
 | `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `uv pip install "strands-robots[lerobot]"` (pins `lerobot>=0.6.1,<0.7.0`) |
 | `ImportError: cannot import name 'MolmoAct2Policy'` | `lerobot < 0.6` (`MolmoAct2Policy` ships in lerobot >= 0.6) | `uv pip install "strands-robots[molmoact2]"` |
 | pyav build fails on Jetson/aarch64 | No prebuilt wheel for sm_110 | Use `--no-build-isolation` or install `torchcodec>=0.7` and skip pyav. See [installation](getting-started/installation.md#molmoact2-on-jetson) |
-| numpy ABI mismatch on Jetson | System pandas vs pip numpy | `uv pip install "numpy<2" "pandas==2.1.4"` then reinstall |
+| `numpy.dtype size changed` / `_ARRAY_API not found` on Jetson | A wheel built against numpy 1.x (apt `python3-pandas`, an old cached wheel) imported under the numpy 2 that `[lerobot]` requires | Work in a venv and rebuild the offender from PyPI: `uv pip install --reinstall pandas` (2.2.2+ ships numpy-2 wheels). Do not pin `numpy<2` - `lerobot >= 0.6` requires `numpy >= 2`, so the pin is undone by the next install |
 | `uv pip install -e .` errors | Wrong cwd | `cd` to repo root first |
 
 ## Simulation
