@@ -47,6 +47,7 @@ The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) d
 ## Install
 
 ```bash
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install "strands-robots[sim-mujoco]"   # simulation
 uv pip install "strands-robots[all]"          # sim + hardware + most policies
 ```

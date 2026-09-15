@@ -117,7 +117,7 @@ from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesM
 from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
-from strands_robots.simulation.mujoco.rendering import RenderingMixin
+from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     eject_camera_from_scene,
@@ -602,6 +602,7 @@ class MuJoCoSimEngine(
         peer_id: str | None = None,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
+        render_dir: str | os.PathLike[str] | None = None,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -652,6 +653,19 @@ class MuJoCoSimEngine(
                 with a :class:`ValueError` during construction whether or not
                 ``ros2_bridge`` is set, so a backend that only publishes later
                 still rejects it up front. Defaults to ``0``.
+            render_dir: Directory that ``render(output_path=...)`` may write
+                into for THIS Simulation - its render sandbox. The model
+                supplies ``output_path`` and cannot move the sandbox; the
+                developer constructing the Simulation can, here, without an
+                environment variable set before the process started. A bare
+                filename lands in this directory; an absolute path outside it
+                is refused as before. Created on the first render if absent.
+                ``None`` (the default) keeps the process-wide sandbox
+                (``STRANDS_ROBOTS_RENDER_ROOT``, else
+                ``~/.strands_robots/renders``). Reaches here from
+                ``Robot(name, mode="sim", render_dir=...)`` through the factory's
+                ``**kwargs``. A value that cannot name a directory (a non-path
+                type, an empty string) is refused with a :class:`ValueError`.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -702,6 +716,10 @@ class MuJoCoSimEngine(
         for _param, _value in (("default_width", default_width), ("default_height", default_height)):
             if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
                 raise ValueError(dim_err)
+        # Same rule as the dimensions: a constructor argument that cannot mean
+        # what it says is refused here, before any ROS 2 node exists.
+        if render_dir is not None and (dir_err := render_dir_error(render_dir)) is not None:
+            raise ValueError(f"MuJoCoSimEngine: {dir_err}")
         # ``mesh`` is resolved here, above ``_init_ros_bridge``, for the reason
         # stated immediately above: it is the one remaining constructor argument
         # that can be refused, and ``_validated_mesh_handle``'s ``TypeError``
@@ -721,6 +739,9 @@ class MuJoCoSimEngine(
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
+        #: This Simulation's render sandbox, or ``None`` for the process default.
+        #: Resolved once here so ``render`` confines against the on-disk location.
+        self.render_dir: Path | None = resolve_render_dir(render_dir) if render_dir is not None else None
 
         # Mesh attributes are stored plainly (no property wrapper) so
         # downstream code can swap in a real mesh client after
@@ -5698,6 +5719,64 @@ class MuJoCoSimEngine(
             }
         return None
 
+    def _world_readiness_sentence(self) -> str:
+        """The opening sentence of the tool description, written from the live world.
+
+        The description is on the LLM hot path and is read before the first
+        call, so it must describe the session the agent is actually joining.
+        ``Robot("so101")`` creates the world and adds the robot before the
+        agent ever sees the tool; a description that still said "start with
+        create_world" sent the first call of every such session into a
+        refusal ("a world already exists"). Measured over eight agent sessions
+        on six embodiments, that refusal was the first tool result in all
+        eight. With a world present this names the robots it holds and the
+        joints an agent can address, and points at the actions that build on
+        it; with no world it keeps the state-machine sentence, which is then
+        true.
+
+        The offered actions are chosen from each robot's resolved actuator
+        ownership (:attr:`SimRobot.actuator_ids`) -- the same value
+        :meth:`_next_step_after_add` reads, so the description and the
+        ``add_robot`` summary cannot disagree in one session. A model that
+        compiles with no actuator can be posed, stepped and rendered, but
+        ``move_to`` refuses it outright ("no joint-transmission actuators to
+        drive") and ``run_policy`` can only advance physics without commanding
+        it, so naming either as the way in would send the first call of such a
+        session into the refusal this sentence exists to prevent. Those
+        sessions are offered :meth:`actuate_robot` instead, the in-tree remedy
+        both other surfaces already name.
+        """
+        world = self._world
+        if world is None or not world.robots:
+            return "One world per instance; actions form an implicit state machine starting with create_world. "
+        robots = []
+        drivable = False
+        for robot_name, robot in world.robots.items():
+            joints = list(getattr(robot, "joint_names", ()) or ())
+            shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
+            entry = f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'"
+            if getattr(robot, "actuator_ids", None):
+                drivable = True
+            else:
+                entry += " [no actuators]"
+            robots.append(entry)
+        if drivable:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, move_to, step or render, and use "
+                "reset to restart the rollout in place. "
+            )
+        else:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, step or render; nothing can drive "
+                "the robot(s) yet, so add a position servo per joint with actuate_robot before "
+                "move_to (which refuses a robot with no actuator) or run_policy. "
+            )
+        return (
+            "One world per instance. The world is ALREADY CREATED and holds robot(s) "
+            f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
+            f"{next_steps}"
+        )
+
     @property
     def tool_spec(self) -> ToolSpec:
         """The Strands ``ToolSpec`` (name, description, JSON input schema) the agent sees.
@@ -5712,8 +5791,7 @@ class MuJoCoSimEngine(
             "name": self.tool_name_str,
             "description": (
                 "Programmatic MuJoCo simulation environment (stateful session). "
-                "One world per instance; actions form an implicit state machine starting with "
-                "create_world. Scene mutations (add_robot, remove_robot, add_object, remove_object, "
+                f"{self._world_readiness_sentence()}Scene mutations (add_robot, remove_robot, add_object, remove_object, "
                 "move_object, add_camera, remove_camera, load_scene) are blocked while a policy "
                 "is running - stop it first. Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "

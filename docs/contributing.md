@@ -9,6 +9,7 @@ Repo: [`strands-labs/robots`](https://github.com/strands-labs/robots). Requires 
 ```bash
 git clone https://github.com/strands-labs/robots
 cd robots
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e '.[all,dev]'
 ```
 
