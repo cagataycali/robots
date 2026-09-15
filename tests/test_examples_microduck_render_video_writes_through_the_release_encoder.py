@@ -94,6 +94,22 @@ class TestTheEncoderIsTheReleases:
         assert len(decoded) == 6
         assert decoded[0].shape[:2] == (18, 32)
 
+    def test_the_gif_the_example_writes_loops(self, tmp_path: Path) -> None:
+        """The showcase GIF repeats, which is what the helper's name promises.
+
+        The private ``imageio.mimwrite`` call this helper used passed ``loop=0``
+        by hand. Routing through the package encoder keeps that only because
+        the encoder writes the looping block itself, so the release's showcase
+        GIF is an animation rather than a still of its last frame.
+        """
+        pytest.importorskip("imageio.v2")
+        Image = pytest.importorskip("PIL.Image")
+        gif = tmp_path / "duck.gif"
+
+        _load()._encode_gif(_frames(w=64, h=36), str(gif), 10, 32)
+
+        assert Image.open(gif).info.get("loop") == 0
+
     def test_a_frame_rate_the_encoder_refuses_is_named_up_front(self, tmp_path: Path) -> None:
         pytest.importorskip("imageio.v2")
         with pytest.raises(ValueError, match="fps"):
