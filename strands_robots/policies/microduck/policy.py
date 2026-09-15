@@ -139,12 +139,75 @@ def _action_scale_error(value: Any, source: str) -> str | None:
     return positive_finite_number_error(value, "action_scale", f"MicroduckPolicy ({source})")
 
 
+#: The Hugging Face repository Pollen publishes the shipped weights to. They
+#: used to live in the ``microduck`` git repository under ``policies/*.onnx``;
+#: upstream removed that directory ("policies/ leaves the repository"), so a
+#: checkout of that repo no longer carries a single weight and the Hub is the
+#: only place they ship.
+MICRODUCK_POLICIES_HF_REPO = "pollen-robotics/microduck-policies"
+
+
+def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = None) -> Path:
+    """Return a local file for a Microduck weight, fetching a bare name from the Hub.
+
+    A path that exists is returned unchanged. A bare file name with no directory
+    part (``alpha_walking.onnx``) that is not in the working directory is fetched
+    from :data:`MICRODUCK_POLICIES_HF_REPO` through ``huggingface_hub`` - which
+    the ``[microduck]`` extra installs - and the cached download is returned, so
+    the docs' ``MicroduckPolicy(onnx_path="alpha_walking.onnx")`` works on a
+    fresh install with no clone beside it. A path *with* directories that does
+    not exist is refused: the caller made a claim about their filesystem, and a
+    download that quietly answered it with a different file would hide a typo.
+
+    Args:
+        onnx_path: A local file, or the bare name of a weight in the Hub repo.
+        revision: Optional Hub revision (branch, tag or commit) for a bare name.
+
+    Returns:
+        A path to a readable ``.onnx`` file.
+
+    Raises:
+        FileNotFoundError: When the path names directories and does not exist,
+            or the bare name is not a file the Hub repository carries. Both
+            messages name the repository and the name that was asked for.
+        ImportError: When a bare name needs downloading and ``huggingface_hub``
+            is not installed (the remedy names the ``[microduck]`` extra).
+    """
+    path = Path(onnx_path)
+    if path.exists():
+        return path
+    bare_name = path.parent == Path(".")
+    if not bare_name:
+        raise FileNotFoundError(
+            f"Microduck ONNX policy not found: {path}. Shipped weights live on the Hub at "
+            f"{MICRODUCK_POLICIES_HF_REPO}; pass a bare name such as {path.name!r} to fetch "
+            "it from there, or the path of a file you already downloaded."
+        )
+    hub = require_optional(
+        "huggingface_hub",
+        extra="microduck",
+        purpose=f"fetching {path.name} from {MICRODUCK_POLICIES_HF_REPO} (or pass the path of a local file)",
+    )
+    try:
+        downloaded = hub.hf_hub_download(  # type: ignore[attr-defined]
+            MICRODUCK_POLICIES_HF_REPO, path.name, revision=revision
+        )
+    except Exception as exc:  # noqa: BLE001 - one door for every Hub-side failure
+        raise FileNotFoundError(
+            f"Microduck ONNX policy {path.name!r} could not be fetched from {MICRODUCK_POLICIES_HF_REPO}: {exc}"
+        ) from exc
+    logger.info("Microduck weight %s fetched from %s", path.name, MICRODUCK_POLICIES_HF_REPO)
+    return Path(downloaded)
+
+
 class MicroduckPolicy(Policy):
     """ONNX locomotion policy for the Pollen Microduck 14-DOF biped.
 
     Args:
-        onnx_path: Path to a shipped Microduck ``.onnx`` policy (e.g.
-            ``alpha_walking.onnx``). Required unless ``session=`` is injected.
+        onnx_path: A shipped Microduck ``.onnx`` policy: a local file, or the
+            bare name of one (``alpha_walking.onnx``), which is fetched from
+            :data:`MICRODUCK_POLICIES_HF_REPO` on first use when it is not in the
+            working directory. Required unless ``session=`` is injected.
         session: An injected ONNX-like session (see
             :class:`~strands_robots.policies.microduck._session.MicroduckSession`)
             for tests / non-onnxruntime hosts.
@@ -594,11 +657,7 @@ class MicroduckPolicy(Policy):
             extra="microduck",
             purpose="running the Microduck locomotion graph (pass `session=` to inject a stub)",
         )
-        if not onnx_path.exists():
-            raise FileNotFoundError(
-                f"Microduck ONNX policy not found: {onnx_path}. Shipped weights live in "
-                "Pollen's microduck repo under policies/*.onnx (e.g. alpha_walking.onnx)."
-            )
+        onnx_path = resolve_microduck_weight(onnx_path)
         sess = ort.InferenceSession(str(onnx_path), providers=providers)  # type: ignore[attr-defined]
         logger.info("Microduck ONNX session ready: %s (providers=%s)", onnx_path.name, sess.get_providers())
         return sess  # onnxruntime.InferenceSession satisfies MicroduckSession structurally

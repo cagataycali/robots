@@ -26,15 +26,15 @@ Examples::
 
     export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
     python examples/microduck/render_video.py \
-        --onnx ../microduck/policies/alpha_walking.onnx \
+        --onnx alpha_walking.onnx \
         --vx 0.3 --duration 8 --out /tmp/microduck_viz/walk_forward.mp4
 
     python examples/microduck/render_video.py \
-        --onnx ../microduck/policies/alpha_walking.onnx \
+        --onnx alpha_walking.onnx \
         --vx 0.1 --vyaw 0.6 --duration 6 --out /tmp/microduck_viz/turn.mp4
 
     python examples/microduck/render_video.py \
-        --onnx ../microduck/policies/alpha_stand.onnx \
+        --onnx alpha_stand.onnx \
         --duration 5 --out /tmp/microduck_viz/stand.mp4
 
     # A skill trained in a variant scene names it with --scene. Without one the
@@ -43,12 +43,17 @@ Examples::
     # and the roller covers about 0.7 m/s at --vx 0.3, so 6 s keeps it on the
     # checkerboard; the script says so when a ride runs off the edge.
     python examples/microduck/render_video.py \
-        --onnx ../microduck/policies/roller.onnx --scene scene_rollers.xml \
+        --onnx roller.onnx --scene scene_rollers.xml \
         --vx 0.3 --duration 6 --out /tmp/microduck_viz/roller.mp4
 
     python examples/microduck/render_video.py \
-        --onnx ../microduck/policies/ball_kick_left.onnx --scene scene_ball.xml \
+        --onnx ball_kick_left.onnx --scene scene_ball.xml \
         --vx 0 --duration 4 --out /tmp/microduck_viz/kick.mp4
+
+``--onnx`` takes a local file or the bare name of a weight in Pollen's Hub
+repository (``pollen-robotics/microduck-policies``), which is fetched on first
+use and cached - the ``policies/`` directory of Pollen's git repository, where
+the weights used to live, no longer exists.
 
 Dependencies::
 
@@ -314,7 +319,11 @@ async def _rollout(args):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--onnx", default="../microduck/policies/alpha_walking.onnx")
+    ap.add_argument(
+        "--onnx",
+        default="alpha_walking.onnx",
+        help="a local .onnx file, or the bare name of a weight in pollen-robotics/microduck-policies",
+    )
     ap.add_argument(
         "--scene",
         default=None,
@@ -340,8 +349,12 @@ def main() -> None:
     ap.add_argument("--elevation", type=float, default=-15.0)
     args = ap.parse_args()
 
-    if not os.path.exists(args.onnx):
-        raise SystemExit(f"no such ONNX: {args.onnx}")
+    from strands_robots.policies.microduck import resolve_microduck_weight  # noqa: PLC0415
+
+    try:
+        args.onnx = str(resolve_microduck_weight(args.onnx))
+    except (FileNotFoundError, ImportError) as exc:
+        raise SystemExit(str(exc)) from exc
 
     asyncio.run(_rollout(args))
 

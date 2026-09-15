@@ -3492,8 +3492,11 @@ class MuJoCoSimEngine(
             "# write qpos directly and run forward kinematics (teleport / set an "
             "initial pose, bypassing the actuators). dict is per-joint; list is "
             "ordered and must match one robot's joint count (see get_features). "
-            "The write is all-or-nothing: a dict key that is not a joint of the "
-            "model is an error, not a silent skip (see robot_joint_names). "
+            "The write is all-or-nothing: a dict key that names neither a joint "
+            "of the model (see robot_joint_names) nor, on a robot whose registry "
+            "entry carries joint_labels, one of those labels -- the SO arms "
+            "accept shoulder_pan..gripper for their servo ids, bare or "
+            "'<robot>/<label>' -- is an error, not a silent skip. "
             "Kinematic only: a joint held by a position servo is pulled back "
             "toward the servo's existing setpoint by the next step, and the "
             "success text names those joints; hold=True moves the matching "
@@ -3795,9 +3798,14 @@ class MuJoCoSimEngine(
                     "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
                 }
 
+            # A registry label beside a joint the asset names by servo id or CAD
+            # term (``1 (shoulder_pan)``), so the agent reading this can address
+            # the joint by what it does; ``set_joint_positions`` accepts the label.
+            labels = self._robot_joint_labels(robot)
             text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
             for jnt, vals in state.items():
-                text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+                shown = f"{jnt} ({labels[jnt]})" if jnt in labels else jnt
+                text += f"{shown}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
             if base is not None:
                 p_, q_ = base["position"], base["quaternion"]
                 lv_, av_ = base["linear_velocity"], base["angular_velocity"]
@@ -3809,6 +3817,8 @@ class MuJoCoSimEngine(
                 )
 
             json_payload: dict[str, Any] = {"state": state}
+            if labels:
+                json_payload["joint_labels"] = {jnt: labels[jnt] for jnt in state if jnt in labels}
             if base is not None:
                 json_payload["base"] = base
 
@@ -4933,9 +4943,35 @@ class MuJoCoSimEngine(
                 self._world.step_count += batch
             remaining -= batch
         self._publish_ros_telemetry()
+        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        # A dataset recording is fed by run_policy's per-step hook and by
+        # nothing else. A caller scripting a demonstration with
+        # set_joint_positions + step under an active recording therefore
+        # captures nothing, and until now learned that only from
+        # stop_recording's empty-dataset refusal - after the whole scripted
+        # motion had run. Say it here, on the call that does not record, while
+        # the motion is still ahead. A rollout in flight IS recording (its hook
+        # runs on the executor thread), so the note stays silent then - and
+        # ``policy_running``, the flag this guard reads, is raised for every
+        # rollout that records: ``_announce_rollout`` for run_policy and
+        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
+        # which feeds the recorder by calling add_frame directly. So the note
+        # says "a policy rollout" rather than naming run_policy alone, and
+        # start_recording's advice names all three. The note
+        # LEADS the line: appended after the step summary it was read past
+        # three times in a row by an agent that then reported "all three poses
+        # captured" - the first token of a success result is what gets read.
+        if self._world._backend_state.get("recording") and not any(
+            r.policy_running for r in self._world.robots.values()
+        ):
+            summary = (
+                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
+                "a policy rollout feeds the recorder (start_recording -> run_policy or start_policy "
+                "-> stop_recording) | " + summary
+            )
         return {
             "status": "success",
-            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [{"text": summary}],
         }
 
     def reset(self) -> dict[str, Any]:
