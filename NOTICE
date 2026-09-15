@@ -132,3 +132,12 @@ math from:
     ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
     POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Dashboard 3D twin (strands_robots/dashboard/static/vendor/)
+
+  * three.js r170 (https://github.com/mrdoob/three.js)
+    MIT License, Copyright (c) 2010-2024 three.js authors. three.module.min.js
+    is vendored unmodified; OrbitControls.js has its bare `three` import
+    rewritten to a relative path. See static/vendor/NOTICE.
+--------------------------------------------------------------------------------
