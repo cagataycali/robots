@@ -266,7 +266,7 @@ class TestToolSpecIsHonest:
         # port, and says which sim verbs do NOT exist here.
         assert "get_state" in spec["description"].split("Motion")[0]
         assert "/dev/fake-bus" in spec["description"]
-        assert "No set_joint_positions/move_to" in spec["description"]
+        assert "No move_to/IK here" in spec["description"]
 
     def test_unknown_action_lists_every_real_action(self) -> None:
         hw = _make_hw(FakeLeRobot(calibrated=True))

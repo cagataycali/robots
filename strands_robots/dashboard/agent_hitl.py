@@ -28,7 +28,8 @@ MOTION_ACTIONS: dict[str, frozenset[str]] = {
     # (tool_context.interrupt in ``strands_robots.tools.robot_mesh``) on every
     # physical action, so listing it here would ask the operator twice for one
     # command. So is the Robot agent tool (``strands_robots.hardware_robot``):
-    # its real-mode execute/start run through the shared command gate and spend
+    # its real-mode motion actions (execute/start, set_joint_positions,
+    # set_gripper, set_torque on) run through the shared command gate and spend
     # a grant this hook deposited (consume_grant) rather than asking again.
     # This dict gates only the dashboard's bespoke tools.
     # The direct-serial tools live in ``strands_robots.tools.serial_tool`` and

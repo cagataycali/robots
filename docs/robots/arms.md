@@ -172,8 +172,33 @@ a rollout and the mesh probes use. An arm with **no calibration file** is still
 readable: the degrees are then an estimate from the encoder centre
 (`2048 ticks = 0°`, `4096 ticks/rev`) and the text says so, naming
 `lerobot-calibrate` - which is also why `execute`/`start` refuse on that arm
-until it has run. The motion actions (`execute`, `start`) stop for operator
-approval as before; see [security](../security.md#ros-2--dds-bridge-command-surface).
+until it has run.
+
+## Moving a real arm a little
+
+Three direct actions move the arm without a policy. Each stops for the
+operator's yes (the same gate as `execute`), then writes, waits, and **reads the
+arm back** so the answer is where the joint arrived, not what was sent:
+
+| action | what it does |
+|---|---|
+| `set_joint_positions {positions: {joint: target}}` | targets in the unit `get_state` reports; at most **20° per joint per call** (or the config's `max_relative_target`) - more is refused before anyone is asked; `raw: true` for encoder ticks |
+| `set_gripper {position}` | the same, for the gripper |
+| `set_torque {enabled, joints?}` | `true` holds position (gated); `false` releases the arm - **never gated** |
+
+```python
+agent("Rotate the wrist 5 degrees and tell me where it ended up.")
+# → get_state, then set_joint_positions {"wrist_roll": 7.8}  ← the operator is asked, with the travel shown
+# → "wrist_roll: 2.8° → target 7.8°, actual 7.3° - reached. Torque is ON on wrist_roll (holding) ..."
+```
+
+Torque is enabled on the commanded joints and left on; the text says so and
+names `set_torque enabled=false`. On an uncalibrated arm the command frame is
+the encoder estimate `get_state` reports, and the tool knows no joint limits -
+it says that too. A servo that stalls is reported `NOT reached (error …)`. There
+is no `move_to`/IK on the hardware class - that is the simulation's. Pre-approve
+by name for a headless script with `STRANDS_ROBOT_COMMAND_ALLOW=set_joint_positions`;
+see [security](../security.md#ros-2--dds-bridge-command-surface).
 
 ## Calibrating a Feetech SO arm
 

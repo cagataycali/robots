@@ -55,7 +55,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolInterruptEvent, ToolResultEvent
 from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
-from strands_robots import hardware_observe
+from strands_robots import hardware_motion, hardware_observe
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
@@ -81,9 +81,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The agent-tool actions that dispatch a rollout to real actuators. ``status``
-# and ``stop`` only read or halt, so they are never gated.
-MOTION_ACTIONS = frozenset({"execute", "start"})
+# The agent-tool actions that write to real actuators: a policy rollout
+# (``execute``/``start``) or a direct joint command (``set_joint_positions``,
+# ``set_gripper``, and ``set_torque`` when it ENABLES torque - releasing it is
+# never gated, like ``stop``). ``status`` and the observe actions only read.
+MOTION_ACTIONS = frozenset({"execute", "start", "set_joint_positions", "set_gripper", "set_torque"})
 
 # Pre-approve motion actions by name (comma-separated, ``*`` for all) for
 # headless runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
@@ -2875,10 +2877,12 @@ class Robot(TeleopMixin, AgentTool):
                 "Observe (no approval, writes nothing): get_state (alias get_robot_state) = joint positions in "
                 "degrees + raw ticks, torque on/off, voltage; list_cameras; render = save one camera frame "
                 "(camera_name, optional output_path). "
-                "Motion (asks the operator first): execute (blocking policy rollout, instruction required), "
-                "start (same, async). status = task state; stop = cancel the rollout. "
-                "No set_joint_positions/move_to here: a policy is the only way to command motion on this real "
-                "robot. To find out where the arm is, call get_state - never execute."
+                "Motion (asks the operator first, then reads back): set_joint_positions {positions: {joint: "
+                "target}} in the unit get_state reports, at most 20° per joint per call unless the config declares "
+                "max_relative_target (raw=true for encoder ticks); set_gripper {position}; set_torque {enabled, "
+                "joints?} (false releases the arm and is never gated); execute (blocking policy rollout, instruction "
+                "required); start (same, async). status = task state; stop = cancel the rollout. "
+                "No move_to/IK here (sim only). To find out where the arm is, call get_state - never execute."
             ),
             "inputSchema": {
                 "json": {
@@ -2888,19 +2892,53 @@ class Robot(TeleopMixin, AgentTool):
                             "type": "string",
                             "description": (
                                 "get_state | get_robot_state | list_cameras | render (observe, ungated); "
-                                "execute | start (motion, operator approval); status | stop"
+                                "set_joint_positions | set_gripper | set_torque | execute | start (motion, operator "
+                                "approval); status | stop"
                             ),
                             "enum": [
                                 "get_state",
                                 "get_robot_state",
                                 "list_cameras",
                                 "render",
+                                "set_joint_positions",
+                                "set_gripper",
+                                "set_torque",
                                 "execute",
                                 "start",
                                 "status",
                                 "stop",
                             ],
                             "default": "get_state",
+                        },
+                        "positions": {
+                            "type": "object",
+                            "description": (
+                                "set_joint_positions: {joint name: target} in the unit get_state reports (degrees; "
+                                "0-100 for a calibrated gripper). Each joint may travel at most the per-call cap."
+                            ),
+                            "additionalProperties": {"type": "number"},
+                        },
+                        "position": {
+                            "type": "number",
+                            "description": "set_gripper: target for the gripper joint (0-100 on a calibrated arm).",
+                        },
+                        "raw": {
+                            "type": "boolean",
+                            "description": "set_joint_positions: targets are raw encoder ticks (0-4095), not degrees.",
+                            "default": False,
+                        },
+                        "settle_s": {
+                            "type": "number",
+                            "description": "set_joint_positions/set_gripper: seconds to wait before reading back (default 0.5, max 3).",
+                        },
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "set_torque: true holds position (gated); false releases the arm (never gated).",
+                        },
+                        "joints": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "set_torque: which joints (default all).",
                         },
                         "camera_name": {
                             "type": "string",
@@ -2976,9 +3014,18 @@ class Robot(TeleopMixin, AgentTool):
         return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
 
     def _gate_motion(
-        self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
+        self,
+        action: str,
+        tool_input: Mapping[str, Any],
+        tool_use: ToolUse,
+        invocation_state: Mapping[str, Any],
+        warning: str | None = None,
     ) -> str | None:
-        """Operator approval for one ``execute``/``start``, before it is dispatched.
+        """Operator approval for one motion action, before it is dispatched.
+
+        ``execute``/``start`` compose their own warning from the instruction
+        and policy; a direct joint command passes ``warning`` naming the joints
+        and the travel, so the operator approves the motion itself.
 
         An ``AgentTool`` receives no ``tool_context`` argument; the SDK builds
         one from the invoking agent for decorated tools, and this builds the
@@ -3012,18 +3059,121 @@ class Robot(TeleopMixin, AgentTool):
         provider = tool_input.get("policy_provider", "groot")
         host = tool_input.get("policy_host", "localhost")
         port = tool_input.get("policy_port")
+        if warning is None:
+            warning = (
+                f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
+                f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched."
+            )
         # ``tool`` is the fixed word "robot" so the interrupt id and the audit
         # source read the same for every robot; the target names which one.
         return gate_motion(
             "robot",
             action,
             self.tool_name_str,
-            f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
-            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched.",
+            warning,
             tool_context,
             allow_env=COMMAND_ALLOW_ENV,
             allow_match=lambda allowed: "*" in allowed or action in allowed,
         )
+
+    def _hardware_error(self, action: str, exc: BaseException) -> dict[str, Any]:
+        """A bus/camera failure as a tool error that names the port and the first checks."""
+        port = getattr(getattr(self.robot, "bus", None), "port", None)
+        lines = str(exc).strip().splitlines()
+        reason = lines[-1] if lines else type(exc).__name__
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{self.tool_name_str}: {action} could not reach the arm on {port!r}: {reason} "
+                        "Check the arm is powered and the port is right (`lerobot-find-port`, or "
+                        "strands_robots._serial_discovery.scan_serial_devices()), and that no other "
+                        "process holds the port (`lsof <port>`)."
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
+    def _positions_for(action: str, tool_input: Mapping[str, Any]) -> Mapping[str, Any]:
+        if action == "set_gripper":
+            if "position" not in tool_input:
+                raise ValueError("set_gripper needs `position` (0-100 on a calibrated arm; see get_state for the unit)")
+            return {"gripper": tool_input["position"]}
+        positions = tool_input.get("positions")
+        if not isinstance(positions, Mapping) or not positions:
+            raise ValueError(
+                "set_joint_positions needs `positions`: {joint name: target}, in the unit get_state reports "
+                "(e.g. {'wrist_roll': 12.5}); pass raw=true to command encoder ticks instead."
+            )
+        return positions
+
+    def _plan_direct(self, action: str, tool_input: Mapping[str, Any]) -> dict[str, Any]:
+        """Read the arm and decide what this call would write; compose the operator's warning.
+
+        Returns ``{"gated": bool, "warning": str}``. Raises ``ValueError`` with
+        the refusal (unknown joint, over-cap travel) BEFORE the operator is asked.
+        """
+        if action == "set_torque":
+            enabled = tool_input.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("set_torque needs `enabled`: true (hold, gated) or false (release, never gated)")
+            joints = tool_input.get("joints")
+            which = ", ".join(map(str, joints)) if joints else "all joints"
+            return {
+                "gated": enabled,
+                "warning": (
+                    f"'set_torque' energises {which} of the real robot {self.tool_name_str!r}: the arm will hold its "
+                    "current position and resist being moved by hand. It needs operator approval."
+                ),
+            }
+        positions = self._positions_for(action, tool_input)
+        plan = hardware_motion.plan_joint_targets(self.robot, positions, raw=bool(tool_input.get("raw", False)))
+        unit = " ticks" if plan["frame"] == "ticks" else "°"
+        travel = "; ".join(
+            f"{j}: {plan['current'][j]:.1f} → {plan['targets'][j]:.1f}{unit} ({plan['deltas'][j]:+.1f})"
+            for j in plan["targets"]
+        )
+        frame = "" if plan["calibrated"] else " (arm NOT calibrated: encoder frame, joint limits unknown)"
+        return {
+            "gated": True,
+            "warning": (
+                f"{action!r} moves the real robot {self.tool_name_str!r} on {plan['port']}: {travel}{frame}. "
+                "Torque will be enabled on those joints and left on. It needs operator approval before it is written."
+            ),
+        }
+
+    def _write_direct(self, action: str, tool_input: Mapping[str, Any]) -> dict[str, Any]:
+        """Perform an approved direct command and read the arm back."""
+        try:
+            if action == "set_torque":
+                joints = tool_input.get("joints")
+                result = hardware_motion.set_torque(
+                    self.robot,
+                    bool(tool_input["enabled"]),
+                    [str(j) for j in joints] if isinstance(joints, (list, tuple)) else None,
+                )
+                return {
+                    "status": "success",
+                    "content": [{"text": hardware_motion.format_torque(self.tool_name_str, result)}, {"json": result}],
+                }
+            positions = self._positions_for(action, tool_input)
+            plan = hardware_motion.move_joints(
+                self.robot,
+                positions,
+                raw=bool(tool_input.get("raw", False)),
+                settle_s=tool_input.get("settle_s", hardware_motion.DEFAULT_SETTLE_S),
+            )
+            plan["robot"] = self.tool_name_str
+            return {
+                "status": "success",
+                "content": [{"text": hardware_motion.format_move(self.tool_name_str, plan)}, {"json": plan}],
+            }
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": f"{self.tool_name_str}: {exc}"}]}
+        except Exception as exc:  # noqa: BLE001 - every hardware failure becomes a tool error that names the port
+            return self._hardware_error(action, exc)
 
     def _observe(self, action: str, tool_input: Mapping[str, Any]) -> dict[str, Any]:
         """Answer one observe action: a read of the arm, never a write to it.
@@ -3090,22 +3240,7 @@ class Robot(TeleopMixin, AgentTool):
             # A refusal this module composed: unknown camera, unsafe path, no cameras.
             return {"status": "error", "content": [{"text": f"{self.tool_name_str}: {exc}"}]}
         except Exception as exc:  # noqa: BLE001 - every hardware failure becomes a tool error that names the port
-            port = getattr(getattr(self.robot, "bus", None), "port", None)
-            lines = str(exc).strip().splitlines()
-            reason = lines[-1] if lines else type(exc).__name__
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"{self.tool_name_str}: {action} could not read the arm on {port!r}: {reason} "
-                            "Check the arm is powered and the port is right (`lerobot-find-port`, or "
-                            "strands_robots._serial_discovery.scan_serial_devices()), and that no other "
-                            "process holds the port (`lsof <port>`)."
-                        )
-                    }
-                ],
-            }
+            return self._hardware_error(action, exc)
 
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
@@ -3122,6 +3257,39 @@ class Robot(TeleopMixin, AgentTool):
                 # Reads. Serial I/O blocks, so each runs off the event loop;
                 # none of them writes a servo register, so none is gated.
                 result = await asyncio.to_thread(self._observe, action, input_data)
+                yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
+
+            elif action in hardware_motion.DIRECT_MOTION_ACTIONS or action == "set_torque":
+                # Direct joint commands. Planned (read + refuse) BEFORE the gate so
+                # the operator is shown the travel that will actually be written
+                # and a refusal costs no approval; written AFTER it.
+                try:
+                    plan = await asyncio.to_thread(self._plan_direct, action, input_data)
+                except ValueError as exc:
+                    yield ToolResultEvent(
+                        self._make_tool_result(
+                            tool_use_id, {"status": "error", "content": [{"text": f"{self.tool_name_str}: {exc}"}]}
+                        )
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001 - a bus that cannot be read is a tool error naming the port
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, self._hardware_error(action, exc)))
+                    return
+                if plan.get("gated", True):
+                    try:
+                        refusal = self._gate_motion(action, input_data, tool_use, invocation_state, plan["warning"])
+                    except InterruptException as exc:
+                        yield ToolInterruptEvent(tool_use, [exc.interrupt])
+                        return
+                    if refusal is not None:
+                        yield ToolResultEvent(
+                            self._make_tool_result(
+                                tool_use_id,
+                                {"status": "error", "content": [{"text": f"{self.tool_name_str}: {refusal}"}]},
+                            )
+                        )
+                        return
+                result = await asyncio.to_thread(self._write_direct, action, input_data)
                 yield ToolResultEvent(self._make_tool_result(tool_use_id, result))
 
             elif action == "execute":
