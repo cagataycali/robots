@@ -73,7 +73,7 @@ import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
@@ -6679,20 +6679,37 @@ class MuJoCoSimEngine(
         if flat.get("path"):
             payload["video"] = flat
 
+    #: Parameters through which a method already spells "which camera".
+    #: A method that declares one of these names the camera there, so its
+    #: ``name`` is a different fact and ``camera_name`` must not be bound to
+    #: it: ``start_cameras_recording`` selects cameras through ``cameras``
+    #: and its ``name`` is the output filename tag.
+    _CAMERA_NAMING_PARAMS: ClassVar[frozenset[str]] = frozenset({"camera_name", "cameras"})
+
     @staticmethod
     def _camera_name_alias_target(action: str, method_param_names: set[str]) -> str | None:
         """The parameter ``camera_name`` stands for on a camera action, or ``None``.
 
         ``add_camera`` / ``remove_camera`` declare ``name``; ``render`` and its
-        siblings declare ``camera_name``. Both mean "which camera". On an
-        action whose name says ``camera`` and whose method has ``name`` but no
-        ``camera_name`` of its own, ``camera_name`` is accepted for ``name``.
-        Anywhere else the answer is ``None`` and ``camera_name`` keeps whatever
-        meaning the method gives it (or none - ``render``'s own parameter is
-        never rewritten, and a ``camera_name`` sent to ``add_object`` stays
-        unknown).
+        siblings declare ``camera_name``. Both mean "which camera", so on those
+        two ``camera_name`` is accepted for ``name``.
+
+        The answer is ``None`` unless the action's name says ``camera`` AND
+        ``name`` is the camera on it - which requires that the method has no
+        other parameter naming one (:attr:`_CAMERA_NAMING_PARAMS`). ``render``
+        spells it ``camera_name``, so its own parameter is never rewritten;
+        ``start_cameras_recording`` spells it ``cameras``, so its ``name`` (the
+        output filename tag) is left alone - binding a camera into it recorded
+        every camera in the scene under that tag and reported success, where
+        the refusal it replaced names ``cameras`` in its ``Valid:`` list. On a
+        non-camera action such as ``add_object``, ``camera_name`` stays
+        unknown.
         """
-        if "camera" not in action or "camera_name" in method_param_names or "name" not in method_param_names:
+        if (
+            "camera" not in action
+            or not method_param_names.isdisjoint(MuJoCoSimEngine._CAMERA_NAMING_PARAMS)
+            or "name" not in method_param_names
+        ):
             return None
         return "name"
 
