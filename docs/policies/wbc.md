@@ -219,6 +219,46 @@ also the way to evaluate WBC at a fixed velocity, since `policy_kwargs` is wired
 on the control path (`run_policy` / `start_policy` / `tell()`), not on
 `eval_policy`.
 
+### Recording it
+
+`run_policy(video={...})` records from the scene's `default` camera unless told
+otherwise, and that camera frames the origin from a fixed vantage: a G1 walking
+at 0.4 m/s reaches the edge of the frame within a couple of seconds and the rest
+of the clip is empty floor. Add a camera first and name it in `video`. Mounted
+on the pelvis it rides with the robot and turns with it - `position` and
+`target` are then in the pelvis frame, x forward:
+
+```python
+sim = Robot("unitree_g1")
+sim.add_camera(
+    name="follow",
+    parent_body="unitree_g1/pelvis",
+    position=[-2.6, -1.6, 1.1],     # behind and to the right, a little above
+    target=[0.4, 0.0, -0.3],        # looking just ahead of the base
+    fov=45,
+    width=1280,
+    height=720,
+)
+sim.run_policy(
+    robot_name="unitree_g1",
+    policy_provider="wbc",
+    policy_config={"checkpoint": "/path/to/grootwbc-g1", "walk": True},
+    policy_kwargs={"target_velocity": [0.5, 0.0, 0.3]},
+    duration=6.0,
+    control_frequency=50.0,
+    action_horizon=1,
+    video={"path": "/tmp/g1_follow.mp4", "fps": 30, "camera": "follow", "width": 1280, "height": 720},
+)
+```
+
+A fixed camera works when it is placed to cover the path - the clip in the next
+section was shot from `add_camera(name="side", position=[1.7, -4.6, 1.4],
+target=[1.7, 0.0, 0.75], fov=42)`, a side view centred on the 3 m the robot
+covers in 8 s at 0.45 m/s. Either way the camera has to be added before the
+rollout; `add_camera` is refused while a policy is running.
+[`examples/locomotion/scripted_g1.py`](https://github.com/strands-labs/robots/blob/main/examples/locomotion/scripted_g1.py)
+does the pelvis mount before its first segment.
+
 ## Watching it walk (torque-control deploy)
 
 [`examples/wbc/wbc_g1_torque_deploy.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc/wbc_g1_torque_deploy.py)
