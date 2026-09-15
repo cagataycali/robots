@@ -42,12 +42,21 @@ def _load() -> ModuleType:
 class _Robot:
     """Answers ``run_policy`` by writing a clip of a known length to the video path."""
 
+    add_camera_status = "success"
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.video_paths: list[str] = []
+        self.cameras: list[dict[str, Any]] = []
+        self.recorded_from: list[str] = []
+
+    def add_camera(self, **kwargs: Any) -> dict[str, Any]:
+        self.cameras.append(kwargs)
+        return {"status": self.add_camera_status, "content": [{"text": f"camera {kwargs.get('name')!r}"}]}
 
     def run_policy(self, **kwargs: Any) -> dict[str, Any]:
         path = kwargs["video"]["path"]
         self.video_paths.append(path)
+        self.recorded_from.append(kwargs["video"]["camera"])
         n = _FRAMES_PER_SEGMENT[len(self.video_paths) - 1]
         rng = np.random.default_rng(len(self.video_paths))
         encode_clip([rng.integers(0, 255, size=(24, 32, 3), dtype=np.uint8) for _ in range(n)], path, fps=30)
@@ -132,3 +141,44 @@ class TestTheArtifact:
         text = _EXAMPLE.read_text(encoding="utf-8")
         assert "append each segment to one MP4" not in text
         assert "concat_clips" in text
+
+
+class TestTheCameraRidesWithTheRobot:
+    """The ``default`` camera frames the origin; a walking G1 leaves it within ~2 s."""
+
+    def test_a_pelvis_mounted_camera_is_added_before_the_first_rollout(self, example, tmp_path: Path) -> None:
+        module, robots = example
+        out = tmp_path / "walk.mp4"
+
+        assert module.main(["--checkpoint", "/ckpt", "--mp4", str(out)]) == 0
+
+        (robot,) = robots
+        (camera,) = robot.cameras
+        assert camera["parent_body"] == "unitree_g1/pelvis"
+        assert camera["name"] == module.FOLLOW_CAMERA["name"] != "default"
+        assert camera["width"] == 640 and camera["height"] == 480
+
+    def test_every_segment_is_recorded_from_it(self, example, tmp_path: Path) -> None:
+        module, robots = example
+
+        module.main(["--checkpoint", "/ckpt", "--mp4", str(tmp_path / "walk.mp4")])
+
+        (robot,) = robots
+        assert robot.recorded_from == [module.FOLLOW_CAMERA["name"]] * len(module.SCHEDULE)
+
+    def test_a_refused_camera_stops_the_run_before_any_rollout(
+        self, example, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        module, robots = example
+        monkeypatch.setattr(_Robot, "add_camera_status", "error")
+
+        assert module.main(["--checkpoint", "/ckpt", "--mp4", str(tmp_path / "walk.mp4")]) == 1
+
+        (robot,) = robots
+        assert robot.video_paths == []
+        assert "add_camera" in capsys.readouterr().out
+
+    def test_the_docstring_promise_matches_the_code(self) -> None:
+        text = _EXAMPLE.read_text(encoding="utf-8")
+        assert "add_camera(parent_body=...)" in text
+        assert '"camera": "default"' not in text

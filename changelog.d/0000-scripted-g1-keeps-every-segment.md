@@ -11,6 +11,8 @@ to end through `encode_clip`, reading the rate from the first clip's header
 unless one is passed, and refuses an empty list, a missing clip, a segment of
 another frame size, or a clip that declares no rate - each naming the clip.
 The example records each segment to `<stem>.seg<i>.mp4`, joins them into
-`--mp4`, removes the segments unless `--keep-segments`, and says why; its
-docstring also notes that the G1 scene's `default` camera loses a walking robot
-within seconds and that `add_camera` keeps it framed.
+`--mp4`, removes the segments unless `--keep-segments`, and says why. It also
+mounts a camera on the pelvis (`add_camera(parent_body="unitree_g1/pelvis")`)
+before the first rollout and records every segment from it: the scene's
+`default` camera frames the origin from a fixed vantage and loses a walking G1
+within a couple of seconds, so the demo it recorded was mostly empty floor.

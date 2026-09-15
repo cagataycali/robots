@@ -17,8 +17,10 @@ the last one - a two-second clip of the robot halting. Pass ``--keep-segments``
 to leave the per-segment files in place.
 
 The G1 scene's ``default`` camera frames the origin from a fixed vantage, so a
-walking robot reaches the edge of the frame within a couple of seconds; a
-tracking camera added with ``add_camera`` before the rollout keeps it centred.
+walking robot reaches the edge of the frame within a couple of seconds. The
+script mounts a camera on the pelvis (``add_camera(parent_body=...)``) before
+the first rollout - :data:`FOLLOW_CAMERA` - so the view rides with the robot
+and every segment is recorded from it.
 
 Usage::
 
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 from strands_robots import Robot
 from strands_robots.rendering import concat_clips
@@ -45,6 +48,19 @@ SCHEDULE: list[tuple[float, dict[str, list[float]]]] = [
     (2.0, {"target_velocity": [0.6, 0.0, 0.0]}),
     (2.0, {"target_velocity": [0.0, 0.0, 0.0]}),
 ]
+
+
+#: A camera that rides on the pelvis, behind and to the right of the robot,
+#: looking a little ahead of it. ``position``/``target`` are in the pelvis frame
+#: (x forward), so it follows the walk and turns with the veer; the base's
+#: pitch and roll while walking are small enough to read as a hand-held follow.
+FOLLOW_CAMERA: dict[str, Any] = {
+    "name": "follow",
+    "parent_body": "unitree_g1/pelvis",
+    "position": [-2.6, -1.6, 1.1],
+    "target": [0.4, 0.0, -0.3],
+    "fov": 45,
+}
 
 
 def segment_path(mp4: str | Path, index: int) -> Path:
@@ -65,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     robot = Robot("unitree_g1", mode="sim")
+    added = robot.add_camera(width=640, height=480, **FOLLOW_CAMERA)
+    if added.get("status") != "success":
+        print(f"add_camera: {added['content'][0]['text']}")
+        return 1
     policy_config = {"checkpoint": args.checkpoint, "walk": True}
     status = 0
     segments: list[Path] = []
@@ -79,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             policy_kwargs=goal,
             duration=duration,
             control_frequency=50.0,
-            video={"path": str(segment), "fps": 30, "camera": "default", "width": 640, "height": 480},
+            video={"path": str(segment), "fps": 30, "camera": FOLLOW_CAMERA["name"], "width": 640, "height": 480},
         )
         print(f"segment {i} goal={goal}: {result['content'][0]['text']}")
         if result.get("status") != "success":
