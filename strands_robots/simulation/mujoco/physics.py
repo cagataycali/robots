@@ -18,6 +18,7 @@ Exposes the deep MuJoCo C API through clean Python methods:
 import logging
 import math
 import numbers
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -39,7 +40,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_geom_properties,
     refresh_body_inertial_from_geometry,
 )
-from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
+from strands_robots.simulation.safe_output import atomic_write_bytes, resolve_sandbox_root, validate_output_path
 from strands_robots.utils import (
     BOOLEAN_VECTOR_REASON,
     boolean_flag_error,
@@ -520,6 +521,34 @@ def _geom_type_name(mj: Any, geom_type: int) -> str:
         return str(mj.mjtGeom(int(geom_type)).name).removeprefix("mjGEOM_").lower()
     except ValueError:
         return f"type_{int(geom_type)}"
+
+
+def scene_export_root() -> Path:
+    """Where a relative ``export_xml(output_path=...)`` lands.
+
+    Defaults to ``~/.strands_robots/scenes``; override with the
+    ``STRANDS_ROBOTS_SCENE_ROOT`` env var (read at call time). The sibling of
+    the render sandbox (``STRANDS_ROBOTS_RENDER_ROOT``), resolved the same way.
+    """
+    return resolve_sandbox_root("STRANDS_ROBOTS_SCENE_ROOT", "scenes")
+
+
+def anchor_relative_export_path(output_path: str) -> str:
+    """Anchor a relative ``export_xml`` destination to :func:`scene_export_root`.
+
+    An absolute path (after ``~`` expansion) is returned unchanged - the
+    historic contract that ``export_xml`` writes to any absolute destination
+    holds. A relative one, bare (``"scene.xml"``) or with directories
+    (``"handoff/scene.xml"``), is joined under the scenes directory instead of
+    resolving against the process CWD. Nothing is validated here: the result
+    still goes through :func:`~strands_robots.simulation.safe_output.validate_output_path`,
+    whose traversal check scans every part of the joined path, so ``".."``
+    cannot climb back out of the anchor.
+    """
+    raw = Path(output_path).expanduser()
+    if raw.is_absolute() or not output_path.strip():
+        return output_path
+    return str(scene_export_root() / raw)
 
 
 class PhysicsMixin:
@@ -2815,10 +2844,16 @@ class PhysicsMixin:
         ``output_path`` is treated as untrusted (LLM-callable tool): a ``..``
         traversal segment, a symlinked target, shell metacharacters, and
         backslash separators are rejected with ``status=error``. An absolute
-        destination is accepted (the historic contract for this sink). The
-        write is atomic and the success text reports the RESOLVED path. A
-        destination the filesystem cannot accept (a directory, an unwritable
-        parent) is reported the same way; a missing parent is created.
+        destination is accepted (the historic contract for this sink). A
+        RELATIVE destination - a bare name or one with directories - lands
+        under the scenes directory (:func:`scene_export_root`:
+        ``~/.strands_robots/scenes``, or ``STRANDS_ROBOTS_SCENE_ROOT``), not the
+        process working directory: an agent asked to "save the scene" used to
+        drop ``scene.xml`` into whatever directory the process was started
+        from, the user's git checkout included. The write is atomic and the
+        success text reports the RESOLVED path. A destination the filesystem
+        cannot accept (a directory, an unwritable parent) is reported the same
+        way; a missing parent is created.
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2850,10 +2885,17 @@ class PhysicsMixin:
             # metacharacters before writing. Guards-only (no sandbox root) keeps
             # the historic contract that an absolute destination is accepted -
             # unlike render(), whose output_path is documented as a newer,
-            # sandboxed-by-design feature. The write is atomic so a crash
-            # mid-export cannot truncate an existing file at the destination.
+            # sandboxed-by-design feature. A relative destination is anchored
+            # to the scenes directory first: resolving it against the CWD made
+            # the most natural agent call ("save it as scene.xml") litter the
+            # directory the process was started from. The anchoring happens
+            # BEFORE the guard so the traversal, symlink and metacharacter
+            # checks inspect the destination actually opened. The write is
+            # atomic so a crash mid-export cannot truncate an existing file at
+            # the destination.
+            destination = anchor_relative_export_path(output_path)
             try:
-                safe = validate_output_path(output_path, sandbox_root=None, allow_abs=True)
+                safe = validate_output_path(destination, sandbox_root=None, allow_abs=True)
             except ValueError as e:
                 return {"status": "error", "content": [{"text": f"export_xml: {e}"}]}
             try:
