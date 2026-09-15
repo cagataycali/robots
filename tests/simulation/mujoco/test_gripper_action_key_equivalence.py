@@ -107,7 +107,7 @@ def _aid(model, name):
 def _ctrl_after(model, action):
     """Apply ``action`` to a fresh MjData and return the ctrl vector."""
     data = mujoco.MjData(model)
-    RenderingMixin()._apply_action_by_name(model, data, action, "", mujoco)
+    RenderingMixin()._apply_action_by_name(model, data, action, "", mujoco, "")
     return data.ctrl.copy()
 
 
@@ -158,7 +158,7 @@ def test_actuator_name_symmetric_tendon_command_passes_verbatim():
     m = mujoco.MjModel.from_xml_string(_XML_SYMMETRIC)
     sym = _aid(m, "sym_act")
     data = mujoco.MjData(m)
-    RenderingMixin()._apply_action_by_name(m, data, {"sym_act": -0.5}, "", mujoco)
+    RenderingMixin()._apply_action_by_name(m, data, {"sym_act": -0.5}, "", mujoco, "")
     assert data.ctrl[sym] == pytest.approx(-0.5)
 
 

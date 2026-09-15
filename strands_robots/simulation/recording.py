@@ -1117,8 +1117,9 @@ class DatasetRecordingMixin:
         #   3. Nothing ever captured (frame_count == 0): fail loudly instead of
         #      writing a 0-frame dataset. This happens when the rollout was
         #      driven by eval_policy / evaluate / replay_episode or a bare step
-        #      loop - none of which feed the active recorder (only run_policy's
-        #      on_frame hook calls add_frame). Previously stop_recording reported
+        #      loop - none of which feed the active recorder (only a rollout's
+        #      on_frame hook calls add_frame, and both run_policy and
+        #      start_policy launch one). Previously stop_recording reported
         #      success with "0 frames, 0 episode(s)", silently producing a
         #      dataset with only meta/info.json (no parquet/video).
         pending = getattr(recorder, "episode_frame_count", 0)

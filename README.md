@@ -51,6 +51,7 @@ Agent(tools=[robot])("pick up the red cube")
 ## Install
 
 ```bash
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install "strands-robots[sim-mujoco]"   # plain pip works too
 ```
 
@@ -99,6 +100,7 @@ start with the [Quickstart](docs/getting-started/quickstart.md) and [Architectur
 ## Development
 
 ```bash
+uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[all,dev]"
 hatch run test && hatch run lint   # pytest; ruff + mypy
 ```

@@ -646,8 +646,11 @@ copy the referenced asset trees too, or re-compose the scene there from the same
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
 
 A discovered camera is registered under its short MJCF name (`wrist`), and the
-compiled model also carries it namespaced (`so101/wrist`); `render` takes the
-namespaced form, `get_observation` keys on the short one. The short name is
+compiled model also carries it namespaced (`so101/wrist`). Either spelling
+addresses it on every camera surface - `render`, `render_depth`, `get_frame`,
+`get_camera_params` and the recorders - the same way a body name may be bare or
+namespaced; `get_observation` keys its frame on the short one, and
+`list_cameras` offers both. The short name is
 first-come across robots: when a second robot declares a camera whose short name
 is already taken, that camera is registered under its namespaced name instead
 (logged, naming both), so two arms that both declare `wrist` give you `wrist` and

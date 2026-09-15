@@ -48,6 +48,7 @@ def _make_mesh(peer_id: str) -> Mesh:
 
 
 def _run_start(mesh: Mesh, caplog: pytest.LogCaptureFixture) -> None:
+    mesh_core._reset_posture_warnings()  # posture warnings are once per process
     with patch.object(mesh_core, "get_session", return_value=_StubSession()):
         with patch.object(mesh_core, "release_session"):
             with patch.object(mesh, "_heartbeat_loop"), patch.object(mesh, "_state_loop"):

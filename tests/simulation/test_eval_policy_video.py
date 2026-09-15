@@ -95,7 +95,7 @@ class TestEvalPolicyVideo:
             policy_provider="mock",
             n_episodes=3,
             max_steps=5,
-            video={"path": str(base), "camera": "side", "fps": 10},
+            video={"path": str(base), "camera": "nonexistent_cam", "fps": 10},
         )
         assert result["status"] == "error", result
         text = result["content"][0]["text"].lower()

@@ -117,7 +117,7 @@ from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesM
 from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
-from strands_robots.simulation.mujoco.rendering import RenderingMixin
+from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
     eject_camera_from_scene,
@@ -602,6 +602,7 @@ class MuJoCoSimEngine(
         peer_id: str | None = None,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
+        render_dir: str | os.PathLike[str] | None = None,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -652,6 +653,19 @@ class MuJoCoSimEngine(
                 with a :class:`ValueError` during construction whether or not
                 ``ros2_bridge`` is set, so a backend that only publishes later
                 still rejects it up front. Defaults to ``0``.
+            render_dir: Directory that ``render(output_path=...)`` may write
+                into for THIS Simulation - its render sandbox. The model
+                supplies ``output_path`` and cannot move the sandbox; the
+                developer constructing the Simulation can, here, without an
+                environment variable set before the process started. A bare
+                filename lands in this directory; an absolute path outside it
+                is refused as before. Created on the first render if absent.
+                ``None`` (the default) keeps the process-wide sandbox
+                (``STRANDS_ROBOTS_RENDER_ROOT``, else
+                ``~/.strands_robots/renders``). Reaches here from
+                ``Robot(name, mode="sim", render_dir=...)`` through the factory's
+                ``**kwargs``. A value that cannot name a directory (a non-path
+                type, an empty string) is refused with a :class:`ValueError`.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -702,6 +716,10 @@ class MuJoCoSimEngine(
         for _param, _value in (("default_width", default_width), ("default_height", default_height)):
             if (dim_err := positive_count_error(_value, _param, "MuJoCoSimEngine")) is not None:
                 raise ValueError(dim_err)
+        # Same rule as the dimensions: a constructor argument that cannot mean
+        # what it says is refused here, before any ROS 2 node exists.
+        if render_dir is not None and (dir_err := render_dir_error(render_dir)) is not None:
+            raise ValueError(f"MuJoCoSimEngine: {dir_err}")
         # ``mesh`` is resolved here, above ``_init_ros_bridge``, for the reason
         # stated immediately above: it is the one remaining constructor argument
         # that can be refused, and ``_validated_mesh_handle``'s ``TypeError``
@@ -721,6 +739,9 @@ class MuJoCoSimEngine(
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
+        #: This Simulation's render sandbox, or ``None`` for the process default.
+        #: Resolved once here so ``render`` confines against the on-disk location.
+        self.render_dir: Path | None = resolve_render_dir(render_dir) if render_dir is not None else None
 
         # Mesh attributes are stored plainly (no property wrapper) so
         # downstream code can swap in a real mesh client after
@@ -968,7 +989,7 @@ class MuJoCoSimEngine(
         if unresolved:
             # Surface the actual valid actuator names so the user can
             # self-correct without inspecting the MJCF by hand.
-            valid_keys = self._get_valid_action_keys(self._world.robots[robot_name].namespace or "")
+            valid_keys = self._get_valid_action_keys(robot_name)
             hint = f" Valid keys: {valid_keys}" if valid_keys else ""
             return {
                 "status": "error",
@@ -2000,6 +2021,12 @@ class MuJoCoSimEngine(
         model's own offset beside it whenever the two differ, so a spawn that
         did not land where it was asked is visible in the result instead of
         having to be measured with :meth:`get_body_state`.
+
+        The summary's last line names the next step THIS robot can take, which
+        is ``run_policy`` only when the model compiled with actuators. A model
+        with none (a bare URDF arm, or a registry pack whose only document
+        declares no ``<actuator>``) is offered :meth:`actuate_robot` instead --
+        see :meth:`_next_step_after_add`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2311,7 +2338,7 @@ class MuJoCoSimEngine(
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
-                            f"Run policy: action='run_policy', robot_name='{name}'"
+                            f"{self._next_step_after_add(name, robot)}"
                             f"{hint_line}"
                         )
                     }
@@ -2322,6 +2349,46 @@ class MuJoCoSimEngine(
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+
+    def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
+        """Name the next step the robot just added can actually take.
+
+        An actuated robot is invited to ``run_policy``, which is what the
+        summary has always offered. A model that compiles with NO actuators
+        cannot take that step: ``send_action`` has no key to resolve, so a
+        policy bound to it can only ever emit an empty action, and the two
+        surfaces that consume one already refuse exactly that -- the
+        all-unresolved abort in :meth:`PolicyRunner.run` and
+        :func:`uncommanded_eval_error` for :meth:`eval_policy`. Both reach the
+        verdict only AFTER a full rollout has been paid for, so repeating the
+        ``run_policy`` invitation here sends the caller down a path this door
+        already knows ends in a refusal.
+
+        Such a model is still worth adding -- rendering, IK and forward
+        kinematics need no actuator -- so it is offered
+        :meth:`actuate_robot` instead, the in-tree remedy that adds a position
+        servo per hinge/slide joint and makes ``run_policy`` the right next
+        step. A bare URDF arm loads this way by construction (URDF has no
+        actuator concept), which is the case ``actuate_robot`` was written for.
+
+        Args:
+            name: Instance label the robot was registered under, so the
+                offered call is copy-pasteable rather than a shape to fill in.
+            robot: The robot just added, read for its resolved actuator
+                ownership (:attr:`SimRobot.actuator_ids`) -- the same count the
+                ``Actuators:`` line above reports, so the two cannot disagree.
+
+        Returns:
+            One summary line naming an action and its ``robot_name``.
+        """
+        if robot.actuator_ids:
+            return f"Run policy: action='run_policy', robot_name='{name}'"
+        return (
+            f"No actuators: nothing can drive '{name}' yet -- send_action has no key to "
+            f"resolve, so run_policy would advance physics without commanding it. "
+            f"Rendering and IK work as-is; to drive it, add a position servo per joint "
+            f"first: action='actuate_robot', robot_name='{name}'"
+        )
 
     def _keyframe_home_state(
         self, resolved_path: str, keyframe: str | int
@@ -2908,14 +2975,17 @@ class MuJoCoSimEngine(
         * a tendon-driven gripper is an *actuator* with no matching joint name.
 
         Keying a policy by :meth:`robot_joint_names` in those cases makes the
-        affected DOFs silently no-op. The namespace short-names are produced by
-        :meth:`_get_valid_action_keys`, which strips the trailing-slash
-        namespace prefix (e.g. ``"xarm7/"``).
+        affected DOFs silently no-op. The keys are produced by
+        :meth:`_get_valid_action_keys`, which reads the robot's resolved
+        actuator ownership and strips the trailing-slash namespace prefix
+        (e.g. ``"xarm7/"``) from the actuators that carry one. An actuator that
+        carries no prefix -- the ``"<robot>_act_<joint>"`` position servos
+        :meth:`actuate_robot` injects -- is reported verbatim, so an actuated
+        URDF arm advertises the keys that drive it rather than none.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
             return []
-        namespace = self._world.robots[robot_name].namespace or ""
-        return self._get_valid_action_keys(namespace)
+        return self._get_valid_action_keys(robot_name)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
@@ -2923,8 +2993,8 @@ class MuJoCoSimEngine(
         Enables zero-config IK for an eef/cartesian-delta policy: the policy
         auto-discovers its end-effector frame from the model scoped to this
         robot's namespace. No-op for policies without ``set_sim_context``, which
-        is every shipped provider today; never fails a rollout on a binding
-        error.
+        is every shipped provider but ``MockPolicy`` - it reads the ctrlranges it
+        must command inside; never fails a rollout on a binding error.
         """
         ctx = getattr(policy, "set_sim_context", None)
         if not callable(ctx):
@@ -3422,8 +3492,11 @@ class MuJoCoSimEngine(
             "# write qpos directly and run forward kinematics (teleport / set an "
             "initial pose, bypassing the actuators). dict is per-joint; list is "
             "ordered and must match one robot's joint count (see get_features). "
-            "The write is all-or-nothing: a dict key that is not a joint of the "
-            "model is an error, not a silent skip (see robot_joint_names). "
+            "The write is all-or-nothing: a dict key that names neither a joint "
+            "of the model (see robot_joint_names) nor, on a robot whose registry "
+            "entry carries joint_labels, one of those labels -- the SO arms "
+            "accept shoulder_pan..gripper for their servo ids, bare or "
+            "'<robot>/<label>' -- is an error, not a silent skip. "
             "Kinematic only: a joint held by a position servo is pulled back "
             "toward the servo's existing setpoint by the next step, and the "
             "success text names those joints; hold=True moves the matching "
@@ -3725,9 +3798,14 @@ class MuJoCoSimEngine(
                     "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
                 }
 
+            # A registry label beside a joint the asset names by servo id or CAD
+            # term (``1 (shoulder_pan)``), so the agent reading this can address
+            # the joint by what it does; ``set_joint_positions`` accepts the label.
+            labels = self._robot_joint_labels(robot)
             text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
             for jnt, vals in state.items():
-                text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+                shown = f"{jnt} ({labels[jnt]})" if jnt in labels else jnt
+                text += f"{shown}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
             if base is not None:
                 p_, q_ = base["position"], base["quaternion"]
                 lv_, av_ = base["linear_velocity"], base["angular_velocity"]
@@ -3739,6 +3817,8 @@ class MuJoCoSimEngine(
                 )
 
             json_payload: dict[str, Any] = {"state": state}
+            if labels:
+                json_payload["joint_labels"] = {jnt: labels[jnt] for jnt in state if jnt in labels}
             if base is not None:
                 json_payload["base"] = base
 
@@ -4863,9 +4943,35 @@ class MuJoCoSimEngine(
                 self._world.step_count += batch
             remaining -= batch
         self._publish_ros_telemetry()
+        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        # A dataset recording is fed by run_policy's per-step hook and by
+        # nothing else. A caller scripting a demonstration with
+        # set_joint_positions + step under an active recording therefore
+        # captures nothing, and until now learned that only from
+        # stop_recording's empty-dataset refusal - after the whole scripted
+        # motion had run. Say it here, on the call that does not record, while
+        # the motion is still ahead. A rollout in flight IS recording (its hook
+        # runs on the executor thread), so the note stays silent then - and
+        # ``policy_running``, the flag this guard reads, is raised for every
+        # rollout that records: ``_announce_rollout`` for run_policy and
+        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
+        # which feeds the recorder by calling add_frame directly. So the note
+        # says "a policy rollout" rather than naming run_policy alone, and
+        # start_recording's advice names all three. The note
+        # LEADS the line: appended after the step summary it was read past
+        # three times in a row by an agent that then reported "all three poses
+        # captured" - the first token of a success result is what gets read.
+        if self._world._backend_state.get("recording") and not any(
+            r.policy_running for r in self._world.robots.values()
+        ):
+            summary = (
+                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
+                "a policy rollout feeds the recorder (start_recording -> run_policy or start_policy "
+                "-> stop_recording) | " + summary
+            )
         return {
             "status": "success",
-            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [{"text": summary}],
         }
 
     def reset(self) -> dict[str, Any]:
@@ -5235,7 +5341,16 @@ class MuJoCoSimEngine(
                 return [n for n in pool if n.startswith(prefix)]
 
             joint_names = robot.joint_names or _scoped(all_joint_names)
-            actuator_names = _scoped(all_actuator_names)
+            # Ownership, not prefix spelling -- the same rule ``n_actuators``
+            # below already reports. ``actuate_robot``'s injected position
+            # servos are named ``"<robot>_act_<joint>"`` and carry no namespace,
+            # so ``_scoped`` dropped every one of them and this line read
+            # "Actuators (14): " with nothing after the colon.
+            actuator_names = [
+                name
+                for act_id in robot.actuator_ids
+                if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id))
+            ]
             camera_names = _scoped(all_camera_names)
 
             robots_info = {
@@ -5614,6 +5729,64 @@ class MuJoCoSimEngine(
             }
         return None
 
+    def _world_readiness_sentence(self) -> str:
+        """The opening sentence of the tool description, written from the live world.
+
+        The description is on the LLM hot path and is read before the first
+        call, so it must describe the session the agent is actually joining.
+        ``Robot("so101")`` creates the world and adds the robot before the
+        agent ever sees the tool; a description that still said "start with
+        create_world" sent the first call of every such session into a
+        refusal ("a world already exists"). Measured over eight agent sessions
+        on six embodiments, that refusal was the first tool result in all
+        eight. With a world present this names the robots it holds and the
+        joints an agent can address, and points at the actions that build on
+        it; with no world it keeps the state-machine sentence, which is then
+        true.
+
+        The offered actions are chosen from each robot's resolved actuator
+        ownership (:attr:`SimRobot.actuator_ids`) -- the same value
+        :meth:`_next_step_after_add` reads, so the description and the
+        ``add_robot`` summary cannot disagree in one session. A model that
+        compiles with no actuator can be posed, stepped and rendered, but
+        ``move_to`` refuses it outright ("no joint-transmission actuators to
+        drive") and ``run_policy`` can only advance physics without commanding
+        it, so naming either as the way in would send the first call of such a
+        session into the refusal this sentence exists to prevent. Those
+        sessions are offered :meth:`actuate_robot` instead, the in-tree remedy
+        both other surfaces already name.
+        """
+        world = self._world
+        if world is None or not world.robots:
+            return "One world per instance; actions form an implicit state machine starting with create_world. "
+        robots = []
+        drivable = False
+        for robot_name, robot in world.robots.items():
+            joints = list(getattr(robot, "joint_names", ()) or ())
+            shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
+            entry = f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'"
+            if getattr(robot, "actuator_ids", None):
+                drivable = True
+            else:
+                entry += " [no actuators]"
+            robots.append(entry)
+        if drivable:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, move_to, step or render, and use "
+                "reset to restart the rollout in place. "
+            )
+        else:
+            next_steps = (
+                "start with get_robot_state, set_joint_positions, step or render; nothing can drive "
+                "the robot(s) yet, so add a position servo per joint with actuate_robot before "
+                "move_to (which refuses a robot with no actuator) or run_policy. "
+            )
+        return (
+            "One world per instance. The world is ALREADY CREATED and holds robot(s) "
+            f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
+            f"{next_steps}"
+        )
+
     @property
     def tool_spec(self) -> ToolSpec:
         """The Strands ``ToolSpec`` (name, description, JSON input schema) the agent sees.
@@ -5628,8 +5801,7 @@ class MuJoCoSimEngine(
             "name": self.tool_name_str,
             "description": (
                 "Programmatic MuJoCo simulation environment (stateful session). "
-                "One world per instance; actions form an implicit state machine starting with "
-                "create_world. Scene mutations (add_robot, remove_robot, add_object, remove_object, "
+                f"{self._world_readiness_sentence()}Scene mutations (add_robot, remove_robot, add_object, remove_object, "
                 "move_object, add_camera, remove_camera, load_scene) are blocked while a policy "
                 "is running - stop it first. Create worlds, add robots from URDF "
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
@@ -6479,7 +6651,7 @@ class MuJoCoSimEngine(
                             # after every robot's ctrl is set.
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
-                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj)
+                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
                         mj.mj_step(self._world._model, self._world._data)
                         # Kinematic attachments (attach_bodies mode="kinematic")
                         # follow their parent every physics step, on this
