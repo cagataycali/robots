@@ -41,8 +41,8 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 | Tab | What it shows | Where the rules live |
 |---|---|---|
 | Fleet | every robot the registry knows, sim and real, and the mesh peers when the `[mesh]` extra is installed | `strands_robots.registry` |
-| Sim | a MuJoCo robot stepping in this process - an MJPEG stream and the same model in your browser | `strands_robots.simulation` |
-| Agent | a Strands Agent with the robot tool; anything that would move hardware pauses on a consent card | `dashboard.agent_hitl`, `dashboard.consent` |
+| Sim | up to four MuJoCo robots stepping in this process, one thread each - the rendered camera as MJPEG and a 3D twin drawn from the compiled model, joint sliders, reset, stop | `dashboard.sim_session`, `dashboard.scene` |
+| Agent | a Strands Agent whose tools are the simulations on the Sim tab; a move it wants to make pauses on a consent card until you answer | `dashboard.agent_console` |
 | Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |
 
 Every string a route serves is rendered as text, never as markup: a Fleet row can
@@ -50,6 +50,60 @@ carry a mesh peer's name, and script running in this page would be same-origin -
 it carries the session cookie and names this origin as its own, so it is behind
 every guard above by construction. `tests/test_dashboard_static_renders_data_as_text.py`
 reads that rule off the files the wheel ships.
+
+## The e-stop
+
+The **E-STOP** button on the Sim tab is `POST /api/safety/estop`. It is never
+refused, never needs anything but a session, and does three things at once:
+every simulation freezes, the dashboard's **lockout** latches (`/api/safety`
+answers `{"lockout": {"state": "locked", "reason": ..., "by": ...}}`), and from
+then on every command that would move something - creating a session, `reset`,
+`joints`, the agent's motion tools - answers `423` until someone presses
+**Resume**. Stopping a session and reading state are exempt: you can always
+stop, you can always look. The lockout lives in `dashboard.safety_state`, the
+same module the mesh e-stop uses, so a fleet stop and a dashboard stop are one
+state, not two.
+
+## Talking to it from a script
+
+Everything the page does is a JSON route under `/api`, behind the same session
+(a passkey cookie, or `Authorization: Bearer $DASHBOARD_AUTH_TOKEN`).
+
+| Route | What |
+|---|---|
+| `GET /api/fleet` · `GET /api/robots/{name}` | the registry, sim and real, plus mesh peers when `[mesh]` is installed |
+| `GET /api/sim` · `POST /api/sim {"robot": "so101"}` · `DELETE /api/sim/{id}` | list, start (`201`, `429` past four), stop |
+| `GET /api/sim/{id}` | the snapshot: `state`, `sim_time`, `steps`, `joint_names`, `qpos` (radians), `fps`, `cameras` |
+| `POST /api/sim/{id}/joints {"positions": {"2": 1.0}}` · `POST /api/sim/{id}/reset` | move (joint name or 1-based index as the key) or go home; `423` under lockout |
+| `GET /api/sim/{id}/stream.mjpg[?frames=N]` | the rendered camera, 12 fps multipart MJPEG; `frames` bounds a probe |
+| `GET /api/sim/{id}/scene` · `GET /api/sim/{id}/mesh/{index}` | the compiled model's geoms (`type`, `size`, `rgba`, `body`, `mesh`) plus cameras and lights, and each mesh's vertices and faces as binary, for the twin |
+| `WS /ws/telemetry/{id}[?poses=1]` | the snapshot at 15 Hz; with `poses=1` each JSON frame is followed by one binary frame of `ngeom × 12` little-endian `float32` world poses (3 position + 9 rotation) |
+| `GET /api/safety` · `POST /api/safety/estop` · `POST /api/safety/resume` | the lockout, and the two ways to change it |
+| `GET /api/agent` · `WS /ws/agent` | the agent's model and which tools ask first; the conversation |
+
+### The agent socket
+
+`/ws/agent` is one conversation. You send `{"type": "say", "text": "..."}`;
+the dashboard streams back flat events until `{"type": "done"}`:
+
+```text
+{"type": "text", "text": "I'll start the so101 first."}
+{"type": "tool_use", "name": "sim_start", "input": {"robot": "so101"}}
+{"type": "tool_result", "status": "success", "text": "{\"id\": \"655a3be6\", ...}"}
+{"type": "tool_use", "name": "sim_set_joints", "input": {"session_id": "655a3be6", "positions": {"2": 1.0}}}
+{"type": "interrupt", "id": "...", "name": "sim_motion", "reason": {"session_id": "655a3be6", "detail": "2 → 1.000 rad", ...}}
+```
+
+An `interrupt` is the agent paused mid-turn by a Strands SDK interrupt - the
+tool has not run. Answer `{"type": "resume", "id": "...", "approve": true,
+"always": false}` and the same turn continues; `approve: false` cancels that
+one call and the agent is told the operator declined. `always: true` stops the
+card from coming back for that session for as long as the socket lives.
+Anything but an explicit `true` is a no, and every answer is written to the
+HITL audit log. The agent's tools are the sim routes above under the same
+lockout, so it cannot do anything the page cannot; stopping is never gated.
+The model comes from `STRANDS_MODEL_ID` (Bedrock), the same variable the CLI
+reads; with no usable model the socket answers one `error` frame and closes.
 
 ## Configuration
 
