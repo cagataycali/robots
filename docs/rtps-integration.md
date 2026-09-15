@@ -206,9 +206,9 @@ gated. Because this gate branches on the same flag, `enable_commands` /
 `ros2_commands` is checked rather than read by truthiness: a non-boolean is
 refused before any DDS state exists, so a `"false"` from a deployment config
 cannot be reported back as "an enabled command bridge" and answered with the
-insecure opt-out that would open it. `dds_security_config` requires the following keys (each a path or a
-`file:` / `data:` URI per the OMG DDS-Security spec); `permissions_ca` is
-optional:
+insecure opt-out that would open it. `dds_security_config` requires the following keys (each a **non-empty string**:
+a path or a `file:` / `data:` URI per the OMG DDS-Security spec); `permissions_ca`
+is optional, and held to the same domain when supplied:
 
 ```python
 from strands_robots import Robot
@@ -232,7 +232,11 @@ arm = Robot(
 The credentials are wired into the cyclonedds `DomainParticipant` QoS together
 with the builtin DDS-Security plugins, so **both** the outbound telemetry and the
 inbound command surface ride an authenticated, access-controlled graph. A
-half-filled config is rejected at construction.
+half-filled config is rejected at construction, and so is a well-shaped one whose
+credential is not a string: the participant carries a property per credential, so
+a `None` would be dropped (auth plugin loaded, no private key) and a `bytes` path
+spelled as its `repr`. The refusal names the key and what arrived
+(`{'private_key': 'NoneType'}`), and no participant is created.
 
 `dds_security_config` is RTPS-specific: passing it with `ros2_transport="rclpy"`
 raises, because the rclpy backend gets its DDS Security from the ROS 2 RMW

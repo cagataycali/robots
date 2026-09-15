@@ -22,10 +22,20 @@ import logging
 import pytest
 
 from strands_robots.ros_telemetry import (
+    _DDS_SECURITY_REQUIRED_KEYS,
     ROS2_INSECURE_ENV,
     RosTelemetryBase,
 )
 from strands_robots.utils import finite_number_error
+
+#: A config every required key of which is a usable credential.
+_VALID_CREDENTIALS: dict[str, str] = {
+    "identity_ca": "file:/ca.pem",
+    "certificate": "file:/cert.pem",
+    "private_key": "file:/key.pem",
+    "governance": "file:/gov.p7s",
+    "permissions": "file:/perm.p7s",
+}
 
 
 class _Msg:
@@ -121,6 +131,75 @@ def test_dds_security_config_empty_credential_counts_as_missing() -> None:
     }
     with pytest.raises(ValueError, match="certificate"):
         RosTelemetryBase._validate_dds_security_config(cfg)
+
+
+class TestACredentialIsAStringOrItIsRefused:
+    """A required credential must be a non-empty *string*, not merely printable.
+
+    The validator's promise ("each must be a non-empty string") and the
+    participant QoS's reading of it
+    (:meth:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge._build_security_qos`,
+    which sets a property per *truthy* credential) only agree while every value
+    the validator accepts is a non-empty string. Grading ``str(value).strip()``
+    broke that agreement in both directions, and a security gate is the wrong
+    place to learn a credential was ignored:
+
+    * a falsy non-string (``None``, ``0``, ``False``) printed non-empty
+      (``str(None)`` is ``"None"``), so it was accepted here and then dropped
+      from the QoS - the auth plugin wired with no private key or governance;
+    * a truthy non-string was accepted and wired as its ``repr``, so a
+      ``bytes`` path reached cyclonedds as the literal ``"b'file:/key.pem'"``.
+
+    Both are the silent-default-on-invalid-input shape, so the value is graded
+    and the refusal names the key and what arrived instead.
+    """
+
+    @pytest.mark.parametrize("key", list(_DDS_SECURITY_REQUIRED_KEYS))
+    @pytest.mark.parametrize(
+        "value",
+        [None, 0, False, True, 1.5, b"file:/key.pem", ["file:/key.pem"], {}],
+        ids=["none", "zero", "false", "true", "float", "bytes", "list", "dict"],
+    )
+    def test_a_non_string_credential_is_refused(self, key: str, value: object) -> None:
+        cfg = dict(_VALID_CREDENTIALS)
+        cfg[key] = value  # type: ignore[assignment]
+        with pytest.raises(ValueError, match=key):
+            RosTelemetryBase._validate_dds_security_config(cfg)
+
+    def test_the_refusal_names_what_arrived_so_the_operator_knows_which_key_to_fix(self) -> None:
+        cfg = dict(_VALID_CREDENTIALS)
+        cfg["private_key"] = None  # type: ignore[assignment]
+        del cfg["governance"]
+        cfg["permissions"] = "  "
+        with pytest.raises(ValueError) as excinfo:
+            RosTelemetryBase._validate_dds_security_config(cfg)
+        message = str(excinfo.value)
+        assert "'private_key': 'NoneType'" in message
+        assert "'governance': 'absent'" in message
+        assert "'permissions': 'empty'" in message
+        # A key that did arrive as a credential is not named as a problem (it
+        # still appears in the trailing list of what a config must supply).
+        assert "identity_ca" not in message.split(". All of")[0]
+
+    def test_every_accepted_credential_is_one_the_participant_qos_cannot_drop(self) -> None:
+        """The invariant that keeps validator and QoS in step."""
+        accepted = RosTelemetryBase._validate_dds_security_config(dict(_VALID_CREDENTIALS))
+        for key in _DDS_SECURITY_REQUIRED_KEYS:
+            value = accepted[key]
+            assert isinstance(value, str) and value.strip() and bool(value)
+
+    def test_an_optional_permissions_ca_is_graded_only_when_it_is_supplied(self) -> None:
+        # Absent stays optional ...
+        assert "permissions_ca" not in RosTelemetryBase._validate_dds_security_config(dict(_VALID_CREDENTIALS))
+        # ... a real one is accepted ...
+        supplied = dict(_VALID_CREDENTIALS, permissions_ca="file:/perm_ca.pem")
+        assert RosTelemetryBase._validate_dds_security_config(supplied)["permissions_ca"] == "file:/perm_ca.pem"
+        # ... and a present-but-unusable one is refused rather than dropped, because
+        # "I supplied a permissions CA" and "no permissions CA is set" must not both
+        # describe the same participant.
+        for bad in (None, "", 0):
+            with pytest.raises(ValueError, match="permissions_ca"):
+                RosTelemetryBase._validate_dds_security_config(dict(_VALID_CREDENTIALS, permissions_ca=bad))
 
 
 # --- inbound command-surface security gate -----------------------------------

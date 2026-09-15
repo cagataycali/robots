@@ -41,6 +41,8 @@ from strands_robots.utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -146,11 +148,13 @@ def _qos_history_depth_error(value: Any, param: str, context: str) -> str | None
 #: factor so a forgotten config cannot silently expose a drivable arm.
 ROS2_INSECURE_ENV = "STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE"
 
-#: Keys a ``dds_security_config`` dict must supply (non-empty). Each names a
-#: credential the RTPS bridge wires into its DDS Security participant: the
-#: identity CA, the participant's own certificate and private key (identity is
-#: unprovable without the key), and the signed governance + permissions
-#: documents. ``permissions_ca`` is optional and applied when present.
+#: Keys a ``dds_security_config`` dict must supply, each as a non-empty string.
+#: Each names a credential the RTPS bridge wires into its DDS Security
+#: participant: the identity CA, the participant's own certificate and private
+#: key (identity is unprovable without the key), and the signed governance +
+#: permissions documents. ``permissions_ca`` is optional; supplied, it is held
+#: to the same domain, because a value the participant QoS would drop must not
+#: read as "a permissions CA is configured".
 _DDS_SECURITY_REQUIRED_KEYS = (
     "identity_ca",
     "certificate",
@@ -158,6 +162,34 @@ _DDS_SECURITY_REQUIRED_KEYS = (
     "governance",
     "permissions",
 )
+
+#: Optional ``dds_security_config`` key, graded like a required one when present.
+_DDS_SECURITY_OPTIONAL_KEY = "permissions_ca"
+
+
+def _credential_problem(config: Mapping[str, Any], key: str) -> str | None:
+    """Why ``config[key]`` is not a usable DDS Security credential, else ``None``.
+
+    A credential is a non-empty string: a path, or a ``file:`` / ``data:`` URI
+    per the OMG DDS-Security spec. The value itself is graded rather than its
+    ``str()``, because ``str(None)`` is ``"None"`` - non-empty, and therefore
+    indistinguishable from a real credential to a printed-emptiness check.
+
+    Args:
+        config: The operator-supplied ``dds_security_config``.
+        key: The credential key to grade.
+
+    Returns:
+        ``"absent"``, ``"empty"``, or the received type's name - what the
+        refusal quotes so the operator knows which key to fix and how - or
+        ``None`` when the value is a credential.
+    """
+    if key not in config:
+        return "absent"
+    value = config[key]
+    if not isinstance(value, str):
+        return type(value).__name__
+    return None if value.strip() else "empty"
 
 
 class RosTelemetryBase:
@@ -394,18 +426,37 @@ class RosTelemetryBase:
         spec). Validated at construction so a half-filled config refuses the
         bridge rather than silently degrading wire security.
 
+        The value is graded, not its ``str()``: a printed-emptiness check read
+        ``None`` as the non-empty ``"None"``, so a credential this validator had
+        accepted could still be one
+        :meth:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge._build_security_qos`
+        drops (it sets a property per *truthy* credential), putting a
+        participant on the wire with the auth plugin loaded and no private key
+        or governance; a truthy non-string was wired as its ``repr`` instead, so
+        a ``bytes`` path reached cyclonedds as the literal ``"b'file:/key.pem'"``.
+        Every value accepted here is therefore one the QoS keeps verbatim.
+
         Raises:
-            ValueError: If ``config`` is not a dict or a required key is missing
-                or empty.
+            ValueError: If ``config`` is not a dict, or any required key - or a
+                supplied ``permissions_ca`` - is absent, empty, or not a string.
         """
         if not isinstance(config, dict):
             raise ValueError(f"dds_security_config must be a dict, got {type(config).__name__}")
-        missing = [k for k in _DDS_SECURITY_REQUIRED_KEYS if not str(config.get(k, "")).strip()]
-        if missing:
+        unusable = {k: problem for k in _DDS_SECURITY_REQUIRED_KEYS if (problem := _credential_problem(config, k))}
+        if unusable:
             raise ValueError(
-                f"dds_security_config is missing required keys: {missing}. "
-                f"All of {list(_DDS_SECURITY_REQUIRED_KEYS)} must be supplied "
-                "(identity CA, participant certificate + private key, governance, permissions)."
+                f"dds_security_config is missing required keys: {unusable}. "
+                f"All of {list(_DDS_SECURITY_REQUIRED_KEYS)} must be supplied as non-empty "
+                "strings (identity CA, participant certificate + private key, governance, "
+                "permissions)."
+            )
+        if _DDS_SECURITY_OPTIONAL_KEY in config and (
+            problem := _credential_problem(config, _DDS_SECURITY_OPTIONAL_KEY)
+        ):
+            raise ValueError(
+                f"dds_security_config[{_DDS_SECURITY_OPTIONAL_KEY!r}] is {problem}; it must be a "
+                "non-empty string, or omit the key. A value the participant QoS would drop must "
+                "not read as a configured permissions CA."
             )
         return config
 

@@ -404,6 +404,41 @@ def test_security_config_missing_required_key_raises(fake_cyclonedds: dict[str, 
         _bridge(_FakeRobot(), dds_security_config=incomplete)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [None, 0, False, b"file:/etc/dds/participant_key.pem", 1.5],
+    ids=["none", "zero", "false", "bytes", "float"],
+)
+def test_a_non_string_credential_builds_no_participant_at_all(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch, bad: object
+) -> None:
+    # A credential the participant QoS cannot carry verbatim - it sets a property
+    # per truthy credential, and stringifies what it does set - is refused before
+    # any DDS state exists, rather than reaching DomainParticipant with the auth
+    # plugin wired and no private key (falsy: dropped) or a private key spelled
+    # "b'file:/etc/dds/participant_key.pem'" (truthy non-string: its repr).
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    cfg = dict(_VALID_SECURITY)
+    cfg["private_key"] = bad  # type: ignore[assignment]
+    before = len(fake_cyclonedds["participants"])
+    with pytest.raises(ValueError, match="private_key"):
+        _bridge(_FakeRobot(), dds_security_config=cfg)
+    assert len(fake_cyclonedds["participants"]) == before
+
+
+def test_a_supplied_permissions_ca_reaches_the_participant_qos(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The optional key's other half: absent it is not set (asserted below), and
+    # supplied it is graded like a required one, so an accepted value lands.
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    cfg = dict(_VALID_SECURITY, permissions_ca="file:/etc/dds/permissions_ca.pem")
+    b = _bridge(_FakeRobot(), dds_security_config=cfg)
+    props = {p.name: p.value for p in fake_cyclonedds["participants"][-1].qos.policies}
+    assert props["dds.sec.access.permissions_ca"] == "file:/etc/dds/permissions_ca.pem"
+    b.shutdown()
+
+
 def test_security_config_wires_plugins_and_credentials_into_participant_qos(
     fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

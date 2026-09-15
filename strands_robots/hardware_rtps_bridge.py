@@ -149,7 +149,10 @@ class HardwareRtpsBridge(RosTelemetryBase):
             (``identity_ca``, ``certificate``, ``private_key``, ``governance``,
             ``permissions``; ``permissions_ca`` optional) wire the participant's
             DDS Security plugins so the whole graph is authenticated and
-            access-controlled. When ``enable_commands`` is in effect this (or
+            access-controlled. Each value must be a non-empty string - a path or
+            a ``file:`` / ``data:`` URI - and a supplied key that is not is
+            refused before any participant exists, because a credential this
+            participant would drop or stringify is not one it can present. When ``enable_commands`` is in effect this (or
             the ``STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`` opt-out) is
             REQUIRED - the bridge refuses to expose an arm-driving command
             surface on an unsecured DDS graph.
@@ -296,6 +299,13 @@ class HardwareRtpsBridge(RosTelemetryBase):
         with the operator-supplied credentials, mapped to their ``dds.sec.*``
         property names (:data:`_DDS_SECURITY_PROPERTY`). Optional keys absent
         from ``config`` (e.g. ``permissions_ca``) are simply not set.
+
+        A property is set per *truthy* credential and carries ``str(value)``, so
+        this drops what is falsy and would spell a non-string as its ``repr``.
+        Neither can arrive:
+        :meth:`~strands_robots.ros_telemetry.RosTelemetryBase._validate_dds_security_config`
+        accepts only non-empty strings, so every credential ``config`` holds is
+        one this sets verbatim.
         """
         from cyclonedds.qos import Policy, Qos
 

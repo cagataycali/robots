@@ -710,8 +710,8 @@ class Robot(TeleopMixin, AgentTool):
                 (no partial application). Requires ``ros2_bridge=True``.
             dds_security_config: Optional DDS Security credentials
                 (``identity_ca``, ``certificate``, ``private_key``,
-                ``governance``, ``permissions``; ``permissions_ca`` optional)
-                for the pure-RTPS bridge. When ``ros2_commands=True`` on the
+                ``governance``, ``permissions``; ``permissions_ca`` optional,
+                each a non-empty string) for the pure-RTPS bridge. When ``ros2_commands=True`` on the
                 ``"rtps"`` transport this (or the
                 ``STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`` opt-out) is
                 REQUIRED - the bridge refuses to drive the arm over an unsecured
