@@ -136,6 +136,34 @@ other spelling is refused. See
 
 </details>
 
+<details>
+<summary><b>Dashboard passkey (WebAuthn) auth env vars</b></summary>
+
+Read by `strands_robots.dashboard.auth`, which fronts the dashboard routes that
+command real hardware. The credential store is the source of truth for whether
+auth is on: the moment a passkey is enrolled, it is. The three durations and the
+two challenge caps are **refused, not defaulted**, when they hold a value the
+module cannot use - each is a knob an operator uses to *narrow* a window, and a
+substituted default lands in the wider direction - so a misspelled value stops
+the server at import rather than surfacing as a failed login later.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STRANDS_DASH_AUTH_ENABLED` | Overrides the store's verdict only when spelled as a recognised boolean: on (`1`/`true`/`yes`/`on`) guards the API with no passkey enrolled yet, off (`0`/`false`/`no`/`off`) disables the guard. Any other spelling is logged and ignored, so an enrolled passkey still guards the API rather than being dropped by a typo | unset (the store decides) |
+| `STRANDS_DASH_AUTH_STORE` | Path of the credential store: the enrolled passkeys and the secret session tokens are signed with | `~/.strands_dashboard/auth.json` |
+| `STRANDS_DASH_AUTH_RP_NAME` | Human-readable relying-party name shown by the authenticator during enrollment | `strands robots dashboard` |
+| `STRANDS_DASH_AUTH_RP_ID` | Pins the WebAuthn relying-party id when the dashboard's hostname legitimately changed and existing passkeys must keep working. Unset, it is derived from the `Host` the request arrived on; a host that cannot be an rpId is refused naming this variable | unset (derived) |
+| `STRANDS_DASH_AUTH_ORIGIN` | The origin the dashboard is served at, e.g. `https://robots.example:8443` - scheme and any non-default port included, since WebAuthn compares origins byte-for-byte. Unset, it is read off the connection (the transport's own scheme plus `Host`). Set it when a proxy rewrites `Host` or `Origin`, or when TLS is terminated upstream and uvicorn is not configured to forward that fact (`--proxy-headers` with `--forwarded-allow-ips`) | unset (read off the connection) |
+| `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` | The secret the **first** passkey enrollment must present. Unset, the module mints one itself into a `0600` file beside the store and the operator reads it off the machine - a loopback peer is never proof of presence, so the first enrollment is never admitted on the strength of where the connection appears to come from | unset (minted into a file) |
+| `STRANDS_DASH_AUTH_ENROLL_TOKEN_FILE` | Relocates the minted first-enrollment token file. Only read when `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` is unset | `<store directory>/enroll_token` |
+| `STRANDS_DASH_AUTH_TOKEN_TTL` | Lifetime of a freshly minted session token, in whole seconds (`1h` and `30m` are not units and are refused). Must be `>= 1` | `86400` (1 day) |
+| `STRANDS_DASH_AUTH_SESSION_MAX_AGE` | Absolute age, in whole seconds, past which no renewal extends a session. Must be `>= 1` | `2592000` (30 days) |
+| `STRANDS_DASH_AUTH_HANDOFF_TTL` | Lifetime of a LAN handoff token, in whole seconds. It rides in a URL - which lands in history, logs and screenshots - so it is short, and it never outlives the session it was copied from. Must be `>= 1` | `300` (5 minutes) |
+| `STRANDS_DASH_AUTH_CHAL_MAX` | Global bound on the table of in-flight WebAuthn challenges; the oldest record is evicted past it, regardless of ip. Integer `>= 2` | `512` |
+| `STRANDS_DASH_AUTH_CHAL_MAX_PER_IP` | Per-ip bound on in-flight challenges, which is what keeps one flooding client off the global cap. Integer `>= 1`, and it must stay **strictly below** `STRANDS_DASH_AUTH_CHAL_MAX` - a pair that does not is refused at import | `16` |
+
+</details>
+
 ### Asset cache
 
 ```

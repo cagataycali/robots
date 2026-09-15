@@ -62,6 +62,22 @@ sibling names (```STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, ...``) - a suffix counts
 only when a documented full name shares its prefix, so a bare suffix with no
 sibling documents nothing.
 
+A key may also be *built* at the read site rather than named there. A module
+that owns a family of variables binds the family's prefix once and reads each
+member as ``os.getenv(_ENV + "ENABLED")`` - or, for the members it validates,
+through a resolver whose body spells ``var = _ENV + name`` and reads ``var``.
+Neither shape puts a whole name anywhere the walk above could see it: the
+constant holds a prefix, the literal holds a suffix, and the resolver's key is
+a local rather than one of its parameters. Measured on the tree this arrived
+in, ``dashboard/auth.py`` read twelve ``STRANDS_DASH_AUTH_*`` names that way
+and no page named one of them - among them the ``ORIGIN`` and ``RP_ID`` the
+module's own refusals tell an operator to set, and ``TOKEN_TTL``, whose
+refusal exists so a narrowed session window is never silently widened. The
+walk concatenates a ``+`` chain of literals and module constants, and a
+resolver may prepend or append such text to the parameter it reads through;
+the parameter must appear exactly once, and a chain that involves a local or
+a second parameter still names nothing a page could spell.
+
 Out of scope, and why: a name that appears only inside a string literal is not
 read by this process. ``mesh.iot.bootstrap`` ships the e-stop fan-out Lambda's
 source as text and sets that Lambda's ``STRANDS_SAFETY_TABLE`` itself, so the
@@ -74,6 +90,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -187,45 +204,131 @@ def _import_aliases(tree: ast.AST) -> dict[str, str]:
     return aliases
 
 
-def _read_key(node: ast.AST, resolvers: dict[str, int], aliases: dict[str, str]) -> ast.AST | None:
-    """The key expression of a read, direct or through a resolver, or None."""
+class Resolver(NamedTuple):
+    """How a function reads the environment through one of its parameters.
+
+    ``parameter`` is the index of the positional parameter the key is built from; ``prefix`` and
+    ``suffix`` are the literal text the function puts around it, empty for the
+    common resolver that reads its parameter as the whole key.
+    """
+
+    parameter: int
+    prefix: str
+    suffix: str
+
+
+def _concatenation(*parts: ast.expr) -> ast.expr:
+    """The ``+`` chain of *parts*, as the key expression a resolver call reads."""
+    expression = parts[0]
+    for part in parts[1:]:
+        expression = ast.BinOp(left=expression, op=ast.Add(), right=part)
+    return expression
+
+
+def _read_key(node: ast.AST, resolvers: dict[str, Resolver], aliases: dict[str, str]) -> ast.AST | None:
+    """The key expression of a read, direct or through a resolver, or None.
+
+    A resolver that wraps its parameter in literal text reads a key the call
+    site never spells whole, so the returned expression is the concatenation
+    the resolver performs, with the call's own argument in the middle.
+    """
     key = _direct_key(node)
     if key is not None:
         return key
     if isinstance(node, ast.Call):
         name = _callee(node)
-        index = resolvers.get(aliases.get(name or "", name or ""))
-        if index is not None and len(node.args) > index:
-            return node.args[index]
+        resolver = resolvers.get(aliases.get(name or "", name or ""))
+        if resolver is not None and len(node.args) > resolver.parameter:
+            argument = node.args[resolver.parameter]
+            if not (resolver.prefix or resolver.suffix):
+                return argument
+            return _concatenation(ast.Constant(resolver.prefix), argument, ast.Constant(resolver.suffix))
     return None
 
 
-def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, int]:
-    """``{function name: index of the parameter it reads the environment through}``.
+def _addends(node: ast.AST) -> list[ast.AST]:
+    """The operands of a ``+`` chain, left to right; a non-chain is its own single operand."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _addends(node.left) + _addends(node.right)
+    return [node]
+
+
+def _locals_bound_once(function: ast.AST) -> dict[str, ast.AST]:
+    """``{name: value}`` for every local *function* assigns exactly once to a bare name.
+
+    A resolver spells ``var = _ENV + name`` and then reads ``var``; following
+    that one binding is what lets the key be read back to the parameter. A
+    name bound twice is ambiguous and is left unresolved.
+    """
+    seen: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            seen.setdefault(node.targets[0].id, []).append(node.value)
+    return {name: values[0] for name, values in seen.items() if len(values) == 1}
+
+
+def _parameter_template(key: ast.AST, parameters: list[str], constants: dict[str, str]) -> Resolver | None:
+    """Read *key* as literal text around exactly one of *parameters*, or None.
+
+    Each operand of the ``+`` chain must be a string literal, a module string
+    constant, or a parameter; the parameter must occur once. Anything else -
+    a local, a call, two parameters - is not a key the caller's argument
+    determines, so the function is not a resolver through it.
+    """
+    parameter: int | None = None
+    prefix, suffix = "", ""
+    for operand in _addends(key):
+        if isinstance(operand, ast.Name) and operand.id in parameters:
+            if parameter is not None:
+                return None
+            parameter = parameters.index(operand.id)
+            continue
+        text = _key_string(operand, constants)
+        if text is None:
+            return None
+        if parameter is None:
+            prefix += text
+        else:
+            suffix += text
+    if parameter is None:
+        return None
+    return Resolver(parameter, prefix, suffix)
+
+
+def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, Resolver]:
+    """``{function name: how it reads the environment through a parameter}``.
 
     A function is a resolver when its body reads the environment - directly, or
-    through a resolver already found - with a key that is one of its own
-    positional parameters. Iterated to a fixed point so ``hz_from_env`` is found
-    even when it only delegates to ``_float_env``.
+    through a resolver already found - with a key built from one of its own
+    positional parameters: the parameter itself, or literal text around it,
+    possibly through a local bound once (``var = _ENV + name``). Iterated to a
+    fixed point so ``hz_from_env`` is found even when it only delegates to
+    ``_float_env``.
     """
     functions = [
-        (node, _import_aliases(tree))
+        (node, _import_aliases(tree), _module_string_constants(tree))
         for tree in trees.values()
         for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
-    resolvers: dict[str, int] = {}
+    resolvers: dict[str, Resolver] = {}
     grown = True
     while grown:
         grown = False
-        for function, aliases in functions:
+        for function, aliases, constants in functions:
             if function.name in resolvers:
                 continue
             parameters = [arg.arg for arg in function.args.posonlyargs + function.args.args]
+            bound_once = _locals_bound_once(function)
             for node in ast.walk(function):
                 key = _read_key(node, resolvers, aliases)
-                if isinstance(key, ast.Name) and key.id in parameters:
-                    resolvers[function.name] = parameters.index(key.id)
+                if key is None:
+                    continue
+                if isinstance(key, ast.Name) and key.id in bound_once and key.id not in parameters:
+                    key = bound_once[key.id]
+                resolver = _parameter_template(key, parameters, constants)
+                if resolver is not None:
+                    resolvers[function.name] = resolver
                     grown = True
                     break
     return resolvers
@@ -258,11 +361,23 @@ def _module_string_constants(tree: ast.AST) -> dict[str, str]:
 
 
 def _key_string(key: ast.AST, constants: dict[str, str]) -> str | None:
-    """The string a key expression names: a literal, or a module constant bound to one."""
+    """The string a key expression names, or None.
+
+    A literal, a module constant bound to one, or a ``+`` chain of those -
+    ``_ENV + "ENABLED"`` names ``STRANDS_DASH_AUTH_ENABLED`` when ``_ENV`` is
+    bound to the prefix at module scope. A chain with an operand that names no
+    string names nothing.
+    """
     if isinstance(key, ast.Constant) and isinstance(key.value, str):
         return key.value
     if isinstance(key, ast.Name):
         return constants.get(key.id)
+    if isinstance(key, ast.BinOp) and isinstance(key.op, ast.Add):
+        left = _key_string(key.left, constants)
+        right = _key_string(key.right, constants)
+        if left is None or right is None:
+            return None
+        return left + right
     return None
 
 
@@ -413,6 +528,50 @@ class TestTheReadShapesAreAllRecognised:
             '    return (env if env is not None else os.environ).get("STRANDS_PROBE", "")\n'
         )
         assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE": ["probe.py:3"]}
+
+    def test_a_key_concatenated_onto_a_module_prefix_is_seen(self) -> None:
+        """``os.getenv(_ENV + "ENABLED")`` - the family-prefix idiom ``dashboard.auth`` uses."""
+        source = 'import os\n_ENV = "STRANDS_PROBE_"\nx = os.getenv(_ENV + "ON", "")\n'
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE_ON": ["probe.py:3"]}
+
+    def test_a_resolver_that_wraps_its_parameter_in_a_prefix_is_seen(self) -> None:
+        """``var = _ENV + name`` then ``os.getenv(var)``: the key is a local, built from the parameter."""
+        source = (
+            "import os\n"
+            '_ENV = "STRANDS_PROBE_"\n'
+            "def _duration(name):\n"
+            "    var = _ENV + name\n"
+            '    return int(os.getenv(var, "") or 0)\n'
+            'TTL = _duration("TTL")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE_TTL": ["probe.py:6"]}
+
+    def test_a_resolver_that_appends_to_its_parameter_is_seen(self) -> None:
+        source = (
+            "import os\n"
+            "def _hz(topic):\n"
+            '    return float(os.getenv("STRANDS_PROBE_" + topic + "_HZ", "") or 1.0)\n'
+            'HZ = _hz("POSE")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {"STRANDS_PROBE_POSE_HZ": ["probe.py:4"]}
+
+    def test_a_key_built_from_two_parameters_names_nothing(self) -> None:
+        """No single argument determines the key, so the caller's literal is not a name."""
+        source = (
+            'import os\ndef _read(prefix, name):\n    return os.getenv(prefix + name)\n_read("STRANDS_PROBE_", "ON")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {}
+
+    def test_a_prefix_bound_only_inside_the_resolver_names_nothing(self) -> None:
+        """A local prefix is not a module constant, so the chain names nothing a page could spell."""
+        source = (
+            "import os\n"
+            "def _read(name):\n"
+            '    prefix = "STRANDS_PROBE_"\n'
+            "    return os.getenv(prefix + name)\n"
+            '_read("ON")\n'
+        )
+        assert names_read(_parse({"probe.py": source})) == {}
 
     def test_a_name_bound_only_inside_a_function_is_not_a_module_constant(self) -> None:
         """A local of the constant's shape names nothing a page could spell; it stays ungraded."""
