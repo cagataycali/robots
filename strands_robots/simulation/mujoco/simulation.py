@@ -6679,6 +6679,23 @@ class MuJoCoSimEngine(
         if flat.get("path"):
             payload["video"] = flat
 
+    @staticmethod
+    def _camera_name_alias_target(action: str, method_param_names: set[str]) -> str | None:
+        """The parameter ``camera_name`` stands for on a camera action, or ``None``.
+
+        ``add_camera`` / ``remove_camera`` declare ``name``; ``render`` and its
+        siblings declare ``camera_name``. Both mean "which camera". On an
+        action whose name says ``camera`` and whose method has ``name`` but no
+        ``camera_name`` of its own, ``camera_name`` is accepted for ``name``.
+        Anywhere else the answer is ``None`` and ``camera_name`` keeps whatever
+        meaning the method gives it (or none - ``render``'s own parameter is
+        never rewritten, and a ``camera_name`` sent to ``add_object`` stays
+        unknown).
+        """
+        if "camera" not in action or "camera_name" in method_param_names or "name" not in method_param_names:
+            return None
+        return "name"
+
     def _validate_and_build_kwargs(
         self,
         action: str,
@@ -6732,6 +6749,14 @@ class MuJoCoSimEngine(
             accepted_field_names.add("robot_name")
         if "robot_name" in method_param_names:
             accepted_field_names.add("name")
+        # The same courtesy for cameras: add_camera/remove_camera take ``name``
+        # while render/render_depth/get_camera_params take ``camera_name``, so
+        # an agent that just rendered from ``camera_name="wrist"`` and now
+        # removes it writes ``camera_name`` again. On a camera action whose
+        # method spells it ``name``, that is the same fact, not an unknown key.
+        camera_name_target = self._camera_name_alias_target(action, method_param_names)
+        if camera_name_target:
+            accepted_field_names.add("camera_name")
 
         # 1) Unknown kwargs (skipped for **kwargs methods which legitimately passthrough)
         unknown = [] if method_has_var_keyword else [k for k in remapped if k not in accepted_field_names]
@@ -6827,6 +6852,8 @@ class MuJoCoSimEngine(
         for param_name, param in named_params.items():
             if param_name == "name" and "name" not in remapped and "robot_name" in remapped:
                 kwargs["name"] = remapped["robot_name"]
+            elif param_name == camera_name_target and param_name not in remapped and "camera_name" in remapped:
+                kwargs[param_name] = remapped["camera_name"]
             elif param_name == "robot_name" and "robot_name" not in remapped and "name" in remapped:
                 kwargs["robot_name"] = remapped["name"]
             elif param_name in remapped:
