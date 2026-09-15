@@ -309,14 +309,19 @@ def test_check_mode_refuses_a_placeholder_number_and_says_what_to_rename(
     suite instead - the shape of #2163, one convention with two verdicts.
     """
     fragment_dir, changelog = workspace
-    _fragment(fragment_dir, "0000-a-placeholder.md", "### Fixed: real change, placeholder name\n\nBody.\n")
+    body = "### Fixed: a real change under a placeholder name\n\nBody.\n"
+    _fragment(fragment_dir, "0000-a-placeholder.md", body)
+    _fragment(fragment_dir, "9999-the-other-placeholder.md", body)
+    _fragment(fragment_dir, "3703-a-real-change.md", body)
 
     code = assemble.main(["--check", "--fragment-dir", str(fragment_dir), "--changelog", str(changelog)])
 
     assert code == 1, "the documented local check must refuse what the required suite refuses"
     message = capsys.readouterr().err
-    assert "0000-a-placeholder.md" in message, f"the refusal must name the file to rename: {message!r}"
+    for placeholder in ("0000-a-placeholder.md", "9999-the-other-placeholder.md"):
+        assert placeholder in message, f"the refusal must name each file to rename: {message!r}"
     assert "rename" in message, f"the refusal must say what to do: {message!r}"
+    assert "3703-a-real-change.md" not in message, f"a real number must not be refused: {message!r}"
 
 
 # --- fragment numbers name the change that landed them --------------------------
