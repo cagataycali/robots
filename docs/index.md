@@ -43,6 +43,7 @@ The agent decides *what* to do. The policy (Mock, GR00T, LeRobot, or Cosmos 3) d
 - **Building something?** [Quickstart](getting-started/quickstart.md) gets a robot picking up a cube; the [simulation](simulation/overview.md) and [policy](policies/overview.md) pages take it from there.
 - **Looking for a robot?** [{{n:robots}} of them](robots/index.md), every one addressable by name.
 - **Want the shape of it?** [Architecture](architecture.md) is one diagram and a table.
+- **Want to watch?** `python -m strands_robots dashboard --open` - the [Dashboard](dashboard.md) is the fleet, a sim with a 3D twin, an e-stop and an agent behind consent cards.
 
 ## Install
 
