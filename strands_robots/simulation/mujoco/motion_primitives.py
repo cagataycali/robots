@@ -915,6 +915,52 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             ik_orientation_residual=ik_orientation_residual,
         )
 
+    @staticmethod
+    def _subtree(model: Any, root_id: int) -> set[int]:
+        """``root_id`` and every body below it."""
+        out = {root_id}
+        for body_id in range(int(model.nbody)):
+            cursor = body_id
+            while cursor > 0:
+                if cursor in out:
+                    out.add(body_id)
+                    break
+                cursor = int(model.body_parentid[cursor])
+        return out
+
+    def _finger_contacts(
+        self,
+        model: Any,
+        data: Any,
+        robot: Any,
+        gripper_joint_ids: list[int],
+    ) -> dict[str, int]:
+        """Bodies outside the robot that touch its fingers, with contact counts.
+
+        The fingers are the subtree of each gripper joint's body together with
+        that body's parent (a fixed jaw or a hand carries pads too). The world
+        body (ground plane) and the robot's own bodies are not "held".
+        """
+        mj = self._mj
+        robot_bodies = self._subtree(model, int(robot.body_id)) if int(robot.body_id) >= 0 else set()
+        fingers: set[int] = set()
+        for jnt_id in gripper_joint_ids:
+            body_id = int(model.jnt_bodyid[jnt_id])
+            fingers |= self._subtree(model, body_id)
+            parent = int(model.body_parentid[body_id])
+            if parent > 0:
+                fingers |= self._subtree(model, parent)
+        held: dict[str, int] = {}
+        for i in range(int(data.ncon)):
+            con = data.contact[i]
+            b1, b2 = int(model.geom_bodyid[con.geom1]), int(model.geom_bodyid[con.geom2])
+            for finger, other in ((b1, b2), (b2, b1)):
+                if finger in fingers and other != 0 and other not in robot_bodies and other not in fingers:
+                    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, other) or f"body {other}"
+                    held[name] = held.get(name, 0) + 1
+                    break
+        return held
+
     def set_gripper(
         self,
         robot_name: str | None = None,
@@ -1028,6 +1074,14 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             act_names = [
                 self._short_name(mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, a), namespace) for a in gripper_acts
             ]
+            # What the fingers closed on, read from the contacts after the
+            # last tick. A close that touches no object is the normal outcome
+            # of a grasp attempt that missed, and the caller's next move (lift)
+            # is wrong unless it hears that here.
+            held: dict[str, int] | None = None
+            if state == "close":
+                gripper_joints = [jnt_by_act[a] for a in gripper_acts if a in jnt_by_act]
+                held = self._finger_contacts(model, data, robot, gripper_joints)
         return self._set_gripper_result(
             robot_name,
             state,
@@ -1036,6 +1090,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             {n: targets[a] for n, a in zip(act_names, gripper_acts, strict=True)},
             {n: setpoint_sources[a] for n, a in zip(act_names, gripper_acts, strict=True)},
             joint_positions,
+            held=held,
         )
 
     def rotate_wrist(
