@@ -208,6 +208,57 @@ class FakeLeRobot:
         return "fake SOFollower"
 
 
+class _CountingCalibration(FakeLeRobot):
+    """Records every evaluation of ``is_calibrated``: on a real arm each is a bus sweep."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.calibration_reads = 0
+
+    @property
+    def is_calibrated(self) -> bool:
+        self.calibration_reads += 1
+        return self.bus.is_calibrated
+
+
+class _NoCalibrationNotion:
+    """A driver with no ``is_calibrated`` at all: lerobot allows that, so must the gate.
+
+    Not a ``FakeLeRobot`` subclass, because the point is the *absence* of the
+    attribute and an inherited property cannot be removed.
+    """
+
+    def __init__(self, *, calibrated: bool = True, cameras: dict[str, FakeCamera] | None = None) -> None:
+        self.bus = FakeBus(calibrated=calibrated)
+        self.cameras = cameras if cameras is not None else {}
+        self.config = _RobotConfig({name: _CamConfig() for name in self.cameras})
+
+    @property
+    def is_connected(self) -> bool:
+        return self.bus.is_connected and all(c.is_connected for c in self.cameras.values())
+
+    def connect(self, calibrate: bool = True) -> None:
+        self.bus.connect()
+        for cam in self.cameras.values():
+            cam.connect()
+
+    def disconnect(self) -> None:
+        self.bus.disconnect(disable_torque=True)
+        for cam in self.cameras.values():
+            cam.disconnect()
+
+    def __str__(self) -> str:
+        return "fake driver without calibration"
+
+
+class _RaisingCalibration(FakeLeRobot):
+    """A driver whose ``is_calibrated`` raises ``AttributeError`` from inside itself."""
+
+    @property
+    def is_calibrated(self) -> bool:
+        return bool(self.bus.no_calibration_here)  # type: ignore[attr-defined]
+
+
 def _make_hw(robot: FakeLeRobot) -> HwRobot:
     hw = HwRobot.__new__(HwRobot)
     hw.tool_name_str = "arm"
@@ -235,7 +286,7 @@ def _call(hw: HwRobot, **tool_input: Any) -> dict[str, Any]:
 
     events = asyncio.run(_run())
     assert isinstance(events[-1], ToolResultEvent)
-    return events[-1].tool_result
+    return dict(events[-1].tool_result)
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -511,6 +562,50 @@ class TestCalibrationGateHoldsOnEveryCall:
         ok, err = asyncio.run(hw._connect_robot())
         assert ok is False and "not calibrated" in err
         assert robot.bus.is_connected is False
+
+    def test_the_gate_reads_the_calibration_once_per_connect(self) -> None:
+        """``is_calibrated`` is a bus sweep, so asking twice doubles it for nothing."""
+        robot = _CountingCalibration(calibrated=True, cameras={"front": FakeCamera()})
+        hw = _make_hw(robot)
+
+        assert asyncio.run(hw._connect_robot()) == (True, "")
+
+        assert robot.calibration_reads == 1, "hasattr on the instance evaluated the property too"
+
+    def test_the_gate_is_not_skipped_when_is_calibrated_raises(self) -> None:
+        """A property that raises must refuse the arm, not be read as "no such property".
+
+        ``hasattr`` swallows an ``AttributeError`` raised *inside* the property -
+        which is what a driver whose ``is_calibrated`` is ``self.bus.is_calibrated``
+        over a lazily built bus raises - and the whole gate was then skipped:
+        ``(True, "")`` for an arm whose calibration was never checked, cameras open
+        and ``configure()`` already run.
+        """
+        robot = _RaisingCalibration(calibrated=False, cameras={"front": FakeCamera()})
+        hw = _make_hw(robot)
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert ok is False, "an unanswerable calibration check must not permit motion"
+        assert "no_calibration_here" in err, err
+        assert robot.is_connected is False, "the refused arm must not keep the port"
+
+    def test_a_driver_with_no_calibration_notion_is_still_allowed(self) -> None:
+        """Absent is not unreadable: lerobot's contract is "always True if not applicable"."""
+        robot = _NoCalibrationNotion(cameras={"front": FakeCamera()})
+        hw = _make_hw(cast(Any, robot))
+
+        assert asyncio.run(hw._connect_robot()) == (True, "")
+
+    def test_calibration_declared_on_the_instance_still_gates(self) -> None:
+        """A driver that carries the flag as a plain attribute, not a property, is checked."""
+        robot = _NoCalibrationNotion(cameras={"front": FakeCamera()})
+        robot.is_calibrated = False  # type: ignore[attr-defined]  # a plain flag, not a property
+        hw = _make_hw(cast(Any, robot))
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert ok is False and "not calibrated" in err
 
 
 class TestTicks:

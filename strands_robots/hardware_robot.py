@@ -1730,8 +1730,31 @@ class Robot(TeleopMixin, AgentTool):
                 logger.error(f"{error_msg}")
                 return False, error_msg
 
-            # Check robot calibration
-            if hasattr(self.robot, "is_calibrated") and not self.robot.is_calibrated:
+            # Check robot calibration, reading the flag exactly once. On a
+            # lerobot arm ``is_calibrated`` is ``read_calibration()`` - a
+            # homing-offset and range sweep of every servo - and the guard used
+            # to be ``hasattr(self.robot, "is_calibrated") and not
+            # self.robot.is_calibrated``, which evaluated it twice. ``hasattr``
+            # also swallows an ``AttributeError`` raised *inside* that read,
+            # which is indistinguishable from "this driver has no such
+            # property": a driver whose ``is_calibrated`` is
+            # ``self.bus.is_calibrated`` over a bus built lazily raises exactly
+            # that, and the gate was then skipped altogether - measured
+            # ``(True, "")``, cameras open and ``configure()`` already run, for
+            # an arm whose calibration was never checked. Absent is not the same
+            # as unreadable: a driver that declares the attribute at all (on the
+            # class as a property, or on the instance as a plain flag) must
+            # answer, and a read that raises falls to the handler below, which
+            # refuses and closes the port. A driver with no notion of
+            # calibration is calibrated by lerobot's own contract for the
+            # property: "should be always True if not applicable".
+            try:
+                is_calibrated = self.robot.is_calibrated
+            except AttributeError:
+                if hasattr(type(self.robot), "is_calibrated"):
+                    raise  # the property exists; its own read failed
+                is_calibrated = True
+            if not is_calibrated:
                 error_msg = (
                     f"Robot {self.robot} is not calibrated. Please calibrate the robot manually"
                     " first using LeRobot's calibration process (lerobot-calibrate)"
