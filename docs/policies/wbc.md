@@ -222,11 +222,12 @@ on the control path (`run_policy` / `start_policy` / `tell()`), not on
 ### Recording it
 
 `run_policy(video={...})` records from the scene's `default` camera unless told
-otherwise, and that camera frames the origin from a fixed vantage: a G1 walking
-at 0.4 m/s reaches the edge of the frame within a couple of seconds and the rest
-of the clip is empty floor. Add a camera first and name it in `video`. Mounted
-on the pelvis it rides with the robot and turns with it - `position` and
-`target` are then in the pelvis frame, x forward:
+otherwise, and that view is a fixed function of the compiled model - its pose
+does not move while the robot does. On the stock G1 scene the pelvis crosses the
+right edge of the 640x480 default view after 1.5 m of forward walk (under 4 s at
+0.4 m/s) and the rest of the clip is empty floor. Add a camera first and name it
+in `video`. Mounted on the pelvis it rides with the robot and turns with it -
+`position` and `target` are then in the pelvis frame, x forward:
 
 ```python
 sim = Robot("unitree_g1")
@@ -251,13 +252,16 @@ sim.run_policy(
 )
 ```
 
-A fixed camera works when it is placed to cover the path - the clip in the next
-section was shot from `add_camera(name="side", position=[1.7, -4.6, 1.4],
-target=[1.7, 0.0, 0.75], fov=42)`, a side view centred on the 3 m the robot
-covers in 8 s at 0.45 m/s. Either way the camera has to be added before the
+The mount holds the base at one pixel for the whole rollout, so a longer walk
+needs no re-placement.
+[`examples/microduck/eval_rl_policy.py`](https://github.com/strands-labs/robots/blob/main/examples/microduck/eval_rl_policy.py)
+records a walking robot this way: a `chase` camera mounted on
+`microduck/trunk_base`, added before the rollout and named in its `video`.
+A fixed camera works when the path is known -
+[`examples/kimodo/kimodo_g1_walking.py`](https://github.com/strands-labs/robots/blob/main/examples/kimodo/kimodo_g1_walking.py)
+calls `add_camera` with `position=[3.0, 0.0, 1.2]`, `target=[0.0, 0.0, 0.8]` to
+face the G1 where it starts. Either way the camera has to be added before the
 rollout; `add_camera` is refused while a policy is running.
-[`examples/locomotion/scripted_g1.py`](https://github.com/strands-labs/robots/blob/main/examples/locomotion/scripted_g1.py)
-does the pelvis mount before its first segment.
 
 ## Watching it walk (torque-control deploy)
 
