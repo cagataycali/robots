@@ -902,6 +902,69 @@ class PhysicsMixin:
                     return int(mid)
         return -1
 
+    def _robot_joint_labels(self, robot: Any) -> dict[str, str]:
+        """``{asset joint name: label}`` for one attached robot, from the registry.
+
+        Empty when the robot was added from a bare file rather than a registry
+        entry, or when its entry declares no ``joint_labels``.
+        """
+        data_config = getattr(robot, "data_config", None)
+        if not data_config:
+            return {}
+        from strands_robots.registry import joint_labels
+
+        return joint_labels(data_config)
+
+    def _resolve_joint_label(self, key: object, robot_name: str | None) -> int:
+        """Resolve a joint *label* (``shoulder_pan``) or ``<robot>/<label>`` to a joint id.
+
+        Labels come from the registry entry's ``joint_labels`` block, so an
+        agent can write the joint by what it does rather than by the asset's
+        servo id or CAD term. With ``robot_name`` only that robot's labels are
+        consulted; without it the robots are tried in attachment order and the
+        first carrying the label wins, mirroring the namespace fallback for a
+        bare asset name. ``-1`` when nothing matches.
+        """
+        if not isinstance(key, str) or self._world is None:
+            return -1
+        mj = _ensure_mujoco()
+        label = key
+        candidates = list(self._world.robots.values())
+        if robot_name is not None:
+            robot = registry_entry(self._world.robots, robot_name)
+            candidates = [robot] if robot is not None else []
+        if "/" in key:
+            head, _, label = key.rpartition("/")
+            ns = head + "/"
+            candidates = [r for r in candidates if (r.namespace or "") == ns]
+        for robot in candidates:
+            # Labels are a fixed vocabulary (``shoulder_pan``), so case is not
+            # information: ``Shoulder_Pan`` from a capitalising agent means it.
+            by_label = {lbl.lower(): jnt for jnt, lbl in self._robot_joint_labels(robot).items()}
+            jnt = by_label.get(label.lower())
+            if jnt is None:
+                continue
+            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, (robot.namespace or "") + jnt)
+            if jnt_id >= 0:
+                return jnt_id
+        return -1
+
+    def _joint_labels_hint(self, robot_name: str | None) -> str:
+        """One sentence naming the labels a joint key may use, or ``""`` when there are none."""
+        if self._world is None:
+            return ""
+        robots = list(self._world.robots.values())
+        if robot_name is not None:
+            robot = registry_entry(self._world.robots, robot_name)
+            robots = [robot] if robot is not None else []
+        parts = []
+        for robot in robots:
+            labels = self._robot_joint_labels(robot)
+            if labels:
+                pairs = ", ".join(f"{jnt}={lbl}" for jnt, lbl in labels.items())
+                parts.append(f"'{robot.name}' joints may also be written by label ({pairs}).")
+        return " ".join(parts)
+
     def _unknown_mj_entity_msg(self, kind: str, requested: object) -> str:
         """Actionable "<kind> not found" message for the physics/introspection
         lookups (``get_body_state`` / ``get_jacobian`` / ``set_body_properties`` /
@@ -1489,6 +1552,12 @@ class PhysicsMixin:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, ns + jnt_name)
             if jnt_id < 0:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            if jnt_id < 0:
+                # The registry's joint label (``shoulder_pan`` for the SO-101's
+                # joint ``1``), scoped to ``robot_name`` when given, otherwise
+                # the first robot whose labels carry it - the same order the
+                # namespace fallback above uses for a bare asset name.
+                jnt_id = self._resolve_joint_label(jnt_name, robot_name)
             if jnt_id >= 0:
                 resolved[jnt_name] = jnt_id
             else:
@@ -1499,6 +1568,9 @@ class PhysicsMixin:
         detail = self._unknown_mj_entity_msg("Joint", unresolved[0])
         if len(unresolved) > 1:
             detail = f"Unresolved '{name}' keys: {unresolved}. {detail}"
+        labels_hint = self._joint_labels_hint(robot_name)
+        if labels_hint:
+            detail = f"{detail} {labels_hint}"
         return {}, {
             "status": "error",
             "content": [

@@ -161,6 +161,13 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     calls it is refused. Reach for it from Python, and for `get_robot_state`
     from a tool call.
 
+    Some assets name joints by servo id or CAD term - the SO-101's are
+    `1`..`6`, the SO-100's `Rotation`..`Jaw`. For those, the registry entry
+    carries `joint_labels` (the `shoulder_pan` .. `gripper` the same arm's
+    driver and datasets use): `get_robot_state` prints `1 (shoulder_pan)`, and
+    the joint writers accept the label as a key - bare, `<robot>/<label>`, in
+    any case - beside the asset name. A refused key lists the labels too.
+
 !!! note "Numeric domain of the state writers"
     `set_joint_positions`, `set_joint_velocities` and the `apply_force`
     vectors take finite real numbers - a python or NumPy scalar - and refuse a

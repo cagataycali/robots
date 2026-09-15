@@ -3725,9 +3725,14 @@ class MuJoCoSimEngine(
                     "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
                 }
 
+            # A registry label beside a joint the asset names by servo id or CAD
+            # term (``1 (shoulder_pan)``), so the agent reading this can address
+            # the joint by what it does; ``set_joint_positions`` accepts the label.
+            labels = self._robot_joint_labels(robot)
             text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
             for jnt, vals in state.items():
-                text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+                shown = f"{jnt} ({labels[jnt]})" if jnt in labels else jnt
+                text += f"{shown}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
             if base is not None:
                 p_, q_ = base["position"], base["quaternion"]
                 lv_, av_ = base["linear_velocity"], base["angular_velocity"]
@@ -3739,6 +3744,8 @@ class MuJoCoSimEngine(
                 )
 
             json_payload: dict[str, Any] = {"state": state}
+            if labels:
+                json_payload["joint_labels"] = {jnt: labels[jnt] for jnt in state if jnt in labels}
             if base is not None:
                 json_payload["base"] = base
 
