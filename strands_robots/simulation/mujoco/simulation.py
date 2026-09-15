@@ -968,7 +968,7 @@ class MuJoCoSimEngine(
         if unresolved:
             # Surface the actual valid actuator names so the user can
             # self-correct without inspecting the MJCF by hand.
-            valid_keys = self._get_valid_action_keys(self._world.robots[robot_name].namespace or "")
+            valid_keys = self._get_valid_action_keys(robot_name)
             hint = f" Valid keys: {valid_keys}" if valid_keys else ""
             return {
                 "status": "error",
@@ -2000,6 +2000,12 @@ class MuJoCoSimEngine(
         model's own offset beside it whenever the two differ, so a spawn that
         did not land where it was asked is visible in the result instead of
         having to be measured with :meth:`get_body_state`.
+
+        The summary's last line names the next step THIS robot can take, which
+        is ``run_policy`` only when the model compiled with actuators. A model
+        with none (a bare URDF arm, or a registry pack whose only document
+        declares no ``<actuator>``) is offered :meth:`actuate_robot` instead --
+        see :meth:`_next_step_after_add`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2311,7 +2317,7 @@ class MuJoCoSimEngine(
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
-                            f"Run policy: action='run_policy', robot_name='{name}'"
+                            f"{self._next_step_after_add(name, robot)}"
                             f"{hint_line}"
                         )
                     }
@@ -2322,6 +2328,46 @@ class MuJoCoSimEngine(
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+
+    def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
+        """Name the next step the robot just added can actually take.
+
+        An actuated robot is invited to ``run_policy``, which is what the
+        summary has always offered. A model that compiles with NO actuators
+        cannot take that step: ``send_action`` has no key to resolve, so a
+        policy bound to it can only ever emit an empty action, and the two
+        surfaces that consume one already refuse exactly that -- the
+        all-unresolved abort in :meth:`PolicyRunner.run` and
+        :func:`uncommanded_eval_error` for :meth:`eval_policy`. Both reach the
+        verdict only AFTER a full rollout has been paid for, so repeating the
+        ``run_policy`` invitation here sends the caller down a path this door
+        already knows ends in a refusal.
+
+        Such a model is still worth adding -- rendering, IK and forward
+        kinematics need no actuator -- so it is offered
+        :meth:`actuate_robot` instead, the in-tree remedy that adds a position
+        servo per hinge/slide joint and makes ``run_policy`` the right next
+        step. A bare URDF arm loads this way by construction (URDF has no
+        actuator concept), which is the case ``actuate_robot`` was written for.
+
+        Args:
+            name: Instance label the robot was registered under, so the
+                offered call is copy-pasteable rather than a shape to fill in.
+            robot: The robot just added, read for its resolved actuator
+                ownership (:attr:`SimRobot.actuator_ids`) -- the same count the
+                ``Actuators:`` line above reports, so the two cannot disagree.
+
+        Returns:
+            One summary line naming an action and its ``robot_name``.
+        """
+        if robot.actuator_ids:
+            return f"Run policy: action='run_policy', robot_name='{name}'"
+        return (
+            f"No actuators: nothing can drive '{name}' yet -- send_action has no key to "
+            f"resolve, so run_policy would advance physics without commanding it. "
+            f"Rendering and IK work as-is; to drive it, add a position servo per joint "
+            f"first: action='actuate_robot', robot_name='{name}'"
+        )
 
     def _keyframe_home_state(
         self, resolved_path: str, keyframe: str | int
@@ -2908,14 +2954,17 @@ class MuJoCoSimEngine(
         * a tendon-driven gripper is an *actuator* with no matching joint name.
 
         Keying a policy by :meth:`robot_joint_names` in those cases makes the
-        affected DOFs silently no-op. The namespace short-names are produced by
-        :meth:`_get_valid_action_keys`, which strips the trailing-slash
-        namespace prefix (e.g. ``"xarm7/"``).
+        affected DOFs silently no-op. The keys are produced by
+        :meth:`_get_valid_action_keys`, which reads the robot's resolved
+        actuator ownership and strips the trailing-slash namespace prefix
+        (e.g. ``"xarm7/"``) from the actuators that carry one. An actuator that
+        carries no prefix -- the ``"<robot>_act_<joint>"`` position servos
+        :meth:`actuate_robot` injects -- is reported verbatim, so an actuated
+        URDF arm advertises the keys that drive it rather than none.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
             return []
-        namespace = self._world.robots[robot_name].namespace or ""
-        return self._get_valid_action_keys(namespace)
+        return self._get_valid_action_keys(robot_name)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
@@ -2923,8 +2972,8 @@ class MuJoCoSimEngine(
         Enables zero-config IK for an eef/cartesian-delta policy: the policy
         auto-discovers its end-effector frame from the model scoped to this
         robot's namespace. No-op for policies without ``set_sim_context``, which
-        is every shipped provider today; never fails a rollout on a binding
-        error.
+        is every shipped provider but ``MockPolicy`` - it reads the ctrlranges it
+        must command inside; never fails a rollout on a binding error.
         """
         ctx = getattr(policy, "set_sim_context", None)
         if not callable(ctx):
@@ -5235,7 +5284,16 @@ class MuJoCoSimEngine(
                 return [n for n in pool if n.startswith(prefix)]
 
             joint_names = robot.joint_names or _scoped(all_joint_names)
-            actuator_names = _scoped(all_actuator_names)
+            # Ownership, not prefix spelling -- the same rule ``n_actuators``
+            # below already reports. ``actuate_robot``'s injected position
+            # servos are named ``"<robot>_act_<joint>"`` and carry no namespace,
+            # so ``_scoped`` dropped every one of them and this line read
+            # "Actuators (14): " with nothing after the colon.
+            actuator_names = [
+                name
+                for act_id in robot.actuator_ids
+                if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id))
+            ]
             camera_names = _scoped(all_camera_names)
 
             robots_info = {
@@ -6479,7 +6537,7 @@ class MuJoCoSimEngine(
                             # after every robot's ctrl is set.
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
-                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj)
+                            self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
                         mj.mj_step(self._world._model, self._world._data)
                         # Kinematic attachments (attach_bodies mode="kinematic")
                         # follow their parent every physics step, on this

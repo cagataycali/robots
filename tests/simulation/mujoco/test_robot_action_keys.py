@@ -20,6 +20,8 @@ it instead.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 pytest.importorskip("mujoco")
@@ -142,7 +144,7 @@ class TestValidActionKeyHint:
     short (prefix-stripped) form callers pass to ``send_action``.
 
     When a key cannot be applied, ``_warn_unresolved_action_key`` surfaces the
-    actuators the scene accepts via ``_get_valid_action_keys(pfx)``. In a
+    actuators the scene accepts via ``_get_valid_action_keys(robot_name)``. In a
     multi-robot world actuators are namespaced (``armA/shoulder``); the hint
     must strip the active robot's prefix so the operator sees exactly the keys
     ``send_action`` expects, not the internal fully-qualified names. Unnamed
@@ -173,24 +175,30 @@ class TestValidActionKeyHint:
     </mujoco>
     """
 
-    def _mixin(self):
+    def _mixin(self, namespace: str) -> Any:
+        """A mixin over a one-robot world whose actuators carry ``namespace``."""
         import mujoco
 
+        from strands_robots.simulation.models import SimRobot, SimWorld
         from strands_robots.simulation.mujoco.rendering import RenderingMixin
 
         model = mujoco.MjModel.from_xml_string(self._XML)
+        robot = SimRobot(name="armA", urdf_path="armA.xml")
+        robot.namespace = namespace
+        robot.actuator_ids = list(range(model.nu))
 
-        class _World:
-            _model = model
+        world = SimWorld()
+        world.robots["armA"] = robot
+        world._model = model
 
         mixin = RenderingMixin()
-        mixin._world = _World()
+        mixin._world = world
         return mixin
 
     def test_prefix_is_stripped_for_matching_robot(self):
         """A robot prefix yields the short keys send_action resolves."""
-        assert self._mixin()._get_valid_action_keys("armA/") == ["shoulder", "elbow"]
+        assert self._mixin("armA/")._get_valid_action_keys("armA") == ["shoulder", "elbow"]
 
     def test_no_prefix_returns_fully_qualified_names(self):
         """Without a prefix the raw namespaced actuator names are returned."""
-        assert self._mixin()._get_valid_action_keys("") == ["armA/shoulder", "armA/elbow"]
+        assert self._mixin("")._get_valid_action_keys("armA") == ["armA/shoulder", "armA/elbow"]
