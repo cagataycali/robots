@@ -1,11 +1,19 @@
-"""Regression for the 'video recording silently writes 0-frame MP4' DX bug.
+"""A rollout video names a camera that can be drawn, or the rollout never starts.
 
-Surfaced by /tmp/e2e_agentic_test_85 scenario S2 (LLM passed video.camera="side"
-when add_robot() had compiled the camera as "arm1/side"). Before the fix,
-sim.render() returned status=error, _extract_frame_ndarray() returned None,
-and the rollout silently completed with writer.close() producing an empty
-file. After the fix, PolicyRunner pre-validates the camera name up-front
-and returns a clean error dict with a "cameras are namespaced" hint.
+``video={"camera": ...}`` used to be checked only by the render call inside the
+step loop: an unrenderable name made every frame ``None``, the rollout ran to
+completion, and ``writer.close()`` produced an empty file with no hint.
+``PolicyRunner`` now probes the camera once up front and refuses the rollout with
+a clean error, so no stub MP4 is written.
+
+Both spellings of a robot's own camera reach that probe: ``add_robot`` registers
+the camera its MJCF calls ``side`` under that short name while the compiled model
+holds it as ``arm1/side``, and
+:meth:`~strands_robots.simulation.mujoco.rendering.RenderingMixin._camera_id`
+resolves either - the same rule ``start_cameras_recording`` follows below. The
+refusal is therefore for a name nothing in the scene answers for, and it keeps
+naming the namespacing convention because a mistyped camera is usually a
+half-remembered namespace.
 """
 
 from __future__ import annotations
@@ -53,13 +61,13 @@ class TestVideoCameraPreValidation:
         """A wrong camera name must be caught BEFORE the rollout starts,
         not silently produce a 0-byte MP4 at the end."""
         video_path = tmp_path / "bad.mp4"
-        # "side" is the raw camera name but the compiled scene has "arm1/side"
+        # A name no camera in the scene answers for, under either spelling.
         r = sim_with_arm.run_policy(
             robot_name="arm1",
             policy_provider="mock",
             duration=0.5,
             fast_mode=False,
-            video={"path": str(video_path), "camera": "side", "fps": 30},
+            video={"path": str(video_path), "camera": "elbow", "fps": 30},
         )
         assert r["status"] == "error", r
         text = r["content"][0]["text"].lower()
@@ -68,6 +76,24 @@ class TestVideoCameraPreValidation:
         assert "namespaced" in text or "arm1/" in text, f"missing hint: {text}"
         # No stub MP4 should have been written
         assert not video_path.exists() or video_path.stat().st_size == 0
+
+    @requires_gl
+    def test_short_camera_name_records_the_video(self, sim_with_arm, tmp_path):
+        """The name ``list_cameras`` offers records, it does not fail the probe.
+
+        ``side`` is how the scene's own MJCF names the camera and how the
+        registry keys it, so a caller reading either surface passes it here.
+        """
+        video_path = tmp_path / "short.mp4"
+        r = sim_with_arm.run_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            duration=0.5,
+            fast_mode=False,
+            video={"path": str(video_path), "camera": "side", "fps": 30, "width": 160, "height": 120},
+        )
+        assert r["status"] == "success", r
+        assert video_path.exists() and video_path.stat().st_size > 0
 
     @requires_gl
     def test_namespaced_camera_succeeds(self, sim_with_arm, tmp_path):

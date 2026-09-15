@@ -660,15 +660,9 @@ class RenderingMixin:
                 continue
             cam_info = registry_entry(self._world.cameras, cname)
             # Resolve the MODEL camera this observation key names. The key alone
-            # is not always that name: ``add_robot`` registers a robot's own
-            # MJCF cameras under their SHORT name - the stable, config-level
-            # schema this method documents for joints as well - while the
-            # compiled model holds them namespaced (``arm0/wrist``). The
-            # registered entry carries that namespaced name, so it answers for
-            # the keys the bare lookup cannot.
-            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
-            if cam_id < 0:
-                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, getattr(cam_info, "name", None))
+            # is not always that name - see :meth:`_camera_id`, which owns that
+            # rule for every camera surface on this backend.
+            cam_id = self._camera_id(cname)
             if cam_id < 0:
                 # Nothing in the compiled model answers for this key, so there
                 # is no view to report under it. Rendering the FREE camera here
@@ -1176,7 +1170,7 @@ class RenderingMixin:
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
-        mj = _ensure_mujoco()
+        _ensure_mujoco()  # import guard; the camera lookup lives in _camera_id
         # treat `None` as "use default", but `0` / negative values must
         # still hit the validator (bool coercion would swallow them silently).
         # When the caller omits a dimension, honor the named camera's CONFIGURED
@@ -1205,7 +1199,7 @@ class RenderingMixin:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1306,7 +1300,7 @@ class RenderingMixin:
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
-        mj = _ensure_mujoco()
+        _ensure_mujoco()  # import guard; the camera lookup lives in _camera_id
         # see note in render() re: None vs 0/negative. Honor the named camera's
         # CONFIGURED resolution (add_camera(width=, height=)) when the caller
         # omits a dimension, so the depth map is pixel-aligned with the RGB
@@ -1325,7 +1319,7 @@ class RenderingMixin:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1518,7 +1512,7 @@ class RenderingMixin:
         if self._world is None or self._world._model is None or self._world._data is None:
             raise RuntimeError(_NO_WORLD_MSG)
 
-        mj = _ensure_mujoco()
+        _ensure_mujoco()  # import guard; the camera lookup lives in _camera_id
         cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
@@ -1534,7 +1528,7 @@ class RenderingMixin:
             if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
             else:
-                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
                     raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
 
@@ -1651,7 +1645,7 @@ class RenderingMixin:
                 K_explicit = None
             else:
                 R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
-                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = self._camera_id(camera_name)
                 K_explicit = self._explicit_intrinsics_K(mj, _np, model, self._world._data, cam_id, w, h)
 
         if K_explicit is not None:
@@ -1771,7 +1765,7 @@ class RenderingMixin:
         Raises:
             KeyError: no camera of that name exists in the model.
         """
-        cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        cam_id = self._camera_id(camera_name)
         if cam_id < 0:
             raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
         mj.mj_forward(model, data)
@@ -1830,6 +1824,49 @@ class RenderingMixin:
         x_axis = np_mod.cross(up, z_axis)
         R = np_mod.column_stack([x_axis, up, z_axis])
         return R, t, float(model.vis.global_.fovy)
+
+    def _camera_id(self, camera_name: str | None) -> int:
+        """Resolve a caller-supplied camera name to its compiled-model camera id.
+
+        The counterpart to :meth:`_list_camera_names`: that method says which
+        names this backend offers, and this one turns any of them into the
+        ``mjOBJ_CAMERA`` id every render path needs. A bare model lookup is not
+        enough, because two spellings answer for one camera: ``add_robot``
+        registers a robot's own MJCF cameras under their SHORT name (``wrist``)
+        -- the config-level schema :meth:`get_observation` publishes and
+        ``add_robot`` reports -- while the compiled model holds them namespaced
+        (``arm0/wrist``). The registered ``SimCamera`` carries the namespaced
+        name, so it answers for the short keys the bare lookup cannot.
+
+        Resolving both spellings in ONE place is what makes
+        :meth:`list_cameras` honest. Each surface used to do its own lookup, so
+        the short alias rendered through :meth:`get_observation` and was refused
+        by :meth:`render`, :meth:`render_depth`, :meth:`get_frame` and
+        :meth:`get_camera_params` -- while the refusal listed the very name it
+        was refusing as available, and ``start_cameras_recording`` accepted it
+        and wrote a clip of zero frames.
+
+        Args:
+            camera_name: A camera name as the caller supplied it, short or
+                namespaced. Free-camera tokens are not handled here: every
+                render path routes :data:`FREE_CAMERA_TOKENS` to the free view
+                before asking for an id.
+
+        Returns:
+            The model camera id, or ``-1`` when nothing in the compiled model
+            answers for the name -- which each caller reports beside
+            :meth:`_list_camera_names`.
+        """
+        world = getattr(self, "_world", None)
+        if world is None or getattr(world, "_model", None) is None:
+            return -1
+        model = world._model
+        mj = _ensure_mujoco()
+        cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            registered = registry_entry(world.cameras, camera_name)
+            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, getattr(registered, "name", None))
+        return int(cam_id)
 
     def _list_camera_names(self) -> list[str]:
         """helper to list all camera names (model-defined + SimCamera aliases)

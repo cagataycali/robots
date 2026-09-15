@@ -76,6 +76,7 @@ EXPECTED_IN_SCOPE = frozenset(
     {
         "tests/simulation/mujoco/test_entity_name_lookup_type_safety.py",
         "tests/simulation/mujoco/test_remove_camera_refused_recompile.py",
+        "tests/simulation/mujoco/test_render_resolves_every_camera_it_lists.py",
         "tests/simulation/mujoco/test_reset_forwards_derived_state.py",
         "tests/simulation/test_camera_pixel_count_domain.py",
         "tests/simulation/test_unhashable_entity_name_is_reported.py",
