@@ -84,9 +84,12 @@ class TestSealed:
         assert client.get(path).status_code == 401
 
     def test_guarded_posts_refuse(self, client):
-        assert client.post("/api/settings", json={"agent": {"temperature": 0.1}}).status_code == 401
-        assert client.post("/api/auth/handoff").status_code == 401
-        assert client.delete("/api/auth/credentials/x").status_code == 401
+        # Each request is bound before the assert: sending one is a side effect, and
+        # `assert` is compiled out under `python -O`.
+        patch = client.post("/api/settings", json={"agent": {"temperature": 0.1}})
+        handoff = client.post("/api/auth/handoff")
+        removal = client.delete("/api/auth/credentials/x")
+        assert [patch.status_code, handoff.status_code, removal.status_code] == [401, 401, 401]
 
     def test_query_string_token_is_not_read(self, client, monkeypatch):
         monkeypatch.setattr(
