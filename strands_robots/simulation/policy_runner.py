@@ -42,7 +42,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -245,6 +245,34 @@ def pass_hat_k(n_completed: int, n_success: int, k_max: int = _PASS_HAT_K_MAX) -
     }
 
 
+def action_commands_robot(action: Mapping[str, Any]) -> bool:
+    """Report whether one action from a policy's chunk commands the robot at all.
+
+    An action dict with no keys is handed to ``send_action`` like any other and
+    the backend accepts it, but it names no actuator, so nothing about the robot
+    is commanded by it. It is the per-action form of the empty chunk
+    :func:`uncommanded_eval_error` refuses: physics advances, a step is counted,
+    and no command reaches the robot. A policy reaches it whenever its decode
+    yields a row with no joint values - :meth:`CuroboPolicy._next_chunk` emits one
+    per waypoint when the planner's trajectory rows carry no joint position, since
+    the key list it zips against is then empty too.
+
+    Counting such an action as applied is what makes an evaluation of nothing but
+    those actions indistinguishable, in every published field, from one that
+    commanded every joint. The sibling ``run`` surface separates the two through
+    its per-actuator ``action_resolution_rate``; this is the rule the evaluation
+    routes read instead.
+
+    Args:
+        action: One action dict from a chunk, as handed to ``send_action``.
+
+    Returns:
+        True when the action names at least one key, so applying it commands the
+        robot; False for an action that commands nothing.
+    """
+    return bool(action)
+
+
 def uncommanded_eval_error(
     *,
     surface: str,
@@ -280,7 +308,9 @@ def uncommanded_eval_error(
             (there is no metric to distrust), so it is not refused here.
         steps_advanced: Control steps the evaluation advanced across those
             episodes. Zero likewise leaves nothing to have been silent about.
-        actions_applied: Actions actually handed to ``send_action``. The
+        actions_applied: Actions that commanded at least one of the robot's
+            keys (see :func:`action_commands_robot`) - not calls made to
+            ``send_action``, which an action commanding nothing reaches too. The
             refusal fires only when this is zero: a PARTIAL shortfall is real
             policy behaviour and is reported as a count, not refused, since
             refusing it would contradict the per-step tolerance above.
@@ -4080,7 +4110,8 @@ class PolicyRunner:
                             self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
                             _fire_on_frame(_observation, action_dict, steps)
                             steps += 1
-                            actions_applied += 1
+                            if action_commands_robot(action_dict):
+                                actions_applied += 1
                             # Check success against the LIVE post-action observation
                             # (mirrors the synchronous path / _evaluate_with_spec).
                             if resolved_check is not None and _criterion_verdict(
@@ -4117,7 +4148,8 @@ class PolicyRunner:
                             self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
                             _fire_on_frame(observation, action_dict, steps)
                             steps += 1
-                            actions_applied += 1
+                            if action_commands_robot(action_dict):
+                                actions_applied += 1
                             # Check success against the LIVE post-action observation,
                             # not the stale pre-action obs. Checking the pre-action
                             # obs detects success one step late and never records a
@@ -4605,7 +4637,8 @@ class PolicyRunner:
                                 break
                             action_applied = dict(action_in_chunk)
                             self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
-                            actions_applied += 1
+                            if action_commands_robot(action_applied):
+                                actions_applied += 1
                             # #191 - synchronous on_frame hook fires on the
                             # eval thread, after send_action + before
                             # on_step's reward bookkeeping. Use this for

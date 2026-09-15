@@ -1246,7 +1246,9 @@ class TestSpecInstructionFallback:
         class _LangPolicy(MockPolicy):
             async def get_actions(self, observation_dict, instruction, **kwargs):
                 captured.append(instruction)
-                return [{}]
+                # Command the robot: this fixture's subject is the instruction it
+                # receives, not a chunk that commands nothing.
+                return [dict.fromkeys(self.robot_state_keys, 0.0)]
 
         class _SpecWithInstruction(_CountingBenchmark):
             @property
@@ -1276,7 +1278,9 @@ class TestSpecInstructionFallback:
         class _LangPolicy(MockPolicy):
             async def get_actions(self, observation_dict, instruction, **kwargs):
                 captured.append(instruction)
-                return [{}]
+                # Command the robot: this fixture's subject is the instruction it
+                # receives, not a chunk that commands nothing.
+                return [dict.fromkeys(self.robot_state_keys, 0.0)]
 
         class _SpecWithInstruction(_CountingBenchmark):
             @property
@@ -1322,7 +1326,9 @@ class TestSpecInstructionFallback:
         class _LangPolicy(MockPolicy):
             async def get_actions(self, observation_dict, instruction, **kwargs):
                 captured.append(instruction)
-                return [{}]
+                # Command the robot: this fixture's subject is the instruction it
+                # receives, not a chunk that commands nothing.
+                return [dict.fromkeys(self.robot_state_keys, 0.0)]
 
         class _SpecWithRaisingInstruction(_CountingBenchmark):
             @property
@@ -1504,6 +1510,20 @@ class _EmptyActionsPolicy(MockPolicy):
         return []
 
 
+class _UncommandingActionsPolicy(MockPolicy):
+    """Returns a NON-empty chunk whose every action names no key.
+
+    The sibling of :class:`_EmptyActionsPolicy` for the spec loop: those
+    actions are applied through ``send_action`` and command no actuator, so the
+    benchmark's ``success_rate`` / ``avg_reward`` describe the scene exactly as
+    an all-empty-chunk run's do - but the chunk is not empty, so the
+    ``if not actions:`` branch above never sees it.
+    """
+
+    async def get_actions(self, observation_dict, instruction, **kwargs):
+        return [{}, {}]
+
+
 class _DegenerateOutcomeBenchmark(BenchmarkProtocol):
     """Counting benchmark whose success/failure/done can be tripped at a given
     step. Used to exercise every sub-branch of the empty-actions path.
@@ -1572,6 +1592,22 @@ class TestDegeneratePolicyInBenchmarkLoop:
         assert ep["success"] is False
         assert ep["failure"] is False
         assert spec.on_step_calls == 8
+
+    def test_actions_that_command_nothing_are_refused_in_aggregate(self):
+        """A full chunk of actions naming no key is the empty chunk's harm: the
+        spec loop applies each one, and none commands the robot."""
+        sim = FakeSim()
+        policy = _UncommandingActionsPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        spec = _DegenerateOutcomeBenchmark()
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=spec, n_episodes=1, seed=7)
+
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["steps_advanced"] == 8
+        assert payload["actions_applied"] == 0
+        assert payload["uncommanded_error"] is not None
+        assert result["status"] == "error"
 
     def test_empty_actions_success_terminates_episode(self):
         """``is_success`` tripping inside the empty-action path ends the episode
