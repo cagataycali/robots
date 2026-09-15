@@ -14,6 +14,13 @@ the caller is told, never silently dropped. A command the worker was already
 inside when the freeze landed cannot be recalled: that write completes, and the
 route answers the request 423 with the lockout still latched.
 
+A session can also be a MIRROR: given a ``source`` (see
+:mod:`strands_robots.dashboard.mirror`), the worker never steps physics. Each
+tick it takes the source's joint angles, writes them into ``qpos`` and runs
+the kinematics, so the render and the twin show the real arm where it is. A
+mirror refuses ``set_joints`` and ``reset`` - the arm decides the pose - and a
+source that stops answering shows as ``stale`` rather than as a frozen pose.
+
 Nothing here knows about the mesh, hardware, or HTTP.
 """
 
@@ -48,7 +55,7 @@ class Snapshot:
 
     id: str
     robot: str
-    state: str  # starting | running | frozen | error | stopped
+    state: str  # starting | running | mirroring | stale | frozen | error | stopped
     sim_time: float
     steps: int
     joint_names: tuple[str, ...]
@@ -62,6 +69,10 @@ class Snapshot:
     #: rows, ``ngeom`` of them - what the browser twin needs, in the bytes it
     #: needs, so no route re-encodes it per client. Empty until the engine exists.
     poses: bytes = b""
+    #: ``"sim"`` for physics, or ``"real:<port>"`` when a source drives the pose.
+    source: str = "sim"
+    #: The source's health (port, hz, age, raw ticks, error), or None for physics.
+    bus: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """The snapshot as JSON-ready fields, floats rounded for the wire."""
@@ -78,6 +89,8 @@ class Snapshot:
             "error": self.error,
             "model_path": self.model_path,
             "created": self.created,
+            "source": self.source,
+            "bus": self.bus,
         }
 
 
@@ -92,11 +105,19 @@ class _Command:
 class SimSession:
     """One simulated robot in one worker thread. See the module docstring."""
 
-    def __init__(self, robot: str, *, engine_factory: Callable[[str], Any] | None = None, realtime: bool = True):
+    def __init__(
+        self,
+        robot: str,
+        *,
+        engine_factory: Callable[[str], Any] | None = None,
+        realtime: bool = True,
+        source: Any | None = None,
+    ):
         self.id = uuid.uuid4().hex[:8]
         self.robot = robot
         self._factory = engine_factory or _default_factory
         self._realtime = realtime
+        self._source = source
         self._commands: queue.Queue[_Command] = queue.Queue()
         self._frozen = threading.Event()
         self._stop = threading.Event()
@@ -104,7 +125,19 @@ class SimSession:
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
         self._engine: Any | None = None
-        self._snapshot = Snapshot(self.id, robot, "starting", 0.0, 0, (), (), 0.0, (), created=time.time())
+        self._snapshot = Snapshot(
+            self.id,
+            robot,
+            "starting",
+            0.0,
+            0,
+            (),
+            (),
+            0.0,
+            (),
+            created=time.time(),
+            source="sim" if source is None else f"real:{source.port}",
+        )
         self._thread = threading.Thread(target=self._run, name=f"sim-{robot}-{self.id}", daemon=True)
         self._thread.start()
 
@@ -146,7 +179,7 @@ class SimSession:
     def thaw(self) -> None:
         """Resume stepping after :meth:`freeze`."""
         self._frozen.clear()
-        self._publish(state="running")
+        self._publish(state="running" if self._source is None else "mirroring")
 
     def stop(self, timeout: float = 5.0) -> None:
         """End the worker and close the engine."""
@@ -192,7 +225,7 @@ class SimSession:
         self._publish(
             # An e-stop that arrived while the engine was building already set
             # the flag; this first publish reports that, not "running".
-            state="frozen" if self._frozen.is_set() else "running",
+            state="frozen" if self._frozen.is_set() else ("running" if self._source is None else "mirroring"),
             joint_names=names,
             cameras=cameras,
             model_path=_model_path(self.robot),
@@ -224,7 +257,12 @@ class SimSession:
             while not self._stop.is_set():
                 self._drain(engine)
                 now = time.monotonic()
-                if not self._frozen.is_set():
+                mirrored: str | None = None
+                if self._source is not None:
+                    # A mirror never steps: the arm decides, the kinematics follow.
+                    mirrored = self._follow(engine, names)
+                    last_wall = now
+                elif not self._frozen.is_set():
                     # Real time: step as many physics ticks as wall time asks for, capped
                     # so a stall never turns into a burst.
                     n = min(int((now - last_wall) / dt), 200) if self._realtime else 1
@@ -249,8 +287,10 @@ class SimSession:
                     steps=steps,
                     qpos=tuple(float(q) for q in engine.mj_data.qpos),
                     fps=fps,
-                    state="frozen" if self._frozen.is_set() else "running",
+                    state="frozen" if self._frozen.is_set() else (mirrored or "running"),
                     poses=_pack_poses(engine.mj_data),
+                    bus=None if self._source is None else self._source.health(),
+                    error=self._source.error if mirrored == "error" and self._source is not None else None,
                 )
                 time.sleep(1.0 / _TELEMETRY_HZ)
         except Exception as exc:
@@ -259,14 +299,29 @@ class SimSession:
         finally:
             self._close(engine)
 
-    @staticmethod
-    def _close(engine: Any) -> None:
+    def _close(self, engine: Any) -> None:
+        if self._source is not None:
+            self._source.close()
         close = getattr(engine, "close", None)
         if callable(close):
             try:
                 close()
             except Exception:
                 logger.debug("engine close failed", exc_info=True)
+
+    def _follow(self, engine: Any, names: tuple[str, ...]) -> str:
+        """Write the source's angles into the model. ``mirroring``, ``stale`` or ``error``."""
+        source = self._source
+        assert source is not None
+        if source.error:
+            return "error"
+        if self._frozen.is_set():
+            return "frozen"
+        q = source.qpos()
+        if q is None:
+            return "stale"
+        engine.set_joint_positions(dict(zip(names, q, strict=False)), robot_name=self.robot, hold=True)
+        return "mirroring"
 
     def _drain(self, engine: Any) -> None:
         while True:
@@ -288,6 +343,15 @@ class SimSession:
                 cmd.done.set()
 
     def _apply(self, engine: Any, cmd: _Command) -> dict[str, Any]:
+        if self._source is not None and cmd.kind in ("reset", "set_joints"):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"this session mirrors the real arm on {self._source.port}: it reads the pose, it cannot set one"
+                    }
+                ],
+            }
         if cmd.kind == "reset":
             return dict(engine.reset())
         if cmd.kind == "set_joints":
