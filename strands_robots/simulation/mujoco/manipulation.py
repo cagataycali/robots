@@ -91,6 +91,64 @@ def _relative_pose(mj: Any, data: Any, parent_id: int, child_id: int) -> tuple[l
     return [float(v) for v in relpos], [float(v) for v in relquat]
 
 
+# Two bodies closer than this are reported as touching. One millimetre is
+# above MuJoCo's default contact margin and below any offset a real pinch
+# leaves between a finger pad and an object.
+_TOUCHING_GAP_M = 1e-3
+
+
+def _subtree_body_ids(model: Any, root_id: int, exclude_id: int) -> list[int]:
+    """``root_id`` and every body under it, minus ``exclude_id``'s subtree."""
+    ids: list[int] = []
+    for body_id in range(model.nbody):
+        cursor = body_id
+        excluded = False
+        while cursor > 0:
+            if cursor == exclude_id:
+                excluded = True
+                break
+            if cursor == root_id:
+                break
+            cursor = int(model.body_parentid[cursor])
+        if excluded:
+            continue
+        if cursor == root_id or body_id == root_id:
+            ids.append(body_id)
+    return ids
+
+
+def _body_gap_m(mj: Any, model: Any, data: Any, parent_id: int, child_id: int) -> float | None:
+    """Smallest surface distance between the parent's subtree and the child.
+
+    A gripper's finger pads usually live on child links of the body a caller
+    names (``Fixed_Jaw`` / ``Moving_Jaw`` under the wrist), so the parent side
+    is the whole subtree below ``parent_id``. Returns ``None`` when either side
+    has no geoms, or when this MuJoCo build cannot measure geom distances.
+    """
+    geom_distance = getattr(mj, "mj_geomDistance", None)
+    if geom_distance is None:
+        return None
+    parent_geoms = [
+        g
+        for b in _subtree_body_ids(model, parent_id, child_id)
+        for g in range(model.ngeom)
+        if model.geom_bodyid[g] == b
+    ]
+    child_geoms = [g for g in range(model.ngeom) if model.geom_bodyid[g] == child_id]
+    if not parent_geoms or not child_geoms:
+        return None
+    fromto = np.zeros(6)
+    best = float("inf")
+    for pg in parent_geoms:
+        for cg in child_geoms:
+            dist = float(geom_distance(model, data, pg, cg, 1.0, fromto))
+            if dist < best:
+                best = dist
+    if not np.isfinite(best):
+        return None
+    return max(best, 0.0)
+
+
 def _find_free_joint(mj: Any, model: Any, body_id: int) -> int:
     """Return the id of the FREE joint carried by ``body_id``, or -1."""
     for jid in range(model.njnt):
@@ -273,6 +331,11 @@ class ManipulationMixin:
             # Capture the CURRENT relative pose from live kinematics.
             mj.mj_forward(model, data)
             relpos, relquat = _relative_pose(mj, data, parent_id, child_id)
+            # Measured before the attachment so the caller learns whether
+            # the bodies touch: an object welded from centimetres away rides
+            # along floating at that offset, and a caller who closed a gripper
+            # near an object has read that as a pick.
+            gap_m = _body_gap_m(mj, model, data, parent_id, child_id)
 
             if mode == "weld":
                 eq_name = f"attach_weld_{parent}__{child}"
@@ -314,6 +377,17 @@ class ManipulationMixin:
                 data.qvel[dof_adr : dof_adr + 6] = 0.0
                 mj.mj_forward(model, data)
 
+        touching = gap_m is not None and gap_m <= _TOUCHING_GAP_M
+        if gap_m is None:
+            contact_note = ""
+        elif touching:
+            contact_note = " The bodies are touching."
+        else:
+            contact_note = (
+                f" The bodies are NOT touching: closest surfaces {gap_m * 100:.1f} cm apart, so "
+                f"'{child}' now floats rigidly at that offset - a weld, not a pick. For a grasp, "
+                "move the gripper onto the object and close it before attaching."
+            )
         return {
             "status": "success",
             "content": [
@@ -321,9 +395,19 @@ class ManipulationMixin:
                     "text": (
                         f"'{child}' attached to '{parent}' (mode={mode}, relpos="
                         f"{[round(v, 4) for v in relpos]}). Note: not a physical grasp - "
-                        "detach_bodies releases it."
+                        "detach_bodies releases it." + contact_note
                     )
-                }
+                },
+                {
+                    "json": {
+                        "parent": parent,
+                        "child": child,
+                        "mode": mode,
+                        "relpos": [round(float(v), 4) for v in relpos],
+                        "gap_m": None if gap_m is None else round(gap_m, 4),
+                        "touching": None if gap_m is None else touching,
+                    }
+                },
             ],
         }
 
