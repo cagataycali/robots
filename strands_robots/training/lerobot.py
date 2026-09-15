@@ -172,9 +172,10 @@ def _module_available(name: str) -> bool:
 # side and the matching AbsoluteActionsProcessorStep on the output side, both
 # built from ``config.use_relative_actions`` and saved into the checkpoint's
 # pre/post processors). Discovered live per policy type off the config class
-# (see :func:`_policy_supports_relative_actions`); the static set is the offline
-# FALLBACK. Currently the pi0 family and groot expose the field.
-_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot"})
+# (see :func:`_policy_supports_relative_actions`); the static set below is the
+# offline FALLBACK and the only written roster - prose that re-lists it goes
+# stale silently, so the docs roster is graded against this gate instead.
+_RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot", "vla_jepa"})
 
 # LeRobot policy types whose config exposes ``train_expert_only`` (freeze the
 # (V)LM backbone, train only the action expert - the cheap VLA finetune recipe).
@@ -977,11 +978,12 @@ class LerobotTrainer(Trainer):
         pipeline) restores the inverse decode automatically - no separate
         inference-side wiring is needed.
 
-        Only some policy configs expose ``use_relative_actions`` (currently the
-        ``pi0`` family and ``groot``); the supported set is discovered live from
-        lerobot's registry (:func:`_policy_supports_relative_actions`), and
-        :meth:`validate` rejects the flag for any policy type whose config lacks
-        the field rather than letting it become a silent no-op.
+        Only some policy configs expose ``use_relative_actions``; the supported
+        set is discovered live from lerobot's registry
+        (:func:`_policy_supports_relative_actions`) and named by the refusal, so
+        it is not re-listed here. :meth:`validate` rejects the flag for any
+        policy type whose config lacks the field rather than letting it become a
+        silent no-op.
         """
         return bool(spec.extra.get("relative_actions", False))
 
