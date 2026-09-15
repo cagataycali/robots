@@ -107,8 +107,12 @@ def ensure_bus_open(robot: Any) -> bool:
     Opens the *bus only*: the robot's own ``connect()`` also runs
     ``configure()``, which writes operating-mode and gain registers to every
     servo, and a read must not do that. The port a rollout later needs is the
-    same one, and lerobot's ``connect()`` is guarded by ``is_connected``, so a
-    bus opened here is simply found open by the rollout.
+    same one, and the driver's ``connect()`` cannot start from an open port -
+    so the caller records a ``True`` return and hands the bus back before any
+    connect (``Robot._hand_back_observe_devices``). Left open it is worse than
+    a refused connect: on an arm with no cameras the open bus alone reads as
+    ``is_connected``, and a rollout would drive servos ``configure()`` never
+    set up.
     """
     bus = _bus(robot)
     if getattr(bus, "is_connected", False):

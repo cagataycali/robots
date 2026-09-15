@@ -26,6 +26,13 @@ asked for, so they grade the observable facts without a serial port:
 * ``_connect_robot()`` refusing an uncalibrated arm closes what it opened, and
   refuses again on the second call instead of short-circuiting past the gate
   on ``is_connected`` - measured on a real SO-101 before the fix.
+* A device an observe action opened is handed back before ``connect()`` - the
+  camera ``render`` opened as much as the bus ``get_state`` opened. The fakes
+  follow lerobot's ``@check_if_already_connected`` contract on every device's
+  ``connect()``, because an open camera is what let the driver's own connect
+  *succeed* with ``configure()`` skipped: a one-camera arm then reads
+  ``is_connected`` and its servos never received an operating mode or a
+  torque limit. A hand-back that fails refuses the connect instead.
 
 One test is marked ``hardware`` and reads a real arm when ``STRANDS_HW_PORT``
 names its port; it is skipped everywhere else.
@@ -42,6 +49,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from lerobot.utils.errors import DeviceAlreadyConnectedError
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolUse
 
@@ -192,6 +200,10 @@ class FakeCamera:
         self.reads = 0
 
     def connect(self) -> None:
+        # lerobot's every camera ``connect()`` is ``@check_if_already_connected``,
+        # and the robot's connect loop has no handler of its own for it.
+        if self.is_connected:
+            raise DeviceAlreadyConnectedError(f"{self} is already connected")
         self.connects += 1
         self.is_connected = True
 
@@ -258,6 +270,10 @@ class FakeLeRobot:
         self.bus.disconnect(disable_torque=True)
         for cam in self.cameras.values():
             cam.disconnect()
+
+    def send_action(self, action: dict[str, float]) -> dict[str, float]:
+        self.bus.sync_write("Goal_Position", action)
+        return action
 
     def __str__(self) -> str:
         return "fake SOFollower"
@@ -686,6 +702,133 @@ class TestCalibrationGateHoldsOnEveryCall:
         assert robot.configure_calls == 1, "the driver ran its full open sequence"
         # The hand-back closed without a torque write: nothing had been energised.
         assert robot.bus.disconnects[0] is False
+
+    def test_a_camera_opened_by_render_is_handed_back_to_connect(self, sandbox: Path) -> None:
+        """An open camera used to make connect() SUCCEED with configure() skipped.
+
+        lerobot's ``connect()`` opens the bus, then each camera, then runs
+        ``configure()``. A camera already open raises in that loop - after the
+        bus is up, before ``configure()`` - and the handler read it as "already
+        connected". With one camera ``is_connected`` then reads True, so the
+        rollout drove servos that never received ``Operating_Mode`` or the
+        gripper's torque limits. Measured on this fake before the fix:
+        ``(True, "")`` with ``configure_calls == 0``.
+        """
+        cam = FakeCamera()
+        robot = FakeLeRobot(calibrated=True, cameras={"front": cam})
+        hw = _make_hw(robot)
+        _call(hw, action="render", camera_name="front")
+        assert cam.is_connected and not robot.bus.is_connected
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert (ok, err) == (True, "")
+        assert robot.is_connected is True
+        assert robot.configure_calls == 1, "the driver ran its full open sequence, configure() included"
+        assert cam.connects == 2, "handed back, then reopened by the driver"
+
+    def test_a_bus_opened_by_get_state_on_a_camera_less_arm_is_handed_back_too(self) -> None:
+        """With no cameras, the open bus alone IS ``is_connected``.
+
+        A hand-back gated on ``not is_connected`` never fires here, so connect()
+        is skipped outright and a rollout follows on an arm whose ``configure()``
+        never ran - the same servos-never-configured state as the camera case,
+        reached without a camera. Measured before the fix: ``(True, "")`` with
+        ``configure_calls == 0``.
+        """
+        robot = FakeLeRobot(calibrated=True)
+        hw = _make_hw(robot)
+        _call(hw, action="get_state")
+        assert robot.is_connected, "no cameras: an open bus reads as a connected robot"
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert (ok, err) == (True, "")
+        assert robot.configure_calls == 1, "the driver's connect() ran, configure() included"
+        assert robot.bus.disconnects == [False] and robot.bus.connects == 2
+
+    def test_a_robot_the_caller_connected_is_left_as_they_left_it(self) -> None:
+        """The ledger records what the tool borrowed, not what the caller opened."""
+        robot = FakeLeRobot(calibrated=True, cameras={"front": FakeCamera()})
+        robot.connect()
+        hw = _make_hw(robot)
+
+        assert asyncio.run(hw._connect_robot()) == (True, "")
+        assert robot.configure_calls == 1, "already connected by the caller; not torn down and redone"
+        assert robot.bus.disconnects == []
+
+    def test_a_teleop_write_hands_back_the_bus_get_state_opened(self) -> None:
+        """The teleop loop's lazy connect is the second path a write reaches the arm by."""
+        robot = FakeLeRobot(calibrated=True)
+        hw = _make_hw(robot)
+        _call(hw, action="get_state")
+
+        result = hw.send_action({"shoulder_pan.pos": 1.0})
+
+        assert result["status"] == "success", result
+        assert robot.configure_calls == 1, "a write must not reach servos configure() never set up"
+        assert robot.bus.disconnects == [False]
+
+    def test_a_camera_opened_by_render_on_a_two_camera_arm_is_handed_back_too(self, sandbox: Path) -> None:
+        """With two cameras the same state failed the connect outright; now it connects."""
+        robot = FakeLeRobot(calibrated=True, cameras={"front": FakeCamera(), "wrist": FakeCamera()})
+        hw = _make_hw(robot)
+        _call(hw, action="render", camera_name="wrist")
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert (ok, err) == (True, "")
+        assert robot.configure_calls == 1
+
+    def test_a_device_that_cannot_be_handed_back_refuses_the_connect(self, sandbox: Path) -> None:
+        """A failed hand-back must not fall through to the driver's "already connected".
+
+        If the close raised and connect() went ahead, the driver would raise
+        ``DeviceAlreadyConnectedError`` in its camera loop and the handler would
+        wave it through - the exact skip-configure state the hand-back exists to
+        prevent. So the refusal is the connect's, and nothing was configured.
+        """
+
+        class _StuckCamera(FakeCamera):
+            def disconnect(self) -> None:
+                raise OSError("v4l2 device is busy")
+
+        cam = _StuckCamera()
+        robot = FakeLeRobot(calibrated=True, cameras={"front": cam})
+        hw = _make_hw(robot)
+        _call(hw, action="render", camera_name="front")
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert ok is False and "device is busy" in err, err
+        assert robot.configure_calls == 0, "a connect that was refused must not have configured anything"
+        assert robot.bus.is_connected is False, "the refusal rolled back the bus the driver had opened"
+
+    def test_the_bus_is_handed_back_under_the_lock_an_observe_read_holds(self) -> None:
+        """A read in flight finishes before the hand-back closes the port under it."""
+        from strands_robots.bus_access import bus_lock
+
+        robot = FakeLeRobot(calibrated=True)
+        hw = _make_hw(robot)
+        _call(hw, action="get_state")
+        assert robot.bus.is_connected
+
+        outcome: list[tuple[bool, str]] = []
+        lock = bus_lock(robot)
+        lock.acquire()  # a probe mid-read
+        try:
+            worker = threading.Thread(target=lambda: outcome.append(asyncio.run(hw._connect_robot())))
+            worker.start()
+            worker.join(timeout=0.3)
+            assert worker.is_alive(), "the hand-back closed the port under a read that held the lock"
+            assert robot.bus.disconnects == []
+        finally:
+            lock.release()
+        worker.join(timeout=5)
+
+        assert outcome == [(True, "")]
+        assert robot.bus.disconnects == [False]
+        assert robot.configure_calls == 1
 
     def test_an_uncalibrated_arm_read_first_is_still_refused_by_connect(self) -> None:
         robot = FakeLeRobot(calibrated=False)
