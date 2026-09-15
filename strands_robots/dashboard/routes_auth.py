@@ -29,9 +29,20 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
+    """The request body as a JSON object, or the 4xx that says why not.
+
+    A body has to declare itself ``application/json``. That is not pedantry:
+    a cross-site ``fetch`` may send ``text/plain`` without a preflight, and a
+    parser that accepts it turns any page on the web into a caller of every
+    write route. Declaring JSON makes the request non-simple, so the browser
+    asks first - and this app never says yes.
+    """
     raw = await request.body()
     if not raw:
         return {}
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type != "application/json":
+        raise HTTPException(415, "body must be application/json")
     try:
         body = await request.json()
     except ValueError:

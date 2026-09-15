@@ -67,6 +67,15 @@ def create_app() -> FastAPI:
         # One shape for every refusal so the UI has one place to render them.
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
+    @app.middleware("http")
+    async def _refuse_cross_origin_writes(request: Request, call_next: Any) -> Any:
+        # A page from another origin can make the browser send a write here
+        # (a no-preflight simple request) but cannot hide where it came from.
+        # Whatever credential rides along, the Origin decides first.
+        if request.method in access.UNSAFE_METHODS and not access.origin_is_self(request):
+            return JSONResponse({"error": "cross-origin write refused"}, status_code=403)
+        return await call_next(request)
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "version": _version(), "service": "strands-robots dashboard"}

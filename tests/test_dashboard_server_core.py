@@ -62,6 +62,51 @@ class TestOpenPosture:
         for header in ("x-forwarded-for", "x-real-ip", "forwarded"):
             assert client.get("/api/whoami", headers={header: "203.0.113.9"}).status_code == 401, header
 
+    def test_a_rebound_name_on_the_loopback_socket_is_not_this_machine(self, client):
+        """DNS rebinding: evil.example resolves to 127.0.0.1, so the socket peer is
+        loopback and no proxy header is set - but Host carries the attacker's name."""
+        for host in ("evil.example", "evil.example:8090", "192.168.1.20:8090"):
+            assert client.get("/api/whoami", headers={"host": host}).status_code == 401, host
+
+    @pytest.mark.parametrize("host", ["localhost", "localhost:8090", "127.0.0.1:8090", "[::1]:8090", "::1"])
+    def test_every_loopback_spelling_of_host_is_this_machine(self, client, host):
+        assert client.get("/api/whoami", headers={"host": host}).json()["via"] == "loopback"
+
+    def test_a_page_from_another_origin_is_not_this_machine(self, client):
+        """The operator's browser running someone else's script: loopback peer,
+        loopback Host, but Origin names the page that made the request."""
+        for origin in ("http://evil.example", "https://evil.example:8090", "null"):
+            assert client.get("/api/whoami", headers={"origin": origin}).status_code == 401, origin
+
+    def test_the_dashboards_own_page_is_this_machine(self, client):
+        assert client.get("/api/whoami", headers={"origin": "http://testserver"}).json()["via"] == "loopback"
+
+    def test_a_cross_origin_write_is_refused_before_any_credential_is_read(self, client):
+        """Whatever the credential, a write whose Origin is another page is 403 -
+        this is the guard the sealed posture has too, not only the open one."""
+        response = client.post(
+            "/api/settings", json={"agent": {"temperature": 0.9}}, headers={"origin": "http://evil.example"}
+        )
+        assert response.status_code == 403
+        assert response.json() == {"error": "cross-origin write refused"}
+        assert settings.get("agent", "temperature") != 0.9
+
+    def test_a_write_has_to_say_it_is_json(self, client):
+        """A text/plain POST is a no-preflight simple request; parsing it would
+        make every page on the web a caller of every write route."""
+        response = client.post(
+            "/api/settings", content='{"agent": {"temperature": 0.9}}', headers={"content-type": "text/plain"}
+        )
+        assert response.status_code == 415
+        assert settings.get("agent", "temperature") != 0.9
+        declared = client.post(
+            "/api/settings",
+            content='{"agent": {"temperature": 0.9}}',
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+        assert declared.status_code == 200
+        assert settings.get("agent", "temperature") == 0.9
+
     def test_static_ui_is_served(self, client):
         assert client.get("/").status_code == 200
         assert "text/html" in client.get("/").headers["content-type"]

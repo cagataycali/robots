@@ -16,9 +16,12 @@ until a passkey guards it.
 
 ## The first minute
 
-1. **This machine, no passkey yet.** The dashboard is usable from the browser on
-   the same machine and refuses every other caller - including a same-host
-   proxy or `ssh -L` forward, which is not presence at the machine.
+1. **This machine, no passkey yet.** The dashboard is usable from a browser on
+   the same machine, at `http://127.0.0.1:8090` or `localhost`, and refuses
+   every other caller - a same-host proxy or `ssh -L` forward, a request whose
+   `Host` is any other name (DNS rebinding), and a page from any other origin
+   (cross-site `fetch` or `WebSocket`). None of those is presence at the
+   machine.
 2. **Enrol the owner passkey.** The login screen asks for a bootstrap token. It
    is in the `0600` file `enrol_token` beside `~/.strands_dashboard/auth.json`
    (or the `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN` you set). Paste it, name the key,
