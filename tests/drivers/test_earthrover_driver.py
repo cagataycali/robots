@@ -240,6 +240,27 @@ class TestCleanupIsAStopFirst:
         assert session.closed
         assert not driver.is_connected
 
+    def test_a_session_that_cannot_be_released_still_ends_the_connection(
+        self, session: _FakeSession, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Closing is the last thing cleanup does, so its failure must not undo the stop.
+
+        A ``cleanup()`` that raised here would abandon a driver that still
+        reports itself connected - and the next caller would send twists into
+        a session that is gone.
+        """
+        driver = _live_driver(session)
+
+        def refuses_to_close() -> None:
+            raise OSError("socket already gone")
+
+        monkeypatch.setattr(session, "close", refuses_to_close)
+
+        driver.cleanup()
+
+        assert session.posts[-1][1] == {"command": {"linear": 0.0, "angular": 0.0}}
+        assert not driver.is_connected
+
     def test_cleanup_is_idempotent(self, session: _FakeSession) -> None:
         driver = _live_driver(session)
         driver.cleanup()
@@ -386,22 +407,85 @@ class TestTheDriveEnvelopeIsTheNormalisedRange:
         assert reason is not None
         assert "angular" in reason and "send_action" in reason
 
-    @pytest.mark.parametrize(
-        ("post_response", "needle"),
-        [
-            (_FakeResponse(500, None, "boom"), "HTTP 500"),
-            (OSError("gone"), "did not reach"),
-        ],
-        ids=["http-500", "dead-link"],
-    )
-    def test_a_failed_send_is_reported_not_swallowed(
-        self, session: _FakeSession, post_response: Any, needle: str
+
+# --------------------------------------------------------------------------- #
+# The doors every SDK-facing verb shares.                                     #
+# --------------------------------------------------------------------------- #
+
+
+def _derail_post(session: _FakeSession, answer: Any) -> None:
+    """Make the next POST answer ``answer``; an exception is raised instead."""
+    session.post_response = answer
+
+
+def _derail_get(session: _FakeSession, answer: Any) -> None:
+    """Make the next ``/v2/front`` GET answer ``answer``."""
+    session.routes["/v2/front"] = answer
+
+
+#: The verbs that reach the SDK after connect: the verb, the endpoint it
+#: addresses, how to call it, and how to break its transport. Adding a row is
+#: how a new SDK-facing verb gets graded at the doors its siblings are graded
+#: at, instead of being the one verb that raises out of an agent turn.
+_SDK_VERBS: tuple[tuple[str, str, Any, Any], ...] = (
+    ("send_action", "/control", lambda d: d.send_action({"linear": 0.2}), _derail_post),
+    ("speak", "/speak", lambda d: d.speak("on my way"), _derail_post),
+    ("capture_frame", "/v2/front", lambda d: d.capture_frame("front"), _derail_get),
+)
+
+#: The failures that belong to the transport rather than to the caller's
+#: argument: what to install (``None`` means "never connect at all") and the
+#: substring the refusal owes.
+_TRANSPORT_DOORS: tuple[tuple[str, Any, str], ...] = (
+    ("not-connected", None, "not connected - call connect_eagerly() first"),
+    ("dead-link", OSError("link dropped"), "did not reach the SDK"),
+    ("http-503", _FakeResponse(503, None, "starting"), "answered HTTP 503"),
+)
+
+
+class TestEverySdkVerbAnswersAtTheSameDoors:
+    """The verbs that reach the SDK refuse the same way when it does not answer.
+
+    ``send_action``, ``speak`` and ``capture_frame`` are the whole of the
+    driver's traffic once it is connected, and each of them can fail for three
+    reasons that have nothing to do with the caller's argument: there is no
+    session, the request never left the host, or the SDK answered something
+    other than 200. A verb that raised one of those instead of refusing would
+    take out the agent turn it was dispatched from - so each is judged on the
+    same three doors, and on naming both itself and the endpoint it tried,
+    which is what tells a caller which of its three requests died.
+    """
+
+    @pytest.mark.parametrize(("verb", "endpoint", "call", "derail"), _SDK_VERBS, ids=[row[0] for row in _SDK_VERBS])
+    @pytest.mark.parametrize(("door", "answer", "needle"), _TRANSPORT_DOORS, ids=[row[0] for row in _TRANSPORT_DOORS])
+    def test_the_refusal_names_the_verb_the_door_and_the_endpoint(
+        self,
+        session: _FakeSession,
+        verb: str,
+        endpoint: str,
+        call: Any,
+        derail: Any,
+        door: str,
+        answer: Any,
+        needle: str,
     ) -> None:
-        driver = _live_driver(session)
-        session.post_response = post_response
-        refusal = driver.send_action({"linear": 0.5})
+        if answer is None:
+            driver = EarthRoverDriver()  # never connected, so there is no session to use
+        else:
+            driver = _live_driver(session)
+            derail(session, answer)
+        already_sent = len(session.posts) + len(session.gets)
+
+        refusal = call(driver)
+
         assert refusal["status"] == "error"
-        assert needle in refusal["content"][0]["text"]
+        text = refusal["content"][0]["text"]
+        assert text.startswith(f"{verb}: "), f"a refusal names the verb it came from: {text!r}"
+        assert needle in text
+        if door == "not-connected":
+            assert len(session.posts) + len(session.gets) == already_sent, "a refused verb sends nothing"
+        else:
+            assert endpoint in text, f"a refusal names the endpoint it tried: {text!r}"
 
 
 class TestSpeakIsGuardedTheSameWay:
@@ -504,11 +588,9 @@ class TestCameraFrames:
         ("camera", "route", "needle"),
         [
             ("side", None, "camera must be one of"),
-            ("front", _FakeResponse(200, {}), "video session is not up"),
-            ("front", _FakeResponse(503, None, "starting"), "HTTP 503"),
             ("front", _FakeResponse(200, {"front_frame": "%%%not-base64%%%"}), "not base64"),
         ],
-        ids=["unknown-view", "no-frame", "http-503", "bad-b64"],
+        ids=["unknown-view", "bad-b64"],
     )
     def test_an_unusable_frame_is_refused_by_name(
         self, session: _FakeSession, camera: str, route: Any, needle: str
@@ -519,6 +601,23 @@ class TestCameraFrames:
         refusal = driver.capture_frame(camera)
         assert refusal["status"] == "error"
         assert needle in refusal["content"][0]["text"]
+
+    def test_a_body_that_is_not_json_reads_like_a_body_without_the_frame(self, session: _FakeSession) -> None:
+        """Both are the same fact about the rover: the SDK answered, the frame did not.
+
+        An unparseable body is not a bug to report separately - it is a video
+        session that is not up, which is what the caller needs to hear, and it
+        must not escape as the ``json.JSONDecodeError`` that ``requests``
+        raises from ``.json()``.
+        """
+        driver = _live_driver(session)
+        session.routes["/v2/front"] = _FakeResponse(200, {})
+        without_the_field = driver.capture_frame("front")
+        session.routes["/v2/front"] = _FakeResponse(200, ValueError("Expecting value: line 1 column 1 (char 0)"))
+        unparseable = driver.capture_frame("front")
+
+        assert unparseable == without_the_field
+        assert "video session is not up" in unparseable["content"][0]["text"]
 
     def test_every_declared_view_is_a_route(self) -> None:
         assert CAMERA_VIEWS == ("front", "rear")
