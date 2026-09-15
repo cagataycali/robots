@@ -111,7 +111,9 @@ def _as_list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [p.strip() for p in value.split(",") if p.strip()]
     if isinstance(value, (list, tuple)):
-        return [str(p).strip() for p in value if str(p).strip()]
+        # Entries are strings by the time they reach here: _coerce_strict grades
+        # each one, so nothing is spelled into a string on its way to the store.
+        return [p.strip() for p in value if p.strip()]
     return []
 
 
@@ -213,6 +215,15 @@ def _coerce_strict(section: str, key: str, value: Any) -> Any:
     if (section, key) in _LIST_KEYS:
         if value is not None and not isinstance(value, (str, list, tuple)):
             raise CoercionError(f"{key}: expected a list or comma-separated string, got {type(value).__name__}")
+        if isinstance(value, (list, tuple)):
+            # The container's shape was graded above; the entries' shape was
+            # not, and ``str(p)`` spelled whatever arrived: a ``null`` in a
+            # JSON body became the endpoint ``"None"``, stored, and published
+            # by apply_mesh_env() as ``ZENOH_CONNECT=None``. An entry is a
+            # string or the list is refused, naming the entry and its type.
+            for index, entry in enumerate(value):
+                if not isinstance(entry, str):
+                    raise CoercionError(f"{key}: entry {index} expected a string, got {type(entry).__name__}")
         return _as_list(value)
     if (section, key) in _BOOL_KEYS:
         if not isinstance(value, bool):

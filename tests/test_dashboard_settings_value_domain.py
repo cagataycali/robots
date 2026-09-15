@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import decimal
 import json
+import os
 
 import pytest
 
@@ -76,6 +77,15 @@ _UNUSABLE: list[tuple[str, str, object, str, object]] = [
     ("mesh", "camera_hz", 500.0, "outside (0, 240]", None),
     ("mesh", "connect", 5, "expected a list or comma-separated string", []),
     ("security", "cors_origins", {"a": 1}, "expected a list", []),
+    # The container's shape was graded; its entries' shape was not, and each
+    # was spelled with ``str()`` on its way to the store - so a ``null`` in a
+    # request body was stored as the endpoint ``"None"``.
+    ("mesh", "connect", [None], "entry 0 expected a string, got NoneType", []),
+    ("mesh", "connect", ["tcp/a:7447", None], "entry 1 expected a string, got NoneType", []),
+    ("mesh", "connect", [7447.0], "entry 0 expected a string, got float", []),
+    ("mesh", "connect", [["tcp/a:7447"]], "entry 0 expected a string, got list", []),
+    ("mesh", "listen", [7447], "entry 0 expected a string, got int", []),
+    ("security", "cors_origins", ["https://a", True], "entry 1 expected a string, got bool", []),
     ("runtime", "trust_remote_code", "maybe", "is not a boolean", False),
     ("runtime", "trust_remote_code", {"a": 1}, "is not a boolean", False),
 ]
@@ -195,6 +205,52 @@ class TestAnUnusableValueIsReportedOrDegradedToTheKeysShape:
 
         assert got == degraded
         assert type(got) is type(degraded), f"{section}.{key} degraded to a {type(got).__name__}"
+
+
+class TestAListEntryIsAStringOrTheListIsRefused:
+    """A non-string entry is refused by name, never spelled into the store.
+
+    ``_UNUSABLE`` holds the two paths' answers; these cells grade what the
+    stringified entry used to reach. ``apply_mesh_env`` publishes ``mesh.connect``
+    comma-joined into ``ZENOH_CONNECT``, so ``[None]`` accepted by the strict path
+    was the environment reading ``ZENOH_CONNECT=None`` - an endpoint spelled from
+    the absence of one. The controls pin that a list of strings is still held
+    whole, whitespace trimmed and blank entries dropped, so the refusal cannot
+    read as "refuse more lists".
+    """
+
+    def test_the_environment_never_reads_an_endpoint_spelled_from_none(self, store, monkeypatch):
+        monkeypatch.delenv("ZENOH_CONNECT", raising=False)
+
+        changed, errors = settings.update_strict({"mesh": {"connect": ["tcp/a:7447", None]}})
+
+        assert changed == []
+        assert errors == ["mesh.connect: entry 1 expected a string, got NoneType"]
+        assert "ZENOH_CONNECT" not in settings.apply_mesh_env()
+        assert "ZENOH_CONNECT" not in os.environ
+
+    @pytest.mark.parametrize("shape", [list, tuple], ids=["list", "tuple"])
+    def test_the_first_offending_entry_is_the_one_named(self, store, shape):
+        """Both sequence shapes the container check admits are graded the same."""
+        _changed, errors = settings.update_strict({"security": {"cors_origins": shape(["https://a", 1, None])}})
+
+        assert errors == ["security.cors_origins: entry 1 expected a string, got int"]
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (["tcp/a:7447", " tcp/b:7447 ", ""], ["tcp/a:7447", "tcp/b:7447"]),
+            (("tcp/a:7447",), ["tcp/a:7447"]),
+            ("tcp/a:7447, tcp/b:7447", ["tcp/a:7447", "tcp/b:7447"]),
+            ([], []),
+        ],
+    )
+    def test_a_list_of_strings_is_still_held_whole(self, store, value, expected):
+        changed, errors = settings.update_strict({"mesh": {"connect": value}})
+
+        assert errors == []
+        assert settings.load()["mesh"]["connect"] == expected
+        assert changed == (["mesh.connect"] if expected else [])
 
 
 class TestTheStoreStillAnswersTheRestOfItsSurface:
