@@ -4,7 +4,7 @@
 ``microduck`` repository under ``policies/*.onnx``", and every example under
 ``examples/microduck/`` defaulted ``--onnx`` to ``../microduck/policies/...``.
 Pollen removed that directory upstream ("policies/ leaves the repository"); the
-twelve weights now live on the Hub at ``pollen-robotics/microduck-policies``. A
+ten weights now live on the Hub at ``pollen-robotics/microduck-policies``. A
 reader following the page got ``no such ONNX`` from the very first command, on
 the headline feature of the release.
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -44,8 +44,10 @@ _PAGE = _REPO_ROOT / "docs" / "policies" / "microduck.md"
 _EXAMPLES = sorted((_REPO_ROOT / "examples" / "microduck").glob("*.py"))
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
-# The layout the weights left. Nothing shipped may send a reader there.
-_GONE = re.compile(r"microduck/policies/|policies/\*\.onnx")
+# The layout the weights left, as a file (``microduck/policies/alpha_walking.onnx``)
+# and as the bare directory an example passed as ``--policy-dir``. Nothing shipped
+# may send a reader to either.
+_GONE = re.compile(r"microduck/policies|policies/\*\.onnx")
 
 
 class _Hub:
@@ -143,10 +145,10 @@ class TestTheResolver:
         monkeypatch.delitem(utils._lazy_modules, "huggingface_hub", raising=False)
         real_import = utils.importlib.import_module
 
-        def _no_hub(name: str, *args: object, **kwargs: object) -> object:
+        def _no_hub(name: str, package: str | None = None) -> ModuleType:
             if name == "huggingface_hub":
                 raise ImportError(name)
-            return real_import(name, *args, **kwargs)
+            return real_import(name, package)
 
         monkeypatch.setattr(utils.importlib, "import_module", _no_hub)
 

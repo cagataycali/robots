@@ -3,7 +3,7 @@
 `docs/policies/microduck.md` said the shipped weights "ship in Pollen's
 `microduck` repository under `policies/*.onnx`" and every example under
 `examples/microduck/` defaulted `--onnx` to `../microduck/policies/...`.
-Pollen removed that directory upstream; the twelve weights are published on
+Pollen removed that directory upstream; the ten weights are published on
 the Hub at `pollen-robotics/microduck-policies`, so a reader following the
 page hit `no such ONNX` on the first command of the release's headline feature.
 

@@ -77,7 +77,9 @@ def _load_mujoco():
 
         return mujoco
     except ImportError as exc:  # pragma: no cover - dependency guard
-        raise SystemExit("mujoco is required. Install with: pip install 'strands-robots[sim-mujoco]'") from exc
+        raise SystemExit(
+            "mujoco is required. Install with: pip install 'strands-robots[sim-mujoco]'"
+        ) from exc
 
 
 def _make_tracking_camera(mujoco, model, body_name, distance, azimuth, elevation):
@@ -204,7 +206,9 @@ async def _rollout(args):
     if direct:
         try:
             renderer = mujoco.Renderer(model, args.height, args.width)
-            cam = _make_tracking_camera(mujoco, model, BASE_BODY, args.distance, args.azimuth, args.elevation)
+            cam = _make_tracking_camera(
+                mujoco, model, BASE_BODY, args.distance, args.azimuth, args.elevation
+            )
             # smoke-render one frame to confirm a GL context exists
             renderer.update_scene(data, camera=cam)
             _ = renderer.render()

@@ -176,7 +176,7 @@ def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = No
     path = Path(onnx_path)
     if path.exists():
         return path
-    bare_name = not path.is_absolute() and path.parent == Path(".")
+    bare_name = path.parent == Path(".")
     if not bare_name:
         raise FileNotFoundError(
             f"Microduck ONNX policy not found: {path}. Shipped weights live on the Hub at "
