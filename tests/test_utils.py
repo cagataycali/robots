@@ -301,6 +301,39 @@ class TestPathResolution:
         assert result == default
         assert result.is_dir()
 
+    def test_base_dir_path_resolves_the_same_directory_without_creating_it(self, tmp_path, monkeypatch):
+        """The read-only half of the pair answers the same, and writes nothing.
+
+        A caller that only compares paths against the base dir - the gr00t
+        bind-mount validator asking whether a candidate mount lies under the
+        checkpoints directory - must not create it to find out.
+        """
+        from strands_robots.utils import base_dir_path, get_base_dir
+
+        target = tmp_path / "custom_base"
+        monkeypatch.setenv("STRANDS_BASE_DIR", str(target))
+
+        assert base_dir_path() == target
+        assert not target.exists()  # asking did not create it
+        assert get_base_dir() == target  # same resolution
+        assert target.is_dir()  # and the creating half still creates
+
+    def test_base_dir_path_answers_even_when_the_directory_cannot_be_created(self, tmp_path, monkeypatch):
+        """A file sits where the base dir would go: resolving answers, creating cannot.
+
+        An unwritable or occupied base dir must not turn a caller that only
+        needed the path into a traceback.
+        """
+        from strands_robots.utils import base_dir_path, get_base_dir
+
+        occupied = tmp_path / "base"
+        occupied.write_text("not a directory")
+        monkeypatch.setenv("STRANDS_BASE_DIR", str(occupied))
+
+        assert base_dir_path() == occupied
+        with pytest.raises(FileExistsError):
+            get_base_dir()
+
     def test_get_assets_dir_honors_env_override(self, tmp_path, monkeypatch):
         from strands_robots.utils import get_assets_dir
 
