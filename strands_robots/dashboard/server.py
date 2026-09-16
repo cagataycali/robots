@@ -16,7 +16,9 @@ step, so it ships in the wheel and works offline. Later slices add a router each
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from strands_robots.dashboard import access, log_redaction, routes_auth, settings
+from strands_robots.dashboard import access, fleet, log_redaction, routes_auth, routes_sim, settings
+from strands_robots.dashboard.sim_session import SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +60,18 @@ def redacted_settings(data: dict[str, dict[str, Any]]) -> dict[str, dict[str, An
     return out
 
 
+@contextlib.asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+    app.state.safety.store.shutdown()
+
+
 def create_app() -> FastAPI:
     """Build the dashboard application. Safe to call more than once (tests do)."""
     log_redaction.install_redaction()
-    app = FastAPI(title="strands-robots dashboard", version=_version(), docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="strands-robots dashboard", version=_version(), docs_url=None, redoc_url=None, lifespan=_lifespan
+    )
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, exc: HTTPException) -> JSONResponse:
@@ -81,6 +92,9 @@ def create_app() -> FastAPI:
         return {"ok": True, "version": _version(), "service": "strands-robots dashboard"}
 
     app.include_router(routes_auth.router)
+    app.include_router(fleet.router)
+    app.include_router(routes_sim.router)
+    app.state.safety = routes_sim.Safety(SessionStore())
 
     @app.get("/api/settings")
     async def get_settings(_: dict = Depends(access.require_session)) -> dict[str, Any]:
