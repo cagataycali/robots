@@ -23,6 +23,22 @@ def test_encode_clip_gif_round_trip(tmp_path) -> None:
     assert len(decoded) == 5
 
 
+def test_encode_clip_gif_loops(tmp_path) -> None:
+    """The GIF carries the looping extension block, so the animation repeats.
+
+    Without it a GIF plays once and freezes on its last frame - a still, not
+    the clip that was asked for. Every animated GIF this repo ships loops, and
+    ``encode_clip`` is the only GIF writer in the package.
+    """
+    pytest.importorskip("imageio.v2")
+    Image = pytest.importorskip("PIL.Image")
+    out = encode_clip(_frames(), tmp_path / "clip.gif", fps=10)
+    # Pillow reports the Netscape looping block as ``loop``; 0 means forever.
+    with Image.open(out) as image:
+        loop = image.info.get("loop")
+    assert loop == 0
+
+
 def test_encode_clip_mp4_round_trip(tmp_path) -> None:
     pytest.importorskip("imageio.v2")
     pytest.importorskip("imageio_ffmpeg")
