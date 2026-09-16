@@ -189,6 +189,57 @@ class TestTheFrameIsTheSceneAsCommanded:
         assert kwargs["required_action_keys"] == list(kwargs["action"])
 
 
+class TestAnUnprefixedActuatorIsRecordedNotDropped:
+    """``robot_action_keys`` returns some keys verbatim, and the frame must resolve those too.
+
+    ``add_robot`` namespaces every robot, but the position servos
+    ``actuate_robot`` injects are named ``"<robot>_act_<joint>"`` with no
+    namespace, so ``robot_action_keys`` reports them raw. A frame that tried
+    only the namespaced spelling resolved none of them and, worse, dropped them
+    from ``required_action_keys`` as well - so the recorder's refusal of an
+    unsupplied declared column never fired and ``add_frame`` wrote 0.0 into
+    every one under a ``step`` that reported success.
+    """
+
+    ROBOT = "asimov_v0"
+
+    @pytest.fixture
+    def actuated(self):
+        s = Simulation(tool_name="step_records_actuated", mesh=False)
+        s.create_world()
+        assert s.add_robot(self.ROBOT)["status"] == "success"
+        assert s.robot_action_keys(self.ROBOT) == [], "precondition: the pack ships no actuator"
+        assert s.actuate_robot(robot_name=self.ROBOT)["status"] == "success"
+        yield s
+        s.cleanup()
+
+    def test_every_injected_servo_is_in_the_recorded_action(self, actuated) -> None:
+        keys = actuated.robot_action_keys(self.ROBOT)
+        assert keys and not any(k.startswith(actuated._world.robots[self.ROBOT].namespace) for k in keys)
+        recorder = _open_fake_recording(actuated, fps=10)
+        assert actuated.step(n_steps=1)["status"] == "success"
+        kwargs = recorder.add_frame.call_args.kwargs
+        assert set(kwargs["action"]) == set(keys), sorted(set(keys) - set(kwargs["action"]))[:5]
+        assert kwargs["required_action_keys"] == keys
+
+    def test_the_recorded_value_is_the_servo_target_in_force(self, actuated) -> None:
+        keys = actuated.robot_action_keys(self.ROBOT)
+        recorder = _open_fake_recording(actuated, fps=10)
+        assert actuated.send_action(robot_name=self.ROBOT, action={keys[0]: 0.25})["status"] == "success"
+        assert actuated.step(n_steps=1)["status"] == "success"
+        assert recorder.add_frame.call_args.kwargs["action"][keys[0]] == pytest.approx(0.25)
+
+    def test_a_key_that_resolves_nowhere_stays_required(self, sim, monkeypatch) -> None:
+        """The recorder, not the frame builder, decides what an unsupplied column costs."""
+        real = sim.robot_action_keys("so101")
+        monkeypatch.setattr(sim, "robot_action_keys", lambda _n: [*real, "no_such_actuator"])
+        recorder = _open_fake_recording(sim, fps=10)
+        assert sim.step(n_steps=1)["status"] == "success"
+        kwargs = recorder.add_frame.call_args.kwargs
+        assert "no_such_actuator" not in kwargs["action"]
+        assert "no_such_actuator" in kwargs["required_action_keys"]
+
+
 class TestTheRolloutOwnsTheRecorder:
     def test_step_does_not_double_record_while_a_policy_runs(self, sim) -> None:
         recorder = _open_fake_recording(sim, fps=10)

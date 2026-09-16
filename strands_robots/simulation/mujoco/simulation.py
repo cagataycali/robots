@@ -5136,16 +5136,25 @@ class MuJoCoSimEngine(
             pfx = robot.namespace or ""
             act: dict[str, Any] = {}
             for key in self.robot_action_keys(robot_name):
-                act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, pfx + key)
+                # The key form mirrors _apply_action_by_name's lookup: the
+                # namespaced spelling first, then the raw one. An actuator
+                # actuate_robot injected is named "<robot>_act_<joint>" with no
+                # namespace, so the first spelling names nothing for it.
+                act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, pfx + key) if pfx else -1
+                if act_id < 0:
+                    act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, key)
+                # Every advertised key is required whether or not it resolved:
+                # a declared column this frame cannot supply is the recorder's
+                # to refuse (unrecordable_action_columns_error), not to zero-fill
+                # under a step that reports success.
+                required.append(f"{robot_name}__{key}" if multi else key)
                 if act_id < 0:
                     continue
                 act[key] = float(data.ctrl[act_id])
             for k, v in obs.items():
                 observation[k if (isinstance(v, np.ndarray) or not multi) else f"{robot_name}__{k}"] = v
             for k, v in act.items():
-                keyed = f"{robot_name}__{k}" if multi else k
-                action[keyed] = v
-                required.append(keyed)
+                action[f"{robot_name}__{k}" if multi else k] = v
             world._backend_state["trajectory"].append(
                 TrajectoryStep(
                     timestamp=now,
