@@ -1553,7 +1553,15 @@ class MuJoCoSimEngine(
             if carried_robots and prior is not None:
                 for name in carried_robots:
                     robot = prior.robots[name]
-                    robot._world = world if robot._world is not None else None
+                    # Re-point the mesh bridge at the world the robot now
+                    # lives in. ``_attach_robot_to_mesh`` sets ``_world`` so
+                    # the child Mesh's ``_read_state`` can read joint
+                    # positions; left pointing at the world just discarded,
+                    # the child peer would publish state from a dead model.
+                    # An off-mesh robot keeps None - the documented value for
+                    # a standalone robot (see SimRobot._world).
+                    if robot._world is not None:
+                        robot._world = world
                     world.robots[name] = robot
                 if prior._backend_state.get("robot_base_xml"):
                     world._backend_state["robot_base_xml"] = prior._backend_state["robot_base_xml"]

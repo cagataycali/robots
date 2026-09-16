@@ -175,6 +175,28 @@ def test_loading_an_exported_scene_into_a_fresh_sim_then_add_robot_names_the_col
         fresh.cleanup()
 
 
+def test_a_carried_robots_mesh_bridge_follows_the_new_world(sim, tmp_path):
+    # ``_attach_robot_to_mesh`` points SimRobot._world at the live SimWorld so
+    # the child Mesh's ``_read_state`` can read joint positions. Carrying the
+    # robot over has to re-point it: left on the world load_scene discarded,
+    # the child peer publishes state from a dead model. Off-mesh robots keep
+    # None, the documented value for a standalone robot.
+    sim.add_robot(name="so101", data_config="so101")
+    robot = sim._world.robots["so101"]
+    assert robot._world is None  # off-mesh: nothing bridged it
+    robot._world = sim._world  # what _attach_robot_to_mesh does
+    discarded = sim._world
+    _export_then_load(sim, tmp_path)
+    assert sim._world is not discarded
+    assert sim._world.robots["so101"]._world is sim._world
+
+
+def test_a_carried_off_mesh_robot_keeps_no_world_backref(sim, tmp_path):
+    sim.add_robot(name="so101", data_config="so101")
+    _export_then_load(sim, tmp_path)
+    assert sim._world.robots["so101"]._world is None
+
+
 def test_a_scene_without_the_robot_still_drops_it(sim, tmp_path, scene_path):
     sim.add_robot(name="so101", data_config="so101")
     r = sim.load_scene(scene_path)
