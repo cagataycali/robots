@@ -8,8 +8,8 @@ auth posture.
 
 Run it with::
 
-    source /opt/ros/jazzy/setup.bash         # or your distro
-    pip install pyzmq msgpack                # the only non-ROS deps
+    source /opt/ros/jazzy/setup.bash         # or your distro, with moveit_py
+    pip install 'strands-robots[moveit2]'    # pyzmq + msgpack, the only non-ROS deps
     python -m strands_robots.policies.moveit2.server.zmq_node \\
         --port 5556 --planning-group arm
 
@@ -57,12 +57,30 @@ import logging
 import sys
 from typing import Any
 
+from strands_robots.utils import require_optional, require_optionals
+
 # These imports deliberately happen inside ``main`` so this file can be
 # imported and statically analysed without ROS 2 sourced. Top-level
 # imports of ``rclpy`` / ``moveit_py`` would crash on dev boxes that
 # only have the strands-robots client installed.
 
 logger = logging.getLogger("moveit2.zmq_node")
+
+#: Remedy for a sidecar launched in a shell where ROS 2 / MoveIt 2 are not
+#: importable. A ``system_install=`` text, not a pip line: ``rclpy``,
+#: ``moveit`` (moveit_py) and ``moveit_configs_utils`` are not published on
+#: PyPI, and the ``[moveit2]`` extra deliberately carries only the client side
+#: (pyzmq + msgpack), so a pip command here would report success and change
+#: nothing.
+ROS_SIDECAR_INSTALL_HINT = (
+    "rclpy and moveit_py are not published on PyPI - they ship with a system ROS 2 + MoveIt 2 "
+    "install (apt / RoboStack / conda).\n"
+    "Source a distro in the shell that launches the sidecar, e.g.:\n"
+    "  source /opt/ros/jazzy/setup.bash   # or your distro\n"
+    "and install MoveIt 2's Python bindings for it, e.g.:\n"
+    "  sudo apt install ros-jazzy-moveit-py ros-jazzy-moveit-configs-utils\n"
+    "The [moveit2] extra installs only the client-side pyzmq + msgpack; it does not provision ROS 2."
+)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -112,6 +130,8 @@ def _build_moveit_py(args: argparse.Namespace) -> Any:
     Kept in its own function so a fork can mock / replace the planner
     initialisation without rewriting the ZMQ loop.
     """
+    require_optional("moveit.planning", system_install=ROS_SIDECAR_INSTALL_HINT, purpose="the MoveIt2 ZMQ sidecar")
+    require_optional("moveit_configs_utils", system_install=ROS_SIDECAR_INSTALL_HINT, purpose="the MoveIt2 ZMQ sidecar")
     from moveit.planning import MoveItPy
     from moveit_configs_utils import MoveItConfigsBuilder
 
@@ -251,14 +271,33 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Lazy imports - see module docstring for rationale.
-    import msgpack
-    import rclpy
-    import zmq
+    # Lazy imports - see module docstring for rationale. Each absence is
+    # refused with the install that supplies the module, before any socket is
+    # bound: an operator who launched the sidecar in an unsourced shell reads
+    # the remedy, not a traceback ending in "No module named 'rclpy'".
+    try:
+        require_optionals(
+            ("msgpack", "zmq"),
+            extra="moveit2",
+            purpose="the MoveIt2 ZMQ sidecar",
+            pip_install={"zmq": "pyzmq"},
+        )
+        require_optional("rclpy", system_install=ROS_SIDECAR_INSTALL_HINT, purpose="the MoveIt2 ZMQ sidecar")
+        import msgpack
+        import rclpy
+        import zmq
+    except ImportError as e:
+        logger.error("%s", e)
+        return 2
 
     rclpy.init()
     try:
         moveit_py = _build_moveit_py(args)
+    except ImportError as e:
+        # moveit_py / moveit_configs_utils absent: the remedy is the message.
+        logger.error("%s", e)
+        rclpy.shutdown()
+        return 2
     except Exception as e:
         logger.exception("Failed to construct MoveItPy: %s", e)
         rclpy.shutdown()
