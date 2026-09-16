@@ -1,12 +1,18 @@
-"""``hf_local_dir`` under the caller's own home, or the system temp dir, is admitted; hidden home entries and other homes are not.
+"""``hf_local_dir`` at the tool's own checkpoints dir, the Hugging Face cache or the system temp dir is admitted; the rest of the home is not.
 
 The bind-mount blocklist names ``/home``, ``/root`` and ``/var``. Read as a
-prefix rule those cover the only places an ordinary user can write: on Linux
-``hf_local_dir="~/checkpoints"`` was refused as "under protected host path
-'/home'" - and so was the tool's own default ``~/.strands_robots/checkpoints``
-when spelled out - while ``/opt``, ``/mnt`` and ``/srv`` are root-owned. On
-macOS the system temp dir is ``/var/folders/.../T``, so every ``$TMPDIR``
-path was refused and this file's own ``tmp_path`` fixtures with it.
+prefix rule those cover the two trees the tool mounts on its own: spelled out,
+its default ``~/.strands_robots/checkpoints`` was refused as "under protected
+host path '/home'", and so was the Hugging Face cache. On macOS the system
+temp dir is ``/var/folders/.../T``, so every ``$TMPDIR`` path was refused and
+this file's own ``tmp_path`` fixtures with it.
+
+Exactly those three places are admitted. An arbitrary visible directory of the
+caller's home (``~/checkpoints``) is not: ``hf_local_dir`` is agent-supplied,
+the mount is read-write and ``hf_repo`` is any repository, so admitting it
+would let a prompt-injected ``download_checkpoint`` write that repository into
+a directory the user's shell or build reads. It is refused naming the places
+that are admitted, so the caller learns where a checkpoint may go.
 
 These tests build a Linux-shaped host under ``tmp_path`` - a ``home`` tree
 with two users - and point the blocklist and the "current user" at it, so
@@ -57,18 +63,18 @@ def _verdict(path: Path | str) -> str | None:
     return gi._check_hf_local_dir_safety(str(path))
 
 
-class TestTheCallersOwnVisibleDirectoriesAreAdmitted:
-    def test_a_visible_directory_in_the_home(self, host):
-        assert _verdict(host / "home/me/checkpoints") is None
+_ADMITTED = "only the tool's own checkpoints dir"
 
-    def test_a_directory_that_does_not_exist_yet(self, host):
-        assert _verdict(host / "home/me/gr00t-n1") is None
 
+class TestTheToolsOwnTreesAndTheTempDirAreAdmitted:
     def test_the_tools_own_default_spelled_out(self, host):
         assert _verdict(host / "home/me/.strands_robots/checkpoints") is None
 
     def test_a_sub_checkpoint_under_the_default(self, host):
         assert _verdict(host / "home/me/.strands_robots/checkpoints/nvidia__GR00T") is None
+
+    def test_a_sub_checkpoint_that_does_not_exist_yet(self, host):
+        assert _verdict(host / "home/me/.strands_robots/checkpoints/not-downloaded-yet") is None
 
     def test_the_hugging_face_cache(self, host):
         assert _verdict(host / "home/me/.cache/huggingface/hub") is None
@@ -77,7 +83,39 @@ class TestTheCallersOwnVisibleDirectoriesAreAdmitted:
         assert _verdict(host / "tmp/pytest-of-me/ckpt") is None
 
 
-class TestWhatStaysRefused:
+class TestTheRestOfTheOwnHomeIsRefusedNamingWhereACheckpointMayGo:
+    """``hf_local_dir`` is agent-supplied and the mount is read-write, so ``~/<anything>`` is not a mount."""
+
+    @pytest.mark.parametrize("visible", ["checkpoints", "gr00t-n1", "workspace/proj", "bin"])
+    def test_a_visible_directory_of_the_own_home(self, host, visible):
+        reason = _verdict(host / "home/me" / visible)
+        assert reason is not None
+        assert _ADMITTED in reason
+        assert repr(str(host / "home/me/.strands_robots/checkpoints")) in reason
+        assert repr(str(host / "home/me/.cache/huggingface")) in reason
+        assert repr(str(host / "tmp")) in reason
+        assert "leave hf_local_dir unset" in reason
+
+    @pytest.mark.parametrize("hidden", [".ssh", ".aws/credentials", ".docker/config.json", ".gnupg"])
+    def test_a_hidden_entry_of_the_own_home(self, host, hidden):
+        reason = _verdict(host / "home/me" / hidden)
+        assert reason is not None and _ADMITTED in reason
+
+    def test_a_hidden_entry_reached_through_a_visible_path(self, host):
+        reason = _verdict(host / "home/me/checkpoints/../.ssh")
+        assert reason is not None and _ADMITTED in reason
+
+    def test_a_symlink_in_the_home_pointing_at_a_hidden_entry(self, host):
+        reason = _verdict(host / "home/me/to-ssh")
+        assert reason is not None and _ADMITTED in reason
+
+    def test_a_sibling_of_the_checkpoints_dir_is_not_under_it(self, host):
+        """Prefix, not substring: ``checkpoints-evil`` shares the spelling and none of the trust."""
+        reason = _verdict(host / "home/me/.strands_robots/checkpoints-evil")
+        assert reason is not None and _ADMITTED in reason
+
+
+class TestWhatTheBlocklistStillDecides:
     def test_the_home_directory_itself(self, host):
         reason = _verdict(host / "home/me")
         assert reason is not None and "protected host path" in reason
@@ -86,25 +124,9 @@ class TestWhatStaysRefused:
         reason = _verdict(host / "home/other/ckpt")
         assert reason is not None and "protected host path" in reason
 
-    @pytest.mark.parametrize("hidden", [".ssh", ".aws/credentials", ".docker/config.json", ".gnupg"])
-    def test_a_hidden_entry_of_the_own_home_by_name(self, host, hidden):
-        reason = _verdict(host / "home/me" / hidden)
-        assert reason is not None
-        assert "hidden entry of your home directory" in reason
-        assert repr(hidden.split("/")[0]) in reason
-        assert "'~/checkpoints'" in reason  # the remedy
-
-    def test_a_hidden_entry_reached_through_a_visible_path(self, host):
-        reason = _verdict(host / "home/me/checkpoints/../.ssh")
-        assert reason is not None and "'.ssh'" in reason
-
     def test_a_symlink_in_the_home_pointing_at_a_protected_dir(self, host):
         reason = _verdict(host / "home/me/to-etc")
         assert reason is not None and "protected host path" in reason
-
-    def test_a_symlink_in_the_home_pointing_at_a_hidden_entry(self, host):
-        reason = _verdict(host / "home/me/to-ssh")
-        assert reason is not None and "'.ssh'" in reason
 
     def test_etc_and_the_docker_socket(self, host):
         assert "protected host path" in (_verdict(host / "etc/shadow") or "")
@@ -118,11 +140,13 @@ class TestWhatStaysRefused:
 
         Both zones are read from the environment, so "the caller's own home"
         can name a directory the blocklist protects in its own right. It stays
-        refused, which is what keeps the promise that ``/root`` is unchanged.
+        refused - even at the tool's own checkpoints dir under it - which is
+        what keeps the promise that ``/root`` is unchanged.
         """
-        (host / "root").mkdir()
+        (host / "root" / ".strands_robots" / "checkpoints").mkdir(parents=True)
         monkeypatch.setattr(gi, "_user_home", lambda: os.path.realpath(host / "root"))
-        reason = _verdict(host / "root/checkpoints")
+        monkeypatch.setattr(gi, "_checkpoints_dir", lambda **_: host / "root" / ".strands_robots" / "checkpoints")
+        reason = _verdict(host / "root/.strands_robots/checkpoints")
         assert reason is not None and "protected host path" in reason
 
     def test_a_temp_dir_the_blocklist_names_is_not_an_allowance_zone(self, host, monkeypatch):
@@ -144,10 +168,13 @@ def test_the_download_probe_accepts_a_temp_dir_on_this_host(tmp_path):
 
 
 def test_this_hosts_own_home_is_consistent_with_the_rule():
-    """On the machine running the suite: a visible home dir passes, ``~/.ssh`` does not."""
-    assert gi._check_hf_local_dir_safety("~/strands-checkpoints") is None
-    reason = gi._check_hf_local_dir_safety("~/.ssh")
-    assert reason is not None and "'.ssh'" in reason
+    """On the machine running the suite: the tool's default passes, ``~/checkpoints`` and ``~/.ssh`` do not."""
+    if os.path.realpath(gi._user_home()) in gi._with_resolved(gi._BLOCKED_VOLUME_HOST_PATHS):
+        pytest.skip("the suite runs as a user whose home the blocklist names (root); nothing under it is admitted")
+    assert gi._check_hf_local_dir_safety(str(gi._checkpoints_dir(create=False))) is None
+    for elsewhere in ("~/strands-checkpoints", "~/.ssh"):
+        reason = gi._check_hf_local_dir_safety(elsewhere)
+        assert reason is not None and _ADMITTED in reason, elsewhere
 
 
 def test_a_protected_directory_inside_the_temp_dir_is_still_refused(tmp_path, monkeypatch):
@@ -180,5 +207,6 @@ def test_asking_neither_writes_to_the_host_nor_raises(tmp_path, monkeypatch):
     occupied.write_text("not a directory")
     monkeypatch.setenv("STRANDS_BASE_DIR", str(occupied))
 
-    assert _verdict(home / "checkpoints") is None
+    reason = _verdict(home / "checkpoints")
+    assert reason is not None and _ADMITTED in reason  # answered, with a reason, not an exception
     assert occupied.read_text() == "not a directory"  # answering changed nothing

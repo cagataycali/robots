@@ -108,13 +108,15 @@ _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
 # NOTE (#384, item 1): ``/home``, ``/root`` and ``/var`` are blocked wholesale
 # rather than narrowed to the sensitive subpaths (~/.ssh, ~/.aws, ~/.config),
 # because any home directory may hold credentials, tokens, or dotfiles whose
-# names we cannot enumerate ahead of time. Read as a prefix rule, though,
-# those three also cover the only directories an ordinary user can write:
-# ``/opt``, ``/mnt`` and ``/srv`` are root-owned, and on macOS the system temp
-# dir lives under ``/var/folders``. So the *caller's own* visible directories
-# are admitted by :func:`_own_directory_allowance`, which keeps the wholesale
-# prefixes for everyone else's - another user's home, ``/root``, ``/var``
-# outside the temp dir - and refuses a hidden entry of the own home by name.
+# names we cannot enumerate ahead of time. Read as a prefix rule, those three
+# also cover the two trees this tool mounts on its own - its checkpoints dir
+# and the Hugging Face cache, both under ``~`` by default - and, on macOS, the
+# system temp dir under ``/var/folders``. :func:`_own_directory_allowance`
+# admits exactly those three places and nothing else under the prefixes. An
+# arbitrary visible directory of the caller's home stays refused on purpose:
+# ``hf_local_dir`` is agent-supplied and the mount is read-write, so admitting
+# ``~/<anything>`` would let a prompt-injected ``download_checkpoint`` write a
+# repository of its choosing into a directory the user's shell or build reads.
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -330,26 +332,28 @@ def _temp_root() -> str:
 
 
 def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | None:
-    """Admit a mount inside the user's own home or the system temp dir, or say why not.
+    """Admit a mount in one of the tool's own trees or the system temp dir, or say why not.
 
     The blocklist names ``/home``, ``/root`` and ``/var`` so an agent cannot
     mount another user's home, root's, or the tree that holds
     ``docker.sock`` - but read as a prefix rule those three also cover the
-    only places an ordinary user can write. On Linux ``hf_local_dir="~/checkpoints"``
-    was refused as "under protected host path '/home'", and so was the
-    tool's own default ``~/.strands_robots/checkpoints`` when spelled out;
-    on macOS the system temp dir lives under ``/var/folders``, so every
-    ``$TMPDIR`` path was refused.
+    two directories this tool mounts on its own: its checkpoints dir
+    (``~/.strands_robots/checkpoints`` by default) and the Hugging Face cache
+    (``~/.cache/huggingface``). Spelled out as ``hf_local_dir`` either was
+    refused as "under protected host path '/home'", and on macOS the system
+    temp dir lives under ``/var/folders``, so every ``$TMPDIR`` path was
+    refused with them.
 
-    What the rule protects inside a home is its hidden entries - ``~/.ssh``,
-    ``~/.aws/credentials``, ``~/.docker/config.json`` - so a visible directory
-    under the caller's own home is admitted, and so are the two hidden trees
-    the tool already mounts on its own (its checkpoints dir and the Hugging
-    Face cache). The home directory itself, a hidden entry in it, another
-    user's home, and everything else under the blocked prefixes stay refused.
-    The judgement is on the resolved path, because that is the directory
-    docker mounts: a symlink in the home that points at ``/etc`` resolves
-    out of the home and falls to the blocklist.
+    Those three places are admitted and nothing else under the prefixes is.
+    A visible directory of the caller's own home (``~/checkpoints``) is not:
+    ``hf_local_dir`` is an agent-supplied string, the mount is read-write and
+    ``hf_repo`` is any repository, so admitting it would let a prompt-injected
+    ``download_checkpoint`` drop that repository's files into a directory the
+    user's shell, editor or build reads. A home path outside the two trees is
+    refused naming them, so the caller learns where a checkpoint may go rather
+    than that ``/home`` is protected. The judgement is on the resolved path,
+    because that is the directory docker mounts: a symlink in the home that
+    points at ``/etc`` resolves out of the home and falls to the blocklist.
 
     A blocklist entry that is itself inside the home or the temp dir is more
     specific than this allowance and wins: the path falls to the prefix rule.
@@ -363,9 +367,9 @@ def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | Non
             inside the allowance zone is still refused.
 
     Returns:
-        ``"allowed"`` when the path is admitted here, a refusal reason when
-        it is a hidden entry of the caller's own home, or None when this
-        allowance does not apply and the blocklist decides.
+        ``"allowed"`` when the path is admitted here, a refusal reason naming
+        the admitted places when it is elsewhere under the caller's own home,
+        or None when this allowance does not apply and the blocklist decides.
     """
     temp_root = _temp_root()
     home = _user_home()
@@ -385,18 +389,16 @@ def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | Non
         return "allowed"
     if home not in zones or not resolved.startswith(home + os.sep):
         return None
+    checkpoints = os.path.realpath(_checkpoints_dir(create=False))
     hf_cache = os.path.realpath(os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface"))
-    for own in (os.path.realpath(_checkpoints_dir(create=False)), hf_cache):
+    for own in (checkpoints, hf_cache):
         if resolved == own or resolved.startswith(own + os.sep):
             return "allowed"
-    relative = resolved[len(home) + 1 :]
-    hidden = [part for part in relative.split(os.sep) if part.startswith(".")]
-    if hidden:
-        return (
-            f"a hidden entry of your home directory ({hidden[0]!r}) is where credentials live; "
-            f"use a visible directory such as {os.path.join('~', 'checkpoints')!r}"
-        )
-    return "allowed"
+    return (
+        f"under your home directory only the tool's own checkpoints dir ({checkpoints!r}) and the "
+        f"Hugging Face cache ({hf_cache!r}) are mounted; use a directory under one of those or under "
+        f"the system temp dir ({temp_root!r}), or leave hf_local_dir unset for the default"
+    )
 
 
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
@@ -423,9 +425,10 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         candidates = {norm, resolved}
         if blocked_exact & candidates:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
-        # The caller's own visible home directories and the system temp dir
-        # sit under blocked prefixes on every host; admit them here, refuse a
-        # hidden home entry by name, and leave the rest to the prefix rule.
+        # The tool's own checkpoints dir, the Hugging Face cache and the system
+        # temp dir sit under blocked prefixes on every host; admit them here,
+        # refuse the rest of the caller's home naming them, and leave everything
+        # else to the prefix rule.
         allowance = _own_directory_allowance(resolved, blocked_dirs)
         if allowance == "allowed":
             continue
@@ -1026,8 +1029,10 @@ def gr00t_inference(
             ``<subfolder>/*`` are downloaded.
         hf_local_dir: Where to download the checkpoint. Defaults to
             ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``. Also the host
-            side of the ``/data/checkpoints`` bind mount, so it is confined to
-            the base directory rather than accepted anywhere on the host.
+            side of the ``/data/checkpoints`` bind mount, so under ``/home`` it
+            is confined to that checkpoints dir and the Hugging Face cache; the
+            system temp dir is admitted too. Anywhere else under a protected
+            prefix is refused.
         hf_token: HuggingFace API token, for gated repos. Falls back to the
             ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars, which is the
             preferred way to supply it - a token passed here travels through the
