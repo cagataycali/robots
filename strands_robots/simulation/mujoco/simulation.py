@@ -71,7 +71,7 @@ import os
 import threading
 import time
 import weakref
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -860,6 +860,12 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # Futures :meth:`_request_policy_stop_all` flagged, kept until the
+        # :meth:`stop_policy` for that robot reads them. A flagged worker can
+        # exit - and be pruned from ``_policy_threads`` - before its turn in a
+        # sequential fanout, and then the flag is lowered and the table is
+        # empty: nothing left says a rollout was in flight. This is that record.
+        self._pre_stopped: dict[str, Future] = {}
         # How the last start_policy rollout per robot failed, recorded by the
         # Future's done-callback and read by ``_rollouts_ended_in_error``.
         # Replaced when that robot's next rollout is submitted.
@@ -2082,8 +2088,10 @@ class MuJoCoSimEngine(
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
         OPTIONAL: when omitted (``None``, or ``""``) it is auto-derived from
         ``data_config`` (or the URDF filename), with a numeric suffix appended
-        if that label is already taken -- so ``add_robot(data_config="so101")``
-        twice yields ``so101`` and ``so101_2`` instead of erroring. Any other
+        if that label is already taken by another robot OR by an object -- so
+        ``add_robot(data_config="so101")`` twice yields ``so101`` and
+        ``so101_2`` instead of erroring, and the short form still works when an
+        object happens to carry the model's name. Any other
         value must be a ``str`` containing no NUL: those two are the documented
         derive-a-label short form, while another falsy value (``0``, ``[]``)
         would take the same branch and report success under a label that was
@@ -2199,7 +2207,17 @@ class MuJoCoSimEngine(
             base = data_config or (os.path.splitext(os.path.basename(urdf_path))[0] if urdf_path else None) or "robot"
             name = base
             i = 2
-            while name in self._world.robots:
+            # Auto-number past a label taken by EITHER registry. The
+            # object-collision refusal below offers "omit name= to
+            # auto-number" as the remedy, and a loop that only skipped robot
+            # labels dead-ended that advice: with an object ``cube`` in the
+            # world, ``add_robot(urdf_path=".../cube.xml")`` derived ``cube``,
+            # found no robot holding it, and was then refused by the very
+            # message telling the caller to do what they had just done - the
+            # robot could be added under no label at all. Skipping object
+            # labels too keeps the derive-a-label short form total, so that
+            # refusal is only ever reachable for a name the caller CHOSE.
+            while name in self._world.robots or name in self._world.objects:
                 name = f"{base}_{i}"
                 i += 1
 
@@ -2212,6 +2230,23 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' already exists. Pick a different "
                             f"name, or omit name= to auto-number. Existing: {taken}."
+                        )
+                    }
+                ],
+            }
+        # The mirror of add_object's rule: a robot labelled like an existing
+        # object shares a name with a body every by-name reader resolves to the
+        # object first, so "state of 'cube'" would keep answering for the box
+        # after an arm called 'cube' joined the world.
+        if name in self._world.objects:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Robot name '{name}' is already an object in this world; by-name reads "
+                            f"(get_body_state, attach_bodies, add_camera) would keep resolving to that object. "
+                            f"Pick another name, or omit name= to auto-number."
                         )
                     }
                 ],
@@ -3061,6 +3096,7 @@ class MuJoCoSimEngine(
                     ],
                 }
             del self._policy_threads[name]
+        self._pre_stopped.pop(name, None)
 
         # Step 2: after stopping our own, there must be no OTHER policy
         # running - an XML round-trip will invalidate cached IDs everywhere.
@@ -4321,6 +4357,30 @@ class MuJoCoSimEngine(
 
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+
+        # A robot's label is not one of its body names (those are
+        # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
+        # repeated-name check does not see the collision an object named after
+        # a robot creates - but every by-name reader does. Measured: with robot
+        # ``so101`` in the world, ``get_body_state(body_name="so101")`` answered
+        # "not found. Did you mean: so101/base, ..." until
+        # ``add_object(name="so101")`` succeeded, after which the same call
+        # answered with the box's pose, and ``add_camera(parent_body="so101")``
+        # or ``attach_bodies(parent="so101", ...)`` would have taken the box for
+        # the arm. Refuse before anything is registered under the label.
+        if name in self._world.robots:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_object: '{name}' is the name of a robot in this world, and an object under "
+                            f"that name would answer get_body_state / attach_bodies / add_camera calls meant "
+                            f"for the robot (its bodies are '{name}/<body>'; see list_bodies). Pick another name."
+                        )
+                    }
+                ],
+            }
 
         # ``is_static`` selects a posture, so it is checked rather than read by
         # truthiness. The resolution below tests it by IDENTITY and every later
@@ -5960,6 +6020,59 @@ class MuJoCoSimEngine(
         )
         return names
 
+    def _request_policy_stop_all(self, robot_names: Iterable[str]) -> None:
+        """Lower the cooperative stop flag on several robots, joining none of them.
+
+        The first pass a SEQUENTIAL fanout over :meth:`stop_policy` needs.
+        That verb waits (bounded by :attr:`_POLICY_STOP_JOIN_TIMEOUT`) for the
+        worker it just flagged to exit, so a caller looping over robots pays
+        that wait between one robot's request and the next robot's - and a
+        robot whose policy server is wedged inside inference pays it in full,
+        holding the stop REQUEST off every robot behind it in the loop while
+        those arms keep executing. Lowering every flag up front makes the
+        workers wind down concurrently, and each later
+        :meth:`stop_policy` still reports that robot's own verdict.
+
+        :meth:`cleanup` sequences its own multi-robot teardown the same way and
+        for the same reason: request on every robot, then join.
+
+        Only rollouts with a Future are flagged, and that is what keeps each
+        later ``stop_policy`` answer honest. Such a rollout stays in
+        :meth:`_active_policy_robots` on its live Future alone, so lowering its
+        flag early costs no evidence - that union is exactly why a second
+        ``stop_policy`` still reported ``Stopped``. A BLOCKING ``run_policy``
+        registers no Future, so the flag is the only record that it was in
+        flight: pre-lowering it would make ``stop_policy`` answer
+        ``Was not running`` for a rollout it really did halt, and the fleet stop
+        would then name nothing under ``stopped``. Such a rollout is also the
+        one shape with nothing to join, so it has nothing to gain here.
+
+        Args:
+            robot_names: Names to flag. A name that is unknown, idle, or
+                driving a blocking rollout is skipped - this is a best-effort
+                pre-pass, and :meth:`stop_policy` is what answers for each
+                robot.
+        """
+        world = self._world
+        if world is None:
+            return
+        for name in robot_names:
+            robot = registry_entry(world.robots, name)
+            future = registry_entry(self._policy_threads, name)
+            if robot is None or future is None or future.done():
+                continue
+            # Keep the Future as evidence for this robot's ``stop_policy``. A
+            # healthy worker exits within a control tick of this flag going
+            # down, and a sequential fanout can spend up to the join bound on
+            # an earlier robot before it asks this one: by then the worker is
+            # done, ``_prune_done_futures`` has dropped it, and the flag is
+            # already low, so without this record the answer would be "Was
+            # not running" for a rollout this very call halted - and the fleet
+            # stop would then leave it out of ``stopped``.
+            self._pre_stopped[name] = future
+            with contextlib.suppress(Exception):
+                robot.request_policy_stop()
+
     def _rollouts_in_flight(self) -> tuple[str, ...]:
         """MuJoCo override: the population :meth:`_active_policy_robots` owns.
 
@@ -6060,7 +6173,7 @@ class MuJoCoSimEngine(
                         {
                             "text": (
                                 f"Cannot '{action_name}' on '{robot_name}' while its policy is running. "
-                                f"Stop it first: action='stop_policy', name='{robot_name}'."
+                                f"Stop it first: action='stop_policy', robot_name='{robot_name}'."
                             )
                         }
                     ],
@@ -6074,10 +6187,7 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [
                     {
-                        "text": (
-                            f"Cannot '{action_name}' while a policy is running on {names}. "
-                            "Stop it first: action='stop_policy'."
-                        )
+                        "text": f"Cannot '{action_name}' while a policy is running on {names}. {self._stop_policy_remedy(active)}"
                     }
                 ],
             }
@@ -7561,20 +7671,30 @@ class MuJoCoSimEngine(
         stop_policy unconditionally. The only error case is an unknown
         robot_name.
 
-        empty robot_name returns a clear error instead of a silent
-        match against the first robot.
+        An empty robot_name means the only rollout in flight when there is
+        exactly one, and is otherwise refused naming what is running - never
+        a silent match against the first robot (:meth:`_stop_policy_target`).
 
         Returns:
             The agent-tool envelope. On success its ``json`` block reports
             ``was_running`` - whether a rollout really was in flight when the
             stop arrived - so a caller aggregating several of these answers
-            reads the verdict rather than matching on the sentence.
+            reads the verdict rather than matching on the sentence - and
+            ``exited``: ``True`` when the worker was joined and is gone, so the
+            robot is free for the caller's next action; ``False`` when it was
+            still live after ``_POLICY_STOP_JOIN_TIMEOUT`` (the text says so);
+            ``None`` when there was nothing to join - no rollout, or a blocking
+            ``run_policy`` driven on its caller's thread.
         """
-        if not robot_name:
-            return {
-                "status": "error",
-                "content": [{"text": "stop_policy requires 'robot_name'."}],
-            }
+        # An empty name means "the only rollout in flight" when there is exactly
+        # one - the case every "Stop it first: action='stop_policy'" remedy was
+        # written for - and is refused, naming what IS running, otherwise. See
+        # :meth:`SimEngine._stop_policy_target`.
+        target, refusal = self._stop_policy_target(robot_name)
+        if target is None:
+            assert refusal is not None
+            return refusal
+        robot_name = target
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]
@@ -7585,12 +7705,53 @@ class MuJoCoSimEngine(
         # reported opposite facts about a blocking rollout at the same instant
         # (#2833).
         was_running = robot_name in self._active_policy_robots()
+        # A rollout :meth:`_request_policy_stop_all` already flagged for this
+        # call counts as having been in flight even when its worker has exited
+        # and been pruned since: the pre-pass is part of this same stop, not
+        # an earlier one, so the verdict it earned belongs to this answer.
+        pre_stopped = self._pre_stopped.pop(robot_name, None)
+        was_running = was_running or pre_stopped is not None
         # Durable: moves this robot's claim out of date, so a worker that has
         # not yet reached its first frame cannot raise the flag back over it. Its
         # own return stays in the OR because the claim can be raised in the
         # window between the read above and this write.
         was_running = robot.request_policy_stop() or was_running
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        # The flag is lowered; the worker exits at its next control tick. Wait
+        # for that (bounded) before answering, because "Stopped" used to be
+        # reported while the worker was still winding down - the caller's very
+        # next ``start_policy`` (or any joint write) on the same robot was then
+        # refused "while its policy is running", and a second ``stop_policy``
+        # in that window answered "Was not running" against a
+        # ``list_policies_running`` that still listed the robot. Only a
+        # ``start_policy`` Future can be joined: a blocking ``run_policy`` is
+        # driven on its caller's own thread, so its stop is the flag alone.
+        exited: bool | None = None
+        fut = registry_entry(self._policy_threads, robot_name) if was_running else None
+        if fut is None and pre_stopped is not None:
+            # Pruned from the table already, so joinable here only through the
+            # record the pre-pass kept; ``done()`` still decides.
+            fut = pre_stopped
+        if fut is not None:
+            with contextlib.suppress(Exception):
+                # Either outcome of ``result`` means the same thing here (the
+                # worker's own raise = it exited; the join timeout = it did
+                # not); ``fut.done()`` decides, as in ``remove_robot``.
+                fut.result(timeout=self._POLICY_STOP_JOIN_TIMEOUT)
+            exited = fut.done()
+            if exited:
+                self._prune_done_futures()
+        if not was_running:
+            msg = f"Was not running on '{robot_name}'"
+        elif exited is False:
+            msg = (
+                f"Stop requested on '{robot_name}', but its policy worker is still live after "
+                f"{self._POLICY_STOP_JOIN_TIMEOUT:.1f}s (queued behind other rollouts, or blocked "
+                "inside one policy inference or send_action, where the stop flag is not read). "
+                "It exits at its next control tick; until then action='list_policies_running' "
+                "still reports it and action='start_policy' on this robot is refused."
+            )
+        else:
+            msg = f"Stopped on '{robot_name}'"
         # The verdict travels as data as well as prose. A programmatic caller -
         # the Device Connect ``stop`` RPC aggregates one of these answers per
         # robot - otherwise has to re-derive "was a rollout in flight" from its
@@ -7605,7 +7766,10 @@ class MuJoCoSimEngine(
         # and opposite on that case is the drift worth spending a word to avoid.
         return {
             "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+            "content": [
+                {"text": msg},
+                {"json": {"robot": robot_name, "was_running": was_running, "exited": exited}},
+            ],
         }
 
     # Cleanup
@@ -7623,6 +7787,15 @@ class MuJoCoSimEngine(
     # refuses the scene rebuild.
     # Override in tests via ``cleanup(policy_stop_timeout=...)`` if needed.
     _DEFAULT_POLICY_STOP_TIMEOUT = 5.0
+
+    # How long ``stop_policy`` waits for the worker it just flagged to exit
+    # before answering. A healthy rollout leaves within one control period
+    # (20 ms at the default 50 Hz), so the wait is normally a few ms; the bound
+    # exists for a worker blocked inside a policy inference, where the flag is
+    # not read, and it is shorter than the teardown budget above because
+    # ``stop_policy`` also serves the Device Connect ``stop`` RPC and the mesh
+    # emergency-stop fanout, whose callers wait on the answer.
+    _POLICY_STOP_JOIN_TIMEOUT = 1.0
 
     # Bounded wait for the world-handoff lock (seconds). A motion primitive
     # holds ``self._lock`` only for one control tick (a few physics substeps,
@@ -7773,6 +7946,7 @@ class MuJoCoSimEngine(
                         e,
                     )
             self._policy_threads.clear()
+            self._pre_stopped.clear()
 
         # Step 3: hand the world off UNDER ``self._lock``.
         #

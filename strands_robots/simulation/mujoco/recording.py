@@ -276,16 +276,11 @@ class RecordingMixin(DatasetRecordingMixin):
         self._world._backend_state["recording_task"] = task
         self._world._backend_state.pop("step_recording_due", None)
 
-        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
-        # Delegates to the same resolver DatasetRecorder.create() uses so the
-        # facade and the low-level recorder agree on where a dataset lives
-        # (honouring $HF_LEROBOT_HOME).
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        # Stash the resolved root so verify_dataset_episodes can read the parquet
-        # after stop_recording has finalized the dataset and dropped the recorder.
-        self._world._backend_state["last_dataset_root"] = str(dataset_dir)
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic)
+        # and stash it with the id it is recorded under, so the consumers that
+        # run after the recorder is dropped can find the parquet and a reader
+        # handed only that id can find a custom directory.
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             # Collect joint names from every robot. When the scene contains

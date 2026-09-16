@@ -1178,6 +1178,58 @@ class DatasetRecordingMixin:
         last = state.get("last_dataset_root")
         return str(last) if last else None
 
+    def _active_dataset_repo_id(self) -> str | None:
+        """Id of the active or most-recently-recorded dataset.
+
+        Overrides :meth:`SimEngine._active_dataset_repo_id`, resolved exactly
+        like its :meth:`_active_dataset_root` counterpart - the live recorder
+        first, then the ``last_dataset_repo_id`` stashed at ``start_recording``.
+        """
+        recorder = self._active_recorder()
+        if recorder is not None:
+            try:
+                return str(recorder.repo_id)
+            except (AttributeError, TypeError):
+                pass
+        state = self._recording_state()
+        if state is None:
+            return None
+        last = state.get("last_dataset_repo_id")
+        return str(last) if last else None
+
+    def _stash_dataset_target(self, repo_id: str, root: str | None) -> Path:
+        """Resolve the directory a recording writes to, stashed with its id.
+
+        Every backend's ``start_recording`` resolves its target with
+        :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` - the same
+        resolver ``DatasetRecorder.create()`` uses, so the facade and the
+        recorder agree on where a dataset lives (honouring ``$HF_LEROBOT_HOME``)
+        - and stashes it as ``last_dataset_root`` for the consumers that run
+        after the recorder is dropped (:meth:`_active_dataset_root`). The id it
+        was recorded under is stashed beside it, because a reader handed only an
+        ``owner/name`` id cannot derive a directory the caller chose with
+        ``root=``.
+
+        Resolving and stashing in ONE place is the point: the pair was written
+        out longhand in all three backends, so a value added to one of them left
+        the other two recording datasets no reader could locate.
+
+        Args:
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path.
+            root: Explicit local dataset directory, if any.
+
+        Returns:
+            The resolved directory, for the caller's overwrite/resume logic.
+        """
+        from strands_robots.dataset_recorder import resolve_dataset_dir
+
+        dataset_dir = resolve_dataset_dir(repo_id, root)
+        state = self._recording_state()
+        if state is not None:
+            state["last_dataset_root"] = str(dataset_dir)
+            state["last_dataset_repo_id"] = repo_id
+        return dataset_dir
+
     def stop_recording(
         self,
         *,
