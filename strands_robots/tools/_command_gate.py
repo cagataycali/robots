@@ -230,6 +230,54 @@ def preapproval_setting(
     )
 
 
+def _no_operator_remedy(
+    tool: str,
+    action: str,
+    target: str,
+    allow_env: str,
+    match: Callable[[frozenset[str]], bool],
+    allow_raw: str | None,
+) -> str:
+    """What to set when the command is stopped and nobody can be asked to allow it.
+
+    That happens two ways - there is no ``tool_context`` to raise an interrupt
+    through, or the host has one and refuses to interrupt - and both leave the
+    same reader in the same place, with no operator and a command that will be
+    refused again. So both carry this sentence: naming the variable in one
+    refusal and nothing at all in the other is what made the second a dead end.
+
+    The remedy has to name the VALUE, not just the variable. The allowlist
+    takes the spelling this tool's matcher accepts (``execute``, ``/cmd_vel``,
+    ``loco.SetVelocity``) or ``*``, so the natural readings - ``=1``, ``=true``
+    - pre-approve nothing and the identical refusal comes back after the advice
+    was followed. When the variable is set to such a value, say so first.
+
+    Args:
+        tool: The calling tool's name, for the ``*`` wildcard's scope.
+        action: The verb carrying the command.
+        target: What the command is aimed at.
+        allow_env: The caller's allowlist variable.
+        match: The caller's allowlist matcher, asked which spelling counts.
+        allow_raw: The allowlist variable's current value, or None when it is
+            unset. It cannot be a value that matches - such a command was
+            already allowed before this refusal was reached.
+
+    Returns:
+        The already-set-but-useless clause, if any, then the two settings that
+        allow the command.
+    """
+    ignored = (
+        f"{allow_env} is set to {allow_raw!r}, which names neither this command nor '*', so it pre-approves nothing. "
+        if allow_raw is not None
+        else ""
+    )
+    setting = preapproval_setting(action, target, allow_env, match)
+    return (
+        f"{ignored}Set {setting} (or {allow_env}=* for every {tool} command; comma-separated) "
+        f"or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
+    )
+
+
 def how_to_answer(
     action: str,
     target: str,
@@ -324,11 +372,11 @@ def gate_motion(
         A refusal message for the caller to return through its own error
         wrapper, or None to let the command proceed. In order: the allowlist
         names the target -> allow silently; ``BYPASS_TOOL_CONSENT=true`` ->
-        allow with a WARNING log; no ``tool_context`` -> refuse, naming the
-        ``<allow_env>=<value>`` that pre-approves this call and the bypass
-        variable (and, when the allowlist variable is set to something that
-        names neither this call nor ``*``, saying so - ``1`` or ``true``
-        pre-approve nothing); otherwise prompt the operator and record the reply.
+        allow with a WARNING log; no ``tool_context`` -> refuse with
+        :func:`_no_operator_remedy`, naming the ``<allow_env>=<value>`` that
+        pre-approves this call; otherwise prompt the operator and record the
+        reply - and if the host refuses to interrupt, refuse with that same
+        remedy, because no operator can be reached either way.
     """
     match = allow_match or _allow_exact_or_star(target)
     allow_raw = os.environ.get(allow_env)
@@ -343,21 +391,9 @@ def gate_motion(
         return None
 
     if tool_context is None:
-        # The operator reading this refusal has no agent to answer through, so
-        # the remedy has to be complete: the variable AND the value. A variable
-        # that is set but names neither this call nor "*" is the common dead
-        # end (=1, =true, a typo) - say so, or the same refusal comes back
-        # after the operator followed the advice.
-        setting = preapproval_setting(action, target, allow_env, match)
-        ignored = (
-            f"{allow_env} is set to {allow_raw!r}, which names neither this command nor '*', so it pre-approves nothing. "
-            if allow_raw is not None
-            else ""
-        )
         return (
-            f"{warning} No tool_context available for operator approval. {ignored}"
-            f"Set {setting} (or {allow_env}=* for every {tool} command; comma-separated) "
-            f"or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
+            f"{warning} No tool_context available for operator approval. "
+            f"{_no_operator_remedy(tool, action, target, allow_env, match, allow_raw)}"
         )
 
     try:
@@ -373,7 +409,12 @@ def gate_motion(
             },
         )
     except RuntimeError as exc:
-        return f"{action} to {target!r} requires operator approval, but interrupts are not available: {exc}"
+        # Same dead end as no tool_context at all - the host cannot ask anyone -
+        # so it gets the same remedy rather than only the reason it failed.
+        return (
+            f"{action} to {target!r} requires operator approval, but interrupts are not available: {exc}. "
+            f"{_no_operator_remedy(tool, action, target, allow_env, match, allow_raw)}"
+        )
 
     approved = approve_response(response)
     log_operator_response(f"{tool}_tool", action, target, approved=approved, response=response)
