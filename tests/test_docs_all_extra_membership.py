@@ -60,14 +60,13 @@ _EXTRA_IN_TEXT = re.compile(r"`\[([a-z0-9][a-z0-9-]*)\]`")
 #: The pages that describe ``[all]``.
 _PAGES = (_INSTALL_PAGE, _ARCHITECTURE_PAGE, _INDEX_PAGE)
 
-#: Counts restated in prose, outside the extras table, as ``kind -> (pattern,
-#: index into the ``_membership()`` set to derive from)``. installation.md
-#: repeats the bundle's size in the install code block's comment and
-#: architecture.md points at "the N it leaves opt-in"; both are the same facts
-#: the table row states, so both are derivable.
+#: Counts restated in prose, outside the extras table. installation.md repeats
+#: the bundle's size in the install code block's comment and architecture.md
+#: points at "the N it leaves opt-in"; both are facts the table row already
+#: derives, so both are derivable too.
 _PROSE_COUNTS = {
-    "bundle-size": (re.compile(r"the (\d+)-extra bundle"), 0),
-    "opt-in": (re.compile(r"the (\d+) it leaves opt-in"), 1),
+    "bundle-size": re.compile(r"the (\d+)-extra bundle"),
+    "opt-in": re.compile(r"the (\d+) it leaves opt-in"),
 }
 
 
@@ -146,8 +145,9 @@ class TestThePagesAgreeWithPyproject:
         drifts - and both had, each by one, because each counted ``[all]``
         itself while the derivation excludes it.
         """
-        pattern, index = _PROSE_COUNTS[kind]
-        wanted = len(_membership()[index])
+        installed, left_out, _ = _membership()
+        pattern = _PROSE_COUNTS[kind]
+        wanted = {"bundle-size": len(installed), "opt-in": len(left_out)}[kind]
         found = [
             (page.name, int(match.group(1)), match.group(0))
             for page in _PAGES
