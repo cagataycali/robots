@@ -364,9 +364,19 @@ def test_the_gate_asks_for_the_scope_the_link_set_needs() -> None:
 
     Without it the query returns errors, the script reports ``unknown-links``, and
     the check passes everything -- a silent no-op rather than a visible failure,
-    which is the failure mode worth pinning. A reusable workflow inherits its
-    permissions from the caller, so the grant lives on ci.yml's call-test-lint job.
+    which is the failure mode worth pinning. The scope has to be declared where
+    the step runs: a called workflow's job-level ``permissions`` block sets every
+    scope it does not name to ``none``, and the caller's grant can only cap what
+    the callee asks for, never add to it. So the effective token carries the scope
+    only when test-lint.yml's job declares it AND ci.yml's call admits it, and both
+    halves are graded - a grant on the caller alone passes while the token lacks
+    the scope.
     """
+    callee = _TEST_LINT_WORKFLOW.read_text(encoding="utf-8")
+    job = callee[callee.index("\n  test-lint:") :]
+    job_header = job[: job.index("steps:")]
+    assert re.search(r"^\s+pull-requests:\s*read\s*$", job_header, re.MULTILINE), job_header
+
     text = _CI_WORKFLOW.read_text(encoding="utf-8")
     call = text[text.index("call-test-lint:") :]
     call = call[: call.index("\n  security:")]

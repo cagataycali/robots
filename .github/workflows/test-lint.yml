@@ -30,6 +30,13 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      # The guards step's check_closing_reference.py reads closingIssuesReferences
+      # over GraphQL. A called workflow's job-level block sets every scope it
+      # does not name to none - the caller's grant is only a ceiling - so the
+      # scope has to be asked for HERE as well as in ci.yml. Without it the
+      # query errors, the script maps that to `unknown-links` / exit 0, and the
+      # guard passes every pull request while rendering like a working one.
+      pull-requests: read
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
