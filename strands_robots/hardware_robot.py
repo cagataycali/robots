@@ -39,6 +39,7 @@ import functools
 import importlib
 import logging
 import math
+import os
 import pkgutil
 import shutil
 import threading
@@ -2730,6 +2731,36 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
+    def _connection_line(self) -> str:
+        """One line saying whether the hardware is open, without touching it.
+
+        ``status`` is the action an agent reaches for to ask "is the arm doing
+        anything?", and it used to answer with the task state alone - "Robot
+        Status: IDLE" - which reads as "the arm is free and ready" whether or
+        not an arm is plugged in. Measured with the SO-101 unplugged: the agent
+        told the operator the arm was ready for instructions. The line reads
+        the driver's ``is_connected`` (an attribute of the open port handler,
+        no bus traffic) and, when closed, whether the configured port exists
+        on this machine, so the answer distinguishes "not connected yet" from
+        "the port is not there".
+
+        Returns:
+            ``"connected"``, ``"not connected (port '…' present)"`` or
+            ``"not connected (port '…' not found on this machine)"``; the port
+            clause is omitted when the driver has no port.
+        """
+        try:
+            connected = bool(getattr(self.robot, "is_connected", False))
+        except Exception:  # noqa: BLE001 - a probe that raises reads as closed
+            connected = False
+        if connected:
+            return "connected"
+        port = getattr(getattr(self.robot, "config", None), "port", None)
+        if not port:
+            return "not connected"
+        found = "present" if os.path.exists(str(port)) else "not found on this machine"
+        return f"not connected (port {str(port)!r} {found})"
+
     def get_task_status(self) -> dict[str, Any]:
         """Get current task execution status."""
 
@@ -2738,6 +2769,7 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = time.monotonic() - self._task_state.start_mono
 
         status_text = f"Robot Status: {self._task_state.status.value.upper()}\n"
+        status_text += f"Connection: {self._connection_line()}\n"
 
         if self._task_state.instruction:
             status_text += f"Task: {self._task_state.instruction}\n"
