@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -39,7 +39,7 @@ from .embodiment import (
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
-from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
+from .resolution import declared_image_features, resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,105 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 # kinova_gen3 is joint_1..joint_7), which is why the run, not the prefix, is
 # what identifies a placeholder.
 _GENERIC_STATE_KEY_PREFIX = "joint_"
+
+
+def _inapplicable_image_target_error(
+    targets: dict[str, list[str]],
+    embodiment_name: str,
+    policy_config: dict[str, Any],
+    observation_keys: Sequence[str],
+) -> str | None:
+    """Report embodiment image renames the checkpoint's own features cannot accept.
+
+    The camera pre-flight check requires a source key for every image rename
+    TARGET the embodiment feeds, on the premise that a target IS a feature the
+    model declares. That premise holds only where the feature set is BUILT from
+    the embodiment - the MolmoAct2 path, whose ``build_policy`` derives it via
+    :func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`.
+    A pretrained LeRobot checkpoint instead records its own ``input_features``,
+    and an embodiment has no say in them: ``so101`` feeds
+    ``observation.images.image`` + ``observation.images.wrist_image`` while
+    ``lerobot/smolvla_base`` declares ``observation.images.camera1..3``.
+
+    For such a pair no camera name can satisfy the target, so the source-key
+    remedy cannot be followed, and ``EmbodimentMap.validate`` refuses the same
+    rename after the weight download - discarding the whole processor pipeline,
+    including the embodiment's state/action unit conversion, and falling back to
+    the raw flow. That is the verdict this reports up front instead, naming the
+    ``obs_rename_override`` drop that :func:`_merge_obs_rename` documents as the
+    only way to remove a rename whose target the model never declares.
+
+    Reported before the source-availability check for the same reason
+    :func:`_undeclared_image_feature_error` is: the contradiction is independent
+    of the runtime camera names and no rename can resolve it.
+
+    Args:
+        targets: Image rename target -> its source keys, as collected by
+            :meth:`LerobotLocalPolicy.preflight` after routing both maps.
+        embodiment_name: Resolved embodiment name, for the message.
+        policy_config: Provider kwargs (``pretrained_name_or_path``,
+            ``policy_type``, ...).
+        observation_keys: Runtime observation keys, used to build the override
+            the message prints: a declared feature whose bare stem names a
+            present camera is routed from it, so the printed remedy is complete
+            for the common case where the scene is already named for the model.
+
+    Returns:
+        The refusal message, or ``None`` when the configuration is consistent -
+        every target declared, a MolmoAct2 checkpoint (features built from the
+        embodiment), or a checkpoint whose declared set cannot be read, which is
+        reported as unknown rather than guessed at.
+    """
+    reference = policy_config.get("pretrained_name_or_path") or ""
+    if not reference:
+        return None
+
+    from . import molmoact2 as _molmoact2
+
+    if _molmoact2.is_molmoact2(reference, policy_config.get("policy_type")):
+        # Features are CONSTRUCTED from the embodiment here, so its targets are
+        # declared by construction; the only contradiction on that path is an
+        # explicit image_keys, owned by _undeclared_image_feature_error.
+        return None
+
+    declared = declared_image_features(reference)
+    if declared is None:
+        return None
+
+    inapplicable = {dst: srcs for dst, srcs in targets.items() if dst not in declared}
+    if not inapplicable:
+        return None
+
+    # The remedy is BOTH halves: dropping the inapplicable renames alone leaves
+    # the declarative path with no camera routing at all, and the model then
+    # raises "All image features are missing from the batch". So every feature
+    # the checkpoint DOES declare needs a source too - taken from a camera whose
+    # bare name is the feature's stem where one exists.
+    override: dict[str, str | None] = {src: None for srcs in inapplicable.values() for src in sorted(srcs)}
+    present = set(observation_keys)
+    unmatched: list[str] = []
+    for feature in sorted(declared):
+        stem = feature.rsplit(".", 1)[-1]
+        if stem in present:
+            override[stem] = feature
+        elif feature not in targets:
+            unmatched.append(feature)
+    trailer = (
+        f" No camera is named for {unmatched}, so add {{'<your_camera_name>': {unmatched[0]!r}}} to"
+        f" that override as well - every declared feature needs a source."
+        if unmatched
+        else ""
+    )
+    return (
+        f"Embodiment {embodiment_name!r} feeds image feature(s) {sorted(inapplicable)}, which "
+        f"{reference!r} does not declare - it declares {sorted(declared)}. A pretrained checkpoint "
+        f"records its own input_features, so renaming a camera cannot create the missing feature: "
+        f"this same rename is refused by the embodiment's own validation after the weight download, "
+        f"and the whole processor pipeline - including the embodiment's state/action unit "
+        f"conversion - is then discarded for the raw flow. Route the features it does declare "
+        f"instead: policy_config={{'obs_rename_override': {override!r}}} - a falsy value drops a "
+        f"rename this checkpoint cannot accept.{trailer}"
+    )
 
 
 def _route_camera_key_map(base: dict[str, str], camera_key_map: Mapping[str, str] | None) -> dict[str, str]:
@@ -1685,6 +1784,14 @@ class LerobotLocalPolicy(Policy):
         undeclared_error = _undeclared_image_feature_error(sorted(targets), embodiment.name, policy_config)
         if undeclared_error:
             raise ValueError(undeclared_error)
+
+        # Same precedence, for the converse contradiction: a target the
+        # CHECKPOINT does not declare is unreachable by any camera name, so it is
+        # reported before the source-availability check below rather than as a
+        # missing camera the caller could rename.
+        inapplicable_error = _inapplicable_image_target_error(targets, embodiment.name, policy_config, observation_keys)
+        if inapplicable_error:
+            raise ValueError(inapplicable_error)
 
         obs = set(observation_keys)
         unsatisfied = {dst: srcs for dst, srcs in targets.items() if not any(s in obs for s in srcs)}
