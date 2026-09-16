@@ -165,6 +165,7 @@ from strands_robots.utils import (
     coerce_pose_vector,
     entity_name_error,
     finite_vector_error,
+    mounted_camera_pose_error,
     non_negative_whole_number_error,
     optional_callable_error,
     positive_count_error,
@@ -4136,8 +4137,8 @@ class MuJoCoSimEngine(
 
         text = (
             f"Bodies ({len(bodies)}): {bodies}\n"
-            "Use any of these as add_camera(parent_body=...) to mount a "
-            "wrist/gripper camera."
+            "Use any of these as add_camera(parent_body=..., position=..., target=...) to mount a "
+            "wrist/gripper camera; position and target are then in that body's frame."
         )
         if robot_name is not None and json_payload.get("gripper_body"):
             text += f"\nGripper/EEF mount: '{json_payload['gripper_body']}'"
@@ -4789,6 +4790,72 @@ class MuJoCoSimEngine(
 
     # Camera Management
 
+    def _mounted_camera_start(self, parent_body: str, parent_id: int) -> str | None:
+        """A starting pose, in *parent_body*'s frame, for a camera mounted on it.
+
+        Uses the robot's end-effector SITE (the tool point
+        :func:`~strands_robots.simulation.ik.discover_ee_frame` picks) when it
+        sits on this body or a direct child of it - a gripper and its jaws. Then
+        the start is 6 cm beside the
+        approach axis (body origin -> site), 30 % of the way out, looking 20 cm
+        past the site - on SO-101 that frames the fingertips over the
+        workspace. The text is a suggestion for the refusal in
+        :func:`~strands_robots.utils.mounted_camera_pose_error`; ``None`` when
+        the body has no such site (a torso, a base, an object), so the generic
+        hint is used.
+        """
+        try:
+            import numpy as np
+
+            mj = self._mj
+            world = self._world
+            if world is None:
+                return None
+            model = world._model
+            data = world._data
+            namespace = parent_body.split("/", 1)[0] + "/" if "/" in parent_body else None
+            # The body and its direct children only: a gripper and its jaws.
+            # The whole subtree would hand a base mount the fingertips 40 cm
+            # down the chain and call that a wrist view.
+            subtree: set[int] = {parent_id}
+            for b in range(model.nbody):
+                if int(model.body_parentid[b]) == parent_id and b != parent_id:
+                    subtree.add(b)
+            frame = discover_ee_frame(model, namespace)
+            if frame is None or frame[1] != "site":
+                return None
+            site_name = frame[0]
+            site_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, site_name)
+            if site_id < 0 or int(model.site_bodyid[site_id]) not in subtree:
+                return None
+            rot = np.asarray(data.xmat[parent_id]).reshape(3, 3)
+            origin = np.asarray(data.xpos[parent_id])
+            site_local = rot.T @ (np.asarray(data.site_xpos[site_id]) - origin)
+            reach = float(np.linalg.norm(site_local))
+            if not math.isfinite(reach) or reach < 1e-4:
+                return None
+            approach = site_local / reach
+            # The first body axis that is not the approach axis carries the
+            # sideways offset, so the camera sits beside the gripper, not in it.
+            side = next(
+                (np.eye(3)[i] for i in range(3) if abs(float(approach[i])) < 0.5),
+                np.eye(3)[0],
+            )
+            pos = 0.3 * site_local + 0.06 * side
+            tgt = site_local + 0.2 * approach
+
+            def fmt(v: Any) -> str:
+                return "[" + ", ".join(f"{(0.0 if abs(float(x)) < 5e-4 else float(x)):.3f}" for x in v) + "]"
+
+            return (
+                f"For this body the end-effector site {site_name!r} sits at {fmt(site_local)} in its "
+                f"frame; a wrist view to start from: position={fmt(pos)}, target={fmt(tgt)} "
+                f"(6 cm beside the approach axis, looking past the fingertips) - then render and adjust."
+            )
+        except Exception:  # noqa: BLE001 - a hint must never turn a refusal into a crash
+            logger.debug("mounted-camera start could not be computed for %r", parent_body, exc_info=True)
+            return None
+
     def add_camera(
         self,
         name: str,
@@ -4938,7 +5005,8 @@ class MuJoCoSimEngine(
         if parent_body:
             mj = self._mj
             model = self._world._model
-            if mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent_body) < 0:
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent_body)
+            if parent_id < 0:
                 available = [
                     mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
                     for i in range(model.nbody)
@@ -4956,6 +5024,22 @@ class MuJoCoSimEngine(
                         }
                     ],
                 }
+
+            # A mount with no pose of its own would take the free-camera
+            # defaults in the body's frame - 1.73 m from the wrist, looking back
+            # at the arm. Refused with a starting pose computed for THIS body
+            # (see ``_mounted_camera_start``) rather than a success that renders
+            # the wrong view.
+            mount_err = mounted_camera_pose_error(
+                "add_camera",
+                name,
+                parent_body,
+                position,
+                target,
+                start=self._mounted_camera_start(parent_body, parent_id),
+            )
+            if mount_err is not None:
+                return {"status": "error", "content": [{"text": mount_err}]}
 
         cam = SimCamera(
             name=name,

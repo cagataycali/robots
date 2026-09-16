@@ -81,6 +81,7 @@ from strands_robots.utils import (
     coerce_size_vector,
     entity_name_error,
     is_boolean,
+    mounted_camera_pose_error,
     non_negative_whole_number_error,
     positive_count_error,
     positive_whole_number_error,
@@ -1525,6 +1526,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
         if _terr is not None:
             return {"status": "error", "content": [{"text": _terr}]}
+        mount_err = mounted_camera_pose_error("add_camera", name, parent_body, position, target)
+        if mount_err is not None:
+            return {"status": "error", "content": [{"text": mount_err}]}
         pos = [1.0, 1.0, 1.0] if position is None else position
         tgt = [0.0, 0.0, 0.0] if target is None else target
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
