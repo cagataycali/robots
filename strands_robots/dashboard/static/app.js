@@ -36,6 +36,18 @@ function serializeCredential(cred) {
 }
 
 /* ---- views ---- */
+/* Data never becomes markup. A view builds its nodes and hands each one its text
+   as text, so a string a route serves - a registry description, a mesh peer's
+   name, a refusal - is a text node and not a tag. Script in this page would be
+   same-origin: it rides the session cookie and passes origin_is_self by
+   construction, so every guard in access.py is behind this one. */
+const node = (tag, className, text) => {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+};
+
 function show(view) {
   for (const v of [...views, "login"]) $(`#view-${v}`).hidden = v !== view;
   for (const b of $("#tabs").children) b.classList.toggle("on", b.dataset.view === view);
@@ -75,14 +87,17 @@ async function loadFleet() {
     const f = await api("/api/fleet");
     $("#fleet-count").textContent = `${f.robots.length} robots`;
     for (const r of f.robots) {
-      const el = document.createElement("article"); el.className = "robot";
-      el.innerHTML = `<div class="name">${r.name}</div><div class="desc">${r.description || ""}</div>
-        <div class="meta"><span class="pill">${r.category || ""}</span><span class="pill">${r.joints ?? "?"} dof</span>
-        ${r.has_sim ? '<span class="pill sim">sim</span>' : ""}${r.has_real ? '<span class="pill real">real</span>' : ""}</div>`;
+      const el = node("article", "robot");
+      el.append(node("div", "name", r.name), node("div", "desc", r.description || ""));
+      const meta = node("div", "meta");
+      meta.append(node("span", "pill", r.category || ""), node("span", "pill", `${r.joints ?? "?"} dof`));
+      if (r.has_sim) meta.append(node("span", "pill sim", "sim"));
+      if (r.has_real) meta.append(node("span", "pill real", "real"));
+      el.append(meta);
       box.appendChild(el);
     }
   } catch (e) {
-    if (e.message !== "sign in required") box.innerHTML = `<p class="muted">${e.message === "Not Found" ? "The fleet route arrives with the next slice." : e.message}</p>`;
+    if (e.message !== "sign in required") box.append(node("p", "muted", e.message === "Not Found" ? "The fleet route arrives with the next slice." : e.message));
   }
 }
 
@@ -96,7 +111,7 @@ async function loadSettings() {
       const label = document.createElement("label");
       const isSecret = section === "security" && key === "auth_token";
       const shown = isSecret ? (value ? "(set)" : "(unset)") : Array.isArray(value) ? value.join(", ") : value ?? "";
-      label.innerHTML = `<span class="mono">${section}.${key}</span>`;
+      label.append(node("span", "mono", `${section}.${key}`));
       const input = document.createElement("input"); input.name = `${section}.${key}`; input.value = shown; input.placeholder = isSecret ? "leave to keep" : "";
       label.appendChild(input); form.appendChild(label);
     }

@@ -45,6 +45,12 @@ python -m strands_robots dashboard --host 0.0.0.0 --port 8090
 | Agent | a Strands Agent with the robot tool; anything that would move hardware pauses on a consent card | `dashboard.agent_hitl`, `dashboard.consent` |
 | Settings | the file `~/.strands_robots/dashboard/settings.json` - agent model, mesh endpoints, static token (shown only as set / unset) | `dashboard.settings` |
 
+Every string a route serves is rendered as text, never as markup: a Fleet row can
+carry a mesh peer's name, and script running in this page would be same-origin -
+it carries the session cookie and names this origin as its own, so it is behind
+every guard above by construction. `tests/test_dashboard_static_renders_data_as_text.py`
+reads that rule off the files the wheel ships.
+
 ## Configuration
 
 | Variable | Default | Meaning |

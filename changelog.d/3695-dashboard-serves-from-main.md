@@ -34,7 +34,13 @@ CLI binds `127.0.0.1:8090` and refuses any other address until a passkey or a
 static token exists, naming the remedy.
 
 The UI is plain files under `dashboard/static/` served by the same process, so
-the wheel carries it and no build step exists. `docs/dashboard.md` is the one
+the wheel carries it and no build step exists. Those pages build their nodes and
+hand each one its text as text: a Fleet row can hold a mesh peer's name, and a
+peer-supplied string is attacker-controlled, so interpolating one into markup
+would put script in the dashboard's own origin - carrying the session cookie,
+naming this origin as its own, and therefore behind every check above by
+construction. Measured in a browser against a `/api/fleet` whose robot name was
+`<img src=x onerror=...>`: the payload ran, then did not. `docs/dashboard.md` is the one
 page that invokes the command, which
 `test_docs_module_commands_are_dispatched` now requires of a dispatched command.
 
