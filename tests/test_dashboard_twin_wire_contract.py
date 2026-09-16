@@ -19,7 +19,6 @@ from __future__ import annotations
 import pathlib
 import re
 from collections.abc import Iterator
-from typing import Any
 
 import numpy as np
 import pytest
@@ -37,7 +36,7 @@ except Exception:  # pragma: no cover
 
 
 @pytest.fixture(scope="module")
-def so101() -> Iterator[tuple[Any, Any, dict[str, Any]]]:
+def so101() -> Iterator[tuple[object, object, dict]]:
     """A compiled so101 and its forward-stepped data, with the scene it publishes."""
     if not _HAS_MUJOCO:
         pytest.skip("mujoco not installed")
@@ -47,7 +46,7 @@ def so101() -> Iterator[tuple[Any, Any, dict[str, Any]]]:
         if session.snapshot.state == "error":
             pytest.skip(f"no renderer here: {session.snapshot.error}")
         engine = session._engine
-        assert engine is not None, "the session reported ready without an engine"
+        assert engine is not None, "a ready session has an engine"
         yield session.model, engine.mj_data, scene.describe(session.model)
     finally:
         session.stop()
