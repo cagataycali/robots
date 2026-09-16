@@ -202,6 +202,34 @@ def _allow_exact_or_star(target: str) -> Callable[[frozenset[str]], bool]:
     return _match
 
 
+def preapproval_setting(
+    action: str,
+    target: str,
+    allow_env: str,
+    match: Callable[[frozenset[str]], bool],
+) -> str:
+    """The ``<allow_env>=<value>`` that pre-approves this command, asked of the matcher.
+
+    Shared by the interrupt's ``how_to_answer`` line and the headless refusal,
+    so an operator reads the same spelling whichever way the gate stopped
+    them. Falls back to the bare variable name when the matcher accepts
+    neither the action nor the target, which no caller in this package does.
+
+    Args:
+        action: The verb carrying the command, as passed to :func:`gate_motion`.
+        target: What the command is aimed at, as passed to :func:`gate_motion`.
+        allow_env: The caller's allowlist variable.
+        match: The caller's allowlist matcher, probed with a one-entry set.
+
+    Returns:
+        ``<allow_env>=<value>``, or ``<allow_env>`` alone.
+    """
+    return next(
+        (f"{allow_env}={candidate}" for candidate in (action, target) if match(frozenset({candidate}))),
+        allow_env,
+    )
+
+
 def how_to_answer(
     action: str,
     target: str,
@@ -237,10 +265,7 @@ def how_to_answer(
         variable alone when the matcher accepts neither the action nor the
         target, which no caller in this package does.
     """
-    hint = next(
-        (f"{allow_env}={candidate}" for candidate in (action, target) if match(frozenset({candidate}))),
-        allow_env,
-    )
+    hint = preapproval_setting(action, target, allow_env, match)
     return (
         "This call is paused, not done: result.stop_reason == 'interrupt' and result.interrupts holds this "
         'question. Resume with agent([{"interruptResponse": {"interruptId": <this interrupt\'s id>, '
@@ -299,8 +324,11 @@ def gate_motion(
         A refusal message for the caller to return through its own error
         wrapper, or None to let the command proceed. In order: the allowlist
         names the target -> allow silently; ``BYPASS_TOOL_CONSENT=true`` ->
-        allow with a WARNING log; no ``tool_context`` -> refuse, naming both
-        variables; otherwise prompt the operator and record the reply.
+        allow with a WARNING log; no ``tool_context`` -> refuse, naming the
+        ``<allow_env>=<value>`` that pre-approves this call and the bypass
+        variable (and, when the allowlist variable is set to something that
+        names neither this call nor ``*``, saying so - ``1`` or ``true``
+        pre-approve nothing); otherwise prompt the operator and record the reply.
     """
     match = allow_match or _allow_exact_or_star(target)
     allow_raw = os.environ.get(allow_env)
@@ -315,9 +343,21 @@ def gate_motion(
         return None
 
     if tool_context is None:
+        # The operator reading this refusal has no agent to answer through, so
+        # the remedy has to be complete: the variable AND the value. A variable
+        # that is set but names neither this call nor "*" is the common dead
+        # end (=1, =true, a typo) - say so, or the same refusal comes back
+        # after the operator followed the advice.
+        setting = preapproval_setting(action, target, allow_env, match)
+        ignored = (
+            f"{allow_env} is set to {allow_raw!r}, which names neither this command nor '*', so it pre-approves nothing. "
+            if allow_raw is not None
+            else ""
+        )
         return (
-            f"{warning} No tool_context available for operator approval. "
-            f"Set {allow_env} or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
+            f"{warning} No tool_context available for operator approval. {ignored}"
+            f"Set {setting} (or {allow_env}=* for every {tool} command; comma-separated) "
+            f"or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
         )
 
     try:
