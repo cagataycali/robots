@@ -38,6 +38,11 @@ def test_start_policy_right_after_stop_policy_is_admitted(arm):
         assert stopped["status"] == "success"
         assert _text(stopped).startswith("Stopped on 'so101'")
         assert _json(stopped) == {"robot": "so101", "was_running": True, "exited": True}
+        # exited=True means the join retired the worker, so its Future is gone
+        # from the table by the time the call answers. Read _policy_threads
+        # first: _active_policy_robots() prunes as a side effect, which would
+        # clear a stale entry before this line could see it.
+        assert "so101" not in arm._policy_threads
         assert "so101" not in arm._active_policy_robots()
     # Nothing left in flight after the last stop.
     assert "No policies running" in _text(arm.list_policies_running())
