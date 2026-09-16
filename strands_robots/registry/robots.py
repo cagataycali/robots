@@ -105,6 +105,30 @@ def get_robot(name: str) -> dict[str, Any] | None:
     return result
 
 
+def joint_labels(name: str) -> dict[str, str]:
+    """Meaningful names for a robot's simulation joints, ``{joint: label}``.
+
+    Some assets name their joints by servo id (SO-101: ``1``..``6``) or by
+    CAD term (SO-100: ``Rotation``, ``Jaw``), while the same arm's driver and
+    LeRobot datasets speak ``shoulder_pan`` .. ``gripper``. The registry's
+    optional ``joint_labels`` block bridges the two so an agent can address a
+    joint by what it does. Returns ``{}`` for an unknown robot or one that
+    declares no labels.
+
+    Args:
+        name: Robot name, alias, or data_config.
+
+    Returns:
+        Mapping from the asset's joint name (as ``get_robot_state`` reports it,
+        without the robot namespace) to its label.
+    """
+    info = get_robot(name)
+    labels = (info or {}).get("joint_labels")
+    if not isinstance(labels, dict):
+        return {}
+    return {str(k): str(v) for k, v in labels.items()}
+
+
 def has_sim(name: str) -> bool:
     """Check if a robot has simulation assets (MJCF/URDF)."""
     info = get_robot(name)

@@ -166,6 +166,18 @@ Naming only one leaves the other inert, and the diagnostic keeps reporting
 whichever half is still unnormalized. Fine-tuning the checkpoint writes stats
 under the canonical keys and needs no override at all.
 
+Where those stats come from is usually the checkpoint you already have. A
+pretraining base checkpoint carries its training datasets' stats under prefixed
+keys rather than the canonical ones LeRobot looks up, so the diagnostic lists the
+spellings it found per missing key -- `lerobot/smolvla_base` reports
+`{'observation.state': [], 'action': ['so100-blue.buffer.action',
+'so100-red.buffer.action', 'so100.buffer.action']}`. Remap one onto `action` and
+pass it as the override above. They are listed rather than adopted because those
+three describe different distributions (joint 0's std is 26.4, 14.1 and 14.3),
+so choosing one is the caller's decision; and the empty `observation.state` list
+is the useful half of that answer -- this checkpoint ships no state stats at all,
+which is why proprioception needs the units half below as well.
+
 Stats also carry the *units* the dataset was recorded in, and that is the second
 half a sim caller owes. An SO-arm dataset comes through the driver's
 `MotorNormMode` - arm joints in servo **degrees**, gripper in `RANGE_0_100`
@@ -231,6 +243,16 @@ present the vector is partly bound and the policy reports the absent keys, the
 keys the observation does carry and the remedy; when none are present it falls
 back to the observation's own state vector. Both degradations are logged, and
 `strict_keys=True` turns them into raises.
+
+The remedy names an `embodiment=` only when a shipped one declares `state_keys`
+the observation carries, so following it cannot land back on the same mismatch.
+One exception is reported instead of recommended: if a declared embodiment was
+already **rejected** at load time - its `obs_rename` names an image feature the
+checkpoint does not declare, so the whole map including the state binding is
+discarded (see [Camera routing](#embodiment-obs_rename-and-the-pre-flight-check))
+- then re-passing it would loop. The remedy then says the embodiment was
+rejected and points at `camera_key_map=` / `obs_rename_override=` to make it
+validate, or `set_robot_state_keys([...])`.
 
 ## Camera routing
 

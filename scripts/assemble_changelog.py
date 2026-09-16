@@ -28,6 +28,11 @@ Fragment contract
 -----------------
 - Path: ``changelog.d/<number>-<slug>.md``, where ``<number>`` is the PR (or
   issue) number and ``<slug>`` is lowercase ``a-z0-9`` words joined by ``-``.
+  A placeholder in place of that number -- ``0000-`` or ``999x-`` -- is refused:
+  the number is the only pointer from a release-note entry back to the change
+  that made it, and ``--apply`` deletes the fragment it folds in, so a
+  placeholder that merges makes the entry permanently untraceable. Rename the
+  fragment once the number exists.
 - Content: exactly the Markdown that would have been pasted into
   ``CHANGELOG.md`` -- one ``### <Category>: <summary>`` heading followed by the
   prose body, in the style of the entries already in the log.
@@ -65,6 +70,15 @@ DEFAULT_CHANGELOG = _REPO_ROOT / "CHANGELOG.md"
 RESERVED_NAMES = frozenset({"README.md"})
 
 FRAGMENT_NAME = re.compile(r"^(?P<number>\d+)-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+
+#: ``0000-`` is the placeholder a branch writes before its PR number exists.
+#: No PR or issue is numbered 0, and zero sorts *below* every real entry.
+PLACEHOLDER_ZERO = 0
+
+#: ``999x-`` is the other placeholder shape. The repository's PR/issue counter is
+#: a single monotonic sequence (the 3700s at the time of writing), so this floor
+#: leaves several years of headroom while still catching it.
+PLACEHOLDER_FLOOR = 9000
 #: A fragment opens with the same level-3 entry heading the log already uses
 #: (``### Fixed: ...``, ``### Added: ...``, ``### Docs: ...``). The wording is
 #: not policed here: the log carries a dozen categories in practice, and this
@@ -128,9 +142,29 @@ def collect_fragments(directory: Path = DEFAULT_FRAGMENT_DIR) -> list[Fragment]:
     return fragments
 
 
+def is_placeholder_number(number: int) -> bool:
+    """True when ``number`` is a pre-PR placeholder rather than a PR or issue number.
+
+    This is the single owner of the rule. ``validate_fragment`` applies it, so
+    ``--check``, ``--apply``, the per-pull-request convention job (which imports
+    ``validate_fragment`` rather than restating it) and
+    ``tests/test_changelog_fragments.py`` cannot disagree about whether a name
+    is a placeholder.
+    """
+    return number == PLACEHOLDER_ZERO or number >= PLACEHOLDER_FLOOR
+
+
 def validate_fragment(fragment: Fragment) -> list[str]:
     """Return every contract violation in one fragment (empty list if valid)."""
     problems: list[str] = []
+
+    if is_placeholder_number(fragment.number):
+        problems.append(
+            f"{fragment.name}: {fragment.number} is a placeholder, not a PR or issue number - "
+            "rename the fragment to the number that carries it, so the release-note entry "
+            "points back at the change and sorts in the right place"
+        )
+
     lines = fragment.body.splitlines()
     stripped = [line for line in lines if line.strip()]
 

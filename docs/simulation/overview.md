@@ -170,6 +170,25 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     calls it is refused. Reach for it from Python, and for `get_robot_state`
     from a tool call.
 
+    Some assets name joints by servo id or CAD term - the SO-101's are
+    `1`..`6`, the SO-100's `Rotation`..`Jaw`. For those, the registry entry
+    carries `joint_labels` (the `shoulder_pan` .. `gripper` the same arm's
+    driver and datasets use): `get_robot_state` prints `1 (shoulder_pan)`, and
+    the joint writers accept the label as a key - bare, `<robot>/<label>`, in
+    any case - beside the asset name. A refused key lists the labels too.
+
+!!! tip "The unit of a joint value"
+    A joint value is in that joint's own MuJoCo unit: radians for a hinge,
+    metres for a slide - never degrees. It matters most when mirroring a real
+    arm onto its sim twin, because the driver on the other side reports the
+    other unit (`drivers/feetech` reads an SO-arm in degrees) and the same
+    number in the wrong unit is a pose an order of magnitude away. So
+    `set_joint_positions` names the unit when it refuses a value the joint's
+    range does not contain, and when converting that value *would* land inside
+    the range it says which conversion:
+    `shoulder_pan=-96.2 outside [-1.92, 1.92] rad (radians, not degrees:
+    -96.2 deg = -1.679 rad)`.
+
 !!! note "Numeric domain of the state writers"
     `set_joint_positions`, `set_joint_velocities` and the `apply_force`
     vectors take finite real numbers - a python or NumPy scalar - and refuse a

@@ -1302,14 +1302,27 @@ class LerobotLocalPolicy(Policy):
                 # observation.state a near-constant. The warning names both.
                 inert = bridge.inert_normalization_features()
                 if inert:
+                    # The stats LeRobot could not find are usually IN this
+                    # checkpoint under dataset-prefixed keys. Name them: a
+                    # caller who is told only that 'action' is missing has to
+                    # open the normalizer safetensors by hand to discover the
+                    # remedy is already on disk. They are not adopted for the
+                    # caller because several prefixes with different
+                    # distributions can be present (smolvla_base ships three),
+                    # so choosing one is a silent guess.
+                    candidates = bridge.prefixed_stat_key_candidates()
                     logger.warning(
                         "lerobot_local: %s has an ACTIVE normalization pipeline "
                         "but its stats do not cover %s -- those features are passed "
                         "through UN-normalized (observation.state reaches the model "
                         "raw; predicted actions reach the robot without "
                         "unnormalization). Pretraining base checkpoints often ship "
-                        "dataset-prefixed stats (e.g. 'so100.buffer.action') instead "
-                        "of the canonical 'action'/'observation.state' keys. "
+                        "dataset-prefixed stats instead of the canonical "
+                        "'action'/'observation.state' keys -- THIS checkpoint's own stats "
+                        "carry %s per missing key (an empty list means it ships no "
+                        "candidate for that feature); they are not adopted automatically "
+                        "because several prefixes with different distributions can be "
+                        "present, so picking one would be a silent guess. "
                         "Fine-tune the checkpoint (which writes proper stats) or pass "
                         "processor_overrides={'normalizer_processor': {'stats': <dataset "
                         "stats>}, 'unnormalizer_processor': {'stats': <dataset stats>}} -- "
@@ -1327,6 +1340,7 @@ class LerobotLocalPolicy(Policy):
                         "pose or ignores proprioception, this is why.",
                         self.pretrained_name_or_path or "<model>",
                         inert,
+                        candidates,
                     )
 
     def _auto_detect_actions_per_step(self) -> None:
@@ -2737,8 +2751,11 @@ class LerobotLocalPolicy(Policy):
             + _state_key_cause(self.robot_state_keys)
             + " "
             # Remedy chosen from the observation, so the advice cannot name an
-            # embodiment whose state_keys would land back on this same guard.
-            + state_key_remedy(scalar_keys)
+            # embodiment whose state_keys would land back on this same guard -
+            # and, once a declared embodiment has already been rejected at load
+            # time, no embodiment at all, since re-passing that one is the same
+            # loop reached through obs_rename rather than state_keys.
+            + state_key_remedy(scalar_keys, embodiment_rejected=self._embodiment_config_failed)
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -2812,7 +2829,11 @@ class LerobotLocalPolicy(Policy):
                 f"observation: {shown}{ellipsis}. Present joints keep their index and the "
                 "missing dims are zero-filled in place, but the sim/robot does not report "
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
-                "from the observation's finger-joint names. " + state_key_remedy(observed_state_keys(observation_dict))
+                "from the observation's finger-joint names. "
+                + state_key_remedy(
+                    observed_state_keys(observation_dict),
+                    embodiment_rejected=self._embodiment_config_failed,
+                )
                 # Same registry-checked remedy as the all-missing guard, so one
                 # rule serves both degradations.
             )

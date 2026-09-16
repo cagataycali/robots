@@ -38,6 +38,14 @@ and a one-second rollout plays for 16 minutes 40 seconds. The file is a valid
 and the caller is handed it as a success. The declared range is the only place
 either can be refused.
 
+:func:`strands_robots.rendering.video.concat_clips` reads that same number back
+through ``imageio.v2.get_reader``: a GIF header declares no rate, so the rate a
+segment plays at is the inverse of the duration ``encode_clip`` wrote. The read
+side therefore rests on the same millisecond reading as the write side, and its
+name lands in the table at the release that first ships the v2 shim - measured
+against the wheels, ``imageio/v2.py`` is absent in 2.15.0 and defines
+``get_reader`` beside ``get_writer`` in 2.16.0.
+
 The encoder itself is already covered: the suite pins that an ``encode_clip``
 GIF decodes to a per-frame duration matching the requested fps, which holds only
 from 2.28.0. What was missing is a floor that admits only the releases where
@@ -111,6 +119,7 @@ _IMAGEIO_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("imageio", _MODULE): "2.9.0",
     ("imageio", "get_writer"): "2.9.0",
     ("imageio.v2", _MODULE): "2.16.0",
+    ("imageio.v2", "get_reader"): "2.16.0",
     ("imageio.v2", "get_writer"): "2.16.0",
     ("imageio.v2", "mimsave"): "2.16.0",
 }
