@@ -21,7 +21,8 @@ Pinned here: the mismatch is the first thing said, by benchmark id and robot
 model, with the two ways out; a matching robot is untouched; an any-robot
 benchmark (empty ``supported_robots``) still reaches the probe; the probe
 spells the resolved robot's name where it used to say ``<the sole robot>``;
-and the runner's own refusal names the benchmark by its registered id.
+and the runner's own refusal - and the summary line a finished eval opens
+with - name the benchmark by its registered id.
 """
 
 from __future__ import annotations
@@ -131,3 +132,19 @@ class TestTheRunnerNamesTheBenchmark:
         text = _text(result)
         assert "benchmark walk-for-t1 supports ['booster_t1']" in text, text
         assert "DeclarativeBenchmark supports" not in text, text
+
+    def test_the_summary_line_of_a_finished_eval_carries_the_registered_id(self, arm):
+        """The line every completed eval opens with. Read on a run that finishes
+        rather than one that refuses, because the id has to survive the whole
+        eval - a joint clause the arm can actually report keeps the probe quiet."""
+        name = _register(
+            "joint-bench-for-so100",
+            ["so100"],
+            "so100",
+            success={"all": [{"predicate": "joint_above", "joint": "Rotation", "value": 99.0}]},
+        )
+        result = arm.evaluate_benchmark(name, n_episodes=1)
+        assert result["status"] == "success", result
+        text = _text(result)
+        assert text.startswith(f"Benchmark: {name} | policy"), text
+        assert "DeclarativeBenchmark" not in text, text
