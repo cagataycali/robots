@@ -13,10 +13,16 @@ relative-action roster was written as ``pi0``/``pi05``/``pi0_fast`` while the
 gate had already accepted ``groot``, so the page denied a combination
 ``validate()`` accepted.
 
-Pinned here: for each gate the page enumerates, the types it names are exactly
-the types the gate accepts. The rosters are read from the gates and the page,
-neither is spelled in this file, so a lerobot release that adds a policy with
-one of these capabilities fails here until the page is updated with it.
+Pinned here: for each gate the page enumerates, the types it names are the types
+the gate accepts, graded by the DIRECTION they differ (see
+:mod:`tests.training._lerobot_capability_range`). A type the page names and the
+gate refuses is always a failure - the page denies nothing and promises a
+combination ``validate()`` rejects. A type the gate accepts and the page omits
+is a failure once the installed lerobot is the floor the manifest declares; on a
+newer in-range lerobot it is reported, because the manifest admits releases that
+disagree about which policies carry a capability and no written roster can name
+both sets. The rosters are read from the gates and the page, neither is spelled
+in this file.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from strands_robots.training.lerobot import (
     _policy_supports_relative_actions,
     _policy_uses_quantile_norm,
 )
+from tests.training._lerobot_capability_range import roster_problem
 
 _PAGE = Path(__file__).resolve().parents[2] / "docs" / "training" / "overview.md"
 
@@ -65,10 +72,13 @@ def _clause(anchor: str) -> str:
 
 
 @pytest.mark.parametrize(("gate", "anchor", "probe"), _DOCUMENTED_GATES, ids=[g[0] for g in _DOCUMENTED_GATES])
-def test_the_page_names_exactly_the_types_the_gate_accepts(
-    gate: str, anchor: str, probe: Callable[[str], bool]
-) -> None:
-    """A roster on the page is the roster the gate derives - no more, no fewer."""
+def test_the_page_names_the_types_the_gate_accepts(gate: str, anchor: str, probe: Callable[[str], bool]) -> None:
+    """A roster on the page names no type the gate refuses, and none it accepts.
+
+    The second half is held to the lerobot the manifest floors at: above the
+    floor a page that has not yet been told about a newly-capable policy is
+    reported, not failed.
+    """
     known = _lerobot_policy_types()
     assert known, "no LeRobot policy types discovered; the rosters below would be vacuous"
 
@@ -76,7 +86,11 @@ def test_the_page_names_exactly_the_types_the_gate_accepts(
     assert accepted, f"the {gate} gate accepts no policy type; its documented roster would be vacuous"
 
     documented = {token for token in _BACKTICKED.findall(_clause(anchor)) if token in known}
-    assert documented == accepted, (
-        f"the {gate} roster in {_PAGE.name} drifted from the gate: "
-        f"page-only={sorted(documented - accepted)} gate-only={sorted(accepted - documented)}"
+    problem = roster_problem(
+        f"the {gate} roster in {_PAGE.name}",
+        documented,
+        accepted,
+        written_label="page-only",
+        accepted_label="gate-only",
     )
+    assert not problem, problem
