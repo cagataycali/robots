@@ -3398,7 +3398,32 @@ class Mesh(SensorLoopsMixin):
         return resps
 
     def tell(self, target: str, instruction: str, **kw: Any) -> dict[str, Any]:
-        """Shorthand: ask a peer to execute a natural-language instruction."""
+        """Shorthand: ask a peer to run a policy with a natural-language instruction.
+
+        Sends ``{"action": "execute", "instruction": instruction, **kw}``.
+        The instruction alone is not a command the peer can act on - it is
+        the text a policy conditions on - so ``policy_provider=`` is
+        required: :func:`~strands_robots.mesh.security.validate_command`
+        refuses an execute without one before it leaves this process
+        ("Silent defaults are not honoured on the security boundary").
+        Checkpoints travel as Hub ids (``pretrained_name_or_path="lerobot/…"``,
+        an org in ``STRANDS_MESH_HF_REPO_ALLOW``); a local path is refused on
+        the wire. ``duration`` defaults to 30 s on the peer.
+
+        Example::
+
+            mesh.tell(peer, "hold the tray steady", policy_provider="lerobot_local",
+                      pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
+
+        Args:
+            target: The peer id to address.
+            instruction: Natural-language instruction the policy conditions on.
+            **kw: The policy - ``policy_provider`` (required), its checkpoint or
+                port, ``duration`` and any provider keyword the wire allows.
+
+        Returns:
+            The peer's reply for the ``execute`` command.
+        """
         return self.send(target, {"action": "execute", "instruction": instruction, **kw})
 
     # Subscribe / publish_step / on_stream
