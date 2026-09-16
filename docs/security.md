@@ -249,6 +249,26 @@ Reference: `strands_robots.assets.download`, `strands_robots.utils.safe_join`.
 - **Agent-side command gate (`use_unitree`).** The raw Unitree SDK2 escape hatch is gated by the same decision path. Every mutative operation and every high-danger one (`loco.ZeroTorque`, `loco.SetFsmId`, `loco.SetVelocity`, `loco.Move`, `motion_switcher.ReleaseMode`) stops for an operator interrupt *before* the RPC is dispatched; a declined or headless call sends nothing. Pre-approve individual pairs with `STRANDS_UNITREE_COMMAND_ALLOW=loco.SetVelocity,audio.TtsMaker` (exact `service.operation` entries, or `*` for the whole surface) or bypass with `BYPASS_TOOL_CONSENT=true`. Reads (`Get*`, `Check*` and the short `READONLY_WHITELIST`), the `meta` discovery operations and `loco.StopMove` are never gated: stopping must not get harder. "Mutative" is decided by allowlist, not by recognising the verb: any public method that is not one of those reads is a write and asks - including a method this release has never seen, so a future SDK bump that adds `Recover` or `ArmTask` cannot dispatch it ungated. (The first F-001 fix classified by a 24-entry prefix denylist, which defaulted to *allow* for anything spelled differently.) Prefer the FSM-gated driver verbs (`g1_send_action`, `g1_run_policy`) for routine motion. The SDK's private transport is refused rather than gated: every client in the service table inherits `_Call(apiId, parameter)` from `unitree_sdk2py.rpc.client.Client` and each typed method is a thin wrapper over it, so `_Call(7105, ...)` is the wire form of `loco.SetVelocity` and walks the robot as far. An underscore name named no danger pair and, under the old prefix denylist, matched no mutative prefix either, so it used to fall past the gate and be dispatched by `getattr`. It is refused before dispatch, and neither an operator's approval, nor `BYPASS_TOOL_CONSENT`, nor a `*` allowlist opens it - those say "do not ask a human about this named operation", not "add the SDK's private transport to the tool's surface", and a prompt naming `loco._Call` could not show an operator that `apiId=7105` is a walk command. `describe_operation` declines such a name too, so discovery cannot report a raw RPC as neither mutative nor high-danger.
 - **Telemetry-only is ungated.** `ros2_commands=False` is publish-only (no inbound surface) and needs no security config. That posture is only as good as how the flag is read, so `ros2_bridge` / `ros2_commands` (and `enable_commands` on either bridge class directly) are **checked** against the shared boolean domain rather than read by truthiness: a non-boolean is refused at construction, so a deployment config that spells the flag `"false"` cannot select the surface it asks to close.
 
+## Answering a command gate from a script
+
+An interrupt is a paused run, not a result: `agent(...)` returns with `result.stop_reason == "interrupt"` and the question in `result.interrupts`, and nothing has moved. Every interrupt raised through the shared command gate - `Robot(mode="real")`, `serial_tool`, `pose_tool`, `use_unitree`, the ROS transports - carries the same structured `reason`: `action`, `target`, `warning` (what would move, ending in `Reply 'y' to approve`), and `how_to_answer`, which states that the call is paused, the exact resume form, and the exact `..._COMMAND_ALLOW=<value>` that would pre-approve this same command with no operator present. It is in the `reason` because `print(result)` on a paused run prints that dict: the script that hit the gate is the one holding the remedy.
+
+```python
+result = agent("Rotate the wrist 5 degrees.")
+while result.stop_reason == "interrupt":
+    for question in result.interrupts:
+        print(question.reason["warning"])         # what would move
+        print(question.reason["how_to_answer"])   # how to answer it, and what pre-approves it
+    result = agent(
+        [
+            {"interruptResponse": {"interruptId": question.id, "response": input("approve? [y/N] ")}}
+            for question in result.interrupts
+        ]
+    )
+```
+
+Only `y` / `yes` / `approve` / `approved` approve; anything else declines and nothing moves. The value `how_to_answer` names is the one this tool's own allowlist matcher accepts, which is not the same shape for every tool - an action name for `Robot` / `serial_tool` / `pose_tool`, a `service.operation` pair for `use_unitree`, a surface name for the ROS transports - so it is read from that matcher rather than described, and a pre-approval the interrupt offers is one that lifts the gate on the command it was offered for.
+
 ## Audit log
 
 Every fleet action the mesh accepts is appended to a JSONL audit log.  The log
