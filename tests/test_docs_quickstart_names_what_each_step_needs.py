@@ -9,7 +9,8 @@ something the page never installs was covered by "everything else".
   PyPI - it ships with a system ROS 2 install - so on a machine with no sourced
   distro the constructor raises ``ImportError`` naming
   ``source /opt/ros/<distro>/setup.bash``.
-* Step 4 is ``follower.mesh.tell(follower.mesh.peers[0]["peer_id"], ...)``. The
+* Step 4 hands a peer a task: ``follower.mesh.tell(peer, ...)``, with ``peer``
+  read out of ``follower.mesh.peers[0]["peer_id"]``. The
   mesh transport comes from the ``[mesh]`` extra (``eclipse-zenoh``), which the
   install command at the top of the page does not pull in, and the mesh also
   declines to start until a posture is chosen (``STRANDS_MESH_LOCAL_DEV`` or an
@@ -113,7 +114,14 @@ def _requirements(extra: str, seen: frozenset[str] = frozenset()) -> set[str]:
 @pytest.mark.parametrize(
     ("step", "snippet"),
     [
-        (4, 'follower.mesh.tell(follower.mesh.peers[0]["peer_id"]'),
+        # One fact per row, because step 4 spends two lines on them: reading a
+        # peer id out of ``mesh.peers`` is what raises ``IndexError`` when the
+        # mesh never started, and ``mesh.tell`` is what needs the transport the
+        # page does not install. Pinned separately so binding the peer id to a
+        # name - which is how the step reads today - is not mistaken for the
+        # step having stopped doing either.
+        (4, 'follower.mesh.peers[0]["peer_id"]'),
+        (4, "follower.mesh.tell("),
         (5, "Simulation(ros2_bridge=True)"),
     ],
 )
