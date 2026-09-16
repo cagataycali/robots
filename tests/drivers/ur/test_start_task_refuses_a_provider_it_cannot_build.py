@@ -244,6 +244,30 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
         )
         assert driver.start_task("pick up the cube", policy_provider="lerobot_local")["status"] == "error"
 
+    @pytest.mark.parametrize(("provider", "requires"), REQUIRING)
+    def test_supplying_what_the_refusal_asks_for_clears_the_guard(
+        self, driver: URDriver, provider: str, requires: tuple[str, ...]
+    ) -> None:
+        """The printed remedy is a call this verb accepts -- for every provider.
+
+        A refusal that names a keyword is only correct if supplying that keyword
+        changes the answer; otherwise the caller loops on advice that cannot
+        work. So the remedy is applied here rather than asserted: each provider
+        is called again with exactly what its own message asked for, and the
+        guard must not fire a second time. It may still be refused -- the two
+        ``lerobot_local`` spellings then meet the remote-code consent gate,
+        which names its own remedy -- but not for a keyword that was supplied.
+
+        This is the domain the previous cell grades at one point: ``port``
+        travels as the named ``policy_port`` and the rest inside
+        ``**policy_kwargs``, so a guard that read only one of the two would pass
+        for ``groot`` and refuse ``lerobot_async`` for a checkpoint it was given.
+        """
+        supplied: dict[str, Any] = {key: "smolvla" if key == "policy_type" else "x" for key in requires}
+        port = supplied.pop("port", None) and 5555
+        text = text_of(driver.start_task("pick up the cube", policy_provider=provider, policy_port=port, **supplied))
+        assert "builds its policy from" not in text, text
+
     def test_a_provider_that_requires_nothing_is_untouched(self, driver: URDriver) -> None:
         """Non-vacuity in the other direction: the guard is not refusing everything."""
         assert driver.start_task("pick up the cube", policy_provider="mock") == ROLLED_OUT
