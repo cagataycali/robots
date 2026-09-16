@@ -6068,10 +6068,7 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [
                     {
-                        "text": (
-                            f"Cannot '{action_name}' while a policy is running on {names}. "
-                            "Stop it first: action='stop_policy'."
-                        )
+                        "text": f"Cannot '{action_name}' while a policy is running on {names}. {self._stop_policy_remedy(active)}"
                     }
                 ],
             }

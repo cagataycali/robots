@@ -4344,6 +4344,33 @@ class SimEngine(ABC):
             text = "stop_policy requires 'robot_name'."
         return None, {"status": "error", "content": [{"text": text}]}
 
+    def _stop_policy_remedy(self, robot_names: Sequence[str]) -> str:
+        """The sentence a rollout gate ends with, as a call the tool accepts.
+
+        A gate that refuses a mutation during a rollout has to name the way out,
+        and the way out has to be typeable: the defect
+        :meth:`_stop_policy_target` closes was a remedy the tool would not
+        accept. A bare ``action='stop_policy'`` is that remedy exactly when the
+        empty name resolves, so the choice is made by asking the resolver rather
+        than by re-deriving its rule here - the gate's own population
+        (rollouts this thread is not driving) is not the resolver's (every
+        rollout in flight), and a gate naming one robot while two are in flight
+        would otherwise emit the bare form the resolver then refuses.
+
+        Args:
+            robot_names: The rollouts the gate is refusing on behalf of, named
+                in the remedy when the bare form would not resolve.
+
+        Returns:
+            A remedy sentence whose every clause is a call ``stop_policy``
+            accepts.
+        """
+        target, _ = self._stop_policy_target("")
+        if target is not None:
+            return "Stop it first: action='stop_policy'."
+        spelled = ", then ".join(f"robot_name='{n}'" for n in robot_names)
+        return f"Stop them first: action='stop_policy' with {spelled}."
+
     def _request_policy_stop(self, robot_name: str) -> bool | None:
         """Move ``robot_name``'s rollout claim out of date; report what was in flight.
 

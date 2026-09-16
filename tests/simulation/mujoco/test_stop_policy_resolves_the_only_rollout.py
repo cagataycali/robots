@@ -11,12 +11,15 @@ The empty name is still never matched to the sole *robot* (a stop aimed at
 the wrong robot reads as a stop that worked). It is matched to the sole
 *rollout*: with exactly one policy running there is no wrong robot to aim
 at. With several running the refusal names them; with none it says so and
-names the robots. Every gate's remedy now spells the parameter
-``robot_name``.
+names the robots. A gate only offers the bare remedy when it would resolve:
+with several in flight it spells ``robot_name`` for each, so the sentence is
+a call the tool accepts at either cardinality.
 """
 
 from __future__ import annotations
 
+import re
+import threading
 import time
 
 import pytest
@@ -126,6 +129,46 @@ class TestAnythingElseIsRefusedNamingWhatIsRunning:
         result = sim._dispatch_action("stop_policy", {})
         assert result["status"] == "success"
         assert _json(result)["robot"] == "arm2"
+
+    def test_the_gates_remedy_works_as_written_with_several_running(self, sim, tmp_path):
+        """A gate offers the bare remedy only where it resolves; else it names them.
+
+        The gate's population (rollouts this thread is not driving) is not the
+        resolver's (every rollout in flight), so the remedy is read back out of
+        the refusal and every call it names is executed, rather than matching a
+        sentence this test wrote itself.
+        """
+        assert sim.add_robot(name="arm2", urdf_path=str(tmp_path / "arm.xml"))["status"] == "success"
+        _start(sim, "arm")
+        _start(sim, "arm2")
+        refused = _text(sim._dispatch_action("reset", {}))
+        # The bare form would be refused in this state, so it is not offered.
+        assert "action='stop_policy'." not in refused
+        named = re.findall(r"robot_name='([^']+)'", refused)
+        assert set(named) == set(sim._rollouts_in_flight()) == {"arm", "arm2"}
+        for name in named:
+            assert sim._dispatch_action("stop_policy", {"robot_name": name})["status"] == "success"
+            _wait_idle(sim, name)
+        assert sim._dispatch_action("reset", {})["status"] == "success"
+
+    def test_the_remedy_asks_the_resolver_not_the_gates_own_population(self, sim, tmp_path):
+        """Two in flight with this thread driving one: the gate sees one, the resolver two.
+
+        The gate exempts the rollout the calling thread drives, so deciding
+        "is there exactly one?" from the gate's own population would offer the
+        bare remedy in a state where ``stop_policy`` still refuses it. Recording
+        this thread as ``arm``'s driver is what ``_drive_rollout`` does for a
+        blocking ``run_policy``.
+        """
+        assert sim.add_robot(name="arm2", urdf_path=str(tmp_path / "arm.xml"))["status"] == "success"
+        _start(sim, "arm")
+        _start(sim, "arm2")
+        sim._rollout_driver_threads["arm"] = threading.get_ident()
+        assert sim._rollouts_driven_by_other_threads() == ["arm2"]
+        assert set(sim._rollouts_in_flight()) == {"arm", "arm2"}
+        refused = _text(sim._dispatch_action("reset", {}))
+        assert "action='stop_policy'." not in refused
+        assert sim._dispatch_action("stop_policy", {})["status"] == "error"
 
     def test_an_explicit_name_is_never_overridden(self, sim, tmp_path):
         assert sim.add_robot(name="arm2", urdf_path=str(tmp_path / "arm.xml"))["status"] == "success"
