@@ -1197,6 +1197,41 @@ class DatasetRecordingMixin:
         last = state.get("last_dataset_repo_id")
         return str(last) if last else None
 
+    def _stash_saved_dataset(self, repo_id: str, root: Any, *, frames: int, episodes: int) -> None:
+        """Record what a save just wrote, for the readers that run after it.
+
+        ``save_episode`` and ``stop_recording`` both reset ``state["trajectory"]``
+        - the buffer :meth:`get_recording_status` counts - so after either one
+        that reader had nothing left to report and answered ``0 steps`` for a
+        dataset that had just gained frames on disk. The four facts are stashed
+        TOGETHER because they have to agree with each other: the
+        ``last_dataset_root`` / ``last_dataset_repo_id`` pair written by
+        :meth:`_stash_dataset_target` moves at the next ``start_recording``, so
+        reading the names from there and the counts from here would describe a
+        dataset that was never saved.
+
+        Args:
+            repo_id: Dataset id the frames were written under.
+            root: On-disk directory they were written to.
+            frames: Frames the dataset holds (the monotonic total).
+            episodes: Episodes the dataset holds.
+        """
+        state = self._recording_state()
+        if state is None:
+            return
+        state["last_dataset"] = {
+            "repo_id": str(repo_id),
+            "root": str(root) if root is not None else None,
+            "frame_count": int(frames),
+            "episode_count": int(episodes),
+        }
+
+    def _last_saved_dataset(self) -> dict[str, Any] | None:
+        """What this session last saved, or ``None`` when it saved nothing."""
+        state = self._recording_state()
+        last = state.get("last_dataset") if state is not None else None
+        return last if isinstance(last, dict) else None
+
     def _stash_dataset_target(self, repo_id: str, root: str | None) -> Path:
         """Resolve the directory a recording writes to, stashed with its id.
 
@@ -1497,6 +1532,9 @@ class DatasetRecordingMixin:
                 extra += f"\npush_to_hub FAILED: {push_result.get('message')}"
 
         self._release_dataset_recorder(state)
+        # The release above clears the trajectory mirror get_recording_status
+        # counts, so what this session saved is recorded before it is gone.
+        self._stash_saved_dataset(repo_id, root, frames=frame_count, episodes=episode_count)
 
         # #708 - if recorder.episode_count and parquet disagree, surface
         # it in the human-readable text too so an operator scanning the
@@ -1755,6 +1793,15 @@ class DatasetRecordingMixin:
         # Reset the in-memory trajectory mirror so get_recording_status reports
         # the NEXT episode from zero (matching the recorder's per-episode reset).
         state["trajectory"] = []
+        # The dataset grew, so record what it now holds: the mirror above is the
+        # only thing get_recording_status counted, and zeroing it alone made a
+        # poll straight after a successful flush read as "nothing recorded".
+        self._stash_saved_dataset(
+            recorder.repo_id,
+            getattr(recorder, "root", None),
+            frames=getattr(recorder, "frame_count", 0) or 0,
+            episodes=getattr(recorder, "episode_count", 0) or 0,
+        )
 
         episode = save_result.get("episode")
         ep_frames = save_result.get("episode_frames")
@@ -1879,15 +1926,32 @@ class DatasetRecordingMixin:
 
         recording = state.get("recording", False)
         steps = len(state.get("trajectory", []))
+        # ``steps`` is the open episode's buffer, which every save resets. What
+        # the dataset HOLDS is a separate fact (see ``_stash_saved_dataset``);
+        # reporting only the buffer answered "0 steps" for a dataset that had
+        # just been written, which reads as "nothing was recorded".
+        last = self._last_saved_dataset()
+        saved = ""
+        if last:
+            saved = f"{last['repo_id']} - {last['frame_count']} frames, {last['episode_count']} episode(s)"
+            if last.get("root"):
+                saved += f" at {last['root']}"
 
         if recording:
             text = f"[recording] {steps} steps captured"
+            if last:
+                text += f" in the open episode; saved so far: {saved}"
+        elif last:
+            text = (
+                f"[idle] Not recording. Last saved: {saved} "
+                f"(replay_episode(repo_id='{last['repo_id']}') reads it back)"
+            )
         else:
-            text = f"[idle] Not recording (last episode: {steps} steps)"
+            text = "[idle] Not recording (nothing saved in this session)"
 
         return {
             "status": "success",
-            "content": [{"text": text}],
+            "content": [{"text": text}, {"json": {"recording": recording, "steps": steps, "last_dataset": last}}],
         }
 
     def _verify_resume_schema(
