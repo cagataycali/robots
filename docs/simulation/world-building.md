@@ -423,6 +423,44 @@ unloadable mesh - the scene is rolled back to its previous compilable state and
 the object name stays reusable, so a corrected retry under the same name works
 and one bad add never bricks later scene edits.
 
+## Object names do not collide with robot labels
+
+A robot's label is not one of its body names - those are `<label>/base`,
+`<label>/gripper`, ... - so MuJoCo's repeated-name check never saw an object
+named after a robot in the world, while every by-name reader did: the object
+took over `get_body_state(body_name=...)`, `add_camera(parent_body=...)` and
+`attach_bodies(parent=...)` for the arm the caller meant, reporting success
+each time. Both directions are refused before anything is registered:
+
+```python
+sim.add_robot(name="so101", data_config="so101")
+sim.add_object("so101", shape="box", size=[0.05, 0.05, 0.05])
+# status=error: add_object: 'so101' is the name of a robot in this world, and an
+#               object under that name would answer get_body_state /
+#               attach_bodies / add_camera calls meant for the robot (its bodies
+#               are 'so101/<body>'; see list_bodies). Pick another name.
+
+sim.add_object("cube", shape="box", size=[0.05, 0.05, 0.05])
+sim.add_robot(name="cube", data_config="so101")
+# status=error: Robot name 'cube' is already an object in this world; by-name
+#               reads (get_body_state, attach_bodies, add_camera) would keep
+#               resolving to that object. Pick another name, or omit name= to
+#               auto-number.
+```
+
+That last remedy is one you can take: the label `add_robot` derives when
+`name` is omitted skips names held by objects as well as by robots, so the
+short form stays usable in a world where an object already carries the model's
+name.
+
+```python
+sim.add_object("so101", shape="box", size=[0.05, 0.05, 0.05])
+sim.add_robot(data_config="so101")   # no name= : derives 'so101_2', not a clash
+```
+
+An object named after an existing *body* was already refused by MuJoCo
+("repeated name") and still is.
+
 ## Mesh objects
 
 Beyond primitives, `add_object` can inject a triangle-mesh asset (STL/OBJ) into
