@@ -4546,7 +4546,17 @@ class SimEngine(ABC):
         writes) only when measured necessary.
         """
 
-        return PolicyRunner(self).replay(
+        adopted_root = None
+        if root is None:
+            # The dataset this session just recorded is where stop_recording
+            # put it. A caller replaying the same repo_id without a root means
+            # THAT dataset; resolving the bare id instead sent an owner/name id
+            # recorded under root= to the Hugging Face Hub and answered with a
+            # raw 404 for a dataset that was on disk the whole time.
+            last = self._last_saved_dataset()
+            if last and last.get("repo_id") == repo_id and last.get("root"):
+                root = adopted_root = str(last["root"])
+        result = PolicyRunner(self).replay(
             repo_id,
             robot_name=robot_name,
             episode=episode,
@@ -4554,6 +4564,22 @@ class SimEngine(ABC):
             speed=speed,
             action_key_map=action_key_map,
         )
+        if adopted_root is not None and result.get("status") == "success":
+            result["content"].insert(1, {"text": f"root taken from this session's recording: {adopted_root}"})
+        return result
+
+    def _last_saved_dataset(self) -> dict[str, Any] | None:
+        """What this session's last ``stop_recording`` saved, or ``None``.
+
+        Read from the recording state ``stop_recording`` writes
+        (``last_dataset``: repo_id, root, episode_count, frame_count). Backends
+        without a recording state - :meth:`_recording_state` returning
+        ``None`` - answer ``None``.
+        """
+        getter = getattr(self, "_recording_state", None)
+        state = getter() if callable(getter) else None
+        last = state.get("last_dataset") if isinstance(state, dict) else None
+        return last if isinstance(last, dict) else None
 
     def eval_policy(
         self,

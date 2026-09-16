@@ -1358,6 +1358,19 @@ class DatasetRecordingMixin:
 
         state["dataset_recorder"] = None
         state["trajectory"] = []
+        # What this session last saved, kept past the recorder's teardown so
+        # the two surfaces that are asked about it AFTER stop_recording can
+        # answer from fact: get_recording_status (which otherwise reported the
+        # cleared buffer - "last episode: 0 steps" - after a 30-frame save) and
+        # replay_episode, which adopts this root when the caller names none for
+        # the same repo_id (the dataset is where this session put it, not
+        # where a bare id resolves to).
+        state["last_dataset"] = {
+            "repo_id": repo_id,
+            "root": root,
+            "episode_count": episode_count,
+            "frame_count": frame_count,
+        }
 
         # #708 - if recorder.episode_count and parquet disagree, surface
         # it in the human-readable text too so an operator scanning the
@@ -1739,12 +1752,25 @@ class DatasetRecordingMixin:
 
         if recording:
             text = f"[recording] {steps} steps captured"
+            payload: dict[str, Any] = {"recording": True, "steps": steps}
         else:
-            text = f"[idle] Not recording (last episode: {steps} steps)"
+            # The trajectory buffer is cleared when an episode is saved, so
+            # reading it here reported "last episode: 0 steps" after every
+            # successful stop_recording. Report what was actually saved.
+            last = state.get("last_dataset")
+            if last:
+                text = (
+                    f"[idle] Not recording. Last saved: {last['repo_id']} - {last['frame_count']} frames, "
+                    f"{last['episode_count']} episode(s) at {last['root']} "
+                    f"(replay_episode(repo_id='{last['repo_id']}') reads it back)"
+                )
+            else:
+                text = "[idle] Not recording (nothing saved in this session)"
+            payload = {"recording": False, "steps": steps, "last_dataset": last}
 
         return {
             "status": "success",
-            "content": [{"text": text}],
+            "content": [{"text": text}, {"json": payload}],
         }
 
     def _verify_resume_schema(

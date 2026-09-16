@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
-from strands_robots.dataset_recorder import RecordingFrameError
+from strands_robots.dataset_recorder import RecordingFrameError, local_dataset_dir
 from strands_robots.policies.base import collect_required_bodies, resolve_chunk_length
 from strands_robots.rendering.video import require_clip_encoder
 from strands_robots.simulation.observers import (
@@ -3429,7 +3429,7 @@ class PolicyRunner:
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except Exception as e:  # noqa: BLE001 - library errors are opaque
-            return {"status": "error", "content": [{"text": f"{e}"}]}
+            return {"status": "error", "content": [{"text": _dataset_load_failure_text(repo_id, root, e)}]}
 
         # Resolve the action-key ordering for action-vector index -> action
         # dict. The recorded ``action`` column is written in the robot's
@@ -5071,3 +5071,37 @@ __all__ = [
     "TrajectoryStep",
     "set_eval_seed",
 ]
+
+
+def _dataset_load_failure_text(repo_id: str, root: str | None, exc: BaseException) -> str:
+    """One sentence for a dataset that could not be opened, naming where was looked.
+
+    A Hub miss for an ``owner/name`` id surfaces from huggingface_hub as a
+    multi-line ``404 Client Error ... Repository Not Found for url:
+    https://huggingface.co/api/datasets/<id>/refs ... make sure you specified
+    the correct repo_id and repo_type`` - the wrong diagnosis for the common
+    case, a dataset recorded under ``root=`` and replayed without it. Any other
+    failure keeps the library's own text.
+    """
+    text = str(exc)
+    is_hub_miss = "Repository Not Found" in text or type(exc).__name__ in {
+        "RepositoryNotFoundError",
+        "DatasetNotFoundError",
+    }
+    if not is_hub_miss:
+        return text
+    if root is not None:
+        looked = f"under root={root!r}"
+    else:
+        local = local_dataset_dir(repo_id)
+        if local is None:
+            from strands_robots.dataset_recorder import _lerobot_home
+
+            local = _lerobot_home() / repo_id
+        looked = f"at {local} (LeRobot's local home for that id)"
+    return (
+        f"replay: dataset '{repo_id}' was not found - not {looked}, and not on the Hugging Face Hub (404). "
+        "A dataset recorded with root= must be replayed with the same root=; a Hub dataset needs its "
+        "owner/name id and, when private, HF_TOKEN. get_recording_status names the dataset this session "
+        "last saved and where."
+    )
