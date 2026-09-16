@@ -1136,7 +1136,25 @@ class Robot(TeleopMixin, AgentTool):
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
     ) -> LeRobotRobot:
-        """Initialize LeRobot robot instance using native lerobot patterns."""
+        """Initialize LeRobot robot instance using native lerobot patterns.
+
+        Raises:
+            ImportError: When lerobot is not installed. Named with the extra
+                that supplies it: this is the first lerobot import a
+                ``Robot(..., mode="real")`` reaches, and on a core-only install
+                a bare ``ModuleNotFoundError: No module named 'lerobot'`` from
+                the line below was the whole answer the README's real-arm
+                quickstart got. The purpose names the lerobot DRIVER rather
+                than real mode at large, because ``driver="strands"`` builds a
+                real robot through a native driver and needs no lerobot at all.
+            ValueError: When *robot* is neither a lerobot ``Robot`` instance,
+                a ``RobotConfig`` nor a robot type string.
+        """
+        require_optional(
+            "lerobot",
+            extra="lerobot",
+            purpose='real-mode robots built through the lerobot driver (the default for Robot(..., mode="real"))',
+        )
         from lerobot.robots.config import RobotConfig
         from lerobot.robots.robot import Robot as LeRobotRobot
         from lerobot.robots.utils import make_robot_from_config
