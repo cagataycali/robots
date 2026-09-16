@@ -92,3 +92,25 @@ def test_base_seam_default_admits_everything():
     from strands_robots.simulation.base import SimEngine
 
     assert SimEngine._require_no_running_policy(object(), "eval_policy", robot_name="x") is None
+
+
+def test_the_running_rollout_is_not_truncated_by_a_second_one():
+    # The consequence of admitting the second rollout: its ``finally`` lowered
+    # the ``policy_running`` claim the first rollout reads as its stop signal,
+    # so the first ended early reporting "Policy stopped" - a stop nobody asked
+    # for - with a fraction of the steps its duration budgeted.
+    sim = Simulation()
+    sim.create_world()
+    sim.add_robot("so101")
+    try:
+        sim.start_policy(robot_name="so101", policy_provider="mock", duration=1.0)
+        fut = sim._policy_threads["so101"]
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "so101" not in sim._active_policy_robots():
+            time.sleep(0.01)
+        sim.run_policy(robot_name="so101", policy_provider="mock", duration=0.2)
+        text = _text(fut.result(timeout=20))
+        assert "Policy complete" in text, text
+        assert "Policy stopped" not in text, text
+    finally:
+        sim.cleanup()
