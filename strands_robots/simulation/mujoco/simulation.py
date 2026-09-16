@@ -6578,15 +6578,20 @@ class MuJoCoSimEngine(
     def _rollouts_ended_in_error(self) -> Mapping[str, str]:
         return dict(self._rollout_failures)
 
-    def _make_run_policy_hook(self, robot_name: str, instruction: str):
-        """MuJoCo override: recording + policy_running flag + lock.
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """MuJoCo override: the recording half of the rollout hook, on its own.
 
-        Returns an ``on_frame(step, obs, action)`` closure that:
-        * READS ``robot.policy_running`` so ``stop_policy`` can interrupt (the
-          launching thread raises it - see :meth:`_announce_rollout`),
-        * appends to ``_backend_state["trajectory"]`` when recording,
-        * forwards frames to the LeRobot ``dataset_recorder`` if attached,
-        * raises ``PolicyStopped`` when the user calls ``stop_policy``.
+        Returns an ``(step, observation, action) -> None`` closure that appends
+        the frame to ``_backend_state["trajectory"]`` and forwards it to the
+        attached LeRobot ``dataset_recorder`` while a recording is open - the
+        same writes :meth:`_make_run_policy_hook` performs, without that
+        hook's ``policy_running`` claim and mesh telemetry. The closure reads
+        the recording flag per frame, so a recording opened or closed during a
+        rollout is honoured from that frame on. ``None`` when the robot is not
+        registered. The single-robot evaluation facades (``eval_policy``,
+        ``evaluate_benchmark``) install it when the caller passes no
+        ``on_frame`` and a recording is open: before that, an evaluation run
+        under an open recording advanced every episode and wrote no frame.
         """
         import numpy as np
 
@@ -6595,25 +6600,6 @@ class MuJoCoSimEngine(
         world = self._world
         if world is None or not registered(world.robots, robot_name):
             return None
-
-        robot = world.robots[robot_name]
-        # Raise the flag for a rollout whose claim is still current, and ONLY
-        # then. This factory runs on the executor worker for a ``start_policy``
-        # rollout, so an unconditional raise here landed after the launch
-        # returned - it overwrote a stop issued in the launch window and the
-        # rollout ran to full duration having reported that it stopped (#2833).
-        # A claim carries the stop count its launcher observed
-        # (:meth:`_announce_rollout`); once a stop has landed against it the
-        # count has moved, and leaving the flag down here is what makes the
-        # hook's own first-frame check refuse the rollout. ``None`` means no
-        # launcher claimed the robot - a caller driving ``PolicyRunner`` with
-        # this hook directly - and that rollout is claimed here, on its own
-        # thread, exactly as before.
-        if robot.policy_claim_stops is None or robot.policy_claim_stops == robot.policy_stops:
-            robot.policy_running = True
-        robot.policy_instruction = instruction
-        robot.policy_steps = 0
-
         lock = self._lock
 
         # Action columns this rollout is responsible for: the driven robot's own
@@ -6639,59 +6625,7 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
-        # N4: stream per-step telemetry on the mesh. publish_step existed with
-        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
-        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
-        # transport caps. Prefer the robot's own child-peer mesh (per-robot
-        # topic), fall back to the parent sim's mesh.
-        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
-        # ``-inf`` rather than ``0.0``: a monotonic reading is only meaningful
-        # relative to another one, so the first step of a rollout is due
-        # wherever this platform's monotonic epoch happens to sit instead of
-        # depending on it being far from zero. It also means the gate's
-        # subtraction is ``inf`` on the first step, which clears any period at
-        # all - see ``_stream_enabled`` below.
-        _stream_state = {"last": float("-inf")}
-        from strands_robots.mesh.session import stream_min_period_from_env
-
-        # inf when step telemetry is off / misconfigured. A bare division here
-        # killed run_policy hook setup on STRANDS_MESH_STREAM_HZ=0.
-        _stream_min_period = stream_min_period_from_env()
-        # An infinite period is the operator's opt-out, and no finite elapsed
-        # time reaches it - but the sentinel above is below every reading, so
-        # the subtraction alone would read ``inf >= inf`` and let exactly one
-        # publish per rollout past the opt-out. The period is therefore read
-        # directly, once here rather than on every step.
-        _stream_enabled = math.isfinite(_stream_min_period)
-
-        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
-            # Cooperative cancellation: stop_policy flips this flag.
-            if not robot.policy_running:
-                raise CooperativeStop(f"Policy stopped on '{robot_name}'")
-
-            robot.policy_steps = step + 1
-
-            if _mesh is not None and _stream_enabled:
-                # ``time.monotonic()``: this is an elapsed interval, and it
-                # carries its own base forward as it goes - each publish
-                # records when it happened and the next is due a period
-                # later. On ``time.time()`` a backward wall-clock step (an
-                # NTP correction, a ``date -s``, a resume from suspend)
-                # landing between two publishes made the difference
-                # negative, so the throttle refused every later step until
-                # the date caught up. The gaps that did land stay correctly
-                # spaced, so the shortfall is indistinguishable afterwards
-                # from a rollout that simply ran for less time. The
-                # hardware control loop throttles the same publish on the
-                # same period and already reads this clock.
-                _now = time.monotonic()
-                if _now - _stream_state["last"] >= _stream_min_period:
-                    _stream_state["last"] = _now
-                    try:
-                        _mesh.publish_step(step, observation, action, instruction=instruction)
-                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
-                        pass
-
+        def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             with lock:
                 if world._backend_state.get("recording", False):
                     world._backend_state["trajectory"].append(
@@ -6750,6 +6684,99 @@ class MuJoCoSimEngine(
                                 task=instruction,
                                 required_action_keys=_required_action_keys(False),
                             )
+
+        return _record
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str):
+        """MuJoCo override: recording + policy_running flag + lock.
+
+        Returns an ``on_frame(step, obs, action)`` closure that:
+        * READS ``robot.policy_running`` so ``stop_policy`` can interrupt (the
+          launching thread raises it - see :meth:`_announce_rollout`),
+        * appends to ``_backend_state["trajectory"]`` when recording,
+        * forwards frames to the LeRobot ``dataset_recorder`` if attached,
+        * raises ``PolicyStopped`` when the user calls ``stop_policy``.
+        """
+        world = self._world
+        if world is None or not registered(world.robots, robot_name):
+            return None
+
+        robot = world.robots[robot_name]
+        # Raise the flag for a rollout whose claim is still current, and ONLY
+        # then. This factory runs on the executor worker for a ``start_policy``
+        # rollout, so an unconditional raise here landed after the launch
+        # returned - it overwrote a stop issued in the launch window and the
+        # rollout ran to full duration having reported that it stopped (#2833).
+        # A claim carries the stop count its launcher observed
+        # (:meth:`_announce_rollout`); once a stop has landed against it the
+        # count has moved, and leaving the flag down here is what makes the
+        # hook's own first-frame check refuse the rollout. ``None`` means no
+        # launcher claimed the robot - a caller driving ``PolicyRunner`` with
+        # this hook directly - and that rollout is claimed here, on its own
+        # thread, exactly as before.
+        if robot.policy_claim_stops is None or robot.policy_claim_stops == robot.policy_stops:
+            robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+
+        record_frame = self._make_recording_on_frame(robot_name, instruction) or (
+            lambda step, observation, action: None
+        )
+
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        # ``-inf`` rather than ``0.0``: a monotonic reading is only meaningful
+        # relative to another one, so the first step of a rollout is due
+        # wherever this platform's monotonic epoch happens to sit instead of
+        # depending on it being far from zero. It also means the gate's
+        # subtraction is ``inf`` on the first step, which clears any period at
+        # all - see ``_stream_enabled`` below.
+        _stream_state = {"last": float("-inf")}
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when step telemetry is off / misconfigured. A bare division here
+        # killed run_policy hook setup on STRANDS_MESH_STREAM_HZ=0.
+        _stream_min_period = stream_min_period_from_env()
+        # An infinite period is the operator's opt-out, and no finite elapsed
+        # time reaches it - but the sentinel above is below every reading, so
+        # the subtraction alone would read ``inf >= inf`` and let exactly one
+        # publish per rollout past the opt-out. The period is therefore read
+        # directly, once here rather than on every step.
+        _stream_enabled = math.isfinite(_stream_min_period)
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            # Cooperative cancellation: stop_policy flips this flag.
+            if not robot.policy_running:
+                raise CooperativeStop(f"Policy stopped on '{robot_name}'")
+
+            robot.policy_steps = step + 1
+
+            if _mesh is not None and _stream_enabled:
+                # ``time.monotonic()``: this is an elapsed interval, and it
+                # carries its own base forward as it goes - each publish
+                # records when it happened and the next is due a period
+                # later. On ``time.time()`` a backward wall-clock step (an
+                # NTP correction, a ``date -s``, a resume from suspend)
+                # landing between two publishes made the difference
+                # negative, so the throttle refused every later step until
+                # the date caught up. The gaps that did land stay correctly
+                # spaced, so the shortfall is indistinguishable afterwards
+                # from a rollout that simply ran for less time. The
+                # hardware control loop throttles the same publish on the
+                # same period and already reads this clock.
+                _now = time.monotonic()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
+
+            record_frame(step, observation, action)
 
         return _hook
 

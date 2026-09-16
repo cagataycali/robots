@@ -552,8 +552,8 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             recording_cameras.append((cam_name, safe_name, width, height))
         return joint_names, action_names, camera_keys, camera_dims, robot_type, recording_cameras
 
-    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
-        """Build the per-step ``on_frame`` recording hook for Isaac.
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """The recording half of the per-step ``on_frame`` hook for Isaac.
 
         Returns an ``on_frame(step, observation, action)`` closure that, while
         a recording session is active, appends a step to the trajectory mirror
@@ -568,8 +568,11 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         scenes scalar observation/action keys are namespaced
         (``robot__joint``) to match the declared schema.
 
-        Returns ``None`` when there is no world or the robot is unknown, so
-        the base run-policy loop runs without recording.
+        Returns ``None`` when there is no world or the robot is unknown. No
+        rollout claim is made here: :meth:`_make_run_policy_hook` layers that
+        on top, and the evaluation facades (``eval_policy``,
+        ``evaluate_benchmark``) install this hook alone when a recording is
+        open and the caller passed no ``on_frame``.
         """
         import time
 
@@ -579,10 +582,6 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         if state is None or not registered(self._robots, robot_name):
             return None
 
-        robot = self._robots[robot_name]
-        robot.policy_running = True
-        robot.policy_instruction = instruction
-        robot.policy_steps = 0
         multi_robot = len(self._robots) > 1
 
         # Action columns this rollout is responsible for: the driven robot's own
@@ -608,8 +607,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 action_key_cache[prefixed] = cached
             return cached
 
-        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
-            robot.policy_steps = step + 1
+        def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             if not state.get("recording", False):
                 return
             rec = state.get("dataset_recorder")
@@ -669,6 +667,31 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                     task=instruction,
                     required_action_keys=_required_action_keys(False),
                 )
+
+        return _record
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
+        """Build the per-step ``on_frame`` hook for a rollout: claim + recording.
+
+        Marks the robot as driven (``policy_running`` / ``policy_instruction`` /
+        ``policy_steps``, released by :meth:`_release_run_policy_hook`) and
+        forwards every frame to :meth:`_make_recording_on_frame`. ``None``
+        when there is no world or the robot is unknown, so the base
+        run-policy loop runs without recording.
+        """
+        state = self._recording_state()
+        if state is None or not registered(self._robots, robot_name):
+            return None
+        robot = self._robots[robot_name]
+        robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+        record_frame = self._make_recording_on_frame(robot_name, instruction)
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            robot.policy_steps = step + 1
+            if record_frame is not None:
+                record_frame(step, observation, action)
 
         return _hook
 

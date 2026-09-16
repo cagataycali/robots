@@ -493,8 +493,8 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             recording_cameras.append((cam_name, safe_name, width, height))
         return joint_names, action_names, camera_keys, camera_dims, robot_type, recording_cameras
 
-    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
-        """Build the per-step ``on_frame`` recording hook for Newton.
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """The recording half of the per-step ``on_frame`` hook for Newton.
 
         Returns an ``on_frame(step, observation, action)`` closure that, while a
         recording session is active, augments the joint-state observation with a
@@ -504,8 +504,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         schema declared in :meth:`start_recording`; camera ndarrays keep their
         sanitized names.
 
-        Returns ``None`` when there is no world or the robot is unknown, so the
-        base run-policy loop runs without recording.
+        Returns ``None`` when there is no world or the robot is unknown. No
+        rollout claim is made here: :meth:`_make_run_policy_hook` layers that
+        on top, and the evaluation facades (``eval_policy``,
+        ``evaluate_benchmark``) install this hook alone when a recording is
+        open and the caller passed no ``on_frame``.
         """
         from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
@@ -513,10 +516,6 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         if world is None or not registered(world.robots, robot_name):
             return None
 
-        robot = world.robots[robot_name]
-        robot.policy_running = True
-        robot.policy_instruction = instruction
-        robot.policy_steps = 0
         multi_robot = len(world.robots) > 1
 
         # Action columns this rollout is responsible for: the driven robot's own
@@ -542,8 +541,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 action_key_cache[prefixed] = cached
             return cached
 
-        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
-            robot.policy_steps = step + 1
+        def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             if not world._backend_state.get("recording", False):
                 return
             rec = world._backend_state.get("dataset_recorder")
@@ -583,6 +581,31 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     task=instruction,
                     required_action_keys=_required_action_keys(False),
                 )
+
+        return _record
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
+        """Build the per-step ``on_frame`` hook for a rollout: claim + recording.
+
+        Marks the robot as driven (``policy_running`` / ``policy_instruction`` /
+        ``policy_steps``, released by :meth:`_release_run_policy_hook`) and
+        forwards every frame to :meth:`_make_recording_on_frame`. ``None``
+        when there is no world or the robot is unknown, so the base
+        run-policy loop runs without recording.
+        """
+        world = self._world
+        if world is None or not registered(world.robots, robot_name):
+            return None
+        robot = world.robots[robot_name]
+        robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+        record_frame = self._make_recording_on_frame(robot_name, instruction)
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            robot.policy_steps = step + 1
+            if record_frame is not None:
+                record_frame(step, observation, action)
 
         return _hook
 

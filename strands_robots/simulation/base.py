@@ -4946,8 +4946,9 @@ class SimEngine(ABC):
             policy = policy_object
         policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
+        on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
-        return PolicyRunner(self).evaluate(
+        result = PolicyRunner(self).evaluate(
             resolved_robot,
             policy,
             instruction=instruction,
@@ -4964,6 +4965,8 @@ class SimEngine(ABC):
             policy_kwargs=policy_kwargs,
             video=video,
         )
+        self._annotate_evaluation_recording(result, recording_claim)
+        return result
 
     # Benchmark protocol facades
 
@@ -5284,8 +5287,11 @@ class SimEngine(ABC):
             policy = policy_object
         policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
+        on_frame, recording_claim = self._evaluation_recording(
+            resolved_robot, instruction, on_frame, "evaluate_benchmark"
+        )
 
-        return PolicyRunner(self).evaluate(
+        result = PolicyRunner(self).evaluate(
             resolved_robot,
             policy,
             instruction=instruction,
@@ -5299,6 +5305,8 @@ class SimEngine(ABC):
             policy_kwargs=policy_kwargs,
             video=video,
         )
+        self._annotate_evaluation_recording(result, recording_claim)
+        return result
 
     def list_benchmarks(self) -> dict[str, Any]:
         """Enumerate registered benchmarks.
@@ -5416,6 +5424,97 @@ class SimEngine(ABC):
                 {"json": {"registered": names}},
             ],
         }
+
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """Override to return an ``on_frame`` that feeds the open recording.
+
+        The recording half of :meth:`_make_run_policy_hook` on its own - no
+        rollout claim, no telemetry - so an evaluation can write the frames a
+        rollout would. Default: no hook.
+
+        Args:
+            robot_name: Robot being evaluated.
+            instruction: Task label the frames are recorded under.
+
+        Returns:
+            Callable or ``None``.
+        """
+        return None
+
+    def _evaluation_recording(
+        self, robot_name: str, instruction: str, on_frame: Any, facade: str
+    ) -> tuple[Any, tuple[str, str, int, int] | None]:
+        """The ``on_frame`` an evaluation runs with, and what it owes the recorder.
+
+        With no ``on_frame`` and a recording open, the backend's recording hook
+        is installed - so ``eval_policy`` / ``evaluate_benchmark`` under
+        ``start_recording`` write one frame per control step and
+        :class:`PolicyRunner` closes one dataset episode per evaluation episode,
+        exactly as ``run_policy(n_episodes=)`` does. Before this an evaluation
+        under an open recording advanced every episode, wrote no frame, and
+        answered with a success rate; ``stop_recording`` then refused on
+        "captured no frames". A caller's own hook is kept untouched - it may
+        already call ``add_frame``, and calling it twice per step would double
+        every frame.
+
+        Returns:
+            ``(on_frame, claim)``. ``claim`` is ``(owner, repo_id, episodes,
+            frames)`` read off the open recorder before the evaluation runs, so
+            :meth:`_annotate_evaluation_recording` can report what this
+            evaluation added; ``None`` when no recording is open.
+        """
+        if not self._is_recording():
+            return on_frame, None
+        owner = "caller"
+        if on_frame is None:
+            hook = self._make_recording_on_frame(robot_name, instruction)
+            if hook is not None:
+                logger.debug("%s: recording open - feeding the dataset recorder from the evaluation", facade)
+                on_frame, owner = hook, "facade"
+        counts = self._recorder_counts()
+        return on_frame, None if counts is None else (owner, *counts)
+
+    def _recorder_counts(self) -> tuple[str, int, int] | None:
+        """``(repo_id, episode_count, frame_count)`` of the open recorder, or ``None``."""
+        rec = self._active_recorder()
+        if rec is None:
+            return None
+        try:
+            return (str(rec.repo_id), int(rec.episode_count), int(rec.frame_count))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+    def _annotate_evaluation_recording(self, result: dict[str, Any], claim: tuple[str, str, int, int] | None) -> None:
+        """Say what an evaluation added to the open recording in its own answer.
+
+        The dataset is the evaluation's second product and the answer otherwise
+        never mentions it - the run reported a success rate while the recorder
+        held nothing. When the caller's own hook fed nothing the report names
+        that instead, with the remedy: an evaluation with no ``on_frame`` feeds
+        the recorder itself. ``claim`` is ``None`` when no recording was open.
+        """
+        after = self._recorder_counts()
+        if claim is None or after is None or result.get("status") != "success":
+            return
+        owner, repo_id, ep0, fr0 = claim
+        _, ep1, fr1 = after
+        episodes, frames = ep1 - ep0, fr1 - fr0
+        if frames == 0 and owner == "caller":
+            line = (
+                f"Recording {repo_id} is open and this evaluation wrote 0 frames: the on_frame "
+                "you passed does not call add_frame. Omit on_frame and the evaluation feeds the "
+                "recorder itself, one dataset episode per evaluation episode"
+            )
+        else:
+            line = (
+                f"Recorded {episodes} episode(s), {frames} frames to {repo_id} "
+                "(one dataset episode per evaluation episode) - stop_recording to finalize"
+            )
+        result.setdefault("content", []).append({"text": line})
+        for block in result["content"]:
+            if isinstance(block, dict) and isinstance(block.get("json"), dict):
+                block["json"]["recording"] = {"repo_id": repo_id, "episodes": episodes, "frames": frames}
+                break
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
         """Override to return an ``on_frame(step, obs, action)`` callable.
