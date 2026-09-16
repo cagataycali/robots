@@ -203,6 +203,12 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     sim-only spawn keywords it cannot honour; this is the mirror. The list is
     the hardware class's own forwardable set, so it cannot drift from it.
 
+    What the set has in common is the driver, not the physicality: ``mock=``
+    asks for a mocked servo bus and ``is_simulation=`` points the lerobot
+    driver at a simulator, so neither "describes a physical robot" - but every
+    one of them configures a hardware driver that ``mode="sim"`` never builds,
+    and ``mode='real'`` is the remedy for all of them alike.
+
     Args:
         kwargs: The caller's residual keyword arguments.
         canonical: Canonical robot name, for the message.
@@ -225,8 +231,8 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     )
     raise TypeError(
         f"Robot({canonical!r}) is a simulation ({how}) and would ignore {names}: "
-        "these describe a physical robot. Add mode='real' to drive the hardware, "
-        "or drop them to simulate."
+        "these configure a hardware driver, which a simulation does not have. "
+        "Add mode='real' to drive the hardware, or drop them to simulate."
     )
 
 

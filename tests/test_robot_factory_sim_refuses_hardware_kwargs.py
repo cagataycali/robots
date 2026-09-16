@@ -48,3 +48,48 @@ def test_refused_set_is_the_hardware_forwardable_set():
     for key in _FORWARDABLE_KWARGS:
         with pytest.raises(TypeError, match=f"{key}="):
             _reject_hardware_kwargs_in_sim({key: 1}, "so101", "sim")
+
+
+def test_the_refusal_names_the_driver_not_the_physicality():
+    # Two names in the set are not descriptions of a physical robot at all:
+    # mock= asks for a mocked servo bus and is_simulation= points the lerobot
+    # driver at a simulator. Telling that caller their keyword "describes a
+    # physical robot" is false, and for is_simulation= it contradicts the
+    # remedy printed on the same line. What every name has in common is the
+    # hardware driver, which mode="sim" never builds.
+    for key in ("mock", "is_simulation"):
+        with pytest.raises(TypeError) as info:
+            _reject_hardware_kwargs_in_sim({key: True}, "so101", "sim")
+        text = str(info.value)
+        assert "describe a physical robot" not in text
+        assert "configure a hardware driver" in text
+        assert "mode='real'" in text
+
+
+def test_no_refused_keyword_is_a_spawn_keyword_of_a_shipped_sim_backend():
+    # The refusal reads the hardware class's forwardable set, so a name added
+    # there lands here without review. That is the point - and the risk: a
+    # name a sim backend ALSO binds would start refusing a call the backend
+    # honours today. Nothing else pins that, so pin it against every backend
+    # Robot(mode="sim") can resolve.
+    import dataclasses
+    import inspect
+
+    from strands_robots.simulation.isaac.config import IsaacConfig
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+    from strands_robots.simulation.newton.simulation import NewtonSimEngine
+
+    spawn_keywords = {
+        "mujoco": set(inspect.signature(MuJoCoSimEngine.__init__).parameters),
+        "newton": set(inspect.signature(NewtonSimEngine.__init__).parameters),
+        "isaac": {field.name for field in dataclasses.fields(IsaacConfig)},
+    }
+    for backend, names in spawn_keywords.items():
+        collision = sorted(names & set(_FORWARDABLE_KWARGS))
+        assert not collision, (
+            f"{backend} binds {collision}, which Robot(mode='sim') now refuses: "
+            "a working call would start raising. Carve the name out of the refusal."
+        )
+    # Non-vacuity: the sets are the real ones, not empty lookups.
+    assert "default_timestep" in spawn_keywords["mujoco"]
+    assert "num_envs" in spawn_keywords["isaac"]

@@ -12,5 +12,8 @@ The real branch already reports the sim-only spawn keywords it cannot honour
 lerobot config (`port`, `robot_ip`, `kp`, `kd`, `calibration_dir`, ...) with a
 `TypeError` that lists the keywords supplied and the remedy - add
 `mode='real'`, or drop them - and says how the call became a simulation (the
-default, or `mode='auto'` finding no servo bus). Cross-backend options pass
-through untouched.
+default, or `mode='auto'` finding no servo bus). What the set has in common is
+the driver, not the physicality, and the message says so: `mock=` asks for a
+mocked servo bus and `is_simulation=` points the lerobot driver at a simulator,
+so neither describes a physical robot, but neither has a driver to configure
+under `mode="sim"` either. Cross-backend options pass through untouched.
