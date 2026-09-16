@@ -15,10 +15,18 @@ blocks the arm it says so, which is the "raise max_steps" case.
 from __future__ import annotations
 
 import importlib.util
+from typing import Any
 
 import pytest
 
 requires_mujoco = pytest.mark.skipif(importlib.util.find_spec("mujoco") is None, reason="mujoco not installed")
+
+
+def _world(sim: Any) -> Any:
+    """The engine's world, asserted present - a created world is every cell's premise."""
+    world = sim._world
+    assert world is not None
+    return world
 
 
 def _text(obstruction: dict[str, object] | None) -> str:
@@ -200,8 +208,8 @@ class TestMoveToNamesTheContact:
         import mujoco as mj
 
         sim = arm_with(extra=_WALL)
-        model = sim._world._model
-        commanded = sim._world.robots["arm"].joint_ids
+        model = _world(sim)._model
+        commanded = _world(sim).robots["arm"].joint_ids
         ids = sim._commanded_robot_body_ids(model, commanded)
         names = {mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b) for b in ids}
         assert names == {"arm/base", "arm/link1", "arm/gripper"}
@@ -284,8 +292,8 @@ class TestOnTheBundledSo100:
         sim.create_world()
         try:
             assert sim.add_robot("arm", data_config="so100")["status"] == "success"
-            model = sim._world._model
-            commanded = sim._world.robots["arm"].joint_ids
+            model = _world(sim)._model
+            commanded = _world(sim).robots["arm"].joint_ids
             first = min(int(j) for j in commanded)
             assert mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.jnt_bodyid[first])) != "arm/Base"
             names = {
