@@ -3038,9 +3038,19 @@ class Robot(TeleopMixin, AgentTool):
         every idle arm.
 
         Every fact here is three-state for the same reason: ``True``/``False``
-        is a reading, ``None`` is "this was not readable". A port is not
-        always a device path - lerobot's network drivers carry a TCP port
-        (``Reachy2RobotConfig.port`` is ``50065``, reached at its
+        is a reading, ``None`` is "this was not readable" - including
+        ``is_connected``, which is a probe and not a stored flag. Every shipped
+        lerobot arm folds its cameras into it (``self.bus.is_connected and
+        all(cam.is_connected for cam in self.cameras.values())``, 8 drivers in
+        lerobot 0.6.2), so the camera whose probe raises - the one this method
+        already tolerates per-camera below - arrives through that aggregate
+        first. Read unguarded it took the whole probe down with it: the port, a
+        filesystem read that cannot raise, was discarded too, and
+        :meth:`get_status` answered ``is_connected: False`` for an arm that was
+        connected and driving.
+
+        A port is not always a device path - lerobot's network drivers carry a
+        TCP port (``Reachy2RobotConfig.port`` is ``50065``, reached at its
         ``ip_address``), and there is nothing on this host to stat for one, so
         ``port_present`` stays ``None`` and must not be reported as either
         answer.
@@ -3050,13 +3060,18 @@ class Robot(TeleopMixin, AgentTool):
             (``True``/``False`` from the filesystem for a path port; ``None``
             when the port is not a path, so presence was never read),
             ``address`` (the host a network port is reached at, ``None`` when
-            the config names none), ``is_connected``, ``is_calibrated``
+            the config names none), ``is_connected`` (``None`` when the
+            driver's probe raised, so it was not read), ``is_calibrated``
             (``None`` until connected), ``cameras`` (the configured names) and
             ``cameras_connected`` (per live camera, best-effort - a camera
             whose probe raises is omitted).
         """
         robot = self.robot
-        is_connected = bool(getattr(robot, "is_connected", False))
+        try:
+            is_connected: bool | None = bool(getattr(robot, "is_connected", False))
+        except Exception as e:  # noqa: BLE001 - an unreadable flag is None, not a probe that fails
+            logger.debug("%s could not read is_connected: %s", self.tool_name_str, e)
+            is_connected = None
         config = getattr(robot, "config", None)
         port = getattr(config, "port", None)
         port_present: bool | None = None
@@ -3105,13 +3120,23 @@ class Robot(TeleopMixin, AgentTool):
 
         Returns:
             Newline-terminated lines: the connection, the port and the
-            cameras. The port line reports what was read - present, absent
-            (with the remedy), or, for a network port, that presence on this
-            host was never a fact to read.
+            cameras. Each reports what was read - and an unreadable fact says
+            so rather than borrowing the negative answer: a connection that
+            could not be probed is not "not connected", and a camera missing
+            from ``cameras_connected`` is not "not connected" either. The port
+            line reports present, absent (with the remedy), or, for a network
+            port, that presence on this host was never a fact to read.
         """
         if facts["is_connected"]:
             calibrated = "calibrated" if facts["is_calibrated"] else "NOT calibrated"
             device = f"Device: connected on {facts['port']} ({calibrated})"
+        elif facts["is_connected"] is None:
+            device = (
+                "Device: whether the bus is open could not be read - the driver's is_connected "
+                "probe raised, so neither answer would be a reading. A lerobot arm reads it as the "
+                "bus AND every camera, so one camera that cannot answer lands here; the cameras "
+                "line names which one."
+            )
         else:
             device = "Device: not connected (the bus is opened by the first task)"
         lines = [device]
@@ -3137,7 +3162,8 @@ class Robot(TeleopMixin, AgentTool):
         if facts["cameras"]:
             states = facts["cameras_connected"]
             named = ", ".join(
-                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else n for n in facts["cameras"]
+                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else f"{n} (could not be read)"
+                for n in facts["cameras"]
             )
             lines.append(f"Cameras: {named}")
         else:
@@ -3720,7 +3746,10 @@ class Robot(TeleopMixin, AgentTool):
         ``is_connected`` probe raises is omitted from ``cameras_connected``
         rather than failing the whole probe, so a name present in ``cameras``
         and absent from ``cameras_connected`` is one whose state could not be
-        read. A device exposing no live camera objects reports an empty map.
+        read. That same raise also reaches the arm's aggregate ``is_connected``,
+        which reports ``None`` for it rather than degrading this probe to its
+        error shape - so the attribution survives the failure it exists to
+        attribute. A device exposing no live camera objects reports an empty map.
 
         Returns:
             Status dict of measured facts. An unexpected failure anywhere in
