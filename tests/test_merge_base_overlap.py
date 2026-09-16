@@ -469,12 +469,21 @@ def _compare(
     behind_by: int = 0,
     renamed: dict[str, str] | None = None,
     patches: dict[str, str] | None = None,
+    commits: list[str] | None = None,
 ) -> dict[str, object]:
-    """Build one ``compare`` payload in the shape the endpoint returns."""
+    """Build one ``compare`` payload in the shape the endpoint returns.
+
+    ``commits`` is the range's own commit list, which the endpoint returns beside
+    ``files`` and which is what a capped ``files`` list is split on. Absent by
+    default, and absent is meaningful: a range offering no boundary is the one a
+    capped list cannot be routed around, so the tests that want that refusal get
+    it by saying nothing.
+    """
     return {
         "merge_base_commit": {"sha": merge_base},
         "behind_by": behind_by,
         "files": _files(files, renamed, patches),
+        "commits": [{"sha": sha} for sha in (commits or [])],
     }
 
 
@@ -885,9 +894,13 @@ def test_a_truncated_base_side_set_still_leaves_the_pair_comparison(
     Measured on the live queue: the base-side set is the one that grows without
     bound, so it is the one that reaches the cap -- on #1035, 265 commits behind.
     Dropping the whole pull request for it would have discarded the pairwise
-    finding against #1722, which is the finding this mode exists to make. The base
-    side is also the only side still read from the capped endpoint: it has no
-    paginated equivalent, so this is the one cap the sweep cannot route around.
+    finding against #1722, which is the finding this mode exists to make.
+
+    The range here offers no commit to split on, which is the one shape a capped
+    ``files`` list cannot be routed around: see
+    ``test_a_capped_base_side_is_read_as_the_halves_of_its_range`` for the same cap
+    over a range that can be split, where the base side is read rather than
+    declined.
     """
     capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
     get = _api(
@@ -905,6 +918,103 @@ def test_a_truncated_base_side_set_still_leaves_the_pair_comparison(
     report = capsys.readouterr().out
     assert "#10 + #20" in report, "the pair comparison must survive an unreadable base side"
     assert "stale-base mode only" in report
+    assert "base moved under a path they edit" not in report
+
+
+def test_a_capped_base_side_is_read_as_the_halves_of_its_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A base side too wide to fetch whole is split, not declined.
+
+    ``M..base`` grows without bound while a branch sits in review, so the widest
+    ranges on the queue are the stale bases -- and a stale base under a path the
+    branch edits is the #1763/#1766 topology arriving from the base rather than
+    from a sibling. Declining to evaluate exactly those left the longest-standing
+    pull requests ungraded by the relation they were most exposed to.
+
+    ``files`` is capped where ``commits`` is not, so the payload that cannot carry
+    the paths does carry a boundary to split them at. Here the shared path is
+    reachable only from the upper half: an implementation that reads the capped
+    list, or the lower half alone, reports no stale base and is wrong in the
+    direction this whole file is written against.
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=255),
+            "head10...main": _compare(capped, commits=["c1", "c2"]),
+            "head10...c1": _compare(capped[:10]),
+            "c1...main": _compare([_SHARED]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "base moved under a path they edit" in report, report
+    assert f"| #10 | 255 | `{_SHARED}` |" in report
+    assert "stale-base mode only" not in report, "the split is what makes it evaluated"
+
+
+def test_a_half_that_is_still_capped_is_split_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One split need not be enough, so a capped half is read the same way.
+
+    A commit list carries one page of the range rather than all of it, so the
+    boundary it offers can leave a half that is itself capped -- measured on the
+    live queue, where the first split of #3205's 157-commit range left an upper
+    half still at the cap. Each half is strictly shorter than the range it came
+    from, so re-reading it through the same path terminates, and the shared path
+    is placed past two splits to pin that it does.
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=157),
+            "head10...main": _compare(capped, commits=["c1", "c2"]),
+            "head10...c1": _compare(capped[:10]),
+            "c1...main": _compare(capped, commits=["c2", "c3"]),
+            "c1...c2": _compare(capped[:10]),
+            "c2...main": _compare([_SHARED]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert f"| #10 | 157 | `{_SHARED}` |" in report, report
+
+
+def test_a_single_commit_at_the_cap_has_nothing_to_split_and_is_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The floor of the split keeps the refusal, and says which floor it hit.
+
+    One commit whose own diff reaches the cap offers no boundary inside itself, so
+    there is no narrower compare to read. Intersecting the short list anyway would
+    report "no overlap" while meaning "did not look", so the pull request is named
+    as unevaluated in that mode -- and the reason names the boundary rather than
+    the cap alone, because the two are different problems with different remedies.
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=1),
+            "head10...main": _compare(capped, commits=["only"]),
+            "main...head20": _compare([_SHARED]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report, "the pair comparison must survive an unreadable base side"
+    assert "no commit boundary to split" in report
     assert "base moved under a path they edit" not in report
 
 

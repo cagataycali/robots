@@ -1501,7 +1501,12 @@ class LerobotLocalPolicy(Policy):
             trained model that is out of distribution and the shift compounds
             every chunk. When left at the default ``1`` we adopt
             ``n_action_steps`` so the chunk is consumed as trained. An explicit
-            ``actions_per_step > 1`` from the caller is respected here.
+            ``actions_per_step > 1`` from the caller is respected here - but one
+            strictly BELOW ``n_action_steps`` is named in a warning, because it
+            truncates the chunk into the same out-of-distribution regime this
+            branch corrects the default away from. A caller who asked for RTC is
+            not warned: RTC blends the seam and ``rtc_execution_horizon`` owns
+            the interval.
 
         Observation history (``config.n_obs_steps > 1``):
             Diffusion (2) and VQBeT (5) consume a short observation history and
@@ -1542,6 +1547,37 @@ class LerobotLocalPolicy(Policy):
             )
             return
         if self.actions_per_step != 1:
+            # A pinned horizon is never overridden, but one BELOW the trained
+            # chunk lands in the same out-of-distribution regime the default
+            # ``1`` is corrected away from further down: the chunk is truncated
+            # to its first ``actions_per_step`` actions and every re-query
+            # starts from a state the checkpoint was never trained to replay
+            # from. That passed silently, so shortening the interval for
+            # reactivity degraded the motion with nothing said. RTC is the
+            # supported way to shorten it - it blends the unexecuted tail of
+            # the previous chunk into the next one - so a caller who asked for
+            # RTC is not warned: there ``rtc_execution_horizon`` owns the
+            # interval and ``actions_per_step`` stays the trained chunk.
+            trained = getattr(config, "n_action_steps", None)
+            if self._rtc_requested is not True and isinstance(trained, int) and self.actions_per_step < trained:
+                remedy = (
+                    "Pass rtc_enabled=True (with rtc_execution_horizon) to shorten the "
+                    "re-query interval instead - RTC blends the unexecuted tail of the "
+                    "previous chunk into the next one, so the seam is not a discontinuity."
+                    if hasattr(config, "rtc_config")
+                    else f"Leave actions_per_step at {trained} to consume the chunk as trained."
+                )
+                logger.warning(
+                    "lerobot_local: %s was trained to replay %d actions per inference "
+                    "(config.n_action_steps) but actions_per_step=%d was pinned, so each "
+                    "chunk is truncated to its first %d actions and every re-query is "
+                    "out of distribution. %s",
+                    type(self._policy).__name__,
+                    trained,
+                    self.actions_per_step,
+                    self.actions_per_step,
+                    remedy,
+                )
             return  # caller pinned an explicit horizon - never override it
         # Observation-history policies (``n_obs_steps > 1``, e.g. Diffusion=2,
         # VQBeT=5) MUST be driven per-step through ``select_action()``. That path

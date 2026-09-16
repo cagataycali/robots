@@ -33,6 +33,7 @@ LerobotLocalPolicy(
     policy_type=None,                    # override auto-detected class
     device=None,                         # "cuda" | "cpu" | "mps"
     actions_per_step=1,                  # positive int; auto-set from config.n_action_steps if left at 1
+                                         #   (a value BELOW that chunk is warned about - see RTC)
     use_processor=True,                  # observation/action processor bridge
     processor_overrides=None,
     tokenizer_max_length=48,
@@ -356,7 +357,15 @@ checkpoint itself was saved with.
 
 The sim consumes `policy.execution_horizon` actions from each chunk before
 re-querying - `rtc_execution_horizon` (default 10) for an RTC policy, the full
-chunk otherwise. For relative-action checkpoints (pi0 / pi0.5 / pi0-FAST
+chunk otherwise.
+
+RTC - not a smaller `actions_per_step` - is how you shorten that interval.
+Pinning `actions_per_step` below the checkpoint's `config.n_action_steps`
+truncates every chunk to its prefix and re-queries from a state the model was
+never trained to replay from, so each seam is a discontinuity in the commanded
+trajectory; the provider now names that when it happens. `rtc_enabled=True`
+re-queries just as often and blends the unexecuted tail into the next chunk
+instead, leaving `actions_per_step` at the trained chunk. For relative-action checkpoints (pi0 / pi0.5 / pi0-FAST
 trained with `RelativeActionsProcessorStep`) the carried prefix is re-anchored
 to the state at the new query, so the seam does not double-apply the offset.
 

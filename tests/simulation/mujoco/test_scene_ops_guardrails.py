@@ -108,14 +108,24 @@ class TestInjectFailuresLeaveTheWorldIntact:
         assert spec is not None
         assert "bad" not in [body.name for body in spec.bodies]
 
-    def test_inject_robot_with_unreadable_urdf_returns_false(self, sim: Simulation) -> None:
+    def test_inject_robot_with_unreadable_urdf_raises_the_reason_and_leaves_the_spec_intact(
+        self, sim: Simulation
+    ) -> None:
+        # Like the object path above: the reason travels instead of folding into
+        # False (which the caller reported as a bare "Failed to inject robot"),
+        # and the pre-attach spec is restored so the failed add costs nothing.
         sim.create_world()
         world = sim._world
         assert world is not None
-        ok = scene_ops.inject_robot_into_scene(
-            world, SimRobot(name="rr", urdf_path="/no/such/file.xml"), "/no/such/file.xml"
-        )
-        assert ok is False
+        nbody_before = world._model.nbody
+        with pytest.raises(ValueError, match="no/such/file.xml"):
+            scene_ops.inject_robot_into_scene(
+                world, SimRobot(name="rr", urdf_path="/no/such/file.xml"), "/no/such/file.xml"
+            )
+        assert world._model.nbody == nbody_before
+        spec = scene_ops._get_spec(world)
+        assert spec is not None
+        assert not [body.name for body in spec.bodies if body.name.startswith("rr/")]
 
 
 class TestEjectMissingBodyIsConsistent:
