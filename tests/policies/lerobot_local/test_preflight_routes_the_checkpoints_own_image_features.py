@@ -228,6 +228,5 @@ def test_revision_is_forwarded_to_declared_image_features(monkeypatch):
     )
     assert captured["reference"] == CHECKPOINT
     assert captured["revision"] == "v1.0.0", (
-        "declared_image_features must receive the revision the policy honours; "
-        "got {!r}".format(captured["revision"])
+        "declared_image_features must receive the revision the policy honours; got {!r}".format(captured["revision"])
     )
