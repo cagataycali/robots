@@ -34,6 +34,7 @@ from strands_robots.simulation.mujoco.backend import (
 from strands_robots.simulation.mujoco.scene_ops import (
     fromto_fixed_size_components,
     joint_drive_map,
+    joint_position_unit,
     joint_rate_drive_map,
     persist_body_mass,
     persist_geom_properties,
@@ -1686,7 +1687,13 @@ class PhysicsMixin:
 
         Args:
             positions: The pose to write, as ``{joint_name: value}`` or as an
-                ordered vector (see the two accepted forms above).
+                ordered vector (see the two accepted forms above). Every value is
+                in its joint's own unit -- radians for a hinge, metres for a slide
+                (:func:`~strands_robots.simulation.mujoco.scene_ops.joint_position_unit`)
+                -- so an angle read from a real arm, whose driver reports degrees,
+                must be converted before it is written here. A value the joint's
+                range does not contain is refused naming that unit, and named as a
+                degree reading when converting it would land inside the range.
             robot_name: Which robot the ordered form binds to, and whose
                 namespace resolves an unqualified joint name. Optional when the
                 world holds exactly one robot. When given it must name a robot
@@ -1806,7 +1813,21 @@ class PhysicsMixin:
                 continue
             lo, hi = (float(x) for x in model.jnt_range[jnt_id])
             if not lo <= float(value) <= hi:
-                out_of_range.append(f"{jnt_name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]")
+                # Name the unit the bounds are in. Without it the cheapest reading
+                # of "outside [-1.92, 1.92]" is "clamp to the bound", which is the
+                # wrong pose whenever the caller is holding the same angle in
+                # another unit; and a degree reading is how a caller mirroring a
+                # real arm arrives here, because a driver reports degrees while
+                # this write takes radians. The degree sentence is added only when
+                # converting the value actually lands inside the range, so it
+                # states a fact about this call rather than guessing at intent.
+                unit = joint_position_unit(model, jnt_id, mj)
+                detail = f"{jnt_name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]"
+                if unit:
+                    detail += f" {unit}"
+                if unit == "rad" and lo <= math.radians(float(value)) <= hi:
+                    detail += f" (radians, not degrees: {float(value):.4g} deg = {math.radians(float(value)):.4g} rad)"
+                out_of_range.append(detail)
         if out_of_range:
             return {
                 "status": "error",
@@ -1886,6 +1907,11 @@ class PhysicsMixin:
 
         Writes to qvel. Useful for initializing dynamics. Accepts dict or list
         (see set_joint_positions for list semantics).
+
+        Every value is in its joint's own unit per second -- rad/s for a hinge,
+        m/s for a slide, the per-second form of the unit
+        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_position_unit`
+        names -- and not degrees per second.
 
         Every value must be a finite real number (Python or NumPy scalar), and
         must not be a boolean. A

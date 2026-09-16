@@ -187,6 +187,38 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
     return int(model.actuator_trnid[act_id, 0])
 
 
+def joint_position_unit(model: Any, jnt_id: int, mj: Any) -> str:
+    """Return the unit one scalar of joint ``jnt_id``'s coordinate is expressed in.
+
+    A MuJoCo joint coordinate carries a unit set by the joint's TYPE, not by the
+    model or the asset: a hinge -- and each component of a ball joint's rotation --
+    is an angle in radians, and a slide is a translation in the model's length
+    unit, metres for every asset the registry ships. A free joint's 7 coordinates
+    mix a translation with a quaternion, so no single unit names them.
+
+    The unit is what a caller converting a reading from a real arm needs, because
+    the driver reports something else: ``drivers/feetech`` reads an SO-arm in
+    degrees, and a degree reading written here unconverted is a pose an order of
+    magnitude away from the one intended. Answering it here keeps "what unit is
+    this number" one rule the messages read, rather than one each re-derives.
+
+    Args:
+        model: The compiled ``MjModel``.
+        jnt_id: Joint index in ``range(model.njnt)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``"rad"`` for a hinge or ball joint, ``"m"`` for a slide joint, and ``""``
+        for a free joint, whose coordinates have no single unit.
+    """
+    jnt_type = int(model.jnt_type[jnt_id])
+    if jnt_type == int(mj.mjtJoint.mjJNT_SLIDE):
+        return "m"
+    if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
+        return ""
+    return "rad"
+
+
 def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]]:
     """Split the joint-driving actuators into position servos and other drives.
 
