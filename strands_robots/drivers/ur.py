@@ -73,9 +73,9 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.drivers.base import policy_step, undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry import resolve_name
+from strands_robots.registry.policies import policy_requires_error
 from strands_robots.utils import (
     finite_number_error,
-    policy_requires_error,
     positive_count_error,
     positive_finite_number_error,
     tcp_port_error,
@@ -1111,7 +1111,7 @@ class URDriver:
         and fail only once the rollout asks for its first action - by which time
         this verb has answered "started" and a live arm is held by a rollout that
         can never take a step. See
-        :func:`~strands_robots.utils.policy_requires_error`.
+        :func:`~strands_robots.registry.policies.policy_requires_error`.
 
         Args:
             instruction: Natural-language instruction handed to the policy.

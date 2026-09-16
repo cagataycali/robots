@@ -181,7 +181,7 @@ class TestARequiredKeywordIsJudgedBeforeTheBuild:
 
     The real-arm surface gained this check in #3752; this is the same decision
     at the fleet's only other registry build, which is why the domain moved to
-    :func:`~strands_robots.utils.policy_requires_error` rather than being
+    :func:`~strands_robots.registry.policies.policy_requires_error` rather than being
     written twice.
     """
 

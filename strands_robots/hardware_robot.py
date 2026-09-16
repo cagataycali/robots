@@ -58,6 +58,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
+from strands_robots.registry.policies import policy_requires_error
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -65,7 +66,6 @@ from strands_robots.utils import (
     boolean_flag_error,
     camera_token_error,
     dds_domain_id_error,
-    policy_requires_error,
     positive_count_error,
     positive_finite_number_error,
     refusal_repr,
@@ -2289,7 +2289,7 @@ class Robot(TeleopMixin, AgentTool):
         """Reject a provider build that is missing a keyword it cannot act without.
 
         This surface's envelope around
-        :func:`~strands_robots.utils.policy_requires_error`, which owns the
+        :func:`~strands_robots.registry.policies.policy_requires_error`, which owns the
         domain and states why. :meth:`_policy_port_error` judges the ``port``
         entry; this judges the rest - the checkpoint a ``lerobot_local`` /
         ``lerobot_async`` policy is built from. Here the harm is that
