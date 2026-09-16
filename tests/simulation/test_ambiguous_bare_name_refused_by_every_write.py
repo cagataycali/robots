@@ -118,7 +118,9 @@ def _text(result: dict[str, Any]) -> str:
 
 def _state(sim: Simulation) -> list[Any]:
     """Everything the five writes can touch, so "nothing was written" is measured."""
-    model, data = sim._world._model, sim._world._data
+    world = sim._world
+    assert world is not None, "the fixture built a world"
+    model, data = world._model, world._data
     return [
         data.qpos.copy(),
         data.qvel.copy(),
