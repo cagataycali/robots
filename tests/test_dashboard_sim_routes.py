@@ -37,6 +37,7 @@ class FakeEngine:
         self.mj_data = SimpleNamespace(time=0.0, qpos=np.zeros(joints))
         self.steps = 0
         self.writes = 0
+        self.holds: list = []
         self.resets = 0
         self.closed = False
 
@@ -65,6 +66,7 @@ class FakeEngine:
         if isinstance(positions, dict) and any(k not in self.robot_joint_names(robot_name) for k in positions):
             return {"status": "error", "content": [{"text": "unknown joint"}]}
         self.writes += 1
+        self.holds.append(hold)
         return {"status": "success", "content": [{"text": "set"}]}
 
     def get_robot_state(self, robot_name=None):
@@ -295,6 +297,20 @@ class TestSimRoutes:
         assert client.post(f"/api/sim/{sid}/joints", json={"positions": {"zz": 0.1}}).status_code == 400
         assert client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.1}}).status_code == 200
         assert client.post(f"/api/sim/{sid}/reset").status_code == 200
+
+    def test_joints_are_written_as_a_target_the_servos_hold(self, client, fake_factory):
+        """The route says "set joint targets", so the write has to survive the next tick.
+
+        ``set_joint_positions`` is a kinematic qpos write; on a robot held by
+        position servos the servos are still commanded to their previous
+        setpoint and the worker's next ``step`` pulls the pose back. Passing
+        ``hold`` moves the setpoints with the pose. Without it the route answered
+        200 for a pose the robot had left before the next telemetry frame.
+        """
+        sid = _create(client)["id"]
+        assert client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.5}}).status_code == 200
+        (engine,) = fake_factory
+        assert engine.holds == [True], "a joints request is a target, so the servo setpoints move with the pose"
 
     def test_stream_is_multipart_mjpeg_and_bounded_on_request(self, client):
         sid = _create(client)["id"]
@@ -693,3 +709,27 @@ def test_real_engine_session_steps_and_renders(monkeypatch):
     assert snap.joint_names == ("1", "2", "3", "4", "5", "6")
     assert s.command("set_joints", positions={"2": 0.3})["status"] == "success"
     s.stop()
+
+
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="mujoco not installed")
+def test_real_engine_joints_target_survives_the_steps_that_follow():
+    """On ``so101`` a joints write that is not held springs back toward home.
+
+    Measured before the fix: ``{"2": 0.5}`` answered ``success`` and read 0.03 rad
+    half a second of sim time later - the position servo was still commanded to
+    its old setpoint. Held, it reads within a few hundredths of the target.
+    """
+    s = sim_session.SimSession("so101")
+    assert s.wait_ready(60), "engine did not start"
+    if s.snapshot.state == "error":
+        pytest.skip(f"no renderer here: {s.snapshot.error}")
+    try:
+        assert _until(lambda: s.snapshot.sim_time > 0.2, timeout=15.0), s.snapshot
+        joint = s.snapshot.joint_names.index("2")
+        assert s.command("set_joints", positions={"2": 0.5})["status"] == "success"
+        settled_at = s.snapshot.sim_time + 0.5
+        assert _until(lambda: s.snapshot.sim_time > settled_at, timeout=30.0), s.snapshot
+        held = s.snapshot.qpos[joint]
+        assert abs(held - 0.5) < 0.15, f"joint 2 read {held:.3f} rad half a second after a 0.5 rad target"
+    finally:
+        s.stop()
