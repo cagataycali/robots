@@ -3408,7 +3408,7 @@ class Mesh(SensorLoopsMixin):
         ("Silent defaults are not honoured on the security boundary").
         Checkpoints travel as Hub ids (``pretrained_name_or_path="lerobot/…"``,
         an org in ``STRANDS_MESH_HF_REPO_ALLOW``); a local path is refused on
-        the wire. ``duration`` defaults to 30 s on the peer.
+        the wire. ``duration`` defaults to 30 s when omitted.
 
         Example::
 

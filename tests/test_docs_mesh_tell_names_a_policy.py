@@ -23,9 +23,10 @@ QUICKSTART = DOCS / "getting-started" / "quickstart.md"
 _TELL = re.compile(r"\.tell\((?P<args>(?:[^()]|\([^()]*\))*)\)", re.DOTALL)
 
 
-def _tell_calls() -> list[tuple[Path, str]]:
+def _tell_calls(root: Path = DOCS) -> list[tuple[Path, str]]:
+    """Every ``.tell(...)`` under *root*, as ``(page, argument text)`` pairs."""
     calls = []
-    for path in sorted(DOCS.rglob("*.md")):
+    for path in sorted(root.rglob("*.md")):
         for m in _TELL.finditer(path.read_text()):
             calls.append((path, m.group("args")))
     return calls
@@ -33,6 +34,20 @@ def _tell_calls() -> list[tuple[Path, str]]:
 
 def test_the_docs_show_tell_at_all():
     assert len(_tell_calls()) >= 4
+
+
+def test_the_reader_flags_a_tell_that_names_no_provider(tmp_path: Path):
+    """The shipped pages all comply, so read a page that does not.
+
+    Without this the reader could match nothing at all and every page would
+    pass for want of a case.
+    """
+    (tmp_path / "bare.md").write_text('mesh.tell(peer, "hold the tray steady")\n')
+    (tmp_path / "named.md").write_text('mesh.tell(peer, "x", policy_provider="mock")\n')
+    found = {path.name: args for path, args in _tell_calls(tmp_path)}
+    assert set(found) == {"bare.md", "named.md"}
+    assert "policy_provider=" not in found["bare.md"]
+    assert "policy_provider=" in found["named.md"]
 
 
 @pytest.mark.parametrize("path,args", _tell_calls(), ids=lambda v: v.name if isinstance(v, Path) else "args")
