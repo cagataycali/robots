@@ -48,9 +48,11 @@ def test_eval_policy_on_a_busy_robot_is_refused(busy_arm):
 
 
 def test_a_policy_on_another_robot_is_not_refused(busy_arm):
-    busy_arm.stop_policy("so101")
-    # stop_policy is cooperative; wait for the worker to release the robot.
-    busy_arm._policy_threads["so101"].result(timeout=10)
+    stopped = busy_arm.stop_policy("so101")
+    # stop_policy waits for the worker to release the robot and prunes its
+    # Future, so the robot is free by the time this returns: nothing to join.
+    assert stopped["status"] == "success", _text(stopped)
+    assert "so101" not in busy_arm._policy_threads
     busy_arm.add_robot("go2", position=[1.0, 0.0, 0.5])
     started = busy_arm.start_policy(robot_name="so101", policy_provider="mock", duration=5.0)
     assert started["status"] == "success", _text(started)
