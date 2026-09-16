@@ -48,11 +48,15 @@ camera names the runtime observation must contain.
 
    ```python
    sim.add_camera(name="front", position=[0.22, 0.025, 0.6], target=[0.22, 0.025, 0])
-   sim.add_camera(name="wrist", parent_body="so101/gripper")
+   sim.add_camera(name="wrist", parent_body="so101/gripper",
+                  position=[0.058, 0.0, -0.029], target=[-0.024, 0.0, -0.297])
    ```
 
    `parent_body` mounts the camera ON a body so the wrist view rides with the
-   arm. It is supported on the **mujoco** and **newton** backends; the isaac
+   arm; `position` and `target` are then in that body's frame, and both are
+   required (omit them and `add_camera` refuses, naming a starting pose for
+   that body - the world-frame defaults would put a "wrist" camera 1.7 m from
+   the wrist looking back at the arm). It is supported on the **mujoco** and **newton** backends; the isaac
    backend refuses it with an error naming this alternative, because it parents
    camera prims to the stage camera scope rather than to an articulation link.
    On isaac, place the wrist camera in world coordinates (omit `parent_body`)

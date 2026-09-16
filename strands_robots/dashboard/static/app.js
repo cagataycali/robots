@@ -135,6 +135,101 @@ async function saveSettings(ev) {
   } catch (e) { $("#settings-msg").textContent = e.message; }
 }
 
+
+/* ---- sim ---- */
+const sockets = new Map();
+/* The lockout as the server last reported it. Only lockoutLine() writes it, and
+   only from a server answer - a failed request is not an e-stop, so it is shown
+   as a message and the line is re-read from /api/safety rather than painted. */
+let lockout = { state: "unknown", reason: "not read yet" };
+
+function lockoutLine(l) {
+  lockout = l;
+  const el = $("#lockout");
+  el.className = `lockout ${l.state}`;
+  el.textContent = l.state === "locked" ? `e-stop engaged · ${l.by || "dashboard"} · ${l.reason}` : l.state === "unknown" ? `lockout unknown · ${l.reason}` : `clear · ${l.reason}`;
+  // The red button's label and the action a click takes are both read from
+  // this state, so they cannot disagree: a page loaded under an engaged e-stop
+  // reads RESUME and resumes, and a button that reads E-STOP stops.
+  $("#estop").textContent = l.state === "locked" ? "RESUME" : "E-STOP";
+}
+
+function simMessage(text) { $("#sim-msg").textContent = text; }
+
+async function simFailed(e) {
+  simMessage(e.message);
+  try { lockoutLine((await api("/api/safety")).lockout); } catch (again) { simMessage(`${e.message} · ${again.message}`); }
+}
+
+async function loadSim() {
+  const sel = $("#sim-robot");
+  if (!sel.options.length) {
+    const f = await api("/api/fleet?mode=sim");
+    for (const r of f.robots.filter(r => r.model_local)) {
+      const o = document.createElement("option"); o.value = r.name; o.textContent = `${r.name} · ${r.joints} dof`; sel.appendChild(o);
+    }
+    sel.value = "so101";
+  }
+  lockoutLine((await api("/api/safety")).lockout);
+  const { sessions } = await api("/api/sim");
+  const box = $("#sessions");
+  for (const el of [...box.children]) if (!sessions.some(s => s.id === el.dataset.id)) { sockets.get(el.dataset.id)?.close(); sockets.delete(el.dataset.id); el.remove(); }
+  for (const s of sessions) if (!box.querySelector(`[data-id="${s.id}"]`)) mountSession(s);
+  if (!sessions.length) { if (!box.querySelector("p.muted")) box.appendChild(node("p", "muted", "No session yet. Pick a robot and press Start - it steps in this process and streams here.")); }
+  else box.querySelector("p.muted")?.remove();
+}
+
+function mountSession(s) {
+  const el = node("article", "session"); el.dataset.id = s.id;
+  // Built node by node: the robot name, the session id and the joint names all
+  // arrive from routes, and each one is handed to the page as text.
+  const head = node("div", "head");
+  head.append(node("span", "name", s.robot), node("span", "pill mono", s.id), node("span", "pill state", s.state));
+  const view = node("div", "view");
+  const img = document.createElement("img"); img.alt = `${s.robot} camera`; img.src = `/api/sim/${s.id}/stream.mjpg`;
+  view.appendChild(img);
+  const joints = node("div", "joints");
+  for (const n of s.joint_names) {
+    const j = node("div", "joint");
+    const bar = node("span", "bar"); bar.appendChild(document.createElement("i"));
+    j.append(node("span", "label", n), node("span", "val", "0.000"), bar);
+    joints.appendChild(j);
+  }
+  const foot = node("div", "foot");
+  foot.append(node("span", "t", "t=0.00s"), node("span", "fps", ""));
+  const reset = node("button", "", "Reset"); reset.dataset.act = "reset";
+  const stop = node("button", "", "Stop"); stop.dataset.act = "stop";
+  foot.append(reset, stop);
+  el.append(head, view, joints, foot);
+  $("#sessions").appendChild(el);
+  el.querySelector('[data-act="stop"]').onclick = async () => { await api(`/api/sim/${s.id}`, { method: "DELETE" }); loadSim(); };
+  el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); simMessage(""); } catch (e) { await simFailed(e); } };
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/telemetry/${s.id}`);
+  sockets.set(s.id, ws);
+  const vals = el.querySelectorAll(".joint .val"), bars = el.querySelectorAll(".joint .bar i");
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    el.classList.toggle("frozen", m.state === "frozen");
+    el.querySelector(".state").textContent = m.state;
+    el.querySelector(".t").textContent = `t=${m.sim_time.toFixed(2)}s`;
+    el.querySelector(".fps").textContent = m.fps ? `${m.fps} fps` : "";
+    m.qpos.forEach((q, i) => { if (vals[i]) { vals[i].textContent = q.toFixed(3); bars[i].style.transform = `translateX(${Math.max(-1, Math.min(1, q / Math.PI)) * 40}px)`; } });
+    lockoutLine(m.lockout);
+    if (m.state === "stopped" || m.state === "error") ws.close();
+  };
+}
+
+$("#sim-new").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try { await api("/api/sim", { method: "POST", body: JSON.stringify({ robot: $("#sim-robot").value }) }); simMessage(""); await loadSim(); }
+  catch (e) { await simFailed(e); }
+});
+$("#estop").addEventListener("click", async () => {
+  const action = lockout.state === "locked" ? "resume" : "estop";
+  try { lockoutLine((await api(`/api/safety/${action}`, { method: "POST" })).lockout); simMessage(""); }
+  catch (e) { await simFailed(e); }
+});
+
 /* ---- ceremonies ---- */
 $("#enrol").addEventListener("submit", async (ev) => {
   ev.preventDefault(); $("#login-error").textContent = "";
@@ -161,6 +256,7 @@ $("#tabs").addEventListener("click", (ev) => {
   if (!authenticated) return showLogin();
   show(v);
   if (v === "fleet") loadFleet();
+  if (v === "sim") loadSim();
   if (v === "settings") loadSettings();
 });
 $("#settings-form").addEventListener("submit", saveSettings);
@@ -174,6 +270,7 @@ async function boot() {
   const v = views.includes(location.hash.slice(1)) ? location.hash.slice(1) : "fleet";
   show(v);
   if (v === "fleet") loadFleet();
+  if (v === "sim") loadSim();
   if (v === "settings") loadSettings();
 }
 boot();
