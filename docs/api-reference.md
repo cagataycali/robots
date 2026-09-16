@@ -83,7 +83,7 @@ Selected actions:
 |--------|------|
 | `run_policy(robot_name, ...)` | Blocking policy rollout. |
 | `start_policy(robot_name, ...)` | Rollout in a background thread on MuJoCo; a blocking passthrough to `run_policy` on the other backends. `describe()['methods']['start_policy']` states which one the engine you hold implements. |
-| `stop_policy(robot_name)` | Cooperatively stop a rollout; the `json` block reports `was_running`. Refused (naming the class) by a backend with no durable per-robot claim. |
+| `stop_policy(robot_name)` | Cooperatively stop a rollout, then wait (bounded, 1 s) for its worker to exit, so the caller's next action on that robot is admitted. The `json` block reports `was_running` and `exited`: `true` when the worker was joined and is gone, `false` when it is still live after that budget (the text says so, and names the action that stays refused), `null` when there was nothing to join - no rollout, or a blocking `run_policy` driven on its caller's own thread. An empty `robot_name` means the only rollout in flight, and is otherwise refused naming what is running. Refused (naming the class) by a backend with no durable per-robot claim. |
 | `run_multi_policy(policies, ...)` | Synchronized multi-robot rollout, one merged frame per step. |
 | `eval_policy(robot_name, n_episodes, ...)` | Multi-episode evaluation. |
 | `evaluate_benchmark(benchmark_name, ...)` | Run registered benchmark. |
