@@ -1102,6 +1102,20 @@ class SimEngine(ABC):
         """
         return self.robot_joint_names(robot_name)
 
+    def bind_predicate_robot(self, robot_name: str | None) -> None:
+        """Bind the robot an unnamed ``base_*`` clause reads for the next probe and rollout.
+
+        Benchmark and ``stop_when`` clauses default ``robot`` to "the sole
+        robot". In a multi-robot scene that used to resolve to the FIRST
+        registered robot, so ``evaluate_benchmark(benchmark_name='go2_walk_forward',
+        robot_name='go2')`` with an arm registered first probed the arm ("has no
+        floating base") and, with two floating-base robots, would have scored the
+        wrong one silently. ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark``
+        call this with the robot they resolved; the predicate readers consult it
+        through :func:`~strands_robots.simulation.predicates._bound_robot`.
+        """
+        self.predicate_robot = robot_name
+
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
 
@@ -3175,6 +3189,7 @@ class SimEngine(ABC):
         # only - a programmatic callable is opaque) turns that silent
         # never-fires into an up-front structured error, including on
         # backends whose predicates cannot resolve bodies at all.
+        self.bind_predicate_robot(robot_name)
         if stop_when_fn is not None and isinstance(stop_when, dict):
             probe_err = self._stop_when_unresolved_error(stop_when)
             if probe_err is not None:
@@ -4890,6 +4905,7 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+        self.bind_predicate_robot(resolved_robot)
         # An evaluation drives the robot exactly as a rollout does, so it is
         # refused while another thread's rollout holds the robot - the gate every
         # joint write and ``start_policy`` already pass. Backends that keep no
@@ -5239,6 +5255,10 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+        # Unnamed base_* clauses in the spec read the robot under evaluation,
+        # not the first registered one - bound before the probe below so the
+        # probe and the rollout agree.
+        self.bind_predicate_robot(resolved_robot)
 
         # Probe the entities the spec's clauses name against the LIVE scene,
         # before any policy is built. A benchmark clause is authored in the
