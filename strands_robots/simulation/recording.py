@@ -49,7 +49,7 @@ def recorded_cameras_line(
     recorded_cameras: Mapping[str, str],
     scene_cameras: Sequence[str],
     cameras: Sequence[str] | None,
-    fps: Any,
+    fps: float,
 ) -> str:
     """The schema line of ``start_recording``'s reply, naming the cameras.
 
@@ -91,7 +91,10 @@ def recorded_cameras_line(
         cameras: The caller's ``cameras=`` argument, ``None`` when it recorded
             every camera. Only its presence is read - an empty selection is the
             one cause the scene alone cannot explain.
-        fps: The dataset frame rate, as reported.
+        fps: The dataset frame rate, as reported. Not the caller's raw value:
+            :func:`dataset_recording_option_error` has already refused anything
+            but a positive whole number inside the range of a 64-bit float, so
+            this renders a number rather than an arbitrary object.
 
     Returns:
         The schema line, newline-terminated, plus the no-camera line when there

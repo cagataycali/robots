@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from strands_robots.simulation.recording import recorded_cameras_line
+from tests.simulation.mujoco._gl_probe import requires_gl
 
 JOINTS = ["j1", "j2", "j3", "j4", "j5", "j6"]
 
@@ -32,9 +33,7 @@ class TestTheLineNamesTheCameras:
         assert line == "6 joints, 1 camera ['default'] @ 10fps\n"
 
     def test_several_cameras_keep_dataset_column_order(self) -> None:
-        line = recorded_cameras_line(
-            JOINTS, {"top": "top", "side": "side"}, ["top", "side"], ["top", "side"], 30
-        )
+        line = recorded_cameras_line(JOINTS, {"top": "top", "side": "side"}, ["top", "side"], ["top", "side"], 30)
         assert line == "6 joints, 2 cameras ['top', 'side'] @ 30fps\n"
 
     def test_a_camera_whose_column_matches_adds_no_second_line(self) -> None:
@@ -45,16 +44,12 @@ class TestARenamedColumnIsNamedBesideTheSceneName:
     """The scene name leads; the ``__`` column is stated, never substituted."""
 
     def test_the_scene_name_is_listed_not_the_column_key(self) -> None:
-        line = recorded_cameras_line(
-            JOINTS, {"so101/wrist": "so101__wrist"}, ["so101/wrist"], None, 10
-        )
+        line = recorded_cameras_line(JOINTS, {"so101/wrist": "so101__wrist"}, ["so101/wrist"], None, 10)
         assert line.startswith("6 joints, 1 camera ['so101/wrist'] @ 10fps\n")
         assert "['so101__wrist']" not in line
 
     def test_the_dataset_column_is_named_too(self) -> None:
-        line = recorded_cameras_line(
-            JOINTS, {"so101/wrist": "so101__wrist"}, ["so101/wrist"], None, 10
-        )
+        line = recorded_cameras_line(JOINTS, {"so101/wrist": "so101__wrist"}, ["so101/wrist"], None, 10)
         assert "'so101/wrist' -> observation.images.so101__wrist" in line
         assert "render and cameras= take the scene name above" in line
 
@@ -152,6 +147,7 @@ class TestOnTheMuJoCoBackend:
         finally:
             sim.cleanup()
 
+    @requires_gl
     def test_every_camera_the_reply_names_is_one_render_accepts(self, tmp_path) -> None:
         """The round trip the defect broke: read the reply, render what it named.
 
@@ -195,9 +191,7 @@ class TestOnTheMuJoCoBackend:
         try:
             sim.create_world()
             assert sim.add_robot(name="arm", data_config="so101")["status"] == "success"
-            result = sim.start_recording(
-                repo_id="t/names_cams", root=str(tmp_path), fps=10, cameras=[]
-            )
+            result = sim.start_recording(repo_id="t/names_cams", root=str(tmp_path), fps=10, cameras=[])
             text = result["content"][0]["text"]
             assert result["status"] == "success", text
             assert "0 cameras [] @ 10fps" in text
@@ -206,6 +200,7 @@ class TestOnTheMuJoCoBackend:
         finally:
             sim.cleanup()
 
+    @requires_gl
     def test_the_caller_s_column_key_spelling_is_answered_with_the_scene_name(self, tmp_path) -> None:
         """``cameras=`` takes either spelling; the reply always answers in one."""
         sim = _mujoco_sim("names_cams")
