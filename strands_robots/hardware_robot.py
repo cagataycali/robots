@@ -2145,6 +2145,77 @@ class Robot(TeleopMixin, AgentTool):
         return None
 
     @staticmethod
+    def _policy_requires_error(
+        policy_provider: str | None, policy_kwargs: dict[str, Any], method: str
+    ) -> dict[str, Any] | None:
+        """Reject a provider build that is missing a keyword it cannot act without.
+
+        The registry's ``requires`` lists the keywords a caller must supply.
+        :meth:`_policy_port_error` judges the ``port`` entry; this judges the
+        rest - the checkpoint a ``lerobot_local`` / ``lerobot_async`` policy is
+        built from. ``LerobotLocalPolicy`` constructs happily with its default
+        ``pretrained_name_or_path=""`` and loads lazily, so an in-process build
+        with no checkpoint succeeded, ``start_task`` answered "Task started",
+        :meth:`_connect_robot` energized the arm, and the first
+        ``get_actions`` raised "No model loaded and no pretrained_name_or_path
+        set" on the executor thread with nobody left to tell. The quickstart's
+        real-arm step did exactly this.
+
+        An empty string counts as missing: it is the provider's own default
+        and the one value the lazy load cannot use. ``None`` likewise.
+
+        Args:
+            policy_provider: Provider name; unknown or unregistered providers
+                are left to ``create_policy`` to refuse.
+            policy_kwargs: Checkpoint/provider keywords the caller supplied.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming the missing keyword(s) and the
+            provider, or ``None`` when every required keyword is present.
+        """
+        if not policy_provider:
+            return None
+        try:
+            from strands_robots.registry.policies import get_policy_provider
+
+            spec = get_policy_provider(policy_provider)
+        except Exception:  # noqa: BLE001 - registry read is best-effort
+            return None
+        if not spec:
+            return None
+        # ``port``/``host`` are excluded because they never travel in
+        # ``**policy_kwargs``: they arrive as the named ``policy_port`` /
+        # ``policy_host`` parameters, so reading them here would find every
+        # caller's absent and refuse a port that WAS supplied. The port is
+        # judged by :meth:`_policy_port_error` and the host has a default.
+        missing = [
+            key
+            for key in (spec.get("requires") or ())
+            if key not in ("port", "host") and ((value := policy_kwargs.get(key)) is None or value == "")
+        ]
+        if not missing:
+            return None
+        hints = {
+            "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
+            "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
+        }
+        asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: policy_provider={policy_provider!r} builds its policy from "
+                        f"{' and '.join(missing)}, and none was given. Pass {asks}. "
+                        f"Without {'it' if len(missing) == 1 else 'them'} the task would start, "
+                        "energize the arm and fail at its first action."
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
     def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
         """Reject a ``policy_port`` no policy can be built from.
 
@@ -2406,6 +2477,10 @@ class Robot(TeleopMixin, AgentTool):
         # value the call ignores would be a false rejection.
         if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
+        if policy_object is None and (
+            err := self._policy_requires_error(policy_provider, policy_kwargs, "execute_task")
+        ):
+            return err
         if err := self._claim_task(instruction):
             return err
 
@@ -2597,6 +2672,8 @@ class Robot(TeleopMixin, AgentTool):
         # "Task started" and failed on the executor thread after the arm was
         # already connected.
         if err := self._policy_port_error(policy_port, "start_task", policy_provider):
+            return err
+        if err := self._policy_requires_error(policy_provider, policy_kwargs, "start_task"):
             return err
 
         # Claim the bus here, not on the executor thread: this method returns
