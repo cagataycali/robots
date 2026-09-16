@@ -5113,16 +5113,33 @@ class SimEngine(ABC):
         spec = get_benchmark(benchmark_name)
         if spec is None:
             from strands_robots.simulation.benchmark import list_benchmarks as _list
+            from strands_robots.simulation.builtin_benchmarks import builtin_benchmark_specs
 
             available = sorted(_list().keys())
+            bundled = sorted(builtin_benchmark_specs())
+            # The bundled names are the ones an agent has seen in docs and in
+            # list_benchmarks' own empty-registry hint, so a refusal that lists
+            # only the (empty) registry and points at register_benchmark_from_file
+            # sends it to write a spec file for a benchmark that ships in the
+            # box. Name the one-call remedy when the name is bundled, and the
+            # bundled set otherwise.
+            if isinstance(benchmark_name, str) and benchmark_name in bundled:
+                remedy = (
+                    f"{benchmark_name!r} is bundled but not registered yet - call "
+                    "action='register_builtin_benchmarks' first, then evaluate_benchmark again."
+                )
+            else:
+                remedy = (
+                    f"Bundled (register_builtin_benchmarks adds them): {bundled}. "
+                    "register_benchmark_from_file or register_benchmark adds your own."
+                )
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
                             f"evaluate_benchmark: no benchmark registered under "
-                            f"{benchmark_name!r}. Registered: {available}. "
-                            "Call register_benchmark_from_file or register_benchmark first."
+                            f"{benchmark_name!r}. Registered: {available}. {remedy}"
                         )
                     }
                 ],
