@@ -61,13 +61,14 @@ from strands_robots import Robot
 from strands_robots import train_policy
 
 # 1. TELEOPERATE a real SO-101 with its leader arm and RECORD demos.
-follower = Robot("so101", mode="real", port="/dev/ttyACM0",
-                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
-                 mesh=True)
-follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
-Agent(tools=[follower])(
-    "start_recording(repo_id='me/pick', root='/tmp/pick', fps=30, "
-    "task='pick up the cube'); teleoperate for 60s; stop_recording"
+#    Recording a real arm is lerobot-record; the lerobot_teleoperate tool runs
+#    it as a session. Robot(mode="real") drives policies (execute, start,
+#    status, stop) - it neither teleoperates nor records from an agent.
+from strands_robots import lerobot_teleoperate
+Agent(tools=[lerobot_teleoperate])(
+    "start a recording session: follower so101_follower on /dev/ttyACM0 with "
+    "camera front at /dev/video0, leader so101_leader on /dev/ttyACM1, dataset "
+    "me/pick under /tmp/pick, one 60 s episode, task 'pick up the cube'"
 )
 
 # 2. POST-TUNE a policy on those demos (LoRA fine-tune; GPU box).
@@ -76,14 +77,23 @@ train_policy(action="train", provider="lerobot_local",
              output_dir="/tmp/pick_ckpt", method="lora", steps=20000)
 
 # 3. RUN the tuned checkpoint - same policy on a MuJoCo twin AND the real arm.
+follower = Robot("so101", mode="real", port="/dev/ttyACM0",
+                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
+                 mesh=True)
 twin = Robot("so101")
 twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
                 policy_config={"pretrained_name_or_path": "/tmp/pick_ckpt"}, duration=10.0)
 follower.start_task("pick up the cube", policy_provider="lerobot_local",
-                    policy_port=None, duration=10.0)
+                    pretrained_name_or_path="/tmp/pick_ckpt", duration=10.0)
 
-# 4. COORDINATE a fleet - tell a mesh peer to assist, in natural language.
-follower.mesh.tell(follower.mesh.peers[0]["peer_id"], "hold the tray steady")
+# 4. COORDINATE a fleet - hand a mesh peer a task: the policy it runs, and
+#    the instruction it runs with. The wire boundary refuses an execute with
+#    no policy_provider, and takes checkpoints as Hub ids (an org in
+#    STRANDS_MESH_HF_REPO_ALLOW), not local paths. Presence arrives ~1 s
+#    after the peer starts.
+peer = follower.mesh.peers[0]["peer_id"]
+follower.mesh.tell(peer, "hold the tray steady", policy_provider="lerobot_local",
+                   pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
 
 # 5. EXPOSE the running sim on ROS 2 - rviz / nav2 / any ros2 node can subscribe.
 from strands_robots.simulation import Simulation
@@ -97,7 +107,14 @@ sim.step(100)
 4. Fleet coordination - [Mesh](../mesh.md).
 5. ROS 2 interop - [ROS 2](../ros2-integration.md).
 
-Steps 1 and 3-real need hardware; step 2 needs a GPU. Everything else runs in sim.
+Steps 1 and 3-real need hardware; step 2 needs a GPU. Step 4 needs the `[mesh]`
+extra and a mesh posture - `eclipse-zenoh` is not in the `[sim-mujoco]` install
+above, and without it (or without `STRANDS_MESH_LOCAL_DEV=true` / an ACL file)
+the mesh stays off, so `mesh.peers` is empty and `peers[0]` raises `IndexError`.
+Step 5 needs a sourced ROS 2 distro - `rclpy` is not on PyPI, and
+`Simulation(ros2_bridge=True)` raises an `ImportError` naming the
+`source /opt/ros/<distro>/setup.bash` to run first. Step 3-twin runs in sim on
+the install line at the top of this page.
 
 ## Next: the notebook series
 
