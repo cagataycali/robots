@@ -185,7 +185,9 @@ class TestMoveToNamesTheContact:
         obstruction = res["content"][1]["json"]["obstruction"]
         pairs = {frozenset((c["geom1"], c["geom2"])) for c in obstruction["contacts"]}
         assert frozenset(("arm/jaw", "arm/wall_geom")) in pairs, obstruction
-        assert all("cube_geom" not in p for p in pairs), "the loose cube's own contacts are not the robot's"
+        assert not any("cube_geom" in geom for pair in pairs for geom in pair), (
+            "the loose cube's own contacts are not the robot's - and it even shares the robot's name prefix"
+        )
         assert len(obstruction["contacts"]) <= OBSTRUCTION_MAX_CONTACTS
         assert obstruction["contacts_total"] >= len(obstruction["contacts"])
         text = res["content"][0]["text"]
@@ -269,5 +271,26 @@ class TestOnTheBundledSo100:
             assert any("Fixed_Jaw" in c["geom1"] or "Fixed_Jaw" in c["geom2"] for c in obstruction["contacts"]), text
             assert "The servo was stopped: the robot is in contact:" in text
             assert "fights joint limits/contacts" not in text
+        finally:
+            sim.destroy()
+
+    def test_the_scope_reaches_above_the_first_commanded_joint(self) -> None:
+        """The base link carries no commanded joint, and a jaw can still hit it."""
+        import mujoco as mj
+
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        sim.create_world()
+        try:
+            assert sim.add_robot("arm", data_config="so100")["status"] == "success"
+            model = sim._world._model
+            commanded = sim._world.robots["arm"].joint_ids
+            first = min(int(j) for j in commanded)
+            assert mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.jnt_bodyid[first])) != "arm/Base"
+            names = {
+                mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b) for b in sim._commanded_robot_body_ids(model, commanded)
+            }
+            assert "arm/Base" in names, names
         finally:
             sim.destroy()
