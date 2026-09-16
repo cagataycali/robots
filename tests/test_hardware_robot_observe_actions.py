@@ -903,6 +903,148 @@ class TestCalibrationGateHoldsOnEveryCall:
         assert robot.bus.disconnects == [False]
         assert robot.configure_calls == 1
 
+    def test_an_observe_that_lands_after_the_hand_back_cannot_skip_configure(self) -> None:
+        """The hop between the hand-back and the ``is_connected`` read is closed.
+
+        Thread C hands the bus back (closed, ledger empty), then reads
+        ``is_connected``; thread O's ``get_state`` lands in between and reopens
+        the bus. On a camera-less arm the open bus alone is ``is_connected``, so
+        the read answered True and ``connect()`` was skipped - measured before
+        the fix: ``(True, "")`` with ``configure_calls == 0``. Now the observer
+        waits for the whole bring-up and then finds a robot already up.
+        """
+        checking, observer_done = threading.Event(), threading.Event()
+
+        class _ParksOnTheCheck(FakeLeRobot):
+            armed = False
+
+            @property
+            def is_connected(self) -> bool:
+                if self.armed and not checking.is_set():
+                    checking.set()
+                    observer_done.wait(0.5)  # the observer's window; it must not get to use it
+                return super().is_connected
+
+        robot = _ParksOnTheCheck(calibrated=True)
+        hw = _make_hw(robot)
+        _call(hw, action="get_state")
+        assert robot.bus.is_connected
+        robot.armed = True
+
+        connected: list[tuple[bool, str]] = []
+        connector = threading.Thread(target=lambda: connected.append(asyncio.run(hw._connect_robot())))
+        connector.start()
+        assert checking.wait(5), "the bring-up never read is_connected"
+        observed: list[dict[str, Any]] = []
+        observer = threading.Thread(target=lambda: observed.append(_call(hw, action="get_state")))
+        observer.start()
+        observer.join(timeout=5)
+        observer_done.set()
+        connector.join(timeout=5)
+
+        assert connected == [(True, "")]
+        assert robot.configure_calls == 1, "the observer reopened the bus inside the bring-up and connect() was skipped"
+        assert observed and observed[0]["status"] == "success", observed
+        assert robot.bus.is_connected
+
+    def test_a_render_that_lands_after_the_hand_back_cannot_skip_configure(self, sandbox: Path) -> None:
+        """The camera is not on the bus, and its open is under the bus lock for this reason.
+
+        Same hop, one-camera arm, the observer is ``render``: the camera it
+        reopened was refused in the driver's camera loop before ``configure()``,
+        the handler waved the refusal through, and ``is_connected`` (bus and
+        that camera) read True - ``(True, "")`` with ``configure_calls == 0``.
+        """
+        checking, observer_done = threading.Event(), threading.Event()
+
+        class _ParksOnTheCheck(FakeLeRobot):
+            armed = False
+
+            @property
+            def is_connected(self) -> bool:
+                if self.armed and not checking.is_set():
+                    checking.set()
+                    observer_done.wait(0.5)
+                return super().is_connected
+
+        cam = FakeCamera()
+        robot = _ParksOnTheCheck(calibrated=True, cameras={"front": cam})
+        hw = _make_hw(robot)
+        _call(hw, action="render")
+        assert cam.is_connected
+        robot.armed = True
+
+        connected: list[tuple[bool, str]] = []
+        connector = threading.Thread(target=lambda: connected.append(asyncio.run(hw._connect_robot())))
+        connector.start()
+        assert checking.wait(5), "the bring-up never read is_connected"
+        observed: list[dict[str, Any]] = []
+        observer = threading.Thread(target=lambda: observed.append(_call(hw, action="render")))
+        observer.start()
+        observer.join(timeout=5)
+        observer_done.set()
+        connector.join(timeout=5)
+
+        assert connected == [(True, "")]
+        assert robot.configure_calls == 1, (
+            "the observer reopened the camera inside the bring-up and configure() was skipped"
+        )
+        assert observed and observed[0]["status"] == "success", observed
+
+    def test_an_observe_that_lands_inside_a_teleop_bring_up_cannot_skip_configure(self) -> None:
+        """The teleop loop's lazy connect had the same hop, and a write followed it at 50 Hz."""
+        checking, observer_done = threading.Event(), threading.Event()
+
+        class _ParksOnTheCheck(FakeLeRobot):
+            armed = False
+
+            @property
+            def is_connected(self) -> bool:
+                if self.armed and not checking.is_set():
+                    checking.set()
+                    observer_done.wait(0.5)
+                return super().is_connected
+
+        robot = _ParksOnTheCheck(calibrated=True)
+        hw = _make_hw(robot)
+        _call(hw, action="get_state")
+        robot.armed = True
+
+        written: list[dict[str, Any]] = []
+        writer = threading.Thread(target=lambda: written.append(hw.send_action({"shoulder_pan.pos": 1.0})))
+        writer.start()
+        assert checking.wait(5), "the bring-up never read is_connected"
+        observer = threading.Thread(target=lambda: _call(hw, action="get_state"))
+        observer.start()
+        observer.join(timeout=5)
+        observer_done.set()
+        writer.join(timeout=5)
+
+        assert written and written[0]["status"] == "success", written
+        assert robot.configure_calls == 1, "a write reached servos configure() never set up"
+
+    def test_the_ledger_is_created_under_the_device_lock(self) -> None:
+        """Two first-ever observers must share one ledger, or one's recorded open is clobbered."""
+        from strands_robots.bus_access import bus_lock
+
+        robot = FakeLeRobot(calibrated=True)
+        hw = _make_hw(robot)
+        assert not hasattr(hw, "_observe_opened"), "no observe yet, so no ledger yet"
+
+        ledgers: list[set[str]] = []
+        lock = bus_lock(robot)
+        lock.acquire()
+        try:
+            first = threading.Thread(target=lambda: ledgers.append(hw._observe_ledger()))
+            first.start()
+            first.join(timeout=0.3)
+            assert first.is_alive(), "the ledger was created outside the device lock"
+        finally:
+            lock.release()
+        first.join(timeout=5)
+
+        assert ledgers and ledgers[0] is hw._observe_ledger(), "a second first-ever observer got a different set"
+
     def test_an_uncalibrated_arm_read_first_is_still_refused_by_connect(self) -> None:
         robot = FakeLeRobot(calibrated=False)
         hw = _make_hw(robot)

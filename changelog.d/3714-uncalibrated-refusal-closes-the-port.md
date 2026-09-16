@@ -8,7 +8,13 @@ gate held for exactly one call, and the process kept the serial port that
 first call refused, second call `(True, "")`. The refusal now closes what the
 attempt opened, the calibration check runs on the already-connected path too,
 and a bus that an observe action opened is handed back so the driver owns its
-whole open sequence.
+whole open sequence. Hand-back, `is_connected` and `connect()` are one unit
+under the device lock, on both the policy path and the teleop loop's lazy
+connect, and the observe actions check-and-open under the same lock: an observe
+action is ungated by design, and one that landed in the thread hop between the
+hand-back and the `is_connected` read reopened the bus, so on a camera-less arm
+the read answered True and `connect()` was skipped - `(True, "")` with
+`configure()` never run. It now waits for the bring-up and finds the arm up.
 
 The gate also asks its question the way `status` now does - on the class. On the
 instance, `hasattr(robot, "is_calibrated")` *evaluates* the property, so a

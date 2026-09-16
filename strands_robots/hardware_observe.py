@@ -27,7 +27,14 @@ Three facts about real arms shape it:
 * **Reads share the bus.** Every read takes the device's
   :func:`~strands_robots.bus_access.bus_lock`, the lock the mesh probes and a
   rollout already hold, so an observe action beside a rollout is serialised
-  rather than colliding ("Port is in use!").
+  rather than colliding ("Port is in use!"). The *open* is under it too - the
+  check and the connect together, for the camera as much as the bus - because
+  a bring-up (``Robot._bring_up_robot``) holds that lock from handing back what
+  an observe action borrowed until its own ``connect()`` has returned. An
+  observe action that lands inside one waits, then finds the device already up;
+  checked outside the lock it reopened the bus in the gap after the hand-back,
+  and the connect then read ``is_connected`` as True and skipped
+  ``configure()``.
 
 Nothing here imports lerobot: the bus is duck-typed on the surface lerobot's
 ``MotorsBus`` exposes (``motors``, ``sync_read``, ``read``, ``is_connected``,
@@ -122,12 +129,18 @@ def ensure_bus_open(robot: Any, on_open: Callable[[str], None] | None = None) ->
     set up.
     """
     bus = _bus(robot)
-    if getattr(bus, "is_connected", False):
-        return False
+    # Check and open under the one lock, with the ledger written inside it.
+    # ``Robot._bring_up_robot`` holds this lock from its hand-back through its
+    # ``connect()``, so a read that lands inside a bring-up waits and then
+    # finds the bus already open, instead of reopening it in the gap after the
+    # hand-back - where the connect then read ``is_connected`` as True and
+    # skipped ``configure()``. Checked outside the lock, that gap was open.
     with bus_lock(robot):
+        if getattr(bus, "is_connected", False):
+            return False
         bus.connect()
-    if on_open is not None:
-        on_open("bus")
+        if on_open is not None:
+            on_open("bus")
     logger.info("opened motor bus %s for a read", getattr(bus, "port", "?"))
     return True
 
@@ -423,15 +436,22 @@ def capture_frame(
         allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
-    opened = False
-    if not getattr(camera, "is_connected", False):
-        camera.connect()
-        opened = True
-        if on_open is not None:
-            on_open(f"camera:{camera_name}")
-    t0 = time.monotonic()
-    frame = camera.read()
-    read_ms = (time.monotonic() - t0) * 1000.0
+    # The camera is not on the bus, but it is opened and read under the bus
+    # lock for the same reason ``ensure_bus_open`` checks under it: a camera
+    # opened inside a bring-up - after the hand-back, before ``connect()`` -
+    # is refused in the driver's camera loop *before* ``configure()``, and on
+    # a one-camera arm that connect then reports success. Under the lock the
+    # open waits for the bring-up to finish and finds the camera already up.
+    with bus_lock(robot):
+        opened = False
+        if not getattr(camera, "is_connected", False):
+            camera.connect()
+            opened = True
+            if on_open is not None:
+                on_open(f"camera:{camera_name}")
+        t0 = time.monotonic()
+        frame = camera.read()
+        read_ms = (time.monotonic() - t0) * 1000.0
 
     safe.parent.mkdir(parents=True, exist_ok=True)
     png = _encode_png(frame)

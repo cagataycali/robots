@@ -1690,12 +1690,23 @@ class Robot(TeleopMixin, AgentTool):
         Entries are ``"bus"`` and ``"camera:<name>"``. Created by the first
         observe action rather than in ``__init__``: a tool that never observed
         has no ledger and nothing to hand back, and that is the same answer.
+
+        Created under the device lock, double-checked. Two first-ever observers
+        - an agent's ``get_state`` on a ``to_thread`` worker and the teleop
+        loop's lazy connect - would otherwise each build a set and the second
+        assignment clobber the first's recorded open, leaving that device
+        permanently outside the hand-back. ``bus_access.bus_lock`` guards its
+        own creation the same way, for the same reason.
         """
         ledger: set[str] | None = getattr(self, "_observe_opened", None)
-        if ledger is None:
-            ledger = set()
-            self._observe_opened = ledger
-        return ledger
+        if ledger is not None:
+            return ledger
+        with bus_lock(self.robot):
+            ledger = getattr(self, "_observe_opened", None)
+            if ledger is None:
+                ledger = set()
+                self._observe_opened = ledger
+            return ledger
 
     def _hand_back_observe_devices(self) -> None:
         """Close every device an observe action left open, so ``connect()`` starts from nothing.
@@ -1726,10 +1737,13 @@ class Robot(TeleopMixin, AgentTool):
         ``_close_open_devices``, which is best-effort because it runs where
         there is nothing left to refuse.
 
-        Synchronous, for the teleop loop; ``_connect_robot`` runs it off the
-        event loop. The bus is closed under its ``bus_lock``, the lock
-        ``get_state`` and the mesh probes read under, so a read in flight
-        finishes before the port goes.
+        Synchronous, and called only from :meth:`_bring_up_robot`, which holds
+        ``bus_lock(self.robot)`` from before this hand-back until ``connect()``
+        has returned. The lock is re-entered here around the bus close so the
+        contract is stated where the close is; it is the lock ``get_state``,
+        ``render`` and the mesh probes open and read under, so a read in flight
+        finishes before the port goes, and no observe action can open a device
+        between this hand-back and the connect that follows it.
 
         Raises:
             Exception: Whatever the device's own ``disconnect()`` raised,
@@ -1759,6 +1773,67 @@ class Robot(TeleopMixin, AgentTool):
                 camera.disconnect()
             ledger.discard(entry)
 
+    def _bring_up_robot(self) -> None:
+        """Hand back what an observe action borrowed, then connect - one unit under the device lock.
+
+        An observe action leaves its device open: ``get_state`` the motor bus,
+        ``render`` one camera. lerobot's ``connect()`` cannot start from either,
+        and the two fail differently - an open bus refuses the connect, an open
+        camera lets it *succeed* with ``configure()`` skipped. So every borrowed
+        device goes back BEFORE ``is_connected`` is read: on a camera-less arm
+        the open bus alone reads as connected.
+
+        The three steps are one critical section under ``bus_lock(self.robot)``
+        because the observe actions are ungated by design, so an agent or a
+        monitor calls them freely beside a bring-up. Serialising each device
+        operation was not enough: between a hand-back that had closed the bus
+        and the ``is_connected`` read that followed it there was a thread hop,
+        and a ``get_state`` landing in that hop reopened the bus - so the read
+        answered True, ``connect()`` was skipped, and the rollout drove servos
+        whose operating mode, gains and torque limits ``configure()`` never
+        wrote. The observe actions take the same lock around their own
+        check-and-open, so one that loses the race waits for the connect to
+        finish and then finds a robot already up.
+
+        Synchronous, so the lock is released by the thread that took it: the
+        teleop loop calls it directly and :meth:`_connect_robot` runs it in one
+        ``to_thread`` call. ``RLock``, so the nested acquisitions inside the
+        hand-back and the driver are fine.
+
+        Raises:
+            Exception: A hand-back that failed, unchanged - the caller refuses
+                and rolls back rather than letting the driver's
+                ``DeviceAlreadyConnectedError`` pass for a robot that was
+                already up. Or whatever ``connect()`` raised, except the
+                already-connected refusal, which is reachable here only for a
+                device the caller opened themselves and is what the ledger
+                deliberately leaves alone.
+        """
+        from lerobot.utils.errors import DeviceAlreadyConnectedError
+
+        with bus_lock(self.robot):
+            self._hand_back_observe_devices()
+            # Not a return: the calibration check in ``_connect_robot`` runs on
+            # this path too. It used to be skipped for a connected robot, so a
+            # refused first call (bus left open) made the second call report
+            # success for an arm the gate had refused.
+            if self.robot.is_connected:
+                logger.info(f"{self.robot} already connected")
+                return
+            logger.info(f"Connecting to {self.robot}...")
+            try:
+                self.robot.connect(False)  # calibrate=False
+            except DeviceAlreadyConnectedError:
+                # Expected and fine - a device the caller connected themselves
+                logger.info(f"{self.robot} was already connected")
+            except Exception as e:
+                # The string version of the same refusal
+                error_str = str(e).lower()
+                if "already connected" in error_str or "is already connected" in error_str:
+                    logger.info(f"{self.robot} connection already established")
+                else:
+                    raise
+
     async def _connect_robot(self) -> tuple[bool, str]:
         """Connect to robot hardware with proper error handling.
 
@@ -1766,46 +1841,10 @@ class Robot(TeleopMixin, AgentTool):
             tuple[bool, str]: (success, error_message) - error_message is empty on success
         """
         try:
-            # Import lerobot exceptions
-            from lerobot.utils.errors import DeviceAlreadyConnectedError
-
-            # An observe action leaves its device open: ``get_state`` the motor
-            # bus, ``render`` one camera. lerobot's ``connect()`` cannot start
-            # from either, and the two fail differently - an open bus refuses
-            # the connect, an open camera lets it *succeed* with ``configure()``
-            # skipped. Hand every borrowed device back BEFORE reading
-            # ``is_connected``: on a camera-less arm the open bus alone reads as
-            # connected. ``_hand_back_observe_devices`` says why a close that
-            # fails has to refuse rather than fall through to the
-            # ``DeviceAlreadyConnectedError`` handler below.
-            await asyncio.to_thread(self._hand_back_observe_devices)
-
-            # Check if already connected. Not a return: the calibration check
-            # below runs on this path too. It used to be skipped here, so a
-            # refused first call (bus left open) made the second call report
-            # success for an arm the gate had refused.
-            if self.robot.is_connected:
-                logger.info(f"{self.robot} already connected")
-            else:
-                logger.info(f"Connecting to {self.robot}...")
-
-            # Handle robot connection using lerobot's error handling patterns
-            try:
-                if not self.robot.is_connected:
-                    await asyncio.to_thread(self.robot.connect, False)  # calibrate=False
-
-            except DeviceAlreadyConnectedError:
-                # This is expected and fine - robot is already connected
-                logger.info(f"{self.robot} was already connected")
-
-            except Exception as e:
-                # Check if it's the string version of "already connected" error
-                error_str = str(e).lower()
-                if "already connected" in error_str or "is already connected" in error_str:
-                    logger.info(f"{self.robot} connection already established")
-                else:
-                    # Re-raise if it's a different error
-                    raise e
+            # Hand-back, ``is_connected`` and ``connect()`` as one locked unit,
+            # in one thread: ``_bring_up_robot`` says why the three cannot be
+            # separated by an ``await``.
+            await asyncio.to_thread(self._bring_up_robot)
 
             # Final connection check
             if not self.robot.is_connected:
@@ -3713,17 +3752,15 @@ class Robot(TeleopMixin, AgentTool):
             errors without exceptions tearing down the hot loop.
         """
         try:
-            # A device an observe action opened goes back first, for the same
-            # reason as in ``_connect_robot``: on a camera-less arm the open bus
-            # reads as connected, and a write would then reach servos the
-            # driver's ``configure()`` never set up.
+            # Lazy connect on first action, through the same locked unit as the
+            # policy-run path: a device an observe action opened goes back
+            # first - on a camera-less arm the open bus reads as connected, and
+            # a write would then reach servos the driver's ``configure()`` never
+            # set up - and no observe action can reopen it before the connect.
+            # calibrate=False: a teleop session assumes the follower is already
+            # calibrated (same contract as the policy-run path).
             try:
-                self._hand_back_observe_devices()
-                if not getattr(self.robot, "is_connected", False):
-                    # Lazy connect on first action. calibrate=False: a teleop
-                    # session assumes the follower is already calibrated (same
-                    # contract as the policy-run path).
-                    self.robot.connect(False)
+                self._bring_up_robot()
             except Exception:
                 self._close_open_devices()
                 raise
