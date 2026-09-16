@@ -55,6 +55,12 @@ def _log_configuration_once() -> None:
 # Runtime cache for user-registered URDFs
 _URDF_REGISTRY: dict[str, str] = {}
 
+# Decorated variants of a bare registry key that :func:`resolve_model` accepts
+# (see the friction fix in its body). Shared with
+# :func:`registry_entry_key` so the ladder that RESOLVES a decorated name and
+# the ladder that reports WHICH ENTRY it resolved to cannot drift.
+_DECORATED_SUFFIXES = ("_default", "_sim", "_robot", "_arm")
+
 
 def register_urdf(data_config: str, urdf_path: str) -> None:
     """Register a URDF/MJCF file for a data_config name."""
@@ -97,7 +103,7 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
     # key is just "so101". Strip a small set of common trailing qualifiers and
     # retry once before giving up, so the natural guess resolves instead of
     # forcing a list_urdfs round-trip.
-    for suffix in ("_default", "_sim", "_robot", "_arm"):
+    for suffix in _DECORATED_SUFFIXES:
         if name.endswith(suffix):
             stripped = name[: -len(suffix)]
             if stripped:
@@ -110,6 +116,38 @@ def resolve_model(name: str, prefer_scene: bool = True) -> str | None:
                     )
                     return found
 
+    return None
+
+
+def registry_entry_key(name: str) -> str | None:
+    """The robot-registry key whose entry describes the model *name* resolves to.
+
+    :func:`resolve_model` accepts more strings than the registry has keys: an
+    alias, and a decorated variant of a key (``"so101_arm"`` loads so101's
+    model). So the string that named a model is not always the key its registry
+    entry - the ``gripper`` block, the joint labels, the ``robot_type`` a
+    recording declares - is filed under. This reports that key, following the
+    same ladder :func:`resolve_model` resolves through.
+
+    Args:
+        name: A robot name, alias, or ``data_config`` as a caller passed it.
+
+    Returns:
+        ``name`` itself when it names an entry (an alias does, since
+        :func:`get_robot` resolves one), the bare key when ``name`` is a
+        decorated variant of one, and ``None`` when it names no entry at all -
+        a file, or a URDF registered under a name the robot registry does not
+        carry.
+    """
+    if not name or not _HAS_REGISTRY:
+        return None
+    if get_robot(name):
+        return name
+    for suffix in _DECORATED_SUFFIXES:
+        if name.endswith(suffix):
+            stripped = name[: -len(suffix)]
+            if stripped and get_robot(stripped):
+                return stripped
     return None
 
 
