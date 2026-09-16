@@ -2669,7 +2669,10 @@ class RenderingMixin:
             # Warmup done (or capped) - capture loop is about to run. Unblock
             # the caller waiting in start_cameras_recording so the success
             # return coincides with the first captured frame, not the cold
-            # thread launch.
+            # thread launch. ``warmup_s`` is what start/status/stop report -
+            # on a machine where a fresh thread's GL context takes seconds to
+            # come up, it is the reason a short window captured nothing.
+            state["warmup_s"] = round(_time.monotonic() - state["started_mono"], 2)
             state["ready"].set()
 
             interval = 1.0 / fps
@@ -2745,7 +2748,8 @@ class RenderingMixin:
         # return after the timeout rather than blocking forever - the thread
         # keeps trying and ``get_cameras_recording_status`` exposes errors.
         _ready_timeout = 5.0 + 1.0 * len(names)
-        if not state["ready"].wait(timeout=_ready_timeout):
+        ready = state["ready"].wait(timeout=_ready_timeout)
+        if not ready:
             logger.warning(
                 "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
                 tag,
@@ -2755,7 +2759,34 @@ class RenderingMixin:
         msg = (
             f"Recording {len(names)} camera(s) @ {fps} FPS -> {out_dir}\n   tag: {tag}\n   cameras: {', '.join(names)}"
         )
-        return {"status": "success", "content": [{"text": msg}]}
+        # The warning above was log-only: the caller read the same "Recording
+        # N camera(s)" sentence whether the thread was capturing or still
+        # bringing up its render context, stopped a few seconds later and got
+        # "0 frames" beside status success. Say which it is.
+        if ready:
+            msg += f"\n   recorder warm after {state.get('warmup_s', 0.0):.1f}s - frames are being captured"
+        else:
+            msg += (
+                f"\n   NOT CAPTURING YET: the recorder thread is still warming its render context after "
+                f"{_ready_timeout:.1f}s (a fresh thread's GL context comes up slower than the main thread's). "
+                f"Frames start when it finishes - check get_cameras_recording_status shows frames before stopping."
+            )
+        return {
+            "status": "success",
+            "content": [
+                {"text": msg},
+                {
+                    "json": {
+                        "recording": tag,
+                        "cameras": list(names),
+                        "fps": fps,
+                        "output_dir": out_dir,
+                        "capturing": bool(ready),
+                        "warmup_s": state.get("warmup_s"),
+                    }
+                },
+            ],
+        }
 
     def stop_cameras_recording(self):
         """Stop capture, flush buffers to MP4 on the MAIN thread.
@@ -2950,10 +2981,27 @@ class RenderingMixin:
                     )
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
-            line = (
-                f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
-                f"({errors} errors)  -> {_os.path.basename(path)}"
-            )
+            if frames_buffer or flush_error:
+                line = (
+                    f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
+                    f"({errors} errors)  -> {_os.path.basename(path)}"
+                )
+            else:
+                # Nothing buffered means nothing encoded and no file: naming the
+                # MP4 here read as "an empty clip was written". Say why instead -
+                # a window shorter than the recorder's warmup is the common one.
+                warmup_s = state.get("warmup_s")
+                if state.get("thread") is None and state.get("ready") is None:
+                    why = f"no step() rendered into the synchronous recorder during the {elapsed:.1f}s window"
+                elif warmup_s is None:
+                    why = f"the recorder thread was still warming up for the whole {elapsed:.1f}s window"
+                elif errors:
+                    why = f"every render after the {warmup_s:.1f}s warmup failed ({errors} errors)"
+                else:
+                    why = (
+                        f"warmup took {warmup_s:.1f}s of the {elapsed:.1f}s window and no capture tick landed after it"
+                    )
+                line = f"   {cam:20s}     0 frames - no MP4 written ({why})"
             if frames_skipped:
                 line += f"  [{frames_skipped} skipped: size mismatch]"
             if flush_error:
@@ -2961,7 +3009,7 @@ class RenderingMixin:
             lines.append(line)
             artifact = {
                 "camera": cam,
-                "path": path,
+                "path": path if (frames_buffer or flush_error) else None,
                 "frames": frames_written,
                 "errors": errors,
                 "size_kb": size_kb,
@@ -3278,6 +3326,9 @@ class RenderingMixin:
         thread = state.get("thread")
         elapsed = _time.monotonic() - state["started_mono"]
         head = f"[{phase}] '{state['name']}' for {elapsed:.1f}s  @ {state['fps']} FPS"
+        ready_event = state.get("ready")  # the synchronous recorder has no warmup and no event
+        if phase == "recording" and ready_event is not None and not ready_event.is_set():
+            head += "  (recorder thread still warming up - no frames yet)"
         if phase == "stopping":
             head += "  (stop requested; the recorder thread has not exited)"
         elif phase == "unflushed":
