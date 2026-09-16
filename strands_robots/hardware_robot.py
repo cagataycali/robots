@@ -57,7 +57,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
-from strands_robots.policies.base import instruction_not_read_notice
+from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -2628,17 +2628,27 @@ class Robot(TeleopMixin, AgentTool):
             self._release_task()
             raise
 
+        # The policy is built on the executor thread after this returns, so
+        # the class the registry maps the provider to is what can be asked
+        # whether the instruction just echoed will be read at all.
+        start_notice = self._pending_instruction_notice(policy_provider)
         return {
             "status": "success",
             "content": [
                 {
                     "text": f"Task started: '{instruction}'\n"
                     f"Robot: {self.tool_name_str}\n"
-                    f"Use action='status' to check progress\n"
-                    f"Use action='stop' to interrupt"
+                    + (f"{start_notice}\n" if start_notice else "")
+                    + "Use action='status' to check progress\n"
+                    "Use action='stop' to interrupt"
                 }
             ],
         }
+
+    @staticmethod
+    def _pending_instruction_notice(policy_provider: str | None) -> str | None:
+        """The instruction-not-read notice for a provider that has not been built yet."""
+        return instruction_not_read_notice(provider_policy_class(policy_provider), pending=True)
 
     def run_policy(
         self,
@@ -2766,6 +2776,17 @@ class Robot(TeleopMixin, AgentTool):
         if self._task_state.error_message:
             status_text += f"Error: {self._task_state.error_message}\n"
 
+        # Same sentence the ``execute`` envelope carries, in the present tense
+        # while the task runs: a RUNNING / 18 steps report on a policy that
+        # never reads the instruction it is filed under otherwise says the task
+        # is being performed.
+        if self._task_state.status not in (TaskStatus.IDLE, TaskStatus.CONNECTING):
+            notice = instruction_not_read_notice(
+                self._task_state.policy, pending=self._task_state.status == TaskStatus.RUNNING
+            )
+            if notice:
+                status_text += f"{notice}\n"
+
         return {
             "status": "success",
             "content": [{"text": status_text}],
@@ -2833,6 +2854,11 @@ class Robot(TeleopMixin, AgentTool):
                     "text": f"Task stopped{stage}: '{self._task_state.instruction}'\n"
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps completed: {self._task_state.step_count}"
+                    + (
+                        f"\n{stop_notice}"
+                        if (stop_notice := instruction_not_read_notice(self._task_state.policy))
+                        else ""
+                    )
                 }
             ],
         }
