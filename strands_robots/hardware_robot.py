@@ -39,6 +39,7 @@ import functools
 import importlib
 import logging
 import math
+import os
 import pkgutil
 import shutil
 import threading
@@ -2730,9 +2731,108 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
-    def get_task_status(self) -> dict[str, Any]:
-        """Get current task execution status."""
+    def _device_facts(self) -> dict[str, Any]:
+        """Measured facts about the device, readable before it is connected.
 
+        The device is connected lazily, on the first task, so for most of a
+        robot's life an agent asks about it while nothing is open. What can be
+        read then: the port it was built for and whether that path exists on
+        this host, the cameras it was configured with, and the ``is_connected``
+        flag. What cannot: ``is_calibrated`` - lerobot reads it through the
+        bus and raises ``DeviceNotConnectedError`` before ``connect()`` - so
+        it is ``None`` until the device is connected, rather than a raise that
+        turned the whole :meth:`get_status` probe into its error shape for
+        every idle arm.
+
+        Returns:
+            ``port`` (``None`` when the driver has no port), ``port_present``
+            (``None`` when there is no port path to test), ``is_connected``,
+            ``is_calibrated`` (``None`` until connected), ``cameras`` (the
+            configured names) and ``cameras_connected`` (per live camera,
+            best-effort - a camera whose probe raises is omitted).
+        """
+        robot = self.robot
+        is_connected = bool(getattr(robot, "is_connected", False))
+        config = getattr(robot, "config", None)
+        port = getattr(config, "port", None)
+        port_present: bool | None = None
+        if isinstance(port, str) and port.startswith("/"):
+            port_present = os.path.exists(port)
+        is_calibrated: bool | None = None
+        if is_connected:
+            is_calibrated = bool(getattr(robot, "is_calibrated", True))
+        cameras: list[str] = []
+        configured = getattr(config, "cameras", None)
+        if isinstance(configured, dict):
+            cameras = list(configured.keys())
+        cameras_connected: dict[str, bool] = {}
+        live_cameras = getattr(robot, "cameras", None)
+        if isinstance(live_cameras, dict):
+            for name, camera in live_cameras.items():
+                try:
+                    cameras_connected[name] = bool(camera.is_connected)
+                except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
+                    logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
+        return {
+            "port": port,
+            "port_present": port_present,
+            "is_connected": is_connected,
+            "is_calibrated": is_calibrated,
+            "cameras": cameras,
+            "cameras_connected": cameras_connected,
+        }
+
+    @staticmethod
+    def _device_lines(facts: dict[str, Any]) -> str:
+        """The device facts as the lines ``status`` prints under the task state.
+
+        Args:
+            facts: The mapping :meth:`_device_facts` returns.
+
+        Returns:
+            Newline-terminated lines: the connection, the port (named as absent
+            when its path is not on this host), and the cameras.
+        """
+        if facts["is_connected"]:
+            calibrated = "calibrated" if facts["is_calibrated"] else "NOT calibrated"
+            device = f"Device: connected on {facts['port']} ({calibrated})"
+        else:
+            device = "Device: not connected (the bus is opened by the first task)"
+        lines = [device]
+        if facts["port_present"] is False:
+            lines.append(
+                f"Port: {facts['port']} is not present on this host - no serial device answers to that path, "
+                "so the first task will fail to connect. Check the cable and power; scan_serial_devices() "
+                "lists what this host does see."
+            )
+        elif facts["port"] is not None and not facts["is_connected"]:
+            lines.append(f"Port: {facts['port']} is present on this host")
+        if facts["cameras"]:
+            states = facts["cameras_connected"]
+            named = ", ".join(
+                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else n for n in facts["cameras"]
+            )
+            lines.append(f"Cameras: {named}")
+        else:
+            lines.append("Cameras: none configured")
+        return "\n".join(lines) + "\n"
+
+    def get_task_status(self) -> dict[str, Any]:
+        """Report the task state, then the device it would drive.
+
+        The task machine used to be the whole answer: an arm whose port does
+        not exist on this host read ``Robot Status: IDLE``, byte-identical to
+        a connected, healthy arm at rest, and the difference only surfaced as
+        a connect failure inside the first task. The measured facts were
+        already gathered by :meth:`get_status` for Python callers; the tool
+        action now prints the same facts under the task state and carries
+        them as a ``json`` block.
+
+        Returns:
+            ``status=success`` with the task state on the first line (as
+            before), the device lines from :meth:`_device_facts` after it,
+            and a second content block holding those facts as JSON.
+        """
         # Update duration for running tasks
         if self._task_state.status == TaskStatus.RUNNING:
             self._task_state.duration = time.monotonic() - self._task_state.start_mono
@@ -2752,9 +2852,15 @@ class Robot(TeleopMixin, AgentTool):
         if self._task_state.error_message:
             status_text += f"Error: {self._task_state.error_message}\n"
 
+        try:
+            facts = self._device_facts()
+        except Exception as e:  # noqa: BLE001 - the task state must still be reported
+            logger.debug("%s device facts unavailable: %s", self.tool_name_str, e)
+            return {"status": "success", "content": [{"text": status_text}]}
+        status_text += self._device_lines(facts)
         return {
             "status": "success",
-            "content": [{"text": status_text}],
+            "content": [{"text": status_text}, {"json": facts}],
         }
 
     def stop_task(self) -> dict[str, Any]:
@@ -3255,45 +3361,12 @@ class Robot(TeleopMixin, AgentTool):
             supervising agent reads a verdict instead of taking an exception.
         """
         try:
-            # Get robot connection status
-            is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
-            is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
-
-            # The configured enumeration: which image streams the device was
-            # asked for. Says nothing about whether any of them came up.
-            camera_status = []
-            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
-                for name in self.robot.config.cameras.keys():
-                    camera_status.append(name)
-
-            # The measured reading, one entry per live camera. The camera
-            # objects hang off the device beside the config, and each carries
-            # the ``is_connected`` that the device's own aggregate is built
-            # from - so reading them here is what turns an aggregate ``False``
-            # into a named culprit instead of a set to guess from.
-            cameras_connected: dict[str, bool] = {}
-            live_cameras = getattr(self.robot, "cameras", None)
-            if isinstance(live_cameras, dict):
-                for name, camera in live_cameras.items():
-                    try:
-                        cameras_connected[name] = bool(camera.is_connected)
-                    except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
-                        # Breadth is the camera backend's, not ours: the default
-                        # OpenCV camera answers through ``cv2.VideoCapture``, and
-                        # ``cv2.error`` subclasses ``Exception`` directly, so any
-                        # narrower tuple would let the shipped camera through.
-                        logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
-
-            # Build status dict
             status_data = {
                 "robot_name": self.tool_name_str,
                 "robot_type": getattr(self.robot, "robot_type", self.robot.name),
                 "robot_info": str(self.robot),
                 "data_config": self.data_config,
-                "is_connected": is_connected,
-                "is_calibrated": is_calibrated,
-                "cameras": camera_status,
-                "cameras_connected": cameras_connected,
+                **self._device_facts(),
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
                 if getattr(self, "_ros_bridge", None) is not None
