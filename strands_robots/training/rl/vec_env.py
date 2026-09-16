@@ -27,12 +27,17 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
-import torch
-
-from strands_robots.utils import positive_count_error
+from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch
+
     from strands_robots.training.rl.env import SimEnv
+else:
+    # torch arrives with the ``[rl]`` extra. Bound through ``require_optional`` so
+    # an install without it is refused with that name instead of the
+    # interpreter's ``No module named 'torch'`` (AGENTS.md convention 7).
+    torch = require_optional("torch", extra="rl", purpose="from-scratch RL training (strands_robots.training.rl)")
 
 
 class VecSimEnv:

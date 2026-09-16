@@ -1791,6 +1791,31 @@ class Robot(TeleopMixin, AgentTool):
         """
         return self._stop_requested.is_set() or self._shutdown_event.is_set()
 
+    def _settle_task_duration(self) -> None:
+        """Write how long the task that is ending here actually ran.
+
+        ``duration`` is the figure every reply and every later ``status`` call
+        reports for a finished task, and it is reset to ``0.0`` when a task
+        starts. Only two writers ever settled it: the rollout's own loop when
+        it ran to its budget, and :meth:`get_task_status` while the task is
+        RUNNING. Every OTHER way a task can end - stopped from outside,
+        stopped during bring-up, a connect that failed, a policy that would
+        not initialize, a rollout that raised - left the reset value in place,
+        so the task reported ``0.0s`` beside a non-zero step count and kept
+        reporting it for good. Measured on a rollout that had applied 39
+        commands to the servo bus: ``error: 39 steps in 0.0s``.
+
+        So this is called wherever a terminal state is recorded, and it owns
+        the arithmetic that :meth:`get_task_status` also needs - one formula,
+        so a stop and the status call after it cannot disagree.
+
+        A ``start_mono`` of ``0.0`` means no task has begun (it is the
+        dataclass default), and is left alone: subtracting it would report the
+        seconds since boot as the duration of a task that never ran.
+        """
+        if self._task_state.start_mono:
+            self._task_state.duration = time.monotonic() - self._task_state.start_mono
+
     def _honor_stop_request(self) -> bool:
         """Record a latched stop or shutdown as the task's terminal state.
 
@@ -1821,6 +1846,7 @@ class Robot(TeleopMixin, AgentTool):
         if not self._rollout_stop_latched:
             return False
         self._task_state.status = TaskStatus.STOPPED
+        self._settle_task_duration()
         logger.info(
             "%s: task stopped during bring-up: '%s'",
             self.tool_name_str,
@@ -1887,6 +1913,7 @@ class Robot(TeleopMixin, AgentTool):
             if not connected:
                 self._task_state.status = TaskStatus.ERROR
                 self._task_state.error_message = connect_error or f"Failed to connect to {self.tool_name_str}"
+                self._settle_task_duration()
                 return
 
             # A stop pressed during the bring-up window above (a motors-bus
@@ -1910,6 +1937,7 @@ class Robot(TeleopMixin, AgentTool):
                     policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
                 except Exception as e:
                     self._task_state.status = TaskStatus.ERROR
+                    self._settle_task_duration()
                     released = await self._release_uncommanded_arm(connected_here)
                     self._task_state.error_message = " ".join(p for p in (str(e), released) if p)
                     logger.error(f"Task execution failed: {e}")
@@ -1918,6 +1946,7 @@ class Robot(TeleopMixin, AgentTool):
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
                 self._task_state.status = TaskStatus.ERROR
+                self._settle_task_duration()
                 released = await self._release_uncommanded_arm(connected_here)
                 self._task_state.error_message = " ".join(p for p in ("Failed to initialize policy", released) if p)
                 return
@@ -2077,6 +2106,7 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Task execution failed: {e}")
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
+            self._settle_task_duration()
 
     @property
     def _task_message_label(self) -> str:
@@ -3114,7 +3144,7 @@ class Robot(TeleopMixin, AgentTool):
         """
         # Update duration for running tasks
         if self._task_state.status == TaskStatus.RUNNING:
-            self._task_state.duration = time.monotonic() - self._task_state.start_mono
+            self._settle_task_duration()
 
         status_text = f"Robot Status: {self._task_state.status.value.upper()}\n"
 
@@ -3189,6 +3219,7 @@ class Robot(TeleopMixin, AgentTool):
 
         # Signal task to stop
         self._task_state.status = TaskStatus.STOPPED
+        self._settle_task_duration()
 
         # Cancel future if it exists
         if self._task_state.task_future:
