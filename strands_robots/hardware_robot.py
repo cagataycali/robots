@@ -2804,6 +2804,15 @@ class Robot(TeleopMixin, AgentTool):
 
         # Signal task to stop
         self._task_state.status = TaskStatus.STOPPED
+        # The elapsed time is settled here, at the moment of the stop. The
+        # rollout writes ``duration`` only when its loop ends on its own, and
+        # ``status`` only while the task is RUNNING - so a task stopped from
+        # outside kept whatever value was last written: 0.0 s when no status
+        # call had happened, and that stale figure was then reported as the
+        # "Total Duration" of the stopped task by every later status call.
+        # Measured: "Task stopped … Duration: 0.0s / Steps completed: 24".
+        if self._task_state.start_mono:
+            self._task_state.duration = time.monotonic() - self._task_state.start_mono
 
         # Cancel future if it exists
         if self._task_state.task_future:
