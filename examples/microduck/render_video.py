@@ -19,8 +19,10 @@ reads far better than the fixed "default" cam. It talks to the underlying
 ``sim.mj_data``); if that offscreen GL path is unreachable, it falls back to
 ``sim.render(camera_name=...)``.
 
-Encodes an MP4 (h264 / yuv420p) with imageio + imageio-ffmpeg, and optionally a
-looping GIF. Import-clean and headless.
+Encodes an MP4 (h264 / yuv420p) - and optionally a looping GIF - through
+:func:`strands_robots.rendering.encode_clip`, the encoder every recorder in the
+package writes with, so this clip and a ``run_policy(video=...)`` clip are the
+same bytes for the same frames. Import-clean and headless.
 
 Examples::
 
@@ -96,9 +98,7 @@ def _load_mujoco():
 
         return mujoco
     except ImportError as exc:  # pragma: no cover - dependency guard
-        raise SystemExit(
-            "mujoco is required. Install with: pip install 'strands-robots[sim-mujoco]'"
-        ) from exc
+        raise SystemExit("mujoco is required. Install with: pip install 'strands-robots[sim-mujoco]'") from exc
 
 
 def _make_tracking_camera(mujoco, model, body_name, distance, azimuth, elevation):
@@ -117,40 +117,43 @@ def _make_tracking_camera(mujoco, model, body_name, distance, azimuth, elevation
 
 
 def _encode(frames, out_path, fps, gif_path=None, gif_fps=13, gif_width=480):
-    """Write frames to an MP4 (h264/yuv420p); optionally a looping GIF."""
-    import imageio.v2 as imageio  # noqa: PLC0415
+    """Write frames to an MP4 through the package encoder; optionally a looping GIF.
 
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-    imageio.mimwrite(
-        out_path,
-        frames,
-        fps=fps,
-        codec="libx264",
-        quality=8,
-        macro_block_size=None,  # allow arbitrary WxH (no forced /16)
-        ffmpeg_params=["-pix_fmt", "yuv420p"],
-    )
-    print(f"  wrote mp4 {out_path} ({len(frames)} frames @ {fps} fps)")
+    :func:`~strands_robots.rendering.encode_clip` is what ``run_policy(video=...)``
+    and every recorder in the package write with (libx264, yuv420p, quality 8,
+    exact frame size). Going through it rather than a private ``imageio`` call
+    keeps this showcase on the encoder the release ships - and on its refusals:
+    a frame rate that is not a positive whole number is named here, not
+    discovered as a clip that plays at the wrong speed.
+    """
+    from strands_robots.rendering import encode_clip  # noqa: PLC0415
+
+    out = encode_clip(frames, out_path, fps=fps, quality=8)
+    print(f"  wrote mp4 {out} ({len(frames)} frames @ {fps} fps)")
 
     if gif_path:
         _encode_gif(frames, gif_path, gif_fps, gif_width)
 
 
-def _encode_gif(frames, gif_path, gif_fps, gif_width):
-    """Write a compact looping GIF, downscaled to ``gif_width`` px wide."""
-    import imageio.v2 as imageio  # noqa: PLC0415
-
-    os.makedirs(os.path.dirname(os.path.abspath(gif_path)) or ".", exist_ok=True)
+def _downscale(frames, width):
+    """Nearest-neighbour downscale to ``width`` px wide (no PIL/cv2 needed)."""
     h, w = frames[0].shape[:2]
-    scale = gif_width / float(w)
-    new_w, new_h = gif_width, max(1, int(round(h * scale)))
-    # Nearest-neighbour subsample keeps it dependency-light (no PIL/cv2 needed).
+    scale = width / float(w)
+    new_w, new_h = width, max(1, int(round(h * scale)))
     ys = (np.linspace(0, h - 1, new_h)).astype(int)
     xs = (np.linspace(0, w - 1, new_w)).astype(int)
-    small = [f[ys][:, xs] for f in frames]
-    imageio.mimwrite(gif_path, small, fps=gif_fps, loop=0)
-    size_mb = os.path.getsize(gif_path) / 1e6
-    print(f"  wrote gif {gif_path} ({new_w}x{new_h}, {size_mb:.2f} MB)")
+    return [f[ys][:, xs] for f in frames]
+
+
+def _encode_gif(frames, gif_path, gif_fps, gif_width):
+    """Write a compact looping GIF, downscaled to ``gif_width`` px wide."""
+    from strands_robots.rendering import encode_clip  # noqa: PLC0415
+
+    small = _downscale(frames, gif_width)
+    out = encode_clip(small, gif_path, fps=gif_fps)
+    new_h, new_w = small[0].shape[:2]
+    size_mb = os.path.getsize(out) / 1e6
+    print(f"  wrote gif {out} ({new_w}x{new_h}, {size_mb:.2f} MB)")
 
 
 def _resolve_scene(name: str) -> str:
@@ -375,9 +378,7 @@ async def _rollout(args):
     if direct:
         try:
             renderer = mujoco.Renderer(model, args.height, args.width)
-            cam = _make_tracking_camera(
-                mujoco, model, BASE_BODY, args.distance, args.azimuth, args.elevation
-            )
+            cam = _make_tracking_camera(mujoco, model, BASE_BODY, args.distance, args.azimuth, args.elevation)
             # smoke-render one frame to confirm a GL context exists
             renderer.update_scene(data, camera=cam)
             _ = renderer.render()
@@ -466,9 +467,9 @@ def main() -> None:
     ap.add_argument("--camera", default="track", help="'track' (body-tracking) or 'default'")
     ap.add_argument("--out", default="/tmp/microduck_viz/microduck.mp4")
     ap.add_argument("--gif", default=None, help="also write a looping GIF here")
-    ap.add_argument("--gif-fps", type=float, default=13.0)
+    ap.add_argument("--gif-fps", type=int, default=13, help="GIF playback rate (whole frames per second)")
     ap.add_argument("--gif-width", type=int, default=480)
-    ap.add_argument("--fps", type=float, default=50.0)
+    ap.add_argument("--fps", type=int, default=50, help="MP4 playback rate (whole frames per second)")
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
     ap.add_argument("--distance", type=float, default=1.4, help="tracking cam distance")
