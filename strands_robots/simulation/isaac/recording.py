@@ -61,6 +61,7 @@ from strands_robots.simulation.recording import (
     camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
+    recorded_cameras_line,
     undriven_robot_state,
 )
 from strands_robots.utils import camera_schema_key, name_list_error
@@ -356,6 +357,15 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 # Optional camera scoping (parity with MuJoCo/Newton). Names
                 # may be raw (``arm0/wrist``) or schema-safe (``arm0__wrist``);
                 # an unknown name fails loudly listing what exists.
+                # Scene camera name -> dataset column key, in dataset column
+                # order. The scene's own camera registry - not recording_cameras
+                # - is the scene truth: _collect_recording_schema returns no
+                # recording camera under render_mode='headless' even though the
+                # scene HAS cameras, and "no camera in the scene, call
+                # add_camera" would be a false errand there.
+                recorded_cameras = {src: safe for src, safe, _w, _h in recording_cameras}
+                scene_cameras = list(self._cameras)
+
                 if cameras is not None:
                     raw_to_safe = {src: safe for src, safe, _w, _h in recording_cameras}
                     safe_to_raw = {safe: src for src, safe in raw_to_safe.items()}
@@ -392,6 +402,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                     camera_keys = selected_safe
                     camera_dims = {safe: camera_dims[safe] for safe in selected_safe}
                     recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
+                    recorded_cameras = {safe_to_raw[safe]: safe for safe in selected_safe}
 
                 state["recording_cameras"] = recording_cameras
 
@@ -438,7 +449,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                         {
                             "text": (
                                 f"Recording Isaac scene to LeRobotDataset: {repo_id}\n"
-                                f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
+                                f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
                                 f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                                 f"Run policies to capture frames, then stop_recording to save the episode"
                             )
