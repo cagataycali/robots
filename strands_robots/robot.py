@@ -45,6 +45,7 @@ import logging
 import os
 import re
 import threading
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from strands_robots._mesh_switch import mesh_env_request
@@ -246,6 +247,51 @@ def _tool_name_error(tool_name: Any) -> str | None:
             "Two robots in one Agent need two distinct names."
         )
     return None
+
+
+def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, requested_mode: str) -> None:
+    """Refuse a hardware-only keyword on a simulated robot, naming the mode.
+
+    The sim backend drops any keyword it does not own, by design, so one call
+    can carry another backend's options (``num_envs``, ``device``). That
+    tolerance also swallowed ``port=`` - the one keyword that only ever means
+    "a physical robot": ``Robot("so101", port="/dev/cu.usbmodem…")`` with
+    ``mode="real"`` forgotten built a simulator under ``status=success`` while
+    the arm on the desk stayed still. The real branch already reports the
+    sim-only spawn keywords it cannot honour; this is the mirror. The list is
+    the hardware class's own forwardable set, so it cannot drift from it.
+
+    What the set has in common is the driver, not the physicality: ``mock=``
+    asks for a mocked servo bus and ``is_simulation=`` points the lerobot
+    driver at a simulator, so neither "describes a physical robot" - but every
+    one of them configures a hardware driver that ``mode="sim"`` never builds,
+    and ``mode='real'`` is the remedy for all of them alike.
+
+    Args:
+        kwargs: The caller's residual keyword arguments.
+        canonical: Canonical robot name, for the message.
+        requested_mode: The mode as the caller wrote it (``"sim"`` or
+            ``"auto"``), so the message says how this became a simulation.
+
+    Raises:
+        TypeError: naming every hardware keyword supplied and the remedy.
+    """
+    from strands_robots.hardware_robot import _FORWARDABLE_KWARGS
+
+    supplied = [key for key in _FORWARDABLE_KWARGS if key in kwargs]
+    if not supplied:
+        return
+    names = ", ".join(f"{key}=" for key in supplied)
+    how = (
+        "mode='auto' found no servo bus and fell back to sim"
+        if requested_mode == "auto"
+        else "mode='sim' is the default"
+    )
+    raise TypeError(
+        f"Robot({canonical!r}) is a simulation ({how}) and would ignore {names}: "
+        "these configure a hardware driver, which a simulation does not have. "
+        "Add mode='real' to drive the hardware, or drop them to simulate."
+    )
 
 
 def _build_native_driver(
@@ -557,6 +603,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     _validate_known_robot(canonical, name, urdf_path)
 
     mode = _normalize_mode(mode)
+    requested_mode = mode
 
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
@@ -617,6 +664,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # option (``default_timestep``, ``num_envs``) is untouched and the
         # backend screens it against its own names in turn.
         reject_misspelled_kwargs(kwargs, own_keyword_names(Robot), owner="Robot(mode='sim')")
+        _reject_hardware_kwargs_in_sim(kwargs, canonical, requested_mode)
 
         # Resolve the backend through create_simulation - the single source of
         # truth for backend selection (built-in registry + entry-point plugins +

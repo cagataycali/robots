@@ -49,7 +49,7 @@ class TestObstructionText:
             }
         )
         assert "the robot is in contact: 'ground' <-> 'so100/Fixed_Jaw/geom_18' (d=-0.0002 m) and 4 more" in text
-        assert text.endswith("Move the target away from what it touches, or loosen tol.")
+        assert text.endswith("Clear what it touches, or command a value that avoids it - or loosen tol.")
 
     def test_joints_at_limit_are_named_with_side_and_bound(self) -> None:
         text = _text(
@@ -60,7 +60,7 @@ class TestObstructionText:
             }
         )
         assert "commanded joint(s) at a limit: 'arm/elbow' at its upper limit (1.5699 vs 1.5700)" in text
-        assert "Choose a target that joint can reach inside its range, or loosen tol." in text
+        assert "Command a value that joint can reach inside its range, or loosen tol." in text
 
     def test_nothing_visible_points_at_max_steps(self) -> None:
         text = _text({"contacts": [], "contacts_total": 0, "joints_at_limit": []})
@@ -202,7 +202,7 @@ class TestMoveToNamesTheContact:
         assert "the robot is in contact:" in text and "'arm/jaw' <-> 'arm/wall_geom'" in text
         # One line per geom pair even when MuJoCo reports several contact points for it.
         assert len(pairs) == len(obstruction["contacts"])
-        assert "Move the target away from what it touches" in text
+        assert "Clear what it touches, or command a value that avoids it" in text
 
     def test_the_scoped_subtree_is_the_arm_only(self, arm_with) -> None:
         import mujoco as mj

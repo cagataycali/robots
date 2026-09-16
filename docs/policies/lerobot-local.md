@@ -296,6 +296,34 @@ provides [...]. Either: (a) rename your sim cameras to one of ['front', 'wrist']
 ..., or (b) pass policy_config={'camera_key_map': {...}} ...
 ```
 
+### When the checkpoint declares different image features
+
+An embodiment's rename targets are a *guess* about a checkpoint's feature names,
+and a pretrained checkpoint records its own `input_features`. `so101` feeds
+`observation.images.image` + `.../wrist_image`; `lerobot/smolvla_base` declares
+`observation.images.camera1..3`. No camera name can satisfy a target the model
+does not declare, so the pre-flight check reads the checkpoint's declared
+features (from its `config.json`, before the weight download) and reports that
+mismatch instead of asking for a camera rename that cannot help:
+
+```text
+Embodiment 'so101' feeds image feature(s) ['observation.images.image',
+'observation.images.wrist_image'], which 'lerobot/smolvla_base' does not declare
+- it declares ['observation.images.camera1', 'observation.images.camera2',
+'observation.images.camera3']. ... Route the features it does declare instead:
+policy_config={'obs_rename_override': {'front': None, 'wrist': None,
+'camera1': 'observation.images.camera1', ...}} - a falsy value drops a rename
+this checkpoint cannot accept.
+```
+
+Both halves are needed: the drops alone leave the declarative path with no
+camera routing, and the model then raises "All image features are missing from
+the batch". Without this check the mismatch was reported after the download, as
+`EmbodimentMap.validate` rejecting the rename - at which point the whole
+processor pipeline is discarded, **including the embodiment's `state_units` /
+`action_units` conversion**, so a sim in radians silently reached a
+degrees-trained checkpoint as radians under a successful-looking run.
+
 A single-camera checkpoint needs no embodiment: declare the joint names with
 `set_robot_state_keys([...])` and the policy synthesizes a state-only embodiment
 that routes the one declared image feature to the one camera.
