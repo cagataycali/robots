@@ -9,7 +9,8 @@ something the page never installs was covered by "everything else".
   PyPI - it ships with a system ROS 2 install - so on a machine with no sourced
   distro the constructor raises ``ImportError`` naming
   ``source /opt/ros/<distro>/setup.bash``.
-* Step 4 is ``follower.mesh.tell(follower.mesh.peers[0]["peer_id"], ...)``. The
+* Step 4 hands a mesh peer a task: it subscripts ``follower.mesh.peers[0]`` for
+  a peer id and calls ``follower.mesh.tell(...)`` with it. The
   mesh transport comes from the ``[mesh]`` extra (``eclipse-zenoh``), which the
   install command at the top of the page does not pull in, and the mesh also
   declines to start until a posture is chosen (``STRANDS_MESH_LOCAL_DEV`` or an
@@ -113,7 +114,15 @@ def _requirements(extra: str, seen: frozenset[str] = frozenset()) -> set[str]:
 @pytest.mark.parametrize(
     ("step", "snippet"),
     [
-        (4, 'follower.mesh.tell(follower.mesh.peers[0]["peer_id"]'),
+        # Step 4's two claims, one case each, so a page that drops one reports
+        # which: it is a mesh call - what needs the ``[mesh]`` transport - and
+        # it subscripts the peer list - what raises ``IndexError`` when the
+        # mesh never started. Neither claim is about *where* the peer id is
+        # spelled. Binding it to a local name first is a formatting choice the
+        # paragraph says nothing about, and pinning one arrangement of it is
+        # what left this cell asserting a one-liner the page had since split.
+        (4, "mesh.tell("),
+        (4, "mesh.peers[0]"),
         (5, "Simulation(ros2_bridge=True)"),
     ],
 )
