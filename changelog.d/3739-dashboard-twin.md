@@ -9,3 +9,7 @@ snapshot with one binary frame of `geom_xpos|geom_xmat` rows, and
 notice so the page works on a LAN with no internet) sets each object's matrix
 from it. No physics runs in the browser and no MJCF is parsed there: the twin
 shows exactly what MuJoCo computed, for every robot the engine can load.
+
+The frame's row width is published as `pose_row_floats` and owned by
+`scene.POSE_ROW_FLOATS`, so the packer and `twin.js` are graded against one
+declaration rather than each restating it.
