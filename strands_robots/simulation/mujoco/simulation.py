@@ -6385,6 +6385,16 @@ class MuJoCoSimEngine(
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
 
+        # The same per-robot gate ``start_policy`` and every joint write pass.
+        # Without it a second rollout on a robot another thread is already
+        # driving ran concurrently - two policies writing one ``ctrl`` slice -
+        # and its ``finally`` then lowered the claim the first one still held.
+        # The driving thread of a rollout in flight is exempt (see
+        # ``_rollouts_driven_by_other_threads``), so ``start_policy``'s worker,
+        # which reaches this body through ``_drive_rollout``, is not refused.
+        if err := self._require_no_running_policy("run_policy", robot_name=robot_name):
+            return err
+
         # The blocking entry runs on the caller's own thread, so claiming the
         # robot here is synchronous with the call and opens no window.
         self._announce_rollout(robot_name)
