@@ -276,16 +276,11 @@ class RecordingMixin(DatasetRecordingMixin):
         self._world._backend_state["recording_task"] = task
         self._world._backend_state.pop("step_recording_due", None)
 
-        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
-        # Delegates to the same resolver DatasetRecorder.create() uses so the
-        # facade and the low-level recorder agree on where a dataset lives
-        # (honouring $HF_LEROBOT_HOME).
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        # Stash the resolved root so verify_dataset_episodes can read the parquet
-        # after stop_recording has finalized the dataset and dropped the recorder.
-        self._world._backend_state["last_dataset_root"] = str(dataset_dir)
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic)
+        # and stash it with the id it is recorded under, so the consumers that
+        # run after the recorder is dropped can find the parquet and a reader
+        # handed only that id can find a custom directory.
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             # Collect joint names from every robot. When the scene contains
@@ -524,9 +519,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names, fps=fps)
-                self._world._backend_state["dataset_recorder"] = resumed
+                recorder = resumed
             else:
-                self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                recorder = _DatasetRecorder.create(
                     repo_id=repo_id,
                     fps=fps,
                     robot_type=robot_type,
@@ -541,12 +536,14 @@ class RecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            resumed_line = self._arm_dataset_recorder(self._world._backend_state, recorder, resumed=resume_existing)
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
+                            f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Frames are captured by a policy rollout - run_policy (one call per "

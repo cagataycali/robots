@@ -132,7 +132,8 @@ def test_send_without_payload_errors(fake_serial_factory):
     result = serial_tool(action="send", port="/dev/ttyACM0")
     assert result["status"] == "error"
     assert "No data or hex_data" in _texts(result)
-    assert created[0].closed
+    # Refused before the gate and before the port is opened: nothing to close.
+    assert created == []
 
 
 def test_read_formats_hex_and_ascii(fake_serial_factory):
@@ -194,7 +195,8 @@ def test_feetech_position_requires_args(fake_serial_factory):
     result = serial_tool(action="feetech_position", port="/dev/ttyACM0", motor_id=1)
     assert result["status"] == "error"
     assert "motor_id and position required" in _texts(result)
-    assert created[0].closed
+    # Refused before the gate and before the port is opened: nothing to close.
+    assert created == []
 
 
 def test_feetech_velocity_builds_packet(fake_serial_factory):
