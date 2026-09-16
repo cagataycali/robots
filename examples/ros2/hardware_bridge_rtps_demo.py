@@ -8,6 +8,11 @@ cyclonedds (a single pip wheel) instead of rclpy, so it runs with NO sourced
 ROS 2 distro:
 
     pip install "strands-robots[ros2]"   # pulls cyclonedds; nothing else needed
+                                         # on macOS / Windows / Linux x86_64.
+                                         # Linux aarch64 (Jetson) has no
+                                         # cyclonedds wheel and needs a Cyclone
+                                         # DDS C install (CYCLONEDDS_HOME) - see
+                                         # docs/rtps-integration.md
 
 The two transports emit byte-identical topics, so a real ROS 2 node, rviz, or
 the stock `ros2` CLI cannot tell this apart from the rclpy bridge or a real

@@ -61,13 +61,14 @@ from strands_robots import Robot
 from strands_robots import train_policy
 
 # 1. TELEOPERATE a real SO-101 with its leader arm and RECORD demos.
-follower = Robot("so101", mode="real", port="/dev/ttyACM0",
-                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
-                 mesh=True)
-follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
-Agent(tools=[follower])(
-    "start_recording(repo_id='me/pick', root='/tmp/pick', fps=30, "
-    "task='pick up the cube'); teleoperate for 60s; stop_recording"
+#    Recording a real arm is lerobot-record; the lerobot_teleoperate tool runs
+#    it as a session. Robot(mode="real") drives policies (execute, start,
+#    status, stop) - it neither teleoperates nor records from an agent.
+from strands_robots import lerobot_teleoperate
+Agent(tools=[lerobot_teleoperate])(
+    "start a recording session: follower so101_follower on /dev/ttyACM0 with "
+    "camera front at /dev/video0, leader so101_leader on /dev/ttyACM1, dataset "
+    "me/pick under /tmp/pick, one 60 s episode, task 'pick up the cube'"
 )
 
 # 2. POST-TUNE a policy on those demos (LoRA fine-tune; GPU box).
@@ -76,6 +77,9 @@ train_policy(action="train", provider="lerobot_local",
              output_dir="/tmp/pick_ckpt", method="lora", steps=20000)
 
 # 3. RUN the tuned checkpoint - same policy on a MuJoCo twin AND the real arm.
+follower = Robot("so101", mode="real", port="/dev/ttyACM0",
+                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}},
+                 mesh=True)
 twin = Robot("so101")
 twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
                 policy_config={"pretrained_name_or_path": "/tmp/pick_ckpt"}, duration=10.0)

@@ -22,10 +22,12 @@ package:
 ```bash
 git clone https://github.com/NVlabs/curobo.git
 pip install -e ./curobo
-pip install "strands-robots[curobo]"   # extra is currently empty;
-                                       # reserved for a future stable
-                                       # cuRobo PyPI wheel
 ```
+
+The `[curobo]` extra exists but is empty - reserved for a future stable cuRobo
+PyPI wheel - so `pip install "strands-robots[curobo]"` exits 0 and installs
+nothing. Constructing a `CuroboPolicy` without cuRobo raises an `ImportError`
+that carries the checkout recipe above rather than that extra.
 
 This policy targets cuRobo's restructured `main` API (`MotionPlanner` /
 `MotionPlannerCfg` / `DeviceCfg` / `JointState` / `GoalToolPose`). The

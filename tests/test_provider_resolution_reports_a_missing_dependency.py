@@ -179,18 +179,6 @@ def plant(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> Any:
     importlib.invalidate_caches()
 
 
-def _top_level_imports(path: pathlib.Path) -> set[str]:
-    """Return the top-level packages ``path`` imports at module scope."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    names: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            names |= {a.name.split(".")[0] for a in node.names}
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            names.add(node.module.split(".")[0])
-    return names
-
-
 def _dependency_is_named(error: BaseException, dependency: str) -> bool:
     """Whether ``dependency`` is named anywhere in the raised error's chain.
 
@@ -369,7 +357,12 @@ class TestTheShippedTreeCanReachThisFailure:
         package = _PACKAGE_ROOT / "training" / "rl" / "__init__.py"
         assert package.is_file(), f"the auto-discoverable module is gone: {package}"
         assert "imports ``torch``" in package.read_text(encoding="utf-8")
-        assert "torch" in _top_level_imports(_PACKAGE_ROOT / "training" / "rl" / "env.py")
+        # ``env.py`` binds torch at module scope through ``require_optional("torch",
+        # extra="rl", ...)``, so the module is still present and unimportable
+        # without the dependency - now refused with the extra's name rather than
+        # the interpreter's bare ``ModuleNotFoundError``.
+        env_text = (_PACKAGE_ROOT / "training" / "rl" / "env.py").read_text(encoding="utf-8")
+        assert 'require_optional("torch", extra="rl"' in env_text, env_text[:400]
 
     def test_that_dependency_is_declared_as_an_extra_rather_than_required(self) -> None:
         """So an install really can have the module and not the dependency."""

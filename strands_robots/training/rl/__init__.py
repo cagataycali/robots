@@ -22,7 +22,12 @@ Public surface:
 
 Importing this package imports ``torch`` (via the env / algo modules), so it is
 not imported by ``strands_robots.training.__init__``; the ``ppo`` provider is
-registered there through a lazy loader instead.
+registered there through a lazy loader instead. torch arrives with the ``[rl]``
+extra, and every module here that needs it binds it through
+``require_optional(..., extra="rl")``, so an install without the extra is
+refused with that name at whichever door it enters - this package, a submodule
+or ``create_trainer("ppo")`` - instead of the interpreter's ``No module named
+'torch'``.
 """
 
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
