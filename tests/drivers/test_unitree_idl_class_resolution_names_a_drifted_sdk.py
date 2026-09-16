@@ -83,11 +83,19 @@ class TestTheResolverNamesWhatItCouldNotResolve:
 
     @pytest.mark.parametrize("driver_module", _RESOLVERS)
     def test_a_module_the_sdk_does_not_ship_is_named(self, driver_module: Any) -> None:
-        """An absent module is reported with the import error behind it."""
+        """An absent module is reported with the import error, the module asked for, and the remedy.
+
+        Every path the resolver sees is a ``unitree_sdk2py`` IDL module, so an
+        absent one is the vendor SDK absent or half-installed - the reason
+        carries the install recipe (:func:`sdk_missing`) and still names the
+        module this call was resolving, which on a partial install is not
+        always the deepest module the exception names.
+        """
         reason = driver_module._resolve_message_class((_MISSING_MODULE, _PLAN_CLASS))
 
         assert isinstance(reason, str)
-        assert reason.startswith(f"cannot import {_MISSING_MODULE}: ")
+        assert reason.startswith("unitree_sdk2py is not installed: ")
+        assert f"(resolving {_MISSING_MODULE})" in reason
 
     @pytest.mark.parametrize("driver_module", _RESOLVERS)
     def test_a_class_the_module_no_longer_carries_is_named(
@@ -183,7 +191,8 @@ class TestBringUpReportsTheReasonInsteadOfRaising:
         if renamed:
             assert result == f"{module_path} has no {class_name}"
         else:
-            assert result.startswith(f"cannot import {module_path}: ")
+            assert result.startswith("unitree_sdk2py is not installed: ")
+            assert f"(resolving {module_path})" in result
         assert driver._connect_error == result
         assert driver._connected is False
         assert driver._subs is None
