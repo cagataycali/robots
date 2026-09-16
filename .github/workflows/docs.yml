@@ -42,8 +42,11 @@ jobs:
         with:
           path: site
 
-  # Deploy to GitHub Pages only from main.
+  # Deploy to GitHub Pages only from main. The push trigger is already bound
+  # to main, but workflow_dispatch runs on whatever ref dispatched it, so
+  # without this gate a dispatch from a topic branch publishes that branch.
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:

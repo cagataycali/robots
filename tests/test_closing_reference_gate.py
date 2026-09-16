@@ -354,8 +354,9 @@ def test_a_lookup_failure_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 # workflow pin in this suite reads one: ``pyyaml`` is an optional dependency
 # here, so a pin that imports it becomes a pin that skips.
 # --------------------------------------------------------------------------
-_CI_WORKFLOW = _ROOT / ".github" / "workflows" / "ci.yml"
-_TEST_LINT_WORKFLOW = _ROOT / ".github" / "workflows" / "test-lint.yml"
+_WORKFLOW_DIR = _ROOT / ".github" / "workflows"
+_CI_WORKFLOW = _WORKFLOW_DIR / "ci.yml"
+_TEST_LINT_WORKFLOW = _WORKFLOW_DIR / "test-lint.yml"
 _GUARDS = _ROOT / "scripts" / "ci_guards.py"
 
 
@@ -381,6 +382,24 @@ def test_the_gate_asks_for_the_scope_the_link_set_needs() -> None:
     call = text[text.index("call-test-lint:") :]
     call = call[: call.index("\n  security:")]
     assert re.search(r"^\s+pull-requests:\s*read\s*$", call, re.MULTILINE), call
+
+
+def test_only_main_can_publish_the_docs_site() -> None:
+    """The ``deploy`` job publishes to the live Pages site, so its ref is gated.
+
+    docs.yml's ``push`` trigger is bound to main, but ``workflow_dispatch`` runs
+    on whatever ref dispatched it. Folding the pull-request build into the
+    required check dropped the ``if:`` on ``deploy`` along with the
+    ``pull_request`` half of the condition, so a dispatch from a topic branch
+    would have published that branch while the comment above the job still read
+    "only from main". The gate is graded on the job header rather than inferred
+    from the trigger list, since the trigger that makes it necessary is the one
+    still subscribed.
+    """
+    docs = (_WORKFLOW_DIR / "docs.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in docs, "docs.yml takes no dispatch any more; re-derive whether the gate is needed"
+    header = docs[docs.index("\n  deploy:") :].split("steps:")[0]
+    assert "if: github.ref == 'refs/heads/main'" in header, header
 
 
 def test_the_title_is_not_handed_to_the_script_by_the_workflow() -> None:
