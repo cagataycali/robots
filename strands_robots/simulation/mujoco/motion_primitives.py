@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -71,12 +72,18 @@ from strands_robots.simulation.motion_primitives_base import (
     _WRIST_HINTS as _WRIST_HINTS,
 )
 from strands_robots.simulation.motion_primitives_base import (
+    OBSTRUCTION_MAX_CONTACTS,
     MotionPrimitivesCore,
     _err,
     _quat_angle_error,
 )
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
-from strands_robots.simulation.mujoco.scene_ops import actuator_target_body_ids, joint_drive_map
+from strands_robots.simulation.mujoco.scene_ops import (
+    actuator_target_body_ids,
+    geom_label,
+    joint_drive_map,
+    mj_contact_is_active,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -897,6 +904,14 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 reached = True
                 break
 
+        # Not reached: read what the engine saw at the final tick so the
+        # refusal can name the contact or the joint that stopped the servo
+        # instead of guessing at "joint limits/contacts".
+        obstruction: dict[str, Any] | None = None
+        if not reached:
+            with self._lock:
+                obstruction = self._move_to_obstruction(model, data, arm_jact)
+
         return self._move_to_result(
             robot_name,
             target,
@@ -913,7 +928,85 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             orientation_error=orientation_error,
             orientation_tol=orientation_tol,
             ik_orientation_residual=ik_orientation_residual,
+            obstruction=obstruction,
         )
+
+    def _commanded_robot_body_ids(self, model: Any, commanded_joint_ids: Iterable[int]) -> set[int]:
+        """Every body in the kinematic tree the commanded joints belong to.
+
+        Derived from the joints the primitive commanded rather than from the
+        :class:`SimRobot` record, because those joints are what the caller is
+        being told about and a primitive that commands none refuses before any
+        of this. Their tree is rooted at the body the world carries
+        (:meth:`_root_body`), so a self-collision (jaw against base) and a
+        collision with the scene (jaw against a cube) both count as "the robot
+        is in contact", while the cube's own contacts with the floor do not.
+
+        Args:
+            model: The ``mujoco.MjModel`` holding the kinematic tree.
+            commanded_joint_ids: The joints the primitive drove; must be non-empty.
+
+        Returns:
+            Body ids in that tree, including its root.
+        """
+        first = min(int(j) for j in commanded_joint_ids)
+        return self._subtree(model, self._root_body(model, int(model.jnt_bodyid[first])))
+
+    def _move_to_obstruction(self, model: Any, data: Any, commanded_jact: dict[int, int]) -> dict[str, Any]:
+        """What stopped the servo at the final tick: contacts on the robot, joints at a limit.
+
+        Must be called under ``self._lock``. Runs ``mj_forward`` first so the
+        contact list belongs to the final joint configuration, the same way
+        :meth:`get_contacts` does. A contact counts when it is pushing back
+        (:func:`mj_contact_is_active` - a pair inside the detection range but
+        in the gap carries no force, at any ``dist``)
+        and at least one of its geoms belongs to the commanded joints' own
+        kinematic tree (:meth:`_commanded_robot_body_ids`); a joint
+        counts when it is one ``move_to`` commands, has limits, and its
+        position sits at a bound (see :meth:`_joints_at_limit`).
+
+        Args:
+            model: The ``mujoco.MjModel``.
+            data: The ``mujoco.MjData`` after the final servo tick.
+            commanded_jact: ``joint_id -> actuator_id`` for the joints the
+                servo commanded (the arm half of the pose map).
+
+        Returns:
+            ``{"contacts": [...], "contacts_total": n, "joints_at_limit": [...]}``
+            in the shape :meth:`_obstruction_text` reads; contacts capped at
+            :data:`OBSTRUCTION_MAX_CONTACTS`, nearest (most negative
+            distance) first.
+        """
+        mj = self._mj
+        mj.mj_forward(model, data)
+        body_ids = self._commanded_robot_body_ids(model, commanded_jact)
+
+        # One entry per geom PAIR, at its deepest point: a box resting on a
+        # plane yields up to four contact points for the same two geoms, and
+        # naming the pair four times tells the caller nothing more.
+        nearest: dict[tuple[int, int], float] = {}
+        for i in range(int(data.ncon)):
+            c = data.contact[i]
+            if not mj_contact_is_active(c):
+                continue
+            g1, g2 = int(c.geom1), int(c.geom2)
+            if int(model.geom_bodyid[g1]) not in body_ids and int(model.geom_bodyid[g2]) not in body_ids:
+                continue
+            key = (g1, g2)
+            nearest[key] = min(nearest.get(key, math.inf), float(c.dist))
+        contacts: list[dict[str, Any]] = [
+            {"geom1": geom_label(model, g1, mj), "geom2": geom_label(model, g2, mj), "dist": dist}
+            for (g1, g2), dist in nearest.items()
+        ]
+        contacts.sort(key=lambda c: c["dist"])
+
+        joints_at_limit = self._joints_at_limit(mj, model, data.qpos, commanded_jact)
+
+        return {
+            "contacts": contacts[:OBSTRUCTION_MAX_CONTACTS],
+            "contacts_total": len(contacts),
+            "joints_at_limit": joints_at_limit,
+        }
 
     @staticmethod
     def _subtree(model: Any, root_id: int) -> set[int]:

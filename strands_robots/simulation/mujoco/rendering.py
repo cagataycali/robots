@@ -25,6 +25,8 @@ from strands_robots.simulation.mujoco.backend import (
 )
 from strands_robots.simulation.mujoco.scene_ops import (
     actuator_target_body_ids,
+    geom_label,
+    mj_contact_is_active,
     robot_owned_actuator_ids,
     tendon_joint_ids,
 )
@@ -2140,34 +2142,18 @@ class RenderingMixin:
                     "geom2": int(data.contact[i].geom2),
                     "dist": float(data.contact[i].dist),
                     "pos": data.contact[i].pos.tolist(),
-                    # ``exclude == 0`` is MuJoCo's own decision to hand the
-                    # pair to the constraint solver, i.e. the pair is close
-                    # enough to push back. Anything else is in the gap and
-                    # carries no force.
-                    "active": int(data.contact[i].exclude) == 0,
+                    # MuJoCo's own decision to hand the pair to the
+                    # constraint solver, i.e. the pair is close enough to push
+                    # back. Anything else is in the gap and carries no force.
+                    "active": mj_contact_is_active(data.contact[i]),
                 }
                 for i in range(ncon)
             ]
 
-        def _resolve_geom(gid: int) -> str:
-            """Prefer the geom name; fall back to its parent body name; then id."""
-            gn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, gid)
-            if gn:
-                return gn
-            # Walk to the parent body name.
-            try:
-                bid = int(model.geom_bodyid[gid])
-                bn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, bid)
-                if bn:
-                    return f"{bn}/geom_{gid}"
-            except (IndexError, AttributeError):
-                pass
-            return f"geom_{gid}"
-
         contacts = []
         for c in contact_snapshot:
-            g1 = _resolve_geom(c["geom1"])
-            g2 = _resolve_geom(c["geom2"])
+            g1 = geom_label(model, c["geom1"], mj)
+            g2 = geom_label(model, c["geom2"], mj)
             contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"], "active": c["active"]})
 
         if contacts:
