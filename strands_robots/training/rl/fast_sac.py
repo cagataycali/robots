@@ -278,7 +278,7 @@ class FastSacTrainer(BaseRLAlgo):
 
     def setup(self, spec: RLTrainSpec) -> None:
         """Build env, actor + twin critics, optimizers, temperature, and replay buffer."""
-        require_optional("torch", purpose="FastSAC RL training (strands_robots.training.rl.fast_sac)")
+        require_optional("torch", extra="rl", purpose="FastSAC RL training (strands_robots.training.rl.fast_sac)")
         import torch
 
         from strands_robots.training.rl.normalization import EmpiricalNormalization

@@ -404,6 +404,19 @@ sim = [
     # the number and derives it from the registry; keep the two in step.
     "robot_descriptions>=1.23.0,<2.0.0",
 ]
+# From-scratch RL (strands_robots.training.rl: PPO, FastSAC, FastTD3, the
+# SimEnv/VecSimEnv adapters and the GymSimEnv wrapper). torch is what every
+# trainer and the replay buffer compute in; gymnasium is what GymSimEnv presents
+# a SimEnv as, for external RL libraries. Both were previously reachable only
+# through other extras (torch via kimodo / lerobot, gymnasium via lerobot), so
+# `create_trainer("ppo")` on any install without one of those died on the
+# interpreter's `No module named 'torch'`. The env adapters step a SimEngine,
+# which is why the MuJoCo backend is folded in.
+rl = [
+    "strands-robots[sim-mujoco]",
+    "torch>=2.0.0",
+    "gymnasium>=0.29,<2.0",
+]
 sim-mujoco = [
     "strands-robots[sim]",
     # 3.5.0 is the oldest release the backend can drive, not merely import:
@@ -654,6 +667,7 @@ all = [
     "strands-robots[lerobot]",
     "strands-robots[lerobot-async]",
     "strands-robots[sim-mujoco]",
+    "strands-robots[rl]",
     "strands-robots[mesh]",
     "strands-robots[mesh-iot]",
     "strands-robots[device-connect]",

@@ -105,9 +105,10 @@ graph TB
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
 | `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` ZMQ |
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
+| `[rl]` | `sim-mujoco` + `torch`, `gymnasium` | From-scratch RL trainers (`create_trainer("ppo")`) |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |
-| `[all]` | 20 of the 32 extras - not a union; see [installation](getting-started/installation.md) for the 12 it leaves opt-in | CI / exploration |
+| `[all]` | 21 of the 33 extras - not a union; see [installation](getting-started/installation.md) for the 12 it leaves opt-in | CI / exploration |
 
 ## See also
 

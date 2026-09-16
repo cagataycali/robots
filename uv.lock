@@ -4193,6 +4193,7 @@ all = [
     { name = "diffusers" },
     { name = "eclipse-zenoh" },
     { name = "fastapi" },
+    { name = "gymnasium" },
     { name = "huggingface-hub" },
     { name = "imageio" },
     { name = "imageio-ffmpeg" },
@@ -4312,6 +4313,16 @@ protomotions = [
     { name = "onnxruntime" },
     { name = "pyyaml" },
 ]
+rl = [
+    { name = "gymnasium" },
+    { name = "imageio" },
+    { name = "imageio-ffmpeg" },
+    { name = "mink" },
+    { name = "mujoco" },
+    { name = "qpsolvers", extra = ["daqp"] },
+    { name = "robot-descriptions" },
+    { name = "torch" },
+]
 ros2 = [
     { name = "cyclonedds" },
 ]
@@ -4395,16 +4406,20 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'all'", specifier = ">=0.110,<1.0" },
     { name = "fastapi", marker = "extra == 'dashboard'", specifier = ">=0.110,<1.0" },
     { name = "gsplat", marker = "extra == 'sim-gs'", specifier = ">=1.4.0,<2.0.0" },
+    { name = "gymnasium", marker = "extra == 'all'", specifier = ">=0.29,<2.0" },
+    { name = "gymnasium", marker = "extra == 'rl'", specifier = ">=0.29,<2.0" },
     { name = "huggingface-hub", marker = "extra == 'all'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'kimodo'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'microduck'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'protomotions'", specifier = ">=1.5,<2.0.0" },
     { name = "huggingface-hub", marker = "extra == 'wbc'", specifier = ">=1.5,<2.0.0" },
     { name = "imageio", marker = "extra == 'all'", specifier = ">=2.28.0,<3.0.0" },
+    { name = "imageio", marker = "extra == 'rl'", specifier = ">=2.28.0,<3.0.0" },
     { name = "imageio", marker = "extra == 'sim-isaac'", specifier = ">=2.28.0,<3.0.0" },
     { name = "imageio", marker = "extra == 'sim-mujoco'", specifier = ">=2.28.0,<3.0.0" },
     { name = "imageio", marker = "extra == 'sim-newton'", specifier = ">=2.28.0,<3.0.0" },
     { name = "imageio-ffmpeg", marker = "extra == 'all'", specifier = ">=0.4.0,<1.0.0" },
+    { name = "imageio-ffmpeg", marker = "extra == 'rl'", specifier = ">=0.4.0,<1.0.0" },
     { name = "imageio-ffmpeg", marker = "extra == 'sim-isaac'", specifier = ">=0.4.0,<1.0.0" },
     { name = "imageio-ffmpeg", marker = "extra == 'sim-mujoco'", specifier = ">=0.4.0,<1.0.0" },
     { name = "imageio-ffmpeg", marker = "extra == 'sim-newton'", specifier = ">=0.4.0,<1.0.0" },
@@ -4424,6 +4439,7 @@ requires-dist = [
     { name = "lerobot", extras = ["smolvla"], marker = "extra == 'smolvla'", specifier = ">=0.6.1,<0.7.0" },
     { name = "mink", marker = "extra == 'all'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'cosmos3-sim'", specifier = ">=0.0.4" },
+    { name = "mink", marker = "extra == 'rl'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'sim-mujoco'", specifier = ">=0.0.4" },
     { name = "mink", marker = "extra == 'sim-newton'", specifier = ">=0.0.4" },
     { name = "msgpack", marker = "extra == 'all'", specifier = ">=1.0.0,<2.0.0" },
@@ -4432,6 +4448,7 @@ requires-dist = [
     { name = "msgpack", marker = "extra == 'moveit2'", specifier = ">=1.0.0,<2.0.0" },
     { name = "mujoco", marker = "extra == 'all'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'cosmos3-sim'", specifier = ">=3.5.0,<4.0.0" },
+    { name = "mujoco", marker = "extra == 'rl'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-mujoco'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-newton'", specifier = ">=3.5.0,<4.0.0" },
     { name = "mujoco", marker = "extra == 'sim-newton'", specifier = ">=3.11.0,<3.12.0" },
@@ -4465,12 +4482,14 @@ requires-dist = [
     { name = "pyzmq", marker = "extra == 'groot-service'", specifier = ">=27.0.0,<28.0.0" },
     { name = "pyzmq", marker = "extra == 'moveit2'", specifier = ">=27.0.0,<28.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'all'", specifier = ">=4.0.0" },
+    { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'rl'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-mujoco'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-newton'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["quadprog"], marker = "extra == 'cosmos3-sim'", specifier = ">=4.0.0" },
     { name = "requests", marker = "extra == 'all'", specifier = ">=2.28.0,<3.0.0" },
     { name = "requests", marker = "extra == 'earthrover'", specifier = ">=2.28.0,<3.0.0" },
     { name = "robot-descriptions", marker = "extra == 'all'", specifier = ">=1.23.0,<2.0.0" },
+    { name = "robot-descriptions", marker = "extra == 'rl'", specifier = ">=1.23.0,<2.0.0" },
     { name = "robot-descriptions", marker = "extra == 'sim'", specifier = ">=1.23.0,<2.0.0" },
     { name = "robot-descriptions", marker = "extra == 'sim-isaac'", specifier = ">=1.23.0,<2.0.0" },
     { name = "robot-descriptions", marker = "extra == 'sim-mujoco'", specifier = ">=1.23.0,<2.0.0" },
@@ -4486,6 +4505,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'all'", specifier = ">=2.0.0" },
     { name = "torch", marker = "extra == 'cosmos3-diffusers'", specifier = ">=2.0" },
     { name = "torch", marker = "extra == 'kimodo'", specifier = ">=2.0.0" },
+    { name = "torch", marker = "extra == 'rl'", specifier = ">=2.0.0" },
     { name = "torch", marker = "extra == 'sim-gs'", specifier = ">=2.2.0,<3.0.0" },
     { name = "transformers", marker = "extra == 'all'", specifier = ">=4.40.0" },
     { name = "transformers", marker = "extra == 'cosmos3-diffusers'", specifier = ">=4.40" },
@@ -4502,7 +4522,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=17.0" },
     { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "smolvla", "ur", "wbc"]
 
 [[package]]
 name = "sympy"
