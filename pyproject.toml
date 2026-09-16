@@ -690,6 +690,14 @@ Changelog = "https://github.com/strands-labs/robots/releases"
 [tool.hatch.version]
 source = "vcs"
 
+# The version is read from the nearest tag. Without the --match, git describe
+# picks the nearest tag containing ANY digit, and a clone that also carries a
+# fork's artifact tags (artifact-902-action-keys, artifacts-pc020-obstruction,
+# ...) fails to build outright: "Can't parse version from tag". Only release
+# tags (v0.5.1) carry a version, so only they are candidates.
+[tool.hatch.version.raw-options]
+git_describe_command = ["git", "describe", "--dirty", "--tags", "--long", "--match", "v[0-9]*"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
 
