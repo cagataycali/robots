@@ -3223,6 +3223,12 @@ class SimEngine(ABC):
             # existing callers are completely unaffected.
             if n_episodes == 1:
                 recording = self._is_recording()
+                # Frames already buffered into the open episode BEFORE this
+                # rollout: a previous rollout nobody closed. The rollout about to
+                # run appends to it, and the result below says so - the caller
+                # otherwise learns of the merge from verify_dataset_episodes
+                # after stop_recording, when the frames are already one episode.
+                open_before = self._open_episode_frames() if recording else 0
                 if recording:
                     logger.info(
                         "run_policy: n_episodes=1, will produce 1 dataset episode of ~%d frames "
@@ -3259,6 +3265,11 @@ class SimEngine(ABC):
                 contract = self._episode_contract_fields(
                     requested=1, completed=completed, saved=0, flush_deferred=recording
                 )
+                if recording:
+                    open_after = self._open_episode_frames()
+                    contract["episode_open_frames"] = open_after
+                    contract["episode_merged_prior_frames"] = open_before
+                    self._append_text(result, self._open_episode_line(open_after, open_before))
                 self._merge_json_fields(result, contract)
                 return result
 
@@ -3795,6 +3806,50 @@ class SimEngine(ABC):
             if isinstance(blk, dict) and isinstance(blk.get("json"), dict):
                 return dict(blk["json"])
         return {}
+
+    def _open_episode_frames(self) -> int:
+        """Frames buffered into the current UNSAVED dataset episode (0 when not recording)."""
+        if not self._is_recording():
+            return 0
+        return int(getattr(self._active_recorder(), "episode_frame_count", 0) or 0)
+
+    @staticmethod
+    def _open_episode_line(open_after: int, open_before: int) -> str:
+        """The recorder line a single-rollout ``run_policy`` result carries while recording.
+
+        ``open_before`` frames were already in the open episode when the rollout
+        started, so the rollout was appended to them; the line names that merge
+        and the ways to end an episode, because ``run_policy`` alone ends none:
+        ``reset`` between rollouts or ``n_episodes=N`` in one call (both
+        published to the agent), or ``save_episode`` from Python. Without the line the merge is only visible after
+        ``stop_recording`` (``verify_dataset_episodes``), when the frames are
+        already one ``episode_index=0``.
+        """
+        added = open_after - open_before
+        if open_before > 0:
+            head = (
+                f"Recorder: +{added} frames APPENDED to the open episode, which already held "
+                f"{open_before} from an earlier rollout - now {open_after} unsaved frames in ONE episode"
+            )
+        else:
+            head = f"Recorder: +{added} frames buffered in the open episode ({open_after} unsaved)"
+        # ``reset`` and ``n_episodes`` are the two remedies an agent can reach
+        # (``save_episode`` is Python-only: not in the published action enum).
+        return (
+            f"{head}. run_policy closes no episode: the next rollout appends to this one unless "
+            f"reset runs first (reset saves the open episode, then starts a new one), or pass "
+            f"n_episodes=N in ONE run_policy call for N distinct episodes. stop_recording saves "
+            f"whatever is open. (From Python, save_episode also closes it.)"
+        )
+
+    @staticmethod
+    def _append_text(result: dict[str, Any], line: str) -> None:
+        """Append ``line`` to the result's first text block (or add one)."""
+        for blk in result.get("content", []) or []:
+            if isinstance(blk, dict) and isinstance(blk.get("text"), str):
+                blk["text"] = blk["text"].rstrip("\n") + "\n" + line
+                return
+        result.setdefault("content", []).append({"text": line})
 
     @staticmethod
     def _merge_json_fields(result: dict[str, Any], fields: dict[str, Any]) -> None:
