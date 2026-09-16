@@ -3867,9 +3867,7 @@ class MuJoCoSimEngine(
                         base_pos = base["position"]
                     else:
                         measured_base = self._robot_root_world_position(robot)
-                        base_pos = (
-                            measured_base if measured_base is not None else [float(v) for v in robot.position]
-                        )
+                        base_pos = measured_base if measured_base is not None else [float(v) for v in robot.position]
                     offset = [ee_pos[i] - base_pos[i] for i in range(3)]
                     axis = reach_axis(offset)
                     text += (
