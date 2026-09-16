@@ -315,9 +315,19 @@ def gate_motion(
         return None
 
     if tool_context is None:
+        # Name the value, not only the variable: "Set STRANDS_ROBOT_COMMAND_ALLOW"
+        # sent a caller who HAD set it (to the tool name, when this gate matches
+        # the action) back to a variable that was already set, with no word on
+        # why it did not count. The spelling this gate accepts is asked of the
+        # same matcher that just declined, so the two cannot disagree.
+        hint = next(
+            (f"{allow_env}={candidate}" for candidate in (action, target) if match(frozenset({candidate}))),
+            allow_env,
+        )
+        already = f" {allow_env}={allow_raw!r} is set but does not name this command." if allow_raw is not None else ""
         return (
-            f"{warning} No tool_context available for operator approval. "
-            f"Set {allow_env} or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
+            f"{warning} No tool_context available for operator approval.{already} "
+            f"Set {hint} (or {allow_env}=*) or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
         )
 
     try:
