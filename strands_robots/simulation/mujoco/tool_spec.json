@@ -389,7 +389,12 @@
     },
     "success_fn": {
       "type": "string",
-      "description": "Success function ('contact')"
+      "description": "eval_policy: named success criterion; the ONLY name is 'contact' (any robot-object contact during the episode). For a condition on the scene use 'success_when' instead. Without either (and no benchmark) success_rate is a hard 0.0 with success_measured=false"
+    },
+    "success_when": {
+      "type": "object",
+      "description": "eval_policy: success criterion as a predicate clause - the SAME DSL as run_policy's stop_when and a benchmark spec's success clause: a single bool predicate call like {'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2} or {'predicate': 'base_beyond_x', 'x': 0.5}, or a group {'all': [<call>, ...]} / {'any': [<call>, ...]}. Compiled through the closed predicate registry (unknown name -> refused with the valid list) and probed against the live scene before the first episode (a body the scene lacks -> refused up front, not a fake 0%). An unnamed base_* clause reads the robot under evaluation. Alternative to success_fn; passing both is refused",
+      "additionalProperties": true
     },
     "fast_mode": {
       "type": "boolean",

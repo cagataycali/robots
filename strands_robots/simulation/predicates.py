@@ -409,7 +409,7 @@ def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float]
     ):
         # A floating base surfaces all three; their absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     v_body = _quat_rotate_inverse_wxyz(quat, lin)
     return float(v_body[0]), float(v_body[1]), float(ang[2])
@@ -448,7 +448,7 @@ def _base_body_velocity(sim: SimEngine, robot: str | None) -> tuple[list[float],
     ):
         # A floating base surfaces all three; their absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     v_body = _quat_rotate_inverse_wxyz(quat, lin)
     return (
@@ -477,7 +477,7 @@ def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
     if not (isinstance(pos, list) and len(pos) == 3):
         # A floating base surfaces base_pos; its absence means this robot has no
         # floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     return [float(pos[0]), float(pos[1]), float(pos[2])]
 
@@ -501,7 +501,7 @@ def _base_quaternion(sim: SimEngine, robot: str | None) -> list[float] | None:
     if not (isinstance(quat, list) and len(quat) == 4):
         # A floating base surfaces base_quat; its absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     return [float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
 
