@@ -1754,9 +1754,21 @@ class Robot(TeleopMixin, AgentTool):
         "Ensure robot is calibrated and accessible on the specified port" - to
         whichever came up, so a camera that did not exist was answered with a
         calibration hint (and an agent relayed "recalibrate if needed" for an
-        unplugged arm). The camera message names lerobot's object,
+        unplugged arm). A camera message names lerobot's object,
         ``OpenCVCamera(99)``, not the key the operator wrote in ``cameras=``;
         that key is looked up here so the reply says which camera.
+
+        The lookup matches the camera *objects* lerobot built, the way
+        :meth:`_close_open_devices` reads them, because every backend writes
+        every one of its messages with ``f"{self}"`` -- the object's ``str`` is
+        the one identity the text is sure to carry, whatever the backend and
+        whatever failed (opening, warmup, a read). No config field can serve as
+        that identity: only ``OpenCVCameraConfig`` declares ``index_or_path``,
+        so matching a config named a webcam and left every other registered
+        backend -- RealSense (``serial_number``), ZMQ
+        (``camera_name@address:port``), Reachy 2 (``name, image_type``) -- with
+        the general remedy, which is the calibration hint for a camera fault
+        this method exists to remove.
 
         Args:
             exc: What ``connect()`` raised.
@@ -1765,10 +1777,9 @@ class Robot(TeleopMixin, AgentTool):
             One message naming the device and the remedy for that device.
         """
         text = " ".join(str(exc).split()).rstrip(".")
-        cameras = getattr(getattr(self.robot, "config", None), "cameras", None) or {}
-        for key, cfg in cameras.items():
-            ident = getattr(cfg, "index_or_path", None)
-            if ident is not None and f"({ident})" in text:
+        cameras = getattr(self.robot, "cameras", None)
+        for key, camera in cameras.items() if isinstance(cameras, Mapping) else ():
+            if str(camera) in text:
                 return (
                     f"Robot connection failed: camera {key!r} did not open - {text}. "
                     "Fix or remove that entry in cameras=; the motors bus is closed again."
