@@ -2078,6 +2078,36 @@ class SimEngine(ABC):
             return None
         return SimEngine._validate_positive_int(control_substeps, "control_substeps", method)
 
+    #: Control-loop rate (Hz) a rollout steps at when the caller names none
+    #: and no recording is open. One constant so every entry point and the
+    #: tool spec agree on the number.
+    DEFAULT_CONTROL_FREQUENCY: float = 50.0
+
+    def _resolve_control_frequency(self, control_frequency: Any) -> Any:
+        """The rate a rollout steps at when the caller left ``control_frequency`` unset.
+
+        ``None`` (the entry-point default) resolves to the ACTIVE RECORDING'S
+        fps when one is open, else :attr:`DEFAULT_CONTROL_FREQUENCY`. The
+        dataset recorder writes one frame per control step with no decimation,
+        so a rollout captured at a rate other than the dataset's fps is refused
+        by :meth:`_validate_recording_rate` - correctly, but before this the two
+        DEFAULTS disagreed (``start_recording`` records at 30 fps, rollouts
+        stepped at 50 Hz), so the README-shaped flow ``start_recording()`` then
+        ``run_policy()`` with nothing else passed refused itself every time,
+        with a remedy the caller could only satisfy by learning both numbers.
+        A value the caller DID pass is returned untouched, so an explicit
+        mismatch is still refused rather than silently corrected.
+        """
+        if control_frequency is not None:
+            return control_frequency
+        if self._is_recording():
+            from strands_robots.simulation.recording import recorder_dataset_fps
+
+            fps = recorder_dataset_fps(self._active_recorder())
+            if fps is not None:
+                return float(fps)
+        return self.DEFAULT_CONTROL_FREQUENCY
+
     @staticmethod
     def _validate_positive_frequency(control_frequency: Any, method: str) -> dict[str, Any] | None:
         """Reject a non-positive or non-numeric ``control_frequency`` at the public API.
@@ -2508,9 +2538,13 @@ class SimEngine(ABC):
         recording, this one when a recording is opened against a rollout that is
         already running. ``start_policy`` makes the second ordering reachable by
         design - it submits the rollout and returns while it continues - and the
-        two library defaults collide (``fps=30`` against
+        two library defaults collided (``fps=30`` against a rollout default of
         ``control_frequency=50.0``), so the plain sequence produced a 1.667x
-        mislabelled episode with every call reporting success.
+        mislabelled episode with every call reporting success. (The other
+        ordering - recording first, rollout second - no longer collides on the
+        defaults: an unset ``control_frequency`` adopts the open recording's
+        fps, see :meth:`_resolve_control_frequency`. This ordering cannot, the
+        rollout's rate is already fixed when the recording opens.)
 
         Instance method for the same reason as :meth:`_validate_recording_rate`:
         the value it compares against lives on the engine. Backends with no
@@ -2637,7 +2671,7 @@ class SimEngine(ABC):
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -3082,6 +3116,7 @@ class SimEngine(ABC):
 
         robot_name = self._resolve_single_robot(robot_name)
 
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "run_policy"):
             return err
         # Coerce to a plain Python float now the value is validated: a NumPy
@@ -3300,7 +3335,7 @@ class SimEngine(ABC):
         policies: dict[str, Policy],
         instructions: dict[str, str] | str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int | dict[str, int] = 8,
         n_steps: int | None = None,
         max_steps: int | None = None,
@@ -4222,7 +4257,7 @@ class SimEngine(ABC):
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -4652,7 +4687,7 @@ class SimEngine(ABC):
         max_steps: int = 300,
         success_fn: str | None = None,
         policy_object: Policy | None = None,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         control_substeps: int | None = None,
         action_horizon: int = 8,
         seed: int | None = None,
@@ -4913,6 +4948,7 @@ class SimEngine(ABC):
             return err
         if err := self._validate_seed(seed, "eval_policy"):
             return err
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "eval_policy"):
@@ -4979,7 +5015,7 @@ class SimEngine(ABC):
         action_horizon: int = 8,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
         policy_kwargs: dict[str, Any] | None = None,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         control_substeps: int | None = None,
         policy_object: Policy | None = None,
         video: dict[str, Any] | None = None,
@@ -5180,6 +5216,7 @@ class SimEngine(ABC):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "evaluate_benchmark"):
             return err
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "evaluate_benchmark"):
             return err
         if err := self._validate_control_substeps(control_substeps, "evaluate_benchmark"):

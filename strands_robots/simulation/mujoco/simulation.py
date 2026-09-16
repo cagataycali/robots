@@ -3764,7 +3764,7 @@ class MuJoCoSimEngine(
         # MuJoCo-scoped like the sibling describe() families.)
         base["methods"]["run_multi_policy"] = (
             "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
-            "control_frequency=50.0, action_horizon=8 | dict, n_steps=None, "
+            "control_frequency=None (the open recording's fps, else 50.0), action_horizon=8 | dict, n_steps=None, "
             "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
             "Policy, in one synchronized loop that records ALL robots into ONE "
             "merged frame per timestep (prefixed state/action, e.g. "
@@ -6388,7 +6388,7 @@ class MuJoCoSimEngine(
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -6456,6 +6456,7 @@ class MuJoCoSimEngine(
         # that named no problem.
         if err := self._validate_posture_flags("start_policy", fast_mode=fast_mode):
             return err
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
             return err
         resolved_duration, resolved_n_steps, horizon_error = self._resolve_horizon(
@@ -6760,7 +6761,7 @@ class MuJoCoSimEngine(
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -6865,7 +6866,7 @@ class MuJoCoSimEngine(
         policies: dict[str, "Policy"],
         instructions: dict[str, str] | str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
@@ -6980,6 +6981,7 @@ class MuJoCoSimEngine(
         # hand-rolled check only fired on the n_steps path, leaving the default
         # duration path to compute total_steps = int(duration * frequency) = 0
         # and report a rollout that never ran as a success.
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "run_multi_policy"):
             return err
         if err := self._validate_recording_rate(control_frequency, "run_multi_policy"):

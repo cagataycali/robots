@@ -213,12 +213,19 @@ class TestControlFrequencyGuards:
         assert "control_frequency must be > 0" in text
         assert str(bad_freq) in text
 
-    @pytest.mark.parametrize("bad_freq", ["fast", None])
+    @pytest.mark.parametrize("bad_freq", ["fast", [50], {"hz": 50}])
     def test_run_policy_rejects_non_numeric(self, sim, bad_freq):
         # Pre-fix the n_steps inline check did `bad <= 0`, raising TypeError for
-        # a str/None rather than returning a structured error.
+        # a str rather than returning a structured error.
         text = _err_text(sim.run_policy("arm1", n_steps=4, control_frequency=bad_freq))
         assert "control_frequency must be > 0" in text
+
+    def test_run_policy_none_means_unset_and_resolves_to_the_default(self, sim):
+        # ``None`` is the entry-point default ("unset"): it resolves to the open
+        # recording's fps, else DEFAULT_CONTROL_FREQUENCY - never to an error.
+        result = sim.run_policy("arm1", n_steps=4, control_frequency=None)
+        assert result["status"] == "success", result
+        assert result["content"][1]["json"]["n_steps"] == 4
 
     def test_run_policy_rejects_bool_control_frequency(self, sim):
         # bool is an int subclass; True would sneak through an isinstance(int)
