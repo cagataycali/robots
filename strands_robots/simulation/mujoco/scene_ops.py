@@ -186,6 +186,38 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
     return int(model.actuator_trnid[act_id, 0])
 
 
+def joint_position_unit(model: Any, jnt_id: int, mj: Any) -> str:
+    """Return the unit one scalar of joint ``jnt_id``'s coordinate is expressed in.
+
+    A MuJoCo joint coordinate carries a unit set by the joint's TYPE, not by the
+    model or the asset: a hinge -- and each component of a ball joint's rotation --
+    is an angle in radians, and a slide is a translation in the model's length
+    unit, metres for every asset the registry ships. A free joint's 7 coordinates
+    mix a translation with a quaternion, so no single unit names them.
+
+    The unit is what a caller converting a reading from a real arm needs, because
+    the driver reports something else: ``drivers/feetech`` reads an SO-arm in
+    degrees, and a degree reading written here unconverted is a pose an order of
+    magnitude away from the one intended. Answering it here keeps "what unit is
+    this number" one rule the messages read, rather than one each re-derives.
+
+    Args:
+        model: The compiled ``MjModel``.
+        jnt_id: Joint index in ``range(model.njnt)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``"rad"`` for a hinge or ball joint, ``"m"`` for a slide joint, and ``""``
+        for a free joint, whose coordinates have no single unit.
+    """
+    jnt_type = int(model.jnt_type[jnt_id])
+    if jnt_type == int(mj.mjtJoint.mjJNT_SLIDE):
+        return "m"
+    if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
+        return ""
+    return "rad"
+
+
 def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]]:
     """Split the joint-driving actuators into position servos and other drives.
 
@@ -444,6 +476,54 @@ def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int
     if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
         return frozenset()
     return tendon_joint_ids(model, int(model.actuator_trnid[act_id, 0]), mj)
+
+
+def mj_contact_is_active(contact: Any) -> bool:
+    """True when MuJoCo admitted this ``mjContact`` to the constraint solver.
+
+    The engine-level half of
+    :func:`~strands_robots.simulation.predicates.contact_is_active`: the
+    ``active`` flag that function reads on a ``get_contacts`` record is this
+    decision, recorded into the payload. ``mjData.contact`` lists every pair
+    inside the *detection* range (``margin`` plus ``gap``); only the admitted
+    ones push back, so a report that counts the rest answers "touching" for
+    bodies that are visibly apart. ``dist`` cannot stand in for it - a pair
+    with a wide ``margin`` is load-bearing at a positive distance.
+
+    Args:
+        contact: One ``mjData.contact`` record.
+
+    Returns:
+        True when the pair carries force.
+    """
+    return int(contact.exclude) == 0
+
+
+def geom_label(model: Any, geom_id: int, mj: Any) -> str:
+    """Return the name a human can find geom ``geom_id`` by in the model.
+
+    Most collision geoms in a shipped asset are unnamed - the so100 jaw pad is
+    geom 18 with no name of its own - so a report that prints only
+    ``mj_id2name`` says ``''`` for exactly the pairs a caller most needs to
+    identify. The body a geom hangs off is named in every asset this package
+    loads, so the fallback ``<body>/geom_<id>`` locates it in the MJCF.
+
+    Args:
+        model: The ``mujoco.MjModel`` the geom lives in.
+        geom_id: The geom to label.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The geom's own name; else ``"<body>/geom_<id>"``; else ``"geom_<id>"``.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, geom_id)
+    if name:
+        return str(name)
+    try:
+        body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[geom_id]))
+    except (IndexError, AttributeError):
+        body = None
+    return f"{body}/geom_{geom_id}" if body else f"geom_{geom_id}"
 
 
 def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:

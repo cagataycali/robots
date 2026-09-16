@@ -50,7 +50,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `add_robot` | `robot_name`, `position=[0,0,0]`, `data_config=None`, `urdf_path=None` |
 | `remove_robot` | `name` |
 | `list_robots` | - each robot's asset, joint count, and **live** base position, read from the physics rather than from the `add_robot` request, so a robot that walked (or whose model's root pose offset the request) reports where it is |
-| `get_robot_state` | `name` → joint positions, velocities, torques |
+| `get_robot_state` | `name` → joint positions, velocities, torques; an `end_effector` line naming the frame `move_to` drives, its world position, its offset **from the base** (measured, like `list_robots`' position - not the `add_robot` request, which a model's own authored root pose offsets) and the horizontal axis the arm currently extends along (`the arm currently extends along -Y` for an SO-100/SO-101 at home) - so "in front of the robot" resolves to the same side of the base for the agent and the person. The `json` payload carries `end_effector.base`, `from_base` and `extends_along` (`"+X"`/`"-Y"`/…, `null` when the arm is over its base) |
 
 ## Objects
 
@@ -176,6 +176,18 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     driver and datasets use): `get_robot_state` prints `1 (shoulder_pan)`, and
     the joint writers accept the label as a key - bare, `<robot>/<label>`, in
     any case - beside the asset name. A refused key lists the labels too.
+
+!!! tip "The unit of a joint value"
+    A joint value is in that joint's own MuJoCo unit: radians for a hinge,
+    metres for a slide - never degrees. It matters most when mirroring a real
+    arm onto its sim twin, because the driver on the other side reports the
+    other unit (`drivers/feetech` reads an SO-arm in degrees) and the same
+    number in the wrong unit is a pose an order of magnitude away. So
+    `set_joint_positions` names the unit when it refuses a value the joint's
+    range does not contain, and when converting that value *would* land inside
+    the range it says which conversion:
+    `shoulder_pan=-96.2 outside [-1.92, 1.92] rad (radians, not degrees:
+    -96.2 deg = -1.679 rad)`.
 
 !!! note "Numeric domain of the state writers"
     `set_joint_positions`, `set_joint_velocities` and the `apply_force`
