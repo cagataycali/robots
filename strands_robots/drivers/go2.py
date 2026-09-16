@@ -226,13 +226,9 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
 
         module = importlib.import_module(module_path)
     except ImportError as exc:
-        # Every path this resolves comes from :meth:`_subscription_plan`, which
-        # names only ``unitree_sdk2py`` IDL modules - so an ImportError here is
-        # that SDK absent or half-installed, and the answer owes the remedy.
-        # The module being resolved is kept in the text: on a partial install
-        # the exception names the deepest module that is missing, which is not
-        # always the one this call asked for.
-        return sdk_missing(f"{exc} (resolving {module_path})")
+        if module_path.split(".")[0] == "unitree_sdk2py":
+            return sdk_missing(f"{exc} (resolving {module_path})")
+        return f"cannot import {module_path}: {exc}"
     if not hasattr(module, class_name):
         return f"{module_path} has no {class_name}"
     return getattr(module, class_name)
