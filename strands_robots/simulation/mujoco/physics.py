@@ -859,6 +859,13 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         data = self._world._data
 
+        # A latched wrench is state, so it is scoped like one: with two so101s
+        # in the scene 'gripper' names a body on each, and the shared retry
+        # latched it on the first robot attached (_refuse_ambiguous_bare_name).
+        if err := self._refuse_ambiguous_bare_name(
+            mj.mjtObj.mjOBJ_BODY, body_name, "apply_force", "body", "Qualify the name"
+        ):
+            return err
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
@@ -957,6 +964,95 @@ class PhysicsMixin:
                 if mid >= 0:
                     return int(mid)
         return -1
+
+    def _bare_name_owners(self, obj_type: int, name: object, labels: bool = False) -> list[str]:
+        """The robots a bare name resolves on, in attachment order.
+
+        Mirrors the retry in :meth:`_resolve_mj_name`: each attached robot tried
+        as ``<namespace><name>``, so ``owners[0]`` is the robot that retry would
+        have picked. ``labels`` adds the registry joint-label pass the joint
+        write path falls back to, and only when no namespace carried the name -
+        the order the write path resolves in, where a namespace hit ends the
+        lookup before a label is read.
+
+        Empty when the retry is not what decides the lookup: an already
+        qualified name, a non-string, no compiled scene, or a name the model
+        carries verbatim - ``mj_name2id`` answers that one and no robot is
+        consulted, so there is nothing to disambiguate. That last case is also
+        what keeps a namespace-less robot out: ``<namespace><name>`` is the name
+        itself for it, which the verbatim check has already answered.
+        """
+        if self._world is None or self._world._model is None or not isinstance(name, str) or "/" in name:
+            return []
+        # No _ensure_mujoco() here: ``obj_type`` is an ``mjtObj`` member, so
+        # every caller has already resolved the module to name it.
+        model = self._world._model
+        if mj_name_to_id(model, obj_type, name) >= 0:
+            return []
+        owners = [
+            r.name
+            for r in self._world.robots.values()
+            if mj_name_to_id(model, obj_type, (r.namespace or "") + name) >= 0
+        ]
+        if not owners and labels:
+            owners = [r.name for r in self._world.robots.values() if self._resolve_joint_label(name, r.name) >= 0]
+        return owners
+
+    def _refuse_ambiguous_bare_name(
+        self,
+        obj_type: int,
+        name: object,
+        method: str,
+        kind: str,
+        remedy: str,
+        labels: bool = False,
+    ) -> dict[str, Any] | None:
+        """Refuse a bare name that several attached robots each carry.
+
+        :meth:`_resolve_mj_name`'s retry is documented as an "unambiguous or
+        explicit" contract: it returns the first robot that matches, and its
+        docstring says the caller MUST qualify the name in a multi-robot scene.
+        A read can live on that - it names one entity and the caller can ask
+        again - which is the population the fallback was written for. A WRITE
+        cannot: the state it changed belongs to a robot the caller never
+        addressed, and no answer says which one it was. So every physics write
+        enforces the contract the resolver only describes, on the same terms the
+        list form, ``get_robot_state``, ``move_to`` and ``run_policy`` already
+        refuse a multi-robot scene they cannot scope.
+
+        ``None`` - the caller proceeds - unless at least two robots answer the
+        name. A name only one robot carries is the case the retry exists for.
+
+        Args:
+            obj_type: The ``mjtObj`` type being looked up.
+            name: The caller's name, refused only when it is bare and ambiguous.
+            method: Calling method name, used in the error text.
+            kind: What the name names, in the error text (``"body"``, ``"geom"``,
+                ``"joint key"``).
+            remedy: The sentence before the qualified-spelling example, so each
+                door offers the remedies it actually has (only the joint writes
+                take ``robot_name=``; only a geom takes ``geom_id=``).
+            labels: Whether a registry joint label may resolve the name.
+        """
+        owners = self._bare_name_owners(obj_type, name, labels)
+        if len(owners) < 2:
+            return None
+        listed = " and ".join(f"'{o}'" for o in owners)
+        # Every owner in the example, not just the first: an example naming one
+        # robot reads as a recommendation, and the agent then picks the robot
+        # the fallback would have.
+        qualified = " or ".join(f"'{o}/{name}'" for o in owners)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: {kind} '{name}' is ambiguous - robots {listed} each carry it, "
+                        f"so nothing was written. {remedy} ({qualified})."
+                    )
+                }
+            ],
+        }
 
     def _robot_joint_labels(self, robot: Any) -> dict[str, str]:
         """``{asset joint name: label}`` for one attached robot, from the registry.
@@ -1626,6 +1722,23 @@ class PhysicsMixin:
             jnt_id = -1
             if ns and isinstance(jnt_name, str) and "/" not in jnt_name:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, ns + jnt_name)
+            elif not ns and isinstance(jnt_name, str) and "/" not in jnt_name:
+                # No scope and a bare key: the shared lookup's first-match
+                # fallback is documented as "unambiguous or explicit", but a
+                # WRITE has to enforce that contract rather than describe it.
+                # Two so101s both carry joint ``1`` (and label
+                # ``shoulder_pan``); resolving the first one attached moved a
+                # robot the caller never addressed while get_robot_state,
+                # move_to and run_policy on the same scene refused to guess.
+                if err := self._refuse_ambiguous_bare_name(
+                    mj.mjtObj.mjOBJ_JOINT,
+                    jnt_name,
+                    method,
+                    "joint key",
+                    "Pass robot_name= to scope the write, or qualify the key",
+                    labels=True,
+                ):
+                    return {}, err
             if jnt_id < 0:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
@@ -2269,6 +2382,10 @@ class PhysicsMixin:
 
         mj = _ensure_mujoco()
         model = self._world._model
+        if err := self._refuse_ambiguous_bare_name(
+            mj.mjtObj.mjOBJ_BODY, body_name, "set_body_properties", "body", "Qualify the name"
+        ):
+            return err
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
@@ -2419,6 +2536,14 @@ class PhysicsMixin:
 
         gid = geom_id
         if geom_name:
+            if err := self._refuse_ambiguous_bare_name(
+                mj.mjtObj.mjOBJ_GEOM,
+                geom_name,
+                "set_geom_properties",
+                "geom",
+                "Pass geom_id= to name one, or qualify the name",
+            ):
+                return err
             gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
             # our add_object pipeline names geoms as ``{object_name}_geom``.
             # Accept the plain object name as a convenience alias.
