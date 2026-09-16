@@ -860,6 +860,12 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # Futures :meth:`_request_policy_stop_all` flagged, kept until the
+        # :meth:`stop_policy` for that robot reads them. A flagged worker can
+        # exit - and be pruned from ``_policy_threads`` - before its turn in a
+        # sequential fanout, and then the flag is lowered and the table is
+        # empty: nothing left says a rollout was in flight. This is that record.
+        self._pre_stopped: dict[str, Future] = {}
         # How the last start_policy rollout per robot failed, recorded by the
         # Future's done-callback and read by ``_rollouts_ended_in_error``.
         # Replaced when that robot's next rollout is submitted.
@@ -3061,6 +3067,7 @@ class MuJoCoSimEngine(
                     ],
                 }
             del self._policy_threads[name]
+        self._pre_stopped.pop(name, None)
 
         # Step 2: after stopping our own, there must be no OTHER policy
         # running - an XML round-trip will invalidate cached IDs everywhere.
@@ -6000,6 +6007,15 @@ class MuJoCoSimEngine(
             future = registry_entry(self._policy_threads, name)
             if robot is None or future is None or future.done():
                 continue
+            # Keep the Future as evidence for this robot's ``stop_policy``. A
+            # healthy worker exits within a control tick of this flag going
+            # down, and a sequential fanout can spend up to the join bound on
+            # an earlier robot before it asks this one: by then the worker is
+            # done, ``_prune_done_futures`` has dropped it, and the flag is
+            # already low, so without this record the answer would be "Was
+            # not running" for a rollout this very call halted - and the fleet
+            # stop would then leave it out of ``stopped``.
+            self._pre_stopped[name] = future
             with contextlib.suppress(Exception):
                 robot.request_policy_stop()
 
@@ -7633,6 +7649,12 @@ class MuJoCoSimEngine(
         # reported opposite facts about a blocking rollout at the same instant
         # (#2833).
         was_running = robot_name in self._active_policy_robots()
+        # A rollout :meth:`_request_policy_stop_all` already flagged for this
+        # call counts as having been in flight even when its worker has exited
+        # and been pruned since: the pre-pass is part of this same stop, not
+        # an earlier one, so the verdict it earned belongs to this answer.
+        pre_stopped = self._pre_stopped.pop(robot_name, None)
+        was_running = was_running or pre_stopped is not None
         # Durable: moves this robot's claim out of date, so a worker that has
         # not yet reached its first frame cannot raise the flag back over it. Its
         # own return stays in the OR because the claim can be raised in the
@@ -7649,6 +7671,10 @@ class MuJoCoSimEngine(
         # driven on its caller's own thread, so its stop is the flag alone.
         exited: bool | None = None
         fut = registry_entry(self._policy_threads, robot_name) if was_running else None
+        if fut is None and pre_stopped is not None:
+            # Pruned from the table already, so joinable here only through the
+            # record the pre-pass kept; ``done()`` still decides.
+            fut = pre_stopped
         if fut is not None:
             with contextlib.suppress(Exception):
                 # Either outcome of ``result`` means the same thing here (the
@@ -7864,6 +7890,7 @@ class MuJoCoSimEngine(
                         e,
                     )
             self._policy_threads.clear()
+            self._pre_stopped.clear()
 
         # Step 3: hand the world off UNDER ``self._lock``.
         #

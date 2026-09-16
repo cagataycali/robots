@@ -14,6 +14,15 @@ the pre-pass: the two healthy workers exited at t+1.007s and t+1.011s instead of
 t+0.004s and t+0.009s. Lowering every target's flag up front (what
 :meth:`cleanup` already does for its own multi-robot teardown) makes the workers
 wind down concurrently while each ``stop_policy`` still reports its own verdict.
+
+The pre-pass must not cost that verdict its evidence. A healthy worker exits
+within a control tick of its flag going down; the fanout then spends up to the
+join bound on the wedged robot before it asks the healthy one, by which time the
+worker is done, pruned from the Future table, and its flag is already low - so
+``stop_policy`` answered ``Was not running`` for a rollout this very stop had
+halted, and the fleet stop's ``stopped`` list named only the robot that was still
+executing. The pre-pass keeps the Futures it flagged until that robot's
+``stop_policy`` reads them.
 """
 
 import threading
@@ -108,6 +117,36 @@ def test_the_healthy_robots_stop_without_waiting_for_the_wedged_one(fleet):
         )
     # The wedged robot is still held by its own server, and the answer says so.
     assert wedged_name not in exited
+
+
+def test_a_robot_the_pre_pass_halted_is_reported_as_stopped_not_as_never_running(fleet):
+    """The reviewer's sequence: wedged robot asked first, the healthy ones after its full join bound."""
+    sim, names, _ = fleet
+    wedged_name, healthy = names[0], names[1:]
+    sim._request_policy_stop_all(names)
+    # The healthy workers exit well inside the wedged robot's join bound...
+    deadline = time.time() + _HEALTHY_EXIT_BUDGET
+    while time.time() < deadline and not all(sim._policy_threads[n].done() for n in healthy):
+        time.sleep(0.005)
+    assert all(sim._policy_threads[n].done() for n in healthy)
+    # ...and the wedged robot's stop_policy burns that bound and prunes them from the table.
+    wedged = sim.stop_policy(wedged_name)
+    assert next(c["json"] for c in wedged["content"] if "json" in c) == {
+        "robot": wedged_name,
+        "was_running": True,
+        "exited": False,
+    }
+    assert all(n not in sim._policy_threads for n in healthy)
+    # Each healthy robot is still answered for as halted BY THIS STOP, and joined.
+    for name in healthy:
+        answer = sim.stop_policy(name)
+        verdict = next(c["json"] for c in answer["content"] if "json" in c)
+        assert verdict == {"robot": name, "was_running": True, "exited": True}, verdict
+        assert f"Stopped on '{name}'" in answer["content"][0]["text"]
+    # The record is consumed: a SECOND stop on the same robot is a real "Was not running".
+    second = sim.stop_policy(healthy[0])
+    assert next(c["json"] for c in second["content"] if "json" in c)["was_running"] is False
+    assert sim._pre_stopped == {}
 
 
 def test_the_pre_pass_lowers_every_named_flag_and_joins_nothing(fleet):
