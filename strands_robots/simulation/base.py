@@ -4918,6 +4918,15 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+        # An evaluation drives the robot exactly as a rollout does, so it is
+        # refused while another thread's rollout holds the robot - the gate every
+        # joint write and ``start_policy`` already pass. Backends that keep no
+        # per-robot claim answer ``None`` from the default seam and are unchanged.
+        # Gate BEFORE binding, so a refused call never mutates predicate_robot
+        # while a concurrent rollout reads it (review feedback: race on shared
+        # mutable state).
+        if err := self._require_no_running_policy("eval_policy", robot_name=resolved_robot):
+            return err
         self.bind_predicate_robot(resolved_robot)
 
         # ``success_when``: the stop_when DSL as a success criterion. Compiled
@@ -4971,13 +4980,6 @@ class SimEngine(ABC):
                 return bool(success_when_fn(engine))
 
             success_check = _success_when_check
-        # An evaluation drives the robot exactly as a rollout does, so it is
-        # refused while another thread's rollout holds the robot - the gate every
-        # joint write and ``start_policy`` already pass. Backends that keep no
-        # per-robot claim answer ``None`` from the default seam and are unchanged.
-        if err := self._require_no_running_policy("eval_policy", robot_name=resolved_robot):
-            return err
-
         if err := self._validate_video_config(video, "eval_policy"):
             return err
         if err := self._validate_policy_object(policy_object, "eval_policy"):
