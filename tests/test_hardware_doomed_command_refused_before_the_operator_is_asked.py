@@ -13,14 +13,19 @@ it runs first; the dispatcher still runs it again.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 from strands import Agent
 from strands.models.model import Model
+from strands.types.tools import ToolUse
 
+# The factory is how an agent builds a real robot; it is a function, so the
+# class it returns is imported too for the annotations below.
 from strands_robots import Robot
 from strands_robots.hardware_robot import COMMAND_ALLOW_ENV
+from strands_robots.hardware_robot import Robot as HwRobot
 
 
 class _Silent(Model):
@@ -39,10 +44,10 @@ class _Silent(Model):
             yield
 
 
-def _events(robot: Robot, tool_input: dict[str, Any]) -> list[str]:
+def _events(robot: HwRobot, tool_input: dict[str, Any]) -> list[str]:
     """Return one tag per streamed event: ``result:<text>`` or ``interrupt``."""
     agent = Agent(model=_Silent(), tools=[], callback_handler=None)
-    tool_use = {"toolUseId": "t1", "name": robot.tool_name, "input": tool_input}
+    tool_use: ToolUse = {"toolUseId": "t1", "name": robot.tool_name, "input": tool_input}
 
     async def collect() -> list[str]:
         out = []
@@ -58,9 +63,18 @@ def _events(robot: Robot, tool_input: dict[str, Any]) -> list[str]:
 
 
 @pytest.fixture
-def real(monkeypatch):
-    monkeypatch.delenv(COMMAND_ALLOW_ENV, raising=False)
-    return Robot("so101", mode="real", port="/dev/cu.does-not-exist")
+def real(monkeypatch: pytest.MonkeyPatch) -> Iterator[HwRobot]:
+    """A real-mode robot in a clean gate environment: nothing pre-approves the call.
+
+    Both env vars decide whether the operator is asked at all, so both are
+    cleared: with either one set the two "still asks the operator" cells below
+    would pass for the wrong reason.
+    """
+    for name in ("BYPASS_TOOL_CONSENT", COMMAND_ALLOW_ENV):
+        monkeypatch.delenv(name, raising=False)
+    robot = Robot("so101", mode="real", port="/dev/cu.does-not-exist")
+    yield robot
+    robot.cleanup()
 
 
 DOOMED = [
