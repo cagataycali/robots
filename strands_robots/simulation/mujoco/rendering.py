@@ -2439,9 +2439,19 @@ class RenderingMixin:
 
         Returns:
             The success envelope naming the tag, cameras and capture clock, or
-            the error envelope from
+            the error envelope from the ``cameras`` domain below or from
             :meth:`_start_cameras_recording_under_lock` on refusal.
         """
+        # ``cameras`` names an ordered list of DISTINCT camera names. Its shape
+        # is the caller's own argument - no world state answers it - so it is
+        # refused here, before ``self._lock`` is even contended for, let alone
+        # any filesystem or capture-thread work. Neither mistake it catches
+        # could be honored as written: a single name passed as a bare string is
+        # iterable per character, so it was read as one camera per letter, and a
+        # repeated name opened a second encoder on the one output path, so the
+        # artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording")):
+            return {"status": "error", "content": [{"text": text}]}
         with self._lock:
             prepared = self._start_cameras_recording_under_lock(
                 cameras=cameras,
@@ -2527,15 +2537,6 @@ class RenderingMixin:
             "start_cameras_recording", fps, width, height, max_frames_per_camera
         ):
             return error
-        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
-        # refused on the shared name-list domain before any filesystem or capture-thread work. Neither
-        # mistake this catches could be honored as written: a single name passed
-        # as a bare string is iterable per character, so it was read as one
-        # camera per letter, and a repeated name opened a second encoder on the one output
-        # path, so the artifact ledger reported two files where one exists.
-        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording")):
-            return {"status": "error", "content": [{"text": text}]}
-
         # The guard above accepts any real scalar with an integral value, so a
         # ``640.0`` read from a config float and an ``np.int64`` probed from a
         # camera are both usable pixel counts - honor that by normalizing them

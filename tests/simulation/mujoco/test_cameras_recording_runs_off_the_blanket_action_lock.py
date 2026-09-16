@@ -17,14 +17,16 @@ Measured through ``Robot("so101", mode="sim")`` (the agent path) while the
 same calls on a bare ``Simulation`` - no dispatch lock - worked. Pinned here:
 both verbs are in ``_SELF_LOCKING_ACTIONS``; through ``_dispatch_action`` start
 is ready well inside its timeout, frames are captured and stop encodes them;
-start still refuses under the lock it takes itself; a camera that buffered
-nothing is reported as "no clip written" with ``path=None`` instead of naming a
-file that does not exist.
+start still refuses under the lock it takes itself; a mistyped ``cameras``
+argument is refused without contending for that lock at all; a camera that
+buffered nothing is reported as "no clip written" with ``path=None`` instead of
+naming a file that does not exist.
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 import pytest
@@ -87,6 +89,31 @@ def test_dispatched_start_still_refuses_what_it_refused_before(sim, tmp_path):
         {"output_dir": str(tmp_path), "cameras": ["no_such_camera"], "fps": 10},
     )
     assert result["status"] == "error", result
+    assert getattr(sim, "_cams_rec_state", None) is None
+
+
+def test_a_mistyped_cameras_argument_is_refused_without_the_lock(sim, tmp_path):
+    """The name-list shape is the caller's argument, so no world state answers it.
+
+    ``cameras="wrist"`` is iterable per character, so it used to be read as five
+    one-letter cameras. Answering that needs nothing from the world, and this
+    verb exists to keep work off the lock its recorder renders under, so the
+    refusal must not queue behind a holder of that lock.
+    """
+    verdict: dict[str, object] = {}
+
+    def refuse() -> None:
+        verdict["result"] = sim.start_cameras_recording(cameras="wrist", output_dir=str(tmp_path), fps=10)
+
+    with sim._lock:
+        worker = threading.Thread(target=refuse, daemon=True)
+        worker.start()
+        worker.join(timeout=2.0)
+        assert not worker.is_alive(), "the cameras= refusal waited for the lock instead of answering"
+
+    result = verdict["result"]
+    assert result["status"] == "error", result
+    assert "cameras" in _text(result), result
     assert getattr(sim, "_cams_rec_state", None) is None
 
 
