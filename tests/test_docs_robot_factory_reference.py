@@ -1,9 +1,10 @@
 """The factory reference page must not state a contract the factory does not implement.
 
 ``docs/getting-started/robot-factory.md`` is the reference a caller reads before
-writing ``Robot(...)``: a parameter table with a Default column, and a Mesh
-section with a copy-paste snippet. Both are hand-written, so either can outlive
-the code.
+writing ``Robot(...)``: a front-matter ``description`` that states the signature
+as a whole, a parameter table with a Default column, and a Mesh section with a
+copy-paste snippet. All three are hand-written, so any of them can outlive the
+code.
 
 A wrong Default is worse than a missing one. It names a state the caller is
 never in, and it hides the knob that would reach the state the page describes -
@@ -78,6 +79,32 @@ def _rows() -> list[tuple[int, str, str, str]]:
     return found
 
 
+def _front_matter_signature() -> list[str]:
+    """Return the parameter names the front-matter ``description`` spells.
+
+    Returns:
+        The names inside the ``Robot(...)`` call the field states, in the order
+        it states them and spelled as a signature line spells them (``**kwargs``
+        keeps its asterisks). Empty when the field states no call at all, which
+        the premise test grades rather than passing vacuously.
+    """
+    field = re.search(r"^description:\s*(.*)$", _DOC.read_text(encoding="utf-8"), re.M)
+    if field is None:
+        return []
+    call = re.search(r"Robot\(([^)]*)\)", field.group(1))
+    if call is None:
+        return []
+    return [name.strip() for name in call.group(1).split(",") if name.strip()]
+
+
+def _signature_display() -> list[str]:
+    """Return ``Robot``'s parameters as a signature line spells them."""
+    return [
+        ("**" if param.kind is inspect.Parameter.VAR_KEYWORD else "") + name
+        for name, param in inspect.signature(Robot).parameters.items()
+    ]
+
+
 def _mesh_section() -> str:
     """Return the page's ``## Mesh`` section, up to the next heading."""
     text = _DOC.read_text(encoding="utf-8")
@@ -143,6 +170,34 @@ class TestEveryDocumentedDefaultIsTheRealDefault:
             if param.kind not in _VARIADIC and name not in documented
         ]
         assert not missing, f"Robot() accepts {missing}, which the parameter table never lists"
+
+
+class TestTheFrontMatterStatesTheWholeSignature:
+    """The ``description`` field promises "the full signature", so it is graded as one.
+
+    It is the only place on the page that states the signature as a whole rather
+    than one row at a time, and it is what a search result and the generated
+    page metadata show - a reader can meet it before they ever reach the table.
+    No table guard reads a YAML field, and the omission is silent in both
+    directions: a parameter missing from it reads as a parameter that does not
+    exist, and a name left in it after a rename reads as one that does.
+    """
+
+    def test_the_description_states_a_signature(self) -> None:
+        assert _front_matter_signature(), (
+            "premise: the description field states a Robot(...) call for the guard "
+            "below to grade. A clean run would otherwise prove nothing."
+        )
+
+    def test_the_description_names_every_parameter_in_order(self) -> None:
+        listed = _front_matter_signature()
+        real = _signature_display()
+        assert listed == real, (
+            "The description promises the full signature but does not match Robot():\n"
+            f"  missing: {[name for name in real if name not in listed]}\n"
+            f"  not a parameter: {[name for name in listed if name not in real]}\n"
+            f"  write: Robot({', '.join(real)})"
+        )
 
 
 class TestADocumentedRefusalReallyRefuses:
