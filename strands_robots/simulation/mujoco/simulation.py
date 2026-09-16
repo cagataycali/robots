@@ -7570,9 +7570,18 @@ class MuJoCoSimEngine(
             reads the verdict rather than matching on the sentence.
         """
         if not robot_name:
+            # Name what IS running: an agent that reached for stop_policy with
+            # no name has a rollout in mind and a list to pick from is the
+            # remedy; "requires 'robot_name'" alone sends it to list_robots.
+            running = self._active_policy_robots() if self._world is not None else []
+            hint = (
+                f" Running now: {running} - pass one of these."
+                if running
+                else " No policy is running on any robot right now (list_policies_running)."
+            )
             return {
                 "status": "error",
-                "content": [{"text": "stop_policy requires 'robot_name'."}],
+                "content": [{"text": f"stop_policy requires 'robot_name'.{hint}"}],
             }
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
@@ -7589,7 +7598,47 @@ class MuJoCoSimEngine(
         # own return stays in the OR because the claim can be raised in the
         # window between the read above and this write.
         was_running = robot.request_policy_stop() or was_running
+        # The stop above is a REQUEST: the worker exits at its next control
+        # tick, which at 50 Hz is up to 20 ms after this line. This surface
+        # used to return "Stopped" right here, so the caller's natural next
+        # call - run_policy on the same robot, a scene mutation, a second
+        # stop_policy - landed inside that window and was refused "while its
+        # policy is running" by a robot the previous answer had just called
+        # stopped (list_policies_running still listed it; a second stop
+        # reported was_running=True again). Wait, bounded, for the worker's
+        # Future to finish when there is one (start_policy's shape; a
+        # blocking run_policy on another thread has no Future here and is
+        # left cooperative) and say which of the two things happened.
+        # remove_robot makes the same bounded join for the same reason; the
+        # budget is shorter here because nothing after it is unsafe - a lapse
+        # means "still winding down", not "scene rebuild refused".
+        worker_exited: bool | None = None
+        fut = registry_entry(self._policy_threads, robot_name)
+        if was_running and fut is not None and not fut.done():
+            with contextlib.suppress(Exception):
+                fut.result(timeout=self._STOP_POLICY_JOIN_TIMEOUT)
+            worker_exited = fut.done()
+        elif was_running and fut is not None:
+            worker_exited = True
+        # "Stopped" stays the first sentence even on a lapse: the stop HAS
+        # landed durably (the claim is lowered and nothing re-raises it), which
+        # is what that word has always meant here. What the lapse adds is a
+        # second sentence saying the worker is still winding down, so the
+        # caller knows its next call on this robot may be refused for a moment.
         msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        content: list[dict[str, Any]] = [{"text": msg}]
+        if was_running and worker_exited is False:
+            content.append(
+                {
+                    "text": (
+                        f"Its policy worker has not exited after {self._STOP_POLICY_JOIN_TIMEOUT:.1f}s - it is "
+                        "blocked somewhere the stop flag is not read (inside a policy inference call, "
+                        "typically). It exits at its next control tick; until then list_policies_running "
+                        "still reports it and run_policy on this robot is refused. Retry action='stop_policy' "
+                        "to wait again."
+                    )
+                }
+            )
         # The verdict travels as data as well as prose. A programmatic caller -
         # the Device Connect ``stop`` RPC aggregates one of these answers per
         # robot - otherwise has to re-derive "was a rollout in flight" from its
@@ -7604,8 +7653,17 @@ class MuJoCoSimEngine(
         # and opposite on that case is the drift worth spending a word to avoid.
         return {
             "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+            "content": [
+                *content,
+                {"json": {"robot": robot_name, "was_running": was_running, "worker_exited": worker_exited}},
+            ],
         }
+
+    # Bounded wait (seconds) :meth:`stop_policy` gives a stopped worker to
+    # exit before answering. A control tick at the slowest published rate is
+    # well under this; a worker still live after it is blocked in inference
+    # and the answer says so instead of "Stopped".
+    _STOP_POLICY_JOIN_TIMEOUT = 2.0
 
     # Cleanup
 

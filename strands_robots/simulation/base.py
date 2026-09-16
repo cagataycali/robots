@@ -4315,7 +4315,15 @@ class SimEngine(ABC):
             (#2833), so it refuses rather than reporting a stop it cannot keep.
         """
         if not robot_name:
-            return {"status": "error", "content": [{"text": "stop_policy requires 'robot_name'."}]}
+            running = self._rollouts_in_flight()
+            hint = (
+                f" Running now: {running} - pass one of these."
+                if running
+                else (
+                    "" if running is None else " No policy is running on any robot right now (list_policies_running)."
+                )
+            )
+            return {"status": "error", "content": [{"text": f"stop_policy requires 'robot_name'.{hint}"}]}
         if robot_name not in self.list_robots():
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         was_running = self._request_policy_stop(robot_name)

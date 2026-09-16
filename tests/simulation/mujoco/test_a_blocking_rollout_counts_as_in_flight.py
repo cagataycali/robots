@@ -189,7 +189,7 @@ class TestEveryReaderInheritsTheOneDefinition:
         in_flight_reader = sim.list_policies_running()["content"][0]["text"]
         stopped = sim.stop_policy("arm")
         assert "arm" in in_flight_reader, in_flight_reader
-        assert _rollout_json(stopped) == {"robot": "arm", "was_running": True}
+        assert _rollout_json(stopped) == {"robot": "arm", "was_running": True, "worker_exited": None}
 
 
 class TestTheFleetStopHaltsABlockingRollout:
