@@ -9,6 +9,7 @@ runs the same session on the real engine and is skipped without ``mujoco``.
 
 from __future__ import annotations
 
+import threading
 import time
 from types import SimpleNamespace
 
@@ -260,6 +261,70 @@ class TestEstop:
         snap = _create(client)
         assert client.get("/api/safety").json()["lockout"]["state"] == "clear", "an accepted command is the proof"
         assert snap["state"] == "running"
+
+    def test_an_estop_reaches_a_session_whose_engine_is_still_building(self, fake_factory):
+        """The window an e-stop exists for: Start pressed, engine not built yet, then E-STOP.
+
+        Building the engine takes real time (a model compile plus a renderer),
+        so a session sits in ``starting`` for that long. It has not stepped yet
+        and starts the instant the build returns, so the e-stop must reach it.
+        """
+        from strands_robots.dashboard.routes_sim import Safety
+
+        building, release = threading.Event(), threading.Event()
+
+        def slow(robot):
+            building.set()
+            release.wait(5)
+            return FakeEngine(robot)
+
+        store = sim_session.SessionStore()
+        safety = Safety(store)
+        session = store.create("so101", engine_factory=slow)
+        assert building.wait(5) and session.snapshot.state == "starting"
+
+        assert safety.estop(by="operator")["frozen"] == [session.id]
+        release.set()
+        assert session.wait_ready(5)
+        time.sleep(0.2)
+        snap = session.snapshot
+        assert snap.state == "frozen", "the engine arrived into an e-stop, so it reports frozen"
+        assert (snap.steps, snap.sim_time) == (0, 0.0), "no physics ran after the e-stop"
+
+        safety.resume(by="operator")
+        time.sleep(0.2)
+        assert session.snapshot.steps > 0, "a resume thaws the session frozen while it was starting"
+        store.shutdown()
+
+    def test_an_estop_during_the_build_refuses_that_create_and_stays_latched(self, client, monkeypatch):
+        """The create was admitted before the e-stop, so it is neither served nor taken as proof."""
+        building, release = threading.Event(), threading.Event()
+
+        def slow(robot):
+            building.set()
+            release.wait(5)
+            return FakeEngine(robot)
+
+        monkeypatch.setattr(sim_session, "_default_factory", slow)
+        reply: dict = {}
+
+        def create():
+            r = client.post("/api/sim", json={"robot": "so101"})
+            reply.update(status=r.status_code, body=r.json())
+
+        worker = threading.Thread(target=create)
+        worker.start()
+        assert building.wait(5), "the create never reached the engine build"
+        safety = client.app.state.safety
+        session = safety.store.all()[0]
+        assert safety.estop(by="operator")["frozen"] == [session.id]
+        release.set()
+        worker.join(10)
+
+        assert reply["status"] == 423 and "e-stop engaged" in reply["body"]["error"]
+        assert safety.lockout.state == "locked", "an in-flight create is not proof that the lockout lifted"
+        assert safety.store.all() == [], "the refused session is not left running"
+        assert session.snapshot.steps == 0
 
     def test_estop_is_never_refused(self, client):
         client.post("/api/safety/estop")

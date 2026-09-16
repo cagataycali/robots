@@ -13,3 +13,10 @@ every route that would move a sim checks `proves_clear` and refuses with 423;
 `/api/safety/resume` leaves the state `unknown`, because a resume is a request,
 and the first command a session then accepts is `note_command_accepted`, the
 proof. Stopping a session is never refused.
+
+Building an engine is not instant - a model compile plus a renderer - so a
+session sits in `starting` for a moment, and an e-stop inside that window
+reaches it too: `freeze_all` selects every session that can still step rather
+than only the ones already running, and a create whose build overlapped the
+e-stop is refused with 423 and dropped instead of being offered as the accepted
+command that would report the lockout clear again.
