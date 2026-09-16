@@ -1866,6 +1866,68 @@ class DatasetRecordingMixin:
 
         return stream_dataset(repo_id, **kwargs)
 
+    def _already_recording_error(self, verb: str, requested_repo_id: str) -> dict[str, Any] | None:
+        """The refusal a second ``start_recording`` gets while one is live, or None.
+
+        Falling through replaced the live recorder object, and the frames it
+        had buffered since its last ``save_episode`` went with it - never saved,
+        never mentioned; when the new dataset then refused (schema mismatch on
+        resume) the caller was left with ``recording`` False and both sessions'
+        frames gone. Refusing here leaves the live recording exactly as it was
+        and names what ``stop_recording`` will save.
+
+        Every backend's ``start_recording`` calls this first, so the refusal is
+        one behaviour rather than three - a backend that skipped it silently got
+        the frame loss back, which is what
+        ``tests/simulation/test_second_start_recording_does_not_drop_the_live_one.py``
+        grades the three implementations for.
+
+        Both figures are scoped to the LIVE SESSION, because the question the
+        caller is about to answer is what THIS session would lose. The frame
+        count is the open episode's. The episode count is measured against the
+        ``episodes_at_start`` stash :meth:`_arm_dataset_recorder` takes for
+        exactly this reason: a resumed recorder's ``episode_count`` is seeded
+        with the dataset's totals, so reading it raw reported the episodes a
+        PREVIOUS session had saved ("1 episode(s) saved" for a session that had
+        saved none) - the reassurance a caller weighing a stop must not be
+        given. Same arithmetic and same "this session" wording as
+        :meth:`stop_recording`'s own report, so the two cannot disagree.
+        """
+        state = self._recording_state()
+        if state is None:
+            return None
+        live = state.get("dataset_recorder")
+        if not state.get("recording") or live is None:
+            return None
+        # The id is resolved by the shared accessor (live recorder first, then
+        # the target stashed at start_recording), so every backend names the
+        # live dataset the same way and none needs a stash of its own.
+        live_repo = self._active_dataset_repo_id() or "?"
+        pending = int(getattr(live, "episode_frame_count", 0) or 0)
+        saved = max(0, int(getattr(live, "episode_count", 0) or 0) - int(state.get("episodes_at_start", 0) or 0))
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{verb}: already recording '{live_repo}' ({pending} frame(s) buffered since the last "
+                        f"saved episode, {saved} episode(s) saved this session). Call stop_recording first - it "
+                        f"saves the buffered frames - then {verb} '{requested_repo_id}'. The live recording is "
+                        f"untouched."
+                    )
+                },
+                {
+                    "json": {
+                        "recording": True,
+                        "repo_id": live_repo,
+                        "frames_buffered": pending,
+                        "episodes_saved_this_session": saved,
+                        "requested_repo_id": requested_repo_id,
+                    }
+                },
+            ],
+        }
+
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can

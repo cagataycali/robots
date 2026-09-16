@@ -266,6 +266,15 @@ class RecordingMixin(DatasetRecordingMixin):
         ):
             return error
 
+        # A second start while one recording is live used to fall through: it
+        # replaced the recorder object (the frames buffered since the last
+        # save_episode went with it - never saved, never mentioned) and, when
+        # the new dataset then refused (schema mismatch on resume), left
+        # ``recording`` False with the first session's frames gone too. Refuse
+        # up front and leave the live recording exactly as it was.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
         self._world._backend_state["push_to_hub"] = push_to_hub

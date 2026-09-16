@@ -254,6 +254,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         if error := camera_schema_key_collision_error("start_recording", list(self._world.cameras)):
             return error
 
+        # A second start while one recording is live used to fall through here
+        # too: it replaced the recorder object (the frames buffered since the
+        # last save_episode went with it - never saved, never mentioned) and,
+        # when the new dataset then refused, left ``recording`` False with the
+        # first session's frames gone as well. Refused on the shared domain, so
+        # the three backends answer a second start identically.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
         world = self._world
         world._backend_state["recording"] = True
         world._backend_state["trajectory"] = []

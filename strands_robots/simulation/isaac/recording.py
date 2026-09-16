@@ -328,6 +328,11 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         # the renderer and this runs on a worker thread, the probe must run
         # on the pump thread (run_on_main), and holding self._lock across
         # that handoff would deadlock against the probe re-acquiring it.
+        # Same refusal MuJoCo gives: a second start while one recording is
+        # live must not replace the recorder and drop its buffered frames.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
         probe_obs = self._probe_recording_observation()
 
         with self._lock:
