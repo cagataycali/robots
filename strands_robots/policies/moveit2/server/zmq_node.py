@@ -8,8 +8,8 @@ auth posture.
 
 Run it with::
 
-    source /opt/ros/jazzy/setup.bash         # or your distro
-    pip install pyzmq msgpack                # the only non-ROS deps
+    source /opt/ros/jazzy/setup.bash         # or your distro, with moveit_py
+    pip install 'strands-robots[moveit2]'    # pyzmq + msgpack, the only non-ROS deps
     python -m strands_robots.policies.moveit2.server.zmq_node \\
         --port 5556 --planning-group arm
 
@@ -57,12 +57,53 @@ import logging
 import sys
 from typing import Any
 
+from strands_robots.utils import require_optional, require_optionals
+
 # These imports deliberately happen inside ``main`` so this file can be
 # imported and statically analysed without ROS 2 sourced. Top-level
 # imports of ``rclpy`` / ``moveit_py`` would crash on dev boxes that
 # only have the strands-robots client installed.
 
 logger = logging.getLogger("moveit2.zmq_node")
+
+#: Remedy for a sidecar launched in a shell where ROS 2 / MoveIt 2 are not
+#: importable. A ``system_install=`` text, not a pip line: ``rclpy``,
+#: ``moveit`` (moveit_py) and ``moveit_configs_utils`` are not published on
+#: PyPI, and the ``[moveit2]`` extra deliberately carries only the client side
+#: (pyzmq + msgpack), so a pip command here would report success and change
+#: nothing.
+ROS_SIDECAR_INSTALL_HINT = (
+    "rclpy and moveit_py are not published on PyPI - they ship with a system ROS 2 + MoveIt 2 "
+    "install (apt / RoboStack / conda).\n"
+    "Source a distro in the shell that launches the sidecar, e.g.:\n"
+    "  source /opt/ros/jazzy/setup.bash   # or your distro\n"
+    "and install MoveIt 2's Python bindings for it, e.g.:\n"
+    "  sudo apt install ros-jazzy-moveit-py ros-jazzy-moveit-configs-utils\n"
+    "The [moveit2] extra installs only the client-side pyzmq + msgpack; it does not provision ROS 2."
+)
+
+#: What the refusals are for, so every gate in this module names one thing.
+_SIDECAR_PURPOSE = "the MoveIt2 ZMQ sidecar"
+
+
+class MissingRosModuleError(ImportError):
+    """A ROS 2 / MoveIt 2 module the sidecar imports lazily is not importable.
+
+    Raised only where this module gates such an import, which is what tells the
+    gate's refusal - the remedy in :data:`ROS_SIDECAR_INSTALL_HINT`, reported as
+    one error line and exit status 2 - apart from an ``ImportError`` raised by
+    the planner the gate admitted. The latter is a failure to diagnose, not an
+    install to perform, and keeps its traceback and exit status 1.
+
+    ``ImportError.name`` cannot draw that line: a binding whose name moved
+    (``from moveit.planning import MoveItPy`` against a MoveIt 2 that renamed
+    it) raises ``ImportError(name="moveit.planning")`` too - the same value the
+    gate for that module carries. Measured: exit status 2 and a single line with
+    no traceback for a construction failure, where the remedy is not the answer.
+
+    Subclasses ``ImportError``, so a fork catching ``ImportError`` around the
+    seams this module invites it to replace still catches it.
+    """
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -112,6 +153,15 @@ def _build_moveit_py(args: argparse.Namespace) -> Any:
     Kept in its own function so a fork can mock / replace the planner
     initialisation without rewriting the ZMQ loop.
     """
+    try:
+        require_optional("moveit.planning", system_install=ROS_SIDECAR_INSTALL_HINT, purpose=_SIDECAR_PURPOSE)
+        require_optional("moveit_configs_utils", system_install=ROS_SIDECAR_INSTALL_HINT, purpose=_SIDECAR_PURPOSE)
+    except ImportError as e:
+        raise MissingRosModuleError(str(e), name=e.name) from None
+
+    # Outside the gate above on purpose: an ImportError from here is a MoveIt 2
+    # whose binding moved, not a MoveIt 2 that is missing, and its traceback is
+    # the only thing that says which.
     from moveit.planning import MoveItPy
     from moveit_configs_utils import MoveItConfigsBuilder
 
@@ -163,6 +213,7 @@ def _plan(
       of the two it was.
     * ``trajectory_error`` - the result did not serialise.
     """
+    require_optional("geometry_msgs.msg", system_install=ROS_SIDECAR_INSTALL_HINT, purpose=_SIDECAR_PURPOSE)
     from geometry_msgs.msg import PoseStamped
 
     try:
@@ -251,14 +302,35 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Lazy imports - see module docstring for rationale.
-    import msgpack
-    import rclpy
-    import zmq
+    # Lazy imports - see module docstring for rationale. Each absence is
+    # refused with the install that supplies the module, before any socket is
+    # bound: an operator who launched the sidecar in an unsourced shell reads
+    # the remedy, not a traceback ending in "No module named 'rclpy'".
+    try:
+        require_optionals(
+            ("msgpack", "zmq"),
+            extra="moveit2",
+            purpose=_SIDECAR_PURPOSE,
+            pip_install={"zmq": "pyzmq"},
+        )
+        require_optional("rclpy", system_install=ROS_SIDECAR_INSTALL_HINT, purpose=_SIDECAR_PURPOSE)
+        import msgpack
+        import rclpy
+        import zmq
+    except ImportError as e:
+        logger.error("%s", e)
+        return 2
 
     rclpy.init()
     try:
         moveit_py = _build_moveit_py(args)
+    except MissingRosModuleError as e:
+        # moveit_py / moveit_configs_utils absent: the remedy is the message.
+        # Only the gate raises this, so a construction failure that happens to
+        # be an ImportError still falls to the branch below with its traceback.
+        logger.error("%s", e)
+        rclpy.shutdown()
+        return 2
     except Exception as e:
         logger.exception("Failed to construct MoveItPy: %s", e)
         rclpy.shutdown()

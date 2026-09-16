@@ -18,7 +18,17 @@ ported directly, re-homed onto the strands-robots observation contract.
 
 from __future__ import annotations
 
-import torch
+from typing import TYPE_CHECKING
+
+from strands_robots.utils import require_optional
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch
+else:
+    # torch arrives with the ``[rl]`` extra. Bound through ``require_optional`` so
+    # an install without it is refused with that name instead of the
+    # interpreter's ``No module named 'torch'`` (AGENTS.md convention 7).
+    torch = require_optional("torch", extra="rl", purpose="from-scratch RL training (strands_robots.training.rl)")
 
 
 class SimpleReplayBuffer:

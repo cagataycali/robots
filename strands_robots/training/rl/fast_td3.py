@@ -266,7 +266,7 @@ class FastTd3Trainer(BaseRLAlgo):
 
     def setup(self, spec: RLTrainSpec) -> None:
         """Build env(s), actor + twin critics (with targets), optimizers, and replay buffer."""
-        require_optional("torch", purpose="FastTD3 RL training (strands_robots.training.rl.fast_td3)")
+        require_optional("torch", extra="rl", purpose="FastTD3 RL training (strands_robots.training.rl.fast_td3)")
         import torch
 
         from strands_robots.training.rl.normalization import EmpiricalNormalization
