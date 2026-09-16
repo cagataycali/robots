@@ -49,20 +49,28 @@ class Safety:
         self._lock = threading.Lock()
 
     def estop(self, by: str) -> dict[str, Any]:
-        """Freeze every session and latch the lockout."""
+        """Freeze every session and latch the lockout.
+
+        The freeze and the fold happen under one lock, the same one
+        :meth:`resume` thaws under. Split, the two admin actions race: a resume
+        that has folded ``unknown`` and not yet thawed lets an e-stop freeze and
+        latch in between, and then thaws every session it just froze - the
+        lockout reads ``locked`` while every session free-runs. Under the lock
+        each action sees the other's whole effect or none of it.
+        """
         now = time.time()
-        frozen = self.store.freeze_all()
         with self._lock:
+            frozen = self.store.freeze_all()
             self.lockout = safety_state.apply_event(self.lockout, kind="estop", data={"source": by, "t": now}, now=now)
         logger.warning("e-stop by %s froze %d session(s)", one_line(by), len(frozen), extra=self.lockout.as_fields())
         return {"lockout": self.lockout.as_fields(), "frozen": frozen}
 
     def resume(self, by: str) -> dict[str, Any]:
-        """Fold a resume (state becomes ``unknown``) and thaw sessions."""
+        """Fold a resume (state becomes ``unknown``) and thaw sessions - atomically, see :meth:`estop`."""
         now = time.time()
         with self._lock:
             self.lockout = safety_state.apply_event(self.lockout, kind="resume", data={"source": by, "t": now}, now=now)
-        thawed = self.store.thaw_all()
+            thawed = self.store.thaw_all()
         return {"lockout": self.lockout.as_fields(), "thawed": thawed}
 
     def gate(self, action: str) -> None:

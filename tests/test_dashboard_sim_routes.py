@@ -520,6 +520,50 @@ class TestEstop:
         assert session.snapshot.state == "error"
         store.shutdown()
 
+    def test_an_estop_that_lands_inside_a_resume_leaves_every_session_frozen(self, fake_factory):
+        """resume() folds ``unknown``, then thaws; estop() freezes, then latches.
+
+        If the fold and the thaw are not one step, an e-stop can land between
+        them: it freezes and latches, and then the resume's thaw runs anyway.
+        The lockout then reads ``locked`` while every session steps in realtime,
+        the inversion of the invariant ``docs/dashboard.md`` promises. This cell
+        parks the thaw, fires the e-stop, and checks the invariant afterwards
+        for both interleavings: the e-stop must wait for the whole resume, or
+        run whole before it.
+        """
+        from strands_robots.dashboard.routes_sim import Safety
+
+        entered, go = threading.Event(), threading.Event()
+
+        class ParkedThaw(sim_session.SessionStore):
+            def thaw_all(self):
+                entered.set()
+                go.wait(5)
+                return super().thaw_all()
+
+        store = ParkedThaw()
+        safety = Safety(store)
+        session = store.create("so101", engine_factory=fake_factory)
+        assert session.wait_ready(5)
+        safety.estop(by="operator")
+        assert session.frozen
+
+        resume = threading.Thread(target=safety.resume, kwargs={"by": "operator"})
+        resume.start()
+        assert entered.wait(5), "the resume reached its thaw"
+        estop = threading.Thread(target=safety.estop, kwargs={"by": "operator"})
+        estop.start()
+        time.sleep(0.2)  # long enough for an unguarded freeze_all to run inside the resume
+        go.set()
+        resume.join(5)
+        estop.join(5)
+        assert not resume.is_alive() and not estop.is_alive()
+
+        assert safety.lockout.state == "locked", "the e-stop landed last, so the lockout is latched"
+        assert session.frozen, "a latched lockout means every session is frozen, whatever the resume did"
+        assert session.snapshot.state == "frozen"
+        store.shutdown()
+
     def test_estop_is_never_refused(self, client):
         client.post("/api/safety/estop")
         assert client.post("/api/safety/estop").status_code == 200
