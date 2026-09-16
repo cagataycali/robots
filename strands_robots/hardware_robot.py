@@ -69,6 +69,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     refusal_repr,
+    refusal_str,
     require_optional,
     tcp_port_error,
     teleoperator_contract_error,
@@ -85,6 +86,24 @@ logger = logging.getLogger(__name__)
 # The agent-tool actions that dispatch a rollout to real actuators. ``status``
 # and ``stop`` only read or halt, so they are never gated.
 MOTION_ACTIONS = frozenset({"execute", "start"})
+
+# Every action the tool publishes, in the order the schema lists them. The
+# ``action`` enum and the unknown-action refusal are two readings of one
+# vocabulary, and they were kept as two literals: the observe verbs were added
+# to the enum while the refusal went on naming only the four motion ones, so an
+# agent that misspelled ``get_state`` was told the valid actions were "execute,
+# start, status, stop" and could conclude that reading the arm was not offered.
+# Both now read this, so a verb cannot be published without being named.
+_PUBLISHED_ACTIONS = (
+    "get_state",
+    "get_robot_state",
+    "list_cameras",
+    "render",
+    "execute",
+    "start",
+    "status",
+    "stop",
+)
 
 # Pre-approve motion actions by name (comma-separated, ``*`` for all) for
 # headless runs. Read by the shared gate, which also honours BYPASS_TOOL_CONSENT.
@@ -1952,6 +1971,31 @@ class Robot(TeleopMixin, AgentTool):
         """
         return self._stop_requested.is_set() or self._shutdown_event.is_set()
 
+    def _settle_task_duration(self) -> None:
+        """Write how long the task that is ending here actually ran.
+
+        ``duration`` is the figure every reply and every later ``status`` call
+        reports for a finished task, and it is reset to ``0.0`` when a task
+        starts. Only two writers ever settled it: the rollout's own loop when
+        it ran to its budget, and :meth:`get_task_status` while the task is
+        RUNNING. Every OTHER way a task can end - stopped from outside,
+        stopped during bring-up, a connect that failed, a policy that would
+        not initialize, a rollout that raised - left the reset value in place,
+        so the task reported ``0.0s`` beside a non-zero step count and kept
+        reporting it for good. Measured on a rollout that had applied 39
+        commands to the servo bus: ``error: 39 steps in 0.0s``.
+
+        So this is called wherever a terminal state is recorded, and it owns
+        the arithmetic that :meth:`get_task_status` also needs - one formula,
+        so a stop and the status call after it cannot disagree.
+
+        A ``start_mono`` of ``0.0`` means no task has begun (it is the
+        dataclass default), and is left alone: subtracting it would report the
+        seconds since boot as the duration of a task that never ran.
+        """
+        if self._task_state.start_mono:
+            self._task_state.duration = time.monotonic() - self._task_state.start_mono
+
     def _honor_stop_request(self) -> bool:
         """Record a latched stop or shutdown as the task's terminal state.
 
@@ -1982,6 +2026,7 @@ class Robot(TeleopMixin, AgentTool):
         if not self._rollout_stop_latched:
             return False
         self._task_state.status = TaskStatus.STOPPED
+        self._settle_task_duration()
         logger.info(
             "%s: task stopped during bring-up: '%s'",
             self.tool_name_str,
@@ -2038,6 +2083,7 @@ class Robot(TeleopMixin, AgentTool):
             if not connected:
                 self._task_state.status = TaskStatus.ERROR
                 self._task_state.error_message = connect_error or f"Failed to connect to {self.tool_name_str}"
+                self._settle_task_duration()
                 return
 
             # A stop pressed during the bring-up window above (a motors-bus
@@ -2058,6 +2104,7 @@ class Robot(TeleopMixin, AgentTool):
             if not await self._initialize_policy(policy_instance):
                 self._task_state.status = TaskStatus.ERROR
                 self._task_state.error_message = "Failed to initialize policy"
+                self._settle_task_duration()
                 return
 
             logger.info(f"Starting task: '{instruction}' on {self.tool_name_str}")
@@ -2212,6 +2259,7 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Task execution failed: {e}")
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
+            self._settle_task_duration()
 
     @staticmethod
     def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
@@ -2305,6 +2353,77 @@ class Robot(TeleopMixin, AgentTool):
         if error := positive_count_error(n_steps, "n_steps", method):
             return {"status": "error", "content": [{"text": error}]}
         return None
+
+    @staticmethod
+    def _policy_requires_error(
+        policy_provider: str | None, policy_kwargs: dict[str, Any], method: str
+    ) -> dict[str, Any] | None:
+        """Reject a provider build that is missing a keyword it cannot act without.
+
+        The registry's ``requires`` lists the keywords a caller must supply.
+        :meth:`_policy_port_error` judges the ``port`` entry; this judges the
+        rest - the checkpoint a ``lerobot_local`` / ``lerobot_async`` policy is
+        built from. ``LerobotLocalPolicy`` constructs happily with its default
+        ``pretrained_name_or_path=""`` and loads lazily, so an in-process build
+        with no checkpoint succeeded, ``start_task`` answered "Task started",
+        :meth:`_connect_robot` energized the arm, and the first
+        ``get_actions`` raised "No model loaded and no pretrained_name_or_path
+        set" on the executor thread with nobody left to tell. The quickstart's
+        real-arm step did exactly this.
+
+        An empty string counts as missing: it is the provider's own default
+        and the one value the lazy load cannot use. ``None`` likewise.
+
+        Args:
+            policy_provider: Provider name; unknown or unregistered providers
+                are left to ``create_policy`` to refuse.
+            policy_kwargs: Checkpoint/provider keywords the caller supplied.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming the missing keyword(s) and the
+            provider, or ``None`` when every required keyword is present.
+        """
+        if not policy_provider:
+            return None
+        try:
+            from strands_robots.registry.policies import get_policy_provider
+
+            spec = get_policy_provider(policy_provider)
+        except Exception:  # noqa: BLE001 - registry read is best-effort
+            return None
+        if not spec:
+            return None
+        # ``port``/``host`` are excluded because they never travel in
+        # ``**policy_kwargs``: they arrive as the named ``policy_port`` /
+        # ``policy_host`` parameters, so reading them here would find every
+        # caller's absent and refuse a port that WAS supplied. The port is
+        # judged by :meth:`_policy_port_error` and the host has a default.
+        missing = [
+            key
+            for key in (spec.get("requires") or ())
+            if key not in ("port", "host") and ((value := policy_kwargs.get(key)) is None or value == "")
+        ]
+        if not missing:
+            return None
+        hints = {
+            "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
+            "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
+        }
+        asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: policy_provider={policy_provider!r} builds its policy from "
+                        f"{' and '.join(missing)}, and none was given. Pass {asks}. "
+                        f"Without {'it' if len(missing) == 1 else 'them'} the task would start, "
+                        "energize the arm and fail at its first action."
+                    )
+                }
+            ],
+        }
 
     @staticmethod
     def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
@@ -2568,6 +2687,10 @@ class Robot(TeleopMixin, AgentTool):
         # value the call ignores would be a false rejection.
         if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
+        if policy_object is None and (
+            err := self._policy_requires_error(policy_provider, policy_kwargs, "execute_task")
+        ):
+            return err
         if err := self._claim_task(instruction):
             return err
 
@@ -2760,6 +2883,8 @@ class Robot(TeleopMixin, AgentTool):
         # already connected.
         if err := self._policy_port_error(policy_port, "start_task", policy_provider):
             return err
+        if err := self._policy_requires_error(policy_provider, policy_kwargs, "start_task"):
+            return err
 
         # Claim the bus here, not on the executor thread: this method returns
         # before its job begins, so a claim taken inside the job would report
@@ -2900,6 +3025,82 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
+    # Verbs an agent reaches for on a real arm that this tool's enum does not
+    # publish, mapped to where each one lives. The quickstart once asked this
+    # tool for three of them; the generic "Unknown action" left the agent to
+    # guess whether the verb was gone, renamed, or in another tool.
+    #
+    # Two of the three destinations are elsewhere - the recording pair are the
+    # simulation tool's actions, teleoperation is the lerobot_teleoperate tool -
+    # and the third is this tool itself: run_policy/start_policy/stop_policy are
+    # the simulation tool's spellings for execute/start/stop, so those refusals
+    # send the caller back here rather than away.
+    _ELSEWHERE_ACTIONS: dict[str, str] = {
+        "teleoperate": "teleoperation",
+        "start_teleop": "teleoperation",
+        "stop_teleoperate": "teleoperation",
+        "record": "recording",
+        "start_recording": "recording",
+        "stop_recording": "recording",
+        "record_episode": "recording",
+        "run_policy": "policy",
+        "start_policy": "policy",
+        "stop_policy": "policy",
+    }
+
+    def _unknown_action_text(self, action: Any) -> str:
+        """The refusal for an action this tool does not have.
+
+        Names every verb the real robot tool does have - the observe ones as
+        well as the motion ones, read from the same tuple the ``action`` enum
+        is built from - and for the
+        spellings an agent is known to reach for it also names where that verb
+        lives: the ``lerobot_teleoperate`` tool for teleoperation, the
+        simulation tool for dataset recording, and this tool's own
+        ``execute``/``start``/``stop`` for the simulation tool's policy verbs.
+        So an agent's next call is the right verb rather than another spelling
+        of the wrong one.
+
+        ``action`` is rendered through :func:`~strands_robots.utils.refusal_str`
+        rather than interpolated: a Python caller of :meth:`stream` supplies it,
+        and a value whose ``__str__`` raises would make building this refusal
+        raise instead of answering. ``str`` rather than ``repr`` keeps the text
+        an agent reads unquoted, as it has always been.
+
+        Args:
+            action: The action the caller sent.
+
+        Returns:
+            One paragraph: the refusal, the valid actions, and the remedy when
+            the verb is a known one that lives elsewhere - or here under
+            another name.
+        """
+        text = f"Unknown action: {refusal_str(action)}. Valid actions: {', '.join(_PUBLISHED_ACTIONS)}"
+        kind = self._ELSEWHERE_ACTIONS.get(action) if isinstance(action, str) else None
+        if kind == "teleoperation":
+            text += (
+                f". {self.tool_name_str} drives policies; it does not teleoperate from an agent. "
+                "Leader-arm teleoperation of a real arm is the lerobot_teleoperate tool "
+                "(action='start', robot_port=..., teleop_port=...), or from Python "
+                "robot.attach_teleop('so101_leader', port=...).teleoperate(duration=...)"
+            )
+        elif kind == "recording":
+            text += (
+                f". {self.tool_name_str} drives policies; it does not record datasets. "
+                "Recording a real arm under teleoperation is the lerobot_teleoperate tool "
+                "(action='start' with dataset_repo_id=..., dataset_root=..., dataset_single_task=...); "
+                "start_recording/stop_recording are the simulation tool's actions"
+            )
+        elif kind == "policy":
+            text += (
+                f". {self.tool_name_str} does drive policies, under its own verbs: action='execute' "
+                "runs one to completion, action='start' runs one in the background and action='stop' "
+                "halts it (instruction=..., policy_provider=..., duration=... carry the rollout). "
+                "run_policy/start_policy/stop_policy are the simulation tool's spellings; from Python, "
+                "robot.run_policy(policy_object=...) drives a policy already built in-process"
+            )
+        return text
+
     def _device_facts(self) -> dict[str, Any]:
         """Measured facts about the device, readable before it is connected.
 
@@ -3038,7 +3239,7 @@ class Robot(TeleopMixin, AgentTool):
         """
         # Update duration for running tasks
         if self._task_state.status == TaskStatus.RUNNING:
-            self._task_state.duration = time.monotonic() - self._task_state.start_mono
+            self._settle_task_duration()
 
         status_text = f"Robot Status: {self._task_state.status.value.upper()}\n"
 
@@ -3113,6 +3314,7 @@ class Robot(TeleopMixin, AgentTool):
 
         # Signal task to stop
         self._task_state.status = TaskStatus.STOPPED
+        self._settle_task_duration()
 
         # Cancel future if it exists
         if self._task_state.task_future:
@@ -3174,16 +3376,7 @@ class Robot(TeleopMixin, AgentTool):
                                 "get_state | get_robot_state | list_cameras | render (observe, ungated); "
                                 "execute | start (motion, operator approval); status | stop"
                             ),
-                            "enum": [
-                                "get_state",
-                                "get_robot_state",
-                                "list_cameras",
-                                "render",
-                                "execute",
-                                "start",
-                                "status",
-                                "stop",
-                            ],
+                            "enum": list(_PUBLISHED_ACTIONS),
                             "default": "get_state",
                         },
                         "camera_name": {
@@ -3258,6 +3451,41 @@ class Robot(TeleopMixin, AgentTool):
         except ImportError:
             return False
         return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
+
+    def _pre_gate_error(
+        self, action: str, policy_port: Any, policy_provider: str, duration: Any
+    ) -> dict[str, Any] | None:
+        """The input checks that decide a command's fate with no operator and no hardware.
+
+        ``execute``/``start`` ask the operator before dispatch, and the
+        dispatcher (:meth:`execute_task` / :meth:`start_task`) then checks
+        the inputs. Every check here is a pure function of the call and of
+        this object - a shut-down robot, a duration that is not a positive
+        number, a ``policy_port`` outside 1-65535 or missing for a provider
+        that needs one - so a call that fails one was never going to move
+        the arm. Asking first would spend an approval on nothing and leave
+        the operator reading an error under the "y" they just typed, with
+        the agent's corrected retry costing a second round. Run them before
+        the gate; the dispatcher runs them again, which is defence in depth,
+        not a second answer.
+
+        Args:
+            action: ``"execute"`` or ``"start"``; names the dispatcher the
+                refusal speaks for.
+            policy_port: As supplied by the tool input.
+            policy_provider: As supplied by the tool input.
+            duration: As supplied by the tool input.
+
+        Returns:
+            The dispatcher's error envelope, or None when the call reaches
+            the operator.
+        """
+        method = "execute_task" if action == "execute" else "start_task"
+        if err := self._shutdown_error(method):
+            return err
+        if err := self._duration_error(duration, method):
+            return err
+        return self._policy_port_error(policy_port, method, policy_provider)
 
     def _gate_motion(
         self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
@@ -3436,6 +3664,12 @@ class Robot(TeleopMixin, AgentTool):
                     )
                     return
 
+                # A call the dispatcher would refuse on its inputs alone is
+                # refused here, before the operator is asked to approve it.
+                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
+                    return
+
                 # Ask the operator before anything is dispatched: a refused or
                 # unanswered call is exactly as inert as one that never happened.
                 try:
@@ -3480,6 +3714,10 @@ class Robot(TeleopMixin, AgentTool):
                     )
                     return
 
+                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
+                    return
+
                 try:
                     refusal = self._gate_motion(action, input_data, tool_use, invocation_state)
                 except InterruptException as exc:
@@ -3512,17 +3750,7 @@ class Robot(TeleopMixin, AgentTool):
                 yield ToolResultEvent(
                     self._make_tool_result(
                         tool_use_id,
-                        {
-                            "status": "error",
-                            "content": [
-                                {
-                                    "text": (
-                                        f"Unknown action: {action}. Valid actions: get_state, get_robot_state, "
-                                        "list_cameras, render (observe); execute, start (motion); status, stop"
-                                    )
-                                }
-                            ],
-                        },
+                        {"status": "error", "content": [{"text": self._unknown_action_text(action)}]},
                     )
                 )
 

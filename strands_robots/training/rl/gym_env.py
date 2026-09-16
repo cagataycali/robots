@@ -43,7 +43,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def _make_gym_env_class() -> type:
     """Build the ``GymSimEnv`` class (gymnasium required at call time).
 
-    gymnasium is an optional dep (the ``[sim]`` extra pulls it in), so the class
+    gymnasium is an optional dep (the ``[rl]`` extra pulls it in), so the class
     is defined inside this factory to keep ``import strands_robots.training.rl``
     free of a hard gymnasium dependency. :func:`GymSimEnv` (below) calls this.
     """
@@ -173,7 +173,7 @@ def GymSimEnv(sim_env: SimEnv, **kwargs: Any) -> Any:  # noqa: N802 - factory mi
         A ``gymnasium.Env`` instance presenting ``sim_env`` over the standard
         NumPy 5-tuple API.
     """
-    require_optional("gymnasium", purpose="GymSimEnv (strands_robots.training.rl.gym_env)")
+    require_optional("gymnasium", extra="rl", purpose="GymSimEnv (strands_robots.training.rl.gym_env)")
     cls = _make_gym_env_class()
     return cls(sim_env, **kwargs)
 
