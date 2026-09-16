@@ -8,8 +8,11 @@ MuJoCo's ``MjData`` is not safe to step and read from two threads at once.
 
 Freezing is the e-stop. A frozen session stops stepping but keeps rendering
 and keeps answering telemetry, so an operator sees the robot exactly where it
-stopped. Commands queued while frozen are refused at the route, never silently
-dropped here - the session records the refusal reason for the snapshot.
+stopped. A queued command that would move the robot is refused when the worker
+reaches it rather than applied - the refusal is that command's own result, so
+the caller is told, never silently dropped. A command the worker was already
+inside when the freeze landed cannot be recalled: that write completes, and the
+route answers the request 423 with the lockout still latched.
 
 Nothing here knows about the mesh, hardware, or HTTP.
 """
@@ -30,6 +33,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 MAX_SESSIONS = 4
+
+#: Commands that move the robot, and so are refused while a session is frozen.
+#: A read (``state``) is still answered, because answering it moves nothing.
+MOTION_COMMANDS = frozenset({"reset", "set_joints", "step"})
 _RENDER_FPS = 15.0
 _RENDER_SIZE = (512, 384)  # width, height: a live view, not a dataset frame
 _TELEMETRY_HZ = 30.0
@@ -236,7 +243,13 @@ class SimSession:
             except queue.Empty:
                 return
             try:
-                cmd.result = self._apply(engine, cmd)
+                if self._frozen.is_set() and cmd.kind in MOTION_COMMANDS:
+                    cmd.result = {
+                        "status": "error",
+                        "content": [{"text": f"{cmd.kind}: refused, this session is frozen by an e-stop"}],
+                    }
+                else:
+                    cmd.result = self._apply(engine, cmd)
             except Exception as exc:
                 cmd.result = {"status": "error", "content": [{"text": f"{type(exc).__name__}: {exc}"}]}
             finally:

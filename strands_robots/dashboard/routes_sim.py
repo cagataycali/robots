@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from typing import Any
@@ -24,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSo
 from fastapi.responses import StreamingResponse
 
 from strands_robots.dashboard import access, safety_state
+from strands_robots.dashboard.log_redaction import one_line
 from strands_robots.dashboard.sim_session import SessionStore, SimSession
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,7 @@ class Safety:
         frozen = self.store.freeze_all()
         with self._lock:
             self.lockout = safety_state.apply_event(self.lockout, kind="estop", data={"source": by, "t": now}, now=now)
-        logger.warning("e-stop by %s froze %d session(s)", by, len(frozen), extra=self.lockout.as_fields())
+        logger.warning("e-stop by %s froze %d session(s)", one_line(by), len(frozen), extra=self.lockout.as_fields())
         return {"lockout": self.lockout.as_fields(), "frozen": frozen}
 
     def resume(self, by: str) -> dict[str, Any]:
@@ -65,8 +67,23 @@ class Safety:
             raise HTTPException(423, f"e-stop engaged: {self.lockout.reason}")
 
     def accepted(self) -> None:
-        """A session took a command: proof the lockout is not engaged."""
+        """Fold the proof of an accepted command, or refuse because an e-stop landed first.
+
+        A command is not instant: the route admits it while the lockout is
+        clear, the worker applies it a tick later, and the red button can be
+        pressed in between. Folding the proof then would report the lockout
+        clear while every session sits frozen - so the check and the fold happen
+        under the same lock :meth:`estop` latches under. Either this command
+        finished before the latch, or the request is refused with 423 and the
+        latch holds.
+
+        Raises:
+            HTTPException: 423, when the lockout latched while the command the
+                caller is being answered for was in flight.
+        """
         with self._lock:
+            if self.lockout.state == "locked":
+                raise HTTPException(423, f"e-stop engaged: {self.lockout.reason}")
             self.lockout = safety_state.note_command_accepted(self.lockout, now=time.time())
 
 
@@ -125,7 +142,7 @@ async def create_session(request: Request, who: dict = Depends(access.require_se
         await asyncio.to_thread(safety.store.remove, session.id)
         safety.gate("create")
     safety.accepted()
-    logger.info("sim %s started for %s by %s", session.id, robot, who.get("via"))
+    logger.info("sim %s started for %s by %s", session.id, one_line(robot), one_line(who.get("via")))
     return snap.as_dict()
 
 
@@ -152,7 +169,7 @@ async def reset_session(request: Request, session_id: str, _: dict = Depends(acc
     safety.gate("reset")
     session = _session(request, session_id)
     result = await asyncio.to_thread(session.command, "reset")
-    safety.accepted()
+    safety.accepted()  # 423 if the e-stop landed while the reset was in flight
     return result
 
 
@@ -166,12 +183,24 @@ async def set_joints(request: Request, session_id: str, _: dict = Depends(access
     positions = body.get("positions") if isinstance(body, dict) else None
     if not isinstance(positions, (dict, list)) or not positions:
         raise HTTPException(400, "positions must be a non-empty object or list")
-    if any(not isinstance(v, (int, float)) for v in (positions.values() if isinstance(positions, dict) else positions)):
+    values = list(positions.values()) if isinstance(positions, dict) else list(positions)
+    if any(not isinstance(v, (int, float)) for v in values):
         raise HTTPException(400, "every position must be a number")
+    if not all(math.isfinite(v) for v in values):
+        # ``json.loads`` accepts the bare ``Infinity``/``-Infinity``/``NaN``
+        # tokens, so a request body is one of the ways a non-finite number
+        # arrives - the same ingress changelog.d/3242-settings-non-finite-
+        # numeric-domain.md documents for the settings store. A non-finite
+        # angle is not a pose, and it is not JSON either: it cannot be
+        # serialised back to any reader (``json.dumps(allow_nan=False)``, which
+        # is what a JSON response renders with).
+        raise HTTPException(400, "every position must be a finite number (no nan or inf)")
     result = await asyncio.to_thread(session.command, "set_joints", positions=positions)
+    # The lockout verdict comes before the engine's: a command refused because
+    # its session is frozen is an e-stop answer (423), not a bad request.
+    safety.accepted()
     if result.get("status") == "error":
         raise HTTPException(400, str(result.get("content")))
-    safety.accepted()
     return result
 
 
@@ -219,6 +248,8 @@ async def telemetry(ws: WebSocket, session_id: str) -> None:
                 break
             await asyncio.sleep(1.0 / _TELEMETRY_HZ)
     except WebSocketDisconnect:
+        # The page closed the socket or navigated away. The session outlives the
+        # socket, so there is nothing to clean up and nothing to report.
         pass
 
 
