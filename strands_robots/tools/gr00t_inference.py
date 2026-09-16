@@ -15,6 +15,7 @@ import os
 import re
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -316,6 +317,76 @@ def _with_resolved(paths: tuple[str, ...]) -> set[str]:
     return out
 
 
+def _user_home() -> str:
+    """The resolved home directory of the user running the tool."""
+    return os.path.realpath(os.path.expanduser("~"))
+
+
+def _temp_root() -> str:
+    """The resolved system temporary directory (``/tmp``; ``/var/folders/.../T`` on macOS)."""
+    return os.path.realpath(tempfile.gettempdir())
+
+
+def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | None:
+    """Admit a mount inside the user's own home or the system temp dir, or say why not.
+
+    The blocklist names ``/home``, ``/root`` and ``/var`` so an agent cannot
+    mount another user's home, root's, or the tree that holds
+    ``docker.sock`` - but read as a prefix rule those three also cover the
+    only places an ordinary user can write. On Linux ``hf_local_dir="~/checkpoints"``
+    was refused as "under protected host path '/home'", and so was the
+    tool's own default ``~/.strands_robots/checkpoints`` when spelled out;
+    on macOS the system temp dir lives under ``/var/folders``, so every
+    ``$TMPDIR`` path was refused.
+
+    What the rule protects inside a home is its hidden entries - ``~/.ssh``,
+    ``~/.aws/credentials``, ``~/.docker/config.json`` - so a visible directory
+    under the caller's own home is admitted, and so are the two hidden trees
+    the tool already mounts on its own (its checkpoints dir and the Hugging
+    Face cache). The home directory itself, a hidden entry in it, another
+    user's home, and everything else under the blocked prefixes stay refused.
+    The judgement is on the resolved path, because that is the directory
+    docker mounts: a symlink in the home that points at ``/etc`` resolves
+    out of the home and falls to the blocklist.
+
+    A blocklist entry that is itself inside the home or the temp dir is more
+    specific than this allowance and wins: the path falls to the prefix rule.
+
+    Args:
+        resolved: The symlink-resolved spelling of one host path.
+        blocked_dirs: The resolved blocklist, so a protected directory placed
+            inside the allowance zone is still refused.
+
+    Returns:
+        ``"allowed"`` when the path is admitted here, a refusal reason when
+        it is a hidden entry of the caller's own home, or None when this
+        allowance does not apply and the blocklist decides.
+    """
+    temp_root = _temp_root()
+    home = _user_home()
+    zones = (temp_root, home)
+    for blocked in blocked_dirs:
+        inside_a_zone = any(blocked.startswith(zone + os.sep) for zone in zones)
+        if inside_a_zone and (resolved == blocked or resolved.startswith(blocked + os.sep)):
+            return None
+    if resolved.startswith(temp_root + os.sep):
+        return "allowed"
+    if not resolved.startswith(home + os.sep):
+        return None
+    hf_cache = os.path.realpath(os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface"))
+    for own in (os.path.realpath(_checkpoints_dir()), hf_cache):
+        if resolved == own or resolved.startswith(own + os.sep):
+            return "allowed"
+    relative = resolved[len(home) + 1 :]
+    hidden = [part for part in relative.split(os.sep) if part.startswith(".")]
+    if hidden:
+        return (
+            f"a hidden entry of your home directory ({hidden[0]!r}) is where credentials live; "
+            f"use a visible directory such as {os.path.join('~', 'checkpoints')!r}"
+        )
+    return "allowed"
+
+
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """Return None if all bind-mount host paths are safe, else a reason.
 
@@ -340,6 +411,14 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         candidates = {norm, resolved}
         if blocked_exact & candidates:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
+        # The caller's own visible home directories and the system temp dir
+        # sit under blocked prefixes on every host; admit them here, refuse a
+        # hidden home entry by name, and leave the rest to the prefix rule.
+        allowance = _own_directory_allowance(resolved, blocked_dirs)
+        if allowance == "allowed":
+            continue
+        if allowance is not None:
+            return f"refusing to mount {host_path!r}: {allowance}"
         # Prefix check: reject the protected dir itself AND any child of it, so
         # mounting /etc/shadow, /root/.ssh/id_rsa, /home/<u>/.aws/credentials,
         # /proc/1/environ, /var/run/docker.sock.bak, etc. is blocked too. Root
