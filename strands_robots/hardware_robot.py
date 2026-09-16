@@ -58,6 +58,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
+from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -633,6 +634,10 @@ class RobotTaskState:
     step_count: int = 0
     error_message: str = ""
     task_future: Future | None = None
+    #: The policy object the loop drove, set once it is built or handed in, so
+    #: the task envelope can describe it (see ``Policy.reads_instruction``).
+    #: Cleared with the rest of the state when a new task is claimed.
+    policy: Any = None
 
 
 class Robot(TeleopMixin, AgentTool):
@@ -1871,6 +1876,7 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = 0.0
             self._task_state.step_count = 0
             self._task_state.error_message = ""
+            self._task_state.policy = None
 
             # Connect to robot
             connected, connect_error = await self._connect_robot()
@@ -1892,6 +1898,7 @@ class Robot(TeleopMixin, AgentTool):
                 policy_instance = policy_object
             else:
                 policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+            self._task_state.policy = policy_instance
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
@@ -2589,12 +2596,18 @@ class Robot(TeleopMixin, AgentTool):
             # No event loop running - safe to create one.
             asyncio.run(task_runner())
 
-        # Return final status
-        policy_desc = (
-            f"{type(policy_object).__name__} (pre-built object)"
-            if policy_object is not None
-            else f"{policy_provider} on {policy_host}:{policy_port}"
-        )
+        # Return final status. A provider that built in process has no
+        # server; "on localhost:None" described one anyway.
+        if policy_object is not None:
+            policy_desc = f"{type(policy_object).__name__} (pre-built object)"
+        elif policy_port is None:
+            policy_desc = f"{policy_provider} (built in process, no server)"
+        else:
+            policy_desc = f"{policy_provider} on {policy_host}:{policy_port}"
+        # The policy the loop drove, for the instruction notice: the pre-built
+        # object when given, else the one ``_get_policy`` built for the task.
+        driven = policy_object if policy_object is not None else self._task_state.policy
+        instruction_notice = instruction_not_read_notice(driven)
         return {
             "status": "success" if self._task_state.status == TaskStatus.COMPLETED else "error",
             "content": [
@@ -2605,6 +2618,7 @@ class Robot(TeleopMixin, AgentTool):
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps: {self._task_state.step_count}"
                     + (f"\nError: {self._task_state.error_message}" if self._task_state.error_message else "")
+                    + (f"\n{instruction_notice}" if instruction_notice else "")
                 }
             ],
         }
@@ -2700,17 +2714,27 @@ class Robot(TeleopMixin, AgentTool):
             self._release_task()
             raise
 
+        # The policy is built on the executor thread after this returns, so
+        # the class the registry maps the provider to is what can be asked
+        # whether the instruction just echoed will be read at all.
+        start_notice = self._pending_instruction_notice(policy_provider)
         return {
             "status": "success",
             "content": [
                 {
                     "text": f"Task started: '{instruction}'\n"
                     f"Robot: {self.tool_name_str}\n"
-                    f"Use action='status' to check progress\n"
-                    f"Use action='stop' to interrupt"
+                    + (f"{start_notice}\n" if start_notice else "")
+                    + "Use action='status' to check progress\n"
+                    "Use action='stop' to interrupt"
                 }
             ],
         }
+
+    @staticmethod
+    def _pending_instruction_notice(policy_provider: str | None) -> str | None:
+        """The instruction-not-read notice for a provider that has not been built yet."""
+        return instruction_not_read_notice(provider_policy_class(policy_provider), pending=True)
 
     def run_policy(
         self,
@@ -3045,6 +3069,18 @@ class Robot(TeleopMixin, AgentTool):
         if self._task_state.error_message:
             status_text += f"Error: {self._task_state.error_message}\n"
 
+        # Same sentence the ``execute`` envelope carries, in the present tense
+        # while the task runs: a RUNNING / 18 steps report on a policy that
+        # never reads the instruction it is filed under otherwise says the task
+        # is being performed. Above the device lines, with the task state it
+        # qualifies - and so on the path that cannot read the device too.
+        if self._task_state.status not in (TaskStatus.IDLE, TaskStatus.CONNECTING):
+            notice = instruction_not_read_notice(
+                self._task_state.policy, pending=self._task_state.status == TaskStatus.RUNNING
+            )
+            if notice:
+                status_text += f"{notice}\n"
+
         try:
             facts = self._device_facts()
         except Exception as e:  # noqa: BLE001 - the task state must still be reported
@@ -3118,6 +3154,11 @@ class Robot(TeleopMixin, AgentTool):
                     "text": f"Task stopped{stage}: '{self._task_state.instruction}'\n"
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps completed: {self._task_state.step_count}"
+                    + (
+                        f"\n{stop_notice}"
+                        if (stop_notice := instruction_not_read_notice(self._task_state.policy))
+                        else ""
+                    )
                 }
             ],
         }

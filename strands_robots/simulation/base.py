@@ -2952,7 +2952,10 @@ class SimEngine(ABC):
             Fields in the json block:
 
             Identity: ``robot_name``, ``policy`` (the driving policy's class
-            name), ``instruction``.
+            name), ``instruction``, ``instruction_read`` (``False`` when the
+            policy never read it - ``MockPolicy`` drives a test motion whatever
+            the task says, and the ``text`` block then carries a note saying so;
+            see :attr:`~strands_robots.policies.base.Policy.reads_instruction`).
 
             Horizon: ``n_steps`` (control steps executed), ``steps_used``
             (alias of ``n_steps`` under the retry-loop name), ``elapsed_s``,
