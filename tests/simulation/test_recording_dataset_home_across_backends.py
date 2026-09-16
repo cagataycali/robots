@@ -310,9 +310,20 @@ def _method_node(module: str, method: str) -> ast.FunctionDef:
 
 
 def _called_names(module: str, method: str) -> set[str]:
-    """Names of every plain ``f(...)`` call made inside ``module::method``."""
+    """Names called inside ``module::method`` - ``f(...)`` and ``x.f(...)`` alike.
+
+    Attribute calls count because the resolution's owner is reached as
+    ``self._stash_dataset_target(...)``; reading bare names only would have
+    graded a backend that resolves for itself as compliant.
+    """
     node = _method_node(module, method)
-    return {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    names: set[str] = set()
+    for call in (n for n in ast.walk(node) if isinstance(n, ast.Call)):
+        if isinstance(call.func, ast.Name):
+            names.add(call.func.id)
+        elif isinstance(call.func, ast.Attribute):
+            names.add(call.func.attr)
+    return names
 
 
 def _string_constants(module: str, method: str) -> set[str]:
@@ -330,11 +341,32 @@ class TestNoDatasetRootResolutionDrifts:
     survived: nothing said the resolution had one owner.
     """
 
+    #: The one owner of resolve-and-stash that every backend goes through.
+    _OWNER = "strands_robots/simulation/recording.py"
+
     @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
     def test_every_backend_start_recording_uses_the_shared_resolver(self, module):
-        assert "resolve_dataset_dir" in _called_names(module, "start_recording"), (
-            f"{module}::start_recording resolves the dataset dir without resolve_dataset_dir"
+        """No backend resolves the dataset dir for itself.
+
+        The resolution was spelled out longhand in each backend, which is how a
+        hand-rolled three-branch copy survived in one of them - and then how a
+        value stashed beside the resolved root in one backend left the other two
+        recording datasets no reader could locate. ``_stash_dataset_target`` owns
+        both halves; a backend resolving again is that drift starting over.
+        """
+        called = _called_names(module, "start_recording")
+        assert "_stash_dataset_target" in called, (
+            f"{module}::start_recording resolves the dataset dir without _stash_dataset_target"
         )
+        assert "resolve_dataset_dir" not in called, (
+            f"{module}::start_recording resolves the dataset dir itself rather than through "
+            "_stash_dataset_target, so what is stashed beside it can drift between backends"
+        )
+
+    def test_the_owner_resolves_through_the_shared_resolver(self):
+        """The property the sweep above delegates to the owner still holds there."""
+        assert "resolve_dataset_dir" in _called_names(self._OWNER, "_stash_dataset_target")
+        assert not _string_constants(self._OWNER, "_stash_dataset_target") & {".cache", "huggingface", "lerobot"}
 
     @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
     def test_no_backend_spells_the_dataset_home_itself(self, module):

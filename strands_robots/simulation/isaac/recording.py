@@ -335,14 +335,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             state["trajectory"] = []
             state["push_to_hub"] = push_to_hub
 
-            # Resolve the on-disk dataset dir with the same resolver
-            # DatasetRecorder.create() uses (honours $HF_LEROBOT_HOME) and
-            # stash it so verify_dataset_episodes can find the parquet after
-            # stop_recording drops the recorder.
-            from strands_robots.dataset_recorder import resolve_dataset_dir
-
-            dataset_dir = resolve_dataset_dir(repo_id, root)
-            state["last_dataset_root"] = str(dataset_dir)
+            # Resolve the on-disk dataset dir and stash it with the id it is
+            # recorded under (see ``_stash_dataset_target``).
+            dataset_dir = self._stash_dataset_target(repo_id, root)
 
             try:
                 (

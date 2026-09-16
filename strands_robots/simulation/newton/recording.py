@@ -273,10 +273,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         # bypass this method, and ``last_dataset_root`` - which
         # ``stop_recording(bucket=...)`` syncs and ``verify_dataset_episodes``
         # reads once the recorder is dropped - named the stale path.
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        world._backend_state["last_dataset_root"] = str(dataset_dir)
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             (
