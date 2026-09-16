@@ -302,7 +302,11 @@ class SimSession:
 
 
 def _pack_poses(data: Any) -> bytes:
-    """``[geom_xpos | geom_xmat]`` per geom as little-endian float32 rows."""
+    """``[geom_xpos | geom_xmat]`` per geom as little-endian float32 rows.
+
+    The row is :data:`strands_robots.dashboard.scene.POSE_ROW_FLOATS` wide, which
+    is the width ``describe`` publishes and ``static/twin.js`` strides by.
+    """
     xpos = np.asarray(data.geom_xpos, dtype=np.float32).reshape(-1, 3)
     xmat = np.asarray(data.geom_xmat, dtype=np.float32).reshape(-1, 9)
     return np.ascontiguousarray(np.hstack([xpos, xmat]), dtype="<f4").tobytes()
