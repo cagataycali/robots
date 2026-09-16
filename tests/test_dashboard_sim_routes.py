@@ -313,10 +313,11 @@ class TestSimRoutes:
         assert len(m["qpos"]) == 3
 
     def test_telemetry_for_an_unknown_session_closes(self, client):
+        """Accepted, then closed with 4404, which is what carries the code to the page."""
         from starlette.websockets import WebSocketDisconnect
 
-        with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect("/ws/telemetry/nope"):
-            pass
+        with client.websocket_connect("/ws/telemetry/nope") as ws, pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_json()
         assert exc.value.code == 4404
 
     def test_telemetry_from_another_origin_is_closed_before_it_is_accepted(self, client):
@@ -540,8 +541,8 @@ class TestEstop:
             assert getattr(client, method)(path).status_code == 401, (method, path)
         from starlette.websockets import WebSocketDisconnect
 
-        with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect(f"/ws/telemetry/{sid}"):
-            pass
+        with client.websocket_connect(f"/ws/telemetry/{sid}") as ws, pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_json()
         assert exc.value.code == 4401
 
 
