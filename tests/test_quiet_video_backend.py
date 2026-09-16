@@ -36,7 +36,7 @@ def _fail_import(exc: BaseException):
     real = importlib.import_module
 
     def fake(name, package=None):
-        if name == "torchcodec._core.ops":
+        if name == "torchcodec":
             raise exc
         return real(name, package)
 
@@ -89,6 +89,51 @@ class TestTheProbe:
             assert _dyld.quiet_video_backend() == "pyav"
         assert "installing-torchcodec" in caplog.records[0].getMessage()
 
+    def test_a_torchcodec_whose_private_internals_moved_is_not_downgraded(self, monkeypatch, caplog):
+        """The probe must import what LeRobot imports: plain ``torchcodec``.
+
+        Naming a private submodule (``torchcodec._core.ops``, where the dlopen
+        actually happens) looks more precise and is strictly worse: torchcodec
+        is 0.x and that path is private, so the day it moves, the probe raises
+        ``ModuleNotFoundError`` - a subclass of ``ImportError``, so it is
+        caught - and answers "pyav" with the "built for a different torch"
+        remedy for a torchcodec that loads perfectly and that LeRobot's own
+        resolver would have chosen. Measured on Thor against a package whose
+        ``_core.ops`` was renamed: probing ``torchcodec`` -> None (agreeing with
+        LeRobot's "torchcodec"), probing ``torchcodec._core.ops`` -> "pyav".
+
+        Importing ``torchcodec`` loses no coverage: its ``__init__`` imports
+        ``._core``, which imports ``.ops``, so the native load is exercised
+        either way (asserted below on the real package when it is installed).
+        """
+        monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: True)
+        real = importlib.import_module
+
+        def fake(name, package=None):
+            if name == "torchcodec":
+                return object()  # the package imports fine
+            if name.startswith("torchcodec."):
+                raise ModuleNotFoundError(f"No module named {name!r}")
+            return real(name, package)
+
+        monkeypatch.setattr(importlib, "import_module", fake)
+        with caplog.at_level(logging.WARNING, logger="strands_robots._dyld"):
+            assert _dyld.quiet_video_backend() is None
+        assert caplog.records == []
+
+    def test_importing_torchcodec_covers_the_native_load(self):
+        """The reason the top-level name is sufficient, pinned on the real wheel.
+
+        ``torchcodec._core.ops`` is what dlopen()s libtorchcodec; if importing
+        the package ever stopped pulling it in, the probe would answer for a
+        library it never tried to load.
+        """
+        pytest.importorskip("torchcodec")
+        import sys
+
+        importlib.import_module("torchcodec")
+        assert "torchcodec._core.ops" in sys.modules
+
     def test_probed_once_per_process(self, monkeypatch, caplog):
         monkeypatch.setattr(_dyld, "_torchcodec_installed", lambda: True)
         calls = []
@@ -101,7 +146,7 @@ class TestTheProbe:
         with caplog.at_level(logging.WARNING, logger="strands_robots._dyld"):
             assert _dyld.quiet_video_backend() == "pyav"
             assert _dyld.quiet_video_backend() == "pyav"
-        assert calls == ["torchcodec._core.ops"]
+        assert calls == ["torchcodec"]
         assert len(caplog.records) == 1
 
 

@@ -217,12 +217,13 @@ def quiet_video_backend() -> str | None:
     ``run_policy``'s success and ``stop_recording``'s "Episode saved", for a
     recording that then reads back fine.
 
-    This probe asks the same question with stderr captured and answers in one
-    line: ``"pyav"`` plus a single warning naming the remedy (the dyld export
-    when Homebrew ffmpeg is installed but invisible to this process, otherwise
-    the install), or ``None`` - "let LeRobot choose" - when torchcodec loads or
-    is not installed at all (LeRobot's message for an absent wheel is already
-    one line). Probed once per process.
+    This probe asks that same question - importing the same module LeRobot
+    imports - with stderr captured, and answers in one line: ``"pyav"`` plus a
+    single warning naming the remedy (the dyld export when Homebrew ffmpeg is
+    installed but invisible to this process, otherwise the install), or ``None``
+    - "let LeRobot choose" - when torchcodec loads or is not installed at all
+    (LeRobot's message for an absent wheel is already one line). Probed once per
+    process.
 
     Returns:
         ``"pyav"`` when torchcodec is installed but cannot load, else ``None``.
@@ -242,7 +243,15 @@ def quiet_video_backend() -> str | None:
     try:
         with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            importlib.import_module("torchcodec._core.ops")
+            # The module name is LeRobot's, deliberately: its resolver imports
+            # plain ``torchcodec``, and a probe that asked a NARROWER question
+            # than the decision it is standing in for would answer "pyav" for a
+            # torchcodec LeRobot would have used. ``torchcodec/__init__``
+            # imports ``._core``, which imports ``.ops`` - the module that
+            # dlopen()s libtorchcodec - so this name already covers the native
+            # load, while naming a private submodule would turn any torchcodec
+            # refactor into a silent pyav downgrade.
+            importlib.import_module("torchcodec")
     except (ImportError, OSError, RuntimeError) as e:
         text = str(e)
         if _pending_hint:
