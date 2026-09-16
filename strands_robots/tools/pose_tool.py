@@ -468,7 +468,8 @@ def _joint_target_error(action: str, label: str, motor_name: str | None, value: 
     are decided here, because they are a property of the arm this module drives.
 
     A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no bounds to check
-    against and is left to the action's own unknown-motor path.
+    against and is left to :func:`_unknown_motor_error`, which refuses the name
+    itself before the operator is asked.
 
     Args:
         action: The requested action, used as the message prefix.
@@ -510,11 +511,9 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
 
     A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no travel to bound a
     displacement against, so this domain defers exactly as
-    :func:`_joint_target_error` does. What it defers to is the action itself:
-    ``incremental_move`` needs a current position before it can compute anything,
-    and neither ``read_motor_position`` nor ``move_motor`` can address a motor
-    absent from that table, so the move is refused before any ``Goal_Position``
-    is written.
+    :func:`_joint_target_error` does - to :func:`_unknown_motor_error`, which
+    refuses the name before the operator is asked, so no ``Goal_Position`` is
+    computed from a displacement this function could not bound.
 
     Args:
         action: The requested action, used as the message prefix.
@@ -1084,7 +1083,9 @@ def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
     :class:`MotorController` builds its table from :data:`_DEFAULT_MOTOR_CONFIGS`
     for every port, so whether a name is known is decided by the call alone;
     the controller raising ``Unknown motor`` after the port is opened is the
-    same verdict, reached late.
+    same verdict, reached late. This is also where :func:`_joint_target_error`
+    and :func:`_joint_delta_error` send an unknown name, neither having bounds
+    to judge a target against without it.
 
     Args:
         action: The requested action, used as the message prefix.

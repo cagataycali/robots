@@ -39,9 +39,20 @@ def _call(fn: Any, **kwargs: Any) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _no_allowlist(monkeypatch, tmp_path):
+def _gate_environment(monkeypatch, tmp_path):
+    """A gate that really asks, a private pose library and a private audit log.
+
+    ``BYPASS_TOOL_CONSENT`` switches the gate off wholesale, and the ambient
+    environment of an agent run carries it - so every "still asks" case here
+    would pass vacuously without clearing it, which is what the sibling gate
+    fixtures do. The audit dir is redirected for the same reason those do:
+    a call that reaches the operator records their reply, and the default
+    destination is the developer's own ``~/.strands_robots``.
+    """
+    monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv(pose_mod.COMMAND_ALLOW_ENV, raising=False)
     monkeypatch.delenv(serial_mod.COMMAND_ALLOW_ENV, raising=False)
+    monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.chdir(tmp_path)  # an empty pose library
 
 
@@ -79,13 +90,20 @@ def test_a_doomed_pose_motion_is_refused_without_asking(kwargs, expected):
     assert out.startswith("error:") and expected in out, out
 
 
-@pytest.mark.parametrize("kwargs,expected", [p for p in POSE_DOOMED if "unknown" not in p.id])
-def test_the_pose_refusal_matches_the_branch_with_the_gate_bypassed(monkeypatch, kwargs, expected):
-    """The pre-gate check speaks with the branch's voice.
+@pytest.mark.parametrize("kwargs,expected", [p for p in POSE_DOOMED if "unknown" not in str(p.id)])
+def test_the_pose_branch_answers_in_the_same_words(monkeypatch, kwargs, expected):
+    """The branch's own check, still there, still says what the pre-gate one says.
+
+    The pre-gate check is bypassed and the gate pre-approved, so the answer
+    comes from the action's own branch: two copies of one verdict, and an
+    operator must not get different words depending on which ran. Without
+    bypassing it the pre-gate check answers first, so a cell that only opens
+    the gate never reaches the branch at all.
 
     The unknown-motor rows are left out: the branch only learns that from the
     controller after the port is open, which is the point of checking first.
     """
+    monkeypatch.setattr(pose_mod, "_motion_input_error", lambda *_, **__: None)
     monkeypatch.setenv(pose_mod.COMMAND_ALLOW_ENV, "*")
     out = _call(pose_mod.pose_tool, port=PORT, **kwargs)
     assert out.startswith("error:") and expected in out, out
@@ -167,3 +185,35 @@ def test_a_sound_serial_write_still_asks(kwargs):
 def test_the_bad_hex_refusal_quotes_the_value():
     out = _call(serial_mod.serial_tool, action="send", port=PORT, hex_data="ZZ 01")
     assert "got ZZ 01." in out
+
+
+@pytest.mark.parametrize("kwargs,expected", [p for p in SERIAL_DOOMED if "hex" not in str(p.id)])
+def test_the_serial_branch_answers_in_the_same_words(monkeypatch, fake_serial, kwargs, expected):
+    """The branch's own payload check, still there, still says the same thing.
+
+    Reached the way the pose one is - pre-gate check bypassed, gate
+    pre-approved - which for a write means the port is opened first, so a
+    stand-in port is installed.
+    """
+    monkeypatch.setattr(serial_mod, "_write_payload_error", lambda *_, **__: None)
+    monkeypatch.setenv(serial_mod.COMMAND_ALLOW_ENV, "*")
+    out = _call(serial_mod.serial_tool, port=PORT, **kwargs)
+    assert out.startswith("error:") and expected in out, out
+
+
+def test_bad_hex_has_no_branch_verdict_and_left_the_port_open(monkeypatch, fake_serial):
+    """Why the hex rows have no wording to match: the branch has no verdict.
+
+    ``bytes.fromhex`` raises, so the answer is the ValueError's own text -
+    naming neither the parameter nor a usable value - from a port that was
+    opened and that the exception path never closes. The pre-gate check is the
+    only verdict there is, and it opens no port at all.
+    """
+    monkeypatch.setenv(serial_mod.COMMAND_ALLOW_ENV, "*")
+    assert _call(serial_mod.serial_tool, action="send", port=PORT, hex_data="ZZ 01").startswith("error:")
+    assert fake_serial == []
+
+    monkeypatch.setattr(serial_mod, "_write_payload_error", lambda *_, **__: None)
+    out = _call(serial_mod.serial_tool, action="send", port=PORT, hex_data="ZZ 01")
+    assert "non-hexadecimal" in out, out
+    assert [port.is_open for port in fake_serial] == [True]
