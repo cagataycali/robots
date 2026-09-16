@@ -2954,6 +2954,51 @@ class Robot(TeleopMixin, AgentTool):
             return False
         return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
 
+    def _motion_warning(self, action: str, tool_input: Mapping[str, Any]) -> str:
+        """The sentence the operator approves: what the arm will physically do, for how long.
+
+        This is the only description of the motion the operator sees before
+        the arm moves, so it states what will happen rather than what was
+        asked. It used to read ``drives the real robot 'so101' with 'Wave the
+        arm' (policy mock at localhost:None)`` - the instruction as the motion,
+        and a server address for a policy that builds in process. With
+        ``mock`` the arm does not wave: every joint follows a sinusoidal test
+        motion whatever the words say, and an operator approving "Wave the
+        arm" approved a motion they were not told about. The time budget the
+        loop will honour is named for the same reason.
+
+        Args:
+            action: ``"execute"`` or ``"start"``.
+            tool_input: The tool's input dict as the agent sent it.
+
+        Returns:
+            One sentence for the interrupt's ``warning`` and the headless refusal.
+        """
+        instruction = str(tool_input.get("instruction", ""))
+        provider = str(tool_input.get("policy_provider") or "groot")
+        host = tool_input.get("policy_host", "localhost")
+        port = tool_input.get("policy_port")
+        duration = tool_input.get("duration", 30.0)
+        policy_desc = (
+            f"policy {provider} on {host}:{port}"
+            if port is not None
+            else f"policy {provider}, built in process, no server"
+        )
+        budget = (
+            f" for up to {duration}s" if isinstance(duration, (int, float)) and not isinstance(duration, bool) else ""
+        )
+        text = (
+            f"{action!r} drives the real robot {self.tool_name_str!r}{budget} with {instruction!r} "
+            f"({policy_desc}); it needs operator approval before it is dispatched."
+        )
+        cls = provider_policy_class(provider)
+        if cls is not None and not getattr(cls, "reads_instruction", True):
+            text += (
+                f" {cls.__name__} does not read the instruction: every joint will follow a "
+                "sinusoidal test motion whatever the words say."
+            )
+        return text
+
     def _gate_motion(
         self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
     ) -> str | None:
@@ -2987,18 +3032,13 @@ class Robot(TeleopMixin, AgentTool):
         tool_context: ToolContext | None = None
         if agent is not None:
             tool_context = ToolContext(tool_use=tool_use, agent=agent, invocation_state=dict(invocation_state))
-        instruction = str(tool_input.get("instruction", ""))
-        provider = tool_input.get("policy_provider", "groot")
-        host = tool_input.get("policy_host", "localhost")
-        port = tool_input.get("policy_port")
         # ``tool`` is the fixed word "robot" so the interrupt id and the audit
         # source read the same for every robot; the target names which one.
         return gate_motion(
             "robot",
             action,
             self.tool_name_str,
-            f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
-            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched.",
+            self._motion_warning(action, tool_input),
             tool_context,
             allow_env=COMMAND_ALLOW_ENV,
             allow_match=lambda allowed: "*" in allowed or action in allowed,
