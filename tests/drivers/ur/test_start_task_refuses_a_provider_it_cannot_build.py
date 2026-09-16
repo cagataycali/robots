@@ -43,6 +43,7 @@ import pytest
 
 from strands_robots.drivers.ur import URDriver
 from strands_robots.policies import list_aliases, list_providers
+from strands_robots.registry.policies import get_policy_provider
 from tests.mocks.ur_rtde import FakeRTDE, text_of
 
 HOST = "192.168.1.10"
@@ -104,8 +105,20 @@ class TestTheTwoFailureShapesThatEscaped:
     """The regression: both of these raised out of the verb before the fix."""
 
     def test_a_remote_code_provider_is_refused_under_the_secure_default(self, driver: URDriver) -> None:
-        """``UntrustedRemoteCodeError`` is a ``RuntimeError``, so the tuple missed it."""
-        envelope = driver.start_task("pick up the cube", policy_provider="lerobot_local")
+        """``UntrustedRemoteCodeError`` is a ``RuntimeError``, so the tuple missed it.
+
+        The checkpoint is supplied so the trust gate stays the thing graded:
+        ``lerobot_local`` requires it, and
+        :class:`TestARequiredKeywordIsJudgedBeforeTheBuild` refuses a build with
+        no checkpoint before ``create_policy`` is reached at all. The trust
+        refusal is raised whether or not a checkpoint is named, so naming one
+        changes nothing about the shape under test.
+        """
+        envelope = driver.start_task(
+            "pick up the cube",
+            policy_provider="lerobot_local",
+            pretrained_name_or_path="lerobot/smolvla_base",
+        )
         assert envelope["status"] == "error"
         assert "lerobot_local" in text_of(envelope)
         assert "trust_remote_code" in text_of(envelope)
@@ -140,3 +153,113 @@ class TestABuildableProviderStillReachesTheRollout:
         assert seen["instruction"] == "pick up the cube"
         assert seen["duration"] == 1.5
         assert type(seen["policy"]).__name__ == "MockPolicy"
+
+
+#: The providers whose registry entry names a keyword the caller must supply,
+#: read from the registry so a new one is held to this the day it lands.
+REQUIRING = sorted(
+    (name, tuple(get_policy_provider(name)["requires"]))  # type: ignore[index]
+    for name in list_providers()
+    if (get_policy_provider(name) or {}).get("requires")
+)
+
+
+class TestARequiredKeywordIsJudgedBeforeTheBuild:
+    """A provider that cannot act without a keyword is refused before it is built.
+
+    ``requires`` names the keywords a provider cannot be built usefully without,
+    and two of them are not enforced by the constructor they are for.
+    ``LerobotLocalPolicy`` defaults ``pretrained_name_or_path=""`` and loads
+    lazily; ``Gr00tPolicy`` accepts no ``port`` and falls back to a default
+    nobody serves. Both therefore *built*, this verb answered ``success``, and
+    the rollout it started held a live arm for one step it could never take:
+    measured on a fake controller, ``lerobot_local`` with no checkpoint reached
+    ``exit_reason="policy"`` / ``steps: 0`` with "No model loaded and no
+    pretrained_name_or_path set", and ``groot`` with no port sat at
+    ``running=True`` / ``steps: 0`` for ~15 s of a 2 s budget before a
+    ``ConnectionError`` to ``tcp://localhost:5555``.
+
+    The real-arm surface gained this check in #3752; this is the same decision
+    at the fleet's only other registry build, which is why the domain moved to
+    :func:`~strands_robots.utils.policy_requires_error` rather than being
+    written twice.
+    """
+
+    def test_the_population_is_not_empty(self) -> None:
+        """Non-vacuity: nothing below grades anything if no provider requires a keyword."""
+        assert REQUIRING, list_providers()
+
+    @pytest.mark.parametrize(("provider", "requires"), REQUIRING)
+    def test_a_missing_required_keyword_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, driver: URDriver, provider: str, requires: tuple[str, ...]
+    ) -> None:
+        """The refusal names the provider and every keyword that was not supplied."""
+        monkeypatch.setattr(
+            URDriver, "run_policy", lambda *a, **k: pytest.fail("a rollout was started for an unbuildable policy")
+        )
+        envelope = driver.start_task("pick up the cube", policy_provider=provider)
+        assert envelope["status"] == "error"
+        text = text_of(envelope)
+        assert text.startswith(f"start_task: policy_provider={provider!r} builds its policy from")
+        for keyword in requires:
+            assert f"{keyword}=..." in text, text
+        assert "the rollout would start on a live arm and fail at its first action" in text
+
+    def test_the_port_is_judged_by_the_same_guard(self, driver: URDriver) -> None:
+        """``policy_port`` is funnelled into the build kwargs, so one guard covers it.
+
+        Unlike the real-arm surface -- where ``port`` arrives as a named
+        parameter and is judged by its own guard -- this verb puts it in the
+        kwargs it builds from, so it is judged with the rest.
+        """
+        text = text_of(driver.start_task("pick up the cube", policy_provider="groot"))
+        assert "builds its policy from port" in text
+        assert "the port the policy server listens on" in text
+
+    def test_a_supplied_keyword_is_not_refused(self, monkeypatch: pytest.MonkeyPatch, driver: URDriver) -> None:
+        """The guard refuses an absence, never a value: the rollout is still reached."""
+        reached: list[str] = []
+
+        def record(self: URDriver, *a: Any, **k: Any) -> dict[str, Any]:
+            reached.append("yes")
+            return ROLLED_OUT
+
+        monkeypatch.setattr(URDriver, "run_policy", record)
+        envelope = driver.start_task("pick up the cube", policy_provider="groot", policy_port=5555)
+        assert envelope == ROLLED_OUT
+        assert reached == ["yes"]
+
+    def test_the_build_is_never_reached(self, monkeypatch: pytest.MonkeyPatch, driver: URDriver) -> None:
+        """ "Before the build" is the point: ``create_policy`` is not called at all.
+
+        This is what separates the fix from a nicer message. The old answer came
+        out of the build -- or worse, out of the rollout a successful build
+        started -- so a guard that ran after it would still have energized a
+        rollout for ``lerobot_local``.
+        """
+        import strands_robots.policies as policies
+
+        monkeypatch.setattr(
+            policies, "create_policy", lambda *a, **k: pytest.fail("the policy was built despite a missing keyword")
+        )
+        assert driver.start_task("pick up the cube", policy_provider="lerobot_local")["status"] == "error"
+
+    def test_a_provider_that_requires_nothing_is_untouched(self, driver: URDriver) -> None:
+        """Non-vacuity in the other direction: the guard is not refusing everything."""
+        assert driver.start_task("pick up the cube", policy_provider="mock") == ROLLED_OUT
+
+    def test_an_unknown_provider_is_left_to_the_build(self, driver: URDriver) -> None:
+        """A name the registry does not hold is passed over, not judged against a guess.
+
+        The guard reads the named provider's registry entry, so a spelling with
+        no entry has no requirements to be missing. Answering for it here would
+        replace ``create_policy``'s refusal -- which names the spelling that
+        failed and lists the ones that resolve -- with a keyword complaint about
+        a provider that does not exist. The real-arm surface pins the same
+        relation on the helper directly; this surface pins it through the verb,
+        because it is the one that does *not* ignore ``port`` and so would
+        otherwise invent "builds its policy from port" for any typo.
+        """
+        text = text_of(driver.start_task("pick up the cube", policy_provider="no_such_provider"))
+        assert "Unknown policy provider: 'no_such_provider'" in text
+        assert "builds its policy from" not in text
