@@ -602,6 +602,34 @@ class MotionPrimitivesCore:
         )
 
     @staticmethod
+    def _joint_limit_record(name: str, pos: float, lo: float, hi: float) -> dict[str, Any] | None:
+        """One joint's at-a-bound record, or ``None`` when it sits clear of both bounds.
+
+        The single owner of "at a bound": a joint counts when its position is
+        within :data:`JOINT_LIMIT_MARGIN_FRACTION` of its range (floor
+        ``1e-3``) of either end. Backends reach it by different routes - the
+        MuJoCo servo through :meth:`_joints_at_limit` (``jnt_range`` against a
+        ``qpos`` vector), the Isaac wrist servo from the articulation DOF
+        limits it already read - so keeping the threshold here is what makes
+        "this joint stopped you" mean the same thing on both.
+
+        Args:
+            name: Joint name as the caller will read it.
+            pos: The joint's position at the final servo tick.
+            lo: Lower bound of its range.
+            hi: Upper bound of its range.
+
+        Returns:
+            ``{"joint", "pos", "limit", "side"}`` naming the bound it sits on,
+            or ``None`` when it is clear of both.
+        """
+        margin = max((hi - lo) * JOINT_LIMIT_MARGIN_FRACTION, 1e-3)
+        side = "lower" if pos <= lo + margin else "upper" if pos >= hi - margin else None
+        if side is None:
+            return None
+        return {"joint": name, "pos": pos, "limit": lo if side == "lower" else hi, "side": side}
+
+    @staticmethod
     def _joints_at_limit(mj: Any, model: Any, qpos: Any, joint_ids: Iterable[int]) -> list[dict[str, Any]]:
         """The commanded joints sitting at a bound of their range, by name.
 
@@ -609,8 +637,8 @@ class MotionPrimitivesCore:
         every backend already holds for IK, so the MuJoCo servo (live
         ``data.qpos``) and the Isaac servo (its FK readback ``q_fk``) answer
         the same question the same way. A joint counts when it has limits and
-        its position is within :data:`JOINT_LIMIT_MARGIN_FRACTION` of its
-        range (floor ``1e-3``) of either bound.
+        :meth:`_joint_limit_record` - the single owner of "at a bound" - says
+        it sits at one.
 
         Args:
             mj: The ``mujoco`` module.
@@ -625,19 +653,19 @@ class MotionPrimitivesCore:
         for jnt_id in sorted(int(j) for j in joint_ids):
             if not bool(model.jnt_limited[jnt_id]):
                 continue
-            lo, hi = float(model.jnt_range[jnt_id][0]), float(model.jnt_range[jnt_id][1])
-            margin = max((hi - lo) * JOINT_LIMIT_MARGIN_FRACTION, 1e-3)
-            pos = float(qpos[int(model.jnt_qposadr[jnt_id])])
-            side = "lower" if pos <= lo + margin else "upper" if pos >= hi - margin else None
-            if side is None:
-                continue
-            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jnt_id) or f"joint_{jnt_id}"
-            out.append({"joint": name, "pos": pos, "limit": lo if side == "lower" else hi, "side": side})
+            record = MotionPrimitivesCore._joint_limit_record(
+                mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jnt_id) or f"joint_{jnt_id}",
+                float(qpos[int(model.jnt_qposadr[jnt_id])]),
+                float(model.jnt_range[jnt_id][0]),
+                float(model.jnt_range[jnt_id][1]),
+            )
+            if record is not None:
+                out.append(record)
         return out
 
     @staticmethod
     def _obstruction_text(obstruction: dict[str, Any] | None) -> str:
-        """Say what stopped a ``move_to`` servo, by name, or that nothing visible did.
+        """Say what stopped the servo, by name, or that nothing visible did.
 
         Measured with an agent on the bundled so100 (v0.5.2 devx replay, s09):
         three ``move_to`` calls in a row ended in "the pose fights joint
@@ -647,7 +675,14 @@ class MotionPrimitivesCore:
         ``the robot is in contact: 'ground' <-> 'so100/Fixed_Jaw/geom_18'
         (d=-0.0002 m)``. The agent needed an extra tool call per failure to
         learn that, and the generic line named neither of the two things it
-        could have.
+        could have. ``rotate_wrist`` servos to a set-point the same way and
+        reported only its residual: on the same robot the wrist turned 0.003
+        of 2.500 rad while contacts held the gripper inside its own base.
+
+        Shared across primitives, so the remedy names the commanded VALUE
+        rather than a target position - ``rotate_wrist`` commands an angle,
+        and "move the target away" is not an instruction its caller can
+        follow.
 
         Args:
             obstruction: ``{"contacts": [{"geom1", "geom2", "dist"}],
@@ -690,9 +725,9 @@ class MotionPrimitivesCore:
                 "(raise max_steps) or a slightly looser tol."
             )
         remedy = (
-            " Move the target away from what it touches, or loosen tol."
+            " Clear what it touches, or command a value that avoids it - or loosen tol."
             if contacts
-            else " Choose a target that joint can reach inside its range, or loosen tol."
+            else " Command a value that joint can reach inside its range, or loosen tol."
         )
         return "The servo was stopped: " + "; ".join(parts) + "." + remedy
 
@@ -821,6 +856,7 @@ class MotionPrimitivesCore:
         final_yaw: float,
         yaw_error: float,
         uncommanded_drives: list[str] | None = None,
+        obstruction: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Success / not-reached envelope for ``rotate_wrist``, shared across backends.
 
@@ -830,6 +866,14 @@ class MotionPrimitivesCore:
         other joint" is reported for the joints it can hold rather than claimed
         for all of them. Omitted from the payload when there are none, which
         keeps the envelope byte-identical for a fully position-servo robot.
+
+        ``obstruction`` is what the engine saw at the final servo tick, in the
+        shape :meth:`_obstruction_text` reads, and is only read on the
+        not-reached path - where it turns a bare residual into the name of the
+        contact or the joint bound that stopped the wrist. ``None`` means the
+        engine did not look, and then the reply stays byte-identical to what
+        it was: a null obstruction would read as "looked, found nothing",
+        which is a different answer.
         """
         payload: dict[str, Any] = {
             "reached": reached,
@@ -856,8 +900,11 @@ class MotionPrimitivesCore:
                 "status": "success",
                 "content": [{"text": text}, {"json": payload}],
             }
-        return _err(
+        text = (
             f"rotate_wrist: '{robot_name}' joint '{wrist_name}' did not reach {target_yaw:.3f} rad "
-            f"within tol={float(tol)} rad after max_steps={max_steps} (residual {yaw_error:.4f} rad).",
-            payload,
+            f"within tol={float(tol)} rad after max_steps={max_steps} (residual {yaw_error:.4f} rad)."
         )
+        if obstruction is not None:
+            payload["obstruction"] = obstruction
+            text += " " + MotionPrimitivesCore._obstruction_text(obstruction)
+        return _err(text, payload)
