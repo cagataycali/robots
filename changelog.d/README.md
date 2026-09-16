@@ -27,7 +27,8 @@ editing or reordering an entry already in the log adds no heading.
 ## Adding a fragment
 
 Create `changelog.d/<number>-<slug>.md`, where `<number>` is your PR (or issue)
-number and `<slug>` is a short lowercase description:
+number and `<slug>` is a short lowercase description. `0000` is a placeholder,
+not a number, and is refused; rename the file once the PR number exists:
 
 ```
 changelog.d/1692-teleop-slew-bound.md

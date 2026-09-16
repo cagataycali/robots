@@ -1,8 +1,11 @@
 """Rendering mixin - render, render_depth, get_contacts, observation helpers."""
 
+import atexit
 import io
 import logging
 import os
+import threading
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -37,6 +40,58 @@ from strands_robots.simulation.safe_output import (
 from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error, refusal_repr
 
 logger = logging.getLogger(__name__)
+
+# Every ``mujoco.Renderer`` this module builds, weakly, with the ident of the
+# thread that built it. Read by :func:`_close_renderers_at_exit`.
+_LIVE_RENDERERS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+_LIVE_RENDERERS_LOCK = threading.Lock()
+_EXIT_HOOK_REGISTERED = False
+
+
+def _close_renderers_at_exit() -> None:
+    """Close the renderers the exiting thread built, while their display is alive.
+
+    ``mujoco.Renderer`` frees its GL context in ``__del__``. Under EGL the
+    display those contexts belong to is torn down by an ``atexit`` hook mujoco
+    registers when it first opens the display, so a renderer that is still
+    alive at interpreter exit - the main-thread cache of a script that never
+    called ``cleanup()``, which is every ``Robot(...).run_policy(video=...)``
+    script - is finalised *after* ``eglTerminate`` and its ``free()`` raises
+    ``EGLError: EGL_NOT_INITIALIZED`` from ``eglMakeCurrent``; the context
+    object's own ``__del__`` then raises the same, so a successful rollout ends
+    in some thirty lines of ignored traceback.
+
+    ``atexit`` runs hooks last-registered first, and this one is registered by
+    :meth:`RenderingMixin._get_renderer` right after the first renderer is
+    built - by which point mujoco's own hook exists - so it runs before the
+    display goes away. Only renderers built on the thread that is running the
+    hooks are closed: a renderer's GL context is bound to its creating thread,
+    and closing one cross-thread SIGSEGVs in ``cgl.free()`` on macOS. Renderers
+    on worker threads need no help - a worker's thread-local cache is dropped
+    when the thread ends, which happens before the hooks run.
+    """
+    ident = threading.get_ident()
+    with _LIVE_RENDERERS_LOCK:
+        mine = [renderer for renderer, owner in list(_LIVE_RENDERERS.items()) if owner == ident]
+    for renderer in mine:
+        try:
+            renderer.close()
+        except Exception:  # noqa: BLE001 - exit path; a driver that refuses to free is not our error
+            logger.debug("renderer close at exit failed", exc_info=True)
+
+
+def _track_renderer(renderer: Any) -> None:
+    """Record ``renderer`` for :func:`_close_renderers_at_exit`, registering the hook once."""
+    global _EXIT_HOOK_REGISTERED
+    with _LIVE_RENDERERS_LOCK:
+        try:
+            _LIVE_RENDERERS[renderer] = threading.get_ident()
+        except TypeError:  # pragma: no cover - a renderer that cannot be weakly referenced (test stub)
+            return
+        if not _EXIT_HOOK_REGISTERED:
+            atexit.register(_close_renderers_at_exit)
+            _EXIT_HOOK_REGISTERED = True
+
 
 # render(output_path=...) is an LLM-callable tool: the path is attacker-influenced.
 # Confine writes to a sandbox root, reject shell metacharacters / traversal /
@@ -417,7 +472,11 @@ class RenderingMixin:
                 except Exception:
                     pass
                 del renderers[oldest_key]
-            renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
+            renderer = mj.Renderer(self._world._model, height=height, width=width)
+            # Registered after the build: mujoco's EGL display hook exists by
+            # now, so the close hook this registers runs before it (LIFO).
+            _track_renderer(renderer)
+            renderers[key] = renderer
         return renderers[key]
 
     def _get_viz_option(self) -> Any:
