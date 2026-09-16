@@ -4315,7 +4315,7 @@ class SimEngine(ABC):
             (#2833), so it refuses rather than reporting a stop it cannot keep.
         """
         if not robot_name:
-            return {"status": "error", "content": [{"text": "stop_policy requires 'robot_name'."}]}
+            return {"status": "error", "content": [{"text": self._stop_policy_requires_name_msg()}]}
         if robot_name not in self.list_robots():
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         was_running = self._request_policy_stop(robot_name)
@@ -4436,6 +4436,27 @@ class SimEngine(ABC):
             gone. Default: ``None`` - the ABC itself owns no registry.
         """
         return None
+
+    def _stop_policy_requires_name_msg(self) -> str:
+        """The refusal for ``stop_policy`` called without a robot, naming the remedy.
+
+        ``robot_name`` is required by design (never defaulted to the sole robot,
+        see :meth:`stop_policy`), but the refusal used to end at "requires
+        'robot_name'" - a caller who had launched with ``start_policy`` on the
+        sole robot, which does default, then had to discover the name. The
+        robots whose rollouts are in flight are the very population the stop is
+        for, so they are named here with the exact call; a backend that keeps
+        no rollout registry (:meth:`_rollouts_in_flight` is ``None``) gets the
+        bare requirement.
+        """
+        base = "stop_policy requires 'robot_name'."
+        names = self._rollouts_in_flight()
+        if names is None:
+            return base
+        if not names:
+            return f"{base} No policy is running now (list_policies_running)."
+        calls = ", ".join(f"stop_policy(robot_name='{n}')" for n in names)
+        return f"{base} Running now: {', '.join(names)} - {calls}."
 
     def list_policies_running(self) -> dict[str, Any]:
         """Name the robots a rollout is driving right now.

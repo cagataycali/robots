@@ -7572,7 +7572,7 @@ class MuJoCoSimEngine(
         if not robot_name:
             return {
                 "status": "error",
-                "content": [{"text": "stop_policy requires 'robot_name'."}],
+                "content": [{"text": self._stop_policy_requires_name_msg()}],
             }
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
