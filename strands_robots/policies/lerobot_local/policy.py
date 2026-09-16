@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import numpy as np
@@ -158,7 +158,7 @@ def _inapplicable_image_target_error(
     targets: dict[str, list[str]],
     embodiment_name: str,
     policy_config: dict[str, Any],
-    observation_keys: Sequence[str],
+    observation_keys: Iterable[str],
 ) -> str | None:
     """Report embodiment image renames the checkpoint's own features cannot accept.
 
