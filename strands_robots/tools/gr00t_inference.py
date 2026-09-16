@@ -12,6 +12,7 @@ from a single prompt - see #148 for the motivation.
 """
 
 import os
+import posixpath
 import re
 import socket
 import subprocess
@@ -39,6 +40,11 @@ _DEFAULT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T"
 _DEFAULT_REPO_TAG = "n1.7-release"
 _DEFAULT_IMAGE_NAME = "gr00t:latest"
 _DEFAULT_CONTAINER_COMMAND = "tail -f /dev/null"
+
+#: Default TensorRT engine cache directory. Relative, so the server resolves
+#: it against its own working directory rather than against a bind mount -
+#: which is what lets the checkpoint mount be read-only by default.
+_DEFAULT_TRT_ENGINE_PATH = "gr00t_engine"
 
 # Fixed in-container path the determinism wrapper is mounted at when
 # ``deterministic=True``. Constant on purpose: the agent never chooses the
@@ -114,9 +120,12 @@ _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
 # system temp dir under ``/var/folders``. :func:`_own_directory_allowance`
 # admits exactly those three places and nothing else under the prefixes. An
 # arbitrary visible directory of the caller's home stays refused on purpose:
-# ``hf_local_dir`` is agent-supplied and the mount is read-write, so admitting
-# ``~/<anything>`` would let a prompt-injected ``download_checkpoint`` write a
-# repository of its choosing into a directory the user's shell or build reads.
+# ``hf_local_dir`` is agent-supplied and ``download_checkpoint`` writes to it
+# directly on the host, so admitting ``~/<anything>`` would let a prompt-
+# injected call drop a repository of its choosing into a directory the user's
+# shell or build reads. Refusing the path is what prevents that write; the
+# container's own mount of an admitted directory is separately read-only
+# wherever it can be (:func:`_checkpoint_mount_is_read_only`).
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -399,6 +408,58 @@ def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | Non
         f"Hugging Face cache ({hf_cache!r}) are mounted; use a directory under one of those or under "
         f"the system temp dir ({temp_root!r}), or leave hf_local_dir unset for the default"
     )
+
+
+#: Container path the default volume layout mounts the checkpoint directory at.
+#: Named because two decisions read it: where the checkpoint is mounted, and
+#: whether the TensorRT engine cache would be written inside that mount.
+_CHECKPOINT_CONTAINER_PATH = "/data/checkpoints"
+
+
+def _checkpoint_mount_is_read_only(*, use_tensorrt: bool, trt_engine_path: str) -> bool:
+    """Whether the default checkpoint mount can be handed to docker as ``:ro``.
+
+    The checkpoint is fetched by :func:`_download_checkpoint`, which writes it
+    **on the host** through ``snapshot_download`` with no docker mediation, and
+    the inference server only ever reads it back. So the container has no
+    reason to hold that directory read-write, and mounting it ``:ro`` means a
+    checkpoint that executes on load - a torch pickle is arbitrary code - cannot
+    rewrite the checkpoint corpus the operator trusts, nor drop a new file into
+    a directory the host reads. It is the mount half of the narrowing in #3755:
+    that change decided *which* directories may be mounted, this one decides
+    *how*.
+
+    The one exception is the TensorRT engine cache. ``--trt-engine-path`` is a
+    container-side path the server *writes* on first compile so that (per this
+    tool's own docstring) "subsequent runs load from ``trt_engine_path``", and
+    the checkpoint mount is today the only writable place in the default layout
+    where such an engine could persist across container recreation. An operator
+    who pointed the cache inside the checkpoint mount is therefore relying on
+    it being writable, and an unconditional ``:ro`` would break them the way
+    this file least wants - a permission error minutes later in the container
+    log rather than as the call's result. That case keeps the mount read-write.
+
+    A relative ``trt_engine_path`` (the ``"gr00t_engine"`` default) resolves
+    against the server's working directory, not against a mount, so it does not
+    hold the checkpoint directory open.
+
+    Args:
+        use_tensorrt: Whether ``--trt-engine-path`` is emitted at all; when it
+            is not, the engine cache is never written and the path is inert.
+        trt_engine_path: The engine cache directory, as it will be passed to
+            the server - a container-side path.
+
+    Returns:
+        True when the mount may be read-only, False when the engine cache
+        would be written inside it.
+    """
+    if not use_tensorrt:
+        return True
+    # A container-side path is POSIX regardless of the host this tool runs on.
+    engine = posixpath.normpath(trt_engine_path)
+    if not posixpath.isabs(engine):
+        return True
+    return not (engine == _CHECKPOINT_CONTAINER_PATH or engine.startswith(_CHECKPOINT_CONTAINER_PATH + "/"))
 
 
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
@@ -800,7 +861,7 @@ def gr00t_inference(
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
-    trt_engine_path: str = "gr00t_engine",
+    trt_engine_path: str = _DEFAULT_TRT_ENGINE_PATH,
     vit_dtype: str = "fp8",
     llm_dtype: str = "nvfp4",
     dit_dtype: str = "fp8",
@@ -1262,6 +1323,8 @@ def gr00t_inference(
             hf_local_dir=hf_local_dir,
             deterministic=deterministic,
             force=force,
+            use_tensorrt=use_tensorrt,
+            trt_engine_path=trt_engine_path,
         )
     elif action == "lifecycle":
         image_name = _resolve_image_name()
@@ -2165,6 +2228,8 @@ def _start_container(
     hf_local_dir: str | None,
     force: bool,
     deterministic: bool = False,
+    use_tensorrt: bool = False,
+    trt_engine_path: str = _DEFAULT_TRT_ENGINE_PATH,
 ) -> dict[str, Any]:
     """``docker run -d`` the GR00T container so subsequent ``start`` actions can
     ``docker exec`` into it.
@@ -2267,11 +2332,20 @@ def _start_container(
     # and the host's HF cache so `huggingface_hub` reuses already-downloaded
     # snapshots. Override with explicit ``volumes={...}`` to customise.
     effective_volumes = dict(volumes) if volumes is not None else {}
+    # Container paths mounted read-only. Only the default layout's checkpoint
+    # mount qualifies: the host writes it and the server reads it back. The HF
+    # cache stays read-write because the container's ``huggingface_hub`` writes
+    # into it - reusing already-downloaded snapshots means adding to them - and
+    # a caller-supplied ``volumes`` dict is left exactly as the operator wrote
+    # it, since only they know what their container needs to write.
+    read_only_container_paths: set[str] = set()
     if not volumes:
         if hf_local_dir:
-            effective_volumes[str(Path(hf_local_dir).expanduser())] = "/data/checkpoints"
+            effective_volumes[str(Path(hf_local_dir).expanduser())] = _CHECKPOINT_CONTAINER_PATH
         else:
-            effective_volumes[str(_checkpoints_dir())] = "/data/checkpoints"
+            effective_volumes[str(_checkpoints_dir())] = _CHECKPOINT_CONTAINER_PATH
+        if _checkpoint_mount_is_read_only(use_tensorrt=use_tensorrt, trt_engine_path=trt_engine_path):
+            read_only_container_paths.add(_CHECKPOINT_CONTAINER_PATH)
         hf_cache = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
         effective_volumes[hf_cache] = "/root/.cache/huggingface"
 
@@ -2289,7 +2363,8 @@ def _start_container(
         return {"status": "error", "message": _hf_dir_reason}
 
     for host_path, container_path in effective_volumes.items():
-        cmd.extend(["-v", f"{host_path}:{container_path}"])
+        mode = ":ro" if container_path in read_only_container_paths else ""
+        cmd.extend(["-v", f"{host_path}:{container_path}{mode}"])
 
     # deterministic=True: mount the packaged determinism wrapper read-only at
     # the fixed container path and forward the operator determinism env vars.
@@ -2484,6 +2559,8 @@ def _lifecycle(
         hf_local_dir=resolved_local_dir,
         deterministic=deterministic,
         force=force,
+        use_tensorrt=use_tensorrt,
+        trt_engine_path=trt_engine_path,
     )
     steps.append({"step": "start_container", "result": container_result})
     if container_result["status"] != "success":
