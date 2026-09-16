@@ -229,24 +229,55 @@ class TestSimRoutes:
         assert client.post("/api/sim", json={"robot": 3}).status_code == 400
         assert client.post("/api/sim", json=[]).status_code == 400
 
-    @pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])
-    def test_a_non_finite_position_is_refused_at_the_door(self, client, fake_factory, token):
-        """``json.loads`` accepts these three bare tokens, and ``isinstance(v, float)`` admits them.
+    @pytest.mark.parametrize(
+        ("token", "reason"),
+        [
+            # The three bare tokens ``json.loads`` accepts and ``isinstance(v, float)`` admits.
+            ("Infinity", "must be a finite number"),
+            ("-Infinity", "must be a finite number"),
+            ("NaN", "must be a finite number"),
+            # A ``bool`` is an ``int``, so the type test admits it and
+            # ``math.isfinite(True)`` is True: without the shared domain a
+            # checkbox posted as a position was a 1 rad target the engine took.
+            ("true", "must be a finite number"),
+            # Finite, and past the float64 range: it needs a reason of its own,
+            # because "must be a finite number" would be false of it - and
+            # ``math.isfinite`` raises ``OverflowError`` on it rather than
+            # answering, which is a 500 out of the guard that exists to answer.
+            ("9" * 400, "must be within the range of a 64-bit float"),
+            ('"0.2"', "must be a finite number"),
+        ],
+    )
+    def test_a_value_that_is_not_a_joint_angle_is_refused_at_the_door(self, client, fake_factory, token, reason):
+        """The route refuses what it cannot carry to a robot, in both body shapes.
 
-        A non-finite angle is not a pose, and it is not JSON either - it cannot
-        be rendered back to any reader - so it is refused where the route states
-        its domain, in both accepted body shapes.
+        A position is a signed physical quantity passed verbatim to the engine,
+        so the domain is ``utils.finite_number_error``'s - the one every surface
+        that carries such a quantity shares. Each row states the reason it is
+        answered with, and the reason names the joint that carried the value, so
+        an operator is not left guessing which one of six was refused.
         """
         sid = _create(client)["id"]
         engine = fake_factory[0]
-        for body in (f'{{"positions": {{"j0": {token}}}}}', f'{{"positions": [{token}, 0.1, 0.2]}}'):
+        for body, named in (
+            (f'{{"positions": {{"j0": {token}}}}}', "positions['j0']"),
+            # Not first in the list: the reason must name the index that
+            # carried the value, which "positions[0]" would satisfy by accident.
+            (f'{{"positions": [0.1, {token}, 0.2]}}', "positions[1]"),
+        ):
             r = client.post(f"/api/sim/{sid}/joints", content=body, headers={"content-type": "application/json"})
             assert r.status_code == 400, body
-            assert "finite" in r.json()["error"]
-        assert engine.writes == 0, "a non-finite target reached the engine"
+            error = r.json()["error"]
+            assert reason in error, error
+            assert named in error, error
+        assert engine.writes == 0, "a value that is not an angle reached the engine"
 
-        ok = client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.2}})
-        assert ok.status_code == 200 and engine.writes == 1
+        # Both signs are angles: a joint turns either way, so the domain is the
+        # signed one and a negative target is a pose, not a refusal.
+        for good in (0.2, -0.2):
+            ok = client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": good}})
+            assert ok.status_code == 200, ok.text
+        assert engine.writes == 2
 
     def test_an_alias_resolves_to_the_canonical_name(self, client):
         assert _create(client, "so-101")["robot"] == "so101"

@@ -30,7 +30,14 @@ under the lock the e-stop latches under, so such a request answers 423 and the
 latch stands. A queued command that would move the robot is refused when the
 worker reaches it rather than applied, which is the promise `sim_session` states.
 
-`/api/sim/{id}/joints` also refuses a non-finite target: `json.loads` accepts the
-bare `Infinity`, `-Infinity` and `NaN` tokens and `isinstance(v, float)` admits
-them, so the domain the route declares now says finite - the same ingress
-`3242-settings-non-finite-numeric-domain.md` documents for the settings store.
+`/api/sim/{id}/joints` states its domain as `utils.finite_number_error`'s - the
+one every surface that carries a signed physical quantity to a robot shares
+instead of restating, the same ingress `3242-settings-non-finite-numeric-domain.md`
+documents for the settings store. Restating it here admitted two values a
+request body carries and `json.loads` builds without complaint: `true`, because
+a `bool` is an `int` and `math.isfinite(True)` is True, so a checkbox posted as
+a position was a 1 rad target the engine took; and an integer past the float64
+range, which is finite and has no float form, so `math.isfinite` raised
+`OverflowError` out of the guard written to answer rather than raise - a 500 for
+the caller. Both answer 400 now, and the reason names the joint, or the list
+index, that carried the value.

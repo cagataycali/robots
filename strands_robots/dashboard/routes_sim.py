@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import threading
 import time
 from typing import Any
@@ -27,6 +26,7 @@ from fastapi.responses import StreamingResponse
 from strands_robots.dashboard import access, safety_state
 from strands_robots.dashboard.log_redaction import one_line
 from strands_robots.dashboard.sim_session import SessionStore, SimSession
+from strands_robots.utils import finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -183,18 +183,21 @@ async def set_joints(request: Request, session_id: str, _: dict = Depends(access
     positions = body.get("positions") if isinstance(body, dict) else None
     if not isinstance(positions, (dict, list)) or not positions:
         raise HTTPException(400, "positions must be a non-empty object or list")
-    values = list(positions.values()) if isinstance(positions, dict) else list(positions)
-    if any(not isinstance(v, (int, float)) for v in values):
-        raise HTTPException(400, "every position must be a number")
-    if not all(math.isfinite(v) for v in values):
-        # ``json.loads`` accepts the bare ``Infinity``/``-Infinity``/``NaN``
-        # tokens, so a request body is one of the ways a non-finite number
-        # arrives - the same ingress changelog.d/3242-settings-non-finite-
-        # numeric-domain.md documents for the settings store. A non-finite
-        # angle is not a pose, and it is not JSON either: it cannot be
-        # serialised back to any reader (``json.dumps(allow_nan=False)``, which
-        # is what a JSON response renders with).
-        raise HTTPException(400, "every position must be a finite number (no nan or inf)")
+    # A joint angle is a signed physical quantity this route carries verbatim to
+    # a robot, and ``finite_number_error`` owns that domain for every surface
+    # that does - it lives in ``utils`` rather than beside any one caller so the
+    # accepted domain cannot diverge between them. Stating it here instead
+    # admitted two values a request body carries and ``json.loads`` builds
+    # without complaint: ``true``, because a ``bool`` is an ``int`` and
+    # ``math.isfinite(True)`` is True, so a checkbox became a 1 rad target; and
+    # an integer past the float64 range, which is finite and has no float form,
+    # so ``math.isfinite`` raised ``OverflowError`` out of the guard written to
+    # answer rather than raise. The shared helper refuses both, and names the
+    # joint that carried the value.
+    items: Any = positions.items() if isinstance(positions, dict) else enumerate(positions)
+    for joint, value in items:
+        if problem := finite_number_error(value, f"positions[{joint!r}]", "set_joints"):
+            raise HTTPException(400, problem)
     result = await asyncio.to_thread(session.command, "set_joints", positions=positions)
     # The lockout verdict comes before the engine's: a command refused because
     # its session is frozen is an e-stop answer (423), not a bad request.
