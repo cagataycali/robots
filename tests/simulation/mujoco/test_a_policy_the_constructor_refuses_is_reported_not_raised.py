@@ -35,9 +35,13 @@ from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 # point -- no screen that runs before construction can know this rule.
 _BAD_PORT = {"host": "127.0.0.1", "port": 70000, "data_config": "so101"}
 _PORT_VERDICT = "Gr00tPolicy: invalid port: 70000"
-# Cosmos3Policy declares no **kwargs sink, so an unbound keyword is CPython's
-# own TypeError -- the other arm of the refusal this envelope has to carry.
+# Cosmos3Policy declares no **kwargs sink, so an unbound keyword is a
+# ``TypeError`` -- the other arm of the refusal this envelope has to carry.
+# ``create_policy`` raises it from ``policy_kwargs_error`` before construction,
+# naming the keyword and the parameter it misspells, so the arm is graded by
+# those two facts rather than by CPython's own phrasing.
 _UNBOUND_KEYWORD = {"hots": "127.0.0.1"}
+_UNBOUND_VERDICT = "does not accept 'hots' (did you mean 'host'?)"
 
 _BENCHMARK = "constructor_refusal_probe"
 
@@ -120,8 +124,8 @@ class TestTheBlockingSurfaces:
     def test_a_keyword_the_constructor_does_not_bind_is_the_same_envelope(self, sim):
         """The ``TypeError`` arm: a provider whose ``__init__`` has no ``**kwargs``.
 
-        A ``ValueError`` the constructor raises on purpose and CPython's own
-        ``TypeError`` for an unbound keyword reach this seam by different
+        A ``ValueError`` the constructor raises on purpose and the
+        ``TypeError`` an unbound keyword earns reach this seam by different
         routes, and both used to leave the library as a traceback.
         """
         result = sim.run_policy(
@@ -131,8 +135,9 @@ class TestTheBlockingSurfaces:
         assert _text(result).startswith(
             "run_policy: policy provider 'cosmos3' refused its configuration, so no rollout was started."
         )
-        # The constructor's own words, not a paraphrase: the keyword is named.
-        assert "unexpected keyword argument 'hots'" in _text(result)
+        # The refusal's own words, not a paraphrase: the keyword is named, and
+        # so is the parameter it misspells.
+        assert _UNBOUND_VERDICT in _text(result)
 
     def test_the_trust_gate_keeps_its_raise(self, sim):
         """Not every refusal belongs in this envelope, and the boundary is the exception type.
