@@ -202,6 +202,53 @@ def _allow_exact_or_star(target: str) -> Callable[[frozenset[str]], bool]:
     return _match
 
 
+def how_to_answer(
+    action: str,
+    target: str,
+    allow_env: str,
+    match: Callable[[frozenset[str]], bool],
+) -> str:
+    """Say that this interrupt is a paused call, and the two ways to answer it.
+
+    Carried in the interrupt's ``reason``, because that dict is what a script
+    printing ``agent(...)``'s result sees: ``result.stop_reason`` is
+    ``"interrupt"``, ``result.interrupts`` holds the question, and the repr of
+    that list named the command but not the one line that resumes it.
+
+    The pre-approval value is asked of ``match`` rather than described, because
+    which spelling the allowlist accepts is per-tool: ``robot``, ``serial_tool``
+    and ``pose_tool`` match the action (``execute``), ``use_unitree`` the
+    ``service.operation`` target (``loco.SetVelocity``) and the ROS transports
+    the surface (``/cmd_vel``). A sentence saying "the action" would be wrong
+    for four of the seven tools on this gate; the matcher that will decide the
+    next call is the only thing that cannot be.
+
+    Args:
+        action: The verb carrying the command, as passed to :func:`gate_motion`.
+        target: What the command is aimed at, as passed to :func:`gate_motion`.
+        allow_env: The caller's allowlist variable.
+        match: The caller's allowlist matcher, probed with a one-entry set. It
+            must be free of side effects, which is what lets it be asked a
+            question here as well as consulted for the decision.
+
+    Returns:
+        One line: paused rather than done, the resume form, what ``y`` means,
+        and ``<allow_env>=<value>`` for a script with no operator - naming the
+        variable alone when the matcher accepts neither the action nor the
+        target, which no caller in this package does.
+    """
+    hint = next(
+        (f"{allow_env}={candidate}" for candidate in (action, target) if match(frozenset({candidate}))),
+        allow_env,
+    )
+    return (
+        "This call is paused, not done: result.stop_reason == 'interrupt' and result.interrupts holds this "
+        'question. Resume with agent([{"interruptResponse": {"interruptId": <this interrupt\'s id>, '
+        '"response": "y"}}]) - \'y\' approves, anything else denies and nothing moves. For a script with '
+        f"no operator, pre-approve this command instead with {hint}."
+    )
+
+
 def gate_motion(
     tool: str,
     action: str,
@@ -244,7 +291,9 @@ def gate_motion(
             this tool, comma-separated. Named in the headless refusal so an
             operator knows what to set.
         allow_match: How the allowlist entries match ``target``. Default: the
-            exact target, or a ``*`` entry for every target of this tool.
+            exact target, or a ``*`` entry for every target of this tool. Also
+            asked which spelling pre-approves this command, for
+            :func:`how_to_answer`, so the two cannot disagree.
 
     Returns:
         A refusal message for the caller to return through its own error
@@ -278,6 +327,9 @@ def gate_motion(
                 "action": action,
                 "target": target,
                 "warning": f"{warning} Reply 'y' to approve, anything else to deny.",
+                # A script that prints ``agent(...)``'s paused result prints this
+                # dict, so the dict carries what resumes it (see how_to_answer).
+                "how_to_answer": how_to_answer(action, target, allow_env, match),
             },
         )
     except RuntimeError as exc:

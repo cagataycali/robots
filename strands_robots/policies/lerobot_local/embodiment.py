@@ -286,7 +286,7 @@ def matching_embodiments(observation_keys: Iterable[Any]) -> list[str]:
     )
 
 
-def state_key_remedy(observation_keys: Iterable[Any]) -> str:
+def state_key_remedy(observation_keys: Iterable[Any], *, embodiment_rejected: bool = False) -> str:
     """Advice for a state-key mismatch, chosen from what the observation contains.
 
     A fixed example cannot be right for every caller. Recommending
@@ -302,9 +302,25 @@ def state_key_remedy(observation_keys: Iterable[Any]) -> str:
     the unambiguous alternative, quoting the observed keys verbatim when the
     list is short enough to paste.
 
+    Matching ``state_keys`` is necessary but not sufficient, because a declared
+    embodiment is applied as a whole: ``LerobotLocalPolicy._configure_embodiment``
+    also validates its ``obs_rename`` against the model's declared image
+    features, and a map that names a feature the checkpoint does not declare is
+    rejected - discarding the state binding along with the camera routing. The
+    auto-generated ordering then survives and the caller lands back on the guard
+    that recommended the embodiment, holding the identical sentence. So
+    ``embodiment_rejected`` withholds the embodiment VALUE once one has already
+    been rejected for this policy, the same way a no-match withholds it: both
+    mechanisms stay named, only a value that cannot resolve is not offered.
+
     Args:
         observation_keys: Keys of the observation being diagnosed, in the order
             they should be bound.
+        embodiment_rejected: Whether a declared embodiment for this policy was
+            already rejected at load time
+            (``LerobotLocalPolicy._embodiment_config_failed``). When set, no
+            embodiment is named and the advice points at the camera routing that
+            makes the declared one validate.
 
     Returns:
         One to three sentences of remedy, plain ASCII, ending in a period. An
@@ -322,6 +338,19 @@ def state_key_remedy(observation_keys: Iterable[Any]) -> str:
         set_keys = f"call set_robot_state_keys({keys!r})"
     else:
         set_keys = "call set_robot_state_keys([...]) with the observed keys above"
+
+    if embodiment_rejected:
+        # A declared embodiment already reached this observation and was rejected
+        # at load time, so naming one - even one whose state_keys match - hands
+        # back the value the caller just tried. That is the loop this helper
+        # exists to prevent, reached through obs_rename instead of state_keys.
+        return (
+            "A declared embodiment was rejected when this policy loaded (see the preceding "
+            "'embodiment could not be configured' warning), so its state_keys were never applied "
+            "and this ordering is the auto-generated one. Passing it again lands back here: route "
+            "the model's declared image features with camera_key_map= or obs_rename_override= so "
+            f"the embodiment validates, or {set_keys}."
+        )
 
     candidates = matching_embodiments(keys)
     if not candidates:

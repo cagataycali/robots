@@ -75,6 +75,8 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from strands_robots.dashboard import log_redaction
+
 _ENV = "STRANDS_DASH_AUTH_"
 
 # Both directions are spelled out. A value outside either vocabulary must not
@@ -617,7 +619,7 @@ def _derive_rp_id(request_or_ws: Any) -> str:
     host = _host_only(_headers(request_or_ws).get("host", ""))
     rp_id, reason = rp_id_verdict(host, _forced_rp_id())
     if rp_id is None:
-        logger.warning("refused WebAuthn ceremony: %s", reason)
+        logger.warning("refused WebAuthn ceremony: %s", log_redaction.one_line(reason))
         raise HTTPException(
             400,
             {
@@ -751,7 +753,7 @@ def _derive_origin(request_or_ws: Any) -> str:
         return expected
     origin, reason = origin_verdict(_headers(request_or_ws).get("origin", ""), expected)
     if origin is None:
-        logger.warning("refused WebAuthn ceremony: %s", reason)
+        logger.warning("refused WebAuthn ceremony: %s", log_redaction.one_line(reason))
         raise HTTPException(
             400,
             {
@@ -880,7 +882,9 @@ def _stash_challenge(
         if ip:
             evicted = _evict_oldest(_challenges, _CHAL_MAX_PER_IP - 1, ip=ip)
             if evicted:
-                logger.warning("challenge cap: dropped %d stale challenge(s) from %s", evicted, ip)
+                logger.warning(
+                    "challenge cap: dropped %d stale challenge(s) from %s", evicted, log_redaction.one_line(ip)
+                )
         if len(_challenges) >= _CHAL_MAX:
             _evict_oldest(_challenges, _CHAL_MAX - 1)
             logger.warning("challenge table full (%d); evicted oldest", _CHAL_MAX)
@@ -1387,7 +1391,9 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
     # authentication VERIFIED against rec["extra"]["rp_id"], which is proof, not a guess.
     if not match.get("rp_id") and rec["extra"].get("rp_id"):
         match["rp_id"] = rec["extra"]["rp_id"]
-        logger.info("recorded rp_id %r for credential %s", match["rp_id"], match.get("name"))
+        # The credential's name is the label the enrolling request chose, kept in the
+        # store and read back here, so it arrives from outside like any header would.
+        logger.info("recorded rp_id %r for credential %s", match["rp_id"], log_redaction.one_line(match.get("name")))
     _save(store)
     token = issue_token(cast(str, cred_id), name=match.get("name", "passkey"))
     return {"ok": True, "token": token, "credential_id": cred_id}
