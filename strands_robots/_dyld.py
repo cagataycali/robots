@@ -195,3 +195,73 @@ def video_decode_hint() -> str | None:
     about ffmpeg and the person who only imported the package does not.
     """
     return _pending_hint
+
+
+#: Memo for :func:`quiet_video_backend` - the answer cannot change within a
+#: process (dyld reads its search path once, at launch), and the probe that
+#: produces it is the expensive import this function exists to do only once.
+_quiet_backend: str | None = None
+_quiet_backend_probed: bool = False
+
+
+def quiet_video_backend() -> str | None:
+    """The LeRobot ``video_backend`` to pass when the caller named none.
+
+    LeRobot's own default resolver (``get_safe_default_video_backend``) tries to
+    import torchcodec and, when the wheel is present but its native library
+    cannot load, logs the WHOLE loader exception - five FFmpeg-version
+    tracebacks, ~150 lines - before quietly falling back to pyav. Measured in
+    this process class (``python -``, IPython, Jupyter, ``python -c``: the hosts
+    :func:`ensure_ffmpeg_on_dyld_path` refuses to re-exec) on the first
+    ``stop_recording`` of a 20-frame episode: the wall lands between
+    ``run_policy``'s success and ``stop_recording``'s "Episode saved", for a
+    recording that then reads back fine.
+
+    This probe asks the same question with stderr captured and answers in one
+    line: ``"pyav"`` plus a single warning naming the remedy (the dyld export
+    when Homebrew ffmpeg is installed but invisible to this process, otherwise
+    the install), or ``None`` - "let LeRobot choose" - when torchcodec loads or
+    is not installed at all (LeRobot's message for an absent wheel is already
+    one line). Probed once per process.
+
+    Returns:
+        ``"pyav"`` when torchcodec is installed but cannot load, else ``None``.
+    """
+    global _quiet_backend, _quiet_backend_probed
+    if _quiet_backend_probed:
+        return _quiet_backend
+    _quiet_backend_probed = True
+    if not _torchcodec_installed():
+        return None
+    import contextlib
+    import importlib
+    import io
+    import logging
+    import warnings
+
+    try:
+        with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            importlib.import_module("torchcodec._core.ops")
+    except (ImportError, OSError, RuntimeError) as e:
+        text = str(e)
+        if _pending_hint:
+            remedy = _pending_hint
+        elif "libav" in text:
+            remedy = (
+                "torchcodec's FFmpeg shared libraries were not found - "
+                "brew install ffmpeg (macOS) / apt install ffmpeg (Linux); torchcodec supports ffmpeg 4-8."
+            )
+        else:
+            remedy = (
+                "torchcodec was built for a different torch - install the matching one: "
+                "https://github.com/pytorch/torchcodec#installing-torchcodec"
+            )
+        logging.getLogger(__name__).warning(
+            "torchcodec is installed but cannot load in this process; decoding video with pyav instead "
+            "(recording is unaffected; `strands-robots doctor` has the full diagnosis). %s",
+            remedy,
+        )
+        _quiet_backend = "pyav"
+        return _quiet_backend
+    return None
