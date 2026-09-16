@@ -3446,7 +3446,8 @@ class MuJoCoSimEngine(
         base["methods"]["randomize"] = (
             "(randomize_colors=True, randomize_lighting=True, "
             "randomize_physics=False, randomize_positions=False, "
-            "position_noise=0.02, seed=None, ...) -> dict  # domain randomization "
+            "position_noise=0.02, color_range=(0.1, 1.0), friction_range=(0.5, 1.5), "
+            "mass_range=(0.5, 2.0), seed=None) -> dict  # domain randomization "
             "(each axis opt-in; no flags = no-op). Destructive - recompile to undo"
         )
         # Scene-construction cameras: the SO-101 rollout rig is built with

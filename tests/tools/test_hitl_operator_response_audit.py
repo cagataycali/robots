@@ -29,6 +29,7 @@ import ast
 import asyncio
 import inspect
 import textwrap
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -117,6 +118,9 @@ def _drive_robot(response: object) -> dict[str, Any] | None:
     agent = SimpleNamespace(_interrupt_state=SimpleNamespace(interrupts=_AnsweredInterrupts(response)))
     robot = hw_mod.Robot.__new__(hw_mod.Robot)
     robot.tool_name_str = "so101"
+    # The stream refuses a shut-down robot before it asks the operator; a
+    # bare instance has no shutdown flag, so give it the one ``__init__`` sets.
+    robot._shutdown_event = threading.Event()
     robot._execute_task_sync = lambda *a: {"status": "success", "content": [{"text": "done"}]}  # type: ignore[method-assign]
 
     async def _run() -> list[Any]:
