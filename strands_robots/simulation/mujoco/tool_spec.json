@@ -457,7 +457,7 @@
     },
     "positions": {
       "type": "object",
-      "description": "Joint name \u2192 position mapping for set_joint_positions"
+      "description": "Joint name \u2192 position mapping for set_joint_positions. Each value is in the joint's own unit: radians for a hinge, metres for a slide - never degrees, so a reading taken from a real arm's driver must be converted first"
     },
     "hold": {
       "type": "boolean",
@@ -465,7 +465,7 @@
     },
     "velocities": {
       "type": "object",
-      "description": "Joint name \u2192 velocity mapping for set_joint_velocities"
+      "description": "Joint name \u2192 velocity mapping for set_joint_velocities. Each value is in the joint's own unit per second: rad/s for a hinge, m/s for a slide"
     },
     "sensor_name": {
       "type": "string",
