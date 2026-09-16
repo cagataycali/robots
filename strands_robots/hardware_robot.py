@@ -2445,11 +2445,15 @@ class Robot(TeleopMixin, AgentTool):
         check, so the port check keeps its rule and its wording unchanged.
 
         Resolution is asked of
-        :func:`~strands_robots.registry.policies.policy_provider_resolves`, the
-        registry's own account of what ``import_policy_class`` accepts, so a
-        declared alias (``lerobot``, ``random``, ``c3``) and an auto-discovered
-        module (``composite``, ``persistent``) are not refused for being absent
-        from :func:`~strands_robots.registry.policies.list_policy_providers`.
+        :func:`~strands_robots.policies.factory.provider_can_be_created`, which
+        walks the same three stages ``create_policy`` does - a provider the
+        public ``register_policy()`` API registered at runtime (by name or
+        alias), a smart string (HF id, ``zmq://`` URL), then the registry's own
+        account of what ``import_policy_class`` accepts - so a runtime-registered
+        provider, a declared alias (``lerobot``, ``random``, ``c3``) and an
+        auto-discovered module (``composite``, ``persistent``) are not refused
+        for being absent from
+        :func:`~strands_robots.registry.policies.list_policy_providers`.
 
         Args:
             policy_provider: The provider name as supplied by the caller. A
@@ -2462,9 +2466,9 @@ class Robot(TeleopMixin, AgentTool):
             A tool-shaped error dict naming the provider and the ones that
             resolve, or ``None`` when a policy can be resolved from the value.
         """
-        from strands_robots.registry.policies import list_policy_providers, policy_provider_resolves
+        from strands_robots.policies.factory import list_providers, provider_can_be_created
 
-        if not policy_provider or policy_provider_resolves(refusal_str(policy_provider)):
+        if not policy_provider or provider_can_be_created(refusal_str(policy_provider)):
             return None
         return {
             "status": "error",
@@ -2472,7 +2476,7 @@ class Robot(TeleopMixin, AgentTool):
                 {
                     "text": (
                         f"{method}: unknown policy_provider {refusal_repr(policy_provider)}. "
-                        f"Available: {', '.join(list_policy_providers())} "
+                        f"Available: {', '.join(list_providers())} "
                         "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve). "
                         "Nothing was dispatched and the arm was not energized."
                     )

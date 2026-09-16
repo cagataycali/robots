@@ -281,3 +281,49 @@ class TestTheResolutionPredicateMatchesTheImporterItSpeaksFor:
                 assert "default port" in described
             else:
                 assert "no server" in described
+
+
+class TestTheGateAcceptsEverySpellingCreatePolicyAccepts:
+    """The pre-flight refusal must not be stricter than ``create_policy`` itself.
+
+    ``create_policy`` resolves in three stages - the runtime registry the public
+    ``register_policy()`` API fills, smart strings, then the shipped registry -
+    and a gate that mirrored only the last refused a provider the user had just
+    registered, at every hardware entry point, while ``create_policy`` built it.
+    """
+
+    @pytest.fixture
+    def registered(self, monkeypatch: pytest.MonkeyPatch) -> str:
+        from strands_robots.policies import factory
+        from strands_robots.policies.mock import MockPolicy
+
+        monkeypatch.setattr(factory, "_runtime_registry", dict(factory._runtime_registry))
+        monkeypatch.setattr(factory, "_runtime_aliases", dict(factory._runtime_aliases))
+        factory.register_policy("gate_probe_custom", lambda: MockPolicy, aliases=["gate_probe"])
+        return "gate_probe_custom"
+
+    def test_a_runtime_registered_provider_is_not_refused(self, registered: str) -> None:
+        from strands_robots.policies.factory import create_policy, provider_can_be_created
+
+        assert type(create_policy(registered)).__name__ == "MockPolicy"
+        assert provider_can_be_created(registered) is True
+        assert HwRobot._policy_provider_error(registered, "start_task") is None
+
+    def test_a_runtime_alias_is_not_refused(self, registered: str) -> None:
+        assert HwRobot._policy_provider_error("gate_probe", "start_task") is None
+
+    @pytest.mark.parametrize("smart", ["lerobot/act_so101_test", "zmq://127.0.0.1:5555", "ws://host:8000/policy"])
+    def test_a_smart_string_is_left_to_resolution(self, smart: str) -> None:
+        assert HwRobot._policy_provider_error(smart, "start_task") is None
+
+    def test_the_refusal_lists_what_create_policy_would_accept(self, registered: str) -> None:
+        err = HwRobot._policy_provider_error("grooot", "start_task")
+        assert err is not None
+        assert registered in _text(err)
+
+    def test_an_unknown_name_is_still_refused_after_a_registration(self, registered: str) -> None:
+        from strands_robots.policies.factory import provider_can_be_created
+
+        assert provider_can_be_created("grooot") is False
+        assert provider_can_be_created(None) is False
+        assert provider_can_be_created(3) is False  # type: ignore[arg-type]
