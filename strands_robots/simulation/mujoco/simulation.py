@@ -670,6 +670,7 @@ def _load_scene_dropped_line(
     objects: list[str],
     cameras: list[str],
     robot_specs: dict[str, Any] | None = None,
+    in_loaded_file: frozenset[str] | None = None,
 ) -> str:
     """The line ``load_scene`` adds when the swap discarded registered robots, objects or cameras.
 
@@ -678,9 +679,18 @@ def _load_scene_dropped_line(
     verb that puts it back into the LOADED scene (``add_robot`` mutates the
     loaded spec in place), spelling the ``add_robot`` call with the data_config
     the robot was registered under when it is known.
+
+    ``in_loaded_file`` names the dropped objects/cameras the loaded file still
+    carries under the same name - the ``export_xml`` -> ``load_scene`` round
+    trip. Those are untracked, not absent, and ``add_object`` under that name is
+    refused with MuJoCo's "repeated name", so they get their own sentence
+    instead of an ``add_object`` call that cannot work. Likewise the "No robots
+    registered" warning is only true when a robot was actually dropped: when the
+    robot was carried instead, robot-scoped actions keep working.
     """
     if not (robots or objects or cameras):
         return ""
+    present = in_loaded_file or frozenset()
     groups: list[str] = []
     if robots:
         groups.append(f"robot(s) {robots}")
@@ -688,6 +698,8 @@ def _load_scene_dropped_line(
         groups.append(f"object(s) {objects}")
     if cameras:
         groups.append(f"camera(s) {cameras}")
+    # Only a dropped robot makes robot-scoped actions refuse.
+    consequence = " (robot-scoped actions refuse with 'No robots registered' until then)" if robots else ""
     remedy: list[str] = []
     if robots:
         calls = []
@@ -699,15 +711,27 @@ def _load_scene_dropped_line(
                 else f"add_robot(name='{name}', data_config=...)"
             )
         remedy.append(" / ".join(calls) + " puts the arm back INTO the loaded scene")
-    if objects:
+    if [o for o in objects if o not in present]:
         remedy.append("add_object re-adds objects")
-    if cameras:
+    if [c for c in cameras if c not in present]:
         remedy.append("add_camera re-adds cameras")
-    return (
-        f"REPLACED the live world: dropped {', '.join(groups)} - the loaded file is now the whole "
-        f"scene (robot-scoped actions refuse with 'No robots registered' until then). "
-        f"{'; '.join(remedy)}.\n"
+    line = (
+        f"REPLACED the live world: dropped {', '.join(groups)} - the loaded file is now the whole scene{consequence}."
     )
+    if remedy:
+        line += f" {'; '.join(remedy)}."
+    still: list[str] = []
+    if [o for o in objects if o in present]:
+        still.append(f"object(s) {[o for o in objects if o in present]}")
+    if [c for c in cameras if c in present]:
+        still.append(f"camera(s) {[c for c in cameras if c in present]}")
+    if still:
+        line += (
+            f" The loaded file already carries {', '.join(still)} under the same name: they are scene "
+            f"geometry now but no longer tracked, and re-adding them is refused ('repeated name') - "
+            f"use a different name for a new one."
+        )
+    return line + "\n"
 
 
 class MuJoCoSimEngine(
@@ -1568,7 +1592,21 @@ class MuJoCoSimEngine(
                 rediscover_robot_ids(world, model, mj)
             self._world = world
 
-        dropped_line = _load_scene_dropped_line(dropped_robots, dropped_objects, dropped_cameras, dropped_specs)
+        # Which dropped names the loaded file still carries under the same
+        # name (the export_xml -> load_scene round trip). Those are untracked,
+        # not absent: telling the caller to add_object them is advice MuJoCo
+        # refuses with "repeated name".
+        in_loaded_file = frozenset(
+            name
+            for name, kind in (
+                *((o, mj.mjtObj.mjOBJ_BODY) for o in dropped_objects),
+                *((c, mj.mjtObj.mjOBJ_CAMERA) for c in dropped_cameras),
+            )
+            if mj_name_to_id(model, kind, name) >= 0
+        )
+        dropped_line = _load_scene_dropped_line(
+            dropped_robots, dropped_objects, dropped_cameras, dropped_specs, in_loaded_file
+        )
         if carried_robots:
             dropped_line = (
                 f"Robot(s) {carried_robots} found in the loaded file (same namespaced joints) and kept "
@@ -1592,6 +1630,7 @@ class MuJoCoSimEngine(
                         "dropped_robots": dropped_robots,
                         "dropped_objects": dropped_objects,
                         "dropped_cameras": dropped_cameras,
+                        "still_in_loaded_file": sorted(in_loaded_file),
                     }
                 },
             ],

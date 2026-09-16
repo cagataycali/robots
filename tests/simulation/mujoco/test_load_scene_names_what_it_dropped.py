@@ -99,7 +99,13 @@ def test_fresh_world_keeps_the_historical_text(sim, scene_path):
     text = _text(r)
     assert "Scene loaded from table.xml" in text and "REPLACED" not in text and "dropped" not in text, text
     j = _json(r)
-    assert j == {"carried_robots": [], "dropped_robots": [], "dropped_objects": [], "dropped_cameras": []}
+    assert j == {
+        "carried_robots": [],
+        "dropped_robots": [],
+        "dropped_objects": [],
+        "dropped_cameras": [],
+        "still_in_loaded_file": [],
+    }
 
 
 def test_the_named_recovery_works(sim, scene_path):
@@ -195,6 +201,44 @@ def test_a_carried_off_mesh_robot_keeps_no_world_backref(sim, tmp_path):
     sim.add_robot(name="so101", data_config="so101")
     _export_then_load(sim, tmp_path)
     assert sim._world.robots["so101"]._world is None
+
+
+def test_an_object_the_loaded_file_still_carries_is_not_given_an_add_object_it_would_refuse(sim, tmp_path):
+    # export_xml -> load_scene: the cube's body is IN the loaded file, so it is
+    # untracked, not absent. "add_object re-adds objects" was a dead end here -
+    # MuJoCo refuses the re-add with "repeated name 'cube' in body", which is
+    # the same shape of dead end this file exists to remove for the robot.
+    sim.add_robot(name="so101", data_config="so101")
+    sim.add_object(name="cube", shape="box", position=[0.25, 0, 0.05], size=[0.02, 0.02, 0.02])
+    r = _export_then_load(sim, tmp_path)
+    text = _text(r)
+    assert "dropped object(s) ['cube']" in text, text
+    assert "add_object re-adds objects" not in text, text
+    assert "already carries object(s) ['cube'] under the same name" in text, text
+    assert "repeated name" in text, text
+    assert _json(r)["still_in_loaded_file"] == ["cube"]
+    # The advice is honest: following the old one is what MuJoCo refuses.
+    refused = _text(sim.add_object(name="cube", shape="box", position=[0.25, 0, 0.05], size=[0.02, 0.02, 0.02]))
+    assert "repeated name 'cube'" in refused, refused
+
+
+def test_the_no_robots_registered_warning_is_only_given_when_a_robot_was_dropped(sim, tmp_path, scene_path):
+    # Carried robot: robot-scoped actions keep working, so claiming they refuse
+    # contradicts the same envelope's own first line.
+    sim.add_robot(name="so101", data_config="so101")
+    sim.add_object(name="cube", shape="box", position=[0.25, 0, 0.05], size=[0.02, 0.02, 0.02])
+    carried = _text(_export_then_load(sim, tmp_path))
+    assert "kept registered" in carried
+    assert "No robots registered" not in carried, carried
+    assert sim.get_robot_state("so101")["status"] == "success"
+    # Dropped robot: the warning is true, so it is given.
+    sim2 = Simulation(tool_name="load_scene_warn", mesh=False)
+    try:
+        sim2.create_world()
+        sim2.add_robot(name="so101", data_config="so101")
+        assert "No robots registered" in _text(sim2.load_scene(scene_path))
+    finally:
+        sim2.cleanup()
 
 
 def test_a_scene_without_the_robot_still_drops_it(sim, tmp_path, scene_path):
