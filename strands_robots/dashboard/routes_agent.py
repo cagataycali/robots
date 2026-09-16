@@ -45,7 +45,7 @@ async def agent_socket(ws: WebSocket) -> None:
     try:
         access.caller(ws)  # type: ignore[arg-type]
     except HTTPException:
-        await ws.close(code=4401)
+        await access.refuse_socket(ws, 4401)
         return
     await ws.accept()
     try:

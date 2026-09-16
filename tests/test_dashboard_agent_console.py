@@ -285,10 +285,12 @@ def test_ws_stranger_is_closed(app, monkeypatch):
 
     monkeypatch.setattr("strands_robots.dashboard.access.peer_is_loopback", lambda request: False)
     app.state.console_factory = lambda: ScriptedConsole([])
+    # Accepted, then closed with 4401: that order is what carries the code to
+    # the page, which shows the login screen on it.
     with (
         TestClient(app) as c,
+        c.websocket_connect("/ws/agent", headers={"x-forwarded-for": "10.0.0.9"}) as ws,
         pytest.raises(WebSocketDisconnect) as exc,
-        c.websocket_connect("/ws/agent", headers={"x-forwarded-for": "10.0.0.9"}),
     ):
-        pass
+        ws.receive_json()
     assert exc.value.code == 4401
