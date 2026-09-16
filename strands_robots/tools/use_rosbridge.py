@@ -418,6 +418,15 @@ def use_rosbridge(
     numeric_error = numeric_option_error(action, _ACTION_NUMERIC_OPTIONS, timeout=timeout, count=count, rate=rate)
     if numeric_error:
         return _err(numeric_error)
+    # The names an action cannot run without are graded here too, for the same
+    # reason: a forgotten ``type`` must not dial the bridge for the full timeout
+    # and then be reported as a bridge that did not reconnect.
+    if action == "echo" and not topic:
+        return _err("echo requires topic")
+    if action == "service_call" and (not service or not type):
+        return _err("service_call requires service and type")
+    if action == "publish" and (not topic or not type):
+        return _err("publish requires topic and type")
 
     if action == "status":
         if not _backend.available():
@@ -455,9 +464,9 @@ def use_rosbridge(
             if action == "list_services":
                 return _ok(_list_services(ros, timeout))
 
-            if action == "echo":
-                if not topic:
-                    return _err("echo requires topic")
+            # Each verb's names are non-empty here (refused above); spelling them
+            # on the condition is what narrows them for the call.
+            if action == "echo" and topic:
                 msg_type = type or _resolve_topic_type(ros, topic, timeout)
                 if not msg_type:
                     return _err(f"cannot resolve type for {topic}; pass type=pkg/Name")
@@ -470,17 +479,13 @@ def use_rosbridge(
                 )
                 return _ok(f"echo {topic} ({msg_type}):\n{body}{note}")
 
-            if action == "service_call":
-                if not service or not type:
-                    return _err("service_call requires service and type")
+            if action == "service_call" and service and type:
                 import json
 
                 resp = _service_call(ros, service, type, fields, timeout)
                 return _ok(f"response:\n{json.dumps(resp, indent=2, default=str)}")
 
-            if action == "publish":
-                if not topic or not type:
-                    return _err("publish requires topic and type")
+            if action == "publish" and topic and type:
                 _publish(ros, topic, type, fields, count, rate)
                 return _ok(f"published {count} message(s) to {topic}")
 

@@ -594,6 +594,11 @@ class Gr00tPolicy(Policy):
             if auto-inferred observation/action keys cannot be matched to the
             model by exact name. Defaults to False (positional fallback). Ignored
             when explicit ``observation_mapping``/``action_mapping`` are provided.
+        timeout_ms: Service mode only - how long each request to the server may
+            wait for its reply (send and receive), default 15000. A request that
+            expires raises ``ConnectionError`` naming the server URI, the
+            endpoint, this budget and whether anything is listening there. Raise
+            it for a slow model; lower it to fail fast on a wrong host/port.
 
     Examples::
 
@@ -629,6 +634,7 @@ class Gr00tPolicy(Policy):
         action_mapping: dict[str, str] | None = None,
         language_key: str | None = None,
         strict_keys: bool = False,
+        timeout_ms: int = 15000,
         **kwargs,
     ):
         self.data_config = load_data_config(data_config)
@@ -705,7 +711,11 @@ class Gr00tPolicy(Policy):
             logger.info("GR00T service mode, %s:%s", host, port)
             # Resolve api_token from env var if not provided as parameter
             resolved_token = api_token or os.environ.get("GROOT_API_TOKEN")
-            self._client = Gr00tInferenceClient(host=host, port=port, api_token=resolved_token)
+            # ``timeout_ms`` is the service-mode wait budget per request, so it
+            # reaches the socket here; pre-fix it fell into ``**kwargs`` and
+            # was dropped, so ``policy_config={"timeout_ms": 500}`` still
+            # waited the 15 s default on a port nothing listens on.
+            self._client = Gr00tInferenceClient(host=host, port=port, timeout_ms=timeout_ms, api_token=resolved_token)
 
         # Runs in BOTH modes: a caller-supplied mapping needs no model
         # metadata, so service mode must reach it too (#2265).

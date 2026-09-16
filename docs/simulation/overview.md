@@ -50,7 +50,26 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `add_robot` | `robot_name`, `position=[0,0,0]`, `data_config=None`, `urdf_path=None` |
 | `remove_robot` | `name` |
 | `list_robots` | - each robot's asset, joint count, and **live** base position, read from the physics rather than from the `add_robot` request, so a robot that walked (or whose model's root pose offset the request) reports where it is |
-| `get_robot_state` | `name` → joint positions, velocities, torques |
+| `get_robot_state` | `name` → joint positions, velocities, torques; an `end_effector` line naming the frame `move_to` drives, its world position, its offset **from the base** (measured, like `list_robots`' position - not the `add_robot` request, which a model's own authored root pose offsets) and the horizontal axis the arm currently extends along (`the arm currently extends along -Y` for an SO-100/SO-101 at home) - so "in front of the robot" resolves to the same side of the base for the agent and the person. The `json` payload carries `end_effector.base`, `from_base` and `extends_along` (`"+X"`/`"-Y"`/…, `null` when the arm is over its base) |
+
+!!! note "The frame `move_to` drives"
+    `move_to` and `get_robot_state`'s `end_effector` line follow the frame
+    `discover_ee_frame` finds: a tool-point **site** first (`tcp`, `gripper`,
+    `attachment_site`, …), else a hand/wrist **body**. A vendored model that
+    ships no site lands on the wrist, so a registry entry may declare the tool
+    point the model lacks and the backend adds that site before the attach:
+
+    ```json
+    "tool_frame": {"body": "Fixed_Jaw", "pos": [0.0, -0.0995, 0.001], "site": "tcp"}
+    ```
+
+    `body` is the model's own body name, `pos` is meters in that body's frame,
+    `site` defaults to `tcp`. The shipped `so100` entry carries one (its
+    Menagerie model has zero sites; the point sits between the jaw tips like
+    the SO-101's own `gripper` site). A malformed block, or one naming a body
+    the model lacks, refuses `add_robot` with the reason - never a silent
+    fall-back to the wrist. The overlay `user_robots.json` may declare one for
+    your own robot.
 
 ## Objects
 

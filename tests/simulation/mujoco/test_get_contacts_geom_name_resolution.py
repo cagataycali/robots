@@ -16,7 +16,10 @@ rather than propagating the error out of the tool.
 
 These tests pin all three ladder rungs plus the degradation path against a
 single scene of overlapping geoms so the contact-naming contract cannot
-silently regress.
+silently regress. The ladder itself is
+``strands_robots.simulation.mujoco.scene_ops.geom_label``, shared with the
+``move_to`` obstruction report, so every contact a caller reads is labelled
+the same way.
 """
 
 from __future__ import annotations
