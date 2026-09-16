@@ -26,6 +26,7 @@ import logging
 import math
 import numbers
 import os
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, SupportsFloat, cast
@@ -1154,8 +1155,41 @@ class SimEngine(ABC):
         """
         return self.robot_joint_names(robot_name)
 
+    # Guards the one-time creation of an engine's per-thread binding slot.
+    # Two rollouts starting on two threads must not each create a slot and
+    # have one of them lost; after creation the slot itself is thread-local.
+    _PREDICATE_BINDING_INIT = threading.Lock()
+
+    def _predicate_binding(self) -> threading.local:
+        """This engine's per-thread ``predicate_robot`` slot, created on first use.
+
+        :class:`SimEngine` has no ``__init__`` of its own, so the slot is made
+        lazily rather than in a constructor every backend would have to call.
+        """
+        slot = self.__dict__.get("_predicate_binding_slot")
+        if slot is None:
+            with SimEngine._PREDICATE_BINDING_INIT:
+                slot = self.__dict__.get("_predicate_binding_slot")
+                if slot is None:
+                    slot = threading.local()
+                    self.__dict__["_predicate_binding_slot"] = slot
+        return slot
+
+    @property
+    def predicate_robot(self) -> str | None:
+        """The robot an unnamed ``base_*`` clause reads ON THIS THREAD, or ``None``.
+
+        Read-only; set through :meth:`bind_predicate_robot`. The binding is
+        thread-scoped, not scene-scoped: a rollout binds on the thread that
+        drives it and every per-step read of the binding happens on that same
+        thread, so two rollouts on two robots each read their own robot. See
+        :meth:`bind_predicate_robot` for why a scene-wide attribute could not
+        carry this.
+        """
+        return getattr(self._predicate_binding(), "robot", None)
+
     def bind_predicate_robot(self, robot_name: str | None) -> None:
-        """Bind the robot an unnamed ``base_*`` clause reads for the next probe and rollout.
+        """Bind the robot an unnamed ``base_*`` clause reads, for the calling thread.
 
         Benchmark and ``stop_when`` clauses default ``robot`` to "the sole
         robot". In a multi-robot scene that used to resolve to the FIRST
@@ -1165,8 +1199,27 @@ class SimEngine(ABC):
         wrong one silently. ``run_policy`` / ``eval_policy`` / ``evaluate_benchmark``
         call this with the robot they resolved; the predicate readers consult it
         through :func:`~strands_robots.simulation.predicates._bound_robot`.
+
+        Concurrency contract: the binding is **per thread**. Rollouts are
+        per-robot and explicitly concurrent - ``start_policy`` submits each to
+        the engine's executor, and "policies on different robots can execute
+        concurrently" is a documented surface - so one scene-wide attribute
+        would make the last bind win: from that instant the OTHER rollout's
+        unnamed clauses (evaluated every step) would read the wrong robot,
+        silently, under ``status=success``. All three surfaces bind on the
+        thread that then drives the rollout, and every reader of the binding
+        (the ``base_*`` predicates, a benchmark's ``on_episode_start``
+        compatibility check) runs on that same thread, so a thread-local slot
+        is exactly the scope the binding needs. A refused or concurrent call
+        therefore cannot disturb a rollout in flight on another thread. The
+        binding stays until the same thread rebinds; a stale one (its robot
+        since removed) is dropped by the reader.
+
+        Args:
+            robot_name: The robot to bind, or ``None`` to restore the
+                sole-robot default on this thread.
         """
-        self.predicate_robot = robot_name
+        self._predicate_binding().robot = robot_name
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
