@@ -171,7 +171,9 @@ class SimSession:
         cameras = tuple(engine.list_cameras())
         dt = float(engine.mj_model.opt.timestep)
         self._publish(
-            state="running",
+            # An e-stop that arrived while the engine was building already set
+            # the flag; this first publish reports that, not "running".
+            state="frozen" if self._frozen.is_set() else "running",
             joint_names=names,
             cameras=cameras,
             model_path=_model_path(self.robot),
@@ -305,10 +307,16 @@ class SessionStore:
         return True
 
     def freeze_all(self) -> list[str]:
-        """Freeze every live session; returns the ids frozen."""
+        """Freeze every session that can still step; returns the ids frozen.
+
+        A session in ``starting`` is included: its engine is still being built,
+        so it has not stepped yet and will begin the moment the build returns.
+        Selecting on ``running`` alone would leave that one stepping after an
+        e-stop, which is the window the e-stop exists for.
+        """
         ids = []
         for s in self.all():
-            if s.snapshot.state in ("running", "frozen"):
+            if s.snapshot.state not in ("stopped", "error"):
                 s.freeze()
                 ids.append(s.id)
         return ids

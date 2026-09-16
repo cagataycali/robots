@@ -117,6 +117,13 @@ async def create_session(request: Request, who: dict = Depends(access.require_se
     if snap.state == "error":
         safety.store.remove(session.id)
         raise HTTPException(500, f"could not start {robot}: {snap.error}")
+    if safety.lockout.state == "locked":
+        # Building an engine is not instant, so an e-stop can land after this
+        # request was admitted. The admission no longer holds: the session is
+        # dropped rather than left stepping, and it is not offered as the
+        # accepted command that would prove the lockout clear.
+        await asyncio.to_thread(safety.store.remove, session.id)
+        safety.gate("create")
     safety.accepted()
     logger.info("sim %s started for %s by %s", session.id, robot, who.get("via"))
     return snap.as_dict()

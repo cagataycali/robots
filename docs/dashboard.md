@@ -51,6 +51,18 @@ it carries the session cookie and names this origin as its own, so it is behind
 every guard above by construction. `tests/test_dashboard_static_renders_data_as_text.py`
 reads that rule off the files the wheel ships.
 
+## The e-stop
+
+The red button posts `/api/safety/estop`: every session in this process stops
+stepping but keeps rendering and answering, so the robot stays on screen exactly
+where it stopped, and the lockout latches `locked`. While it is latched, any
+route that would move a sim - create, reset, joints - answers `423`; stopping a
+session never is. A session whose engine is still being built is frozen too, and
+a create that overlapped the e-stop is refused rather than served, because
+accepting it would report the lockout clear again. `/api/safety/resume` lifts the
+lockout only to `unknown`: a resume is a request, and the next command a session
+accepts is the proof.
+
 ## Configuration
 
 | Variable | Default | Meaning |
