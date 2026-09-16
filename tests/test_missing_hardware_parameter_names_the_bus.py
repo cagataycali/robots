@@ -330,6 +330,88 @@ class TestTheRuleHasOneOwner:
         assert scan_serial_devices() == []
 
 
+class TestAFieldTheClassDerivesIsNotAskedOfTheCaller:
+    """A field the constructor does not accept cannot be a missing parameter.
+
+    ``dataclasses.field(init=False)`` names a value the config class computes for
+    itself. It carries no default, so a scan reading the absent default alone
+    counts it as required -- refusing a call the dataclass would have accepted,
+    and offering a remedy that raises ``TypeError: __init__() got an unexpected
+    keyword argument`` when followed. lerobot's ``UnitreeG1Config.sim_env``
+    (assigned in ``__post_init__``) is such a field, which is why
+    ``test_robot_factory.py`` builds that config through real-mode discovery.
+    These cells pin the rule itself, so it keeps holding when lerobot's shape
+    changes.
+    """
+
+    def test_a_derived_robot_config_field_is_not_required_of_the_caller(self, monkeypatch, bus) -> None:
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        @dataclasses.dataclass
+        class DerivedFieldConfig:
+            id: str = ""
+            cameras: dict[str, Any] = dataclasses.field(default_factory=dict)
+            sim_env: str = dataclasses.field(init=False)
+
+            def __post_init__(self) -> None:
+                self.sim_env = "built by the class"
+
+        monkeypatch.setattr(RobotConfig, "get_choice_class", lambda robot_type: DerivedFieldConfig)
+        bus(_arm("/dev/ttyACM0", "5AB0181806"))
+
+        built = _config_for("so101_follower", "so101")
+
+        assert built.sim_env == "built by the class"
+
+    def test_a_real_missing_parameter_is_still_named_without_the_derived_one(self, monkeypatch, bus) -> None:
+        """The remedy offers only what the constructor accepts."""
+        pytest.importorskip("lerobot")
+        from lerobot.robots.config import RobotConfig
+
+        @dataclasses.dataclass
+        class PortAndDerivedConfig:
+            port: str
+            id: str = ""
+            cameras: dict[str, Any] = dataclasses.field(default_factory=dict)
+            sim_env: str = dataclasses.field(init=False)
+
+            def __post_init__(self) -> None:
+                self.sim_env = "built by the class"
+
+        monkeypatch.setattr(RobotConfig, "get_choice_class", lambda robot_type: PortAndDerivedConfig)
+        bus(_arm("/dev/ttyACM0", "5AB0181806"))
+
+        text = _refusal_for("so101_follower", "so101")
+
+        assert "port=..." in text, text
+        assert "sim_env" not in text, text
+
+    def test_a_derived_camera_option_is_not_required_of_the_caller(self, monkeypatch, bus) -> None:
+        """The camera-option scan reads the same rule through the same owner."""
+        pytest.importorskip("lerobot")
+        from lerobot.cameras.configs import CameraConfig
+
+        @dataclasses.dataclass
+        class DerivedOptionCameraConfig:
+            fps: int = 30
+            width: int = 640
+            height: int = 480
+            stream_handle: str = dataclasses.field(init=False)
+
+            def __post_init__(self) -> None:
+                self.stream_handle = "opened by the class"
+
+        monkeypatch.setattr(CameraConfig, "get_choice_class", lambda cam_type: DerivedOptionCameraConfig)
+        bus(_arm("/dev/ttyACM0", "5AB0181806"))
+
+        from strands_robots.hardware_robot import _build_camera_config
+
+        built = _build_camera_config("wrist", {"type": "opencv"})
+
+        assert built.stream_handle == "opened by the class"
+
+
 class TestNothingElseChanges:
     """Which calls are refused is unchanged -- only what a refused call is told."""
 

@@ -12,9 +12,10 @@ the tool already knew.
 A caller who omitted the rate expressed no preference between the defaults,
 so the omitted one follows the recording (rollout after recording) or the
 rollout (recording after rollout), and the result says so. A caller who
-PASSED a rate is still refused on a mismatch. The Python-level defaults and
-the direct-call refusals in ``test_recording_rate_matches_control_frequency``
-are untouched: this is the router's reading of an absent field.
+PASSED a rate is still refused on a mismatch. The rule belongs to the engine
+rather than to the tool router, so a direct ``run_policy(...)`` on the Python
+API follows the open recording exactly as a routed call does - an agent and a
+script cannot disagree about what an absent rate means.
 """
 
 from __future__ import annotations
@@ -107,11 +108,20 @@ class TestARolloutAfterARecording:
         assert result["status"] == "success"
         assert "followed" not in _text(result)
 
-    def test_the_python_default_is_untouched(self, sim, tmp_path):
-        """Direct callers keep the refusal: only the router reads an absent field."""
+    def test_a_direct_python_call_follows_too(self, sim, tmp_path):
+        """The engine owns the rule, so a script sees what an agent sees.
+
+        The deferral lives in ``run_policy`` itself rather than in the tool
+        router's reading of an absent field, so calling the Python API without
+        a rate is not refused either, and the rollout is captured into the open
+        recording at the rate that recording declared. A caller refused here
+        would have to type a number the engine already knew. Naming the adopted
+        rate back to the caller is the routed surface's line, pinned above.
+        """
         sim.start_recording(repo_id="local/e", task="hold", root=str(tmp_path / "e"))
         result = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=3)
-        assert result["status"] == "error"
+        assert result["status"] == "success", result
+        assert "3 steps" in _text(sim.get_recording_status())
 
 
 class TestARecordingAfterARollout:

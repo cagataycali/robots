@@ -33,6 +33,7 @@ LerobotLocalPolicy(
     policy_type=None,                    # override auto-detected class
     device=None,                         # "cuda" | "cpu" | "mps"
     actions_per_step=1,                  # positive int; auto-set from config.n_action_steps if left at 1
+                                         #   (a value BELOW that chunk is warned about - see RTC)
     use_processor=True,                  # observation/action processor bridge
     processor_overrides=None,
     tokenizer_max_length=48,
@@ -67,8 +68,14 @@ LerobotLocalPolicy(
 
 Loading a large VLA (MolmoAct2 SO-100/101 ships 1,295 weight files) takes a
 minute or more. Models are cached process-wide, keyed by
-`(pretrained_name_or_path, policy_type, device, revision)`; a second
-`create_policy` with the same key reuses the weights. Every instance records
+`(pretrained_name_or_path, policy_type, device, revision)` and by the RTC
+request (`rtc_enabled`, `rtc_execution_horizon`, `rtc_max_guidance_weight`); a
+second `create_policy` with the same key reuses the weights. RTC is part of the
+key because it is configured on the model rather than beside it, so an RTC-on
+and an RTC-off policy from one checkpoint hold one resident copy each - which is
+what lets an on/off comparison run in a single process without either arm
+rewriting the other's RTC. Call `clear_model_cache()` between the two arms when
+the memory matters more than the reload. Every instance records
 `load_cache_hit` (`bool`) and `load_time_s` (`float`, near `0.0` on a hit),
 and `run_policy` reports them as
 `policy_load_cache_hit` / `policy_load_time_s` in its result block.
@@ -350,7 +357,15 @@ checkpoint itself was saved with.
 
 The sim consumes `policy.execution_horizon` actions from each chunk before
 re-querying - `rtc_execution_horizon` (default 10) for an RTC policy, the full
-chunk otherwise. For relative-action checkpoints (pi0 / pi0.5 / pi0-FAST
+chunk otherwise.
+
+RTC - not a smaller `actions_per_step` - is how you shorten that interval.
+Pinning `actions_per_step` below the checkpoint's `config.n_action_steps`
+truncates every chunk to its prefix and re-queries from a state the model was
+never trained to replay from, so each seam is a discontinuity in the commanded
+trajectory; the provider now names that when it happens. `rtc_enabled=True`
+re-queries just as often and blends the unexecuted tail into the next chunk
+instead, leaving `actions_per_step` at the trained chunk. For relative-action checkpoints (pi0 / pi0.5 / pi0-FAST
 trained with `RelativeActionsProcessorStep`) the carried prefix is re-anchored
 to the state at the new query, so the seam does not double-apply the offset.
 
