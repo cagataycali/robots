@@ -1,8 +1,11 @@
 """Policy factory - create_policy() and runtime registration."""
 
+import difflib
+import inspect
 import logging
 import os
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from strands_robots import refusal_codes
 from strands_robots.policies.base import Policy
@@ -314,6 +317,124 @@ def policy_object_error(value: object, param: str = "policy_object") -> str | No
     )
 
 
+# A residual keyword scoring at least this against a declared constructor
+# parameter is a misspelling of it, not another option. The cutoff is the one
+# ``simulation.base.reject_misspelled_kwargs`` uses for engine kwargs, so a typo
+# is judged the same way whichever sink it lands in; not imported from there
+# because the policies package does not depend on the simulation package.
+_MISSPELLING_RATIO = 0.8
+
+
+def _constructor_keywords(PolicyClass: type) -> tuple[tuple[str, ...], bool]:
+    """The keyword names a provider's constructor binds, and whether it has a sink.
+
+    Returns:
+        ``(accepted, tolerates_unknown)`` - the parameters a caller can spell by
+        keyword (``self`` and the sinks omitted, in declaration order) and
+        whether the constructor declares ``**kwargs``. Empty and ``True`` when
+        the class has no introspectable signature, which turns screening into
+        a no-op rather than refusing every keyword.
+    """
+    try:
+        params = inspect.signature(PolicyClass).parameters
+    except (TypeError, ValueError):
+        return (), True
+    accepted = tuple(
+        name
+        for name, p in params.items()
+        if name != "self" and p.kind not in (p.VAR_KEYWORD, p.VAR_POSITIONAL, p.POSITIONAL_ONLY)
+    )
+    tolerates_unknown = any(p.kind is p.VAR_KEYWORD for p in params.values())
+    return accepted, tolerates_unknown
+
+
+def _misspelling_of(name: str, accepted: tuple[str, ...]) -> str | None:
+    """The accepted parameter ``name`` misspells, or ``None``.
+
+    Two tests: a close match at :data:`_MISSPELLING_RATIO`, and the letters of
+    one accepted name in another order - ``hots`` for ``host``, ``prot`` for
+    ``port``. A transposition of two adjacent letters in a four-letter word
+    scores 0.75, under the cutoff, and it is the typo a hand makes most; no
+    pass-through option is an anagram of a parameter this constructor binds.
+    """
+    match = difflib.get_close_matches(name, list(accepted), n=1, cutoff=_MISSPELLING_RATIO)
+    if match:
+        return match[0]
+    letters = sorted(name)
+    for candidate in accepted:
+        if len(candidate) == len(name) and sorted(candidate) == letters:
+            return candidate
+    return None
+
+
+def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, Any]) -> str | None:
+    """Why ``kwargs`` cannot be handed to ``PolicyClass`` as written, or ``None``.
+
+    One rule for every provider, applied before construction. Pre-fix each
+    provider had its own: a constructor with ``**kwargs`` dropped
+    ``create_policy("groot", hots="x")`` silently (the client dialled the
+    default host under ``status="success"``), ``remote`` and ``lerobot_async``
+    logged "ignoring unexpected constructor kwarg(s)" where no agent reads it,
+    and a constructor without a sink raised CPython's
+    ``__init__() got an unexpected keyword argument 'acton_space'`` - which
+    names neither the provider nor the parameter meant.
+
+    A name the constructor binds passes. A name that misspells one it binds
+    (:data:`_MISSPELLING_RATIO`) is refused naming the parameter meant: no
+    call can intend it, and a sink makes it byte-identical to omitting the
+    argument. A name that is neither is refused when the constructor has no
+    sink (it would have raised anyway - this names the provider and lists
+    what it does accept) and tolerated when it has one, because a provider's
+    ``**kwargs`` is its documented pass-through (model-loader options,
+    another provider's keys on a shared ``policy_config``), logged at DEBUG so
+    it is visible somewhere.
+
+    Args:
+        provider: The canonical provider name, quoted in the report.
+        PolicyClass: The class about to be constructed.
+        kwargs: The resolved constructor kwargs.
+
+    Returns:
+        The refusal, or ``None`` when every name is usable.
+    """
+    accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
+    if not accepted:
+        return None
+    owner = f"{PolicyClass.__name__} (policy provider {provider!r})"
+    misspelled: list[str] = []
+    unknown: list[str] = []
+    for name in kwargs:
+        if name in accepted:
+            continue
+        meant = _misspelling_of(name, accepted)
+        if meant is not None:
+            misspelled.append(f"{name!r} (did you mean {meant!r}?)")
+        else:
+            unknown.append(name)
+    if misspelled:
+        return (
+            f"{owner} does not accept {', '.join(misspelled)}. A misspelling of a parameter it does read "
+            "cannot be a pass-through option, so it is refused rather than dropped - dropped, it would be "
+            "byte-identical to omitting the argument and the policy would run on the default. Fix the "
+            f"spelling, or drop the argument. It accepts: {', '.join(accepted)}."
+        )
+    if unknown and not tolerates_unknown:
+        names = ", ".join(repr(n) for n in unknown)
+        return (
+            f"{owner} does not accept {names}: its constructor declares no **kwargs, so there is nothing "
+            f"to forward them to. It accepts: {', '.join(accepted)}. Drop the argument, or check the "
+            "provider's docs for the name it uses."
+        )
+    if unknown:
+        logger.debug(
+            "%s forwarded %s to its **kwargs: no parameter of that name, and no close match to one. "
+            "Expected for a pass-through option; otherwise it is an unsupported name.",
+            owner,
+            sorted(unknown),
+        )
+    return None
+
+
 def create_policy(provider: str, **kwargs) -> Policy:
     """Create a policy instance.
 
@@ -336,9 +457,15 @@ def create_policy(provider: str, **kwargs) -> Policy:
         UntrustedRemoteCodeError: If the provider loads HF models with
             ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
             is not set.
+        TypeError: If a keyword misspells one the provider's constructor
+            binds, or names one it cannot bind at all (no ``**kwargs``) - see
+            :func:`policy_kwargs_error`. Raised before construction, so no
+            model is downloaded and no server dialled on a typo.
     """
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     _check_trust_remote_code(canonical)
+    if (kwargs_error := policy_kwargs_error(canonical, PolicyClass, resolved_kwargs)) is not None:
+        raise TypeError(kwargs_error)
     return PolicyClass(**resolved_kwargs)
 
 
