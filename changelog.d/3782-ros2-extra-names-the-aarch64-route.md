@@ -8,3 +8,12 @@ offers the RTPS transport as its alternative, the ROS 2 / RTPS integration
 pages, troubleshooting, the two RTPS examples and the manifest comment now scope
 the promise and carry the recipe (`CYCLONEDDS_HOME` from a sourced distro or a
 source build), including when that variable is needed at runtime.
+
+The cell grading the rclpy refusal establishes the missing import with
+`tests._blocked_module.blocked` instead of reading the host, so it holds on a
+machine with a ROS 2 distro sourced (where it previously skipped) and after a
+sibling suite has left a fake `rclpy` in `require_optional`'s memo (where it
+previously reported no refusal at all). The grader that forbids assuming the
+absence now derives the functions that probe `rclpy`, not only the classes, so a
+cell reaching the probe by calling the guard directly is covered too.
+

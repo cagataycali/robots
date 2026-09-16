@@ -13,13 +13,13 @@ install that already failed.
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
 
 import pytest
 
 from strands_robots.hardware_robot import _RCLPY_TRANSPORT_INSTALL_HINT
 from strands_robots.rtps.idl import _INSTALL_HINT
+from tests._blocked_module import blocked
 
 _DOCS = Path(__file__).resolve().parents[2] / "docs"
 _ANCHOR = "docs/rtps-integration.md#linux-aarch64-jetson"
@@ -54,12 +54,19 @@ def test_the_rclpy_refusal_a_blocked_caller_reads_carries_the_condition() -> Non
     as the alternative. On aarch64 that alternative needs a Cyclone DDS C install
     of its own, so the refusal names it rather than handing the caller the same
     ``pip install`` twice.
+
+    Asserted on the message the production guard really raises, with the import
+    made to fail by :func:`tests._blocked_module.blocked` rather than assumed
+    absent. Reading the host instead does not hold either way: skipping when
+    ``rclpy`` is importable grades nothing on a machine with a distro sourced,
+    and on a machine without one the refusal still does not fire, because
+    ``require_optional`` answers from its memo and a sibling suite leaves a fake
+    ``rclpy`` in it. ``blocked`` clears that memo and restores it, so this holds
+    wherever it runs and whatever ran before it.
     """
-    if importlib.util.find_spec("rclpy") is not None:
-        pytest.skip("rclpy is importable, so the ImportError under test cannot be raised")
     from strands_robots.hardware_robot import Robot
 
-    with pytest.raises(ImportError) as excinfo:
+    with blocked("rclpy"), pytest.raises(ImportError) as excinfo:
         Robot._check_ros2_bridge_deps(ros2_transport="rclpy")
     text = str(excinfo.value)
     assert "ros2_transport='rtps'" in text, text
