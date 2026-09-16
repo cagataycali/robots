@@ -2413,6 +2413,34 @@ class RenderingMixin:
         warmup ``render`` needs that lock; waiting for it while holding it
         spent the whole readiness timeout on nothing and returned success over
         a recorder that had not captured a frame.
+
+        The recorder samples WALL time: one frame per ``1 / fps`` seconds of
+        real time while it runs, not one per sim step. A ``step()`` burst that
+        returns in milliseconds records ~0 frames; for one frame per control
+        step record with ``start_recording`` (LeRobotDataset) instead.
+
+        Args:
+            cameras: list of camera names; None = every camera.
+            output_dir: where to write ``{tag}__{cam}.mp4``. Validated against
+                ``..`` traversal / backslash / shell metacharacters / symlink;
+                set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
+            fps: capture rate. Must be a positive whole number - the capture
+                loop's period is ``1 / fps``, so an unusable value is rejected
+                up front rather than killing the capture thread behind a
+                ``status="success"`` return.
+            width/height: per-frame size. ``None`` uses the camera's configured
+                resolution (else the renderer default); an explicit value must
+                be a positive whole number, and an integral ``float`` or
+                ``np.int64`` is normalized to ``int`` rather than refused.
+            name: filename tag (auto if None). Validated as a single path
+                component - separators / traversal / metacharacters rejected.
+            max_frames_per_camera: safety cap on in-memory buffers. Must be a
+                positive whole number; ``0``/negative would drop every frame.
+
+        Returns:
+            The success envelope naming the tag, cameras and capture clock, or
+            the error envelope from
+            :meth:`_start_cameras_recording_under_lock` on refusal.
         """
         with self._lock:
             prepared = self._start_cameras_recording_under_lock(
@@ -2480,23 +2508,8 @@ class RenderingMixin:
         Memory cost: H*W*3 bytes * fps * duration * n_cams. For a 2s / 4-cam /
         320x240 / 15fps rollout: ~27 MB. Bounded by ``max_frames_per_camera``.
 
-        Args:
-            cameras: list of camera names; None = every camera.
-            output_dir: where to write ``{tag}__{cam}.mp4``. Validated against
-                ``..`` traversal / backslash / shell metacharacters / symlink;
-                set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
-            fps: capture rate. Must be a positive whole number - the capture
-                loop's period is ``1 / fps``, so an unusable value is rejected
-                up front rather than killing the capture thread behind a
-                ``status="success"`` return.
-            width/height: per-frame size. ``None`` uses the camera's configured
-                resolution (else the renderer default); an explicit value must
-                be a positive whole number, and an integral ``float`` or
-                ``np.int64`` is normalized to ``int`` rather than refused.
-            name: filename tag (auto if None). Validated as a single path
-                component - separators / traversal / metacharacters rejected.
-            max_frames_per_camera: safety cap on in-memory buffers. Must be a
-                positive whole number; ``0``/negative would drop every frame.
+        Takes the same arguments as :meth:`start_cameras_recording`, which
+        documents them.
         """
         import os as _os
         import tempfile as _tempfile
