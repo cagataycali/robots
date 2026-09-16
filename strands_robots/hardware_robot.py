@@ -3015,7 +3015,10 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Policy provider name (e.g. groot, lerobot_local, mock). See list_providers()."
+                                "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, lerobot_async, "
+                                "lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait "
+                                "(default groot). The model itself is named in policy_config. Not an action - an "
+                                "unknown name is refused listing the current registry."
                             ),
                             "default": "groot",
                         },

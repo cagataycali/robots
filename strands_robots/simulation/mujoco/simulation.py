@@ -67,6 +67,7 @@ import logging
 import math
 import numbers
 import os
+import re
 import threading
 import time
 import weakref
@@ -562,6 +563,30 @@ def _published_string_params(field_aliases: dict[str, str]) -> frozenset[str]:
 # reason ``_PUBLISHED_ACTIONS`` is, and used to decide which spelling a refusal
 # may name: a model constrained to this schema can emit no other.
 _PUBLISHED_PARAMS: frozenset[str] = frozenset(_TOOL_SPEC_SCHEMA["properties"]) - {"action"}
+
+
+def _tool_call_can_carry(param: inspect.Parameter) -> bool:
+    """Whether a JSON tool call can supply *param* at all.
+
+    A parameter annotated as a callable (``observer``, ``stop_when``,
+    ``on_frame``, ``success_fn``) or as a live :class:`Policy` instance
+    (``policy_object``) exists for the Python caller; no JSON value satisfies
+    it, so a refusal's "Valid:" list leaves it out. Everything else - including
+    an unannotated parameter - is kept: the list must never hide a key the
+    caller could have used.
+
+    Args:
+        param: The method parameter as :func:`inspect.signature` reports it.
+
+    Returns:
+        ``False`` for a callable- or ``Policy``-typed parameter, ``True``
+        otherwise.
+    """
+    annotation = param.annotation
+    if annotation is inspect.Parameter.empty:
+        return True
+    text = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", None) or repr(annotation)
+    return "Callable" not in text and re.search(r"\bPolicy\b", text) is None
 
 
 def _reported_param_name(param: str, field_aliases: Mapping[str, str], received: Mapping[str, Any]) -> str:
@@ -7317,13 +7342,28 @@ class MuJoCoSimEngine(
             # exists to prevent, surviving in the one branch that read the loop
             # variable directly.
             reported_unknown = _reported_param_name(unknown[0], self._FIELD_ALIASES, received)
-            valid_sorted = sorted(
-                _reported_param_name(param, self._FIELD_ALIASES, received) for param in method_param_names - {"action"}
-            )
+            # The "Valid:" list is what the caller will pick from next, so it
+            # names only parameters a tool call can carry. A method may also
+            # take a callback or a live object (``observer``, ``stop_when``,
+            # ``on_frame``, ``success_fn``, ``policy_object``) for the Python
+            # caller; listing those to a model that just sent ``policy=`` sends
+            # it to keys it cannot fill, and the one it needs
+            # (``policy_provider`` / ``policy_config``) is buried between them.
+            reachable = {name for name in method_param_names - {"action"} if _tool_call_can_carry(named_params[name])}
+            valid_sorted = sorted(_reported_param_name(param, self._FIELD_ALIASES, received) for param in reachable)
+            # ...and the nearest of them is named, the way an unknown action or
+            # an unknown robot already is: ``policy`` is answered with
+            # ``policy_provider, policy_config`` instead of a 20-name list to
+            # scan.
+            hint = close_match_hint(reported_unknown, valid_sorted)
             return None, {
                 "status": "error",
                 "content": [
-                    {"text": (f"Unknown parameter '{reported_unknown}' for action '{action}'. Valid: {valid_sorted}")}
+                    {
+                        "text": (
+                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
+                        )
+                    }
                 ],
             }
 
