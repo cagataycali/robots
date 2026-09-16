@@ -59,9 +59,12 @@ where it stopped, and the lockout latches `locked`. While it is latched, any
 route that would move a sim - create, reset, joints - answers `423`; stopping a
 session never is. A session whose engine is still being built is frozen too, and
 a create that overlapped the e-stop is refused rather than served, because
-accepting it would report the lockout clear again. `/api/safety/resume` lifts the
-lockout only to `unknown`: a resume is a request, and the next command a session
-accepts is the proof.
+accepting it would report the lockout clear again. The same holds for a command
+already in flight when the button was pressed: a write the worker had begun
+cannot be recalled, one still on the queue is refused instead of applied, and
+either way the request answers `423` and the latch keeps refusing the next
+command. `/api/safety/resume` lifts the lockout only to `unknown`: a resume is a
+request, and the next command a session accepts is the proof.
 
 ## Configuration
 

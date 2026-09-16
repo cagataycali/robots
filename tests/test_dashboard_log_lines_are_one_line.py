@@ -188,3 +188,23 @@ class TestAValuePersistedInTheStoreIsStillCallerSupplied:
         message = recorded[0]
         assert message.splitlines() == [message]
         assert FORGED_SECOND_LINE in message  # escaped, not dropped: the bytes stay legible
+
+
+class TestTheNameOnTheEStopEntryIsCallerSupplied:
+    """`/api/safety/estop` records whoever pressed it, and for a passkey caller that
+    is the label the enrolling request chose - the same stored-then-read-back value
+    the class above covers, at the one dashboard statement that quotes it.
+    """
+
+    def test_a_passkey_label_cannot_forge_the_estop_entry(self, caplog) -> None:
+        pytest.importorskip("fastapi")
+        from strands_robots.dashboard.routes_sim import Safety
+        from strands_robots.dashboard.sim_session import SessionStore
+
+        safety = Safety(SessionStore())
+        with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.routes_sim"):
+            safety.estop(by="owner\r\n" + FORGED_SECOND_LINE)
+
+        (message,) = [r.getMessage() for r in caplog.records]
+        assert message.splitlines() == [message]
+        assert FORGED_SECOND_LINE in message  # escaped, not dropped: the bytes stay legible

@@ -30,6 +30,8 @@ class FakeEngine:
         self.mj_model = SimpleNamespace(opt=SimpleNamespace(timestep=0.002))
         self.mj_data = SimpleNamespace(time=0.0, qpos=np.zeros(joints))
         self.steps = 0
+        self.writes = 0
+        self.resets = 0
         self.closed = False
 
     def robot_joint_names(self, robot):
@@ -48,6 +50,7 @@ class FakeEngine:
         return np.full((height or 8, width or 8, 3), 128, dtype=np.uint8), np.zeros((8, 8))
 
     def reset(self):
+        self.resets += 1
         self.mj_data.time = 0.0
         self.mj_data.qpos = np.zeros_like(self.mj_data.qpos)
         return {"status": "success", "content": [{"text": "reset"}]}
@@ -55,6 +58,7 @@ class FakeEngine:
     def set_joint_positions(self, positions, robot_name=None, hold=False):
         if isinstance(positions, dict) and any(k not in self.robot_joint_names(robot_name) for k in positions):
             return {"status": "error", "content": [{"text": "unknown joint"}]}
+        self.writes += 1
         return {"status": "success", "content": [{"text": "set"}]}
 
     def get_robot_state(self, robot_name=None):
@@ -155,6 +159,31 @@ class TestSimSession:
         with pytest.raises(RuntimeError):
             s.command("reset")
 
+    def test_a_motion_command_queued_while_frozen_is_refused_not_applied(self, fake_factory):
+        """A write the worker had not reached yet does not run because the e-stop landed.
+
+        The route gate refuses a command an operator sends after the stop; this is
+        the other half - a command already on the queue when the freeze landed,
+        which the worker would otherwise apply on its next pass, frozen or not.
+        """
+        s = sim_session.SimSession("so101")
+        assert s.wait_ready(5)
+        engine = fake_factory[0]
+        s.freeze()
+
+        refused = s.command("set_joints", positions={"j0": 0.4})
+        assert refused["status"] == "error"
+        assert "frozen by an e-stop" in refused["content"][0]["text"]
+        assert engine.writes == 0, "the frozen session applied the write anyway"
+        assert s.command("reset")["status"] == "error", "a reset moves the robot too"
+        assert engine.resets == 0
+        assert s.command("state")["status"] == "success", "a read moves nothing, so it is answered"
+
+        s.thaw()
+        assert s.command("set_joints", positions={"j0": 0.4})["status"] == "success"
+        assert engine.writes == 1
+        s.stop()
+
     def test_a_factory_failure_is_an_error_state_not_a_hang(self, monkeypatch):
         s = sim_session.SimSession("so101", engine_factory=ExplodingEngine)
         assert s.wait_ready(5)
@@ -167,7 +196,9 @@ class TestSimSession:
         store.create("so101")
         with pytest.raises(RuntimeError, match="2 sessions"):
             store.create("so101")
-        assert store.remove(a.id) and not store.remove(a.id)
+        removed = store.remove(a.id)
+        removed_again = store.remove(a.id)
+        assert removed and not removed_again
         store.create("so101")  # room again
         store.shutdown()
         assert all(s.snapshot.state == "stopped" for s in store.all())
@@ -182,14 +213,34 @@ class TestSimRoutes:
         assert snap["state"] == "running" and snap["joint_names"] == ["j0", "j1", "j2"]
         assert client.get(f"/api/sim/{snap['id']}").json()["robot"] == "so101"
         assert client.get("/api/sim").json()["sessions"][0]["id"] == snap["id"]
-        assert client.delete(f"/api/sim/{snap['id']}").status_code == 200
-        assert client.get(f"/api/sim/{snap['id']}").status_code == 404
-        assert client.delete(f"/api/sim/{snap['id']}").status_code == 404
+        deleted = client.delete(f"/api/sim/{snap['id']}")
+        gone = client.get(f"/api/sim/{snap['id']}")
+        deleted_again = client.delete(f"/api/sim/{snap['id']}")
+        assert (deleted.status_code, gone.status_code, deleted_again.status_code) == (200, 404, 404)
 
     def test_only_registry_robots_with_a_sim_asset(self, client):
         assert client.post("/api/sim", json={"robot": "not-a-robot"}).status_code == 400
         assert client.post("/api/sim", json={"robot": 3}).status_code == 400
         assert client.post("/api/sim", json=[]).status_code == 400
+
+    @pytest.mark.parametrize("token", ["Infinity", "-Infinity", "NaN"])
+    def test_a_non_finite_position_is_refused_at_the_door(self, client, fake_factory, token):
+        """``json.loads`` accepts these three bare tokens, and ``isinstance(v, float)`` admits them.
+
+        A non-finite angle is not a pose, and it is not JSON either - it cannot
+        be rendered back to any reader - so it is refused where the route states
+        its domain, in both accepted body shapes.
+        """
+        sid = _create(client)["id"]
+        engine = fake_factory[0]
+        for body in (f'{{"positions": {{"j0": {token}}}}}', f'{{"positions": [{token}, 0.1, 0.2]}}'):
+            r = client.post(f"/api/sim/{sid}/joints", content=body, headers={"content-type": "application/json"})
+            assert r.status_code == 400, body
+            assert "finite" in r.json()["error"]
+        assert engine.writes == 0, "a non-finite target reached the engine"
+
+        ok = client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.2}})
+        assert ok.status_code == 200 and engine.writes == 1
 
     def test_an_alias_resolves_to_the_canonical_name(self, client):
         assert _create(client, "so-101")["robot"] == "so101"
@@ -264,8 +315,8 @@ class TestEstop:
             r = client.post(path, json=body)
             assert r.status_code == 423, path
             assert "e-stop engaged" in r.json()["error"]
-        assert client.delete(f"/api/sim/{sid}").status_code == 200, "stopping is never refused"
-        sid = None
+        stopped = client.delete(f"/api/sim/{sid}")
+        assert stopped.status_code == 200, "stopping is never refused"
         r = client.post("/api/safety/resume").json()
         assert r["lockout"]["state"] == "unknown", "a resume is a request, not proof"
         snap = _create(client)
@@ -343,6 +394,80 @@ class TestEstop:
         assert safety.lockout.state == "locked", "an in-flight create is not proof that the lockout lifted"
         assert safety.store.all() == [], "the refused session is not left running"
         assert session.snapshot.steps == 0
+
+    def test_an_estop_during_a_write_refuses_that_request_and_stays_latched(self, client, monkeypatch):
+        """The joints request was admitted while clear, and the red button was pressed mid-write.
+
+        The write cannot be recalled - the worker is already inside the engine
+        call - so what has to hold is the latch. Folding this command in as proof
+        would report the lockout clear while every session sits frozen, and the
+        next command would be admitted.
+        """
+        inside, release = threading.Event(), threading.Event()
+
+        class HoldsTheWrite(FakeEngine):
+            def set_joint_positions(self, positions, robot_name=None, hold=False):
+                inside.set()
+                release.wait(5)
+                return super().set_joint_positions(positions, robot_name=robot_name, hold=hold)
+
+        monkeypatch.setattr(sim_session, "_default_factory", HoldsTheWrite)
+        sid = _create(client)["id"]
+        reply: dict = {}
+
+        def send_joints():
+            r = client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.5}})
+            reply.update(status=r.status_code, body=r.json())
+
+        worker = threading.Thread(target=send_joints)
+        worker.start()
+        assert inside.wait(5), "the command never reached the engine"
+        safety = client.app.state.safety
+        safety.estop(by="operator")
+        release.set()
+        worker.join(10)
+
+        assert reply["status"] == 423 and "e-stop engaged" in reply["body"]["error"]
+        assert safety.lockout.state == "locked", "an in-flight command is not proof the lockout lifted"
+        blocked = client.post("/api/sim", json={"robot": "so101"})
+        assert blocked.status_code == 423, "the latch still refuses the next command"
+
+    def test_a_command_the_freeze_refused_answers_the_estop_not_a_bad_request(self, client, monkeypatch):
+        """A queued command refused because its session froze is an e-stop answer, not a bad body.
+
+        The worker is parked in a render, so the joints command sits on the queue
+        when the e-stop lands; the drain then refuses it. That refusal is an
+        error envelope, and reading it before the lockout would answer 400 for
+        what is a 423.
+        """
+        rendering, hold = threading.Event(), threading.Event()
+
+        class ParksInTheRender(FakeEngine):
+            def get_frame(self, *a, **kw):
+                rendering.set()
+                hold.wait(5)
+                return super().get_frame(*a, **kw)
+
+        monkeypatch.setattr(sim_session, "_default_factory", ParksInTheRender)
+        sid = _create(client)["id"]
+        assert rendering.wait(5), "the worker never reached a render"
+        reply: dict = {}
+
+        def send_joints():
+            r = client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.5}})
+            reply.update(status=r.status_code, body=r.json())
+
+        worker = threading.Thread(target=send_joints)
+        worker.start()
+        safety = client.app.state.safety
+        assert _until(lambda: not safety.store.get(sid)._commands.empty()), "the command never queued"
+        safety.estop(by="operator")
+        hold.set()
+        worker.join(10)
+
+        assert reply["status"] == 423, "a frozen session's refusal is the e-stop's answer"
+        assert "e-stop engaged" in reply["body"]["error"]
+        assert safety.lockout.state == "locked"
 
     def test_an_estop_does_not_relabel_a_session_that_failed_to_start(self):
         """``error`` is not a state an e-stop can freeze, and saying so would hide the failure."""
