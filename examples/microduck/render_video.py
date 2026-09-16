@@ -41,10 +41,12 @@ Examples::
 
     # A skill trained in a variant scene names it with --scene. Without one the
     # duck rolls on a floor with no wheels under its feet, or swings at a ball
-    # that is not there.
+    # that is not there. The world's rendered floor reaches 5 m from the origin
+    # and the roller covers about 0.7 m/s at --vx 0.3, so 6 s keeps it on the
+    # checkerboard; the script says so when a ride runs off the edge.
     python examples/microduck/render_video.py \
         --onnx roller.onnx --scene scene_rollers.xml \
-        --vx 0.3 --duration 8 --out /tmp/microduck_viz/roller.mp4
+        --vx 0.3 --duration 6 --out /tmp/microduck_viz/roller.mp4
 
     python examples/microduck/render_video.py \
         --onnx ball_kick_left.onnx --scene scene_ball.xml \
@@ -174,6 +176,54 @@ def _resolve_scene(name: str) -> str:
     raise SystemExit(f"scene {name!r} not found; searched {searched}")
 
 
+def _floor_half_extent(mujoco, model) -> float | None:
+    """How far from the origin the rendered ground reaches, in metres.
+
+    The world strips the floor a scene ships and lays its own ``ground`` plane
+    in its place, whose ``size`` bounds what is *drawn* - MuJoCo planes collide
+    without limit, so a robot that rolls past that edge keeps rolling, on a floor
+    the frame no longer shows. Returns ``None`` when there is no such plane or it
+    is drawn without limit (``size`` 0), in which case nothing can be run off.
+    """
+    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
+    if gid < 0 or model.geom_type[gid] != mujoco.mjtGeom.mjGEOM_PLANE:
+        return None
+    half = float(min(model.geom_size[gid][0], model.geom_size[gid][1]))
+    return half if half > 0 else None
+
+
+def first_tick_off_the_floor(path, half_extent: float | None) -> int | None:
+    """The index of the first trunk position past the rendered floor, or ``None``.
+
+    Args:
+        path: The trunk's world ``(x, y[, z])`` per control tick, in order.
+        half_extent: The floor's half-extent from :func:`_floor_half_extent`;
+            ``None`` means the floor is unbounded and nothing is ever off it.
+    """
+    if half_extent is None:
+        return None
+    for i, pos in enumerate(path):
+        if max(abs(float(pos[0])), abs(float(pos[1]))) > half_extent:
+            return i
+    return None
+
+
+def distance_travelled(path) -> float:
+    """How far the trunk went along ``path``, in metres.
+
+    The sum of the step lengths, not the straight line from the first position to
+    the last: the roller curves, so the chord understates the ride (a 10 s ride
+    that ends 6.22 m from the start covers 7.21 m of ground).
+
+    Args:
+        path: The trunk's world ``(x, y[, z])`` per control tick, in order.
+    """
+    if len(path) < 2:
+        return 0.0
+    steps = np.diff(np.asarray(path, dtype=float)[:, :2], axis=0)
+    return float(np.linalg.norm(steps, axis=1).sum())
+
+
 def _sim_kwargs(args) -> dict[str, str]:
     """The ``Robot(...)`` keyword arguments the requested scene needs.
 
@@ -218,12 +268,17 @@ async def _rollout(args):
             renderer = None
             direct = False
 
+    base_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, BASE_BODY)
+    half_extent = _floor_half_extent(mujoco, model)
+    path = []
     frames = []
     for _ in range(n_ticks):
         obs = sim.get_observation()
         actions = await policy.get_actions(obs, "", target_velocity=tv)
         sim.send_action(actions[0])
         sim.step(substeps)
+        if base_body >= 0:
+            path.append(data.xpos[base_body][:2].copy())
         if direct and renderer is not None:
             renderer.update_scene(data, camera=cam)
             frames.append(renderer.render().copy())
@@ -240,6 +295,18 @@ async def _rollout(args):
     # static-frame sanity check
     spread = float(np.mean(np.abs(frames[-1].astype(np.int16) - frames[0].astype(np.int16))))
     print(f"  rendered {len(frames)} frames; first/last mean abs diff = {spread:.2f}")
+
+    # A ride that outruns the drawn floor keeps rolling on an invisible one; the
+    # frames from that tick on show the duck over the void. Say so, with the
+    # second it happened, rather than leave it to be found in the clip.
+    off = first_tick_off_the_floor(path, half_extent)
+    if off is not None:
+        travelled = distance_travelled(path)
+        print(
+            f"  the duck left the rendered floor (±{half_extent:.1f} m) at "
+            f"{off / args.control_frequency:.1f} s and travelled {travelled:.2f} m in all; "
+            f"the frames after that show it over the void - shorten --duration or lower --vx"
+        )
 
     _encode(
         frames,

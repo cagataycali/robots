@@ -45,7 +45,7 @@ from .ibl import (
     environment_map_cache_path,
     render_environment_map,
 )
-from .video import encode_clip, mjpeg_frames, require_clip_encoder
+from .video import concat_clips, encode_clip, mjpeg_frames, require_clip_encoder
 
 __all__ = [
     "GSPLAT_SCENES",
@@ -60,6 +60,7 @@ __all__ = [
     "PanoramaBackground",
     "bake_environment_map",
     "bake_gsplat_panorama",
+    "concat_clips",
     "derive_key_light",
     "download_gsplat_scene",
     "encode_clip",

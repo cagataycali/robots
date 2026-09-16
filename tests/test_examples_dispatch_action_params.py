@@ -8,7 +8,11 @@ example passed ``camera_name`` to ``add_camera``, whose parameter is ``name``.
 ``get_frame`` / ``get_camera_params`` / ``get_world_point``), so the mistake
 reads plausible -- and because the envelope was dropped the world kept only its
 default camera and the policy failed much later complaining about missing image
-keys, pointing at the policy instead of the refused call.
+keys, pointing at the policy instead of the refused call. The router has since
+accepted that spelling on ``add_camera`` / ``remove_camera``
+(``MuJoCoSimEngine._camera_name_alias_target``), so the same key is now
+accepted there and still refused on ``get_observation``, which is why the
+planted-offender pin below uses the latter.
 
 This statically scans every example for ``_dispatch_action`` calls written with
 a literal action name and a literal parameter dict, and checks each parameter
@@ -87,6 +91,10 @@ def _accepted_params(action: str, param_names: Sequence[str] = ()) -> frozenset[
         accepted.add("robot_name")
     if "robot_name" in named:
         accepted.add("name")
+    # camera_name stands for name on a camera action whose method spells it
+    # ``name``; the router owns that rule, so it is asked rather than restated.
+    if MuJoCoSimEngine._camera_name_alias_target(action, named) is not None:
+        accepted.add("camera_name")
     return frozenset(accepted)
 
 
@@ -164,15 +172,15 @@ class TestExamplesUseParametersTheRouterAccepts:
     def test_a_planted_bad_parameter_is_detected(self) -> None:
         """Meta: an empty offender list must mean clean sources, not a blind scanner."""
         for planted in (
-            'sim._dispatch_action("add_camera", {"camera_name": "front"})\n',
-            '_must(sim, "add_camera", {"camera_name": "front"})\n',  # the wrapper form
+            'sim._dispatch_action("get_observation", {"camera_name": "front"})\n',
+            '_must(sim, "get_observation", {"camera_name": "front"})\n',  # the wrapper form
         ):
             calls = _literal_dispatch_calls(planted)
-            assert calls == [(1, "add_camera", ("camera_name",))], (planted, calls)
-        accepted = _accepted_params("add_camera")
+            assert calls == [(1, "get_observation", ("camera_name",))], (planted, calls)
+        accepted = _accepted_params("get_observation")
         assert accepted is not None
         assert "camera_name" not in accepted
-        assert "name" in accepted
+        assert "robot_name" in accepted
 
 
 # Payload shapes that reach the flat-video rule. The fold consumes what it can
@@ -212,7 +220,10 @@ class TestTheAcceptanceMirrorAgreesWithTheRouter:
         ("action", "params", "param", "accepted"),
         [
             ("add_camera", ("name",), "name", True),
-            ("add_camera", ("camera_name",), "camera_name", False),  # the #244 defect
+            # The #244 spelling: accepted since the router aliases it to ``name``
+            # on the two camera actions whose method spells it that way.
+            ("add_camera", ("camera_name",), "camera_name", True),
+            ("remove_camera", ("camera_name",), "camera_name", True),
             ("add_camera", ("position",), "position", True),
             ("get_observation", ("robot_name",), "robot_name", True),
             ("get_observation", ("camera_name",), "camera_name", False),  # same file, same mistake
@@ -262,6 +273,30 @@ class TestTheAcceptanceMirrorAgreesWithTheRouter:
         assert bool(mirror_refuses) is router_refuses, (
             f"{action} with {label}: the mirror says refused={bool(mirror_refuses)} {mirror_refuses}, "
             f"the router says refused={router_refuses}"
+        )
+
+    @pytest.mark.parametrize(
+        ("action", "payload"),
+        [
+            ("add_camera", {"camera_name": "wrist", "position": [0.0, 0.0, 1.0]}),
+            ("remove_camera", {"camera_name": "wrist"}),
+            ("get_observation", {"robot_name": "arm", "camera_name": "wrist"}),
+        ],
+        ids=["add_camera", "remove_camera", "get_observation"],
+    )
+    def test_the_mirror_matches_the_router_for_camera_name(self, action: str, payload: dict[str, object]) -> None:
+        """The router owns the camera_name alias; the mirror must reach its verdict.
+
+        Two actions accept the spelling and one refuses it, so a mirror that
+        restated the rule in either direction fails one of the three cells.
+        """
+        allowed = _accepted_params(action, tuple(payload))
+        assert allowed is not None, f"{action} accepts **kwargs; nothing to assert"
+        mirror_refuses = "camera_name" not in allowed
+        router_refuses = _router_refuses(action, payload)
+        assert mirror_refuses is router_refuses, (
+            f"{action}: mirror {'refuses' if mirror_refuses else 'accepts'} camera_name, "
+            f"router {'refuses' if router_refuses else 'accepts'} it"
         )
 
     def test_a_planted_flat_video_key_on_a_sibling_action_is_reported(self) -> None:
