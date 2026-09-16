@@ -70,7 +70,7 @@ import os
 import threading
 import time
 import weakref
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -5717,6 +5717,50 @@ class MuJoCoSimEngine(
             if name not in registered_names and getattr(robot, "policy_running", False)
         )
         return names
+
+    def _request_policy_stop_all(self, robot_names: Iterable[str]) -> None:
+        """Lower the cooperative stop flag on several robots, joining none of them.
+
+        The first pass a SEQUENTIAL fanout over :meth:`stop_policy` needs.
+        That verb waits (bounded by :attr:`_POLICY_STOP_JOIN_TIMEOUT`) for the
+        worker it just flagged to exit, so a caller looping over robots pays
+        that wait between one robot's request and the next robot's - and a
+        robot whose policy server is wedged inside inference pays it in full,
+        holding the stop REQUEST off every robot behind it in the loop while
+        those arms keep executing. Lowering every flag up front makes the
+        workers wind down concurrently, and each later
+        :meth:`stop_policy` still reports that robot's own verdict.
+
+        :meth:`cleanup` sequences its own multi-robot teardown the same way and
+        for the same reason: request on every robot, then join.
+
+        Only rollouts with a Future are flagged, and that is what keeps each
+        later ``stop_policy`` answer honest. Such a rollout stays in
+        :meth:`_active_policy_robots` on its live Future alone, so lowering its
+        flag early costs no evidence - that union is exactly why a second
+        ``stop_policy`` still reported ``Stopped``. A BLOCKING ``run_policy``
+        registers no Future, so the flag is the only record that it was in
+        flight: pre-lowering it would make ``stop_policy`` answer
+        ``Was not running`` for a rollout it really did halt, and the fleet stop
+        would then name nothing under ``stopped``. Such a rollout is also the
+        one shape with nothing to join, so it has nothing to gain here.
+
+        Args:
+            robot_names: Names to flag. A name that is unknown, idle, or
+                driving a blocking rollout is skipped - this is a best-effort
+                pre-pass, and :meth:`stop_policy` is what answers for each
+                robot.
+        """
+        world = self._world
+        if world is None:
+            return
+        for name in robot_names:
+            robot = registry_entry(world.robots, name)
+            future = registry_entry(self._policy_threads, name)
+            if robot is None or future is None or future.done():
+                continue
+            with contextlib.suppress(Exception):
+                robot.request_policy_stop()
 
     def _rollouts_in_flight(self) -> tuple[str, ...]:
         """MuJoCo override: the population :meth:`_active_policy_robots` owns.
