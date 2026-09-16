@@ -57,6 +57,7 @@ from .robots import (
     get_robot,
     has_hardware,
     has_sim,
+    joint_labels,
     list_aliases,
     list_robots,
     list_robots_by_category,
@@ -72,6 +73,7 @@ __all__ = [
     # Robot registry
     "resolve_name",
     "get_robot",
+    "joint_labels",
     "has_sim",
     "has_hardware",
     "get_driver",

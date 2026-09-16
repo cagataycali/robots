@@ -764,28 +764,43 @@ class MotionPrimitivesCore:
         targets: dict[str, float],
         setpoint_sources: dict[str, str],
         gripper_joint_positions: dict[str, float],
+        *,
+        held: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """Success envelope for ``set_gripper``, shared across backends.
 
         All mappings are keyed by the (namespace-stripped) actuator / joint
         name, so the payload is meaningful to the agent whichever backend
         resolved the ids.
+
+        ``held`` is what the fingers touch after a close, body name to contact
+        count, for backends that can read contacts; ``None`` means the backend
+        did not look (or the state was ``"open"``), and the reply stays as it
+        was. An empty dict is a close that touched nothing, and the text says
+        so - a grasp that missed reads exactly like one that landed otherwise.
         """
-        payload = {
+        payload: dict[str, Any] = {
             "state": state,
             "actuators": actuators,
             "targets": targets,
             "setpoint_sources": setpoint_sources,
             "gripper_joint_positions": gripper_joint_positions,
         }
+        text = f"set_gripper: '{robot_name}' gripper commanded {state} ({steps} ticks, actuators {actuators})."
+        if held is not None:
+            payload["holding"] = sorted(held)
+            payload["finger_contacts"] = dict(sorted(held.items()))
+            if held:
+                what = ", ".join(f"'{name}' ({n} contact{'s' if n != 1 else ''})" for name, n in sorted(held.items()))
+                text += f" Closed on {what}."
+            else:
+                text += (
+                    " Closed on nothing: no object is touching the fingers, so a lift now carries nothing - "
+                    "move_to the object first (get_body_state gives its position)."
+                )
         return {
             "status": "success",
-            "content": [
-                {
-                    "text": f"set_gripper: '{robot_name}' gripper commanded {state} ({steps} ticks, actuators {actuators})."
-                },
-                {"json": payload},
-            ],
+            "content": [{"text": text}, {"json": payload}],
         }
 
     @staticmethod

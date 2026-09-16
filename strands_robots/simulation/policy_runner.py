@@ -4328,8 +4328,16 @@ class PolicyRunner:
                         )
                         + f"Episodes: {n_completed}"
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
-                        + f" | Success: {n_success}/{n_completed} ({success_rate:.1%})"
-                        + ("" if success_measured else " [no success criterion - not measured]")
+                        + (
+                            f" | Success: {n_success}/{n_completed} ({success_rate:.1%})"
+                            if success_measured
+                            # No fraction when nothing measured it: "0/3 (0.0%)
+                            # [not measured]" was read as a 0% baseline and each
+                            # episode reported as failed. The json keeps the
+                            # documented success_rate=0.0 + success_measured=false.
+                            else " | Success: not measured (no success criterion - pass success_fn, "
+                            "e.g. 'contact', or a benchmark spec)"
+                        )
                         + "\n"
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
                         + f" | Actions applied: {total_actions}/{total_steps}"

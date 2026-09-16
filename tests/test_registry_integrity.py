@@ -266,3 +266,29 @@ def test_shipped_gripper_metadata_entries(registry: dict) -> None:
         assert gripper is not None, f"{name} lost its registry gripper metadata"
         assert gripper["actuators"] == actuators, f"{name}.gripper.actuators changed: {gripper['actuators']}"
         assert gripper["closed"] == "low" and gripper["open"] == "high", name
+
+
+def test_joint_labels_shape(registry: dict) -> None:
+    """Optional ``joint_labels`` blocks are ``{asset joint: label}`` with one
+    label per declared joint, labels unique and non-empty. ``get_robot_state``
+    prints the label beside the joint and ``set_joint_positions`` resolves a
+    label to its joint, so a malformed block would either mislabel a joint or
+    let two labels name one.
+    """
+    problems: list[str] = []
+    for name, info in registry.items():
+        labels = info.get("joint_labels")
+        if labels is None:
+            continue
+        if not isinstance(labels, dict):
+            problems.append(f"{name}.joint_labels must be a dict, got {type(labels).__name__}")
+            continue
+        if not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in labels.items()):
+            problems.append(f"{name}.joint_labels must map non-empty strings to non-empty strings: {labels!r}")
+            continue
+        if len(set(labels.values())) != len(labels):
+            problems.append(f"{name}.joint_labels has duplicate labels: {sorted(labels.values())}")
+        joints = info.get("joints")
+        if isinstance(joints, int) and len(labels) != joints:
+            problems.append(f"{name}.joint_labels has {len(labels)} entries for a {joints}-joint robot")
+    assert not problems, "\n".join(problems)

@@ -24,7 +24,7 @@ body-tracking chase camera. Reproduce with
 ```bash
 export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib  # macOS: Homebrew ffmpeg
 python examples/microduck/render_video.py \
-    --onnx ../microduck/policies/alpha_walking.onnx \
+    --onnx alpha_walking.onnx \
     --vx 0.3 --duration 8 --out walk_forward.mp4 \
     --gif docs/assets/microduck/microduck_walk.gif
 ```
@@ -41,8 +41,20 @@ drops straight in. The four skills that need a different scene — `roller`,
 pip install "strands-robots[microduck]"
 ```
 
-That pulls `onnxruntime` (runs the graph). Weights are not bundled — they ship
-in Pollen's `microduck` repository under `policies/*.onnx`. A MuJoCo rollout
+That pulls `onnxruntime` (runs the graph) and `huggingface_hub` (fetches the
+weights). Weights are not bundled — Pollen publishes them on the Hub at
+[`pollen-robotics/microduck-policies`](https://huggingface.co/pollen-robotics/microduck-policies)
+(the `policies/` directory of their `microduck` git repository, where they used
+to ship, is gone). Pass a bare weight name and it is fetched on first use and
+cached by `huggingface_hub`; pass a path to use a file you already have:
+
+```python
+MicroduckPolicy(onnx_path="alpha_walking.onnx")          # fetched from the Hub
+MicroduckPolicy(onnx_path="/data/weights/roller.onnx")   # a local file
+```
+
+A path with directories that does not exist is refused rather than downloaded,
+so a typo cannot be answered with a different file. A MuJoCo rollout
 additionally needs `strands-robots[sim-mujoco]`.
 
 ## Walk in simulation
