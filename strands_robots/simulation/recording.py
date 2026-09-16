@@ -1876,11 +1876,10 @@ class DatasetRecordingMixin:
         frames gone. Refusing here leaves the live recording exactly as it was
         and names what ``stop_recording`` will save.
 
-        Every backend's ``start_recording`` calls this first, so the refusal is
-        one behaviour rather than three - a backend that skipped it silently got
-        the frame loss back, which is what
-        ``tests/simulation/test_second_start_recording_does_not_drop_the_live_one.py``
-        grades the three implementations for.
+        Every backend's ``start_recording`` calls this first, before it writes
+        any session state, so the refusal is one behaviour rather than three - a
+        backend that reached its own bookkeeping first silently got the frame
+        loss back.
 
         Both figures are scoped to the LIVE SESSION, because the question the
         caller is about to answer is what THIS session would lose. The frame
