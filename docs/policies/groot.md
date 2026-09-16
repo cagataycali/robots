@@ -58,6 +58,7 @@ Gr00tPolicy(
     action_mapping=None,
     language_key=None,
     strict_keys=False,             # raise instead of positional key-guessing
+    timeout_ms=15000,               # service mode only: per-request wait budget
 )
 ```
 
@@ -71,6 +72,18 @@ booleans are stored as given. The check is not scoped to local mode even though
 only local mode reads either flag, because local mode needs Isaac-GR00T
 installed: a caller composing a `policy_config` against a service-mode policy
 would otherwise get no answer until they moved to a GPU host.
+
+`timeout_ms` is the service-mode wait budget for one request (send and
+receive), default 15000. A request that expires raises `ConnectionError`
+naming the `tcp://` URI, the endpoint, the budget, and - from a 1 s TCP probe
+of the port - which side the wait was on: connection refused means no server
+is there, so the report is "start one" (`gr00t_inference(action='start',
+port=N)` or `python -m gr00t.eval.run_gr00t_server --port N`); a listening but
+silent port means a checkpoint still loading or a wedged forward pass, so the
+report is "read its log, and raise `timeout_ms` if the model is simply
+slower". Lower it to fail fast while you are still finding the right host and
+port - a typo costs the full budget, because ZMQ connects lazily and never
+reports a refusal on its own.
 
 ## Strict key matching
 

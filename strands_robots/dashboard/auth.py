@@ -352,7 +352,7 @@ def store_corruption() -> dict[str, str] | None:
 
 
 def _preserve_corrupt(path: Path, exc: Exception) -> None:
-    """Move an unparseable store aside instead of clobbering it, and remember that we did."""
+    """Move a store this module cannot use aside instead of clobbering it, and remember that we did."""
     global _corrupt
     backup = path.with_name(f"{path.name}.corrupt-{int(time.time())}")
     try:
@@ -410,6 +410,50 @@ def _remember_locked(identity: tuple | None, raw: str, store: dict[str, Any]) ->
         _cache[identity] = _CachedStore(raw, store)
 
 
+def _parsed_store(raw: str) -> dict[str, Any]:
+    """The store *raw* holds, or ``ValueError`` naming why it cannot be one.
+
+    Parsing is not usability. Every reader here indexes the parsed document
+    without a second look - ``_jwt_secret`` takes ``store["jwt_secret"]``,
+    ``has_credentials`` takes ``len(store.get("credentials", []))`` - so a file
+    that is valid JSON and still not a store hands each of them a value it has
+    no branch for, and the fault surfaces as a ``KeyError``, ``TypeError`` or
+    ``AttributeError`` from inside whichever route asked. Presenting any session
+    token against a store with no ``jwt_secret`` did exactly that: ``KeyError``
+    inside :func:`verify_token`, which is a 500 on every guarded route and says
+    nothing an operator could act on, where the same request without the token
+    was a clean 401. A non-string secret was quieter and worse - every token
+    failed to verify (401 forever) while signing in raised from PyJWT.
+
+    Raising here routes all of that into the recovery :func:`_load` already
+    has for a store it cannot read: the bytes are kept aside, the reason is
+    recorded for :func:`store_corruption`, and a working default takes over -
+    so the dashboard comes up sealed against enrollment from anywhere but the
+    machine, instead of answering 500 until someone reads a traceback.
+
+    Args:
+        raw: The store file's contents.
+
+    Returns:
+        The parsed store, usable by every reader in this module.
+
+    Raises:
+        ValueError: The text is not JSON, or is JSON that cannot serve as a
+            store. ``json.JSONDecodeError`` is a ``ValueError``, so both
+            arrive at the caller through one channel.
+    """
+    store = json.loads(raw)
+    if not isinstance(store, dict):
+        raise ValueError(f"store is a JSON {type(store).__name__}, not an object")
+    secret = store.get("jwt_secret")
+    if not isinstance(secret, str) or not secret:
+        raise ValueError(f"store has no usable jwt_secret (found {type(secret).__name__})")
+    creds = store.get("credentials", [])
+    if not isinstance(creds, list) or not all(isinstance(c, dict) and isinstance(c.get("id"), str) for c in creds):
+        raise ValueError("store credentials are not a list of records each carrying an id")
+    return store
+
+
 def _load() -> dict[str, Any]:
     """Read the store, serving memory only while the file still holds its bytes.
 
@@ -428,7 +472,7 @@ def _load() -> dict[str, Any]:
                 cached = _cache.get(identity)
                 if cached is not None and cached.raw == raw:
                     return cached.store
-                store: dict[str, Any] = json.loads(raw)
+                store: dict[str, Any] = _parsed_store(raw)
             except (OSError, ValueError) as exc:
                 _preserve_corrupt(path, exc)
             else:
