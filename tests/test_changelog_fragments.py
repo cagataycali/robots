@@ -307,6 +307,15 @@ def test_check_mode_exits_non_zero_on_an_invalid_fragment(workspace: tuple[Path,
 #: number exists.
 _PLACEHOLDER_FLOOR = 9000
 
+#: The other placeholder shape: ``0000-<slug>.md``, the name a branch writes
+#: before its PR number exists. No PR or issue is numbered 0.
+_PLACEHOLDER_ZERO = 0
+
+
+def _is_placeholder_number(number: int) -> bool:
+    """True when ``number`` is a pre-PR placeholder rather than a PR or issue number."""
+    return number == _PLACEHOLDER_ZERO or number >= _PLACEHOLDER_FLOOR
+
 
 def _real_fragment_numbers() -> list[tuple[int, str]]:
     """Every ``(number, name)`` pair in the repository's own fragment directory."""
@@ -334,13 +343,40 @@ def test_no_fragment_uses_a_reserved_placeholder_number() -> None:
     entry back to the change that made it, so a placeholder makes an entry
     untraceable. And because assembly orders by *descending* number, the
     placeholder sorts above every real entry - see the companion cell below.
+
+    The floor alone was not enough. ``0000-`` is the other placeholder shape,
+    and ten ``0000-`` fragments from ten merged PRs (#3526, #3529, #3534, #3537,
+    #3690, #3692, #3694, #3697, #3701, #3703) reached main under the old
+    ``>= 9000`` rule, which never looked at zero. Zero sorts *below* every real
+    entry instead of above it, so the same untraceable pointer lands at the
+    bottom of the section rather than the top.
     """
-    offenders = [name for number, name in _real_fragment_numbers() if number >= _PLACEHOLDER_FLOOR]
+    offenders = [name for number, name in _real_fragment_numbers() if _is_placeholder_number(number)]
     assert not offenders, (
-        f"fragment(s) named with a reserved placeholder number (>= {_PLACEHOLDER_FLOOR}): "
+        f"fragment(s) named with a reserved placeholder number ({_PLACEHOLDER_ZERO} or >= {_PLACEHOLDER_FLOOR}): "
         f"{offenders}. Rename each to the PR or issue number that carries it, so the "
         "release-note entry points back at the change and sorts in the right place."
     )
+
+
+def test_a_zero_fragment_number_is_refused_as_a_placeholder(workspace: tuple[Path, Path]) -> None:
+    """``0000-x.md`` is the placeholder a branch writes before its PR exists.
+
+    The rule has one owner, ``_is_placeholder_number``, so the guard over the
+    repository's own fragments and this cell cannot drift apart.
+    """
+    fragment_dir, _ = workspace
+    _fragment(fragment_dir, "0000-x.md", "### Fixed: placeholder\n\nBody.\n")
+    _fragment(fragment_dir, "3703-a-real-change.md", "### Fixed: real\n\nBody.\n")
+
+    numbers = {
+        fragment.name: int(assemble.FRAGMENT_NAME.match(fragment.name).group("number"))
+        for fragment in assemble.collect_fragments(fragment_dir)
+    }
+
+    assert numbers["0000-x.md"] == _PLACEHOLDER_ZERO, "the name regex must parse 0000 as the number 0"
+    assert _is_placeholder_number(numbers["0000-x.md"]), "0000 is a placeholder and must be refused"
+    assert not _is_placeholder_number(numbers["3703-a-real-change.md"]), "a real PR number must pass"
 
 
 def test_a_placeholder_number_sorts_above_every_real_entry(workspace: tuple[Path, Path]) -> None:

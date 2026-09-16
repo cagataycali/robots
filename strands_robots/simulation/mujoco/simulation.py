@@ -73,7 +73,7 @@ import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
@@ -3506,8 +3506,11 @@ class MuJoCoSimEngine(
             "# write qpos directly and run forward kinematics (teleport / set an "
             "initial pose, bypassing the actuators). dict is per-joint; list is "
             "ordered and must match one robot's joint count (see get_features). "
-            "The write is all-or-nothing: a dict key that is not a joint of the "
-            "model is an error, not a silent skip (see robot_joint_names). "
+            "The write is all-or-nothing: a dict key that names neither a joint "
+            "of the model (see robot_joint_names) nor, on a robot whose registry "
+            "entry carries joint_labels, one of those labels -- the SO arms "
+            "accept shoulder_pan..gripper for their servo ids, bare or "
+            "'<robot>/<label>' -- is an error, not a silent skip. "
             "Kinematic only: a joint held by a position servo is pulled back "
             "toward the servo's existing setpoint by the next step, and the "
             "success text names those joints; hold=True moves the matching "
@@ -3809,9 +3812,14 @@ class MuJoCoSimEngine(
                     "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
                 }
 
+            # A registry label beside a joint the asset names by servo id or CAD
+            # term (``1 (shoulder_pan)``), so the agent reading this can address
+            # the joint by what it does; ``set_joint_positions`` accepts the label.
+            labels = self._robot_joint_labels(robot)
             text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
             for jnt, vals in state.items():
-                text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+                shown = f"{jnt} ({labels[jnt]})" if jnt in labels else jnt
+                text += f"{shown}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
             if base is not None:
                 p_, q_ = base["position"], base["quaternion"]
                 lv_, av_ = base["linear_velocity"], base["angular_velocity"]
@@ -3823,6 +3831,8 @@ class MuJoCoSimEngine(
                 )
 
             json_payload: dict[str, Any] = {"state": state}
+            if labels:
+                json_payload["joint_labels"] = {jnt: labels[jnt] for jnt in state if jnt in labels}
             if base is not None:
                 json_payload["base"] = base
 
@@ -4947,9 +4957,35 @@ class MuJoCoSimEngine(
                 self._world.step_count += batch
             remaining -= batch
         self._publish_ros_telemetry()
+        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        # A dataset recording is fed by run_policy's per-step hook and by
+        # nothing else. A caller scripting a demonstration with
+        # set_joint_positions + step under an active recording therefore
+        # captures nothing, and until now learned that only from
+        # stop_recording's empty-dataset refusal - after the whole scripted
+        # motion had run. Say it here, on the call that does not record, while
+        # the motion is still ahead. A rollout in flight IS recording (its hook
+        # runs on the executor thread), so the note stays silent then - and
+        # ``policy_running``, the flag this guard reads, is raised for every
+        # rollout that records: ``_announce_rollout`` for run_policy and
+        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
+        # which feeds the recorder by calling add_frame directly. So the note
+        # says "a policy rollout" rather than naming run_policy alone, and
+        # start_recording's advice names all three. The note
+        # LEADS the line: appended after the step summary it was read past
+        # three times in a row by an agent that then reported "all three poses
+        # captured" - the first token of a success result is what gets read.
+        if self._world._backend_state.get("recording") and not any(
+            r.policy_running for r in self._world.robots.values()
+        ):
+            summary = (
+                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
+                "a policy rollout feeds the recorder (start_recording -> run_policy or start_policy "
+                "-> stop_recording) | " + summary
+            )
         return {
             "status": "success",
-            "content": [{"text": f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"}],
+            "content": [{"text": summary}],
         }
 
     def reset(self) -> dict[str, Any]:
@@ -5286,9 +5322,25 @@ class MuJoCoSimEngine(
     def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
         """Describe the simulation's joints / actuators / cameras / robots.
 
-        If ``robot_name`` is given, the joint / actuator / camera listings
-        are restricted to that robot (its namespaced MuJoCo names).  The
-        ``robots`` map is also filtered to just that entry.
+        Every count reported here counts the list it introduces, so a
+        robot-scoped listing never labels a robot's own parts with the world's
+        total - it reports the same numbers the ``robots`` map carries for that
+        robot.
+
+        Args:
+            robot_name: When set, restrict the joint / actuator / camera
+                listings and the ``robots`` map to that robot. A joint or
+                actuator is the robot's when the robot owns it. A camera is the
+                robot's when the robot brought it - registered to it by
+                ``add_robot`` from its own MJCF, wherever that MJCF declares it -
+                or when it is mounted on one of the robot's bodies, which is what
+                makes a camera added with ``add_camera(parent_body=...)`` part of
+                the robot that wears it even though its own name carries no
+                namespace.
+
+        Returns:
+            Agent-tool dict with a ``text`` summary and a ``json`` block
+            ``{"features": {...}}``.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -5329,7 +5381,33 @@ class MuJoCoSimEngine(
                 for act_id in robot.actuator_ids
                 if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id))
             ]
-            camera_names = _scoped(all_camera_names)
+            # Ownership, not the camera's own name -- the correction the
+            # actuator line above already needed, and it takes two rules for the
+            # reason ``robot_owned_actuator_ids`` needs two. A camera the robot
+            # brought in its own MJCF is registered to it by ``add_robot`` (the
+            # record ``remove_robot`` takes it away by) and may be declared
+            # outside every one of the robot's bodies, so no walk of the model
+            # finds it. A camera mounted later with
+            # ``add_camera(parent_body=...)`` rides on one of those bodies and is
+            # deliberately registered to no robot at all. The camera's own name
+            # answers neither: a caller picks it, so it carries no namespace, and
+            # filtering names by the prefix dropped every camera a robot wears --
+            # this line read "Cameras (2): none (free camera only)" for a robot
+            # with a camera on its pelvis. Mount membership is read the way
+            # :meth:`_body_is_namespaced` reads it, from the compiled name, which
+            # is the only part of a robot's identity a recompile keeps; an empty
+            # prefix matches every body, which is the whole scene, the same
+            # answer ``_scoped`` gives a robot that has no namespace.
+            declared_by = {cam.name: cam.origin_robot for cam in self._world.cameras.values() if cam.origin_robot}
+            camera_names = [
+                name
+                for cam_id in range(model.ncam)
+                if (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, cam_id))
+                and (
+                    declared_by.get(name) == robot_name
+                    or self._body_is_namespaced(model, int(model.cam_bodyid[cam_id]), prefix)
+                )
+            ]
 
             robots_info = {
                 robot_name: {
@@ -5357,9 +5435,12 @@ class MuJoCoSimEngine(
 
         features = {
             "n_bodies": model.nbody,
-            "n_joints": model.njnt,
-            "n_actuators": model.nu,
-            "n_cameras": model.ncam,
+            # Each count counts the list beside it, so a robot-scoped listing
+            # cannot report the world's total for a robot's own parts: the
+            # numbers the ``robots`` map below carries for the same robot.
+            "n_joints": len(joint_names),
+            "n_actuators": len(actuator_names),
+            "n_cameras": len(camera_names),
             "timestep": model.opt.timestep,
             "joint_names": joint_names,
             "actuator_names": actuator_names,
@@ -5367,11 +5448,21 @@ class MuJoCoSimEngine(
             "robots": robots_info,
         }
 
+        # A scene with no camera at all is the free camera's, but a robot merely
+        # wearing none is not: the scene's cameras are still there to render
+        # from, and this listing is the one place that says which are the
+        # robot's own.
+        no_cameras_note = (
+            "none (free camera only)"
+            if not all_camera_names
+            else f"none mounted on '{robot_name}' (list_cameras names the scene's)"
+        )
         lines = [
             "Simulation Features",
-            f"Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
-            f"Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
-            f"Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
+            f"Joints ({len(joint_names)}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
+            f"Actuators ({len(actuator_names)}): "
+            f"{', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
+            f"Cameras ({len(camera_names)}): {', '.join(camera_names) if camera_names else no_cameras_note}",
             f"Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
@@ -6829,6 +6920,40 @@ class MuJoCoSimEngine(
         if flat.get("path"):
             payload["video"] = flat
 
+    #: Parameters through which a method already spells "which camera".
+    #: A method that declares one of these names the camera there, so its
+    #: ``name`` is a different fact and ``camera_name`` must not be bound to
+    #: it: ``start_cameras_recording`` selects cameras through ``cameras``
+    #: and its ``name`` is the output filename tag.
+    _CAMERA_NAMING_PARAMS: ClassVar[frozenset[str]] = frozenset({"camera_name", "cameras"})
+
+    @staticmethod
+    def _camera_name_alias_target(action: str, method_param_names: set[str]) -> str | None:
+        """The parameter ``camera_name`` stands for on a camera action, or ``None``.
+
+        ``add_camera`` / ``remove_camera`` declare ``name``; ``render`` and its
+        siblings declare ``camera_name``. Both mean "which camera", so on those
+        two ``camera_name`` is accepted for ``name``.
+
+        The answer is ``None`` unless the action's name says ``camera`` AND
+        ``name`` is the camera on it - which requires that the method has no
+        other parameter naming one (:attr:`_CAMERA_NAMING_PARAMS`). ``render``
+        spells it ``camera_name``, so its own parameter is never rewritten;
+        ``start_cameras_recording`` spells it ``cameras``, so its ``name`` (the
+        output filename tag) is left alone - binding a camera into it recorded
+        every camera in the scene under that tag and reported success, where
+        the refusal it replaced names ``cameras`` in its ``Valid:`` list. On a
+        non-camera action such as ``add_object``, ``camera_name`` stays
+        unknown.
+        """
+        if (
+            "camera" not in action
+            or not method_param_names.isdisjoint(MuJoCoSimEngine._CAMERA_NAMING_PARAMS)
+            or "name" not in method_param_names
+        ):
+            return None
+        return "name"
+
     def _validate_and_build_kwargs(
         self,
         action: str,
@@ -6882,6 +7007,14 @@ class MuJoCoSimEngine(
             accepted_field_names.add("robot_name")
         if "robot_name" in method_param_names:
             accepted_field_names.add("name")
+        # The same courtesy for cameras: add_camera/remove_camera take ``name``
+        # while render/render_depth/get_camera_params take ``camera_name``, so
+        # an agent that just rendered from ``camera_name="wrist"`` and now
+        # removes it writes ``camera_name`` again. On a camera action whose
+        # method spells it ``name``, that is the same fact, not an unknown key.
+        camera_name_target = self._camera_name_alias_target(action, method_param_names)
+        if camera_name_target:
+            accepted_field_names.add("camera_name")
 
         # 1) Unknown kwargs (skipped for **kwargs methods which legitimately passthrough)
         unknown = [] if method_has_var_keyword else [k for k in remapped if k not in accepted_field_names]
@@ -6977,6 +7110,8 @@ class MuJoCoSimEngine(
         for param_name, param in named_params.items():
             if param_name == "name" and "name" not in remapped and "robot_name" in remapped:
                 kwargs["name"] = remapped["robot_name"]
+            elif param_name == camera_name_target and param_name not in remapped and "camera_name" in remapped:
+                kwargs[param_name] = remapped["camera_name"]
             elif param_name == "robot_name" and "robot_name" not in remapped and "name" in remapped:
                 kwargs["robot_name"] = remapped["name"]
             elif param_name in remapped:

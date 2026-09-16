@@ -55,6 +55,23 @@ _known: set[str] = set()
 _VALUE_RAILS = (_QUERY_RE, _LONG_QUERY_RE, _KEYED_RE, _BEARER_RE)
 
 
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def one_line(value: object, limit: int = 200) -> str:
+    """A caller-supplied value, safe to put in one log line.
+
+    Host, Origin and X-Forwarded-For are chosen by whoever sends the request,
+    and a log file is parsed by line: a carriage return and a line feed inside
+    one of them forges a second entry that never happened. Control characters
+    become their escapes, so the bytes that arrived are still legible, and a
+    value that runs past ``limit`` is cut with an ellipsis so a header cannot
+    fill the file either.
+    """
+    text = _CONTROL_RE.sub(lambda m: f"\\x{ord(m.group()):02x}", str(value).replace("\r", "\\r").replace("\n", "\\n"))
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def register_secret(value: str | None) -> None:
     """Redact ``value`` from every future log line, whatever shape it appears in."""
     if value and len(value.strip()) >= 12:
