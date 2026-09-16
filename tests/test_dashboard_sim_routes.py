@@ -95,6 +95,16 @@ def client(tmp_path, monkeypatch, fake_factory):
     app.state.safety.store.shutdown()
 
 
+def _until(predicate, timeout: float = 5.0) -> bool:
+    """True as soon as *predicate* holds, so no cell sleeps a guess at a thread."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def _create(client, robot="so101"):
     r = client.post("/api/sim", json={"robot": robot})
     assert r.status_code == 201, r.text
@@ -272,28 +282,36 @@ class TestEstop:
         from strands_robots.dashboard.routes_sim import Safety
 
         building, release = threading.Event(), threading.Event()
+        rendering, hold = threading.Event(), threading.Event()
 
-        def slow(robot):
-            building.set()
-            release.wait(5)
-            return FakeEngine(robot)
+        class SlowToBuild(FakeEngine):
+            def __init__(self, robot):
+                building.set()
+                release.wait(5)
+                super().__init__(robot)
+
+            def get_frame(self, *a, **kw):
+                # Parked in the first render, the worker has published exactly
+                # once since the engine appeared: that publish is what is read.
+                rendering.set()
+                hold.wait(5)
+                return super().get_frame(*a, **kw)
 
         store = sim_session.SessionStore()
         safety = Safety(store)
-        session = store.create("so101", engine_factory=slow)
+        session = store.create("so101", engine_factory=SlowToBuild)
         assert building.wait(5) and session.snapshot.state == "starting"
 
         assert safety.estop(by="operator")["frozen"] == [session.id]
         release.set()
-        assert session.wait_ready(5)
-        time.sleep(0.2)
+        assert session.wait_ready(5) and rendering.wait(5)
         snap = session.snapshot
         assert snap.state == "frozen", "the engine arrived into an e-stop, so it reports frozen"
         assert (snap.steps, snap.sim_time) == (0, 0.0), "no physics ran after the e-stop"
 
+        hold.set()
         safety.resume(by="operator")
-        time.sleep(0.2)
-        assert session.snapshot.steps > 0, "a resume thaws the session frozen while it was starting"
+        assert _until(lambda: session.snapshot.steps > 0), "a resume thaws the session frozen while starting"
         store.shutdown()
 
     def test_an_estop_during_the_build_refuses_that_create_and_stays_latched(self, client, monkeypatch):
@@ -325,6 +343,17 @@ class TestEstop:
         assert safety.lockout.state == "locked", "an in-flight create is not proof that the lockout lifted"
         assert safety.store.all() == [], "the refused session is not left running"
         assert session.snapshot.steps == 0
+
+    def test_an_estop_does_not_relabel_a_session_that_failed_to_start(self):
+        """``error`` is not a state an e-stop can freeze, and saying so would hide the failure."""
+        from strands_robots.dashboard.routes_sim import Safety
+
+        store = sim_session.SessionStore()
+        session = store.create("so101", engine_factory=ExplodingEngine)
+        assert session.wait_ready(5) and session.snapshot.state == "error"
+        assert Safety(store).estop(by="operator")["frozen"] == []
+        assert session.snapshot.state == "error"
+        store.shutdown()
 
     def test_estop_is_never_refused(self, client):
         client.post("/api/safety/estop")
