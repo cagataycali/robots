@@ -17,6 +17,7 @@ leaves ``host`` and ``port`` - the parameters the most providers declare - open.
 from __future__ import annotations
 
 import difflib
+import importlib.util
 
 import pytest
 
@@ -29,6 +30,10 @@ from strands_robots.policies.factory import (
     policy_kwargs_error,
 )
 from strands_robots.registry import list_policy_providers
+
+#: ``zmq`` is what resolving the ``groot`` provider imports. Read as a spec
+#: rather than imported, so the gate costs nothing and mutes nothing.
+_HAS_ZMQ = importlib.util.find_spec("zmq") is not None
 
 
 class _Tolerant(Policy):
@@ -208,7 +213,7 @@ class TestTheHelperItself:
         assert policy_kwargs_error("strict_test", _Strict, {"host": "h", "port": 1}) is None
 
 
-@pytest.mark.skipif(pytest.importorskip("zmq", reason="groot extra") is None, reason="groot extra")
+@pytest.mark.skipif(not _HAS_ZMQ, reason="groot extra")
 def test_the_groot_reproduction_from_the_lab():
     # PC2-009 verbatim: pre-fix this returned a Gr00tPolicy dialling localhost.
     with pytest.raises(TypeError) as info:

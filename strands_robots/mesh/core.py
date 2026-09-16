@@ -2358,6 +2358,21 @@ class Mesh(SensorLoopsMixin):
                             "ok": False,
                             "error": f"{type(r).__name__} cannot enumerate rollouts in flight; nothing was stopped",
                         }
+                    # Lower every target's cooperative flag BEFORE the first
+                    # join. ``stop_policy`` waits (bounded) for the worker it
+                    # flagged to exit, and this fanout is sequential, so
+                    # without this pre-pass one robot whose policy server is
+                    # wedged inside inference holds the stop REQUEST off every
+                    # robot behind it in ``targets`` - measured on a 3-robot
+                    # world with one wedged server, the two healthy workers
+                    # exited a full second later than they do without the
+                    # wait, still driving their arms for that second. The
+                    # engine's own teardown sequences its multi-robot stop the
+                    # same way: request on every robot, then join. Engines
+                    # without the pre-pass are unaffected - their
+                    # ``stop_policy`` is what answers either way.
+                    if hasattr(r, "_request_policy_stop_all"):
+                        r._request_policy_stop_all(targets)
                     results = {name: dict(r.stop_policy(name)) for name in targets}
                     # ``ok`` is derived from the per-robot answers, never
                     # assumed. Reporting ok=True here counted a refused

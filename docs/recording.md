@@ -261,6 +261,31 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
 
+A resume says so, and names what is already on disk, so the reply that opens the
+session tells you the episodes you are about to record will join others:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=30)
+# -> "Recording to LeRobotDataset: user/my_dataset
+#     Resuming the existing dataset (1 episode(s), 19 frames); this session's
+#     episodes are appended. Pass overwrite=True to record from scratch instead.
+#     ..."
+```
+
+`stop_recording` then measures **that session** rather than the dataset. A
+resumed session that captured no frames is refused, naming the dataset it left
+unchanged - the counters a resumed recorder carries are the dataset's totals, so
+reading them alone reported the previous sessions' episodes as one just saved:
+
+```python
+sim.stop_recording()   # resumed, nothing captured
+# -> error: "This session captured no frames: the resumed dataset user/my_dataset
+#            (19 frames, 1 episode(s)) is unchanged and no episode was saved. ..."
+
+sim.stop_recording()   # resumed, one episode captured
+# -> "user/my_dataset -- 37 frames, 2 episode(s) (+18 frames, +1 episode(s) this session)"
+```
+
 Because `overwrite=True` is the one posture that deletes a dataset without
 asking, it is applied as the last step before the recorder is built: every
 refusal `start_recording` can make - the fps and camera domains, the boolean

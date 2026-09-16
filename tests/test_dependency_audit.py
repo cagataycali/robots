@@ -1019,6 +1019,61 @@ def test_require_optional_call_sites_name_declared_extras() -> None:
     )
 
 
+def _literal_extra_call_sites() -> list[tuple[str, str]]:
+    """``(location, extra)`` for every ``require_optional(s)`` call with a literal ``extra=``."""
+    sites: list[tuple[str, str]] = []
+    for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in {"require_optional", "require_optionals"}:
+                continue
+            for keyword in node.keywords:
+                if (
+                    keyword.arg == "extra"
+                    and isinstance(keyword.value, ast.Constant)
+                    and isinstance(keyword.value.value, str)
+                ):
+                    rel = path.relative_to(_REPO_ROOT).as_posix()
+                    sites.append((f"{rel}:{node.lineno}", _normalize_extra(keyword.value.value.strip())))
+    return sites
+
+
+def test_require_optional_call_sites_name_extras_that_install_something() -> None:
+    """A declared extra can still be an empty one, and naming it is the same no-op.
+
+    ``test_require_optional_call_sites_name_declared_extras`` grades that the
+    extra exists; this grades that it pulls in at least one distribution. An
+    extra declared as ``[]`` is legitimate in ``pyproject.toml`` - ``[curobo]``
+    is kept empty on purpose, so that ``pip install 'strands-robots[curobo]'``
+    is a no-op rather than an install of the PyPI squatter - but a refusal that
+    then puts that command first hands the caller an instruction that exits 0
+    and changes nothing, verbatim the failure ``require_optional``'s
+    ``system_install`` exists to replace. Measured before the fix::
+
+        'curobo' is required for CuroboPolicy motion planning
+        Install with:
+          pip install 'strands-robots[curobo]'
+          pip install -e git+https://github.com/NVlabs/curobo.git#egg=curobo
+
+    A module that arrives from outside every extra names its real install
+    (``system_install=`` for a checkout or a system package, a bare
+    ``pip_install=`` for an index package no extra bundles) instead.
+    """
+    sites = _literal_extra_call_sites()
+    assert len(sites) > 20, f"only {len(sites)} literal extra= call sites found; the audit has stopped seeing them"
+    offenders = [f"{where} passes extra={extra!r}" for where, extra in sites if not _extra_requirements(extra)]
+    assert not offenders, (
+        "these require_optional call sites name an extra whose closure installs no distribution, so the "
+        "first line of the refusal is a pip command that exits 0 without supplying the module:\n" + "\n".join(offenders)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Declaring `qpsolvers` is not the same as declaring a QP backend.
 #

@@ -82,8 +82,10 @@ _GATE = _REPO_ROOT / ".github" / "workflows" / "lockfile-parity.yml"
 #: and the install hint in :mod:`strands_robots.rtps.idl` all promise it, and the
 #: whole reason the RTPS bridge exists beside the rclpy one is that it needs no
 #: sourced distro.  An sdist here is that promise falsified: the build wants a
-#: CycloneDDS C install.  Add an extra to this tuple when its remedy is a bare
-#: ``pip install`` rather than a system package.
+#: CycloneDDS C install.  (The promise is scoped: no cyclonedds release ships a
+#: linux aarch64 wheel, so a Jetson builds the sdist by design - the docs say so.)
+#: Add an extra to this tuple when its remedy is a bare ``pip install`` rather
+#: than a system package.
 _WHEEL_ONLY_EXTRAS = ("ros2",)
 
 #: This project, which appears in its own manifest as ``strands-robots[<extra>]``
