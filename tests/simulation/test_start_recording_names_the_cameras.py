@@ -107,13 +107,12 @@ class TestNoCameraSaysWhatTheDatasetCarriesAndWhy:
     ],
 )
 def test_every_backend_builds_the_line_from_the_shared_helper(module: str) -> None:
-    import importlib
     import inspect
 
-    try:
-        mod = importlib.import_module(module)
-    except ImportError as e:  # pragma: no cover - optional backend deps
-        pytest.skip(f"{module}: {e}")
+    # Isaac and Newton are optional extras; importorskip is the house answer for
+    # a module that may not be installed (a try/except that skips leaves the name
+    # bound only on the success path).
+    mod = pytest.importorskip(module)
     src = inspect.getsource(mod)
     assert "recorded_cameras_line(joint_names, recorded_cameras, " in src
     assert "cameras @ {fps}fps" not in src
