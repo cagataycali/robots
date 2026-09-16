@@ -2730,6 +2730,54 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
+    # Verbs an agent reaches for on a real arm that belong to another tool.
+    # The sim tool has them; the quickstart once asked the real Robot tool for
+    # them; the generic "Unknown action" left the agent to guess where they
+    # went (lab PC2-015).
+    _ELSEWHERE_ACTIONS: dict[str, str] = {
+        "teleoperate": "teleoperation",
+        "start_teleop": "teleoperation",
+        "stop_teleoperate": "teleoperation",
+        "record": "recording",
+        "start_recording": "recording",
+        "stop_recording": "recording",
+        "record_episode": "recording",
+    }
+
+    def _unknown_action_text(self, action: Any) -> str:
+        """The refusal for an action this tool does not have.
+
+        Names the four verbs the real robot tool does have. For the verbs
+        that exist on the simulation tool and on the lerobot side but not
+        here - teleoperation and dataset recording - it also names where they
+        live, so an agent's next call is the right tool rather than another
+        spelling of the wrong one.
+
+        Args:
+            action: The action the caller sent.
+
+        Returns:
+            One paragraph: the refusal, the valid actions, and the remedy when
+            the verb is a known one that lives elsewhere.
+        """
+        text = f"Unknown action: {action}. Valid actions: execute, start, status, stop"
+        kind = self._ELSEWHERE_ACTIONS.get(action) if isinstance(action, str) else None
+        if kind == "teleoperation":
+            text += (
+                f". {self.tool_name_str} drives policies; it does not teleoperate from an agent. "
+                "Leader-arm teleoperation of a real arm is the lerobot_teleoperate tool "
+                "(action='start', robot_port=..., teleop_port=...), or from Python "
+                "robot.attach_teleop('so101_leader', port=...).teleoperate(duration=...)"
+            )
+        elif kind == "recording":
+            text += (
+                f". {self.tool_name_str} drives policies; it does not record datasets. "
+                "Recording a real arm under teleoperation is the lerobot_teleoperate tool "
+                "(action='start' with dataset_repo_id=..., dataset_root=..., dataset_single_task=...); "
+                "start_recording/stop_recording are the simulation tool's actions"
+            )
+        return text
+
     def get_task_status(self) -> dict[str, Any]:
         """Get current task execution status."""
 
@@ -3075,12 +3123,7 @@ class Robot(TeleopMixin, AgentTool):
                 yield ToolResultEvent(
                     self._make_tool_result(
                         tool_use_id,
-                        {
-                            "status": "error",
-                            "content": [
-                                {"text": f"Unknown action: {action}. Valid actions: execute, start, status, stop"}
-                            ],
-                        },
+                        {"status": "error", "content": [{"text": self._unknown_action_text(action)}]},
                     )
                 )
 
