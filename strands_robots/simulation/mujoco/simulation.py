@@ -90,6 +90,7 @@ from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, discover_ee_frame, 
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
+    registry_entry_key,
     resolve_model,
 )
 from strands_robots.simulation.model_registry import (
@@ -2197,6 +2198,20 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": "Either urdf_path or data_config is required."}]}
         if not os.path.exists(resolved_path):
             return {"status": "error", "content": [{"text": f"File not found: {resolved_path}"}]}
+
+        # ``resolve_model`` accepts more strings than the registry has keys: a
+        # decorated variant of a key resolves to its model as a documented
+        # friction fix ("so101_arm" loads so101's model). The string that named
+        # the model is therefore not always the key its entry is filed under, so
+        # record the key - otherwise the decorated name loses exactly what the
+        # fallback above lost: ``add_robot("so101_arm")`` loaded so101's model
+        # and ``set_gripper`` then reported "the registry carries no gripper
+        # metadata for this robot" for an entry that has it. A name that names no
+        # entry at all is kept as passed: a URDF registered under a key the robot
+        # registry does not carry still describes its own model better than the
+        # instance label a recording would fall back to.
+        if registry_key:
+            registry_key = registry_entry_key(registry_key) or registry_key
 
         mj = self._mj
 
