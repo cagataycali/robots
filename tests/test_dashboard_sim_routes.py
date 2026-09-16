@@ -380,8 +380,9 @@ class TestEstop:
                 super().__init__(robot)
 
             def get_frame(self, *a, **kw):
-                # Parked in the first render, the worker has published exactly
-                # once since the engine appeared: that publish is what is read.
+                # Parked in the first render, which precedes ready: the worker
+                # has published exactly once since the engine appeared, and
+                # that publish is what is read.
                 rendering.set()
                 hold.wait(5)
                 return super().get_frame(*a, **kw)
@@ -393,12 +394,13 @@ class TestEstop:
 
         assert safety.estop(by="operator")["frozen"] == [session.id]
         release.set()
-        assert session.wait_ready(5) and rendering.wait(5)
+        assert rendering.wait(5)
         snap = session.snapshot
         assert snap.state == "frozen", "the engine arrived into an e-stop, so it reports frozen"
         assert (snap.steps, snap.sim_time) == (0, 0.0), "no physics ran after the e-stop"
 
         hold.set()
+        assert session.wait_ready(5), "ready follows the first frame"
         safety.resume(by="operator")
         assert _until(lambda: session.snapshot.steps > 0), "a resume thaws the session frozen while starting"
         store.shutdown()
@@ -566,6 +568,45 @@ class TestFleet:
         assert client.get("/api/robots/nope").status_code == 404
 
 
+class TestReadyMeansItRenders:
+    """The first frame is built before ready, so a session that cannot render is
+    reported as ``error`` by the create route, not served as one that never streams."""
+
+    def test_a_renderer_that_fails_is_an_error_before_ready_and_the_engine_is_closed(self):
+        closed = threading.Event()
+
+        class NoGL(FakeEngine):
+            def get_frame(self, *a, **kw):
+                raise RuntimeError("no OpenGL context")
+
+            def close(self):
+                closed.set()
+
+        s = sim_session.SimSession("so101", engine_factory=NoGL)
+        assert s.wait_ready(5)
+        snap = s.snapshot
+        assert snap.state == "error" and "no OpenGL context" in (snap.error or "")
+        assert (snap.steps, snap.sim_time) == (0, 0.0)
+        assert closed.wait(5), "the engine is released with the session"
+        assert s.latest_frame() is None
+
+    def test_ready_carries_a_frame(self):
+        s = sim_session.SimSession("so101", engine_factory=FakeEngine)
+        assert s.wait_ready(5)
+        assert s.latest_frame() is not None, "no client sees a ready session without a frame"
+        s.stop()
+
+    def test_the_create_route_reports_a_missing_renderer_as_500_and_keeps_no_session(self, client, monkeypatch):
+        class NoGL(FakeEngine):
+            def get_frame(self, *a, **kw):
+                raise RuntimeError("no OpenGL context")
+
+        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: NoGL(robot))
+        r = client.post("/api/sim", json={"robot": "so101"})
+        assert r.status_code == 500 and "no OpenGL context" in r.json()["error"]
+        assert client.get("/api/sim").json()["sessions"] == []
+
+
 # -- the real engine -----------------------------------------------------------
 
 
@@ -575,11 +616,12 @@ def test_real_engine_session_steps_and_renders(monkeypatch):
     assert s.wait_ready(60), "engine did not start"
     if s.snapshot.state == "error":
         pytest.skip(f"no renderer here: {s.snapshot.error}")
-    time.sleep(1.0)
-    snap = s.snapshot
-    assert snap.joint_names == ("1", "2", "3", "4", "5", "6")
-    assert snap.sim_time > 0.2
+    # Ready already carries the first frame; the physics is read when it has
+    # visibly advanced, not after a sleep that guesses how slow this GL is.
     frame = s.latest_frame()
     assert frame is not None and frame.shape == (384, 512, 3)
+    assert _until(lambda: s.snapshot.sim_time > 0.2, timeout=15.0), s.snapshot
+    snap = s.snapshot
+    assert snap.joint_names == ("1", "2", "3", "4", "5", "6")
     assert s.command("set_joints", positions={"2": 0.3})["status"] == "success"
     s.stop()
