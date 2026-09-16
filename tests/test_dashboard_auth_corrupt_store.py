@@ -220,12 +220,12 @@ class TestTheLastNineLines:
             return real_stat(self, *a, **k)
 
         monkeypatch.setattr(auth.Path, "stat", stat_fails_once)
-        auth._save({"credentials": [], "note": "written"})
+        auth._save({"jwt_secret": "s" * 32, "credentials": [], "note": "written"})
         path = tmp_path / "auth.json"
         assert failed, "the post-write stat is the one that failed"
         assert json.loads(path.read_text())["note"] == "written", "the write itself still happened"
 
-        path.write_text(json.dumps({"credentials": [], "note": "replaced"}))
+        path.write_text(json.dumps({"jwt_secret": "s" * 32, "credentials": [], "note": "replaced"}))
         assert auth._load()["note"] == "replaced", "an un-keyed store must not be served from memory"
 
     def test_a_request_whose_headers_explode_still_returns_a_status(self, tmp_path):
