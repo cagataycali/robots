@@ -1130,6 +1130,51 @@ class SimEngine(ABC):
         """
         return None
 
+    def _build_policy(
+        self, entry: str, policy_provider: str, policy_config: dict[str, Any] | None
+    ) -> Policy | dict[str, Any]:
+        """``create_policy`` for a rollout entry point, with a refusal as an envelope.
+
+        ``_preflight_policy_config`` reports what can be judged without
+        constructing - an unresolvable provider name, the provider's own
+        ``preflight``. What a constructor judges for itself - ``Gr00tPolicy:
+        invalid port: 70000``, a keyword a constructor with no ``**kwargs``
+        sink does not bind - only exists once it runs, and it used to raise past the
+        ``status=error`` envelope every other refusal on these surfaces is
+        returned as: the library caller got a traceback, the agent tool got
+        an exception where a sibling mistake (an unknown robot, no world, a
+        busy robot) gets a result it can act on.
+
+        Args:
+            entry: The public method being served, quoted in the report.
+            policy_provider: As passed to the entry point.
+            policy_config: As passed to the entry point.
+
+        Returns:
+            The policy when construction succeeds, or the ``status=error``
+            envelope when the constructor refused - the constructor's own
+            text, prefixed with the entry and provider. A missing optional
+            dependency and the trust-remote-code gate keep their own raise:
+            each names its remedy already, and both hold for every call on
+            this process, not for this configuration.
+        """
+        from strands_robots.policies import create_policy
+
+        try:
+            return create_policy(policy_provider, **(policy_config or {}))
+        except (TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{entry}: policy provider {policy_provider!r} refused its configuration, "
+                            f"so no rollout was started. {exc}"
+                        )
+                    }
+                ],
+            }
+
     def _preflight_policy_config(
         self,
         robot_name: str,
@@ -3010,8 +3055,6 @@ class SimEngine(ABC):
             robot's valid actuator names. A PARTIAL failure runs to completion,
             surfaced via ``partial_action_failure_rate``.
         """
-        from strands_robots.policies import create_policy
-
         # Refuse a value outside the observer's domain before robot discovery,
         # policy construction, backend hook creation, clocks, or rollout work.
         if observer_error := optional_callable_error(observer, "observer", "run_policy"):
@@ -3144,7 +3187,10 @@ class SimEngine(ABC):
             preflight_error = self._preflight_policy_config(robot_name, policy_provider, policy_config)
             if preflight_error is not None:
                 return preflight_error
-            policy = create_policy(policy_provider, **(policy_config or {}))
+            built = self._build_policy("run_policy", policy_provider, policy_config)
+            if isinstance(built, dict):
+                return built
+            policy = built
         else:
             # Pre-built policy path - skip the expensive create_policy call.
             # Caller is responsible for policy.set_robot_state_keys(...) if needed,
@@ -4327,6 +4373,44 @@ class SimEngine(ABC):
         """
         return None
 
+    def _rollouts_ended_in_error(self) -> Mapping[str, str]:
+        """Per robot, how its last asynchronous rollout failed, if it did.
+
+        ``start_policy`` returns "Policy started" before the worker has built
+        the policy or taken a step, so a rollout that fails after that - a
+        constructor refusing its port, a server that never answers - fails
+        where no caller is looking: the exception lives in a Future nobody
+        reads and ``list_policies_running`` reports "No policies running.",
+        the same reading as a rollout that completed. A backend that keeps a
+        worker table records those verdicts and answers here; the default is
+        the empty record for a backend with no asynchronous entry.
+
+        Returns:
+            ``robot_name -> reason``, one entry per robot whose most recent
+            asynchronous rollout raised or returned ``status=error``. A later
+            rollout on the same robot replaces the entry.
+        """
+        return {}
+
+    def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
+        """Refuse ``action_name`` while a rollout another thread drives holds the robot.
+
+        The seam :meth:`eval_policy` reads. ``robot_name=None`` asks about the
+        whole scene, a name about that robot. Default: ``None`` - the ABC keeps
+        no per-robot rollout claim, so it has nothing to refuse on. A backend
+        that tracks rollouts in flight (MuJoCo) overrides this with the gate its
+        joint writes and :meth:`start_policy` already pass, so an evaluation
+        cannot drive a robot concurrently with the rollout already on it.
+
+        Args:
+            action_name: The verb being gated, named in the refusal.
+            robot_name: The robot the verb targets, or ``None`` for scene scope.
+
+        Returns:
+            The agent-tool error envelope to return, or ``None`` to proceed.
+        """
+        return None
+
     def _rollouts_in_flight(self) -> tuple[str, ...] | None:
         """Names of this world's robots a rollout is driving right now.
 
@@ -4399,12 +4483,19 @@ class SimEngine(ABC):
                     }
                 ],
             }
+        failed = self._rollouts_ended_in_error()
+        failed_lines = "".join(f"\n  - {n}: {reason}" for n, reason in failed.items() if n not in names)
+        failed_text = (
+            f"\nRollouts started with start_policy that ended in error ({len(failed)}):{failed_lines}"
+            if failed_lines
+            else ""
+        )
         if not names:
-            return {"status": "success", "content": [{"text": "No policies running."}]}
+            return {"status": "success", "content": [{"text": f"No policies running.{failed_text}"}]}
         robot_lines = "\n".join(f"  - {n}" for n in names)
         return {
             "status": "success",
-            "content": [{"text": f"Active policies ({len(names)}):\n{robot_lines}"}],
+            "content": [{"text": f"Active policies ({len(names)}):\n{robot_lines}{failed_text}"}],
         }
 
     def replay_episode(
@@ -4715,6 +4806,12 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+        # An evaluation drives the robot exactly as a rollout does, so it is
+        # refused while another thread's rollout holds the robot - the gate every
+        # joint write and ``start_policy`` already pass. Backends that keep no
+        # per-robot claim answer ``None`` from the default seam and are unchanged.
+        if err := self._require_no_running_policy("eval_policy", robot_name=resolved_robot):
+            return err
 
         if err := self._validate_video_config(video, "eval_policy"):
             return err
@@ -4750,13 +4847,14 @@ class SimEngine(ABC):
         control_frequency = float(control_frequency)
 
         if policy_object is None:
-            from strands_robots.policies import create_policy
-
             # Fail fast on a misconfiguration BEFORE the create_policy download.
             preflight_error = self._preflight_policy_config(resolved_robot, policy_provider, policy_config)
             if preflight_error is not None:
                 return preflight_error
-            policy = create_policy(policy_provider, **(policy_config or {}))
+            built = self._build_policy("eval_policy", policy_provider, policy_config)
+            if isinstance(built, dict):
+                return built
+            policy = built
         else:
             # Pre-built policy path - mirror run_policy. Caller may have already
             # set robot_state_keys; we set defensively so semantics match the
@@ -4980,7 +5078,6 @@ class SimEngine(ABC):
             Only this route reports it: :meth:`eval_policy` takes a ``success_fn``
             and has no failure criterion to sample.
         """
-        from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
 
         # Same rule as eval_policy: an uncallable hook is refused before any
@@ -5092,7 +5189,10 @@ class SimEngine(ABC):
                 return probe_error
 
         if policy_object is None:
-            policy = create_policy(policy_provider, **(policy_config or {}))
+            built = self._build_policy("evaluate_benchmark", policy_provider, policy_config)
+            if isinstance(built, dict):
+                return built
+            policy = built
         else:
             # Pre-built policy path - mirror run_policy / eval_policy. Lets a
             # caller benchmark an already-loaded checkpoint (e.g. a multi-GB

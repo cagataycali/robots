@@ -181,7 +181,7 @@ class TestTheGateIsBoundedToTheFirstEnrollment:
         Pinned because a gate on ``first_time`` that leaked into later enrollments would
         lock an operator out of their own dashboard from anywhere but the console.
         """
-        auth._save({"credentials": [{"id": "AAAA", "name": "existing"}]})
+        auth._save({"jwt_secret": "s" * 32, "credentials": [{"id": "AAAA", "name": "existing"}]})
         auth._cache = {}
         assert auth.auth_enabled() is True
 
