@@ -962,8 +962,17 @@ class G1Driver:
                     if callable(getattr(client, "Init", None)):
                         client.Init()
         except Exception as exc:  # noqa: BLE001 - the SDK's failures are opaque
+            # A missing SDK is not an opaque client failure: it has a remedy,
+            # and this is the one refusal that carries it on a host where the
+            # rest of the SDK is present. The PyPI ``unitree-sdk2`` wheel ships
+            # no ``comm`` package, so the bus init and the IDL classes succeed
+            # and only the motion-switcher import fails - :meth:`connect_eagerly`
+            # returns ``None`` and this string is the whole diagnosis a user
+            # gets from :meth:`get_status`.
             self._motion_switcher_open_error = (
-                f"motion-switcher client could not be opened: {type(exc).__name__}: {exc}"
+                sdk_missing(exc)
+                if isinstance(exc, ImportError)
+                else f"motion-switcher client could not be opened: {type(exc).__name__}: {exc}"
             )
             logger.debug(
                 "%s: motion-switcher factory refused: %s",
@@ -1789,7 +1798,13 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
 
         module = importlib.import_module(module_path)
     except ImportError as exc:
-        return f"cannot import {module_path}: {exc}"
+        # Every path this resolves comes from :meth:`_subscription_plan`, which
+        # names only ``unitree_sdk2py`` IDL modules - so an ImportError here is
+        # that SDK absent or half-installed, and the answer owes the remedy.
+        # The module being resolved is kept in the text: on a partial install
+        # the exception names the deepest module that is missing, which is not
+        # always the one this call asked for.
+        return sdk_missing(f"{exc} (resolving {module_path})")
     if not hasattr(module, class_name):
         return f"{module_path} has no {class_name}"
     return getattr(module, class_name)

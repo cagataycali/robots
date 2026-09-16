@@ -226,7 +226,13 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
 
         module = importlib.import_module(module_path)
     except ImportError as exc:
-        return f"cannot import {module_path}: {exc}"
+        # Every path this resolves comes from :meth:`_subscription_plan`, which
+        # names only ``unitree_sdk2py`` IDL modules - so an ImportError here is
+        # that SDK absent or half-installed, and the answer owes the remedy.
+        # The module being resolved is kept in the text: on a partial install
+        # the exception names the deepest module that is missing, which is not
+        # always the one this call asked for.
+        return sdk_missing(f"{exc} (resolving {module_path})")
     if not hasattr(module, class_name):
         return f"{module_path} has no {class_name}"
     return getattr(module, class_name)
@@ -868,7 +874,14 @@ class Go2Driver:
                 with _DDS_INIT_LOCK:
                     client = factory(self._network_interface)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport failure is one reason
-            self._sport_mode_client_error = f"cannot open MotionSwitcherClient: {exc}"
+            # The import is indirected through ``_load_motion_switcher_client``,
+            # which lets the ImportError propagate here - so this handler is the
+            # one that answers a missing SDK for :meth:`release_sport_mode`, the
+            # gate that hands the legs over. It owes the remedy, and on the PyPI
+            # wheel (no ``comm`` package) it is the only refusal a user sees.
+            self._sport_mode_client_error = (
+                sdk_missing(exc) if isinstance(exc, ImportError) else f"cannot open MotionSwitcherClient: {exc}"
+            )
             logger.debug("%s: %s", self._tool_name, self._sport_mode_client_error, exc_info=True)
             return None
         self._sport_mode_client_error = None

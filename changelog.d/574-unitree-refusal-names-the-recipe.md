@@ -12,3 +12,12 @@ Jetson/aarch64 caveat (no `cyclonedds` wheel exists there; build 0.10.2 and set
 G1 native-driver section with that recipe per platform, proven in fresh venvs
 on macOS arm64, x86_64 Linux and Jetson aarch64; a source-level test keeps
 every `unitree_sdk2py` import site on the shared text.
+
+That includes the sites a partial install reaches, which are the ones the wheel
+produces: with `comm` absent but the bus bindings present, `connect_eagerly()`
+succeeds and the motion-switcher open is the only failure, so the G1's
+`get_status()` and the Go2's `release_sport_mode()` are where the remedy has to
+appear. The source-level test reads three kinds of site, because a handler
+catching `Exception` answers the `ImportError` too, and an import reached
+through a propagating helper is answered by its caller - in a file that names
+`unitree_sdk2py` nowhere.

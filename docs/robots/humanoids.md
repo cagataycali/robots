@@ -115,6 +115,14 @@ source build that wants the CycloneDDS C library. Without the SDK the driver
 still imports and builds; `connect_eagerly()` and every write verb return a
 refusal that names this recipe.
 
+A *partial* install fails elsewhere, and that is the shape the PyPI wheel
+produces. With the bus bindings and the IDL types present but no `comm`
+package, `connect_eagerly()` **succeeds** and the only thing that fails is the
+motion-switcher open - reported as `motion_switcher_open_error` by the G1's
+`get_status()`, and as the refusal from the Go2's `release_sport_mode()`. Both
+name the same recipe and keep the SDK's own exception, so the module that is
+actually missing is in the text.
+
 The upstream checkout installed beside a `cyclonedds` wheel is what works. On
 macOS arm64 and x86_64 Linux (Python 3.12):
 
