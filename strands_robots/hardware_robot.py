@@ -3294,6 +3294,15 @@ class Robot(TeleopMixin, AgentTool):
     ) -> str | None:
         """Operator approval for one ``execute``/``start``, before it is dispatched.
 
+        The warning is the only description of the motion an operator reads
+        before a real arm moves, so it says how long the arm may move and, when
+        the policy about to be built never reads the instruction, that the words
+        will not shape the motion. It read ``drives the real robot 'so101' with
+        'Wave the arm'`` with no budget and nothing else: with ``mock`` the arm
+        does not wave - every joint follows a sinusoid whatever the task says -
+        so the operator approved a motion they were not told about, for an
+        unstated length of time.
+
         An ``AgentTool`` receives no ``tool_context`` argument; the SDK builds
         one from the invoking agent for decorated tools, and this builds the
         same object from the same two inputs so the shared gate can raise the
@@ -3326,14 +3335,27 @@ class Robot(TeleopMixin, AgentTool):
         provider = tool_input.get("policy_provider", "groot")
         host = tool_input.get("policy_host", "localhost")
         port = tool_input.get("policy_port")
+        duration = tool_input.get("duration", 30.0)
+        # How long the arm may move, and whether the words the operator is
+        # reading will shape that motion at all. The budget is the horizon the
+        # control loop compares against (see :meth:`_duration_error`, which has
+        # already refused anything but a positive finite number by the time the
+        # gate runs); the notice is the one ``start`` and a RUNNING ``status``
+        # carry, in the same words, so what the operator approves is what the
+        # envelopes will report.
+        budget = (
+            f" for up to {duration:g}s" if isinstance(duration, int | float) and not isinstance(duration, bool) else ""
+        )
+        notice = self._pending_instruction_notice(provider)
         # ``tool`` is the fixed word "robot" so the interrupt id and the audit
         # source read the same for every robot; the target names which one.
         return gate_motion(
             "robot",
             action,
             self.tool_name_str,
-            f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
-            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched.",
+            f"{action!r} drives the real robot {self.tool_name_str!r}{budget} with {instruction!r} "
+            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched."
+            + (f" {notice}" if notice else ""),
             tool_context,
             allow_env=COMMAND_ALLOW_ENV,
             allow_match=lambda allowed: "*" in allowed or action in allowed,
