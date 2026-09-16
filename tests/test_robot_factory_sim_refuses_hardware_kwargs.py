@@ -93,3 +93,26 @@ def test_no_refused_keyword_is_a_spawn_keyword_of_a_shipped_sim_backend():
     # Non-vacuity: the sets are the real ones, not empty lookups.
     assert "default_timestep" in spawn_keywords["mujoco"]
     assert "num_envs" in spawn_keywords["isaac"]
+
+
+def test_a_named_tool_and_the_mode_refusal_coexist_on_one_call():
+    # Robot(tool_name=) grades the caller's own parameter; this refusal grades
+    # the mode the call resolved to. Both sit on the sim path, so the pair has
+    # an order and a shared call, and neither guard's own tests exercise the
+    # other. A malformed value of a parameter the caller wrote answers first:
+    # nothing can be said about which mode that call wanted until the name it
+    # asked for is usable. A usable name leaves the mode refusal in charge.
+    with pytest.raises(ValueError, match="is not a valid tool name") as bad_name:
+        Robot("so101", mode="sim", tool_name="left arm", port="/dev/cu.usbmodem5AB01818061")
+    assert "mode='real'" not in str(bad_name.value)
+
+    with pytest.raises(TypeError, match=r"port=.*Add mode='real'"):
+        Robot("so101", mode="sim", tool_name="left_arm", port="/dev/cu.usbmodem5AB01818061")
+
+    # And a named simulated tool with no hardware keyword is built, under the
+    # name asked for rather than the "<name>_sim" default.
+    arm = Robot("so101", mode="sim", tool_name="left_arm")
+    try:
+        assert arm.tool_name == "left_arm"
+    finally:
+        arm.destroy()
