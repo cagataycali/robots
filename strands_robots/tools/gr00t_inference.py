@@ -23,6 +23,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.utils import (
+    base_dir_path,
     boolean_flag_error,
     get_base_dir,
     positive_count_error,
@@ -104,15 +105,16 @@ _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
 # of these hands the container (and anything that can influence its command)
 # control over the host: root fs, the docker socket (daemon takeover),
 # credential/identity dirs, and kernel/proc/sys pseudo-filesystems.
-# NOTE (#384, item 1): ``/home`` is blocked wholesale, not narrowed to the
-# sensitive subpaths (~/.ssh, ~/.aws, ~/.config). Rationale: this guard is
-# defence-in-depth for an untrusted/prompt-injected caller, and any home
-# directory may hold credentials, tokens, or dotfiles whose names we cannot
-# enumerate ahead of time. Operators who need a checkpoint bind-mount must
-# place it OUTSIDE ``/home`` (e.g. ``/data/checkpoints`` or ``/opt/...``); the
-# auto-derived default (``~/.cache/huggingface``) is never agent-controlled
-# and reaches docker only via the curated ``effective_volumes`` set. See the
-# README Configuration section for the operator-facing guidance.
+# NOTE (#384, item 1): ``/home``, ``/root`` and ``/var`` are blocked wholesale
+# rather than narrowed to the sensitive subpaths (~/.ssh, ~/.aws, ~/.config),
+# because any home directory may hold credentials, tokens, or dotfiles whose
+# names we cannot enumerate ahead of time. Read as a prefix rule, though,
+# those three also cover the only directories an ordinary user can write:
+# ``/opt``, ``/mnt`` and ``/srv`` are root-owned, and on macOS the system temp
+# dir lives under ``/var/folders``. So the *caller's own* visible directories
+# are admitted by :func:`_own_directory_allowance`, which keeps the wholesale
+# prefixes for everyone else's - another user's home, ``/root``, ``/var``
+# outside the temp dir - and refuses a hidden entry of the own home by name.
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -351,6 +353,9 @@ def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | Non
 
     A blocklist entry that is itself inside the home or the temp dir is more
     specific than this allowance and wins: the path falls to the prefix rule.
+    A zone that the blocklist *names* is not an allowance zone at all, so the
+    tool running as root (where ``~`` is the protected ``/root``) or with
+    ``TMPDIR`` pointed at a protected directory admits nothing new.
 
     Args:
         resolved: The symlink-resolved spelling of one host path.
@@ -364,17 +369,24 @@ def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | Non
     """
     temp_root = _temp_root()
     home = _user_home()
-    zones = (temp_root, home)
+    # A directory the blocklist names in its own right is never an allowance
+    # zone, however the environment spells it. Both zones are read from the
+    # environment, so both can be pointed at a protected directory: running
+    # the tool as root makes ``~`` the blocked ``/root``, and ``TMPDIR`` is an
+    # ordinary env var, so a temp dir pointed at ``/etc`` would otherwise
+    # admit every path under it. Filtering here keeps "``/root``, ``/etc`` and
+    # other users' homes are refused" true of every caller.
+    zones = tuple(zone for zone in (temp_root, home) if zone not in blocked_dirs)
     for blocked in blocked_dirs:
         inside_a_zone = any(blocked.startswith(zone + os.sep) for zone in zones)
         if inside_a_zone and (resolved == blocked or resolved.startswith(blocked + os.sep)):
             return None
-    if resolved.startswith(temp_root + os.sep):
+    if temp_root in zones and resolved.startswith(temp_root + os.sep):
         return "allowed"
-    if not resolved.startswith(home + os.sep):
+    if home not in zones or not resolved.startswith(home + os.sep):
         return None
     hf_cache = os.path.realpath(os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface"))
-    for own in (os.path.realpath(_checkpoints_dir()), hf_cache):
+    for own in (os.path.realpath(_checkpoints_dir(create=False)), hf_cache):
         if resolved == own or resolved.startswith(own + os.sep):
             return "allowed"
     relative = resolved[len(home) + 1 :]
@@ -457,9 +469,24 @@ def _isaac_gr00t_dir() -> Path:
     return get_base_dir() / "Isaac-GR00T"
 
 
-def _checkpoints_dir() -> Path:
-    """Default download destination for HuggingFace checkpoints."""
-    return get_base_dir() / "checkpoints"
+def _checkpoints_dir(*, create: bool = True) -> Path:
+    """Default download destination for HuggingFace checkpoints.
+
+    Args:
+        create: Whether to create the directory (and the base dir above it).
+            A caller that downloads into the directory or bind-mounts it wants
+            it to exist, so this defaults to True. A caller that only compares
+            paths against it passes False: :func:`_own_directory_allowance`
+            asks whether a candidate mount lies under this directory, and a
+            question must not write to the host filesystem to be answered -
+            nor raise ``PermissionError`` when the home directory is not
+            writable, which would turn a mount refusal into a traceback.
+
+    Returns:
+        Path to the checkpoints directory.
+    """
+    base = get_base_dir() if create else base_dir_path()
+    return base / "checkpoints"
 
 
 # Which numeric options each action actually consumes.

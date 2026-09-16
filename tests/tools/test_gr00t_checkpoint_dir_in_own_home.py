@@ -48,7 +48,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(gi, "_BLOCKED_VOLUME_EXACT", (str(root / "var/run/docker.sock"),))
     monkeypatch.setattr(gi, "_user_home", lambda: os.path.realpath(me))
     monkeypatch.setattr(gi, "_temp_root", lambda: os.path.realpath(root / "tmp"))
-    monkeypatch.setattr(gi, "_checkpoints_dir", lambda: me / ".strands_robots" / "checkpoints")
+    monkeypatch.setattr(gi, "_checkpoints_dir", lambda **_: me / ".strands_robots" / "checkpoints")
     monkeypatch.setenv("HF_HOME", str(me / ".cache" / "huggingface"))
     return root
 
@@ -113,6 +113,24 @@ class TestWhatStaysRefused:
     def test_var_outside_the_temp_dir(self, host):
         assert "protected host path" in (_verdict(host / "var/log") or "")
 
+    def test_a_home_the_blocklist_names_is_not_an_allowance_zone(self, host, monkeypatch):
+        """Run the tool as root and ``~`` *is* the protected ``/root``.
+
+        Both zones are read from the environment, so "the caller's own home"
+        can name a directory the blocklist protects in its own right. It stays
+        refused, which is what keeps the promise that ``/root`` is unchanged.
+        """
+        (host / "root").mkdir()
+        monkeypatch.setattr(gi, "_user_home", lambda: os.path.realpath(host / "root"))
+        reason = _verdict(host / "root/checkpoints")
+        assert reason is not None and "protected host path" in reason
+
+    def test_a_temp_dir_the_blocklist_names_is_not_an_allowance_zone(self, host, monkeypatch):
+        """``TMPDIR`` is an ordinary env var; pointed at ``/etc`` it admits nothing."""
+        monkeypatch.setattr(gi, "_temp_root", lambda: os.path.realpath(host / "etc"))
+        reason = _verdict(host / "etc/shadow")
+        assert reason is not None and "protected host path" in reason
+
 
 def test_the_download_probe_accepts_a_temp_dir_on_this_host(tmp_path):
     """The failure that led here: ``tmp_path`` refused on macOS as under ``/var``."""
@@ -141,3 +159,26 @@ def test_a_protected_directory_inside_the_temp_dir_is_still_refused(tmp_path, mo
     reason = gi._check_hf_local_dir_safety(str(protected / "shadow"))
     assert reason is not None and "protected host path" in reason
     assert gi._check_hf_local_dir_safety(str(tmp_path / "ckpt")) is None
+
+
+def test_asking_neither_writes_to_the_host_nor_raises(tmp_path, monkeypatch):
+    """Deciding a mount consults the tool's checkpoints dir - as a path, not a directory.
+
+    ``_checkpoints_dir()`` resolves through ``get_base_dir()``, which *creates*
+    what it returns. Consulting it from this validator therefore made asking
+    "is this mount safe?" write to the host filesystem, and raise when the
+    write was impossible - an unwritable or occupied home turned a mount
+    refusal into an unhandled exception at the tool boundary, where every
+    caller expects a reason string. A file where the base dir would go is
+    uncreatable for any user, root included.
+    """
+    home = tmp_path / "home" / "me"
+    (home / "checkpoints").mkdir(parents=True)
+    monkeypatch.setattr(gi, "_user_home", lambda: os.path.realpath(home))
+    monkeypatch.setattr(gi, "_temp_root", lambda: os.path.realpath(tmp_path / "not-the-temp-dir"))
+    occupied = tmp_path / "base"
+    occupied.write_text("not a directory")
+    monkeypatch.setenv("STRANDS_BASE_DIR", str(occupied))
+
+    assert _verdict(home / "checkpoints") is None
+    assert occupied.read_text() == "not a directory"  # answering changed nothing
