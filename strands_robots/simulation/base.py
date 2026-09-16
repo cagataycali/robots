@@ -4389,6 +4389,25 @@ class SimEngine(ABC):
         """
         return {}
 
+    def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
+        """Refuse ``action_name`` while a rollout another thread drives holds the robot.
+
+        The seam :meth:`eval_policy` reads. ``robot_name=None`` asks about the
+        whole scene, a name about that robot. Default: ``None`` - the ABC keeps
+        no per-robot rollout claim, so it has nothing to refuse on. A backend
+        that tracks rollouts in flight (MuJoCo) overrides this with the gate its
+        joint writes and :meth:`start_policy` already pass, so an evaluation
+        cannot drive a robot concurrently with the rollout already on it.
+
+        Args:
+            action_name: The verb being gated, named in the refusal.
+            robot_name: The robot the verb targets, or ``None`` for scene scope.
+
+        Returns:
+            The agent-tool error envelope to return, or ``None`` to proceed.
+        """
+        return None
+
     def _rollouts_in_flight(self) -> tuple[str, ...] | None:
         """Names of this world's robots a rollout is driving right now.
 
@@ -4784,6 +4803,12 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
+        # An evaluation drives the robot exactly as a rollout does, so it is
+        # refused while another thread's rollout holds the robot - the gate every
+        # joint write and ``start_policy`` already pass. Backends that keep no
+        # per-robot claim answer ``None`` from the default seam and are unchanged.
+        if err := self._require_no_running_policy("eval_policy", robot_name=resolved_robot):
+            return err
 
         if err := self._validate_video_config(video, "eval_policy"):
             return err
