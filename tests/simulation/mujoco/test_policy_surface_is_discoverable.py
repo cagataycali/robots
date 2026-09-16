@@ -26,7 +26,7 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-from strands_robots.policies import list_providers
+from strands_robots.registry.policies import list_policy_providers
 from strands_robots.simulation.mujoco.simulation import _TOOL_SPEC_SCHEMA, Simulation, _tool_call_can_carry
 
 
@@ -139,9 +139,21 @@ class TestToolCallCanCarry:
 
 
 class TestTheSchemaNamesTheProviders:
+    """The exhaustive ``one of ...`` clause is graded against the shipped registry.
+
+    The description is a literal written when the package was built, so its
+    population is ``policies.json`` and not the process's live registry:
+    :func:`strands_robots.policies.list_providers` also reports every
+    ``register_policy`` call made at runtime, and in a whole-suite run those
+    are the throwaway providers sibling tests register (``custom_test``,
+    ``kwarg_test``, ``preflight_*``) - names no shipped schema can list and no
+    caller can pass on a clean install. Measured: the cells below pass alone
+    and failed under ``hatch run test`` for exactly those names.
+    """
+
     def test_mujoco_schema_lists_every_registered_provider(self):
         desc = _TOOL_SPEC_SCHEMA["properties"]["policy_provider"]["description"]
-        missing = [name for name in list_providers() if name not in desc]
+        missing = [name for name in list_policy_providers() if name not in desc]
         assert missing == [], f"providers registered but not in the schema description: {missing}"
         assert "list_providers()" not in desc.split("(")[0]  # not presented as an action to call
         assert "policy_config" in desc  # says where the model itself goes
@@ -159,8 +171,8 @@ class TestTheSchemaNamesTheProviders:
             desc = arm.tool_spec["inputSchema"]["json"]["properties"]["policy_provider"]["description"]
         finally:
             arm.cleanup()
-        missing = [name for name in list_providers() if name not in desc]
-        assert missing == []
+        missing = [name for name in list_policy_providers() if name not in desc]
+        assert missing == [], f"providers registered but not in the schema description: {missing}"
 
 
 class TestNoPublishedKnobIsHiddenByARefusal:
