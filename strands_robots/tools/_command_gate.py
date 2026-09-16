@@ -248,9 +248,15 @@ def _no_operator_remedy(
 
     The remedy has to name the VALUE, not just the variable. The allowlist
     takes the spelling this tool's matcher accepts (``execute``, ``/cmd_vel``,
-    ``loco.SetVelocity``) or ``*``, so the natural readings - ``=1``, ``=true``
-    - pre-approve nothing and the identical refusal comes back after the advice
+    ``loco.SetVelocity``), so the natural readings - ``=1``, ``=true`` -
+    pre-approve nothing and the identical refusal comes back after the advice
     was followed. When the variable is set to such a value, say so first.
+
+    ``*`` is offered only when this tool's matcher honours it. The ROS
+    transports match through :func:`match_blocklist`, which canonicalises the
+    entry ``*`` to ``/*`` and so matches nothing; advertising ``=*`` there is
+    advice that loops back to this same refusal. The matcher is asked, as it
+    is for the value itself, rather than the tool named.
 
     Args:
         tool: The calling tool's name, for the ``*`` wildcard's scope.
@@ -266,16 +272,16 @@ def _no_operator_remedy(
         The already-set-but-useless clause, if any, then the two settings that
         allow the command.
     """
+    star = match(frozenset({"*"}))
+    names = "neither this command nor '*'" if star else "not this command"
     ignored = (
-        f"{allow_env} is set to {allow_raw!r}, which names neither this command nor '*', so it pre-approves nothing. "
+        f"{allow_env} is set to {allow_raw!r}, which names {names}, so it pre-approves nothing. "
         if allow_raw is not None
         else ""
     )
     setting = preapproval_setting(action, target, allow_env, match)
-    return (
-        f"{ignored}Set {setting} (or {allow_env}=* for every {tool} command; comma-separated) "
-        f"or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
-    )
+    every = f"or {allow_env}=* for every {tool} command; " if star else ""
+    return f"{ignored}Set {setting} ({every}comma-separated) or {BYPASS_CONSENT_ENV}=true to allow in headless mode."
 
 
 def how_to_answer(
