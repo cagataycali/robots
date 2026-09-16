@@ -32,6 +32,12 @@ GEOM_TYPES = {
 
 MESH_MAGIC = b"SRM1"  # header: magic, nvert u32, nface u32; then f32[nvert*3], u32[nface*3]
 
+#: Floats per geom in a binary pose frame: ``[x y z | 3x3 row-major]``. Published
+#: in :func:`describe` so the browser strides by it instead of restating it, and
+#: graded against ``static/twin.js`` and the packer that fills the rows
+#: (:func:`strands_robots.dashboard.sim_session._pack_poses`).
+POSE_ROW_FLOATS = 12
+
 
 def _name(model: Any, kind: str, index: int) -> str | None:
     import mujoco
@@ -83,7 +89,7 @@ def describe(model: Any) -> dict[str, Any]:
         "meshes": meshes,
         "cameras": cameras,
         "nlight": int(model.nlight),
-        "pose_row_floats": 12,
+        "pose_row_floats": POSE_ROW_FLOATS,
         "mesh_format": MESH_MAGIC.decode(),
     }
 
