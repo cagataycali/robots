@@ -1499,6 +1499,18 @@ class DatasetRecordingMixin:
                 extra += f"\npush_to_hub FAILED: {push_result.get('message')}"
 
         self._release_dataset_recorder(state)
+        # The four facts of THIS save, kept past that teardown so
+        # get_recording_status can answer from them. It reads the trajectory
+        # mirror the release just cleared, so a 37-frame save was reported as
+        # "last episode: 0 steps" - the very sentence a sim that never recorded
+        # gives. They travel as one mapping because they describe one save: a
+        # reader must never pair this id with another save's counts.
+        state["last_save"] = {
+            "repo_id": repo_id,
+            "root": str(root),
+            "frame_count": frame_count,
+            "episode_count": episode_count,
+        }
 
         # #708 - if recorder.episode_count and parquet disagree, surface
         # it in the human-readable text too so an operator scanning the
@@ -1871,25 +1883,62 @@ class DatasetRecordingMixin:
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can
-        poll it unconditionally without try/except."""
+        poll it unconditionally without try/except.
+
+        Every branch also carries a json block of the same shape - ``world``,
+        ``recording``, ``steps``, ``repo_id``, ``root``, ``last_save`` - so a
+        poller reads one mapping instead of parsing three sentences.
+
+        Idle reports the dataset this sim last SAVED, not the trajectory
+        mirror: ``stop_recording`` clears that mirror when it releases the
+        recorder, so reading it here answered "last episode: 0 steps" for a
+        37-frame save - byte-identical to the answer a sim that never recorded
+        gives, and the false confirmation of the "stopped before any frames"
+        diagnosis ``docs/troubleshooting.md`` sends an operator here to check.
+        The recipe it names carries ``root=`` so it is runnable whatever this
+        sim recorded afterwards.
+        """
         state = self._recording_state()
         if state is None:
             return {
                 "status": "success",
-                "content": [{"text": "No world. Call create_world to start recording."}],
+                "content": [
+                    {"text": "No world. Call create_world to start recording."},
+                    {"json": {"world": False, "recording": False, "steps": 0, "last_save": None}},
+                ],
             }
 
         recording = state.get("recording", False)
         steps = len(state.get("trajectory", []))
+        last = state.get("last_save")
+        last = last if isinstance(last, dict) else None
+        payload: dict[str, Any] = {
+            "world": True,
+            "recording": recording,
+            "steps": steps,
+            "last_save": last,
+        }
 
         if recording:
-            text = f"[recording] {steps} steps captured"
+            # The live recorder's own id and root, through the seams that
+            # prefer it - the dataset being written is the one fact a caller
+            # polling an open session cannot get anywhere else.
+            payload["repo_id"] = self._active_dataset_repo_id()
+            payload["root"] = self._active_dataset_root()
+            into = f" into {payload['repo_id']} at {payload['root']}" if payload["repo_id"] and payload["root"] else ""
+            text = f"[recording] {steps} steps captured{into}"
+        elif last is not None:
+            text = (
+                f"[idle] Not recording. Last saved: {last['repo_id']} - {last['frame_count']} frames, "
+                f"{last['episode_count']} episode(s) at {last['root']} "
+                f"(replay_episode(repo_id='{last['repo_id']}', root='{last['root']}') reads it back)"
+            )
         else:
-            text = f"[idle] Not recording (last episode: {steps} steps)"
+            text = "[idle] Not recording (nothing saved in this session)"
 
         return {
             "status": "success",
-            "content": [{"text": text}],
+            "content": [{"text": text}, {"json": payload}],
         }
 
     def _verify_resume_schema(

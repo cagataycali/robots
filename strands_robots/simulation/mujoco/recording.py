@@ -546,13 +546,15 @@ class RecordingMixin(DatasetRecordingMixin):
                             f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
-                            f"Frames are captured by a policy rollout - run_policy (one call per "
+                            f"Frames are captured by a policy rollout - run_policy (one rollout; "
+                            f"it closes NO episode, so call reset between rollouts or pass "
+                            f"n_episodes=N in one call, else consecutive rollouts merge into one "
                             f"episode), start_policy (async), eval_policy / evaluate_benchmark "
                             f"(one dataset episode per evaluation episode) or run_multi_policy "
                             f"(several robots into one merged frame) - or by stepping a scripted motion: "
                             f"set_joint_positions(hold=True) + step records one frame per 1/{fps}s "
                             f"of sim time. teleoperate and replay_episode do not feed the "
-                            f"recorder. Then stop_recording to save the episode"
+                            f"recorder. Then stop_recording to save the open episode"
                         )
                     }
                 ],
