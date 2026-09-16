@@ -271,19 +271,53 @@ def _backend_root() -> pathlib.Path:
     return pathlib.Path(inspect.getfile(SimWorld)).parent
 
 
+def _calls_name_list_error(node: ast.AST) -> bool:
+    return any(
+        isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "name_list_error"
+        for call in ast.walk(node)
+    )
+
+
+def _private_callees(node: ast.AST) -> set[str]:
+    """Names of ``self._helper(...)`` methods a function body calls."""
+    return {
+        call.func.attr
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.func.attr.startswith("_")
+    }
+
+
 def _cameras_surfaces(source: str) -> list[tuple[str, bool]]:
-    """Public methods in ``source`` taking ``cameras``, and whether each guards it."""
+    """Public methods in ``source`` taking ``cameras``, and whether each guards it.
+
+    Guarding is *wiring*, so a public method counts as guarded when it calls
+    ``name_list_error`` itself or hands ``cameras`` to a private ``self._…``
+    helper in the same module that does - ``start_cameras_recording`` guards
+    inside ``_start_cameras_recording_under_lock`` so the refusal happens under
+    the lock it exists to protect. One hop only: a helper that merely forwards
+    to another helper is not a guard this sweep can see, and must not be.
+    """
+    tree = ast.parse(source)
+    guarding_helpers = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith("_")
+        and "cameras" in [arg.arg for arg in node.args.args + node.args.kwonlyargs]
+        and _calls_name_list_error(node)
+    }
     found: list[tuple[str, bool]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
             continue
         argnames = [arg.arg for arg in node.args.args + node.args.kwonlyargs]
         if "cameras" not in argnames:
             continue
-        guarded = any(
-            isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "name_list_error"
-            for call in ast.walk(node)
-        )
+        guarded = _calls_name_list_error(node) or bool(_private_callees(node) & guarding_helpers)
         found.append((node.name, guarded))
     return found
 
@@ -334,3 +368,40 @@ class TestGuardIsWiredAtEveryBackendSurface:
             "class Mixin:\n    def start_cameras_recording(self, cameras=None):\n        return {'status': 'success'}\n"
         )
         assert _cameras_surfaces(planted) == [("start_cameras_recording", False)]
+
+
+class TestTheSweepFollowsOneDelegationHop:
+    """The sweep sees a guard placed in a private helper, and only one hop deep."""
+
+    def test_a_guard_inside_a_private_helper_counts(self) -> None:
+        src = (
+            "class W:\n"
+            "    def start(self, cameras=None):\n"
+            "        return self._start_under_lock(cameras=cameras)\n"
+            "    def _start_under_lock(self, cameras=None):\n"
+            "        if cameras and (t := name_list_error(cameras, 'cameras', 'start')):\n"
+            "            return t\n"
+        )
+        assert _cameras_surfaces(src) == [("start", True)]
+
+    def test_a_helper_that_only_forwards_does_not_count(self) -> None:
+        src = (
+            "class W:\n"
+            "    def start(self, cameras=None):\n"
+            "        return self._hop(cameras=cameras)\n"
+            "    def _hop(self, cameras=None):\n"
+            "        return self._guard(cameras)\n"
+            "    def _guard(self, cameras=None):\n"
+            "        return name_list_error(cameras, 'cameras', 'start')\n"
+        )
+        assert _cameras_surfaces(src) == [("start", False)]
+
+    def test_a_helper_without_the_cameras_argument_does_not_count(self) -> None:
+        src = (
+            "class W:\n"
+            "    def start(self, cameras=None):\n"
+            "        self._other()\n"
+            "    def _other(self):\n"
+            "        return name_list_error([], 'cameras', 'start')\n"
+        )
+        assert _cameras_surfaces(src) == [("start", False)]
