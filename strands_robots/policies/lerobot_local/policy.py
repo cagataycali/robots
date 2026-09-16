@@ -1557,7 +1557,6 @@ class LerobotLocalPolicy(Policy):
         renames + state packing on the preprocessor via ``_configure_embodiment``.
         """
         from . import molmoact2 as _molmoact2
-        from .processor import ProcessorBridge
 
         self.policy_type = _molmoact2.MOLMOACT2_TYPE
 
@@ -2754,8 +2753,6 @@ class LerobotLocalPolicy(Policy):
         Returns:
             Dict with all values as properly shaped device tensors.
         """
-        import torch
-
         device = self._device or "cpu"
         fixed: dict[str, Any] = {}
 
