@@ -2264,6 +2264,9 @@ class Robot(TeleopMixin, AgentTool):
             policy_port: The caller-supplied port to validate, or ``None`` when
                 none was supplied.
             method: Public entry point name, used to prefix the message.
+            policy_provider: The provider the port would be handed to, named in
+                the refusal - a missing port is only that provider's problem,
+                and which one asked for it decides the caller's next step.
 
         Returns:
             A tool-shaped error dict naming ``policy_port``, or ``None`` when a
@@ -2284,14 +2287,24 @@ class Robot(TeleopMixin, AgentTool):
                         return None
                 except Exception:  # noqa: BLE001 - registry read is best-effort
                     pass
+            # Name the provider that needs the port - the DEFAULT (groot) is
+            # one the caller never chose, so "policy_port is required" read as
+            # a fact about the arm - and the way to run with no server at all.
+            # The old remedy ("use run_policy with a pre-built policy_object")
+            # named a verb this tool does not have; an agent reading it asked
+            # the operator for a port instead of picking mock.
+            provider_clause = f"policy_provider '{policy_provider}'" if policy_provider else "the policy provider"
+            if policy_provider == "groot":
+                provider_clause += " (the default)"
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"{method}: policy_port is required to build a policy "
-                            "(pass the port of the policy server, or use run_policy "
-                            "with a pre-built policy_object)."
+                            f"{method}: policy_port is required - {provider_clause} dials a policy "
+                            "server; pass the port it listens on. With no server running, choose a "
+                            "provider that builds in process: policy_provider='mock' (sinusoidal test "
+                            "motion, no model) or 'lerobot_local' (a local HuggingFace checkpoint)."
                         )
                     }
                 ],
