@@ -559,6 +559,18 @@ _NOT_AN_INPUT_DOMAIN = {
     # test_a_qpos_write_beyond_mujocos_ceiling_is_refused.py fails when any of
     # those delegations is dropped.
     "qpos_ceiling_error": "coerces only coordinates their own domains accepted",
+    # Names the horizontal axis of ``ee_pos - base_pos``, and the ``str | None``
+    # it returns is that axis rather than a refusal - the _prim_body_state shape.
+    # The end-effector frame and the live floating-base pose are read off mjData.
+    # The third leg of that base is caller-named: a model with several root
+    # bodies has no one measured base pose, so get_robot_state falls back to the
+    # ``add_robot`` ``position``. That request went through coerce_pose_vector,
+    # which refuses a boolean component by name, so a boolean cannot reach this
+    # float() from there either. Pinned behaviourally rather than only claimed
+    # here: tests/simulation/test_pose_vector_domain_across_backends.py fails
+    # when add_robot stops routing its position through that shared domain, or
+    # when the domain stops refusing a boolean.
+    "reach_axis": "reads an end-effector offset out of the engine",
 }
 
 _GUARDED_VALIDATORS = {

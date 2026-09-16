@@ -46,6 +46,7 @@ from typing import Any
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
 from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, SpecBuilder
+from strands_robots.simulation.tool_frame import ToolFrame, ToolFrameRefused
 from strands_robots.utils import (
     coerce_rgba,
     entity_name_error,
@@ -476,6 +477,54 @@ def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int
     if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
         return frozenset()
     return tendon_joint_ids(model, int(model.actuator_trnid[act_id, 0]), mj)
+
+
+def mj_contact_is_active(contact: Any) -> bool:
+    """True when MuJoCo admitted this ``mjContact`` to the constraint solver.
+
+    The engine-level half of
+    :func:`~strands_robots.simulation.predicates.contact_is_active`: the
+    ``active`` flag that function reads on a ``get_contacts`` record is this
+    decision, recorded into the payload. ``mjData.contact`` lists every pair
+    inside the *detection* range (``margin`` plus ``gap``); only the admitted
+    ones push back, so a report that counts the rest answers "touching" for
+    bodies that are visibly apart. ``dist`` cannot stand in for it - a pair
+    with a wide ``margin`` is load-bearing at a positive distance.
+
+    Args:
+        contact: One ``mjData.contact`` record.
+
+    Returns:
+        True when the pair carries force.
+    """
+    return int(contact.exclude) == 0
+
+
+def geom_label(model: Any, geom_id: int, mj: Any) -> str:
+    """Return the name a human can find geom ``geom_id`` by in the model.
+
+    Most collision geoms in a shipped asset are unnamed - the so100 jaw pad is
+    geom 18 with no name of its own - so a report that prints only
+    ``mj_id2name`` says ``''`` for exactly the pairs a caller most needs to
+    identify. The body a geom hangs off is named in every asset this package
+    loads, so the fallback ``<body>/geom_<id>`` locates it in the MJCF.
+
+    Args:
+        model: The ``mujoco.MjModel`` the geom lives in.
+        geom_id: The geom to label.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The geom's own name; else ``"<body>/geom_<id>"``; else ``"geom_<id>"``.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, geom_id)
+    if name:
+        return str(name)
+    try:
+        body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[geom_id]))
+    except (IndexError, AttributeError):
+        body = None
+    return f"{body}/geom_{geom_id}" if body else f"geom_{geom_id}"
 
 
 def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
@@ -1428,8 +1477,18 @@ def inject_robot_into_scene(
     world: SimWorld,
     robot: SimRobot,
     robot_xml_path: str,
+    tool_frame: ToolFrame | None = None,
 ) -> bool:
     """Attach a robot to the scene via ``spec.attach(other, prefix=..., frame=...)``.
+
+    ``tool_frame`` is a registry-declared tool point for a model that ships no
+    tool site (:mod:`strands_robots.simulation.tool_frame`); it is added to the
+    robot's spec before the attach. A declaration the model cannot honour
+    (unknown body, duplicate site name) raises ``ValueError`` with the reason
+    rather than folding into a bare ``False``, so the caller can report which
+    entry is wrong. That check reads the robot's OWN spec before anything
+    touches the scene's, so the scene needs no rollback: a refused add leaves
+    the live spec byte-identical and the next add succeeds.
 
     MuJoCo handles name prefixing (bodies, joints, geoms, actuators, sensors,
     sites), asset deduplication (meshes, textures, materials), and default-
@@ -1474,8 +1533,16 @@ def inject_robot_into_scene(
 
     try:
         with filter_mujoco_attach_noise():
-            joint_names = SpecBuilder.attach_robot(spec, robot, robot_xml_path)
+            joint_names = SpecBuilder.attach_robot(spec, robot, robot_xml_path, tool_frame=tool_frame)
         robot.joint_names = joint_names
+    except ToolFrameRefused:
+        # The registry asked for a tool site the model cannot carry. The check
+        # reads the robot's own spec before the attach, so the scene's spec was
+        # never touched and there is nothing to put back (measured: the live
+        # spec's XML is byte-identical across a refused add). Re-raised so the
+        # reason reaches the caller instead of the handler below folding it
+        # into a bare False.
+        raise
     except (ValueError, RuntimeError, OSError) as e:
         # attach_robot can insert its worldbody frame before the call that
         # raised. That leftover compiles, so it never broke the scene, but the

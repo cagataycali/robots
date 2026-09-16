@@ -56,7 +56,9 @@
       "class": "LerobotLocalPolicy",
       "description": "Direct HuggingFace inference (no server)",
       "extra": "lerobot",
-      "requires": [],
+      "requires": [
+        "pretrained_name_or_path"
+      ],
       "config_keys": [
         "pretrained_name_or_path",
         "policy_type",

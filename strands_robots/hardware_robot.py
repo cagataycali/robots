@@ -39,6 +39,7 @@ import functools
 import importlib
 import logging
 import math
+import os
 import pkgutil
 import shutil
 import threading
@@ -194,6 +195,13 @@ _CAMERA_STREAM_DEFAULTS: dict[str, Any] = {"fps": 30, "width": 640, "height": 48
 # ``type`` selects which camera backend to build. It is consumed by the
 # registry lookup below, not forwarded to the config dataclass.
 _CAMERA_TYPE_KEY = "type"
+
+# Where a network driver's port is reached. A lerobot driver config spells the
+# host it talks to differently per family - ``ip_address`` (Reachy 2),
+# ``remote_ip`` (LeKiwi client), ``robot_ip`` (Unitree G1), ``host`` - and
+# ``Robot._device_facts`` names it beside a port that is not a device path, so
+# a bare TCP port number is not the whole answer an agent gets.
+_ADDRESS_FIELDS = ("ip_address", "remote_ip", "robot_ip", "host")
 
 
 @functools.cache
@@ -2137,6 +2145,77 @@ class Robot(TeleopMixin, AgentTool):
         return None
 
     @staticmethod
+    def _policy_requires_error(
+        policy_provider: str | None, policy_kwargs: dict[str, Any], method: str
+    ) -> dict[str, Any] | None:
+        """Reject a provider build that is missing a keyword it cannot act without.
+
+        The registry's ``requires`` lists the keywords a caller must supply.
+        :meth:`_policy_port_error` judges the ``port`` entry; this judges the
+        rest - the checkpoint a ``lerobot_local`` / ``lerobot_async`` policy is
+        built from. ``LerobotLocalPolicy`` constructs happily with its default
+        ``pretrained_name_or_path=""`` and loads lazily, so an in-process build
+        with no checkpoint succeeded, ``start_task`` answered "Task started",
+        :meth:`_connect_robot` energized the arm, and the first
+        ``get_actions`` raised "No model loaded and no pretrained_name_or_path
+        set" on the executor thread with nobody left to tell. The quickstart's
+        real-arm step did exactly this.
+
+        An empty string counts as missing: it is the provider's own default
+        and the one value the lazy load cannot use. ``None`` likewise.
+
+        Args:
+            policy_provider: Provider name; unknown or unregistered providers
+                are left to ``create_policy`` to refuse.
+            policy_kwargs: Checkpoint/provider keywords the caller supplied.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming the missing keyword(s) and the
+            provider, or ``None`` when every required keyword is present.
+        """
+        if not policy_provider:
+            return None
+        try:
+            from strands_robots.registry.policies import get_policy_provider
+
+            spec = get_policy_provider(policy_provider)
+        except Exception:  # noqa: BLE001 - registry read is best-effort
+            return None
+        if not spec:
+            return None
+        # ``port``/``host`` are excluded because they never travel in
+        # ``**policy_kwargs``: they arrive as the named ``policy_port`` /
+        # ``policy_host`` parameters, so reading them here would find every
+        # caller's absent and refuse a port that WAS supplied. The port is
+        # judged by :meth:`_policy_port_error` and the host has a default.
+        missing = [
+            key
+            for key in (spec.get("requires") or ())
+            if key not in ("port", "host") and ((value := policy_kwargs.get(key)) is None or value == "")
+        ]
+        if not missing:
+            return None
+        hints = {
+            "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
+            "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
+        }
+        asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: policy_provider={policy_provider!r} builds its policy from "
+                        f"{' and '.join(missing)}, and none was given. Pass {asks}. "
+                        f"Without {'it' if len(missing) == 1 else 'them'} the task would start, "
+                        "energize the arm and fail at its first action."
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
     def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
         """Reject a ``policy_port`` no policy can be built from.
 
@@ -2398,6 +2477,10 @@ class Robot(TeleopMixin, AgentTool):
         # value the call ignores would be a false rejection.
         if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
+        if policy_object is None and (
+            err := self._policy_requires_error(policy_provider, policy_kwargs, "execute_task")
+        ):
+            return err
         if err := self._claim_task(instruction):
             return err
 
@@ -2590,6 +2673,8 @@ class Robot(TeleopMixin, AgentTool):
         # already connected.
         if err := self._policy_port_error(policy_port, "start_task", policy_provider):
             return err
+        if err := self._policy_requires_error(policy_provider, policy_kwargs, "start_task"):
+            return err
 
         # Claim the bus here, not on the executor thread: this method returns
         # before its job begins, so a claim taken inside the job would report
@@ -2730,9 +2815,142 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
-    def get_task_status(self) -> dict[str, Any]:
-        """Get current task execution status."""
+    def _device_facts(self) -> dict[str, Any]:
+        """Measured facts about the device, readable before it is connected.
 
+        The device is connected lazily, on the first task, so for most of a
+        robot's life an agent asks about it while nothing is open. What can be
+        read then: the port it was built for and whether that path exists on
+        this host, the cameras it was configured with, and the ``is_connected``
+        flag. What cannot: ``is_calibrated`` - lerobot reads it through the
+        bus and raises ``DeviceNotConnectedError`` before ``connect()`` - so
+        it is ``None`` until the device is connected, rather than a raise that
+        turned the whole :meth:`get_status` probe into its error shape for
+        every idle arm.
+
+        Every fact here is three-state for the same reason: ``True``/``False``
+        is a reading, ``None`` is "this was not readable". A port is not
+        always a device path - lerobot's network drivers carry a TCP port
+        (``Reachy2RobotConfig.port`` is ``50065``, reached at its
+        ``ip_address``), and there is nothing on this host to stat for one, so
+        ``port_present`` stays ``None`` and must not be reported as either
+        answer.
+
+        Returns:
+            ``port`` (``None`` when the driver has no port), ``port_present``
+            (``True``/``False`` from the filesystem for a path port; ``None``
+            when the port is not a path, so presence was never read),
+            ``address`` (the host a network port is reached at, ``None`` when
+            the config names none), ``is_connected``, ``is_calibrated``
+            (``None`` until connected), ``cameras`` (the configured names) and
+            ``cameras_connected`` (per live camera, best-effort - a camera
+            whose probe raises is omitted).
+        """
+        robot = self.robot
+        is_connected = bool(getattr(robot, "is_connected", False))
+        config = getattr(robot, "config", None)
+        port = getattr(config, "port", None)
+        port_present: bool | None = None
+        if isinstance(port, str) and port.startswith("/"):
+            port_present = os.path.exists(port)
+        # A port that is not a device path is a network port, and the number
+        # alone does not say where. lerobot spells the host differently per
+        # driver family, so the first one the config carries wins.
+        address: str | None = None
+        for field in _ADDRESS_FIELDS:
+            value = getattr(config, field, None)
+            if isinstance(value, str) and value:
+                address = value
+                break
+        is_calibrated: bool | None = None
+        if is_connected:
+            is_calibrated = bool(getattr(robot, "is_calibrated", True))
+        cameras: list[str] = []
+        configured = getattr(config, "cameras", None)
+        if isinstance(configured, dict):
+            cameras = list(configured.keys())
+        cameras_connected: dict[str, bool] = {}
+        live_cameras = getattr(robot, "cameras", None)
+        if isinstance(live_cameras, dict):
+            for name, camera in live_cameras.items():
+                try:
+                    cameras_connected[name] = bool(camera.is_connected)
+                except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
+                    logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
+        return {
+            "port": port,
+            "port_present": port_present,
+            "address": address,
+            "is_connected": is_connected,
+            "is_calibrated": is_calibrated,
+            "cameras": cameras,
+            "cameras_connected": cameras_connected,
+        }
+
+    @staticmethod
+    def _device_lines(facts: dict[str, Any]) -> str:
+        """The device facts as the lines ``status`` prints under the task state.
+
+        Args:
+            facts: The mapping :meth:`_device_facts` returns.
+
+        Returns:
+            Newline-terminated lines: the connection, the port and the
+            cameras. The port line reports what was read - present, absent
+            (with the remedy), or, for a network port, that presence on this
+            host was never a fact to read.
+        """
+        if facts["is_connected"]:
+            calibrated = "calibrated" if facts["is_calibrated"] else "NOT calibrated"
+            device = f"Device: connected on {facts['port']} ({calibrated})"
+        else:
+            device = "Device: not connected (the bus is opened by the first task)"
+        lines = [device]
+        if facts["port_present"] is False:
+            lines.append(
+                f"Port: {facts['port']} is not present on this host - no serial device answers to that path, "
+                "so the first task will fail to connect. Check the cable and power; scan_serial_devices() "
+                "lists what this host does see."
+            )
+        elif facts["port"] is not None and not facts["is_connected"]:
+            if facts["port_present"]:
+                lines.append(f"Port: {facts['port']} is present on this host")
+            else:
+                # port_present is None: the port is not a device path, so
+                # nothing on this host was stat-ed. Reporting it as present
+                # would be the defect this method exists to fix - a sentence
+                # an agent cannot tell from a reading.
+                where = f", reached at {facts['address']}" if facts["address"] else ""
+                lines.append(
+                    f"Port: {facts['port']} is a network port{where}, not a device path - this host has no "
+                    "such path to check, so neither answer about it would be a reading."
+                )
+        if facts["cameras"]:
+            states = facts["cameras_connected"]
+            named = ", ".join(
+                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else n for n in facts["cameras"]
+            )
+            lines.append(f"Cameras: {named}")
+        else:
+            lines.append("Cameras: none configured")
+        return "\n".join(lines) + "\n"
+
+    def get_task_status(self) -> dict[str, Any]:
+        """Report the task state, then the device it would drive.
+
+        The task machine used to be the whole answer: an arm whose port does
+        not exist on this host read ``Robot Status: IDLE``, byte-identical to
+        a connected, healthy arm at rest, and the difference only surfaced as
+        a connect failure inside the first task. The measured facts were
+        already gathered by :meth:`get_status` for Python callers; the tool
+        action now prints the same facts under the task state and carries
+        them as a ``json`` block.
+
+        Returns:
+            ``status=success`` with the task state on the first line (as
+            before), the device lines from :meth:`_device_facts` after it,
+            and a second content block holding those facts as JSON.
+        """
         # Update duration for running tasks
         if self._task_state.status == TaskStatus.RUNNING:
             self._task_state.duration = time.monotonic() - self._task_state.start_mono
@@ -2752,9 +2970,15 @@ class Robot(TeleopMixin, AgentTool):
         if self._task_state.error_message:
             status_text += f"Error: {self._task_state.error_message}\n"
 
+        try:
+            facts = self._device_facts()
+        except Exception as e:  # noqa: BLE001 - the task state must still be reported
+            logger.debug("%s device facts unavailable: %s", self.tool_name_str, e)
+            return {"status": "success", "content": [{"text": status_text}]}
+        status_text += self._device_lines(facts)
         return {
             "status": "success",
-            "content": [{"text": status_text}],
+            "content": [{"text": status_text}, {"json": facts}],
         }
 
     def stop_task(self) -> dict[str, Any]:
@@ -3255,45 +3479,12 @@ class Robot(TeleopMixin, AgentTool):
             supervising agent reads a verdict instead of taking an exception.
         """
         try:
-            # Get robot connection status
-            is_connected = self.robot.is_connected if hasattr(self.robot, "is_connected") else False
-            is_calibrated = self.robot.is_calibrated if hasattr(self.robot, "is_calibrated") else True
-
-            # The configured enumeration: which image streams the device was
-            # asked for. Says nothing about whether any of them came up.
-            camera_status = []
-            if hasattr(self.robot, "config") and hasattr(self.robot.config, "cameras"):
-                for name in self.robot.config.cameras.keys():
-                    camera_status.append(name)
-
-            # The measured reading, one entry per live camera. The camera
-            # objects hang off the device beside the config, and each carries
-            # the ``is_connected`` that the device's own aggregate is built
-            # from - so reading them here is what turns an aggregate ``False``
-            # into a named culprit instead of a set to guess from.
-            cameras_connected: dict[str, bool] = {}
-            live_cameras = getattr(self.robot, "cameras", None)
-            if isinstance(live_cameras, dict):
-                for name, camera in live_cameras.items():
-                    try:
-                        cameras_connected[name] = bool(camera.is_connected)
-                    except Exception as e:  # noqa: BLE001 - a camera that cannot answer is omitted, not fatal
-                        # Breadth is the camera backend's, not ours: the default
-                        # OpenCV camera answers through ``cv2.VideoCapture``, and
-                        # ``cv2.error`` subclasses ``Exception`` directly, so any
-                        # narrower tuple would let the shipped camera through.
-                        logger.debug("camera %r on %s could not report is_connected: %s", name, self.tool_name_str, e)
-
-            # Build status dict
             status_data = {
                 "robot_name": self.tool_name_str,
                 "robot_type": getattr(self.robot, "robot_type", self.robot.name),
                 "robot_info": str(self.robot),
                 "data_config": self.data_config,
-                "is_connected": is_connected,
-                "is_calibrated": is_calibrated,
-                "cameras": camera_status,
-                "cameras_connected": cameras_connected,
+                **self._device_facts(),
                 "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
                 if getattr(self, "_ros_bridge", None) is not None
