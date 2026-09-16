@@ -57,6 +57,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
+from strands_robots.policies.base import instruction_not_read_notice
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -624,6 +625,10 @@ class RobotTaskState:
     step_count: int = 0
     error_message: str = ""
     task_future: Future | None = None
+    #: The policy object the loop drove, set once it is built or handed in, so
+    #: the task envelope can describe it (see ``Policy.reads_instruction``).
+    #: Cleared with the rest of the state when a new task is claimed.
+    policy: Any = None
 
 
 class Robot(TeleopMixin, AgentTool):
@@ -1862,6 +1867,7 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = 0.0
             self._task_state.step_count = 0
             self._task_state.error_message = ""
+            self._task_state.policy = None
 
             # Connect to robot
             connected, connect_error = await self._connect_robot()
@@ -1883,6 +1889,7 @@ class Robot(TeleopMixin, AgentTool):
                 policy_instance = policy_object
             else:
                 policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+            self._task_state.policy = policy_instance
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
@@ -2505,12 +2512,18 @@ class Robot(TeleopMixin, AgentTool):
             # No event loop running - safe to create one.
             asyncio.run(task_runner())
 
-        # Return final status
-        policy_desc = (
-            f"{type(policy_object).__name__} (pre-built object)"
-            if policy_object is not None
-            else f"{policy_provider} on {policy_host}:{policy_port}"
-        )
+        # Return final status. A provider that built in process has no
+        # server; "on localhost:None" described one anyway.
+        if policy_object is not None:
+            policy_desc = f"{type(policy_object).__name__} (pre-built object)"
+        elif policy_port is None:
+            policy_desc = f"{policy_provider} (built in process, no server)"
+        else:
+            policy_desc = f"{policy_provider} on {policy_host}:{policy_port}"
+        # The policy the loop drove, for the instruction notice: the pre-built
+        # object when given, else the one ``_get_policy`` built for the task.
+        driven = policy_object if policy_object is not None else self._task_state.policy
+        instruction_notice = instruction_not_read_notice(driven)
         return {
             "status": "success" if self._task_state.status == TaskStatus.COMPLETED else "error",
             "content": [
@@ -2521,6 +2534,7 @@ class Robot(TeleopMixin, AgentTool):
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps: {self._task_state.step_count}"
                     + (f"\nError: {self._task_state.error_message}" if self._task_state.error_message else "")
+                    + (f"\n{instruction_notice}" if instruction_notice else "")
                 }
             ],
         }

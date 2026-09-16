@@ -29,6 +29,11 @@ class MockPolicy(Policy):
         """Mock policy only consumes joint state - skip camera rendering."""
         return False
 
+    @property
+    def reads_instruction(self) -> bool:
+        """``False``: every joint follows a sinusoid; ``instruction`` is never read."""
+        return False
+
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Record the ordered joint keys used to name the sinusoidal action dict.
 

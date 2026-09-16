@@ -330,6 +330,21 @@ class Policy(ABC):
         return True
 
     @property
+    def reads_instruction(self) -> bool:
+        """Whether the ``instruction`` passed to :meth:`get_actions` shapes the actions.
+
+        Default ``True``: a VLA, a planner given a goal, a scripted policy that
+        parses its task all act on the words. A policy that never reads them -
+        :class:`~strands_robots.policies.mock.MockPolicy` drives every joint in a
+        sinusoidal test motion whatever the task says - returns ``False``, and
+        the rollout envelopes (``run_policy``, the real robot's ``execute`` /
+        ``start``) say so beside the instruction they echo. Without that line
+        "MockPolicy | wave the arm ... completed" read as a wave that happened,
+        and an agent relayed it as one.
+        """
+        return True
+
+    @property
     def required_bodies(self) -> tuple[str, ...]:
         """Named rigid bodies whose world pose this policy needs in its observation.
 
@@ -468,6 +483,30 @@ class Policy(ABC):
     def provider_name(self) -> str:
         """Get provider name for identification."""
         pass
+
+
+def instruction_not_read_notice(policy: object) -> str | None:
+    """One sentence for a rollout envelope when ``policy`` never read the instruction.
+
+    Reads :attr:`Policy.reads_instruction` and returns ``None`` for a policy
+    that acts on the words (or for an object that does not declare the
+    property - a pre-built stand-in). Shared by the simulation's
+    ``run_policy`` and the real robot's task envelope so the two surfaces
+    describe the same policy in the same words.
+
+    Args:
+        policy: The policy object the rollout drove.
+
+    Returns:
+        The notice naming the policy class, or ``None``.
+    """
+    if getattr(policy, "reads_instruction", True):
+        return None
+    return (
+        f"Note: {type(policy).__name__} does not read the instruction. Its actions - a test "
+        "motion on every joint - were commanded to the robot whatever the task says; nothing "
+        "above means the task was performed."
+    )
 
 
 @runtime_checkable
