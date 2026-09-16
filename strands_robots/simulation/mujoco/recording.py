@@ -178,7 +178,6 @@ class RecordingMixin(DatasetRecordingMixin):
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
-
         # Reject an fps no dataset can be written at before creating or
         # resuming the recorder: an unusable rate was reported as success and
         # then cost the caller the whole episode (see
@@ -541,6 +540,18 @@ class RecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            # The schema above is frozen from the robots attached now. With
+            # none, this is a camera-only dataset fed by ``step`` - a legitimate
+            # recording, but one an agent that goes on to add_robot would
+            # expect to hold that robot; add_robot refuses while recording, so
+            # the sequence is named here rather than discovered there.
+            no_robot_note = (
+                "No robots are attached, so this dataset has no observation.state/action columns and "
+                "records cameras only (one frame per step). To record a robot, stop_recording, add_robot, "
+                "then start_recording again.\n"
+                if not self._world.robots
+                else ""
+            )
             return {
                 "status": "success",
                 "content": [
@@ -548,6 +559,7 @@ class RecordingMixin(DatasetRecordingMixin):
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
+                            f"{no_robot_note}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Frames are captured by a policy rollout - run_policy (one call per "
                             f"episode), start_policy (async) or run_multi_policy (several robots "

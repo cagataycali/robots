@@ -2155,6 +2155,25 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
+        if self._is_recording():
+            # The active recorder's schema was frozen from the robots present
+            # at start_recording; a robot attached now has no columns in it,
+            # so its first recorded rollout fails inside lerobot with a
+            # feature mismatch. Sequence the calls instead of corrupting the
+            # dataset: stop, add, start again.
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_robot: a dataset recording is active and its schema was frozen from the "
+                            f"{len(self._world.robots)} robot(s) present at start_recording, so a robot added now "
+                            "would have no observation.state/action columns and the next rollout would fail with a "
+                            "feature mismatch. stop_recording first, add the robot, then start_recording again."
+                        )
+                    }
+                ],
+            }
 
         # Refuse a name that cannot address the robot this call creates. ``None``
         # and ``""`` are the documented "derive a label from the model" short
