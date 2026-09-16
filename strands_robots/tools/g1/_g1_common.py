@@ -33,6 +33,50 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# The one install line for Unitree's SDK, spelled here so every refusal in the
+# G1/Go2 drivers and the g1 tools names the same remedy. It is a vendor SDK,
+# not an extra of this project, and no ``[unitree]`` extra can be honest about
+# it: PyPI's ``unitree-sdk2`` 1.0.1 wheel ships no ``g1``/``comm`` package (its
+# ``__init__`` imports a ``b2`` it does not contain, so it fails to import) and
+# pins ``cyclonedds==0.10.2``, whose wheels stop at cp310 - under this project's
+# ``requires-python = ">=3.12"`` that is an sdist build needing the CycloneDDS
+# C library. The upstream git checkout installed with ``--no-deps`` beside a
+# ``cyclonedds`` wheel imports and binds a ChannelFactory on macOS arm64 and
+# x86_64 Linux; Linux aarch64 (the Jetson the robot ships with) has no
+# ``cyclonedds`` wheel at any version, so the C library comes first there.
+# ---------------------------------------------------------------------------
+#: The pip line a missing-SDK refusal names.
+UNITREE_SDK_INSTALL = (
+    "pip install 'cyclonedds>=0.10.2,<12' && "
+    "git clone https://github.com/unitreerobotics/unitree_sdk2_python && "
+    "pip install --no-deps -e ./unitree_sdk2_python"
+)
+
+#: Where the per-platform recipe lives in the docs.
+UNITREE_SDK_DOCS = "docs/robots/humanoids.md (Installing the Unitree SDK)"
+
+
+def sdk_missing(exc: BaseException | str) -> str:
+    """The refusal text for an ``ImportError`` on ``unitree_sdk2py``.
+
+    One sentence of diagnosis, one install line, one pointer - so the driver,
+    the DDS engine and ``use_unitree`` all answer a missing SDK the same way,
+    and the answer says what to run instead of only what is absent (the
+    ``booster`` driver's refusal set the shape). ``exc`` is kept verbatim: a
+    partially installed SDK fails with a *different* ImportError than an
+    absent one, and that difference is the diagnosis.
+    """
+    return (
+        f"unitree_sdk2py is not installed: {exc}. "
+        "It is Unitree's vendor SDK, not a strands-robots extra (the PyPI "
+        "unitree-sdk2 wheel lacks its g1 package and pins cyclonedds==0.10.2, "
+        f"which has no py>=3.12 wheel). Install it with: {UNITREE_SDK_INSTALL} "
+        "- on Jetson/aarch64 build CycloneDDS 0.10.2 first and set "
+        f"CYCLONEDDS_HOME. See {UNITREE_SDK_DOCS}."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Error decoder shared with agent tools (issue #358) so the same numeric code
 # renders the same text everywhere. Values sourced from ``unitree_sdk2py``
 # response codes observed against the real G1; ``0`` is the SDK's success
@@ -169,7 +213,7 @@ def ensure_dds(network_interface: str = "eth0") -> str | None:
             # can decide whether to proceed with a mocked bus.
             sdk_channel = importlib.import_module("unitree_sdk2py.core.channel")
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return f"unitree_sdk2py is not installed: {exc}"
+            return sdk_missing(exc)
         if _sdk_factory_already_bound(sdk_channel):
             # Something bound the bus without coming through here, so the
             # interface it is on is not this process's to know. Calling

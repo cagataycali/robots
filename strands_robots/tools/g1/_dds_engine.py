@@ -25,7 +25,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds, sdk_missing
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class DDSSubscriberSet:
             # Lazy import so this module is safe to import without the SDK.
             from unitree_sdk2py.core.channel import ChannelSubscriber
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return f"unitree_sdk2py is not installed: {exc}"
+            return sdk_missing(exc)
         with self._lock:
             # :meth:`close` rebinds ``_subs`` to a fresh list, so the identity
             # of the list this call was told to append to IS the teardown
@@ -286,7 +286,7 @@ class DDSPublisher:
             # Lazy import so this module is safe to import without the SDK.
             from unitree_sdk2py.core.channel import ChannelPublisher
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return None, f"unitree_sdk2py is not installed: {exc}"
+            return None, sdk_missing(exc)
         with self._lock:
             # :meth:`close` rebinds ``_pubs`` to a fresh dict, so the identity
             # of the cache this call was told to write to IS the teardown

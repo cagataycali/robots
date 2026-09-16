@@ -96,6 +96,11 @@ go2.release_sport_mode()       # hands the legs over - see below
 go2.send_action({"FL_calf_joint": -1.5})
 ```
 
+The driver talks CycloneDDS through `unitree_sdk2py`, a vendor SDK that is not
+an extra of this project; the install recipe per platform is in
+[Installing the Unitree SDK](humanoids.md#installing-the-unitree-sdk), and a
+missing SDK is refused with that recipe rather than only its module name.
+
 Two Go2 specifics are worth knowing before writing a controller.
 
 **Sport mode must be released first.** The Go2 ships with an onboard sport-mode
