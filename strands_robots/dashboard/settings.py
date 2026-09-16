@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard import log_redaction
+
 logger = logging.getLogger(__name__)
 
 SETTINGS_FILE = Path(
@@ -426,7 +428,7 @@ def _update(patch: dict[str, Any], strict: bool) -> tuple[list[str], list[str]]:
                 if strict:
                     errors.append(reason)
                 else:
-                    logger.warning("ignoring settings patch: %s", reason)
+                    logger.warning("ignoring settings patch: %s", log_redaction.one_line(reason))
                 continue
             for key, raw in values.items():
                 if key not in _SCHEMA[section]:

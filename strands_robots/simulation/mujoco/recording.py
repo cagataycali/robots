@@ -18,6 +18,7 @@ from strands_robots.simulation.recording import (
     camera_schema_key_collision_error,
     dataset_recording_option_error,
     dataset_recording_posture_error,
+    recorded_cameras_line,
 )
 from strands_robots.utils import camera_schema_key, name_list_error
 
@@ -379,6 +380,13 @@ class RecordingMixin(DatasetRecordingMixin):
                 else:
                     camera_dims[safe_name] = (int(self.default_height), int(self.default_width))
 
+            # Scene camera name -> dataset column key, in dataset column order:
+            # what start_recording's reply names the cameras by. The reply lists
+            # the SCENE name (the spelling render/get_frame answer for) and the
+            # column only when camera_schema_key renamed it, so it cannot hand
+            # back a name every camera surface refuses.
+            recorded_cameras = dict(raw_to_safe)
+
             # Optional camera scoping. By default EVERY scene camera is recorded,
             # which sweeps in the implicit ``default`` overview camera and any
             # view the trained policy never declared - bloating the dataset and
@@ -422,6 +430,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     }
                 camera_keys = selected_safe
                 camera_dims = {safe: camera_dims[safe] for safe in selected_safe}
+                recorded_cameras = {safe_to_raw[safe]: safe for safe in selected_safe}
             # Stash the scoped RAW camera names so the run_policy frame hook drops
             # un-recorded camera arrays before add_frame (None -> record all).
             self._world._backend_state["recording_cameras"] = record_raw_cameras
@@ -532,7 +541,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     {
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
-                            f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
+                            f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Frames are captured by a policy rollout only - run_policy (one call "
                             f"per episode), start_policy (async) or run_multi_policy (several "
