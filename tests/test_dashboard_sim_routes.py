@@ -611,6 +611,50 @@ class TestEstop:
         assert session.snapshot.state == "error"
         store.shutdown()
 
+    def test_an_estop_that_lands_inside_a_resume_leaves_every_session_frozen(self, fake_factory):
+        """resume() folds ``unknown``, then thaws; estop() freezes, then latches.
+
+        If the fold and the thaw are not one step, an e-stop can land between
+        them: it freezes and latches, and then the resume's thaw runs anyway.
+        The lockout then reads ``locked`` while every session steps in realtime,
+        the inversion of the invariant ``docs/dashboard.md`` promises. This cell
+        parks the thaw, fires the e-stop, and checks the invariant afterwards
+        for both interleavings: the e-stop must wait for the whole resume, or
+        run whole before it.
+        """
+        from strands_robots.dashboard.routes_sim import Safety
+
+        entered, go = threading.Event(), threading.Event()
+
+        class ParkedThaw(sim_session.SessionStore):
+            def thaw_all(self):
+                entered.set()
+                go.wait(5)
+                return super().thaw_all()
+
+        store = ParkedThaw()
+        safety = Safety(store)
+        session = store.create("so101", engine_factory=fake_factory)
+        assert session.wait_ready(5)
+        safety.estop(by="operator")
+        assert session.frozen
+
+        resume = threading.Thread(target=safety.resume, kwargs={"by": "operator"})
+        resume.start()
+        assert entered.wait(5), "the resume reached its thaw"
+        estop = threading.Thread(target=safety.estop, kwargs={"by": "operator"})
+        estop.start()
+        time.sleep(0.2)  # long enough for an unguarded freeze_all to run inside the resume
+        go.set()
+        resume.join(5)
+        estop.join(5)
+        assert not resume.is_alive() and not estop.is_alive()
+
+        assert safety.lockout.state == "locked", "the e-stop landed last, so the lockout is latched"
+        assert session.frozen, "a latched lockout means every session is frozen, whatever the resume did"
+        assert session.snapshot.state == "frozen"
+        store.shutdown()
+
     def test_estop_is_never_refused(self, client):
         client.post("/api/safety/estop")
         assert client.post("/api/safety/estop").status_code == 200
@@ -694,7 +738,7 @@ class TestReadyMeansItRenders:
             def get_frame(self, *a, **kw):
                 raise RuntimeError("no OpenGL context")
 
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: NoGL(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", NoGL)
         r = client.post("/api/sim", json={"robot": "so101"})
         assert r.status_code == 500 and "no OpenGL context" in r.json()["error"]
         assert client.get("/api/sim").json()["sessions"] == []
@@ -711,7 +755,7 @@ class TestReadyMeansItRenders:
                 return super().get_frame(*a, **kw)
 
         monkeypatch.setattr(routes_sim, "_READY_TIMEOUT", 0.2)
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: ParksInTheFirstRender(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", ParksInTheFirstRender)
         try:
             r = client.post("/api/sim", json={"robot": "so101"})
             assert r.status_code == 504, r.text
@@ -720,7 +764,7 @@ class TestReadyMeansItRenders:
         finally:
             hold.set()
         # The slot it held is free again: a working engine still starts afterwards.
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: FakeEngine(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", FakeEngine)
         assert _create(client)["state"] == "running"
 
 
