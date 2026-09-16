@@ -93,6 +93,24 @@ class TestOnMuJoCo:
         assert again["status"] == "success", again
         assert "wrist" in sim.list_cameras()
 
+    @pytest.mark.parametrize("key", ["position", "target"])
+    def test_a_boolean_coordinate_is_refused_before_the_mount_rule(self, sim, key):
+        """The numeric domain answers first, so the mount rule cannot shadow it.
+
+        A mounted camera supplies its pose in a body frame, and the suggestion
+        the refusal carries is measured off mjData rather than coerced from the
+        caller - which holds only while a boolean coordinate is still refused by
+        name on the way in, ahead of the mount check.
+        """
+        kwargs = {"position": [0.0, 0.0, -0.1], "target": [0.0, 0.0, -0.3]}
+        kwargs[key] = [True, 0.0, -0.1]
+        result = sim.add_camera(name="wrist", parent_body="so101/gripper", **kwargs)
+        assert result["status"] == "error", result
+        text = _text(result)
+        assert f"'{key}' elements must be numbers, not a bool" in text, text
+        assert "LOCAL frame" not in text, text
+        assert "wrist" not in sim.list_cameras()
+
     def test_a_non_gripper_body_gets_the_generic_hint_not_the_fingertips(self, sim):
         result = sim.add_camera(name="chase", parent_body="so101/base")
         assert result["status"] == "error", result
