@@ -509,6 +509,8 @@ class RecordingMixin(DatasetRecordingMixin):
             resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             assert _DatasetRecorder is not None  # checked above
+            resume_line = ""
+            resumed_json: dict[str, Any] = {"resumed": False, "episodes_on_disk": 0, "frames_on_disk": 0}
             if resume_existing:
                 # Append to the existing dataset (schema inherited from disk).
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
@@ -525,6 +527,22 @@ class RecordingMixin(DatasetRecordingMixin):
                 # up front and raise a clear schema-diff instead.
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names, fps=fps)
                 self._world._backend_state["dataset_recorder"] = resumed
+                # The resume used to be a logger.info only: an agent that
+                # re-recorded the same repo_id (overwrite is not a published
+                # parameter) got the fresh-dataset sentence and saw its "first"
+                # episode land at episode_index 2.
+                episodes_on_disk = int(getattr(resumed, "episode_count", 0) or 0)
+                frames_on_disk = int(getattr(resumed, "frame_count", 0) or 0)
+                resume_line = (
+                    f"RESUMING the existing dataset at {dataset_dir}: {episodes_on_disk} episode(s) / "
+                    f"{frames_on_disk} frames already on disk - new episodes append after them (the next "
+                    f"is episode_index {episodes_on_disk}). For a fresh dataset record to a new repo_id or root.\n"
+                )
+                resumed_json = {
+                    "resumed": True,
+                    "episodes_on_disk": episodes_on_disk,
+                    "frames_on_disk": frames_on_disk,
+                }
             else:
                 self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
                     repo_id=repo_id,
@@ -547,6 +565,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     {
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
+                            f"{resume_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Frames are captured by a policy rollout - run_policy (one call per "
@@ -556,7 +575,8 @@ class RecordingMixin(DatasetRecordingMixin):
                             f"of sim time. teleoperate and replay_episode do not feed the "
                             f"recorder. Then stop_recording to save the episode"
                         )
-                    }
+                    },
+                    {"json": {"repo_id": repo_id, "dataset_dir": str(dataset_dir), "fps": fps, **resumed_json}},
                 ],
             }
         except Exception as e:
