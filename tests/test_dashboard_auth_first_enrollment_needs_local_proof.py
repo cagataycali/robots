@@ -205,7 +205,7 @@ class TestTheLocalTokenIsTheProof:
 
     def test_a_later_enrollment_ignores_the_bootstrap_value(self, tmp_path: Path) -> None:
         """The gate is on the one-way door only; the route guards later enrollments with a session."""
-        auth._save({"credentials": [{"id": "AAAA", "name": "existing"}]})
+        auth._save({"jwt_secret": "s" * 32, "credentials": [{"id": "AAAA", "name": "existing"}]})
         auth._cache = {}
         opts = auth.begin_registration(FakeRequest({"x-forwarded-for": _STRANGER}, client_host=_STRANGER))
         assert opts.get("challenge_id")
@@ -262,7 +262,7 @@ class TestStatusTellsTheLoginScreenWhatToAskFor:
         assert str(tmp_path) not in blob
 
     def test_nothing_is_required_once_enrolled(self) -> None:
-        auth._save({"credentials": [{"id": "AAAA", "name": "existing"}]})
+        auth._save({"jwt_secret": "s" * 32, "credentials": [{"id": "AAAA", "name": "existing"}]})
         auth._cache = {}
         out = auth.status()
         assert out["bootstrap_required"] is False and out["bootstrap_source"] is None
