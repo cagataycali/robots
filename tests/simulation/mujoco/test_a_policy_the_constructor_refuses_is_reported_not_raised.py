@@ -179,6 +179,41 @@ class TestTheAsynchronousSurface:
         assert _PORT_VERDICT in listed
         assert any("start_policy rollout on 'so101'" in rec.getMessage() for rec in caplog.records)
 
+    def test_a_refusal_that_keeps_its_raise_is_still_reported_on_the_worker(self, sim, caplog):
+        """The other arm of the done-callback: ``future.exception()``, not a result.
+
+        The trust-remote-code gate and a missing optional dependency
+        deliberately keep raising (see ``test_the_trust_gate_keeps_its_raise``),
+        which on the blocking surfaces reaches the caller. On ``start_policy``
+        it reached nobody: the raise stayed in the Future. Both routes have to
+        land in the same reading, so the reason is prefixed with the exception
+        type the caller would otherwise have caught.
+        """
+        with caplog.at_level(logging.ERROR, logger="strands_robots.simulation.mujoco.simulation"):
+            assert sim.start_policy(robot_name="so101", policy_provider="kimodo", duration=1.0)["status"] == "success"
+            _await_idle(sim)
+            _await_record(sim)
+        listed = _text(sim.list_policies_running())
+        assert "Rollouts started with start_policy that ended in error (1):" in listed
+        assert "so101: UntrustedRemoteCodeError: " in listed
+        assert "STRANDS_TRUST_REMOTE_CODE=1" in listed  # the remedy survives the trip
+        assert any("start_policy rollout on 'so101'" in rec.getMessage() for rec in caplog.records)
+
+    def test_a_robot_a_rollout_is_still_driving_is_not_also_listed_as_failed(self, sim):
+        """A robot cannot be both readings at once.
+
+        The record is cleared when that robot's next rollout is submitted, but
+        a done-callback runs after its Future is marked done, so it can land
+        just after a second rollout was admitted. Seeded here directly, since
+        that ordering is not something a test can schedule.
+        """
+        assert sim.start_policy(robot_name="so101", policy_provider="mock", duration=2.0)["status"] == "success"
+        sim._rollout_failures["so101"] = "a verdict from the rollout before this one"
+        listed = _text(sim.list_policies_running())
+        assert listed == "Active policies (1):\n  - so101"
+        sim.stop_policy(robot_name="so101")
+        _await_idle(sim)
+
     def test_the_next_rollout_on_that_robot_replaces_the_record(self, sim):
         """The record is the last outcome, not a log: a later rollout clears it."""
         sim.start_policy(robot_name="so101", policy_provider="groot", policy_config=_BAD_PORT, duration=1.0)
