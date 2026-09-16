@@ -6,6 +6,7 @@ classes, and building provider-specific kwargs.
 """
 
 import importlib
+import importlib.util
 import logging
 import re
 from typing import Any
@@ -64,6 +65,51 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     """
     reg = _load("policies")
     return reg.get("providers", {}).get(_canonical_provider_name(name))
+
+
+def policy_provider_resolves(name: str | None) -> bool:
+    """Whether :func:`import_policy_class` could resolve this provider spelling.
+
+    Callers validate a provider name before spending something expensive on it -
+    energizing an arm, asking an operator to approve a rollout - and the only
+    authority on whether a name resolves is :func:`import_policy_class`. Asking
+    it directly would import the provider's module (``lerobot_local`` imports
+    torch), which a pre-flight check must not do, so this answers the same
+    question from the two things that decide it, without importing anything:
+
+    - a registry entry under the canonical name, which is how the declared
+      providers and every alias/shorthand they declare resolve - ``lerobot``,
+      ``random`` and ``c3`` are legal spellings that
+      :func:`list_policy_providers` does not list;
+    - failing that, an importable ``strands_robots.policies.<name>`` module,
+      which is the auto-discovery fallback ``import_policy_class`` tries next -
+      ``composite`` and ``persistent`` build through it while declaring no
+      registry entry.
+
+    Deliberately optimistic at one edge: a module that exists but exposes no
+    :class:`~strands_robots.policies.Policy` subclass (``base``, ``factory``)
+    is reported as resolving, and :func:`import_policy_class` refuses it later.
+    A caller uses this to refuse, so a false ``False`` would reject a name that
+    works - the expensive error - while a false ``True`` only defers to the
+    refusal that already existed.
+
+    Args:
+        name: Any spelling a caller may supply - canonical name, alias,
+            shorthand, or a mistake. ``None``/empty resolves to nothing.
+
+    Returns:
+        True when the name is one :func:`import_policy_class` could resolve.
+    """
+    if not name:
+        return False
+    canonical = _canonical_provider_name(name)
+    if get_policy_provider(canonical) is not None:
+        return True
+    try:
+        return importlib.util.find_spec(f"strands_robots.policies.{canonical}") is not None
+    except (ImportError, ValueError):
+        # A dotted or otherwise unimportable spelling is not a provider name.
+        return False
 
 
 def provider_reads_a_port(name: str | None) -> bool | None:

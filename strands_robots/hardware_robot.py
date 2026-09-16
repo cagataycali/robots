@@ -2217,6 +2217,127 @@ class Robot(TeleopMixin, AgentTool):
         }
 
     @staticmethod
+    def _policy_description(policy_provider: Any, policy_host: Any, policy_port: Any) -> str:
+        """Describe the policy an operator is being asked to approve, truthfully.
+
+        The approval prompt named the policy as ``at {host}:{port}``
+        unconditionally, so a rollout that supplied no port - the normal way to
+        run 9 of the 14 registered providers - was described as a server ``at
+        localhost:None``. There is no such endpoint. An operator approving a
+        real arm's motion is reading this line to decide, and a location that
+        does not exist is the one part of it they cannot check.
+
+        Which of three things is true is the registry's to answer, through
+        :func:`~strands_robots.registry.policies.provider_reads_a_port`:
+
+        - a port was supplied, so the policy is that server;
+        - no port and the provider declares no ``port`` keyword (``mock``,
+          ``lerobot_local``, ``rl``, ...): it is built in this process and
+          dials nothing;
+        - no port and the provider does dial one (``cosmos3``,
+          ``lerobot_async``, ``remote`` default their port rather than requiring
+          it): there is a server, at a port this call did not choose. Calling
+          that "no server" would be a new false statement, not a fix.
+
+        A provider the registry does not know is described by name only. It
+        cannot reach the operator through the agent tool -
+        :meth:`_policy_provider_error` refuses an unresolvable name before the
+        gate - but ``composite`` and ``persistent`` resolve by auto-discovery
+        with no registry entry to read, and claiming either endpoint for them
+        would be a guess.
+
+        Args:
+            policy_provider: Provider name as supplied by the caller.
+            policy_host: Host as supplied by the caller, defaulted upstream.
+            policy_port: Port as supplied by the caller, ``None`` when absent.
+
+        Returns:
+            A phrase for the approval prompt, e.g. ``"policy groot at
+            localhost:5555"`` or ``"policy mock built in this process, no
+            server"``.
+        """
+        from strands_robots.registry.policies import provider_reads_a_port
+
+        # Rendered through the shared plain renderer for the reason every refusal
+        # is: this text is built from caller-supplied values on the path whose
+        # purpose is to tell an operator what they are approving, so producing it
+        # must not be able to raise. Plain rather than quoted - the prompt reads
+        # as a sentence, and ``repr`` would spell a host "'localhost'".
+        provider = refusal_str(policy_provider)
+        if policy_port is not None:
+            return f"policy {provider} at {refusal_str(policy_host)}:{refusal_str(policy_port)}"
+        reads_a_port = provider_reads_a_port(provider if policy_provider else None)
+        if reads_a_port is False:
+            return f"policy {provider} built in this process, no server"
+        if reads_a_port is True:
+            return f"policy {provider} at {refusal_str(policy_host)}, on the provider's default port"
+        return f"policy {provider}"
+
+    @staticmethod
+    def _policy_provider_error(policy_provider: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``policy_provider`` no policy can be resolved from.
+
+        Every other pre-flight check in this class asks the registry about the
+        named provider - :meth:`_policy_port_error` reads ``requires`` to decide
+        whether a port is mandatory, :meth:`_policy_requires_error` reads it for
+        the checkpoint keywords - so the provider name is the value that decides
+        whether any of them can be answered at all. Both were written to defer
+        an unresolvable name to ``create_policy``, whose refusal
+        (``"Unknown policy provider: 'grooot'"``) is raised from
+        :meth:`_get_policy`, *after* :meth:`_connect_robot` has energized the
+        arm and after the operator has approved the rollout. That is the very
+        shape both of those checks exist to close, left open for the one
+        argument that names what is being built.
+
+        Deferring also made the port check answer for it. With no registry entry
+        to read, ``requires`` cannot say a port is optional, so a missing port
+        was reported as ``"policy_port is required"`` for a provider that does
+        not exist - the wrong reason, whose remedy leads to the next wrong
+        reason, and indistinguishable from the same message for a correctly
+        spelled ``groot``. ``TestAPortTheProviderDoesNotReadIsRefused`` states
+        the rule this restores: "answering it here would report a port problem
+        for a provider problem". It held for a *supplied* port, which
+        :meth:`_policy_port_error` leaves to the provider, and not for a missing
+        one. Running this first means an unresolvable name never reaches that
+        check, so the port check keeps its rule and its wording unchanged.
+
+        Resolution is asked of
+        :func:`~strands_robots.registry.policies.policy_provider_resolves`, the
+        registry's own account of what ``import_policy_class`` accepts, so a
+        declared alias (``lerobot``, ``random``, ``c3``) and an auto-discovered
+        module (``composite``, ``persistent``) are not refused for being absent
+        from :func:`~strands_robots.registry.policies.list_policy_providers`.
+
+        Args:
+            policy_provider: The provider name as supplied by the caller. A
+                falsy value is left alone: it is the "not named" spelling that
+                :meth:`_policy_requires_error` also passes over, and the port
+                check already reports what a nameless build is missing.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming the provider and the ones that
+            resolve, or ``None`` when a policy can be resolved from the value.
+        """
+        from strands_robots.registry.policies import list_policy_providers, policy_provider_resolves
+
+        if not policy_provider or policy_provider_resolves(refusal_str(policy_provider)):
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: unknown policy_provider {refusal_repr(policy_provider)}. "
+                        f"Available: {', '.join(list_policy_providers())} "
+                        "(declared aliases such as 'lerobot' for 'lerobot_local' also resolve). "
+                        "Nothing was dispatched and the arm was not energized."
+                    )
+                }
+            ],
+        }
+
+    @staticmethod
     def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
         """Reject a ``policy_port`` no policy can be built from.
 
@@ -2476,6 +2597,11 @@ class Robot(TeleopMixin, AgentTool):
         # ``policy_object``, because a pre-built policy makes the port inert -
         # ``_execute_task_async`` never reads it on that path - and refusing a
         # value the call ignores would be a false rejection.
+        # Gated on ``policy_object`` for the same reason the port is: a
+        # pre-built policy is never resolved from the provider name, so
+        # refusing an unresolvable one would be a false rejection.
+        if policy_object is None and (err := self._policy_provider_error(policy_provider, "execute_task")):
+            return err
         if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
         if policy_object is None and (
@@ -2672,6 +2798,11 @@ class Robot(TeleopMixin, AgentTool):
         # policy can be built from. Pre-fix every unusable value returned
         # "Task started" and failed on the executor thread after the arm was
         # already connected.
+        # Unconditional here for the same reason the port check is: this
+        # entry point takes no ``policy_object``, so the provider name is
+        # always what the policy is resolved from.
+        if err := self._policy_provider_error(policy_provider, "start_task"):
+            return err
         if err := self._policy_port_error(policy_port, "start_task", policy_provider):
             return err
         if err := self._policy_requires_error(policy_provider, policy_kwargs, "start_task"):
@@ -3246,6 +3377,10 @@ class Robot(TeleopMixin, AgentTool):
             return err
         if err := self._duration_error(duration, method):
             return err
+        # Before the port check, which cannot judge a port for a provider it
+        # cannot resolve - see _policy_provider_error.
+        if err := self._policy_provider_error(policy_provider, method):
+            return err
         return self._policy_port_error(policy_port, method, policy_provider)
 
     def _gate_motion(
@@ -3292,7 +3427,8 @@ class Robot(TeleopMixin, AgentTool):
             action,
             self.tool_name_str,
             f"{action!r} drives the real robot {self.tool_name_str!r} with {instruction!r} "
-            f"(policy {provider} at {host}:{port}); it needs operator approval before it is dispatched.",
+            f"({self._policy_description(provider, host, port)}); "
+            "it needs operator approval before it is dispatched.",
             tool_context,
             allow_env=COMMAND_ALLOW_ENV,
             allow_match=lambda allowed: "*" in allowed or action in allowed,
