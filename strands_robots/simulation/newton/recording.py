@@ -273,10 +273,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         # bypass this method, and ``last_dataset_root`` - which
         # ``stop_recording(bucket=...)`` syncs and ``verify_dataset_episodes``
         # reads once the recorder is dropped - named the stale path.
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        world._backend_state["last_dataset_root"] = str(dataset_dir)
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             (
@@ -394,9 +391,9 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
                 resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, fps=fps)
-                world._backend_state["dataset_recorder"] = resumed
+                recorder = resumed
             else:
-                world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                recorder = _DatasetRecorder.create(
                     repo_id=repo_id,
                     fps=fps,
                     robot_type=robot_type,
@@ -411,12 +408,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            resumed_line = self._arm_dataset_recorder(world._backend_state, recorder, resumed=resume_existing)
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
                             f"Recording Newton scene to LeRobotDataset: {repo_id}\n"
+                            f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Run policies to capture frames, then stop_recording to save the episode"

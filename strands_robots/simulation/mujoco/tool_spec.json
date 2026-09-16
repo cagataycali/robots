@@ -265,19 +265,45 @@
       "description": "Frames per second: video rate for run_policy record_video, dataset rate for start_recording. Must be a positive whole number."
     },
     "randomize_colors": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: recolor every geom (default True); each RGB channel is drawn uniformly from color_range."
     },
     "randomize_lighting": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: perturb light positions and intensity (default True)."
     },
     "randomize_physics": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: scale geom friction by a factor from friction_range and body mass by a factor from mass_range (default False). Destructive - recompile the scene (reset or load_scene) to undo."
     },
     "randomize_positions": {
-      "type": "boolean"
+      "type": "boolean",
+      "description": "randomize: jitter free-body positions by position_noise metres (default False)."
     },
     "position_noise": {
-      "type": "number"
+      "type": "number",
+      "description": "randomize: std (metres) of the position jitter when randomize_positions is set (default 0.02)."
+    },
+    "color_range": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "randomize: [low, high] each RGB channel is drawn from when randomize_colors is set (default [0.1, 1.0])."
+    },
+    "friction_range": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "randomize: [low, high] multiplicative range for geom friction when randomize_physics is set (default [0.5, 1.5])."
+    },
+    "mass_range": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "randomize: [low, high] multiplicative range for body mass when randomize_physics is set (default [0.5, 2.0])."
     },
     "seed": {
       "type": "integer",
@@ -307,6 +333,10 @@
       "type": "string",
       "description": "Video codec for dataset recording (h264, hevc, libsvtav1)"
     },
+    "overwrite": {
+      "type": "boolean",
+      "description": "start_recording: wipe an existing dataset at root/repo_id and record from scratch. Default False RESUMES it (episodes are appended)."
+    },
     "task": {
       "type": "string",
       "description": "Task description for dataset recording"
@@ -322,6 +352,11 @@
     "speed": {
       "type": "number",
       "description": "Replay speed multiplier (1.0 = original)"
+    },
+    "action_key_map": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "replay_episode: action keys, one per recorded action-vector index (default: the robot's own action keys). Must be unique and match the recorded width."
     },
     "n_episodes": {
       "type": "integer",
@@ -359,6 +394,35 @@
     "fast_mode": {
       "type": "boolean",
       "description": "Skip sleep between actions for faster data collection"
+    },
+    "control_substeps": {
+      "type": "integer",
+      "description": "run_policy / eval_policy / evaluate_benchmark: physics steps integrated per applied action, overriding the value derived from control_frequency. Must be a positive whole number; omit to derive it from control_frequency and the scene timestep."
+    },
+    "reset_between": {
+      "type": "boolean",
+      "description": "run_policy: with n_episodes > 1, reset the sim to its initial state between episodes (default true; never after the last one). False chains each episode from the previous end state."
+    },
+    "async_rtc": {
+      "type": "boolean",
+      "description": "run_policy / eval_policy: overlap policy inference with action execution (latency masking). Omit to resolve it from the policy - chunk-emitting VLAs get it, single-step policies stay synchronous."
+    },
+    "rtc_inference_timeout_s": {
+      "type": "number",
+      "description": "run_policy / eval_policy: per-chunk deadline (seconds) for the async-RTC prefetch, so a stuck inference is reported as an error instead of hanging the sim. Omit to wait without a deadline; ignored on the synchronous path."
+    },
+    "wbc_install_torque_control": {
+      "type": "boolean",
+      "description": "run_policy: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
+    },
+    "max_onframe_failures": {
+      "type": "integer",
+      "description": "run_policy: consecutive video/dataset hook failures tolerated before the episode aborts. Must be a positive whole number; omit to use the runner's own limit of 5. A lost dataset frame aborts on the first occurrence whatever this is set to."
+    },
+    "policy_kwargs": {
+      "type": "object",
+      "description": "run_policy / start_policy / eval_policy / evaluate_benchmark: per-call goal payload forwarded verbatim to every policy.get_actions call. Carries target_pose / target_joints / target_velocity / world_update to providers that read their goal from kwargs (curobo, moveit2, wbc); VLA providers ignore keys they do not know.",
+      "additionalProperties": true
     },
     "x": {
       "type": "number",
@@ -496,6 +560,10 @@
     "output_dir": {
       "type": "string",
       "description": "Directory for start_cameras_recording output. Defaults to a platform-appropriate temp directory (tempfile.gettempdir()/strands_robots/recordings)."
+    },
+    "max_frames_per_camera": {
+      "type": "integer",
+      "description": "start_cameras_recording: in-memory per-camera frame cap (default 3000); capture stops for a camera once it is reached."
     },
     "xml": {
       "type": "string",
