@@ -3144,7 +3144,8 @@ class Robot(TeleopMixin, AgentTool):
             f"{COMMAND_ALLOW_ENV}=execute,start) - and run for at most duration seconds (default 30). "
             f"They need instruction; the default provider groot also needs policy_port (the server it "
             f"dials), while mock and lerobot_local build in process with no server - mock ignores the "
-            f"instruction and drives a test motion on every joint. "
+            f"instruction and drives a test motion on every joint, and lerobot_local needs "
+            f"pretrained_name_or_path (the checkpoint it loads). "
             f"status/stop take no other parameters.",
             "inputSchema": {
                 "json": {
@@ -3172,9 +3173,11 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Policy provider name. groot (default, needs policy_port) and moveit2 dial a "
-                                "server; lerobot_local runs a local checkpoint in process; mock is a test "
-                                "motion on every joint that ignores the instruction. See list_providers()."
+                                "Policy provider name (e.g. groot, moveit2, lerobot_local, mock). "
+                                "groot (default, needs policy_port) and moveit2 dial a server; "
+                                "lerobot_local runs a local checkpoint in process and needs "
+                                "pretrained_name_or_path; mock is a test motion on every joint that "
+                                "ignores the instruction. See list_providers()."
                             ),
                             "default": "groot",
                         },
