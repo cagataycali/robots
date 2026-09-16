@@ -218,3 +218,44 @@ class TestDisconnectThatFails:
         text = _text(asyncio.run(_execute(robot)))
         assert text.index("no checkpoint") < text.index("disconnecting it failed: bus busy")
         assert "still connected (torque on)" in text
+
+
+class TestAnAbandonedBringUpReportsHowLongItRan:
+    """Releasing the arm is a terminal exit, so it settles the elapsed time too.
+
+    ``duration`` is reset to ``0.0`` when a task starts and only a terminal
+    writer settles it. The two exits that release the arm here return before the
+    rollout's own loop and before the outer handler that settles every raise, so
+    each has to settle its own: a bring-up that really did spend seconds on a
+    motors-bus handshake and a checkpoint load otherwise reported ``0.0s``, and
+    kept reporting it, since nothing writes the duration once a task is
+    terminal. The stop-gate exit needs nothing of its own -
+    :meth:`_honor_stop_request` settles before it releases the arm.
+    """
+
+    _SPENT = 0.15
+
+    @pytest.mark.parametrize("exit_reached", ["cannot_be_built", "cannot_be_initialized"])
+    def test_the_elapsed_time_is_reported_not_zero(self, arm, exit_reached) -> None:
+        robot, spy = arm
+
+        async def slow_boom(*args, **kwargs):
+            await asyncio.sleep(self._SPENT)
+            raise RuntimeError("checkpoint 'nobody/none' not found")
+
+        async def slow_refusal(policy):
+            await asyncio.sleep(self._SPENT)
+            return False
+
+        if exit_reached == "cannot_be_built":
+            robot._get_policy = slow_boom
+        else:
+            robot._initialize_policy = slow_refusal
+
+        asyncio.run(_execute(robot))
+
+        assert robot._task_state.status is TaskStatus.ERROR
+        assert spy.log == ["connect", "disconnect"]  # the exit under test was the one reached
+        assert robot._task_state.duration >= self._SPENT
+        # The figure the agent reads, now and on every later status call.
+        assert "Total Duration: 0.0s" not in _text(robot.get_task_status())
