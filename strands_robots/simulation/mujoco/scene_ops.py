@@ -1111,29 +1111,59 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     # load_scene + add_robot round-trip).
     _sync_cached_xml(world, spec)
 
-    # Re-discover per-robot IDs. Names inside MuJoCo are namespaced under
-    # robot.namespace (e.g. "arm1/shoulder_pan") when robots were attached
-    # via SpecBuilder.attach_robot; fall back to the raw name otherwise.
+    rediscover_robot_ids(world, new_model, mj)
+
+    return True
+
+
+def rediscover_robot_ids(world: SimWorld, model: Any, mj: Any) -> None:
+    """Resolve every registered robot's joint / actuator ids against ``model``.
+
+    Names inside MuJoCo are namespaced under ``robot.namespace`` (e.g.
+    ``"arm1/shoulder_pan"``) when robots were attached via
+    ``SpecBuilder.attach_robot``; the raw name is the fallback. Called after
+    every recompile, and by ``load_scene`` when it carries a registered robot
+    into a loaded model that already contains that robot's subtree (the
+    ``export_xml`` -> ``load_scene`` round trip).
+    """
     for robot in world.robots.values():
         pfx = robot.namespace or ""
         robot.joint_ids = []
         for jnt_name in robot.joint_names:
             jid = -1
             if pfx:
-                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
             if jid < 0:
-                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
-        robot.actuator_ids = robot_owned_actuator_ids(new_model, robot, mj)
+        robot.actuator_ids = robot_owned_actuator_ids(model, robot, mj)
         # Single-robot fallback. Ownership above is settled by namespace or by
         # driven joint; a lone robot whose actuators are neither prefixed nor
         # joint-driven (a tendon or site transmission in a scene loaded whole,
         # so no attach prefix) matches on neither, and in a one-robot scene
         # every actuator is unambiguously that robot's.
         if not robot.actuator_ids and len(world.robots) == 1:
-            robot.actuator_ids = list(range(new_model.nu))
+            robot.actuator_ids = list(range(model.nu))
 
+
+def robot_subtree_in_model(robot: SimRobot, model: Any, mj: Any) -> bool:
+    """Whether ``model`` already contains ``robot``'s joints under its namespace.
+
+    True when the robot has joint names and every one resolves (namespaced,
+    else raw) in ``model`` - the signature of a scene file that was exported
+    with the robot in it. A robot with no recorded joint names cannot be
+    recognised, so the answer is False.
+    """
+    if not robot.joint_names:
+        return False
+    pfx = robot.namespace or ""
+    for jnt_name in robot.joint_names:
+        jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name) if pfx else -1
+        if jid < 0:
+            jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+        if jid < 0:
+            return False
     return True
 
 
@@ -1548,9 +1578,13 @@ def inject_robot_into_scene(
         # raised. That leftover compiles, so it never broke the scene, but the
         # snapshot is already in hand - restoring it costs nothing and puts
         # every failure path on one rule: the spec is left as it was found.
+        # Re-raised after the rollback, like the recompile refusal below: folded
+        # into False the caller reported "Failed to inject robot '<name>' into
+        # scene." and MuJoCo's reason - e.g. "repeated name 'so101/base' in
+        # mesh" when the scene already carries that robot - stayed in the log.
         logger.error("Robot attach failed for '%s': %s", robot.name, e)
         world._backend_state["spec"] = backup_spec
-        return False
+        raise
 
     # Ask for the refusal's own reason rather than a bare False, exactly as
     # inject_object_into_scene does. Folded into a False it reached the caller as

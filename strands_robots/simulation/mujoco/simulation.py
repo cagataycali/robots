@@ -142,9 +142,11 @@ from strands_robots.simulation.mujoco.scene_ops import (
     install_compiled_model,
     patch_scene_mjcf,
     persist_world_option,
+    rediscover_robot_ids,
     registry_rebuild_loss_error,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    robot_subtree_in_model,
     torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
@@ -1503,7 +1505,19 @@ class MuJoCoSimEngine(
         # facade named after the very arm this drops - "Scene loaded, Bodies: 3"
         # followed later by "No robots registered" is how it used to surface.
         prior = self._world
-        dropped_robots = list(prior.robots) if prior is not None else []
+        # A robot whose namespaced joints are ALL in the loaded model was
+        # exported with the scene (export_xml -> load_scene, the documented
+        # round trip): its bodies and actuators are in the file, so it is
+        # carried over - registration and ids re-resolved against the new
+        # model - instead of being dropped. Dropping it left the arm in the
+        # scene but unreachable ("No robots registered"), and add_robot under
+        # the same name then collided on every mesh name.
+        carried_robots = (
+            [name for name, robot in prior.robots.items() if robot_subtree_in_model(robot, model, mj)]
+            if prior is not None
+            else []
+        )
+        dropped_robots = [name for name in prior.robots if name not in carried_robots] if prior is not None else []
         dropped_objects = list(prior.objects) if prior is not None else []
         # "default" is the free camera create_world seeds into every world -
         # nobody added it and the loaded world renders from it too, so it is
@@ -1530,9 +1544,23 @@ class MuJoCoSimEngine(
 
             world._backend_state["scene_loaded"] = True
             world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
+            if carried_robots and prior is not None:
+                for name in carried_robots:
+                    robot = prior.robots[name]
+                    robot._world = world if robot._world is not None else None
+                    world.robots[name] = robot
+                if prior._backend_state.get("robot_base_xml"):
+                    world._backend_state["robot_base_xml"] = prior._backend_state["robot_base_xml"]
+                rediscover_robot_ids(world, model, mj)
             self._world = world
 
         dropped_line = _load_scene_dropped_line(dropped_robots, dropped_objects, dropped_cameras, dropped_specs)
+        if carried_robots:
+            dropped_line = (
+                f"Robot(s) {carried_robots} found in the loaded file (same namespaced joints) and kept "
+                f"registered - robot-scoped actions keep working; do NOT add_robot them again (the names "
+                f"would collide).\n" + dropped_line
+            )
         return {
             "status": "success",
             "content": [
@@ -1546,6 +1574,7 @@ class MuJoCoSimEngine(
                 },
                 {
                     "json": {
+                        "carried_robots": carried_robots,
                         "dropped_robots": dropped_robots,
                         "dropped_objects": dropped_objects,
                         "dropped_cameras": dropped_cameras,
@@ -2591,7 +2620,18 @@ class MuJoCoSimEngine(
             # Clean up on failure
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
-            return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+            hint = ""
+            if "repeated name" in str(e) and f"'{name}/" in str(e):
+                # MuJoCo refused the attach because a subtree namespaced under
+                # this robot's name is already in the live model: a scene loaded
+                # from a file exported with the robot in it (load_scene keeps
+                # such a robot registered), or an earlier add under this name.
+                hint = (
+                    f" A subtree named '{name}/' is already in the scene. If it came from load_scene of a "
+                    f"file exported with this robot, it is already registered (see list_robots) and needs no "
+                    f"add_robot; otherwise pick a different name."
+                )
+            return {"status": "error", "content": [{"text": f"Failed to load: {e}{hint}"}]}
 
     def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
         """Name the next step the robot just added can actually take.

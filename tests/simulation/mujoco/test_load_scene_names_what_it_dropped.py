@@ -99,7 +99,7 @@ def test_fresh_world_keeps_the_historical_text(sim, scene_path):
     text = _text(r)
     assert "Scene loaded from table.xml" in text and "REPLACED" not in text and "dropped" not in text, text
     j = _json(r)
-    assert j == {"dropped_robots": [], "dropped_objects": [], "dropped_cameras": []}
+    assert j == {"carried_robots": [], "dropped_robots": [], "dropped_objects": [], "dropped_cameras": []}
 
 
 def test_the_named_recovery_works(sim, scene_path):
@@ -116,3 +116,67 @@ def test_line_without_a_known_data_config_leaves_a_placeholder():
     line = _load_scene_dropped_line(["arm"], [], [], {"arm": None})
     assert "add_robot(name='arm', data_config=...)" in line
     assert _load_scene_dropped_line([], [], []) == ""
+
+
+def _export_then_load(sim, tmp_path):
+    out = str(tmp_path / "exported.xml")
+    assert sim.export_xml(output_path=out)["status"] == "success"
+    return sim.load_scene(out)
+
+
+def test_export_xml_load_scene_round_trip_keeps_the_robot_registered(sim, tmp_path):
+    assert sim.add_robot(name="so101", data_config="so101")["status"] == "success"
+    r = _export_then_load(sim, tmp_path)
+    assert r["status"] == "success", r
+    text = _text(r)
+    assert "Robot(s) ['so101'] found in the loaded file" in text and "kept registered" in text, text
+    assert "dropped robot(s)" not in text
+    j = _json(r)
+    assert j["carried_robots"] == ["so101"] and j["dropped_robots"] == []
+    assert "so101" in sim._world.robots
+    robot = sim._world.robots["so101"]
+    assert len(robot.joint_ids) == 6 and len(robot.actuator_ids) == 6, (robot.joint_ids, robot.actuator_ids)
+    st = sim.get_robot_state("so101")
+    assert st["status"] == "success", st
+    assert sim._world._backend_state.get("scene_loaded") is True
+
+
+def test_round_trip_then_add_robot_under_the_same_name_is_refused_as_already_registered(sim, tmp_path):
+    sim.add_robot(name="so101", data_config="so101")
+    _export_then_load(sim, tmp_path)
+    r = sim.add_robot(name="so101", data_config="so101")
+    assert r["status"] == "error"
+    assert "already exists" in _text(r), _text(r)
+    # The carried registration survived the refused add.
+    assert "so101" in sim._world.robots and sim.get_robot_state("so101")["status"] == "success"
+
+
+def test_loading_an_exported_scene_into_a_fresh_sim_then_add_robot_names_the_collision(sim, tmp_path):
+    # A file exported WITH the robot, loaded where nothing is registered: the
+    # subtree is in the model but unknown to the registry, so add_robot under
+    # that name collides in MuJoCo. The reason travels (it used to be the bare
+    # "Failed to inject robot 'so101' into scene.") with a hint.
+    sim.add_robot(name="so101", data_config="so101")
+    out = str(tmp_path / "exported.xml")
+    assert sim.export_xml(output_path=out)["status"] == "success"
+    fresh = Simulation(tool_name="load_scene_fresh", mesh=False)
+    try:
+        fresh.create_world()
+        assert fresh.load_scene(out)["status"] == "success"
+        assert fresh.list_robots() == []
+        r = fresh.add_robot(name="so101", data_config="so101")
+        assert r["status"] == "error"
+        text = _text(r)
+        assert "repeated name 'so101/" in text, text
+        assert "A subtree named 'so101/' is already in the scene" in text, text
+        assert "Failed to inject robot" not in text
+        assert "so101" not in fresh._world.robots
+    finally:
+        fresh.cleanup()
+
+
+def test_a_scene_without_the_robot_still_drops_it(sim, tmp_path, scene_path):
+    sim.add_robot(name="so101", data_config="so101")
+    r = sim.load_scene(scene_path)
+    j = _json(r)
+    assert j["carried_robots"] == [] and j["dropped_robots"] == ["so101"]
