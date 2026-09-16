@@ -67,8 +67,14 @@ LerobotLocalPolicy(
 
 Loading a large VLA (MolmoAct2 SO-100/101 ships 1,295 weight files) takes a
 minute or more. Models are cached process-wide, keyed by
-`(pretrained_name_or_path, policy_type, device, revision)`; a second
-`create_policy` with the same key reuses the weights. Every instance records
+`(pretrained_name_or_path, policy_type, device, revision)` and by the RTC
+request (`rtc_enabled`, `rtc_execution_horizon`, `rtc_max_guidance_weight`); a
+second `create_policy` with the same key reuses the weights. RTC is part of the
+key because it is configured on the model rather than beside it, so an RTC-on
+and an RTC-off policy from one checkpoint hold one resident copy each - which is
+what lets an on/off comparison run in a single process without either arm
+rewriting the other's RTC. Call `clear_model_cache()` between the two arms when
+the memory matters more than the reload. Every instance records
 `load_cache_hit` (`bool`) and `load_time_s` (`float`, near `0.0` on a hit),
 and `run_policy` reports them as
 `policy_load_cache_hit` / `policy_load_time_s` in its result block.

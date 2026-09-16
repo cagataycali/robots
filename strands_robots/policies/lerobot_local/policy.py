@@ -386,6 +386,13 @@ _RTC_FALLBACK_FPS: float = 30.0
 # Two wrappers driving the SAME checkpoint+device CONCURRENTLY would share that
 # state; opt out with ``cache_model=False`` for that (rare) case. Call
 # :func:`clear_model_cache` to evict and free the held GPU/CPU memory.
+#
+# RTC is part of the key because RTC state lives ON the model, not beside it:
+# ``_init_rtc`` writes ``config.rtc_config`` and has lerobot build the model's
+# ``rtc_processor`` from it, and lerobot then branches on that same field -
+# ``select_action`` asserts ``not self._rtc_enabled()``. Two wrappers that asked
+# for different RTC therefore cannot share one module, so they get one entry
+# each; wrappers that asked for the same RTC still share one.
 _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
@@ -747,6 +754,17 @@ class LerobotLocalPolicy(Policy):
             if error:
                 raise ValueError(error)
         self._rtc_max_guidance_weight = rtc_max_guidance_weight
+        # The caller's RTC request exactly as given, frozen here because it is
+        # part of the model cache key (see ``_model_cache_key``) and the live
+        # attributes above cannot serve: ``_init_rtc`` resolves the horizon and
+        # the ceiling in place from the checkpoint, so by the time a policy
+        # reloads its model (``get_actions`` on a released policy) they no longer
+        # describe what was asked for.
+        self._rtc_identity: tuple[Any, ...] = (
+            rtc_enabled,
+            rtc_execution_horizon,
+            rtc_max_guidance_weight,
+        )
         # The previous chunk as it was handed to the consumer - LeRobot's
         # ``ActionQueue.original_queue``. The prefix the denoiser receives is a
         # SLICE of this taken at the next inference, once the number of steps the
@@ -1092,13 +1110,28 @@ class LerobotLocalPolicy(Policy):
     def _model_cache_key(self, namespace: str, *extra: Any) -> tuple[Any, ...] | None:
         """Build the process-cache key for the underlying model load.
 
+        The key carries the caller's RTC request (``_rtc_identity``) alongside
+        the checkpoint, device and ``namespace``-specific fields, because
+        ``_init_rtc`` configures RTC by mutating the shared model: without it, a
+        policy built with ``rtc_enabled=True`` handed its RTC to every later
+        policy loaded from the same checkpoint, and left the ones built before it
+        driving an RTC-enabled module through ``select_action``. The first three
+        fields stay in place so :func:`clear_model_cache` and
+        :func:`list_cached_models` keep reading the checkpoint and device.
+
         Returns ``None`` when caching is disabled or there is no checkpoint
         path to key on (a from-scratch / parameterless policy), which makes the
         cache a transparent no-op for those cases.
         """
         if not self.cache_model or not self.pretrained_name_or_path:
             return None
-        return (namespace, self.pretrained_name_or_path, self.requested_device, *extra)
+        return (
+            namespace,
+            self.pretrained_name_or_path,
+            self.requested_device,
+            *self._rtc_identity,
+            *extra,
+        )
 
     def _cache_get(self, key: tuple[Any, ...] | None) -> Any:
         if key is None:
