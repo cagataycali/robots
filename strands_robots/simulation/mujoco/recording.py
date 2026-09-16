@@ -524,9 +524,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names, fps=fps)
-                self._world._backend_state["dataset_recorder"] = resumed
+                recorder = resumed
             else:
-                self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                recorder = _DatasetRecorder.create(
                     repo_id=repo_id,
                     fps=fps,
                     robot_type=robot_type,
@@ -541,12 +541,14 @@ class RecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            resumed_line = self._arm_dataset_recorder(self._world._backend_state, recorder, resumed=resume_existing)
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
+                            f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Frames are captured by a policy rollout - run_policy (one call per "

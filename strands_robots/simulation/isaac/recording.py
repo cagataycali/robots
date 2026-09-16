@@ -427,9 +427,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                     logger.info("Resuming existing dataset for append: %s", dataset_dir)
                     resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
                     self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims, action_names, fps=fps)
-                    state["dataset_recorder"] = resumed
+                    recorder = resumed
                 else:
-                    state["dataset_recorder"] = _DatasetRecorder.create(
+                    recorder = _DatasetRecorder.create(
                         repo_id=repo_id,
                         fps=fps,
                         robot_type=robot_type,
@@ -443,12 +443,14 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                         video_width=int(self._config.camera_width),
                         video_height=int(self._config.camera_height),
                     )
+                resumed_line = self._arm_dataset_recorder(state, recorder, resumed=resume_existing)
                 return {
                     "status": "success",
                     "content": [
                         {
                             "text": (
                                 f"Recording Isaac scene to LeRobotDataset: {repo_id}\n"
+                                f"{resumed_line}"
                                 f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
                                 f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                                 f"Run policies to capture frames, then stop_recording to save the episode"
