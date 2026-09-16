@@ -1,6 +1,6 @@
 """Contract pins for the concurrency group of every workflow a push can start.
 
-``pr-and-push.yml`` cancels an in-flight run when a new one starts in the same
+``ci.yml`` cancels an in-flight run when a new one starts in the same
 concurrency group. Keyed on ``github.event.pull_request.number || github.ref``
 that was two different behaviours wearing one expression, because only the first
 operand is ever set:

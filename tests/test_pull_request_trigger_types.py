@@ -1,6 +1,6 @@
 """Contract pins for which pull_request events may start a workflow.
 
-``pr-and-push.yml`` carries the repository's one required check
+``ci.yml`` carries the repository's one required check
 (``call-test-lint / Test and Lint``) and cancels its own in-flight run for the
 same pull request (``cancel-in-progress: true``). Those two facts together make
 the trigger list load-bearing: an event that cannot change the head sha, but is
@@ -76,7 +76,7 @@ without ``edited`` the report would ask for a fix it could never observe.
 
 The measured harm cannot reach the *required check* from it either, and that is a
 premise rather than an assurance: cancellation is per concurrency group,
-``pr-and-push.yml`` keys its group on its own ``github.workflow`` name and does
+``ci.yml`` keys its group on its own ``github.workflow`` name and does
 not subscribe to ``edited``, so an edit starts no run in that group. Both halves
 are read back by ``test_an_exempt_workflow_cannot_cancel_the_required_check``, so
 an exemption cannot outlive the reasoning that admitted it.

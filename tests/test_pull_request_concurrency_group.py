@@ -1,6 +1,6 @@
 """Contract pins for the concurrency group of every workflow a pull_request can start.
 
-A concurrency group is per workflow: ``pr-and-push.yml`` keys its own on
+A concurrency group is per workflow: ``ci.yml`` keys its own on
 ``github.workflow``, so cancelling a superseded run of the required check says
 nothing about the ten other workflows a pull request starts. Each of those has to
 declare its own group or it declares none, and five of them declared none -
