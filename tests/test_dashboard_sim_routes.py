@@ -451,6 +451,32 @@ class TestEstop:
         assert safety.store.all() == [], "the refused session is not left running"
         assert session.snapshot.steps == 0
 
+    def test_an_estop_in_the_instant_before_the_create_is_folded_drops_the_session(self, client, monkeypatch):
+        """The build finished clear, and the red button lands as the create is about to be folded.
+
+        Between the last read of the lockout in the route and the fold in
+        ``accepted`` there is no work left for the request but the fold itself,
+        so the e-stop is fired on the way into it - the narrowest window the
+        latch can land in. The refusal is 423 as for the wider windows; what is
+        pinned here is that the refused session leaves the store with it. Left
+        behind it holds one of the slots, frozen, and thaws into a running robot
+        on the next resume - one no operator was ever handed.
+        """
+        safety = client.app.state.safety
+        fold = type(safety).accepted
+
+        def an_estop_lands_first():
+            safety.estop(by="operator")
+            fold(safety)
+
+        monkeypatch.setattr(safety, "accepted", an_estop_lands_first)
+        r = client.post("/api/sim", json={"robot": "so101"})
+
+        assert r.status_code == 423 and "e-stop engaged" in r.json()["error"]
+        assert safety.lockout.state == "locked", "the refused create is not proof that the lockout lifted"
+        assert safety.store.all() == [], "a create the caller was told was refused holds no slot"
+        assert safety.resume(by="operator")["thawed"] == [], "and there is nothing for a resume to set running"
+
     def test_an_estop_during_a_write_refuses_that_request_and_stays_latched(self, client, monkeypatch):
         """The joints request was admitted while clear, and the red button was pressed mid-write.
 
