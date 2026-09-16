@@ -122,7 +122,7 @@ class SimSession:
         return self._frozen.is_set()
 
     def wait_ready(self, timeout: float = 30.0) -> bool:
-        """Block until the engine exists (or failed). Tests and the create route use it."""
+        """Block until the engine exists and rendered once (or failed). Tests and the create route use it."""
         return self._ready.wait(timeout)
 
     # -- controls (any thread) -----------------------------------------------
@@ -185,10 +185,25 @@ class SimSession:
             cameras=cameras,
             model_path=_model_path(self.robot),
         )
+        # The first render builds the GL context, which takes longer than the
+        # engine itself (0.7 s here, more under software GL). Ready means the
+        # session steps AND renders, so that cost is paid before the create
+        # route answers and a machine with no renderer reports ``error`` there,
+        # not as a session that never shows a frame.
+        try:
+            rgb, _ = engine.get_frame(width=_RENDER_SIZE[0], height=_RENDER_SIZE[1])
+        except Exception as exc:
+            logger.warning("sim %s (%s) has no renderer: %s", self.id, self.robot, exc)
+            self._publish(state="error", error=f"{type(exc).__name__}: {exc}")
+            self._ready.set()
+            self._close(engine)
+            return
+        with self._lock:
+            self._frame = rgb
         self._ready.set()
 
-        last_render = 0.0
-        last_wall = time.monotonic()
+        last_render = time.monotonic()
+        last_wall = last_render
         frames = 0
         fps = 0.0
         fps_window = time.monotonic()
@@ -229,12 +244,16 @@ class SimSession:
             logger.exception("sim %s (%s) died", self.id, self.robot)
             self._publish(state="error", error=f"{type(exc).__name__}: {exc}")
         finally:
-            close = getattr(engine, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    logger.debug("engine close failed", exc_info=True)
+            self._close(engine)
+
+    @staticmethod
+    def _close(engine: Any) -> None:
+        close = getattr(engine, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.debug("engine close failed", exc_info=True)
 
     def _drain(self, engine: Any) -> None:
         while True:
