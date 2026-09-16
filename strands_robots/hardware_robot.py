@@ -196,6 +196,13 @@ _CAMERA_STREAM_DEFAULTS: dict[str, Any] = {"fps": 30, "width": 640, "height": 48
 # registry lookup below, not forwarded to the config dataclass.
 _CAMERA_TYPE_KEY = "type"
 
+# Where a network driver's port is reached. A lerobot driver config spells the
+# host it talks to differently per family - ``ip_address`` (Reachy 2),
+# ``remote_ip`` (LeKiwi client), ``robot_ip`` (Unitree G1), ``host`` - and
+# ``Robot._device_facts`` names it beside a port that is not a device path, so
+# a bare TCP port number is not the whole answer an agent gets.
+_ADDRESS_FIELDS = ("ip_address", "remote_ip", "robot_ip", "host")
+
 
 @functools.cache
 def _ensure_lerobot_cameras_registered() -> None:
@@ -2744,12 +2751,23 @@ class Robot(TeleopMixin, AgentTool):
         turned the whole :meth:`get_status` probe into its error shape for
         every idle arm.
 
+        Every fact here is three-state for the same reason: ``True``/``False``
+        is a reading, ``None`` is "this was not readable". A port is not
+        always a device path - lerobot's network drivers carry a TCP port
+        (``Reachy2RobotConfig.port`` is ``50065``, reached at its
+        ``ip_address``), and there is nothing on this host to stat for one, so
+        ``port_present`` stays ``None`` and must not be reported as either
+        answer.
+
         Returns:
             ``port`` (``None`` when the driver has no port), ``port_present``
-            (``None`` when there is no port path to test), ``is_connected``,
-            ``is_calibrated`` (``None`` until connected), ``cameras`` (the
-            configured names) and ``cameras_connected`` (per live camera,
-            best-effort - a camera whose probe raises is omitted).
+            (``True``/``False`` from the filesystem for a path port; ``None``
+            when the port is not a path, so presence was never read),
+            ``address`` (the host a network port is reached at, ``None`` when
+            the config names none), ``is_connected``, ``is_calibrated``
+            (``None`` until connected), ``cameras`` (the configured names) and
+            ``cameras_connected`` (per live camera, best-effort - a camera
+            whose probe raises is omitted).
         """
         robot = self.robot
         is_connected = bool(getattr(robot, "is_connected", False))
@@ -2758,6 +2776,16 @@ class Robot(TeleopMixin, AgentTool):
         port_present: bool | None = None
         if isinstance(port, str) and port.startswith("/"):
             port_present = os.path.exists(port)
+        address: str | None = None
+        if port is not None and port_present is None:
+            # A port that is not a device path is a network port, and the port
+            # number alone does not say where. lerobot spells the host
+            # differently per driver, so the first one the config carries wins.
+            for field in _ADDRESS_FIELDS:
+                value = getattr(config, field, None)
+                if isinstance(value, str) and value:
+                    address = value
+                    break
         is_calibrated: bool | None = None
         if is_connected:
             is_calibrated = bool(getattr(robot, "is_calibrated", True))
@@ -2776,6 +2804,7 @@ class Robot(TeleopMixin, AgentTool):
         return {
             "port": port,
             "port_present": port_present,
+            "address": address,
             "is_connected": is_connected,
             "is_calibrated": is_calibrated,
             "cameras": cameras,
@@ -2790,8 +2819,10 @@ class Robot(TeleopMixin, AgentTool):
             facts: The mapping :meth:`_device_facts` returns.
 
         Returns:
-            Newline-terminated lines: the connection, the port (named as absent
-            when its path is not on this host), and the cameras.
+            Newline-terminated lines: the connection, the port and the
+            cameras. The port line reports what was read - present, absent
+            (with the remedy), or, for a network port, that presence on this
+            host was never a fact to read.
         """
         if facts["is_connected"]:
             calibrated = "calibrated" if facts["is_calibrated"] else "NOT calibrated"
@@ -2806,7 +2837,18 @@ class Robot(TeleopMixin, AgentTool):
                 "lists what this host does see."
             )
         elif facts["port"] is not None and not facts["is_connected"]:
-            lines.append(f"Port: {facts['port']} is present on this host")
+            if facts["port_present"]:
+                lines.append(f"Port: {facts['port']} is present on this host")
+            else:
+                # port_present is None: the port is not a device path, so
+                # nothing on this host was stat-ed. Reporting it as present
+                # would be the defect this method exists to fix - a sentence
+                # an agent cannot tell from a reading.
+                where = f", reached at {facts['address']}" if facts["address"] else ""
+                lines.append(
+                    f"Port: {facts['port']} is a network port{where}, not a device path - this host has no "
+                    "such path to check, so neither answer about it would be a reading."
+                )
         if facts["cameras"]:
             states = facts["cameras_connected"]
             named = ", ".join(

@@ -9,7 +9,9 @@ through lerobot's ``is_calibrated`` (a bus read that refuses before
 "error"}`` shape.
 
 The stand-ins here mirror lerobot's contract: ``is_calibrated`` raises while
-disconnected, the config carries ``port`` and ``cameras``.
+disconnected, the config carries ``port`` and ``cameras``. A port is not always
+a device path, so the shipped ``Reachy2RobotConfig`` is used as-is for the
+network case rather than imitated.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ import threading
 from typing import Any
 
 import pytest
+
+from lerobot.robots.reachy2 import Reachy2RobotConfig
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
@@ -55,7 +59,18 @@ class _Arm:
         return True
 
 
-def _hw(arm: _Arm) -> HwRobot:
+class _Device:
+    """An arm built around a config as given - including a non-path port."""
+
+    def __init__(self, config: Any) -> None:
+        self.name = "device"
+        self.robot_type = "device"
+        self.is_connected = False
+        self.config = config
+        self.cameras: dict[str, _Camera] = {}
+
+
+def _hw(arm: _Arm | _Device) -> HwRobot:
     hw = HwRobot.__new__(HwRobot)
     hw.tool_name_str = "so101"
     hw.data_config = None
@@ -119,6 +134,45 @@ class TestTheToolStatus:
         assert result["status"] == "success"
 
 
+class TestAPortThatIsNotAPath:
+    """``port_present`` is three-state, and the text may not flatten it.
+
+    lerobot's network drivers carry a TCP port, not a device path: nothing on
+    this host is stat-ed for one, so ``port_present`` stays ``None``. Reporting
+    it as present would be the very defect ``status`` exists to fix - a
+    sentence an agent cannot tell apart from a reading.
+    """
+
+    def test_a_network_port_is_not_read_as_present_on_this_host(self):
+        config = Reachy2RobotConfig()  # the shipped config: port is a TCP port, reached at ip_address
+        assert isinstance(config.port, int)  # the shape is lerobot's, not this test's
+        result = _hw(_Device(config)).get_task_status()
+        text, facts = _text(result), result["content"][1]["json"]
+        assert facts["port"] == config.port
+        assert facts["port_present"] is None  # nothing on this host was stat-ed
+        assert "present on this host" not in text  # so presence is claimed neither way
+        assert f"Port: {config.port} is a network port, reached at {config.ip_address}, not a device path" in text
+        assert "this host has no such path to check" in text
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected"),
+        [
+            ("ip_address", "reachy.local", "reachy.local"),  # Reachy 2
+            ("remote_ip", "192.168.1.9", "192.168.1.9"),  # LeKiwi client
+            ("robot_ip", "192.168.123.161", "192.168.123.161"),  # Unitree G1
+            ("host", "kiwi.local", "kiwi.local"),
+            ("host", object(), None),  # a host that is not an address names nothing
+            ("ip_address", "", None),
+        ],
+    )
+    def test_the_address_a_network_port_is_reached_at_is_named(self, field, value, expected):
+        config = type("Cfg", (), {"port": 50065, "cameras": {}, field: value})()
+        facts = _hw(_Device(config))._device_facts()
+        assert facts["address"] == expected
+        text = HwRobot._device_lines(facts)
+        assert (f"reached at {expected}" in text) is (expected is not None)
+
+
 class TestThePythonProbe:
     def test_an_idle_arm_is_not_an_error(self, tmp_path):
         hw = _hw(_Arm(port=str(tmp_path / "gone"), cameras={"top": False}))
@@ -138,7 +192,8 @@ class TestThePythonProbe:
 
 
 @pytest.mark.parametrize(
-    "attr", ["port", "port_present", "is_connected", "is_calibrated", "cameras", "cameras_connected"]
+    "attr",
+    ["port", "port_present", "address", "is_connected", "is_calibrated", "cameras", "cameras_connected"],
 )
 def test_the_tool_and_the_probe_carry_the_same_facts(attr, tmp_path):
     hw = _hw(_Arm(port=str(tmp_path / "gone"), cameras={"top": False}))
