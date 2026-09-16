@@ -52,7 +52,7 @@ import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
-from strands_robots.policies.base import collect_required_bodies, resolve_chunk_length
+from strands_robots.policies.base import collect_required_bodies, instruction_not_read_notice, resolve_chunk_length
 from strands_robots.rendering.video import require_clip_encoder
 from strands_robots.simulation.observers import (
     SCHEMA_VERSION as _OBSERVER_SCHEMA_VERSION,
@@ -3035,6 +3035,11 @@ class PolicyRunner:
         )
         if sim_time is not None:
             text += f" | sim_t={sim_time:.3f}s"
+        # A policy that never read the instruction says so beside the
+        # instruction it just echoed, or the line above reads as the task done.
+        _instruction_notice = instruction_not_read_notice(policy)
+        if _instruction_notice is not None:
+            text += f"\n{_instruction_notice}"
         if _stop_when_reset_warning is not None:
             text += f"\n{_stop_when_reset_warning}"
         if vwriter is not None:
@@ -3073,6 +3078,7 @@ class PolicyRunner:
             "robot_name": robot_name,
             "policy": type(policy).__name__,
             "instruction": instruction,
+            "instruction_read": _instruction_notice is None,
             "n_steps": step_count,
             # Alias of n_steps under the retry-loop name: the control steps
             # actually executed before the rollout ended. Paired with
