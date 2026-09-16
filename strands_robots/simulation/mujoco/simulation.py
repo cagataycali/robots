@@ -142,9 +142,11 @@ from strands_robots.simulation.mujoco.scene_ops import (
     install_compiled_model,
     patch_scene_mjcf,
     persist_world_option,
+    rediscover_robot_ids,
     registry_rebuild_loss_error,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    robot_subtree_in_model,
     torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
@@ -661,6 +663,75 @@ def _release_live_engines() -> None:
 
 
 atexit.register(_release_live_engines)
+
+
+def _load_scene_dropped_line(
+    robots: list[str],
+    objects: list[str],
+    cameras: list[str],
+    robot_specs: dict[str, Any] | None = None,
+    in_loaded_file: frozenset[str] | None = None,
+) -> str:
+    """The line ``load_scene`` adds when the swap discarded registered robots, objects or cameras.
+
+    Empty string when nothing was registered (a fresh world), so the historical
+    text is unchanged for that case. Otherwise names each dropped group and the
+    verb that puts it back into the LOADED scene (``add_robot`` mutates the
+    loaded spec in place), spelling the ``add_robot`` call with the data_config
+    the robot was registered under when it is known.
+
+    ``in_loaded_file`` names the dropped objects/cameras the loaded file still
+    carries under the same name - the ``export_xml`` -> ``load_scene`` round
+    trip. Those are untracked, not absent, and ``add_object`` under that name is
+    refused with MuJoCo's "repeated name", so they get their own sentence
+    instead of an ``add_object`` call that cannot work. Likewise the "No robots
+    registered" warning is only true when a robot was actually dropped: when the
+    robot was carried instead, robot-scoped actions keep working.
+    """
+    if not (robots or objects or cameras):
+        return ""
+    present = in_loaded_file or frozenset()
+    groups: list[str] = []
+    if robots:
+        groups.append(f"robot(s) {robots}")
+    if objects:
+        groups.append(f"object(s) {objects}")
+    if cameras:
+        groups.append(f"camera(s) {cameras}")
+    # Only a dropped robot makes robot-scoped actions refuse.
+    consequence = " (robot-scoped actions refuse with 'No robots registered' until then)" if robots else ""
+    remedy: list[str] = []
+    if robots:
+        calls = []
+        for name in robots:
+            cfg = (robot_specs or {}).get(name)
+            calls.append(
+                f"add_robot(name='{name}', data_config='{cfg}')"
+                if cfg
+                else f"add_robot(name='{name}', data_config=...)"
+            )
+        remedy.append(" / ".join(calls) + " puts the arm back INTO the loaded scene")
+    if [o for o in objects if o not in present]:
+        remedy.append("add_object re-adds objects")
+    if [c for c in cameras if c not in present]:
+        remedy.append("add_camera re-adds cameras")
+    line = (
+        f"REPLACED the live world: dropped {', '.join(groups)} - the loaded file is now the whole scene{consequence}."
+    )
+    if remedy:
+        line += f" {'; '.join(remedy)}."
+    still: list[str] = []
+    if [o for o in objects if o in present]:
+        still.append(f"object(s) {[o for o in objects if o in present]}")
+    if [c for c in cameras if c in present]:
+        still.append(f"camera(s) {[c for c in cameras if c in present]}")
+    if still:
+        line += (
+            f" The loaded file already carries {', '.join(still)} under the same name: they are scene "
+            f"geometry now but no longer tracked, and re-adding them is refused ('repeated name') - "
+            f"use a different name for a new one."
+        )
+    return line + "\n"
 
 
 class MuJoCoSimEngine(
@@ -1458,6 +1529,36 @@ class MuJoCoSimEngine(
         # world (load_scene runs under the blanket dispatch lock, so this
         # acquisition is a reentrant no-op there and the real guard when the
         # method is called directly).
+        # The swap below discards the live registries: every robot, object and
+        # camera added so far is gone, the loaded file is the whole scene. The
+        # result names them, because through the tool the caller is a Robot
+        # facade named after the very arm this drops - "Scene loaded, Bodies: 3"
+        # followed later by "No robots registered" is how it used to surface.
+        prior = self._world
+        # A robot whose namespaced joints are ALL in the loaded model was
+        # exported with the scene (export_xml -> load_scene, the documented
+        # round trip): its bodies and actuators are in the file, so it is
+        # carried over - registration and ids re-resolved against the new
+        # model - instead of being dropped. Dropping it left the arm in the
+        # scene but unreachable ("No robots registered"), and add_robot under
+        # the same name then collided on every mesh name.
+        carried_robots = (
+            [name for name, robot in prior.robots.items() if robot_subtree_in_model(robot, model, mj)]
+            if prior is not None
+            else []
+        )
+        dropped_robots = [name for name in prior.robots if name not in carried_robots] if prior is not None else []
+        dropped_objects = list(prior.objects) if prior is not None else []
+        # "default" is the free camera create_world seeds into every world -
+        # nobody added it and the loaded world renders from it too, so it is
+        # not something the swap took away.
+        dropped_cameras = [c for c in prior.cameras if c != "default"] if prior is not None else []
+        dropped_specs = (
+            {name: getattr(robot, "data_config", None) for name, robot in prior.robots.items()}
+            if prior is not None
+            else {}
+        )
+
         with self._lock:
             world = SimWorld()
             world._backend_state["spec"] = spec
@@ -1473,8 +1574,45 @@ class MuJoCoSimEngine(
 
             world._backend_state["scene_loaded"] = True
             world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
+            if carried_robots and prior is not None:
+                for name in carried_robots:
+                    robot = prior.robots[name]
+                    # Re-point the mesh bridge at the world the robot now
+                    # lives in. ``_attach_robot_to_mesh`` sets ``_world`` so
+                    # the child Mesh's ``_read_state`` can read joint
+                    # positions; left pointing at the world just discarded,
+                    # the child peer would publish state from a dead model.
+                    # An off-mesh robot keeps None - the documented value for
+                    # a standalone robot (see SimRobot._world).
+                    if robot._world is not None:
+                        robot._world = world
+                    world.robots[name] = robot
+                if prior._backend_state.get("robot_base_xml"):
+                    world._backend_state["robot_base_xml"] = prior._backend_state["robot_base_xml"]
+                rediscover_robot_ids(world, model, mj)
             self._world = world
 
+        # Which dropped names the loaded file still carries under the same
+        # name (the export_xml -> load_scene round trip). Those are untracked,
+        # not absent: telling the caller to add_object them is advice MuJoCo
+        # refuses with "repeated name".
+        in_loaded_file = frozenset(
+            name
+            for name, kind in (
+                *((o, mj.mjtObj.mjOBJ_BODY) for o in dropped_objects),
+                *((c, mj.mjtObj.mjOBJ_CAMERA) for c in dropped_cameras),
+            )
+            if mj_name_to_id(model, kind, name) >= 0
+        )
+        dropped_line = _load_scene_dropped_line(
+            dropped_robots, dropped_objects, dropped_cameras, dropped_specs, in_loaded_file
+        )
+        if carried_robots:
+            dropped_line = (
+                f"Robot(s) {carried_robots} found in the loaded file (same namespaced joints) and kept "
+                f"registered - robot-scoped actions keep working; do NOT add_robot them again (the names "
+                f"would collide).\n" + dropped_line
+            )
         return {
             "status": "success",
             "content": [
@@ -1482,9 +1620,19 @@ class MuJoCoSimEngine(
                     "text": (
                         f"Scene loaded from {os.path.basename(scene_path)}\n"
                         f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}\n"
+                        f"{dropped_line}"
                         "Use action='get_state' to inspect, action='step' to simulate"
                     )
-                }
+                },
+                {
+                    "json": {
+                        "carried_robots": carried_robots,
+                        "dropped_robots": dropped_robots,
+                        "dropped_objects": dropped_objects,
+                        "dropped_cameras": dropped_cameras,
+                        "still_in_loaded_file": sorted(in_loaded_file),
+                    }
+                },
             ],
         }
 
@@ -2554,7 +2702,18 @@ class MuJoCoSimEngine(
             # Clean up on failure
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
-            return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+            hint = ""
+            if "repeated name" in str(e) and f"'{name}/" in str(e):
+                # MuJoCo refused the attach because a subtree namespaced under
+                # this robot's name is already in the live model: a scene loaded
+                # from a file exported with the robot in it (load_scene keeps
+                # such a robot registered), or an earlier add under this name.
+                hint = (
+                    f" A subtree named '{name}/' is already in the scene. If it came from load_scene of a "
+                    f"file exported with this robot, it is already registered (see list_robots) and needs no "
+                    f"add_robot; otherwise pick a different name."
+                )
+            return {"status": "error", "content": [{"text": f"Failed to load: {e}{hint}"}]}
 
     def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
         """Name the next step the robot just added can actually take.
@@ -3555,8 +3714,11 @@ class MuJoCoSimEngine(
             "(cameras=None, output_dir=None, fps=30, width=None, height=None, "
             "name=None, max_frames_per_camera=3000) -> dict  # start a "
             "dependency-free background recorder that writes one MP4 per camera "
-            "(no lerobot / dataset); cameras=None records every camera. The "
-            "raw-MP4 sibling of start_recording's LeRobotDataset"
+            "(no lerobot / dataset); cameras=None records every camera. Samples "
+            "WALL time (one frame per 1/fps s of real time), not sim steps - a "
+            "step() burst that returns in milliseconds records ~0 frames. The "
+            "raw-MP4 sibling of start_recording's LeRobotDataset (which records "
+            "one frame per control step)"
         )
         base["methods"]["stop_cameras_recording"] = (
             "() -> dict  # stop start_cameras_recording, flush each camera's "
@@ -7247,8 +7409,26 @@ class MuJoCoSimEngine(
     # The motion primitives (move_to / set_gripper / rotate_wrist) lock per
     # control tick (the step() pattern) so stop_policy / renders can
     # interleave during a long primitive.
+    #: ``start_cameras_recording`` / ``stop_cameras_recording`` are here because
+    #: the recorder thread they start and join renders under ``self._lock``
+    #: (``render`` serializes its mjData read against ``mj_step``). Dispatched
+    #: under the blanket lock, start waited its whole readiness timeout for a
+    #: warmup render that was waiting for the lock start held (6 s of nothing,
+    #: "not ready" warning, first frames lost), and stop joined a thread that was
+    #: blocked in render on the lock stop held - the join expired every time,
+    #: nothing was encoded, and the recording stayed registered. Both take the
+    #: lock themselves around the world reads they do make.
     _SELF_LOCKING_ACTIONS: frozenset[str] = frozenset(
-        {"step", "stop_policy", "remove_robot", "move_to", "set_gripper", "rotate_wrist"}
+        {
+            "step",
+            "stop_policy",
+            "remove_robot",
+            "move_to",
+            "set_gripper",
+            "rotate_wrist",
+            "start_cameras_recording",
+            "stop_cameras_recording",
+        }
     )
 
     _ACTION_ALIASES = {
@@ -7858,7 +8038,7 @@ class MuJoCoSimEngine(
             if exited:
                 self._prune_done_futures()
         if not was_running:
-            msg = f"Was not running on '{robot_name}'"
+            msg = self._was_not_running_msg(robot_name)
         elif exited is False:
             msg = (
                 f"Stop requested on '{robot_name}', but its policy worker is still live after "

@@ -1492,14 +1492,20 @@ hatch run format            # ruff check --fix, ruff format
    was reporting - both read `mergeStateStatus: CLEAN`.
 
    Three properties of that sweep are worth knowing before leaning on it. A
-   truncated path set is named as unevaluated rather than intersected: a capped
-   list is indistinguishable from a complete one in the payload, and this check's
+   truncated path set is never intersected as if it were complete: a capped list
+   is indistinguishable from a complete one in the payload, and this check's
    failure mode is a *missed* overlap, so quietly intersecting a truncated set is
    how one goes missing. The two sides differ in how far away that is - the head
    side is read from the paginated `pulls/{n}/files` endpoint and stops at 3000
-   entries, while the base side has no paginated equivalent and keeps the compare
+   entries, while the base side has no paginated `files` and keeps the compare
    endpoint's 300 - and the head side is the input to the pairwise mode, so it is
-   the one that must not drop a large diff.
+   the one that must not drop a large diff. The base side reaches its 300 often,
+   because `M..base` grows for as long as a branch sits in review, so a range that
+   reaches it is read as its halves instead: the same payload carries the range's
+   `commits`, and one of them splits the compare into two narrower ones whose
+   union is the set the capped list was hiding. Only a range with no boundary
+   inside it - a single commit whose own diff reaches the cap - is still named as
+   unevaluated.
    And the two path sets skip apart: the base-side set is the one that grows
    without bound, so it is the one that hits its cap - #1035 was 265 commits
    behind - and dropping the whole pull request for it would discard the pairwise

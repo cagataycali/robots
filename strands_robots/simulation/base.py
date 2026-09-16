@@ -3226,6 +3226,12 @@ class SimEngine(ABC):
             # existing callers are completely unaffected.
             if n_episodes == 1:
                 recording = self._is_recording()
+                # Frames already buffered into the open episode BEFORE this
+                # rollout: a previous rollout nobody closed. The rollout about to
+                # run appends to it, and the result below says so - the caller
+                # otherwise learns of the merge from verify_dataset_episodes
+                # after stop_recording, when the frames are already one episode.
+                open_before = self._open_episode_frames() if recording else 0
                 if recording:
                     logger.info(
                         "run_policy: n_episodes=1, will produce 1 dataset episode of ~%d frames "
@@ -3262,6 +3268,11 @@ class SimEngine(ABC):
                 contract = self._episode_contract_fields(
                     requested=1, completed=completed, saved=0, flush_deferred=recording
                 )
+                if recording:
+                    open_after = self._open_episode_frames()
+                    contract["episode_open_frames"] = open_after
+                    contract["episode_merged_prior_frames"] = open_before
+                    self._append_text(result, self._open_episode_line(open_after, open_before))
                 self._merge_json_fields(result, contract)
                 return result
 
@@ -3530,6 +3541,7 @@ class SimEngine(ABC):
         subject: str,
         consequence: str,
         err: Callable[[str], dict[str, Any]],
+        sole_robot: str | None = None,
     ) -> dict[str, Any] | None:
         """Structured error if any entity in *entities* does not resolve in this sim.
 
@@ -3557,6 +3569,9 @@ class SimEngine(ABC):
                 the remedy in each message.
             err: Builds the caller's error envelope from a message, so each
                 surface keeps its own prefix and json block.
+            sole_robot: The robot a clause with no robot of its own resolves
+                to, when the caller has already resolved it - spelled by name
+                in the message instead of the ``<the sole robot>`` placeholder.
 
         Returns:
             ``None`` when every entity resolves, else *err*'s envelope.
@@ -3597,7 +3612,8 @@ class SimEngine(ABC):
             except Exception:  # noqa: BLE001 - the refusal must not depend on the listing
                 known = []
             named = [r for r in unresolved_bases if r is not None and r not in known]
-            spelled = [r if r is not None else "<the sole robot>" for r in unresolved_bases]
+            placeholder = repr(sole_robot) if sole_robot is not None else "<the sole robot>"
+            spelled = [r if r is not None else placeholder for r in unresolved_bases]
             cause = (
                 f"no robot in the scene is named {named} (robots: {known})"
                 if named
@@ -3798,6 +3814,50 @@ class SimEngine(ABC):
             if isinstance(blk, dict) and isinstance(blk.get("json"), dict):
                 return dict(blk["json"])
         return {}
+
+    def _open_episode_frames(self) -> int:
+        """Frames buffered into the current UNSAVED dataset episode (0 when not recording)."""
+        if not self._is_recording():
+            return 0
+        return int(getattr(self._active_recorder(), "episode_frame_count", 0) or 0)
+
+    @staticmethod
+    def _open_episode_line(open_after: int, open_before: int) -> str:
+        """The recorder line a single-rollout ``run_policy`` result carries while recording.
+
+        ``open_before`` frames were already in the open episode when the rollout
+        started, so the rollout was appended to them; the line names that merge
+        and the ways to end an episode, because ``run_policy`` alone ends none:
+        ``reset`` between rollouts or ``n_episodes=N`` in one call (both
+        published to the agent), or ``save_episode`` from Python. Without the line the merge is only visible after
+        ``stop_recording`` (``verify_dataset_episodes``), when the frames are
+        already one ``episode_index=0``.
+        """
+        added = open_after - open_before
+        if open_before > 0:
+            head = (
+                f"Recorder: +{added} frames APPENDED to the open episode, which already held "
+                f"{open_before} from an earlier rollout - now {open_after} unsaved frames in ONE episode"
+            )
+        else:
+            head = f"Recorder: +{added} frames buffered in the open episode ({open_after} unsaved)"
+        # ``reset`` and ``n_episodes`` are the two remedies an agent can reach
+        # (``save_episode`` is Python-only: not in the published action enum).
+        return (
+            f"{head}. run_policy closes no episode: the next rollout appends to this one unless "
+            f"reset runs first (reset saves the open episode, then starts a new one), or pass "
+            f"n_episodes=N in ONE run_policy call for N distinct episodes. stop_recording saves "
+            f"whatever is open. (From Python, save_episode also closes it.)"
+        )
+
+    @staticmethod
+    def _append_text(result: dict[str, Any], line: str) -> None:
+        """Append ``line`` to the result's first text block (or add one)."""
+        for blk in result.get("content", []) or []:
+            if isinstance(blk, dict) and isinstance(blk.get("text"), str):
+                blk["text"] = blk["text"].rstrip("\n") + "\n" + line
+                return
+        result.setdefault("content", []).append({"text": line})
 
     @staticmethod
     def _merge_json_fields(result: dict[str, Any], fields: dict[str, Any]) -> None:
@@ -4355,7 +4415,7 @@ class SimEngine(ABC):
                     }
                 ],
             }
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        msg = f"Stopped on '{robot_name}'" if was_running else self._was_not_running_msg(robot_name)
         return {
             "status": "success",
             "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
@@ -4429,6 +4489,42 @@ class SimEngine(ABC):
             return "Stop it first: action='stop_policy'."
         spelled = ", then ".join(f"robot_name='{n}'" for n in robot_names)
         return f"Stop them first: action='stop_policy' with {spelled}."
+
+    def _was_not_running_msg(self, robot_name: str) -> str:
+        """The verdict for a stop that halted nothing, naming any rollout still in flight.
+
+        A ``stop_policy`` on a robot with nothing running is a success by design
+        (idempotent, ``was_running=False``), and that sentence was the same one
+        whether the world was idle or another arm was mid-rollout - measured on
+        two so101s with a policy on the second, ``stop_policy(robot_name='alpha')``
+        answered ``status="success"``, "Was not running on 'alpha'", byte-identical
+        to the reply from a world with nothing in flight at all, while beta kept
+        driving. ``docs/simulation/overview.md`` reserves that reading for "the
+        genuinely idempotent case, where nothing is in flight at all", so an agent
+        that aimed a stop at the wrong arm was told its stop was a no-op without
+        being told the motion it meant to end continued. A stop that stopped
+        nothing now names what is running, in the phrase every rollout gate uses,
+        and ends with :meth:`_stop_policy_remedy` - the one builder that
+        guarantees the way out is a call the tool accepts, asked rather than
+        re-derived, so a remedy is never the bare form the resolver refuses.
+
+        A backend that keeps no rollout registry (:meth:`_rollouts_in_flight` is
+        ``None``) has no evidence about the other robots and keeps the bare
+        verdict, rather than an affirmative claim about a population it cannot
+        see - the same reason :meth:`_stop_policy_target` refuses there.
+
+        Args:
+            robot_name: The robot the caller aimed the stop at.
+
+        Returns:
+            ``"Was not running on '<robot>'"``, followed by the rollouts still in
+            flight and the remedy when there are any.
+        """
+        others = tuple(name for name in (self._rollouts_in_flight() or ()) if name != robot_name)
+        if not others:
+            return f"Was not running on '{robot_name}'"
+        names = ", ".join(f"'{name}'" for name in others)
+        return f"Was not running on '{robot_name}'. A policy is running on {names}. {self._stop_policy_remedy(others)}"
 
     def _request_policy_stop(self, robot_name: str) -> bool | None:
         """Move ``robot_name``'s rollout claim out of date; report what was in flight.
@@ -4967,6 +5063,44 @@ class SimEngine(ABC):
 
     # Benchmark protocol facades
 
+    def _benchmark_robot_mismatch_error(self, spec: Any, benchmark_name: str, robot_name: str) -> dict[str, Any] | None:
+        """Structured error when *robot_name*'s model is outside *spec*'s ``supported_robots``.
+
+        The same test :meth:`BenchmarkProtocol.on_episode_start` makes before
+        episode 1 (a robot's registry ``data_config`` against the spec's
+        non-empty ``supported_robots``), asked up front by
+        :meth:`evaluate_benchmark` so it is the FIRST thing a caller hears
+        when the benchmark is written for another robot - ahead of the clause
+        probe, whose "no floating base" finding is the same mismatch seen
+        from further down. Reads the model the way ``on_episode_start`` does
+        (``_world.robots[name].data_config``); a backend without that surface,
+        a robot without a recorded model, or an any-robot benchmark (empty
+        list) returns ``None`` and leaves the decision to the runner.
+        """
+        supported = getattr(spec, "supported_robots", None)
+        if not supported or not isinstance(supported, list | tuple):
+            return None
+        world = getattr(self, "_world", None)
+        robots = getattr(world, "robots", None)
+        robot_obj = robots.get(robot_name) if isinstance(robots, dict) else None
+        data_config = getattr(robot_obj, "data_config", None)
+        if data_config is None or data_config in supported:
+            return None
+        loadable = list(supported)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"evaluate_benchmark: benchmark {benchmark_name!r} is written for "
+                        f"{loadable}; robot {robot_name!r} in this scene is a {data_config!r}. "
+                        f"Load a supported robot (Robot({loadable[0]!r}, mode='sim')) or pick a "
+                        "benchmark for this robot - list_benchmarks names each one's robots."
+                    )
+                }
+            ],
+        }
+
     def evaluate_benchmark(
         self,
         benchmark_name: str,
@@ -5240,6 +5374,19 @@ class SimEngine(ABC):
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
 
+        # The benchmark's own robot list, checked BEFORE the clause probe below.
+        # The runner enforces it too (BenchmarkCompatibilityError before episode
+        # 1), but the probe ran first, and for a fixed-base arm asked to run a
+        # locomotion benchmark it fires first: g1_walk_forward on an so101 scene
+        # answered "['<the sole robot>'] has no floating base - a fixed-base
+        # arm reports no base_pos/base_quat" - a lecture about floating bases
+        # when the cause is that the benchmark is written for unitree_g1. The
+        # mismatch is the coarser fact, so it is named first, with the two ways
+        # out.
+        compat_error = self._benchmark_robot_mismatch_error(spec, benchmark_name, resolved_robot)
+        if compat_error is not None:
+            return compat_error
+
         # Probe the entities the spec's clauses name against the LIVE scene,
         # before any policy is built. A benchmark clause is authored in the
         # same predicate DSL as ``stop_when`` and compiles the same way, so it
@@ -5268,6 +5415,7 @@ class SimEngine(ABC):
                     "report a 0% success rate that reads as an honest policy failure."
                 ),
                 err=_benchmark_err,
+                sole_robot=resolved_robot,
             )
             if probe_error is not None:
                 return probe_error

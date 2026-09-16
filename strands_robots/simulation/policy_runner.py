@@ -4579,6 +4579,12 @@ class PolicyRunner:
             set_eval_seed(seed)
         master_rng = random.Random(seed)
         spec_name = type(spec).__name__
+        # The registered id when the spec carries one, for the lines a caller
+        # reads: "benchmark DeclarativeBenchmark supports [...]" named the
+        # class every declarative benchmark shares, not which one refused.
+        spec_label = getattr(spec, "name", None) or spec_name
+        if not isinstance(spec_label, str) or not spec_label:
+            spec_label = spec_name
         max_steps = spec.max_steps
         results: list[dict[str, Any]] = []
         episodes_successful_at_reset = 0
@@ -4686,7 +4692,7 @@ class PolicyRunner:
                                 "text": (
                                     f"Benchmark compatibility error: robot '{e.robot_name}' "
                                     f"has data_config={e.data_config!r}, but benchmark "
-                                    f"{spec_name} supports {e.supported}."
+                                    f"{spec_label} supports {e.supported}."
                                 )
                             }
                         ],
@@ -4993,7 +4999,7 @@ class PolicyRunner:
             "content": [
                 {
                     "text": (
-                        f"Benchmark: {spec_name} | policy {type(policy).__name__} on '{robot_name}'\n"
+                        f"Benchmark: {spec_label} | policy {type(policy).__name__} on '{robot_name}'\n"
                         + (
                             f"Stopped after a lost recording episode - {recording_save_error}\n"
                             if recording_save_error is not None

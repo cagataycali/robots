@@ -33,7 +33,7 @@ import hmac
 from typing import Any
 from urllib.parse import urlsplit
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocket
 
 from strands_robots.dashboard import auth, settings
 
@@ -167,6 +167,29 @@ def caller(request: Request) -> dict[str, Any]:
     if open_posture(request):
         return {"via": "loopback"}
     raise HTTPException(401, "sign in required")
+
+
+async def refuse_socket(ws: WebSocket, code: int) -> None:
+    """Refuse *ws* so that the page which opened it can read why.
+
+    A close sent before ``accept`` is a handshake rejection, not a close: the
+    ASGI server answers the handshake with HTTP 403 and no close code ever
+    reaches the wire, so a browser reports 1006 for "sign in required" and "no
+    such session" alike. The page needs that difference - ``static/app.js``
+    shows the login screen on 4401 and nothing on the rest - so the socket is
+    accepted and then closed with *code*. No frame is ever sent on it.
+
+    A caller from another origin is the exception, and is refused at the
+    handshake: WebSockets are exempt from CORS, so a page anywhere can open one
+    here, and it is owed neither an accepted socket nor the reason.
+
+    Args:
+        ws: The socket to refuse. It must not have been accepted yet.
+        code: The application close code, 4000-4999.
+    """
+    if origin_is_self(ws):  # type: ignore[arg-type]  # WebSocket answers headers like a Request
+        await ws.accept()
+    await ws.close(code=code)
 
 
 async def require_session(request: Request) -> dict[str, Any]:
