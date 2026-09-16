@@ -61,6 +61,7 @@ real guard when the verb is called directly as a Python API.
 
 import atexit
 import contextlib
+import functools
 import inspect
 import json
 import logging
@@ -155,6 +156,7 @@ from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
+from strands_robots.simulation.tool_frame import registry_tool_frame
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
@@ -858,6 +860,10 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # How the last start_policy rollout per robot failed, recorded by the
+        # Future's done-callback and read by ``_rollouts_ended_in_error``.
+        # Replaced when that robot's next rollout is submitted.
+        self._rollout_failures: dict[str, str] = {}
         # Capture rate of each rollout in ``_policy_threads``, recorded where
         # the Future is tracked so it is readable from another thread the
         # instant ``start_policy`` returns (``start_recording`` compares against
@@ -2353,6 +2359,26 @@ class MuJoCoSimEngine(
                 self._world.robots.pop(name, None)
                 return mesh_err
 
+            # A tool point the registry declares for a model that ships none
+            # (so100: no sites, so move_to drove the wrist 16 cm short of the
+            # jaws). It describes the registry's OWN model, so it applies only
+            # when that model is what loads: a caller's urdf_path with
+            # data_config= as the metadata source keeps its own frames. Shape-
+            # checked before anything touches the scene; a malformed block is
+            # refused loudly, like the sibling gripper block, rather than
+            # silently falling back to the wrist.
+            # ``data_config or name`` is the registry key the model was
+            # resolved from on this path (the same key the mesh resolution
+            # above uses): ``data_config`` when it was passed, else the
+            # instance name that the deprecated name-as-registry-key fallback
+            # looked up.
+            tool_frame = None
+            if not urdf_path:
+                tool_frame, tool_frame_err = registry_tool_frame(data_config or name)
+                if tool_frame_err is not None:
+                    self._world.robots.pop(name, None)
+                    return {"status": "error", "content": [{"text": f"add_robot: {tool_frame_err}"}]}
+
             # Resolve the requested spawn keyframe from the robot's SOURCE
             # model BEFORE mutating the scene, so an unknown keyframe fails
             # cleanly (naming the available keyframes) without leaving a
@@ -2382,7 +2408,7 @@ class MuJoCoSimEngine(
                 # robot.joint_names from the source spec (pre-namespacing) and
                 # then scene_ops._recompile_preserving_state resolves the
                 # post-attach joint/actuator IDs on the compiled model.
-                ok = inject_robot_into_scene(self._world, robot, resolved_path)
+                ok = inject_robot_into_scene(self._world, robot, resolved_path, tool_frame=tool_frame)
                 if not ok:
                     del self._world.robots[name]
                     return {
@@ -6409,11 +6435,38 @@ class MuJoCoSimEngine(
         )
         self._policy_threads[robot_name] = future
         self._policy_rates[robot_name] = float(control_frequency)
+        # The verdict below is given before the worker has built the policy.
+        # What the worker then finds - a constructor refusing its port, a
+        # server that never answers - is recorded on completion, where
+        # ``list_policies_running`` reports it; otherwise the exception lives
+        # in a Future nobody reads and "No policies running." is the same
+        # reading as a rollout that completed.
+        self._rollout_failures.pop(robot_name, None)
+        future.add_done_callback(functools.partial(self._record_rollout_outcome, robot_name, policy_provider))
 
         return {
             "status": "success",
             "content": [{"text": f"Policy started on '{robot_name}' (async)"}],
         }
+
+    def _record_rollout_outcome(self, robot_name: str, policy_provider: str, future: Future) -> None:
+        """Done-callback of a ``start_policy`` worker: keep a failure where a caller can read it."""
+        exc = future.exception()
+        if exc is not None:
+            reason = f"{type(exc).__name__}: {exc}"
+        else:
+            result = future.result()
+            if not (isinstance(result, dict) and result.get("status") == "error"):
+                return
+            content = result.get("content") or [{}]
+            reason = str(content[0].get("text", result)) if isinstance(content[0], dict) else str(result)
+        self._rollout_failures[robot_name] = reason
+        logger.error(
+            "start_policy rollout on %r (policy_provider %r) ended in error: %s", robot_name, policy_provider, reason
+        )
+
+    def _rollouts_ended_in_error(self) -> Mapping[str, str]:
+        return dict(self._rollout_failures)
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str):
         """MuJoCo override: recording + policy_running flag + lock.
