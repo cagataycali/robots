@@ -27,7 +27,9 @@ editing or reordering an entry already in the log adds no heading.
 ## Adding a fragment
 
 Create `changelog.d/<number>-<slug>.md`, where `<number>` is your PR (or issue)
-number and `<slug>` is a short lowercase description:
+number and `<slug>` is a short lowercase description. `0000` and `999x` are
+placeholders, not numbers, and are refused by `--check`, by `--apply` and by the
+pull-request convention check; rename the file once the PR number exists:
 
 ```
 changelog.d/1692-teleop-slew-bound.md
@@ -59,7 +61,7 @@ Rules, all enforced by `tests/test_changelog_fragments.py`:
 Validate locally with:
 
 ```bash
-python scripts/assemble_changelog.py --check    # names + headings
+python scripts/assemble_changelog.py --check    # names, numbers + headings
 python scripts/assemble_changelog.py --print    # preview the assembled section
 ```
 
