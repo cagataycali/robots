@@ -2,7 +2,8 @@
  *
  * No physics runs here and no MJCF is parsed. GET scene -> build one mesh per geom;
  * the telemetry socket (?poses=1) sends a binary frame of [x y z | 3x3 row-major]
- * per geom after every JSON snapshot; we copy it into the objects' matrices.
+ * per geom after every JSON snapshot; we copy it into the objects' matrices. The
+ * row width is read from the scene (pose_row_floats), never restated here.
  * MuJoCo is Z-up, three.js is Y-up: the whole world hangs under one group rotated
  * -90deg about X, so every pose is used exactly as sent.
  */
@@ -35,6 +36,7 @@ export class Twin {
     this.scene.add(grid);
     this.geoms = [];
     this.framed = false;
+    this.poseRow = 0; // floats per pose row; the scene publishes it, load() reads it
     this._mat = new THREE.Matrix4();
     this._ro = new ResizeObserver(() => this.resize());
     this._ro.observe(canvas.parentElement);
@@ -45,6 +47,12 @@ export class Twin {
 
   async load() {
     const desc = await fetch(`/api/sim/${this.sessionId}/scene`).then((r) => r.json());
+    // The frame's row width is the server's to state: scene.POSE_ROW_FLOATS is
+    // published here so this file never carries a second copy of it.
+    if (!Number.isInteger(desc.pose_row_floats) || desc.pose_row_floats <= 0) {
+      throw new Error(`scene published no pose_row_floats: ${desc.pose_row_floats}`);
+    }
+    this.poseRow = desc.pose_row_floats;
     const meshes = new Map();
     await Promise.all(
       desc.meshes.map(async (m) => {
@@ -75,15 +83,17 @@ export class Twin {
     return desc;
   }
 
-  /** One binary telemetry frame: ngeom rows of 12 float32. */
+  /** One binary telemetry frame: ngeom rows of `pose_row_floats`, as the scene published it. */
   poses(buffer) {
+    if (!this.poseRow) return; // no scene yet, so no objects to move and no width to stride by
     const f = new Float32Array(buffer);
-    const n = Math.min(this.geoms.length, f.length / 12);
+    const n = Math.min(this.geoms.length, f.length / this.poseRow);
     const m = this._mat;
     for (let i = 0; i < n; i++) {
       const obj = this.geoms[i];
       if (!obj) continue;
-      const o = i * 12;
+      // Offsets inside the row are the layout `[x y z | 3x3]`, which the width does not describe.
+      const o = i * this.poseRow;
       // MuJoCo xmat is row-major R; three's Matrix4.set takes row-major too.
       m.set(
         f[o + 3], f[o + 4], f[o + 5], f[o + 0],

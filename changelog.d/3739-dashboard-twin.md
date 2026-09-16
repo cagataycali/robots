@@ -11,5 +11,5 @@ from it. No physics runs in the browser and no MJCF is parsed there: the twin
 shows exactly what MuJoCo computed, for every robot the engine can load.
 
 The frame's row width is published as `pose_row_floats` and owned by
-`scene.POSE_ROW_FLOATS`, so the packer and `twin.js` are graded against one
-declaration rather than each restating it.
+`scene.POSE_ROW_FLOATS`: the packer emits that width and `twin.js` strides by
+the value the scene sent it, so neither restates it.
