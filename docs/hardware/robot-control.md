@@ -142,10 +142,11 @@ if result.stop_reason == "interrupt":
 print(result)
 ```
 
-A script with no operator pre-approves by action name instead:
+A script with no operator pre-approves by action name instead, which is the
+line `how_to_answer` ends with for this tool:
 `STRANDS_ROBOT_COMMAND_ALLOW=set_joint_positions` (or `execute,start`, or `*`).
 With neither an operator nor that variable the call is refused, naming both.
-See [security](../security.md#ros-2--dds-bridge-command-surface).
+See [security](../security.md#answering-a-gate-from-a-script).
 
 ## Teleoperation
 

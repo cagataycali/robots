@@ -166,10 +166,16 @@ and nothing has moved. Every interrupt raised through the shared command gate
 the same structured `reason`: `action`, `target`, `warning` (what would move,
 with `Reply 'y' to approve`), and `how_to_answer` - the exact resume form,
 `agent([{"interruptResponse": {"interruptId": q.id, "response": "y"}}])`, with
-what `y` means and the tool's `*_COMMAND_ALLOW` variable for a script with no
-operator. It is in the `reason` because `print(result)` on a paused run prints
-that dict: the script that hit the gate is the one holding the remedy. A worked
-loop is in [robot control](hardware/robot-control.md#what-comes-back-when-the-gate-fires).
+what `y` means, and the pre-approval line for a script with no operator -
+naming the variable and the entry outright (`STRANDS_ROBOT_COMMAND_ALLOW=set_joint_positions`,
+`STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel`) because a script can derive neither: the
+three ROS transports share one variable with no transport name in it, and the
+entry is the action for the arm tools but the `service.operation` pair or the
+surface name for `use_unitree` and the ROS transports. It is asked of the same
+matcher that enforces the allowlist, so the advice cannot name something that
+would not have worked. It is in the `reason` because `print(result)` on a paused
+run prints that dict: the script that hit the gate is the one holding the
+remedy. A worked loop is in [robot control](hardware/robot-control.md#what-comes-back-when-the-gate-fires).
 
 ## Refusal codes are the stable contract; prose is not
 

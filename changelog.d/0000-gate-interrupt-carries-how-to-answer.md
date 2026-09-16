@@ -9,8 +9,13 @@ interrupt raised through the shared command gate (`robot`, `serial_tool`,
 `pose_tool`, `use_unitree`, the ROS transports) now carries `how_to_answer` in
 its `reason`: that the call is paused with the question in `result.interrupts`,
 the exact `agent([{"interruptResponse": {"interruptId": …, "response": "y"}}])`
-resume form, that anything but `y` denies and nothing moves, and the tool's
-`*_COMMAND_ALLOW` variable for a script with no operator. The existing
+resume form, that anything but `y` denies and nothing moves, and the exact
+`<TOOL>_COMMAND_ALLOW=<entry>` line that pre-approves this one call for a script
+with no operator - asked of the matcher that enforces the allowlist, because
+neither half is derivable: the three ROS transports share
+`STRANDS_ROS2_COMMAND_ALLOW`, and the entry is the action for the arm tools but
+the target (`sport.Move`, `/cmd_vel`) for `use_unitree` and the ROS
+transports. The existing
 `action`/`target`/`warning` fields and the headless refusal are unchanged.
 `docs/hardware/robot-control.md` lists all eleven real-mode actions with their
 gating (the table had only four) and shows the resume loop; `docs/security.md`

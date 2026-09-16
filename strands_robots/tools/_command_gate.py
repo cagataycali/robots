@@ -202,16 +202,62 @@ def _allow_exact_or_star(target: str) -> Callable[[frozenset[str]], bool]:
     return _match
 
 
-#: The resume form, carried in every interrupt's ``reason`` so a headless script
-#: that printed the interrupt is holding its own remedy. ``agent(...)`` returns
-#: the paused result with ``result.interrupts`` set and ``str(result)`` is that
-#: list's repr, which named the question but not how to reply.
-HOW_TO_ANSWER = (
-    "This call is paused, not done: result.stop_reason == 'interrupt' and result.interrupts holds this "
-    'question. Resume with agent([{"interruptResponse": {"interruptId": <this interrupt\'s id>, '
-    '"response": "y"}}]) - \'y\' approves, anything else denies and nothing moves. For a script with no '
-    "operator, pre-approve the action by name in the tool's *_COMMAND_ALLOW variable instead."
-)
+def allow_entry(match: Callable[[frozenset[str]], bool], action: str, target: str) -> str:
+    """The ``allow_env`` entry that would let this one call through.
+
+    Asked of the caller's own matcher rather than guessed, because the spelling
+    differs per tool: the arm tools pre-approve the *action*
+    (``set_joint_positions``, ``move_motor``), while
+    :mod:`~strands_robots.tools.g1.use_unitree` and the ROS transports
+    pre-approve the *target* (``sport.Move``, ``/cmd_vel``). Advice that named
+    the wrong one would send an operator to set a variable that changes nothing,
+    and ``match`` is the same callable the check above enforces, so the advice
+    cannot disagree with it.
+
+    Args:
+        match: The allowlist matcher for this call, as resolved by
+            :func:`gate_motion`.
+        action: The verb carrying the command.
+        target: What the command is aimed at.
+
+    Returns:
+        The action or the target, whichever ``match`` accepts alone - the action
+        first, so a matcher that would take either reads the way three of the
+        five families document it ("pre-approve by action name"); ``*`` when it
+        accepts neither, which every matcher honours.
+    """
+    for candidate in (action, target):
+        if match(frozenset({candidate})):
+            return candidate
+    return "*"
+
+
+def how_to_answer(allow_env: str, entry: str) -> str:
+    """The resume form, for an interrupt's ``reason``.
+
+    ``agent(...)`` returns a PAUSED result when the gate fires, and
+    ``str(result)`` is the interrupt list's repr - so the ``reason`` dict is the
+    one thing a headless script is certainly printing, and it carries the line
+    that continues the run. The pre-approval half names the caller's variable and
+    entry outright: neither is derivable from the tool name (the three ROS
+    transports share ``STRANDS_ROS2_COMMAND_ALLOW``) or from the action (see
+    :func:`allow_entry`).
+
+    Args:
+        allow_env: The caller's pre-approval variable, as passed to
+            :func:`gate_motion`.
+        entry: The value that variable needs for this call, from
+            :func:`allow_entry`.
+
+    Returns:
+        One line for ``reason["how_to_answer"]``.
+    """
+    return (
+        "This call is paused, not done: result.stop_reason == 'interrupt' and result.interrupts holds this "
+        'question. Resume with agent([{"interruptResponse": {"interruptId": <this interrupt\'s id>, '
+        '"response": "y"}}]) - \'y\' approves, anything else denies and nothing moves. For a script with no '
+        f"operator, set {allow_env}={entry} instead."
+    )
 
 
 def gate_motion(
@@ -291,8 +337,8 @@ def gate_motion(
                 "target": target,
                 "warning": f"{warning} Reply 'y' to approve, anything else to deny.",
                 # A script that prints ``agent(...)``'s result sees this dict, so the
-                # dict carries the one line that resumes it (see HOW_TO_ANSWER).
-                "how_to_answer": HOW_TO_ANSWER,
+                # dict carries the line that resumes it (see :func:`how_to_answer`).
+                "how_to_answer": how_to_answer(allow_env, allow_entry(match, action, target)),
             },
         )
     except RuntimeError as exc:
