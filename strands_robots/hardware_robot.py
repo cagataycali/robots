@@ -2838,10 +2838,15 @@ class Robot(TeleopMixin, AgentTool):
         """Get tool specification with async actions."""
         return {
             "name": self.tool_name_str,
-            "description": f"Universal robot control with async task execution ({self.robot}). "
+            "description": f"Drive the real robot {self.robot} with a policy. "
             f"Actions: execute (blocking), start (async), status, stop. "
-            f"For execute/start actions: instruction is required; policy_port when the provider dials a server. "
-            f"For status/stop actions: no additional parameters needed.",
+            f"execute/start pause for operator approval before the arm moves - the call returns only "
+            f"after the operator answers (a headless script pre-approves with "
+            f"{COMMAND_ALLOW_ENV}=execute,start) - and run for at most duration seconds (default 30). "
+            f"They need instruction; the default provider groot also needs policy_port (the server it "
+            f"dials), while mock and lerobot_local build in process with no server - mock ignores the "
+            f"instruction and drives a test motion on every joint. "
+            f"status/stop take no other parameters.",
             "inputSchema": {
                 "json": {
                     "type": "object",
@@ -2868,7 +2873,9 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Policy provider name (e.g. groot, lerobot_local, mock). See list_providers()."
+                                "Policy provider name. groot (default, needs policy_port) and moveit2 dial a "
+                                "server; lerobot_local runs a local checkpoint in process; mock is a test "
+                                "motion on every joint that ignores the instruction. See list_providers()."
                             ),
                             "default": "groot",
                         },
