@@ -1,7 +1,9 @@
 """``stop_policy`` answers once the robot is free, so the caller's next action on it is admitted."""
 
+import re
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -113,3 +115,35 @@ def test_stop_of_a_blocking_run_policy_has_nothing_to_join(arm):
     assert _json(stopped) == {"robot": "so101", "was_running": True, "exited": None}
     assert _text(stopped) == "Stopped on 'so101'"
     assert seen["result"]["status"] == "success"
+
+
+_ROW = re.compile(r"^\| `stop_policy\(", re.MULTILINE)
+
+
+def test_the_api_reference_row_names_the_fields_the_envelope_carries(arm):
+    """The row a caller reads before their first call names every key they get back.
+
+    The envelope's keys are read off a real stop, not listed by hand: when this
+    surface grew ``exited`` the row still documented ``was_running`` alone, so a
+    caller reading the reference could not learn that the answer tells them
+    whether the robot is free yet - the whole point of the field. Same for the
+    join budget, which is graded against the constant rather than a copied
+    number, and the empty-name resolution.
+    """
+    arm.start_policy(robot_name="so101", policy_provider="mock", duration=5.0)
+    keys = set(_json(arm.stop_policy("so101")))
+    assert keys == {"robot", "was_running", "exited"}, keys
+
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "api-reference.md").read_text(encoding="utf-8")
+    rows = [line for line in doc.splitlines() if _ROW.match(line)]
+    assert len(rows) == 1, rows  # a broken parse would make the rule below vacuous
+    row = rows[0]
+    for key in keys - {"robot"}:
+        assert f"`{key}`" in row, (
+            f"docs/api-reference.md documents stop_policy without naming {key!r}, a key its json "
+            f"block really returns: {row}"
+        )
+    assert f"{type(arm)._POLICY_STOP_JOIN_TIMEOUT:g} s" in row, (
+        f"the row does not name the real join budget ({type(arm)._POLICY_STOP_JOIN_TIMEOUT}s): {row}"
+    )
+    assert "only rollout in flight" in row, row

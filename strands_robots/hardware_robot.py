@@ -59,6 +59,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
 from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
+from strands_robots.registry.policies import policy_requires_error
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -1767,13 +1768,60 @@ class Robot(TeleopMixin, AgentTool):
             return True, ""
 
         except Exception as e:
-            error_msg = f"Robot connection failed: {e}. Ensure robot is calibrated and accessible on the specified port"
+            error_msg = self._connect_failure_message(e)
             logger.error(f"{error_msg}")
             # Same rollback as the lazy teleop connect: without it a half-open
             # port makes the NEXT _connect_robot short-circuit on
             # "already connected" and report success against a dead bus.
             self._close_open_devices()
             return False, error_msg
+
+    def _connect_failure_message(self, exc: BaseException) -> str:
+        """Name the device that failed to open and the remedy for that device.
+
+        lerobot's ``connect()`` opens the motors bus, then each camera; either
+        raises its own message. The wrapper used to append one fixed remedy -
+        "Ensure robot is calibrated and accessible on the specified port" - to
+        whichever came up, so a camera that did not exist was answered with a
+        calibration hint (and an agent relayed "recalibrate if needed" for an
+        unplugged arm). A camera message names lerobot's object,
+        ``OpenCVCamera(99)``, not the key the operator wrote in ``cameras=``;
+        that key is looked up here so the reply says which camera.
+
+        The lookup matches the camera *objects* lerobot built, the way
+        :meth:`_close_open_devices` reads them, because every backend writes
+        every one of its messages with ``f"{self}"`` -- the object's ``str`` is
+        the one identity the text is sure to carry, whatever the backend and
+        whatever failed (opening, warmup, a read). No config field can serve as
+        that identity: only ``OpenCVCameraConfig`` declares ``index_or_path``,
+        so matching a config named a webcam and left every other registered
+        backend -- RealSense (``serial_number``), ZMQ
+        (``camera_name@address:port``), Reachy 2 (``name, image_type``) -- with
+        the general remedy, which is the calibration hint for a camera fault
+        this method exists to remove.
+
+        Args:
+            exc: What ``connect()`` raised.
+
+        Returns:
+            One message naming the device and the remedy for that device.
+        """
+        text = " ".join(str(exc).split()).rstrip(".")
+        cameras = getattr(self.robot, "cameras", None)
+        for key, camera in cameras.items() if isinstance(cameras, Mapping) else ():
+            if str(camera) in text:
+                return (
+                    f"Robot connection failed: camera {key!r} did not open - {text}. "
+                    "Fix or remove that entry in cameras=; the motors bus is closed again."
+                )
+        port = getattr(getattr(self.robot, "config", None), "port", None)
+        if "port" in text.lower():
+            where = f" on port {port!r}" if port else ""
+            return (
+                f"Robot connection failed: {text}. The motors bus did not open{where}: check the USB "
+                "cable and power, then find the port (lerobot-find-port or scan_serial_devices)."
+            )
+        return f"Robot connection failed: {text}. Ensure the robot is powered, on the right port and calibrated."
 
     async def _initialize_policy(self, policy: Policy) -> bool:
         """Initialize policy with robot state keys."""
@@ -2294,19 +2342,14 @@ class Robot(TeleopMixin, AgentTool):
     ) -> dict[str, Any] | None:
         """Reject a provider build that is missing a keyword it cannot act without.
 
-        The registry's ``requires`` lists the keywords a caller must supply.
-        :meth:`_policy_port_error` judges the ``port`` entry; this judges the
-        rest - the checkpoint a ``lerobot_local`` / ``lerobot_async`` policy is
-        built from. ``LerobotLocalPolicy`` constructs happily with its default
-        ``pretrained_name_or_path=""`` and loads lazily, so an in-process build
-        with no checkpoint succeeded, ``start_task`` answered "Task started",
-        :meth:`_connect_robot` energized the arm, and the first
-        ``get_actions`` raised "No model loaded and no pretrained_name_or_path
-        set" on the executor thread with nobody left to tell. The quickstart's
-        real-arm step did exactly this.
-
-        An empty string counts as missing: it is the provider's own default
-        and the one value the lazy load cannot use. ``None`` likewise.
+        This surface's envelope around
+        :func:`~strands_robots.registry.policies.policy_requires_error`, which owns the
+        domain and states why. :meth:`_policy_port_error` judges the ``port``
+        entry; this judges the rest - the checkpoint a ``lerobot_local`` /
+        ``lerobot_async`` policy is built from. Here the harm is that
+        :meth:`_connect_robot` energizes the arm before the first
+        ``get_actions`` fails on the executor thread with nobody left to tell;
+        the quickstart's real-arm step did exactly this.
 
         Args:
             policy_provider: Provider name; unknown or unregistered providers
@@ -2318,46 +2361,20 @@ class Robot(TeleopMixin, AgentTool):
             A tool-shaped error dict naming the missing keyword(s) and the
             provider, or ``None`` when every required keyword is present.
         """
-        if not policy_provider:
-            return None
-        try:
-            from strands_robots.registry.policies import get_policy_provider
-
-            spec = get_policy_provider(policy_provider)
-        except Exception:  # noqa: BLE001 - registry read is best-effort
-            return None
-        if not spec:
-            return None
-        # ``port``/``host`` are excluded because they never travel in
+        # ``port``/``host`` are ignored because they never travel in
         # ``**policy_kwargs``: they arrive as the named ``policy_port`` /
         # ``policy_host`` parameters, so reading them here would find every
         # caller's absent and refuse a port that WAS supplied. The port is
-        # judged by :meth:`_policy_port_error` and the host has a default.
-        missing = [
-            key
-            for key in (spec.get("requires") or ())
-            if key not in ("port", "host") and ((value := policy_kwargs.get(key)) is None or value == "")
-        ]
-        if not missing:
-            return None
-        hints = {
-            "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
-            "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
-        }
-        asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
-        return {
-            "status": "error",
-            "content": [
-                {
-                    "text": (
-                        f"{method}: policy_provider={policy_provider!r} builds its policy from "
-                        f"{' and '.join(missing)}, and none was given. Pass {asks}. "
-                        f"Without {'it' if len(missing) == 1 else 'them'} the task would start, "
-                        "energize the arm and fail at its first action."
-                    )
-                }
-            ],
-        }
+        # judged by :meth:`_policy_port_error`, which runs first, and the host
+        # has a default.
+        reason = policy_requires_error(
+            policy_provider,
+            policy_kwargs,
+            method,
+            "the task would start, energize the arm and fail at its first action",
+            ignore=("port", "host"),
+        )
+        return None if reason is None else {"status": "error", "content": [{"text": reason}]}
 
     @staticmethod
     def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
@@ -2407,6 +2424,9 @@ class Robot(TeleopMixin, AgentTool):
             policy_port: The caller-supplied port to validate, or ``None`` when
                 none was supplied.
             method: Public entry point name, used to prefix the message.
+            policy_provider: The provider the port would be handed to, named in
+                the refusal - a missing port is only that provider's problem,
+                and which one asked for it decides the caller's next step.
 
         Returns:
             A tool-shaped error dict naming ``policy_port``, or ``None`` when a
@@ -2427,14 +2447,24 @@ class Robot(TeleopMixin, AgentTool):
                         return None
                 except Exception:  # noqa: BLE001 - registry read is best-effort
                     pass
+            # Name the provider that needs the port - the DEFAULT (groot) is
+            # one the caller never chose, so "policy_port is required" read as
+            # a fact about the arm - and the way to run with no server at all.
+            # The old remedy ("use run_policy with a pre-built policy_object")
+            # named a verb this tool does not have; an agent reading it asked
+            # the operator for a port instead of picking mock.
+            provider_clause = f"policy_provider '{policy_provider}'" if policy_provider else "the policy provider"
+            if policy_provider == "groot":
+                provider_clause += " (the default)"
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"{method}: policy_port is required to build a policy "
-                            "(pass the port of the policy server, or use run_policy "
-                            "with a pre-built policy_object)."
+                            f"{method}: policy_port is required - {provider_clause} dials a policy "
+                            "server; pass the port it listens on. With no server running, choose a "
+                            "provider that builds in process: policy_provider='mock' (sinusoidal test "
+                            "motion, no model) or 'lerobot_local' (a local HuggingFace checkpoint)."
                         )
                     }
                 ],
@@ -3343,10 +3373,16 @@ class Robot(TeleopMixin, AgentTool):
         """Get tool specification with async actions."""
         return {
             "name": self.tool_name_str,
-            "description": f"Universal robot control with async task execution ({self.robot}). "
+            "description": f"Drive the real robot {self.robot} with a policy. "
             f"Actions: execute (blocking), start (async), status, stop. "
-            f"For execute/start actions: instruction is required; policy_port when the provider dials a server. "
-            f"For status/stop actions: no additional parameters needed.",
+            f"execute/start pause for operator approval before the arm moves - the call returns only "
+            f"after the operator answers (a headless script pre-approves with "
+            f"{COMMAND_ALLOW_ENV}=execute,start) - and run for at most duration seconds (default 30). "
+            f"They need instruction; the default provider groot also needs policy_port (the server it "
+            f"dials), while mock and lerobot_local build in process with no server - mock ignores the "
+            f"instruction and drives a test motion on every joint, and lerobot_local needs "
+            f"pretrained_name_or_path (the checkpoint it loads). "
+            f"status/stop take no other parameters.",
             "inputSchema": {
                 "json": {
                     "type": "object",
@@ -3373,7 +3409,11 @@ class Robot(TeleopMixin, AgentTool):
                         "policy_provider": {
                             "type": "string",
                             "description": (
-                                "Policy provider name (e.g. groot, lerobot_local, mock). See list_providers()."
+                                "Policy provider name (e.g. groot, moveit2, lerobot_local, mock). "
+                                "groot (default, needs policy_port) and moveit2 dial a server; "
+                                "lerobot_local runs a local checkpoint in process and needs "
+                                "pretrained_name_or_path; mock is a test motion on every joint that "
+                                "ignores the instruction. See list_providers()."
                             ),
                             "default": "groot",
                         },

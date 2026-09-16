@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands_robots.drivers.base import policy_step, undeclared_verb_error
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.registry import resolve_name
+from strands_robots.registry.policies import policy_requires_error
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -1105,7 +1106,12 @@ class URDriver:
         A provider that cannot be built is refused, never raised: this is the one
         driver in the fleet that builds a policy from the provider registry, and
         it is reached as an agent tool, where an exception is not something the
-        caller can handle.
+        caller can handle. A provider missing a keyword the registry names as
+        required is refused before the build, because several build without it
+        and fail only once the rollout asks for its first action - by which time
+        this verb has answered "started" and a live arm is held by a rollout that
+        can never take a step. See
+        :func:`~strands_robots.registry.policies.policy_requires_error`.
 
         Args:
             instruction: Natural-language instruction handed to the policy.
@@ -1118,13 +1124,27 @@ class URDriver:
 
         Returns:
             The envelope :meth:`run_policy` returns for the rollout it started,
-            or a refusal naming the provider that could not be built.
+            or a refusal naming the provider that could not be built - or the
+            keyword it needed and was not given.
         """
         from strands_robots.policies import create_policy
 
         kwargs: dict[str, Any] = {"host": policy_host, **policy_kwargs}
         if policy_port is not None:
             kwargs["port"] = policy_port
+        # Judged before the build, because several providers build without the
+        # keyword they cannot act without and only fail on the worker thread,
+        # once this verb has answered "started" and the rollout holds an arm
+        # that is already live. ``kwargs`` is what the caller supplied, so
+        # nothing is ignored here: unlike the real-arm surface, this verb funnels
+        # ``policy_port`` into it, so the same guard judges the port too.
+        if reason := policy_requires_error(
+            policy_provider,
+            kwargs,
+            "start_task",
+            "the rollout would start on a live arm and fail at its first action",
+        ):
+            return _refuse(reason)
         try:
             policy = create_policy(policy_provider, **kwargs)
         # Recovery path: catch broadly. The refusal below is this verb's
