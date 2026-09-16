@@ -5167,11 +5167,12 @@ class SimEngine(ABC):
         # refused while another thread's rollout holds the robot - the gate every
         # joint write and ``start_policy`` already pass. Backends that keep no
         # per-robot claim answer ``None`` from the default seam and are unchanged.
-        # Gate BEFORE binding, so a refused call never mutates predicate_robot
-        # while a concurrent rollout reads it (review feedback: race on shared
-        # mutable state).
         if err := self._require_no_running_policy("eval_policy", robot_name=resolved_robot):
             return err
+        # The binding is per thread (see bind_predicate_robot): what is bound
+        # here is read only by THIS thread's probe and episodes, so neither a
+        # call refused below nor an evaluation of another robot can retarget
+        # the unnamed clauses of a rollout in flight on another thread.
         self.bind_predicate_robot(resolved_robot)
 
         # ``success_when``: the stop_when DSL as a success criterion. Compiled
