@@ -72,8 +72,22 @@ authoring, not after.
 The two sides come from different endpoints, and so have different ceilings. The
 head side -- the input to the pairwise mode -- is read from the paginated
 pull-request files endpoint, which carries ten times what the compare endpoint's
-``files`` does. The base side has no paginated equivalent and keeps the compare
-cap, reported as unevaluated for that mode alone.
+``files`` does. The base side has no paginated ``files``, so a range wide enough
+to reach the cap is read as its halves instead: the same payload carries the
+range's ``commits``, and a commit in it splits ``M..base`` into two narrower
+compares whose union is the set the capped list was hiding. Each half is strictly
+shorter than the range it came from, so the split terminates; the floor is a
+single commit, and one that alone reaches the cap has no boundary left to split
+on and is still reported as unevaluated.
+
+That floor is why the split is an increase in coverage rather than a change of
+contract: a set assembled from sub-ranges is never short of the capped one. It
+can be longer -- a path some commit in the range created and another removed nets
+out of ``M..base`` and survives in a half -- and that direction is the safe one
+here, because this check's failure mode is a *missed* overlap and main did touch
+that path. Measured against ``git diff`` over five capped pull requests on the
+live queue (#3205, #3427, #3496, #3615, #3673, 380-780 paths each): no path
+missing in any of them, 2-8 of those transient extras each, at 5-17 requests.
 
 A file carrying a ``strict=True`` xfail is the highest-value overlap candidate
 there is: its whole purpose is to fail when a sibling change lands, so it breaks
@@ -682,10 +696,14 @@ _MAX_PAGES = 20
 
 #: GitHub's compare endpoint returns at most this many entries in ``files``. A
 #: truncated list is indistinguishable from a complete one in the payload, so a
-#: path set that reaches the cap is reported as unevaluated rather than as not
-#: overlapping. This check's failure mode is a *missed* overlap, and quietly
-#: intersecting a truncated set is exactly how one goes missing. Only the
-#: base-side set is read from this endpoint; the head side has a paginated one.
+#: path set that reaches the cap is never intersected as if it were complete:
+#: this check's failure mode is a *missed* overlap, and quietly intersecting a
+#: truncated set is exactly how one goes missing. Only the base-side set is read
+#: from this endpoint; the head side has a paginated one. Reaching it is answered
+#: by splitting the range at a commit boundary
+#: (:func:`_paths_across_commit_split`) rather than by declining to evaluate --
+#: which is left for the one range that cannot be split, a single commit whose
+#: own diff reaches the cap.
 _COMPARE_FILE_CAP = 300
 
 #: The pull-request files endpoint is paginated and stops at this many entries,
@@ -717,8 +735,8 @@ class OpenPullRequest:
 
     ``edits`` comes from the paginated pull-request files endpoint and
     ``landed_since`` from the compare endpoint, so the two sides have different
-    ceilings: the base side has no paginated equivalent and keeps
-    ``_COMPARE_FILE_CAP``.
+    ceilings: the base side has no paginated ``files`` and reads a range past
+    ``_COMPARE_FILE_CAP`` as its halves instead (:func:`compare_paths`).
 
     ``literals`` comes from the ``patch`` field of the same entries ``edits`` is
     built from, so it costs no additional request: the endpoint already carries
@@ -806,7 +824,7 @@ def paths_from_entries(entries: Iterable[object]) -> frozenset[str]:
     )
 
 
-def _compare_payload(repo: str, base: str, head: str, token: str) -> tuple[list[object], str, int]:
+def _compare_payload(repo: str, base: str, head: str, token: str) -> tuple[list[object], str, int, list[str]]:
     """Fetch a three-dot ``base...head`` and return ``(file entries, merge_base_sha, behind_by)``.
 
     The three-dot form is what makes this the same question the single-branch
@@ -820,6 +838,14 @@ def _compare_payload(repo: str, base: str, head: str, token: str) -> tuple[list[
     ``files`` list is a problem depends on whether the caller reads it, and the
     two callers differ: one wants the paths, the other wants only the two fields
     the paginated endpoint does not carry.
+
+    The commit shas come from the same payload, so the split a capped ``files``
+    list needs costs no additional request. They are the range's own commits, and
+    ``files`` is capped where ``commits`` is not, so a payload can carry a short
+    file list and a usable boundary at once. The list is whatever this page holds
+    rather than the whole range -- a boundary anywhere inside the range splits it,
+    and the halves are re-read the same way, so paging to the end to find the true
+    midpoint would buy nothing.
     """
     url = f"{API_ROOT}/repos/{repo}/compare/{base}...{head}"
     payload = _get(url, token)
@@ -830,7 +856,13 @@ def _compare_payload(repo: str, base: str, head: str, token: str) -> tuple[list[
     commit = payload.get("merge_base_commit")
     merge_base_sha = str((commit or {}).get("sha") or "") if isinstance(commit, dict) else ""
     behind_by = payload.get("behind_by")
-    return entries, merge_base_sha, behind_by if isinstance(behind_by, int) else 0
+    rows = payload.get("commits")
+    commits = [
+        row["sha"]
+        for row in (rows if isinstance(rows, list) else [])
+        if isinstance(row, dict) and isinstance(row.get("sha"), str)
+    ]
+    return entries, merge_base_sha, behind_by if isinstance(behind_by, int) else 0, commits
 
 
 def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozenset[str], str, int]:
@@ -838,16 +870,43 @@ def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozense
 
     Enforces the compare endpoint's file cap: a path set that reached it is
     incomplete, and intersecting it would report "no overlap" while meaning "did
-    not look". Used for the base side, which has no paginated equivalent.
+    not look". Used for the base side, which has no paginated ``files`` -- so a
+    capped range is re-read as its halves (:func:`_paths_across_commit_split`)
+    rather than declined. The two fields returned beside the paths come from the
+    whole range either way: a cap on ``files`` says nothing about
+    ``merge_base_commit`` or ``behind_by``.
     """
-    entries, merge_base_sha, behind_by = _compare_payload(repo, base, head, token)
+    entries, merge_base_sha, behind_by, commits = _compare_payload(repo, base, head, token)
     if len(entries) >= _COMPARE_FILE_CAP:
+        return _paths_across_commit_split(repo, base, head, token, commits), merge_base_sha, behind_by
+    return paths_from_entries(entries), merge_base_sha, behind_by
+
+
+def _paths_across_commit_split(repo: str, base: str, head: str, token: str, commits: list[str]) -> frozenset[str]:
+    """Return the paths of a capped ``base...head`` by reading its halves.
+
+    ``commits`` is the range's own commit list, carried by the payload whose
+    ``files`` reached the cap. Splitting at one of them yields two compares over
+    strictly shorter ranges, each read by :func:`compare_paths` and so split again
+    if it is capped too. Since ``head`` is reached from ``base`` through those
+    commits, the union is the set the truncated list was hiding.
+
+    A range with no boundary inside it -- one commit, whose own diff reaches the
+    cap -- is where the old refusal still belongs: there is nothing left to split,
+    and the alternative is intersecting a set known to be short, which is how a
+    missed overlap is manufactured.
+    """
+    if len(commits) < 2:
         raise ApiError(
             f"{API_ROOT}/repos/{repo}/compare/{base}...{head}: the file list reached the "
-            + f"{_COMPARE_FILE_CAP}-entry cap, so the path set is incomplete and an overlap "
-            + "computed from it could be a false negative"
+            + f"{_COMPARE_FILE_CAP}-entry cap and the range has no commit boundary to split "
+            + "on, so the path set is incomplete and an overlap computed from it could be a "
+            + "false negative"
         )
-    return paths_from_entries(entries), merge_base_sha, behind_by
+    boundary = commits[len(commits) // 2 - 1]
+    lower, _, _ = compare_paths(repo, base, boundary, token)
+    upper, _, _ = compare_paths(repo, boundary, head, token)
+    return lower | upper
 
 
 def compare_fork_point(repo: str, base: str, head: str, token: str) -> tuple[str, int]:
@@ -860,7 +919,7 @@ def compare_fork_point(repo: str, base: str, head: str, token: str) -> tuple[str
     comparison as well: the one mode where a 300-file branch is the most likely
     thing on the queue to collide with something.
     """
-    _, merge_base_sha, behind_by = _compare_payload(repo, base, head, token)
+    _, merge_base_sha, behind_by, _ = _compare_payload(repo, base, head, token)
     return merge_base_sha, behind_by
 
 

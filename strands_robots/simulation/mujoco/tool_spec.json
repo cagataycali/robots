@@ -237,7 +237,8 @@
       "type": "integer"
     },
     "control_frequency": {
-      "type": "number"
+      "type": "number",
+      "description": "run_policy/start_policy/run_multi_policy/eval_policy/evaluate_benchmark: control-loop rate in Hz - one policy query and one applied action per 1/control_frequency s of sim time (duration = n_steps / control_frequency). Unset = the active recording's fps when a recording is open (the dataset recorder writes one frame per control step, so the two rates must agree), else 50. A value you pass that disagrees with an open recording is refused, naming both rates"
     },
     "camera_name": {
       "type": "string"

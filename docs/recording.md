@@ -47,11 +47,22 @@ The recorder captures **one frame per control step and never decimates**, so the
 rate frames arrive at is the rollout's `control_frequency` - and LeRobot derives
 every timestamp from the dataset's declared `fps` positionally
 (`timestamp = frame_index / fps`). A differing `fps` therefore cannot be
-honored, only mislabelled, so it is refused:
+honored, only mislabelled, so it is refused.
+
+Leave `control_frequency` unset and a rollout started while a recording is open
+**adopts the recording's fps** - the plain sequence just works:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", task="t")          # 30 fps
+sim.run_policy(robot_name="so100", policy_provider="mock")        # steps at 30 Hz
+```
+
+A rate you pass yourself is never corrected behind your back; a disagreeing one
+is refused:
 
 ```python
 sim.start_recording(repo_id="user/my_dataset", task="t", fps=30)
-sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
+sim.run_policy(robot_name="so100", policy_provider="mock", control_frequency=50.0)
 # -> "run_policy: the active recording declares 30 fps but this rollout captures
 #     at control_frequency=50 Hz. [...] a 1.667x distortion of the episode
 #     duration [...] Align the two rates: pass control_frequency=30 to
@@ -59,7 +70,15 @@ sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
 ```
 
 The refusal lands before any frame is written, so nothing is lost - pass either
-rate. It matters beyond the label: that per-frame interval is the control period
+rate. Through the **agent tool** an omitted rate needs no second call: a caller
+who named no `control_frequency` expressed no preference between the two
+defaults, and only one of them can be honored, so the rollout runs at the open
+recording's `fps` and its reply says so (`control_frequency=30 followed the
+active recording's 30 fps (no rate was passed); pass control_frequency= to
+choose.`). The mirror holds for the other ordering - `start_recording` with no
+`fps` while one rollout is in flight opens at that rollout's whole rate. A rate
+the caller *passed* is a decision, not a default, and a mismatch is still
+refused; the Python defaults above are unchanged. It matters beyond the label: that per-frame interval is the control period
 a policy trains on, and `replay_episode` derives its per-frame physics budget
 from the dataset rate, so a mislabelled episode also replays at the wrong speed.
 To record at a lower rate than you control at, run the rollout at that rate -
@@ -80,8 +99,10 @@ runner.run("so100", policy, control_frequency=50.0, on_frame=hook)
 
 The rule holds whichever call comes first. `start_policy` returns while its
 rollout keeps running, so a recording can be opened against a rollout already in
-flight - and on the defaults (`fps=30` against `control_frequency=50.0`) that
-recorded a 1.667x mislabelled episode with every call reporting success.
+flight - and on the defaults (`fps=30` against a rollout that, with no recording
+open when it started, stepped at `50.0` Hz) that recorded a 1.667x mislabelled
+episode with every call reporting success. (This is the one ordering the
+adopt-the-recording rule above cannot help: the rollout's rate is already fixed.)
 `start_recording` refuses the same disagreement, before creating the dataset:
 
 ```python

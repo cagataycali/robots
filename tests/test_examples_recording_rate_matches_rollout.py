@@ -16,9 +16,14 @@ with an unrelated-looking Hub 404 for the empty local set, and
 ``locomotion/vla_g1_workflow.py`` printed ``Episode N/N recorded.`` per episode
 for a dataset with no frames in it.
 
-The rates are compared as the example states them, and the default is read from
-``run_policy``'s own signature rather than restated here, so a change to that
-default cannot leave this test asserting a stale number.
+The rates are compared as the example states them. An example that names no
+rate at all is graded against what an unset rate resolves to, read from the code
+rather than restated here: ``control_frequency=None`` adopts the fps of a
+recording that is already open, so a rollout after ``start_recording`` cannot
+mismatch, and falls back to ``SimEngine.DEFAULT_CONTROL_FREQUENCY`` when no
+recording is open yet - which a rollout placed BEFORE the recording still can.
+A rate the example does state is never adopted, so stating the wrong one is
+still refused and still flagged here.
 """
 
 from __future__ import annotations
@@ -34,9 +39,13 @@ from strands_robots.simulation.base import SimEngine
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
-#: The rate a rollout captures at when the caller does not say. Read from the
-#: signature so this file cannot disagree with the code it grades.
-_DEFAULT_CONTROL_FREQUENCY = inspect.signature(SimEngine.run_policy).parameters["control_frequency"].default
+#: What ``run_policy`` declares for a caller who names no rate. ``None`` means
+#: "resolve at call time" - adopt an open recording's fps, else fall back.
+_UNSET_CONTROL_FREQUENCY = inspect.signature(SimEngine.run_policy).parameters["control_frequency"].default
+
+#: The rate an unset rollout captures at with NO recording open. Read from the
+#: engine so this file cannot disagree with the code it grades.
+_NO_RECORDING_RATE = SimEngine.DEFAULT_CONTROL_FREQUENCY
 
 #: A refactor that stops reaching the examples must fail loudly rather than
 #: report a clean sweep over nothing.
@@ -81,19 +90,20 @@ def _dict_assignments(tree: ast.Module, name: str) -> list[dict[str, Any]]:
     return out
 
 
-def _capture_rates(tree: ast.Module, call: ast.Call) -> set[Any]:
+def _capture_rates(tree: ast.Module, call: ast.Call, unset_rate: float) -> set[Any]:
     """Every rate ``call`` can capture at, given the module's assignments.
 
-    A caller may pass the rate directly, omit it (taking the signature
-    default), or splat a dict that carries it - a locomotion example builds one
-    dict per data source, so every branch it can take is graded.
+    A caller may pass the rate directly, omit it (resolving to ``unset_rate``),
+    or splat a dict that carries it - a locomotion example builds one dict per
+    data source, so every branch it can take is graded. An explicit ``None`` is
+    the same request as omitting it and resolves the same way.
     """
     direct = _keyword(call, "control_frequency")
     if direct is not None:
         return {direct}
     splats = _splatted_names(call)
     if not splats:
-        return {_DEFAULT_CONTROL_FREQUENCY}
+        return {unset_rate}
     rates: set[Any] = set()
     for name in splats:
         assignments = _dict_assignments(tree, name)
@@ -101,7 +111,7 @@ def _capture_rates(tree: ast.Module, call: ast.Call) -> set[Any]:
             rates.add(_DYNAMIC)
             continue
         for mapping in assignments:
-            rates.add(mapping.get("control_frequency", _DEFAULT_CONTROL_FREQUENCY))
+            rates.add(mapping.get("control_frequency") or unset_rate)
     return rates
 
 
@@ -110,11 +120,12 @@ def _graded_examples() -> list[tuple[Path, float, set[Any]]]:
     graded: list[tuple[Path, float, set[Any]]] = []
     for path in sorted(_EXAMPLES.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        recordings, rollouts = [], []
+        recordings, rollouts, opened_at = [], [], []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 if node.func.attr == "start_recording":
                     recordings.append(_keyword(node, "fps"))
+                    opened_at.append(node.lineno)
                 elif node.func.attr == "run_policy":
                     rollouts.append(node)
         declared = {f for f in recordings if isinstance(f, (int, float))}
@@ -123,9 +134,13 @@ def _graded_examples() -> list[tuple[Path, float, set[Any]]]:
         if len(declared) != 1 or not rollouts:
             continue
         fps = float(declared.pop())
+        first_open = min(opened_at)
         rates: set[Any] = set()
         for call in rollouts:
-            rates |= _capture_rates(tree, call)
+            # A rollout after the recording opens adopts its fps; one before it
+            # has no recording to adopt from and takes the engine's fallback.
+            unset_rate = fps if first_open < call.lineno else _NO_RECORDING_RATE
+            rates |= _capture_rates(tree, call, unset_rate)
         graded.append((path, fps, rates))
     return graded
 
@@ -152,19 +167,28 @@ def test_every_recording_example_captures_at_the_rate_it_declares() -> None:
     )
 
 
-def test_the_default_capture_rate_is_read_from_the_signature() -> None:
-    """The default is the one ``run_policy`` declares, not a copy of it."""
-    assert isinstance(_DEFAULT_CONTROL_FREQUENCY, (int, float))
-    assert _DEFAULT_CONTROL_FREQUENCY > 0
+def test_the_unset_rate_is_read_from_the_code_not_restated() -> None:
+    """An unset rate resolves at call time, and its fallback lives on the engine."""
+    assert _UNSET_CONTROL_FREQUENCY is None, (
+        "run_policy no longer defers an unset control_frequency to call time, so it "
+        "cannot adopt an open recording's fps and this file grades the wrong rule"
+    )
+    assert isinstance(_NO_RECORDING_RATE, (int, float))
+    assert _NO_RECORDING_RATE > 0
 
 
 @pytest.mark.parametrize(
     ("source", "should_flag"),
     [
-        # Omitting the rate takes the default, which only matches a recording
-        # that declares that same rate.
-        ("sim.start_recording(fps=30)\nsim.run_policy(robot_name='r')", True),
-        (f"sim.start_recording(fps={_DEFAULT_CONTROL_FREQUENCY:g})\nsim.run_policy(robot_name='r')", False),
+        # Omitting the rate after a recording opens adopts its fps, at any value.
+        ("sim.start_recording(fps=30)\nsim.run_policy(robot_name='r')", False),
+        (f"sim.start_recording(fps={_NO_RECORDING_RATE:g})\nsim.run_policy(robot_name='r')", False),
+        # Omitting it BEFORE any recording opens has no fps to adopt, so the
+        # rollout takes the engine fallback and a differing declaration is flagged.
+        (f"sim.run_policy(robot_name='r')\nsim.start_recording(fps={_NO_RECORDING_RATE + 20:g})", True),
+        (f"sim.run_policy(robot_name='r')\nsim.start_recording(fps={_NO_RECORDING_RATE:g})", False),
+        # An explicit None is the same request as omitting it.
+        ("sim.start_recording(fps=30)\nsim.run_policy(control_frequency=None)", False),
         # Stating it wrongly is flagged; stating it correctly is not.
         ("sim.start_recording(fps=30)\nsim.run_policy(control_frequency=50.0)", True),
         ("sim.start_recording(fps=30)\nsim.run_policy(control_frequency=30.0)", False),

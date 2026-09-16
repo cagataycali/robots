@@ -571,6 +571,17 @@ _NOT_AN_INPUT_DOMAIN = {
     # when add_robot stops routing its position through that shared domain, or
     # when the domain stops refusing a boolean.
     "reach_axis": "reads an end-effector offset out of the engine",
+    # Formats a suggested starting pose for a mounted camera. Its four float()
+    # calls coerce vectors measured out of mjData - the end-effector site
+    # position in the parent body's frame, and the approach axis derived from
+    # it - never a parameter: it takes ``parent_body: str`` and an engine-looked-up
+    # ``parent_id: int``, and coerces neither. The caller's own position and
+    # target go through coerce_pose_vector, which refuses a boolean component by
+    # name, before the mount rule is asked at all. Pinned behaviourally rather
+    # than only claimed here:
+    # tests/simulation/mujoco/test_add_camera_mounted_needs_a_pose_in_the_body_frame.py
+    # fails when a boolean coordinate stops being refused ahead of the mount refusal.
+    "_mounted_camera_start": "formats a pose read out of the engine",
 }
 
 _GUARDED_VALIDATORS = {
