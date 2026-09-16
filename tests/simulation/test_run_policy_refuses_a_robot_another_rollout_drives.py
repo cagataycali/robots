@@ -48,9 +48,15 @@ def test_eval_policy_on_a_busy_robot_is_refused(busy_arm):
 
 
 def test_a_policy_on_another_robot_is_not_refused(busy_arm):
-    busy_arm.stop_policy("so101")
-    # stop_policy is cooperative; wait for the worker to release the robot.
-    busy_arm._policy_threads["so101"].result(timeout=10)
+    # stop_policy joins the worker before it answers, so so101 is free the
+    # moment the call returns and this cell has no rollout of its own to wait
+    # on. It used to do that wait itself, through the robot's entry in
+    # _policy_threads, which the join now drops once the worker is gone. The
+    # guarantee is still under test rather than assumed: that wait is what made
+    # the restart below reliable, so a stop that answered while the worker was
+    # still winding down would have start_policy refuse the robot.
+    stopped = busy_arm.stop_policy("so101")
+    assert stopped["status"] == "success", _text(stopped)
     busy_arm.add_robot("go2", position=[1.0, 0.0, 0.5])
     started = busy_arm.start_policy(robot_name="so101", policy_provider="mock", duration=5.0)
     assert started["status"] == "success", _text(started)

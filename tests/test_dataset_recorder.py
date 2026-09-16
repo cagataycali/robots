@@ -1210,7 +1210,16 @@ def test_create_omits_video_backend_by_default(monkeypatch, tmp_path):
     auto``. With the fix, the default is None and the kwarg is left off so
     LeRobot picks its own platform default. The fake's sentinel default proves
     the recorder sent nothing (pre-fix it forwarded "auto" and this fails).
+
+    The one exception is a torchcodec that is installed but cannot load, where
+    the recorder names "pyav" itself so LeRobot's resolver does not log its
+    ~150-line loader exception (``tests/test_quiet_video_backend.py``); that
+    probe is pinned to "torchcodec is fine" here so the assertion holds on a
+    host whose torchcodec happens to be broken.
     """
+    from strands_robots import dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "quiet_video_backend", lambda: None)
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
 
@@ -1222,6 +1231,9 @@ def test_create_omits_video_backend_by_default(monkeypatch, tmp_path):
 def test_resume_omits_video_backend_by_default(monkeypatch):
     """Regression: resume() must not forward video_backend when left at its
     None default (see test_create_omits_video_backend_by_default)."""
+    from strands_robots import dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "quiet_video_backend", lambda: None)
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeResume)
 

@@ -778,6 +778,7 @@ for four unrelated reasons that need four different instructions - so the
 | lerobot is installed, but a package its dataset stack needs (`datasets`, `pandas`, `pyarrow`, `av`, `torchcodec`) is not | `pip install 'lerobot[dataset]'` - installing lerobot alone does not pull those in |
 | lerobot is installed but does not provide that module (an out-of-range or from-source lerobot) | `pip install 'strands-robots[lerobot]'`, which pins the supported range |
 | the import failed with nothing missing (a binary conflict between installed packages) | No install fixes it; reconcile the conflicting packages |
+| `torchcodec is installed but cannot load in this process; decoding video with pyav instead` (one warning line) | Nothing is broken - recording and read-back use pyav. To use torchcodec, follow the remedy the line names (`export DYLD_FALLBACK_LIBRARY_PATH=...` when Homebrew ffmpeg is installed but invisible to a notebook/REPL, else install ffmpeg or the torchcodec matching your torch); `strands-robots doctor` has the full diagnosis |
 
 ### Schema column names must be distinct
 
