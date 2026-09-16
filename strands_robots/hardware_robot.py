@@ -359,6 +359,26 @@ def _camera_option_vocabulary(camera_name: str, config: Mapping[str, Any]) -> tu
     return ConfigClass, fields
 
 
+def _requires_a_caller_value(field: dataclasses.Field) -> bool:
+    """Answer whether a config dataclass field is one the caller must supply.
+
+    A field is the caller's to supply only if the constructor accepts it at all.
+    ``dataclasses.field(init=False)`` names a value the class derives for itself
+    -- lerobot's ``UnitreeG1Config.sim_env`` is assigned in ``__post_init__`` --
+    so it is absent from ``__init__`` and carries no default either. Reading the
+    absent default alone counts such a field as required, which refuses a call
+    the dataclass would have accepted, and the remedy that refusal prints
+    (``sim_env=...``) then raises ``TypeError: __init__() got an unexpected
+    keyword argument``: a dead end whichever way the caller turns.
+
+    The one owner of the rule, so the robot-config and camera-option scans
+    cannot come to disagree about what a caller can be asked for.
+    ``strands_robots.training.lerobot`` reads ``field.init`` for the same
+    question about training-config kwargs.
+    """
+    return field.init and field.default is dataclasses.MISSING and field.default_factory is dataclasses.MISSING
+
+
 def _build_camera_config(camera_name: str, config: Any) -> Any:
     """Build the lerobot camera config for one entry of a ``cameras`` dict.
 
@@ -404,10 +424,7 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
     missing = sorted(
         name
         for name, field in fields.items()
-        if name not in config
-        and name not in _CAMERA_STREAM_DEFAULTS
-        and field.default is dataclasses.MISSING
-        and field.default_factory is dataclasses.MISSING
+        if name not in config and name not in _CAMERA_STREAM_DEFAULTS and _requires_a_caller_value(field)
     )
     if missing:
         raise ValueError(
@@ -1511,13 +1528,15 @@ class Robot(TeleopMixin, AgentTool):
         # rather than from the exception because the answer is on the bus, and
         # by the time the dataclass raises nobody is looking at it: the same
         # values would reach the same dataclass either way, so this changes
-        # which sentence a refused call gets, not which calls are refused.
+        # which sentence a refused call gets, not which calls are refused --
+        # which is why the scan asks ``_requires_a_caller_value`` rather than
+        # reading the absent default alone: a field the class derives for itself
+        # is one the constructor does not accept, so counting it as missing
+        # would refuse a call that builds.
         missing_required = [
             field.name
             for field in dataclasses.fields(ConfigClass)
-            if field.default is dataclasses.MISSING
-            and field.default_factory is dataclasses.MISSING
-            and field.name not in config_data
+            if _requires_a_caller_value(field) and field.name not in config_data
         ]
         if missing_required:
             remedy = ", ".join(f"{name}=..." for name in missing_required)
