@@ -559,6 +559,10 @@ _NOT_AN_INPUT_DOMAIN = {
     # test_a_qpos_write_beyond_mujocos_ceiling_is_refused.py fails when any of
     # those delegations is dropped.
     "qpos_ceiling_error": "coerces only coordinates their own domains accepted",
+    # Names the horizontal axis of ``ee_pos - base_pos``, both read off mjData
+    # by get_robot_state - not caller input, and the ``str | None`` it returns
+    # is an axis label rather than a refusal. Same shape as _prim_body_state.
+    "reach_axis": "reads an end-effector offset out of the engine",
 }
 
 _GUARDED_VALIDATORS = {
