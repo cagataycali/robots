@@ -15,7 +15,7 @@ interoperates with Humble, Jazzy, Rolling, and beyond.
 | | `use_ros` | `use_rtps` |
 |---|-----------|------------|
 | Role | client / observer | **participant / robot** |
-| Backend | in-process `rclpy` | `cyclonedds` (pip wheel) |
+| Backend | in-process `rclpy` | `cyclonedds` (pip wheel; source build on Linux aarch64) |
 | Needs sourced ROS 2 | yes | **no** |
 | Type coverage | any installed interface | curated IDL bundle |
 | Runs on macOS / CI bare | no (needs ROS) | **yes** |
@@ -26,8 +26,40 @@ robot** - publishing topics a real ROS 2 stack (rviz, nav2, a teleop node) will
 consume, indistinguishable from hardware on the wire.
 
 ```bash
-pip install 'strands-robots[ros2]'   # cyclonedds - a self-contained wheel
+pip install 'strands-robots[ros2]'   # cyclonedds - a self-contained wheel on macOS / Windows / Linux x86_64
 ```
+
+### Linux aarch64 (Jetson)
+
+No cyclonedds release publishes a Linux aarch64 wheel (checked against every
+release on PyPI), so on a Jetson, a Thor dev kit or a humanoid's onboard PC the
+same command resolves to the **sdist**, and its build needs an existing Cyclone
+DDS C install pointed at by `CYCLONEDDS_HOME` (plus `python3-dev`). Two ways to
+have one:
+
+```bash
+# (a) a sourced ROS 2 distro already ships it
+sudo apt install ros-$ROS_DISTRO-cyclonedds
+CYCLONEDDS_HOME=/opt/ros/$ROS_DISTRO pip install 'strands-robots[ros2]'
+
+# (b) no ROS 2 on the box: build Cyclone DDS from source (ENABLE_TYPELIB stays ON)
+git clone https://github.com/eclipse-cyclonedds/cyclonedds
+cmake -S cyclonedds -B cyclonedds/build -DCMAKE_INSTALL_PREFIX=$HOME/cyclonedds
+cmake --build cyclonedds/build --target install
+export CYCLONEDDS_HOME=$HOME/cyclonedds     # keep it set at runtime too - add to ~/.bashrc
+pip install 'strands-robots[ros2]'
+```
+
+At runtime the binding locates `libddsc` itself, trying a wheel's bundled copy,
+then `$CYCLONEDDS_HOME/lib`, then the normal loader path. So keep
+`CYCLONEDDS_HOME` exported whenever the install prefix is somewhere the loader
+does not already search - route (b)'s `$HOME/cyclonedds`, or
+`/opt/ros/$ROS_DISTRO` in a shell that has not sourced the distro. Install to the
+default `/usr/local` prefix instead and `ldconfig` finds `libddsc.so.0`, so the
+import needs no variable at all. If `CYCLONEDDS_HOME` *is* set it must be
+correct: the loader raises `CycloneDDSLoaderException: Failed to load CycloneDDS
+library from <CYCLONEDDS_HOME>/lib/libddsc.so` instead of falling back to the
+system path, so a stale export breaks an install that would otherwise work.
 
 ## Actions
 

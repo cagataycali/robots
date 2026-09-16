@@ -5,7 +5,9 @@ Where ``use_ros`` is a *client* that needs a sourced ROS 2 distro (rclpy),
 ``use_rtps`` is a *participant* built on the pip-installable ``cyclonedds``
 binding alone. It speaks RTPS - the DDS wire protocol every ROS 2 distro uses -
 so it interoperates with Humble, Jazzy, Rolling, ... uniformly, with nothing
-installed but a pip wheel.
+installed but a pip wheel - on macOS, Windows and Linux x86_64. Linux aarch64
+publishes no cyclonedds wheel and builds the binding against a Cyclone DDS C
+install instead (``docs/rtps-integration.md#linux-aarch64-jetson``).
 
 The headline capability: an RTPS participant can **act as a robot**. It can
 advertise and publish a topic that a real ROS 2 node (rviz, nav2, a teleop

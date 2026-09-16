@@ -95,14 +95,20 @@ COMMAND_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 # The shared hint names the step that supplies rclpy; this adds the alternative
 # only a Robot can take, because ``ros2_transport`` is the caller's choice: the
 # pure-RTPS bridge publishes the same topics (both transports share the wire
-# contract in ``RosTelemetryBase``) over cyclonedds, which is a pip wheel, so it
-# is the one route here the ``[ros2]`` extra really does complete.
+# contract in ``RosTelemetryBase``) over cyclonedds, a pip wheel on macOS,
+# Windows and Linux x86_64.  No cyclonedds release publishes a Linux aarch64
+# wheel, so there the extra builds the sdist against a Cyclone DDS C install and
+# this alternative carries a condition: a caller already blocked on rclpy must be
+# told that, not sent into a second failing install.
 _RCLPY_TRANSPORT_INSTALL_HINT = (
     f"{ROS2_SYSTEM_INSTALL_HINT}\n"
     "Or select the pure-RTPS transport, which publishes the same topics and "
     "needs no sourced distro:\n"
     "  pip install 'strands-robots[ros2]'\n"
-    "  Robot(..., ros2_bridge=True, ros2_transport='rtps')"
+    "  Robot(..., ros2_bridge=True, ros2_transport='rtps')\n"
+    "On Linux aarch64 (Jetson) that extra has no wheel: install Cyclone DDS C "
+    "first and set CYCLONEDDS_HOME, see "
+    "docs/rtps-integration.md#linux-aarch64-jetson."
 )
 
 
