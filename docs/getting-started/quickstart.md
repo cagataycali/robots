@@ -80,7 +80,7 @@ twin = Robot("so101")
 twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
                 policy_config={"pretrained_name_or_path": "/tmp/pick_ckpt"}, duration=10.0)
 follower.start_task("pick up the cube", policy_provider="lerobot_local",
-                    policy_port=None, duration=10.0)
+                    pretrained_name_or_path="/tmp/pick_ckpt", duration=10.0)
 
 # 4. COORDINATE a fleet - tell a mesh peer to assist, in natural language.
 follower.mesh.tell(follower.mesh.peers[0]["peer_id"], "hold the tray steady")
