@@ -437,10 +437,13 @@ class MotionPlayer:
 
         # .pt raw ProtoMotions format - needs torch to unpickle. torch is not
         # part of [protomotions]: the tracker itself runs on onnxruntime, and a
-        # caller with a cache dict or .npz never needs it.
+        # caller with a cache dict or .npz never needs it. No ``extra=`` here:
+        # the extras that happen to carry torch ([kimodo], [lerobot], [rl], ...)
+        # are whole other stacks, and naming one would send a ProtoMotions user
+        # to install diffusers and transformers for a one-line unpickle. The
+        # remedy is the package itself.
         torch = require_optional(
             "torch",
-            extra="kimodo",
             purpose="unpickling a raw ProtoMotions .pt motion (a cache dict or .npz needs no torch)",
         )
 
