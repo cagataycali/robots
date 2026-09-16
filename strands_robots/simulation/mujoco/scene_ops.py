@@ -446,6 +446,54 @@ def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int
     return tendon_joint_ids(model, int(model.actuator_trnid[act_id, 0]), mj)
 
 
+def mj_contact_is_active(contact: Any) -> bool:
+    """True when MuJoCo admitted this ``mjContact`` to the constraint solver.
+
+    The engine-level half of
+    :func:`~strands_robots.simulation.predicates.contact_is_active`: the
+    ``active`` flag that function reads on a ``get_contacts`` record is this
+    decision, recorded into the payload. ``mjData.contact`` lists every pair
+    inside the *detection* range (``margin`` plus ``gap``); only the admitted
+    ones push back, so a report that counts the rest answers "touching" for
+    bodies that are visibly apart. ``dist`` cannot stand in for it - a pair
+    with a wide ``margin`` is load-bearing at a positive distance.
+
+    Args:
+        contact: One ``mjData.contact`` record.
+
+    Returns:
+        True when the pair carries force.
+    """
+    return int(contact.exclude) == 0
+
+
+def geom_label(model: Any, geom_id: int, mj: Any) -> str:
+    """Return the name a human can find geom ``geom_id`` by in the model.
+
+    Most collision geoms in a shipped asset are unnamed - the so100 jaw pad is
+    geom 18 with no name of its own - so a report that prints only
+    ``mj_id2name`` says ``''`` for exactly the pairs a caller most needs to
+    identify. The body a geom hangs off is named in every asset this package
+    loads, so the fallback ``<body>/geom_<id>`` locates it in the MJCF.
+
+    Args:
+        model: The ``mujoco.MjModel`` the geom lives in.
+        geom_id: The geom to label.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The geom's own name; else ``"<body>/geom_<id>"``; else ``"geom_<id>"``.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, geom_id)
+    if name:
+        return str(name)
+    try:
+        body = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[geom_id]))
+    except (IndexError, AttributeError):
+        body = None
+    return f"{body}/geom_{geom_id}" if body else f"geom_{geom_id}"
+
+
 def actuator_target_body_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
     """Return the bodies actuator ``act_id``'s transmission acts on.
 

@@ -641,16 +641,21 @@ class MotionPrimitivesCore:
 
         Measured with an agent on the bundled so100 (v0.5.2 devx replay, s09):
         three ``move_to`` calls in a row ended in "the pose fights joint
-        limits/contacts" while ``get_contacts`` showed the actual cause, a
-        self-collision ``Fixed_Jaw <-> Base`` - the target sat too close to the
-        base. The agent needed an extra tool call per failure to learn that,
-        and the generic line named neither of the two things it could have.
+        limits/contacts" and only a separate ``get_contacts`` call named the
+        cause. On that robot a low target near the base
+        (``position=[0.0, -0.10, 0.03]``) drives the jaw into the floor:
+        ``the robot is in contact: 'ground' <-> 'so100/Fixed_Jaw/geom_18'
+        (d=-0.0002 m)``. The agent needed an extra tool call per failure to
+        learn that, and the generic line named neither of the two things it
+        could have.
 
         Args:
-            obstruction: ``{"contacts": [{"a", "b", "dist_m"}], "joints_at_limit":
-                [{"joint", "pos", "limit", "side"}]}`` as the engine read it at
-                the final tick, at most :data:`OBSTRUCTION_MAX_CONTACTS`
-                contacts. ``None`` when the engine did not look.
+            obstruction: ``{"contacts": [{"geom1", "geom2", "dist"}],
+                "joints_at_limit": [{"joint", "pos", "limit", "side"}]}`` as the
+                engine read it at the final tick, at most
+                :data:`OBSTRUCTION_MAX_CONTACTS` contacts. The contact records
+                are spelled the way :meth:`get_contacts` spells them, so the
+                two reports read as one. ``None`` when the engine did not look.
 
         Returns:
             One clause naming the obstruction and the remedy it implies; the
@@ -662,7 +667,7 @@ class MotionPrimitivesCore:
         limits = list(obstruction.get("joints_at_limit") or [])
         parts: list[str] = []
         if contacts:
-            named = "; ".join(f"'{c['a']}' <-> '{c['b']}' (d={float(c['dist_m']):.4f} m)" for c in contacts)
+            named = "; ".join(f"'{c['geom1']}' <-> '{c['geom2']}' (d={float(c['dist']):.4f} m)" for c in contacts)
             more = obstruction.get("contacts_total")
             suffix = f" and {int(more) - len(contacts)} more" if more and int(more) > len(contacts) else ""
             parts.append(f"the robot is in contact: {named}{suffix}")

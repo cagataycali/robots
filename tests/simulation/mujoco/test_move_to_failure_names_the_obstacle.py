@@ -2,13 +2,14 @@
 
 Measured with an agent on the bundled so100 (v0.5.2 devx replay, s09):
 three ``move_to`` calls in a row ended in "the pose fights joint
-limits/contacts" while ``get_contacts`` showed the actual cause - a
-self-collision ``Fixed_Jaw <-> Base``, the target sat too close to the base.
-The refusal now reads the engine at the final tick and names the active
-contacts on the robot (at most three, nearest first, total reported) and the
-commanded joints sitting at a bound, and carries the same facts as
-``json.obstruction``. When nothing visible blocks the arm it says so, which
-is the "raise max_steps" case.
+limits/contacts" and only a separate ``get_contacts`` call named the cause.
+On that robot a low target near the base stops the servo with the jaw pushing
+into the floor (``'ground' <-> 'so100/Fixed_Jaw/geom_18'``). The refusal now
+reads the engine at the final tick and names the active contacts on the robot
+(at most three, nearest first, total reported) and the commanded joints
+sitting at a bound, and carries the same facts as ``json.obstruction`` -
+spelled the way ``get_contacts`` spells a contact. When nothing visible
+blocks the arm it says so, which is the "raise max_steps" case.
 """
 
 from __future__ import annotations
@@ -17,15 +18,14 @@ import importlib.util
 
 import pytest
 
-from strands_robots.simulation.motion_primitives_base import (
-    JOINT_LIMIT_MARGIN_FRACTION,
-    OBSTRUCTION_MAX_CONTACTS,
-    MotionPrimitivesCore,
-)
-
 requires_mujoco = pytest.mark.skipif(importlib.util.find_spec("mujoco") is None, reason="mujoco not installed")
 
-_text = MotionPrimitivesCore._obstruction_text
+
+def _text(obstruction: dict[str, object] | None) -> str:
+    """The refusal clause the builder produces for ``obstruction``."""
+    from strands_robots.simulation.motion_primitives_base import MotionPrimitivesCore
+
+    return MotionPrimitivesCore._obstruction_text(obstruction)
 
 
 class TestObstructionText:
@@ -35,12 +35,12 @@ class TestObstructionText:
     def test_contacts_are_named_with_distance_and_total(self) -> None:
         text = _text(
             {
-                "contacts": [{"a": "so100/Fixed_Jaw", "b": "so100/Base", "dist_m": -0.0021}],
+                "contacts": [{"geom1": "ground", "geom2": "so100/Fixed_Jaw/geom_18", "dist": -0.0002}],
                 "contacts_total": 5,
                 "joints_at_limit": [],
             }
         )
-        assert "the robot is in contact: 'so100/Fixed_Jaw' <-> 'so100/Base' (d=-0.0021 m) and 4 more" in text
+        assert "the robot is in contact: 'ground' <-> 'so100/Fixed_Jaw/geom_18' (d=-0.0002 m) and 4 more" in text
         assert text.endswith("Move the target away from what it touches, or loosen tol.")
 
     def test_joints_at_limit_are_named_with_side_and_bound(self) -> None:
@@ -147,6 +147,8 @@ class TestMoveToNamesTheJointLimit:
         joints = obstruction["joints_at_limit"]
         assert [j["joint"] for j in joints] == ["arm/shoulder"]
         assert joints[0]["side"] == "upper" and joints[0]["limit"] == pytest.approx(1.0)
+        from strands_robots.simulation.motion_primitives_base import JOINT_LIMIT_MARGIN_FRACTION
+
         assert joints[0]["pos"] >= 1.0 - max(1.2 * JOINT_LIMIT_MARGIN_FRACTION, 1e-3)
         assert "The servo was stopped: commanded joint(s) at a limit: 'arm/shoulder' at its upper limit" in text
         assert "fights joint limits/contacts" not in text
@@ -176,10 +178,12 @@ class TestMoveToNamesTheContact:
         # Swing toward +Y into the wall standing at y=0.12 across the tip's arc;
         # the target sits ON the arc (0.45 rad), so IK solves it and the servo
         # is what gets stopped.
+        from strands_robots.simulation.motion_primitives_base import OBSTRUCTION_MAX_CONTACTS
+
         res = sim.move_to(robot_name="arm", position=[0.3603, 0.1740, 0.1], tol=0.005, max_steps=60)
         assert res["status"] == "error"
         obstruction = res["content"][1]["json"]["obstruction"]
-        pairs = {frozenset((c["a"], c["b"])) for c in obstruction["contacts"]}
+        pairs = {frozenset((c["geom1"], c["geom2"])) for c in obstruction["contacts"]}
         assert frozenset(("arm/jaw", "arm/wall_geom")) in pairs, obstruction
         assert all("cube_geom" not in p for p in pairs), "the loose cube's own contacts are not the robot's"
         assert len(obstruction["contacts"]) <= OBSTRUCTION_MAX_CONTACTS
@@ -190,14 +194,61 @@ class TestMoveToNamesTheContact:
         assert len(pairs) == len(obstruction["contacts"])
         assert "Move the target away from what it touches" in text
 
-    def test_robot_body_ids_is_the_arm_subtree_only(self, arm_with) -> None:
+    def test_the_scoped_subtree_is_the_arm_only(self, arm_with) -> None:
         import mujoco as mj
 
         sim = arm_with(extra=_WALL)
         model = sim._world._model
-        robot = sim._world.robots["arm"]
-        names = {mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b) for b in sim._robot_body_ids(model, robot)}
+        commanded = sim._world.robots["arm"].joint_ids
+        ids = sim._commanded_robot_body_ids(model, commanded)
+        names = {mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, b) for b in ids}
         assert names == {"arm/base", "arm/link1", "arm/gripper"}
+
+    def test_a_contact_report_is_spelled_like_get_contacts(self, arm_with) -> None:
+        """One vocabulary for one fact: the row a caller reads in either report is the same row."""
+        sim = arm_with(extra=_WALL)
+        res = sim.move_to(robot_name="arm", position=[0.3603, 0.1740, 0.1], tol=0.005, max_steps=60)
+        contacts = res["content"][1]["json"]["obstruction"]["contacts"]
+        assert contacts
+        listed = sim.get_contacts()["content"][1]["json"]["contacts"]
+        assert listed
+        assert all(set(c) <= set(listed[0]) for c in contacts), (contacts, listed[0])
+        assert set(contacts[0]) == {"geom1", "geom2", "dist"}
+
+
+_CURTAIN = """
+    <body name="curtain" pos="0.40 0.15 0.1">
+      <geom name="curtain_geom" type="box" size="0.02 0.02 0.1" margin="0.08" gap="0.08"/>
+    </body>
+"""
+
+
+@requires_mujoco
+class TestAProximityReportIsNotWhatStoppedTheServo:
+    def test_only_the_pair_that_carries_force_is_named(self, arm_with) -> None:
+        """A wide ``margin`` puts two pairs of one obstacle in the list; one pushes back.
+
+        ``dist`` cannot sort them - the load-bearing pair here is at a
+        *positive* distance too - so the report reads the solver's own
+        admission, the reading
+        :func:`~strands_robots.simulation.predicates.contact_is_active` owns
+        for a ``get_contacts`` record.
+        """
+        sim = arm_with(extra=_CURTAIN)
+        res = sim.move_to(robot_name="arm", position=[0.3603, 0.1740, 0.1], tol=0.005, max_steps=60)
+        assert res["status"] == "error"
+        named = {frozenset((c["geom1"], c["geom2"])) for c in res["content"][1]["json"]["obstruction"]["contacts"]}
+        listed = sim.get_contacts()["content"][1]["json"]["contacts"]
+        pushing = {frozenset((c["geom1"], c["geom2"])) for c in listed if c["active"]}
+        in_the_gap = {frozenset((c["geom1"], c["geom2"])) for c in listed if not c["active"]} - pushing
+        assert named == pushing & named, (named, pushing)
+        assert in_the_gap, "the wide margin must put at least one pair in the gap"
+        assert not (named & in_the_gap), (named, in_the_gap)
+        # The pair that stopped the arm is named even though it is 0.0765 m
+        # away: a wide margin is load-bearing at a positive distance.
+        jaw = frozenset(("arm/jaw", "arm/curtain_geom"))
+        assert jaw in named, named
+        assert min(c["dist"] for c in res["content"][1]["json"]["obstruction"]["contacts"]) > 0.0
 
 
 @requires_mujoco
@@ -215,7 +266,7 @@ class TestOnTheBundledSo100:
             text = res["content"][0]["text"]
             obstruction = res["content"][1]["json"]["obstruction"]
             assert obstruction["contacts"], text
-            assert any("Fixed_Jaw" in c["a"] or "Fixed_Jaw" in c["b"] for c in obstruction["contacts"]), text
+            assert any("Fixed_Jaw" in c["geom1"] or "Fixed_Jaw" in c["geom2"] for c in obstruction["contacts"]), text
             assert "The servo was stopped: the robot is in contact:" in text
             assert "fights joint limits/contacts" not in text
         finally:
