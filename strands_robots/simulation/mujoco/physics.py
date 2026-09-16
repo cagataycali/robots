@@ -958,6 +958,29 @@ class PhysicsMixin:
                     return int(mid)
         return -1
 
+    def _joint_key_owners(self, key: str) -> list[str]:
+        """Names of the attached robots on which a bare joint key resolves.
+
+        A key resolves on a robot when ``<namespace><key>`` is a joint of the
+        model or ``key`` is one of that robot's registry joint labels (case
+        folded, as :meth:`_resolve_joint_label` reads them). Attachment order,
+        so ``owners[0]`` is the robot the first-match fallback would have
+        picked. Empty when the scene is not built or the key is not bare.
+        """
+        if self._world is None or self._world._model is None or not isinstance(key, str) or "/" in key:
+            return []
+        mj = _ensure_mujoco()
+        owners: list[str] = []
+        for robot in self._world.robots.values():
+            ns = robot.namespace or ""
+            if mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_JOINT, ns + key) >= 0:
+                owners.append(robot.name)
+                continue
+            labels = {lbl.lower() for lbl in self._robot_joint_labels(robot).values()}
+            if key.lower() in labels:
+                owners.append(robot.name)
+        return owners
+
     def _robot_joint_labels(self, robot: Any) -> dict[str, str]:
         """``{asset joint name: label}`` for one attached robot, from the registry.
 
@@ -1626,6 +1649,33 @@ class PhysicsMixin:
             jnt_id = -1
             if ns and isinstance(jnt_name, str) and "/" not in jnt_name:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, ns + jnt_name)
+            elif not ns and isinstance(jnt_name, str) and "/" not in jnt_name:
+                # No scope and a bare key: the shared lookup's first-match
+                # fallback is documented as "unambiguous or explicit", but a
+                # WRITE has to enforce that contract rather than describe it.
+                # Two so101s both carry joint ``1`` (and label
+                # ``shoulder_pan``); resolving the first one attached moved a
+                # robot the caller never addressed while get_robot_state,
+                # move_to and run_policy on the same scene refused to guess.
+                owners = self._joint_key_owners(jnt_name)
+                if len(owners) > 1:
+                    listed = " and ".join(f"'{o}'" for o in owners)
+                    # Every owner in the example, not just the first: an
+                    # example naming one robot reads as a recommendation, and
+                    # the agent then picks the robot the fallback would have.
+                    qualified = " or ".join(f"'{o}/{jnt_name}'" for o in owners)
+                    return {}, {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"{method}: joint key '{jnt_name}' is ambiguous - robots {listed} each carry it, "
+                                    f"so nothing was written. Pass robot_name= to scope the write, or qualify the key "
+                                    f"({qualified})."
+                                )
+                            }
+                        ],
+                    }
             if jnt_id < 0:
                 jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
