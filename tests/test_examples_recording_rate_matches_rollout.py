@@ -34,9 +34,20 @@ from strands_robots.simulation.base import SimEngine
 
 _EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
-#: The rate a rollout captures at when the caller does not say. Read from the
-#: signature so this file cannot disagree with the code it grades.
+#: What a rollout captures at when the caller does not say. Read from the
+#: signature so this file cannot disagree with the code it grades: ``None``
+#: means an unset ``control_frequency`` adopts the open recording's fps
+#: (:meth:`SimEngine._resolve_control_frequency`), so an omitted rate can
+#: never disagree with the recording it lands in.
 _DEFAULT_CONTROL_FREQUENCY = inspect.signature(SimEngine.run_policy).parameters["control_frequency"].default
+
+#: Stands in for an omitted rate when the default follows the recording.
+_FOLLOWS_RECORDING = object()
+
+
+def _omitted_rate() -> Any:
+    return _FOLLOWS_RECORDING if _DEFAULT_CONTROL_FREQUENCY is None else _DEFAULT_CONTROL_FREQUENCY
+
 
 #: A refactor that stops reaching the examples must fail loudly rather than
 #: report a clean sweep over nothing.
@@ -93,7 +104,7 @@ def _capture_rates(tree: ast.Module, call: ast.Call) -> set[Any]:
         return {direct}
     splats = _splatted_names(call)
     if not splats:
-        return {_DEFAULT_CONTROL_FREQUENCY}
+        return {_omitted_rate()}
     rates: set[Any] = set()
     for name in splats:
         assignments = _dict_assignments(tree, name)
@@ -101,7 +112,7 @@ def _capture_rates(tree: ast.Module, call: ast.Call) -> set[Any]:
             rates.add(_DYNAMIC)
             continue
         for mapping in assignments:
-            rates.add(mapping.get("control_frequency", _DEFAULT_CONTROL_FREQUENCY))
+            rates.add(mapping.get("control_frequency", _omitted_rate()))
     return rates
 
 
@@ -153,18 +164,24 @@ def test_every_recording_example_captures_at_the_rate_it_declares() -> None:
 
 
 def test_the_default_capture_rate_is_read_from_the_signature() -> None:
-    """The default is the one ``run_policy`` declares, not a copy of it."""
-    assert isinstance(_DEFAULT_CONTROL_FREQUENCY, (int, float))
-    assert _DEFAULT_CONTROL_FREQUENCY > 0
+    """The default is the one ``run_policy`` declares, not a copy of it.
+
+    An unset ``control_frequency`` adopts the open recording's fps, so the
+    signature says ``None`` and the grader treats an omitted rate as following
+    the recording rather than as a number to compare.
+    """
+    assert _DEFAULT_CONTROL_FREQUENCY is None
+    assert _omitted_rate() is _FOLLOWS_RECORDING
 
 
 @pytest.mark.parametrize(
     ("source", "should_flag"),
     [
-        # Omitting the rate takes the default, which only matches a recording
-        # that declares that same rate.
-        ("sim.start_recording(fps=30)\nsim.run_policy(robot_name='r')", True),
-        (f"sim.start_recording(fps={_DEFAULT_CONTROL_FREQUENCY:g})\nsim.run_policy(robot_name='r')", False),
+        # Omitting the rate adopts the open recording's fps, whatever it is.
+        ("sim.start_recording(fps=30)\nsim.run_policy(robot_name='r')", False),
+        ("sim.start_recording(fps=50)\nsim.run_policy(robot_name='r')", False),
+        # A splatted dict without the key is the same omission.
+        ("kw = {'steps': 10}\nsim.start_recording(fps=30)\nsim.run_policy(**kw)", False),
         # Stating it wrongly is flagged; stating it correctly is not.
         ("sim.start_recording(fps=30)\nsim.run_policy(control_frequency=50.0)", True),
         ("sim.start_recording(fps=30)\nsim.run_policy(control_frequency=30.0)", False),
