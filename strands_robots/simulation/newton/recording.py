@@ -325,6 +325,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             # (``arm0__wrist_cam``); an unknown name fails loudly (no silent
             # drop), listing what exists. Scoping filters the ``recording_cameras``
             # tuples so the on_frame hook renders only the selected views.
+            # Scene camera name -> dataset column key, in dataset column order, and
+            # the scene's full camera list. start_recording's reply names the
+            # cameras by their SCENE name (the spelling every camera surface
+            # answers for) and reads "no camera recorded" off the scene rather
+            # than assuming a cause.
+            scene_cameras = [src for src, _safe, _w, _h in recording_cameras]
+            recorded_cameras = {src: safe for src, safe, _w, _h in recording_cameras}
+
             if cameras is not None:
                 raw_to_safe = {src: safe for src, safe, _w, _h in recording_cameras}
                 safe_to_raw = {safe: src for src, safe in raw_to_safe.items()}
@@ -361,6 +369,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 camera_keys = selected_safe
                 camera_dims = {safe: camera_dims[safe] for safe in selected_safe}
                 recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
+                recorded_cameras = {safe_to_raw[safe]: safe for safe in selected_safe}
 
             world._backend_state["recording_cameras"] = recording_cameras
 
@@ -408,7 +417,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     {
                         "text": (
                             f"Recording Newton scene to LeRobotDataset: {repo_id}\n"
-                            f"{recorded_cameras_line(joint_names, camera_keys, cameras, fps)}"
+                            f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Run policies to capture frames, then stop_recording to save the episode"
                         )

@@ -44,36 +44,87 @@ from strands_robots.utils import (
 logger = logging.getLogger(__name__)
 
 
-def recorded_cameras_line(joint_names: Sequence[str], camera_keys: Sequence[str], cameras: object, fps: Any) -> str:
+def recorded_cameras_line(
+    joint_names: Sequence[str],
+    recorded_cameras: Mapping[str, str],
+    scene_cameras: Sequence[str],
+    cameras: Sequence[str] | None,
+    fps: Any,
+) -> str:
     """The schema line of ``start_recording``'s reply, naming the cameras.
 
-    ``"6 joints, 1 cameras @ 10fps"`` told an agent how many image columns
-    the dataset has but not which: a replayed agent read it, then asked
-    ``render`` for ``top_camera`` - the name it assumed the recording used -
-    and got "not found. Available: ['default']". The count is replaced by the
-    dataset's camera keys, so the names an agent needs next (for ``render``,
-    for ``cameras=`` on the next recording, for a policy's
-    ``input_features``) are in the reply that created them. When no camera is
-    recorded a second line says what the dataset WILL contain (joint state and
-    actions, no ``observation.images.*``) and how to get images - naming
-    ``cameras=[]`` when the caller scoped every camera out, ``add_camera(...)``
-    when the scene has none.
+    ``"6 joints, 1 cameras @ 10fps"`` told an agent how many image columns the
+    dataset has but not which: a replayed agent read it, then asked ``render``
+    for ``top_camera`` - the name it assumed the recording used - and got "not
+    found. Available: ['default']". The count is replaced by the cameras
+    themselves, so the names an agent needs next are in the reply that created
+    the columns.
+
+    The name it lists is the SCENE camera name, because that is the one every
+    camera surface accepts: ``render``, ``render_depth``, ``get_frame``,
+    ``get_camera_params`` and ``start_cameras_recording`` resolve a name
+    through the compiled model (or a registered alias), and ``cameras=`` on the
+    next ``start_recording`` takes either spelling. The dataset column is named
+    by :func:`~strands_robots.utils.camera_schema_key`, which collapses the
+    ``/`` of a robot-scoped camera to ``__`` because a LeRobot feature name
+    cannot carry it - so listing the column key instead would hand back
+    ``so101__wrist`` for a camera the render surfaces only answer for as
+    ``so101/wrist``, reproducing the very refusal above one namespace deeper.
+    Both names matter (the column is what a policy's ``input_features`` and a
+    dataset reader see), so when they differ the column is named too rather
+    than chosen between.
+
+    When no camera is recorded, a second line says what the dataset WILL carry
+    (joint state and actions, no ``observation.images.*``) and why - which is
+    read off the scene rather than assumed, because the three causes have three
+    different remedies: a scene with no camera needs ``add_camera(...)``, a
+    ``cameras=`` that scoped every camera out needs a different subset, and a
+    scene whose cameras produce no frame (Isaac's ``render_mode="headless"``)
+    needs neither and would be sent on a false errand by either.
+
+    Args:
+        joint_names: The scalar joint columns of ``observation.state``.
+        recorded_cameras: Scene camera name -> dataset column key, in dataset
+            column order. Empty when the dataset carries no image column.
+        scene_cameras: Every camera the scene offers, recorded or not, which is
+            what distinguishes "there are none" from "none was recorded".
+        cameras: The caller's ``cameras=`` argument, ``None`` when it recorded
+            every camera. Only its presence is read - an empty selection is the
+            one cause the scene alone cannot explain.
+        fps: The dataset frame rate, as reported.
+
+    Returns:
+        The schema line, newline-terminated, plus the no-camera line when there
+        is one.
     """
-    names = list(camera_keys)
+    names = list(recorded_cameras)
     word = "camera" if len(names) == 1 else "cameras"
     line = f"{len(joint_names)} joints, {len(names)} {word} {names} @ {fps}fps\n"
     if names:
+        renamed = [(name, key) for name, key in recorded_cameras.items() if name != key]
+        if renamed:
+            columns = ", ".join(f"{name!r} -> observation.images.{key}" for name, key in renamed)
+            line += (
+                f"Dataset columns: {columns} (a dataset feature name cannot carry '/', so it "
+                "collapses to '__'; render and cameras= take the scene name above).\n"
+            )
         return line
+    if not scene_cameras:
+        return line + (
+            "No cameras in the scene: the dataset carries joint state and actions only, "
+            "no observation.images.*. Call add_camera(...) before start_recording to record "
+            "images.\n"
+        )
     if cameras is not None:
         return line + (
-            "No cameras recorded (cameras=[] scoped them all out): the dataset carries "
-            "joint state and actions only, no observation.images.*. Omit cameras= or "
+            f"No cameras recorded (cameras= scoped out {sorted(scene_cameras)}): the dataset "
+            "carries joint state and actions only, no observation.images.*. Omit cameras= or "
             "name the ones to keep.\n"
         )
     return line + (
-        "No cameras in the scene: the dataset carries joint state and actions only, "
-        "no observation.images.*. Call add_camera(...) before start_recording to record "
-        "images.\n"
+        f"No cameras recorded: the scene's camera(s) {sorted(scene_cameras)} produce no frame to "
+        "record, so the dataset carries joint state and actions only, no observation.images.* "
+        "(the reason is logged as a warning above).\n"
     )
 
 
