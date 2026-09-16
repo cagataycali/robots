@@ -26,6 +26,9 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 
 logger = logging.getLogger(__name__)
 
+#: The actions ``train_policy`` answers, in the order its docstring lists them.
+_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "export", "list")
+
 
 def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Canonical Strands tool result: ``{status, content:[...]}`` only.
@@ -220,6 +223,13 @@ def train_policy(
           and lerobot silently yields zero frames. See docs/training/overview.md.
     """
     try:
+        # Graded first: an action this tool does not know is a mistake in the
+        # call itself, so answering it with the data-source gate below (or with
+        # the trainer build) sends the caller to fix arguments that no action
+        # would read.
+        if action not in _ACTIONS:
+            return _err(f"Unknown action: {action}. Valid: {', '.join(_ACTIONS)}")
+
         if action == "list":
             return _ok("Available training providers:\n  " + "\n  ".join(list_trainers()))
 
@@ -330,7 +340,7 @@ def train_policy(
                 ],
             }
 
-        return _err(f"Unknown action: {action}. Valid: train, validate, status, export, list")
+        return _err(f"Unknown action: {action}. Valid: {', '.join(_ACTIONS)}")
 
     except Exception as e:  # noqa: BLE001 - tool boundary: report, don't crash the agent
         logger.exception("train_policy failed")

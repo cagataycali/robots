@@ -86,7 +86,13 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
 )
-from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, discover_ee_frame, hint_matches_name
+from strands_robots.simulation.ik import (
+    GRIPPER_BODY_HINTS,
+    discover_ee_frame,
+    hint_matches_name,
+    reach_axis,
+    reach_axis_label,
+)
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -115,7 +121,12 @@ from strands_robots.simulation.mujoco.backend import (
 )
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
-from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
+from strands_robots.simulation.mujoco.physics import (
+    PhysicsMixin,
+    _coerce_rgba,
+    anchor_relative_scene_path,
+    scene_not_found_error,
+)
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
@@ -1274,6 +1285,17 @@ class MuJoCoSimEngine(
         ``add_object`` / ``add_camera`` / ``add_robot`` calls mutate it via
         ``spec.recompile(model, data)`` and preserve the on-disk scene.
 
+        ``scene_path`` is read as given. When nothing is there and the path is
+        relative, the scenes directory
+        (:func:`~strands_robots.simulation.mujoco.physics.scene_root`:
+        ``~/.strands_robots/scenes``, or ``STRANDS_ROBOTS_SCENE_ROOT``) is
+        searched too, because that is where a relative
+        :meth:`~strands_robots.simulation.mujoco.physics.PhysicsMixin.export_xml`
+        destination lands - so ``export_xml {"output_path": "scene.xml"}``
+        followed by ``load_scene {"scene_path": "scene.xml"}`` is one round
+        trip in the spelling an agent actually uses. A refusal names both
+        directories it searched.
+
         Notes:
 
         * ``_backend_state["scene_loaded"] = True`` marks the live spec as one
@@ -1293,7 +1315,19 @@ class MuJoCoSimEngine(
         mj = self._mj
 
         if not os.path.exists(scene_path):
-            return {"status": "error", "content": [{"text": f"Scene file not found: {scene_path}"}]}
+            # A relative source is ALSO looked for in the scenes directory,
+            # because that is where a relative export_xml destination lands:
+            # `export_xml {"output_path": "scene.xml"}` followed by
+            # `load_scene {"scene_path": "scene.xml"}` is the documented round
+            # trip, and anchoring only the writer would have made the natural
+            # spelling of it fail. As given wins, so a path that resolves
+            # against the working directory today keeps resolving there; the
+            # scenes directory is consulted only when nothing is at the
+            # caller's path, which cannot change an answer anything got before.
+            anchored = anchor_relative_scene_path(scene_path)
+            if not os.path.exists(anchored):
+                return {"status": "error", "content": [{"text": scene_not_found_error(scene_path)}]}
+            scene_path = anchored
 
         # Compile the new scene into LOCAL model/data first. A malformed MJCF
         # must NOT destroy the currently-live world: previously self._world was
@@ -3863,11 +3897,50 @@ class MuJoCoSimEngine(
                 if frame_id >= 0:
                     xpos = data.site_xpos[frame_id] if frame_type == "site" else data.xpos[frame_id]
                     ee_pos = [float(xpos[0]), float(xpos[1]), float(xpos[2])]
+                    # Where the EE is RELATIVE to the base, and which way the
+                    # arm extends right now. Nothing else in the reading says
+                    # which axis is the robot's front: an agent reading "in
+                    # front of the base" as +X placed a cube at [0.2, 0, 0.02]
+                    # for an so101 whose whole reach lies along -Y, and only the
+                    # arm's spare reach saved the move.
+                    #
+                    # The base is MEASURED, never the ``add_robot`` request:
+                    # ``position`` is the attach frame's translation and MuJoCo
+                    # composes it with the model's authored root pose rather
+                    # than replacing it, so the request names a place the robot
+                    # is not for 30 of the registry's 55 single-root models
+                    # (see :meth:`_robot_root_world_position`, which owns this
+                    # question for ``add_robot`` and ``list_robots`` too). A
+                    # root body carrying its own ``pos`` then flips the very
+                    # sentence this line adds: an arm authored at
+                    # ``pos="0 -0.5 0.1"`` and spawned at the origin extends
+                    # along +X from its base, and measuring from the request
+                    # reported -Y - the axis of the base's own offset. The live
+                    # floating-base pose answers first when there is one; a
+                    # model with several root bodies has no one base pose to
+                    # measure, so its offset is from the requested attach frame
+                    # (the case ``list_robots`` labels).
+                    if base is not None:
+                        base_pos = base["position"]
+                    else:
+                        measured_base = self._robot_root_world_position(robot)
+                        base_pos = measured_base if measured_base is not None else [float(v) for v in robot.position]
+                    offset = [ee_pos[i] - base_pos[i] for i in range(3)]
+                    axis = reach_axis(offset)
                     text += (
                         f"end_effector ({frame_type} '{frame_name}', the frame move_to drives): "
-                        f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]\n"
+                        f"pos=[{ee_pos[0]:.4f}, {ee_pos[1]:.4f}, {ee_pos[2]:.4f}]; "
+                        f"from base [{base_pos[0]:.4f}, {base_pos[1]:.4f}, {base_pos[2]:.4f}]: "
+                        f"[{offset[0]:+.4f}, {offset[1]:+.4f}, {offset[2]:+.4f}] ({reach_axis_label(axis)})\n"
                     )
-                    json_payload["end_effector"] = {"name": frame_name, "type": frame_type, "position": ee_pos}
+                    json_payload["end_effector"] = {
+                        "name": frame_name,
+                        "type": frame_type,
+                        "position": ee_pos,
+                        "base": base_pos,
+                        "from_base": offset,
+                        "extends_along": axis,
+                    }
 
         # Name torque-only actuation, because its normal behaviour reads as a
         # broken model. A Menagerie quadruped is driven entirely by <motor>, so
@@ -6413,6 +6486,16 @@ class MuJoCoSimEngine(
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
+
+        # The same per-robot gate ``start_policy`` and every joint write pass.
+        # Without it a second rollout on a robot another thread is already
+        # driving ran concurrently - two policies writing one ``ctrl`` slice -
+        # and its ``finally`` then lowered the claim the first one still held.
+        # The driving thread of a rollout in flight is exempt (see
+        # ``_rollouts_driven_by_other_threads``), so ``start_policy``'s worker,
+        # which reaches this body through ``_drive_rollout``, is not refused.
+        if err := self._require_no_running_policy("run_policy", robot_name=robot_name):
+            return err
 
         # The blocking entry runs on the caller's own thread, so claiming the
         # robot here is synchronous with the call and opens no window.
