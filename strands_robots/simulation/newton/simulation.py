@@ -1526,9 +1526,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
         if _terr is not None:
             return {"status": "error", "content": [{"text": _terr}]}
-        mount_err = mounted_camera_pose_error("add_camera", name, parent_body, position, target)
-        if mount_err is not None:
-            return {"status": "error", "content": [{"text": mount_err}]}
         pos = [1.0, 1.0, 1.0] if position is None else position
         tgt = [0.0, 0.0, 0.0] if target is None else target
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
@@ -1587,6 +1584,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                         }
                     ],
                 }
+
+            # A mount with no pose of its own would read the free-camera
+            # defaults in this body's frame - 1.73 m off it, looking back at it.
+            # Checked AFTER the body is known to exist, so an unknown body still
+            # gets the not-found refusal above: the order MuJoCo's ``add_camera``
+            # uses, and this rule exists to make the two backends agree.
+            mount_err = mounted_camera_pose_error("add_camera", name, parent_body, position, target)
+            if mount_err is not None:
+                return {"status": "error", "content": [{"text": mount_err}]}
 
         with self._lock:
             self._world.cameras[name] = SimCamera(

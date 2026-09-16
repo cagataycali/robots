@@ -16,6 +16,11 @@ the robot's end-effector site sits on that body) a concrete starting pose in
 that frame which is itself accepted; either coordinate supplied is enough; a
 free camera keeps its defaults; a body that is not a gripper gets the generic
 hint, not another body's fingertips.
+
+The Newton half is pinned here too, driven through a fake ``self``: ``newton``
+is not installable on most machines, so its own suite skips, and the ordering
+that keeps the two backends agreeing - an unknown body answers "not found",
+not "you omitted the pose" - has to be reachable without it.
 """
 
 from __future__ import annotations
@@ -24,14 +29,16 @@ import re
 
 import pytest
 
-pytest.importorskip("mujoco")
-
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.utils import mounted_camera_pose_error
 
 
 @pytest.fixture
 def sim():
+    # Only the cells that compile a model need MuJoCo. The shared rule and the
+    # Newton ordering below do not, so the gate sits here rather than at module
+    # scope, where it would skip them as well.
+    pytest.importorskip("mujoco")
     s = Simulation(tool_name="mounted_cam_test", mesh=False)
     s.create_world()
     assert s.add_robot(name="so101", data_config="so101")["status"] == "success"
@@ -106,3 +113,64 @@ class TestOnMuJoCo:
         text = _text(sim.list_bodies())
         assert "position=..., target=..." in text, text
         assert "that body's frame" in text, text
+
+
+class TestOnNewton:
+    """The same rule, and the same order MuJoCo answers in.
+
+    ``add_camera``'s refusal paths read only ``self._model.body_label`` and
+    ``self._world.cameras``, so a fake ``self`` reaches every one of them
+    without a ``newton`` install. The order matters as much as the rule: the
+    pose check sits AFTER the body-existence check, so an unknown body still
+    gets the not-found refusal that names ``list_bodies``. Checked before this
+    rule landed, it did not - the mount refusal answered first and talked about
+    a body that does not exist.
+    """
+
+    @staticmethod
+    def _engine():
+        import threading
+        import types
+
+        from strands_robots.simulation.newton.simulation import NewtonSimEngine
+
+        engine = object.__new__(NewtonSimEngine)
+        engine._lock = threading.RLock()
+        engine._world = types.SimpleNamespace(cameras={})
+        engine._model = types.SimpleNamespace(body_label=["so101/base", "so101/gripper"])
+        return NewtonSimEngine, engine
+
+    @pytest.mark.parametrize(
+        ("kwargs", "status", "expected"),
+        [
+            pytest.param(
+                {"name": "wrist", "parent_body": "no_such_body"},
+                "error",
+                "not found",
+                id="an-unknown-body-answers-not-found-not-the-pose-refusal",
+            ),
+            pytest.param(
+                {"name": "wrist", "parent_body": "so101/gripper"},
+                "error",
+                "LOCAL frame",
+                id="a-known-body-with-no-pose-is-refused",
+            ),
+            pytest.param(
+                {"name": "wrist", "parent_body": "so101/gripper", "position": [0.0, 0.0, -0.1]},
+                "success",
+                "mounted on 'so101/gripper'",
+                id="one-coordinate-is-enough",
+            ),
+            pytest.param(
+                {"name": "overview"},
+                "success",
+                "added",
+                id="a-free-camera-is-unchanged",
+            ),
+        ],
+    )
+    def test_the_mounted_camera_rule_and_its_order(self, kwargs, status, expected):
+        cls, engine = self._engine()
+        result = cls.add_camera(engine, **kwargs)
+        assert result["status"] == status, result
+        assert expected in _text(result), result
