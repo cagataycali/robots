@@ -39,8 +39,9 @@ Contract notes (shared by all three):
   destroyed/recompiled or a policy starts mid-run, the loop aborts with a
   structured error instead of stepping a stale model.
 * **Dataset-recording interplay** (pinned by test): primitive motion does NOT
-  feed frames into an active ``start_recording`` dataset session - only
-  ``run_policy``'s per-frame hook records episodes. Camera MP4 recording
+  feed frames into an active ``start_recording`` dataset session -
+  ``run_policy``'s per-frame hook and ``step`` (one frame per ``1/fps`` of sim
+  time) record episodes; a primitive steps its own loop. Camera MP4 recording
   (``start_cameras_recording``) still captures primitive motion, since it
   samples the live scene on its own thread.
 """
@@ -910,7 +911,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         obstruction: dict[str, Any] | None = None
         if not reached:
             with self._lock:
-                obstruction = self._move_to_obstruction(model, data, arm_jact)
+                obstruction = self._servo_obstruction(model, data, arm_jact)
 
         return self._move_to_result(
             robot_name,
@@ -952,7 +953,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         first = min(int(j) for j in commanded_joint_ids)
         return self._subtree(model, self._root_body(model, int(model.jnt_bodyid[first])))
 
-    def _move_to_obstruction(self, model: Any, data: Any, commanded_jact: dict[int, int]) -> dict[str, Any]:
+    def _servo_obstruction(self, model: Any, data: Any, commanded_jact: dict[int, int]) -> dict[str, Any]:
         """What stopped the servo at the final tick: contacts on the robot, joints at a limit.
 
         Must be called under ``self._lock``. Runs ``mj_forward`` first so the
@@ -962,14 +963,18 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         in the gap carries no force, at any ``dist``)
         and at least one of its geoms belongs to the commanded joints' own
         kinematic tree (:meth:`_commanded_robot_body_ids`); a joint
-        counts when it is one ``move_to`` commands, has limits, and its
-        position sits at a bound (see :meth:`_joints_at_limit`).
+        counts when it is one the primitive COMMANDED to a new value, has
+        limits, and its position sits at a bound (see
+        :meth:`_joints_at_limit`). Joints a primitive merely holds at their
+        live position did not stop it, so a bound one of those is not offered
+        as the cause.
 
         Args:
             model: The ``mujoco.MjModel``.
             data: The ``mujoco.MjData`` after the final servo tick.
             commanded_jact: ``joint_id -> actuator_id`` for the joints the
-                servo commanded (the arm half of the pose map).
+                servo commanded to a new value (``move_to``'s arm half of the
+                pose map; ``rotate_wrist``'s single wrist joint).
 
         Returns:
             ``{"contacts": [...], "contacts_total": n, "joints_at_limit": [...]}``
@@ -1381,6 +1386,16 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 reached = True
                 break
 
+        # Not reached: read what the engine saw at the final tick so the
+        # refusal names the contact or the joint bound that stopped the wrist
+        # instead of reporting only the residual. Scoped to the wrist joint
+        # alone: this primitive HOLDS every other joint at its live position,
+        # so a bound one of those did not stop the call.
+        obstruction: dict[str, Any] | None = None
+        if not reached:
+            with self._lock:
+                obstruction = self._servo_obstruction(model, data, {wrist_jnt: pose_jact[wrist_jnt]})
+
         return self._rotate_wrist_result(
             robot_name,
             float(tol),
@@ -1392,4 +1407,5 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             final_yaw=final_yaw,
             yaw_error=yaw_error,
             uncommanded_drives=uncommanded_drives,
+            obstruction=obstruction,
         )
