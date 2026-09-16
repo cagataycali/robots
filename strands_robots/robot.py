@@ -64,6 +64,7 @@ from strands_robots.registry import (
     list_robots,
     resolve_name,
 )
+from strands_robots.utils import refusal_repr
 
 if TYPE_CHECKING:
     from strands_robots.drivers import HardwareDriver
@@ -191,23 +192,58 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         )
 
 
-_TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+# The two things a model provider requires of a tool name. The *local* Strands
+# tool registry validates nothing - a name with a space, a slash or 80
+# characters registers fine and survives ``Agent(tools=[...])`` - so a bad name
+# does not surface until the first model call, as a provider validation error
+# about ``toolConfig.tools.N.member.toolSpec.name`` that never mentions the
+# robot. Bedrock's Converse API states both constraints: the name must match
+# ``[a-zA-Z0-9_-]+`` and be at most 64 characters. The anchor is ``\Z`` and not
+# ``$``, which would also match before a trailing newline and admit
+# ``"left_arm\n"`` - a name that provider pattern rejects.
+_TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+\Z")
+_TOOL_NAME_MAX_LEN = 64
 
 
 def _tool_name_error(tool_name: Any) -> str | None:
-    """Refuse a ``tool_name`` the Strands registry would reject, with the remedy.
+    """Refuse a ``tool_name`` no model provider would accept, with the remedy.
 
     ``None`` means "use the default" and is fine. Anything else must be a
-    non-empty string of letters, digits, ``_`` or ``-`` - the pattern the
-    Strands tool registry validates against - so the refusal lands here, naming
-    the parameter, instead of at ``Agent(tools=[...])`` naming an object repr.
+    string of letters, digits, ``_`` or ``-``, at most
+    :data:`_TOOL_NAME_MAX_LEN` characters - the constraints a provider puts on
+    a tool name - so the refusal lands here, naming the parameter, instead of
+    at ``Agent(tools=[...])`` naming an object repr or at the first model call
+    naming a slot in the request body.
+
+    The value is rendered through :func:`~strands_robots.utils.refusal_repr`,
+    like every other guard in the package: a refusal must not raise while it is
+    being built, and ``repr`` can - of an ``int`` wider than
+    :func:`sys.get_int_max_str_digits`, or of any object whose ``__repr__``
+    raises.
+
+    Args:
+        tool_name: The value passed to :func:`Robot`; any type, since the
+            refusal has to cover a caller who passed the wrong one.
+
+    Returns:
+        The refusal to raise, or ``None`` if the name is usable. Each reason
+        names itself: the character set for a name a provider's pattern
+        rejects, the measured length for one that is merely too long.
     """
     if tool_name is None:
         return None
     if not isinstance(tool_name, str) or not _TOOL_NAME_PATTERN.match(tool_name):
         return (
-            f"Robot(tool_name={tool_name!r}) is not a valid tool name: use letters, digits, '_' or '-' "
-            "(e.g. tool_name='left_arm'). Two robots in one Agent need two distinct names."
+            f"Robot(tool_name={refusal_repr(tool_name)}) is not a valid tool name: "
+            "use letters, digits, '_' or '-' (e.g. tool_name='left_arm'). "
+            "Two robots in one Agent need two distinct names."
+        )
+    if len(tool_name) > _TOOL_NAME_MAX_LEN:
+        return (
+            f"Robot(tool_name=...) is {len(tool_name)} characters long, over the "
+            f"{_TOOL_NAME_MAX_LEN}-character limit a model provider puts on a tool name: shorten it "
+            f"(e.g. tool_name={refusal_repr(tool_name[:_TOOL_NAME_MAX_LEN])}). "
+            "Two robots in one Agent need two distinct names."
         )
     return None
 
@@ -472,8 +508,10 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             used to fail at registration ("Tool name 'so101_sim' already
             exists"). Name each one (``tool_name="left_arm"``) to put a
             bimanual pair, or a real arm beside its sim twin, in one agent.
-            Must match the Strands tool-name pattern (letters, digits, ``_``,
-            ``-``); anything else is refused here, before the backend builds.
+            Must be letters, digits, ``_`` or ``-``, at most 64 characters -
+            what a model provider accepts as a tool name. Anything else is
+            refused here, before the backend builds, rather than at the first
+            model call as a validation error about the request body.
         **kwargs: Forwarded to the underlying backend constructor.
 
     Returns:

@@ -9,6 +9,11 @@ obvious escape, `Robot("so101", tool_name="left_arm")`, raised a `TypeError`
 from the factory's own internal forward.
 
 `tool_name` is now a keyword-only factory parameter on every path (simulation,
-lerobot hardware, native driver); the default is unchanged. A name the
-registry would refuse (empty, spaces, slashes, a non-string) is refused at the
-call site with the remedy, before any backend is built.
+lerobot hardware, native driver); the default is unchanged. A name no model
+provider would accept is refused at the call site, with the remedy, before any
+backend is built: the character set, the 64-character limit, and a trailing
+newline, each naming its own reason. The local tool registry validates none of
+them - such a name registers fine and only fails at the first model call, as a
+validation error about a slot in the request body that never mentions the
+robot. The refusal renders the offending value through `refusal_repr`, so a
+value whose own `repr` raises is answered rather than re-raised.
