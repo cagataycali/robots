@@ -663,6 +663,51 @@ def _release_live_engines() -> None:
 atexit.register(_release_live_engines)
 
 
+def _load_scene_dropped_line(
+    robots: list[str],
+    objects: list[str],
+    cameras: list[str],
+    robot_specs: dict[str, Any] | None = None,
+) -> str:
+    """The line ``load_scene`` adds when the swap discarded registered robots, objects or cameras.
+
+    Empty string when nothing was registered (a fresh world), so the historical
+    text is unchanged for that case. Otherwise names each dropped group and the
+    verb that puts it back into the LOADED scene (``add_robot`` mutates the
+    loaded spec in place), spelling the ``add_robot`` call with the data_config
+    the robot was registered under when it is known.
+    """
+    if not (robots or objects or cameras):
+        return ""
+    groups: list[str] = []
+    if robots:
+        groups.append(f"robot(s) {robots}")
+    if objects:
+        groups.append(f"object(s) {objects}")
+    if cameras:
+        groups.append(f"camera(s) {cameras}")
+    remedy: list[str] = []
+    if robots:
+        calls = []
+        for name in robots:
+            cfg = (robot_specs or {}).get(name)
+            calls.append(
+                f"add_robot(name='{name}', data_config='{cfg}')"
+                if cfg
+                else f"add_robot(name='{name}', data_config=...)"
+            )
+        remedy.append(" / ".join(calls) + " puts the arm back INTO the loaded scene")
+    if objects:
+        remedy.append("add_object re-adds objects")
+    if cameras:
+        remedy.append("add_camera re-adds cameras")
+    return (
+        f"REPLACED the live world: dropped {', '.join(groups)} - the loaded file is now the whole "
+        f"scene (robot-scoped actions refuse with 'No robots registered' until then). "
+        f"{'; '.join(remedy)}.\n"
+    )
+
+
 class MuJoCoSimEngine(
     TeleopMixin,
     PhysicsMixin,
@@ -1452,6 +1497,24 @@ class MuJoCoSimEngine(
         # world (load_scene runs under the blanket dispatch lock, so this
         # acquisition is a reentrant no-op there and the real guard when the
         # method is called directly).
+        # The swap below discards the live registries: every robot, object and
+        # camera added so far is gone, the loaded file is the whole scene. The
+        # result names them, because through the tool the caller is a Robot
+        # facade named after the very arm this drops - "Scene loaded, Bodies: 3"
+        # followed later by "No robots registered" is how it used to surface.
+        prior = self._world
+        dropped_robots = list(prior.robots) if prior is not None else []
+        dropped_objects = list(prior.objects) if prior is not None else []
+        # "default" is the free camera create_world seeds into every world -
+        # nobody added it and the loaded world renders from it too, so it is
+        # not something the swap took away.
+        dropped_cameras = [c for c in prior.cameras if c != "default"] if prior is not None else []
+        dropped_specs = (
+            {name: getattr(robot, "data_config", None) for name, robot in prior.robots.items()}
+            if prior is not None
+            else {}
+        )
+
         with self._lock:
             world = SimWorld()
             world._backend_state["spec"] = spec
@@ -1469,6 +1532,7 @@ class MuJoCoSimEngine(
             world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
             self._world = world
 
+        dropped_line = _load_scene_dropped_line(dropped_robots, dropped_objects, dropped_cameras, dropped_specs)
         return {
             "status": "success",
             "content": [
@@ -1476,9 +1540,17 @@ class MuJoCoSimEngine(
                     "text": (
                         f"Scene loaded from {os.path.basename(scene_path)}\n"
                         f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}\n"
+                        f"{dropped_line}"
                         "Use action='get_state' to inspect, action='step' to simulate"
                     )
-                }
+                },
+                {
+                    "json": {
+                        "dropped_robots": dropped_robots,
+                        "dropped_objects": dropped_objects,
+                        "dropped_cameras": dropped_cameras,
+                    }
+                },
             ],
         }
 
