@@ -3835,10 +3835,31 @@ class MuJoCoSimEngine(
                     # which axis is the robot's front: an agent reading "in
                     # front of the base" as +X placed a cube at [0.2, 0, 0.02]
                     # for an so101 whose whole reach lies along -Y, and only the
-                    # arm's spare reach saved the move. The base is the live
-                    # floating-base pose when there is one, else the spawn
-                    # pose the robot was attached at.
-                    base_pos = base["position"] if base is not None else [float(v) for v in robot.position]
+                    # arm's spare reach saved the move.
+                    #
+                    # The base is MEASURED, never the ``add_robot`` request:
+                    # ``position`` is the attach frame's translation and MuJoCo
+                    # composes it with the model's authored root pose rather
+                    # than replacing it, so the request names a place the robot
+                    # is not for 30 of the registry's 55 single-root models
+                    # (see :meth:`_robot_root_world_position`, which owns this
+                    # question for ``add_robot`` and ``list_robots`` too). A
+                    # root body carrying its own ``pos`` then flips the very
+                    # sentence this line adds: an arm authored at
+                    # ``pos="0 -0.5 0.1"`` and spawned at the origin extends
+                    # along +X from its base, and measuring from the request
+                    # reported -Y - the axis of the base's own offset. The live
+                    # floating-base pose answers first when there is one; a
+                    # model with several root bodies has no one base pose to
+                    # measure, so its offset is from the requested attach frame
+                    # (the case ``list_robots`` labels).
+                    if base is not None:
+                        base_pos = base["position"]
+                    else:
+                        measured_base = self._robot_root_world_position(robot)
+                        base_pos = (
+                            measured_base if measured_base is not None else [float(v) for v in robot.position]
+                        )
                     offset = [ee_pos[i] - base_pos[i] for i in range(3)]
                     axis = reach_axis(offset)
                     text += (
