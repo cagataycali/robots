@@ -67,6 +67,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     refusal_repr,
+    refusal_str,
     require_optional,
     tcp_port_error,
     teleoperator_contract_error,
@@ -2730,10 +2731,16 @@ class Robot(TeleopMixin, AgentTool):
             "content": [{"text": summary}, {"json": payload}],
         }
 
-    # Verbs an agent reaches for on a real arm that belong to another tool.
-    # The sim tool has them; the quickstart once asked the real Robot tool for
-    # them; the generic "Unknown action" left the agent to guess where they
-    # went (lab PC2-015).
+    # Verbs an agent reaches for on a real arm that this tool's enum does not
+    # publish, mapped to where each one lives. The quickstart once asked this
+    # tool for three of them; the generic "Unknown action" left the agent to
+    # guess whether the verb was gone, renamed, or in another tool.
+    #
+    # Two of the three destinations are elsewhere - the recording pair are the
+    # simulation tool's actions, teleoperation is the lerobot_teleoperate tool -
+    # and the third is this tool itself: run_policy/start_policy/stop_policy are
+    # the simulation tool's spellings for execute/start/stop, so those refusals
+    # send the caller back here rather than away.
     _ELSEWHERE_ACTIONS: dict[str, str] = {
         "teleoperate": "teleoperation",
         "start_teleop": "teleoperation",
@@ -2742,25 +2749,37 @@ class Robot(TeleopMixin, AgentTool):
         "start_recording": "recording",
         "stop_recording": "recording",
         "record_episode": "recording",
+        "run_policy": "policy",
+        "start_policy": "policy",
+        "stop_policy": "policy",
     }
 
     def _unknown_action_text(self, action: Any) -> str:
         """The refusal for an action this tool does not have.
 
-        Names the four verbs the real robot tool does have. For the verbs
-        that exist on the simulation tool and on the lerobot side but not
-        here - teleoperation and dataset recording - it also names where they
-        live, so an agent's next call is the right tool rather than another
-        spelling of the wrong one.
+        Names the four verbs the real robot tool does have, and for the
+        spellings an agent is known to reach for it also names where that verb
+        lives: the ``lerobot_teleoperate`` tool for teleoperation, the
+        simulation tool for dataset recording, and this tool's own
+        ``execute``/``start``/``stop`` for the simulation tool's policy verbs.
+        So an agent's next call is the right verb rather than another spelling
+        of the wrong one.
+
+        ``action`` is rendered through :func:`~strands_robots.utils.refusal_str`
+        rather than interpolated: a Python caller of :meth:`stream` supplies it,
+        and a value whose ``__str__`` raises would make building this refusal
+        raise instead of answering. ``str`` rather than ``repr`` keeps the text
+        an agent reads unquoted, as it has always been.
 
         Args:
             action: The action the caller sent.
 
         Returns:
             One paragraph: the refusal, the valid actions, and the remedy when
-            the verb is a known one that lives elsewhere.
+            the verb is a known one that lives elsewhere - or here under
+            another name.
         """
-        text = f"Unknown action: {action}. Valid actions: execute, start, status, stop"
+        text = f"Unknown action: {refusal_str(action)}. Valid actions: execute, start, status, stop"
         kind = self._ELSEWHERE_ACTIONS.get(action) if isinstance(action, str) else None
         if kind == "teleoperation":
             text += (
@@ -2775,6 +2794,14 @@ class Robot(TeleopMixin, AgentTool):
                 "Recording a real arm under teleoperation is the lerobot_teleoperate tool "
                 "(action='start' with dataset_repo_id=..., dataset_root=..., dataset_single_task=...); "
                 "start_recording/stop_recording are the simulation tool's actions"
+            )
+        elif kind == "policy":
+            text += (
+                f". {self.tool_name_str} does drive policies, under its own verbs: action='execute' "
+                "runs one to completion, action='start' runs one in the background and action='stop' "
+                "halts it (instruction=..., policy_provider=..., duration=... carry the rollout). "
+                "run_policy/start_policy/stop_policy are the simulation tool's spellings; from Python, "
+                "robot.run_policy(policy_object=...) drives a policy already built in-process"
             )
         return text
 

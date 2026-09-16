@@ -1,13 +1,23 @@
-"""A real robot tool refusing a verb it does not have names the tool that does.
+"""A real robot tool refusing a verb it does not have names where that verb lives.
 
-``Robot(mode="real")`` publishes four actions: execute, start, status, stop.
-The simulation tool also has ``teleoperate`` and ``start_recording`` /
-``stop_recording``, and the quickstart once asked the real robot tool for all
-three in one prompt - every call came back "Unknown action" with nothing about
-where the verb went. The refusal now names ``lerobot_teleoperate`` (and the
-Python ``attach_teleop().teleoperate()`` path) for those verbs; an unknown
-spelling still gets the plain refusal. The quickstart itself is pinned here to
-verbs the tool it hands the agent actually has.
+``Robot(mode="real")`` publishes four actions: execute, start, status, stop. The
+quickstart once asked it, in one prompt, for ``start_recording``, ``teleoperate``
+and ``stop_recording`` - every call came back "Unknown action" with nothing about
+where the verb went. Measured against the simulation tool's 77 published actions,
+the three land in three different places: ``start_recording`` / ``stop_recording``
+are its actions, ``teleoperate`` is not an action of either tool but a Python
+method of the teleop mixin, and the recording of a real arm under a leader is the
+``lerobot_teleoperate`` tool.
+
+A fourth place is this tool itself. ``run_policy`` is both a simulation tool
+action and a Python method of this class, and it is what this tool does - under
+the names ``execute`` and ``start`` - so refusing it without saying so
+contradicts the refusal's own opening ("so101 drives policies").
+
+The refusal now names the destination for each group, an unknown spelling still
+gets the plain refusal byte for byte, and building it cannot raise on the value
+it reports. The quickstart itself is pinned here to verbs the tool it hands the
+agent actually has.
 """
 
 from __future__ import annotations
@@ -18,6 +28,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from strands.types._events import ToolResultEvent
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState
@@ -50,10 +61,20 @@ def _hw() -> HwRobot:
     return hw
 
 
-def _call(hw: HwRobot, action: str) -> str:
+def _call(hw: HwRobot, action: object) -> str:
+    """The one text block the tool answers ``action`` with.
+
+    ``action`` is typed ``object`` rather than ``str`` because a Python caller
+    may send anything, which is what
+    :func:`test_building_the_refusal_cannot_raise_on_the_action_it_reports`
+    sends.
+    """
+
     async def run() -> str:
-        events = [e async for e in hw.stream({"toolUseId": "t", "input": {"action": action}}, {})]
-        result = events[-1].tool_result
+        events = [e async for e in hw.stream({"toolUseId": "t", "name": "so101", "input": {"action": action}}, {})]
+        final = events[-1]
+        assert isinstance(final, ToolResultEvent)
+        result = final.tool_result
         assert result["status"] == "error"
         return result["content"][0]["text"]
 
@@ -78,6 +99,70 @@ def test_a_recording_verb_is_sent_to_the_tool_that_records(action):
     assert "simulation tool's actions" in text
 
 
+@pytest.mark.parametrize("action", ["run_policy", "start_policy", "stop_policy"])
+def test_a_policy_verb_is_sent_back_to_this_tools_own_verbs(action):
+    """The simulation tool's policy spellings resolve here, not elsewhere.
+
+    The refusal's first sentence is that this tool drives policies, so the one
+    thing it may not do with a policy verb is refuse it without naming the verb
+    that runs it.
+    """
+    text = _call(_hw(), action)
+    assert text.startswith(f"Unknown action: {action}. Valid actions: execute, start, status, stop")
+    assert "does drive policies" in text
+    for verb in ("action='execute'", "action='start'", "action='stop'"):
+        assert verb in text
+    assert "robot.run_policy(policy_object=...)" in text
+
+
+def test_the_policy_verb_the_refusal_answers_is_one_this_class_has_in_python():
+    """Why the policy group exists: the name is real here, just not in the enum."""
+    assert hasattr(HwRobot, "run_policy")
+    assert "run_policy" not in REAL_ROBOT_ACTIONS
+
+
+def test_every_verb_the_refusal_attributes_to_the_simulation_tool_is_published_by_it():
+    """Two readings of one repository may not disagree about who owns a verb.
+
+    The claim under test is the refusal's own text, not a list kept beside it:
+    the verbs are read out of the sentences that attribute them, so a new false
+    attribution fails here rather than being carried to an agent. ``teleoperate``
+    is asserted absent because it is the one the earlier telling of this fix got
+    wrong - it is a Python method of the teleop mixin, not an action of either
+    tool.
+    """
+    pytest.importorskip("mujoco")
+    from strands_robots.simulation.mujoco.simulation import _PUBLISHED_ACTIONS
+
+    attributed: set[str] = set()
+    for action in sorted(HwRobot._ELSEWHERE_ACTIONS):
+        text = _call(_hw(), action)
+        for group in re.findall(r"([a-z_/]+) are the simulation tool's", text):
+            attributed.update(group.split("/"))
+    assert attributed == {"start_recording", "stop_recording", "run_policy", "start_policy", "stop_policy"}
+    assert attributed <= set(_PUBLISHED_ACTIONS), (
+        f"attributed to the simulation tool but not published by it: {attributed - set(_PUBLISHED_ACTIONS)}"
+    )
+    assert "teleoperate" not in _PUBLISHED_ACTIONS
+
+
+def test_building_the_refusal_cannot_raise_on_the_action_it_reports():
+    """A Python caller of ``stream`` supplies the action, and rendering can raise.
+
+    The tool path decodes JSON, so it can only send a renderable value; a Python
+    caller is under no such restriction, and the refusal is the only channel this
+    door answers on. An object whose ``__str__`` raises must still be refused.
+    """
+
+    class _Unprintable:
+        def __repr__(self) -> str:
+            raise RuntimeError("no repr")
+
+    text = _call(_hw(), _Unprintable())
+    assert text.endswith("Valid actions: execute, start, status, stop")
+    assert "Unknown action: <" in text
+
+
 def test_an_unknown_spelling_gets_the_plain_refusal():
     text = _call(_hw(), "bogus")
     assert text == "Unknown action: bogus. Valid actions: execute, start, status, stop"
@@ -87,8 +172,12 @@ def test_the_refusal_is_one_content_block_of_text():
     hw = _hw()
 
     async def run():
-        events = [e async for e in hw.stream({"toolUseId": "t", "input": {"action": "teleoperate"}}, {})]
-        return events[-1].tool_result
+        events = [
+            e async for e in hw.stream({"toolUseId": "t", "name": "so101", "input": {"action": "teleoperate"}}, {})
+        ]
+        final = events[-1]
+        assert isinstance(final, ToolResultEvent)
+        return final.tool_result
 
     result = asyncio.run(run())
     assert [set(block) for block in result["content"]] == [{"text"}]
