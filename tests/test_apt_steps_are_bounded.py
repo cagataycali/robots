@@ -291,13 +291,13 @@ class TestTheParserActuallySeesTheApt:
         assert _WORKFLOW_FILES, "no workflow files were found"
 
     def test_apt_invocations_are_found(self) -> None:
-        assert len(_INVOCATIONS) >= 3, (
-            f"parsed only {len(_INVOCATIONS)} apt-get invocations; the tree has at least three "
-            f"(one looped update plus an install, in each of two workflows)"
+        assert len(_INVOCATIONS) >= 2, (
+            f"parsed only {len(_INVOCATIONS)} apt-get invocations; the tree has at least two "
+            f"(one looped update plus an install, in test-lint.yml)"
         )
-        assert len(_APT_WORKFLOWS) >= 2, (
-            f"apt-get was found in {_APT_WORKFLOWS}; it is installed by more than one workflow, "
-            f"so a single-file result means the parser stopped seeing the tree"
+        assert "test-lint.yml" in _APT_WORKFLOWS, (
+            f"apt-get was found in {_APT_WORKFLOWS}; test-lint.yml installs the MuJoCo system "
+            f"dependencies, so a result without it means the parser stopped seeing the tree"
         )
 
     @pytest.mark.parametrize("path", _WORKFLOW_FILES, ids=lambda p: p.name)

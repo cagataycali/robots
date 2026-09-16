@@ -69,7 +69,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _WORKFLOW_DIR = _REPO_ROOT / ".github" / "workflows"
-_REQUIRED_CHECK_WORKFLOW = _WORKFLOW_DIR / "pr-and-push.yml"
+_REQUIRED_CHECK_WORKFLOW = _WORKFLOW_DIR / "ci.yml"
 
 #: Workflows a push may start whose group is allowed to collapse two commits into
 #: one bucket, mapped to the reason. An entry is not a waiver of the rule but a

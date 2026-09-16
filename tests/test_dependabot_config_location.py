@@ -66,8 +66,10 @@ _JOBS_KEY = re.compile(r"^jobs:", re.MULTILINE)
 _REQUIRED_ECOSYSTEMS = ("pip", "github-actions")
 
 #: Lower bound for the workflow scan, so the class guard cannot pass by finding
-#: nothing. The directory held 13 files when this landed.
-_MIN_WORKFLOWS = 10
+#: nothing. The directory held 13 files when this landed and 4 after the
+#: pull-request guards were folded into the required check (ci.yml, docs.yml,
+#: pypi-publish-on-release.yml, test-lint.yml).
+_MIN_WORKFLOWS = 4
 
 
 def _config_text() -> str:

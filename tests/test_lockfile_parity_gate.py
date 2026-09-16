@@ -72,7 +72,11 @@ from packaging.version import Version
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _LOCK = _REPO_ROOT / "uv.lock"
-_GATE = _REPO_ROOT / ".github" / "workflows" / "lockfile-parity.yml"
+# The gate lives in the required check: scripts/ci_guards.py runs `uv lock --check`
+# as one of the guards test-lint.yml executes before the install (it was its own
+# workflow, lockfile-parity.yml, until the ten advisory rows were folded).
+_GATE = _REPO_ROOT / "scripts" / "ci_guards.py"
+_GATE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "test-lint.yml"
 
 #: Extras whose documented contract is a *wheel*: installable with a plain
 #: ``pip install`` and no toolchain.  ``[ros2]`` declares only the cyclonedds RMW
@@ -350,7 +354,7 @@ def test_the_gate_runs_the_parity_check(gate_text: str) -> None:
     non-zero when the lock would have to change - so a gate that installs uv and
     checks nothing would pass every pin here while enforcing nothing.
     """
-    assert re.search(r"^\s*run:\s*uv lock --check\s*$", gate_text, re.MULTILINE), (
+    assert re.search(r'_run\(\[uv, "lock", "--check"\]\)', gate_text), (
         f"{_GATE.name} does not run `uv lock --check`. Neither `uv lock` (which "
         "rewrites the file and exits 0) nor `uv sync` (which relocks silently) "
         "reports drift."
@@ -375,9 +379,10 @@ def test_the_gate_reads_the_merge_tree(gate_text: str) -> None:
     both base and head because it asks what a branch *added*; an addition only
     exists as a diff, while a parity check reads two files and needs one tree.
     """
-    head_sha_ref = re.search(r"^\s*ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha", gate_text, re.MULTILINE)
+    workflow = _GATE_WORKFLOW.read_text(encoding="utf-8")
+    head_sha_ref = re.search(r"^\s*ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.sha", workflow, re.MULTILINE)
     assert head_sha_ref is None, (
-        f"{_GATE.name} checks out the pull request head sha. Take the default "
+        f"{_GATE_WORKFLOW.name} checks out the pull request head sha. Take the default "
         "merge-commit ref instead: on the head sha, a branch that forked before "
         "a relock fails this gate while having changed no dependency file."
     )
@@ -390,7 +395,10 @@ def test_every_action_the_gate_uses_is_sha_pinned(gate_text: str) -> None:
     supply-chain pattern, and this gate runs on ``pull_request``, so it is
     reachable from a fork.
     """
-    references = re.findall(r"^\s*uses:\s*(?P<ref>\S+)", gate_text, re.MULTILINE)
-    assert references, f"no `uses:` found in {_GATE.name}"
+    workflow = _GATE_WORKFLOW.read_text(encoding="utf-8")
+    references = re.findall(r"^\s*uses:\s*(?P<ref>\S+)", workflow, re.MULTILINE)
+    assert references, f"no `uses:` found in {_GATE_WORKFLOW.name}"
     unpinned = [ref for ref in references if not re.search(r"@[0-9a-f]{40}$", ref)]
-    assert not unpinned, f"these action references in {_GATE.name} do not pin a 40-character commit SHA: {unpinned}"
+    assert not unpinned, (
+        f"these action references in {_GATE_WORKFLOW.name} do not pin a 40-character commit SHA: {unpinned}"
+    )

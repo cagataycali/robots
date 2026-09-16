@@ -404,22 +404,27 @@ def test_a_branch_with_no_overlap_still_passes_from_the_base_checkout(repo: Path
     assert _run_at(repo, head) == 0
 
 
-def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> None:
-    """The workflow must not require its own script in the tree under review.
+def test_the_workflow_names_the_head_rather_than_checking_it_out() -> None:
+    """The step must grade the pull request head without checking it out.
 
-    A ``pull_request`` workflow definition is read from the merge commit, so a gate
-    runs against heads that contain neither it nor its script. The sibling changelog
-    gate exited 2 for exactly that reason (issue #1791); this workflow had the same
-    shape.
+    The gate used to be its own workflow, checked out from the *base* so a head
+    that predates the script could not exit 2 (#1791). It now runs as a guard
+    inside the required check (scripts/ci_guards.py), whose checkout is the pull
+    request's merge commit -- a tree that carries every script on the base tip by
+    construction. What has to stay explicit is the commit under test: a merge
+    commit already contains the base tip, so its merge base is the base tip and
+    the overlap is empty (``test_a_merge_commit_head_defeats_the_check``). The
+    head sha is therefore named with ``--head`` and never checked out.
     """
-    workflow = (_REPO_ROOT / ".github" / "workflows" / "merge-base-overlap.yml").read_text(encoding="utf-8")
-
-    assert "ref: ${{ github.base_ref }}" in workflow, "the gate's script must come from the base branch"
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "test-lint.yml").read_text(encoding="utf-8")
+    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
     assert "ref: ${{ github.event.pull_request.head.sha }}" not in workflow, (
         "checking the head out is what made the script's presence a precondition"
     )
-    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
-    assert '--head "$HEAD_SHA"' in workflow, "the commit under test is named, not checked out"
+    guards = (_REPO_ROOT / "scripts" / "ci_guards.py").read_text(encoding="utf-8")
+    assert '"check_merge_base_overlap.py"), "--base-ref", base_ref, "--head", head' in guards, (
+        "the commit under test is named, not checked out"
+    )
 
 
 # --- the open set ---------------------------------------------------------------

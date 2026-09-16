@@ -68,10 +68,11 @@ _USES_MENTION = re.compile(r"^\s*(?:-\s+)?uses:")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 
 # Floors, so a walk that stops finding the tree fails instead of passing
-# vacuously. The tree holds 14 workflows and 33 non-local references; these sit
-# below that with room for a workflow to be retired.
-_WORKFLOW_FLOOR = 12
-_REMOTE_REF_FLOOR = 28
+# vacuously. The tree holds 4 workflows (ci, docs, pypi-publish-on-release,
+# test-lint - the ten advisory pull-request workflows were folded into the
+# required check) and 15 non-local references; these sit below that.
+_WORKFLOW_FLOOR = 4
+_REMOTE_REF_FLOOR = 12
 
 
 class ActionRef(NamedTuple):
@@ -156,7 +157,7 @@ class TestTheCensusSeesTheTree:
     def test_the_local_reusable_workflow_calls_are_still_seen(self) -> None:
         assert _LOCAL_REFS, (
             "no ./-relative reusable-workflow call was found; the tree has always had "
-            "at least one (pr-and-push.yml, pypi-publish-on-release.yml), so the "
+            "at least one (ci.yml, pypi-publish-on-release.yml), so the "
             "local-reference branch below is no longer being exercised"
         )
 
