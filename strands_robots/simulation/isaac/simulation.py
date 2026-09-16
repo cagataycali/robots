@@ -2675,7 +2675,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         the asset is referenced onto the stage rather than constructed
         from a primitive class.
         """
-        import numpy as np  # type: ignore[import-not-found]
 
         if shape == "mesh":
             if not mesh_path:
@@ -2801,7 +2800,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ImportError)``, so a failed conversion / reference / wrap returns a
         structured error envelope and leaves the name reusable.
         """
-        import numpy as np  # type: ignore[import-not-found]
 
         from strands_robots.simulation.isaac.mesh_assets import (
             MESH_EXTENSIONS,
@@ -5912,8 +5910,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         """
         import math
 
-        import numpy as np  # type: ignore[import-not-found]
-
         try:
             from isaacsim.sensors.camera import Camera  # type: ignore[import-not-found]
         except ImportError:
@@ -6116,7 +6112,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ImportError)`` so any Isaac-side surface drift returns a
         structured error envelope rather than blowing up the agent.
         """
-        import numpy as np  # type: ignore[import-not-found]
 
         # Isaac Sim 6.0 renamed the single-articulation wrapper. The 4.x
         # path was ``omni.isaac.core.articulations.Articulation``; on 6.0
@@ -6220,7 +6215,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         ``(RuntimeError, ValueError, OSError, AttributeError,
         TypeError, ImportError)``.
         """
-        import numpy as np  # type: ignore[import-not-found]
 
         # Isaac Sim 6.0 renamed the single-articulation wrapper (see
         # ``_import_articulation_cls`` / ``_load_usd_robot``). Probe the
@@ -6234,7 +6228,6 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         #   ``acquire_urdf_interface().parse_urdf()/import_robot()``.
         # * pre-4.5 used ``omni.importer.urdf._urdf``.
         # Try the modern 6.0 class API first, then the legacy ``_urdf`` ifaces.
-        import os
 
         urdf_root, urdf_filename = os.path.split(os.path.abspath(urdf_path))
         imported_prim_path = None
