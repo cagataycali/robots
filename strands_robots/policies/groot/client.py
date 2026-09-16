@@ -7,6 +7,7 @@ using msgpack with custom encode/decode hooks.
 import io
 import json
 import logging
+import socket as _socket
 from typing import Any
 
 import numpy as np
@@ -18,6 +19,68 @@ from .data_config import ModalityConfig
 logger = logging.getLogger(__name__)
 
 _SERVER_NAME = "GR00T policy server"
+
+# How long :func:`_listener_present` gives a bare TCP connect to the server's
+# port. It only has to tell "nothing listening" from "listening but silent",
+# so a second is plenty on a LAN and short next to any inference budget.
+_PROBE_TIMEOUT_S = 1.0
+
+
+def _listener_present(host: str, port: int) -> bool | None:
+    """Whether anything accepts a TCP connection on ``host:port`` right now.
+
+    Called after a request timed out, to say which side the wait was on: an
+    absent process (connection refused - ZMQ's ``connect`` is lazy and never
+    reports it, so a typo in the port looks exactly like a slow model) or a
+    listener that accepted the frame and never answered (checkpoint still
+    loading, or a wedged forward pass). ``None`` when the probe itself could
+    not decide - a name that does not resolve, a firewall that drops instead
+    of refusing - so the report falls back to naming both possibilities.
+    """
+    try:
+        with _socket.create_connection((host, port), timeout=_PROBE_TIMEOUT_S):
+            return True
+    except ConnectionRefusedError:
+        return False
+    except OSError:
+        return None
+
+
+def unreachable_server_error(*, uri: str, endpoint: str, timeout_ms: int, listener: bool | None) -> str:
+    """The report for a request that timed out, worded for the side that failed.
+
+    Args:
+        uri: ``tcp://host:port`` the client dialled.
+        endpoint: The request that got no answer, named so a caller batching
+            several knows which one.
+        timeout_ms: The budget that expired - it is the knob, so it is named.
+        listener: :func:`_listener_present`'s verdict.
+
+    Returns:
+        One sentence each for what happened, why (as far as the probe can
+        tell) and what to do; the remedy names the parameter that changes the
+        budget and the command that starts a server.
+    """
+    head = f"{_SERVER_NAME} at {uri} did not answer '{endpoint}' within timeout_ms={timeout_ms}."
+    if listener is False:
+        return (
+            f"{head} Nothing is listening on that port (connection refused), so no server is running there "
+            "or host/port name the wrong place. Start one - gr00t_inference(action='start', "
+            f"port={uri.rsplit(':', 1)[-1]}) runs the container, or `python -m gr00t.eval.run_gr00t_server "
+            f"--port {uri.rsplit(':', 1)[-1]}` inside an Isaac-GR00T install - or pass the host/port it is "
+            "actually on."
+        )
+    if listener is True:
+        return (
+            f"{head} The port is listening, so the server is still loading (a large checkpoint takes "
+            "minutes) or it is wedged: read its log to tell those apart, and raise timeout_ms if the model "
+            "is simply slower than the budget."
+        )
+    return (
+        f"{head} Could not tell whether anything is listening there (the probe got neither a refusal nor a "
+        "connection). Check host/port and that a server is running there (gr00t_inference(action='start') "
+        "or `python -m gr00t.eval.run_gr00t_server`), or raise timeout_ms if it is only slow."
+    )
 
 
 def _load_zmq():
@@ -312,8 +375,14 @@ class Gr00tInferenceClient:
             ``(action, info)`` tuple arrives as a 2-element list.
 
         Raises:
-            ConnectionError: If the reply is neither a msgpack map nor a list -
-                see :meth:`_decode_reply`.
+            ConnectionError: If no reply arrived within ``timeout_ms`` - the
+                report names the URI, the endpoint, the budget and, from a TCP
+                probe, whether anything is listening there (see
+                :func:`unreachable_server_error`); ``zmq.Again`` is kept as the
+                cause. Pre-fix that ``zmq.Again`` escaped raw, so the runner
+                printed ``Policy failed: Resource temporarily unavailable`` -
+                no host, no port, no remedy. Or if the reply is neither a
+                msgpack map nor a list - see :meth:`_decode_reply`.
             RuntimeError: If the server returns an error response.
         """
         request: dict = {"endpoint": endpoint}
@@ -321,8 +390,23 @@ class Gr00tInferenceClient:
             request["data"] = data
         if self.api_token:
             request["api_token"] = self.api_token
-        self.socket.send(MsgSerializer.to_bytes(request))
-        message = self.socket.recv()
+        try:
+            self.socket.send(MsgSerializer.to_bytes(request))
+            message = self.socket.recv()
+        except self._zmq.Again as exc:
+            # A REQ socket that timed out is stuck in its send/recv lockstep:
+            # the next ``send`` raises EFSM. Re-create it here so the caller's
+            # retry (or ``ping``) is a real attempt and not a second failure
+            # about the state machine.
+            self.reconnect()
+            raise ConnectionError(
+                unreachable_server_error(
+                    uri=f"tcp://{self.host}:{self.port}",
+                    endpoint=endpoint,
+                    timeout_ms=self.timeout_ms,
+                    listener=_listener_present(self.host, self.port),
+                )
+            ) from exc
         response = self._decode_reply(message, endpoint)
         if isinstance(response, dict) and "error" in response:
             raise RuntimeError(f"Server error: {response['error']}")

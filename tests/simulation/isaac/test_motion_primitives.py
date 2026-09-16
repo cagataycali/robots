@@ -568,6 +568,31 @@ class TestRotateWrist:
         assert payload["steps"] == 8
         assert payload["yaw_error_rad"] == pytest.approx(0.7)
 
+    def test_timeout_names_the_wrist_bound_and_marks_contacts_unread(self):
+        # A wrist already sitting on its upper bound with a set-point it never
+        # leaves for: the refusal names the bound instead of only the residual,
+        # and says contacts were not read rather than claiming none exist.
+        span = ARM_LIMITS[3]
+        assert span is not None
+        sim, _ = _make_sim(servo_rate=0.0, positions=[0.0, 0.0, 0.0, span[1], 0.0])
+        result = sim.rotate_wrist(robot_name="arm", target_yaw=0.5, tol=0.01, max_steps=4)
+        assert result["status"] == "error"
+        obstruction = _json_block(result)["obstruction"]
+        assert obstruction["contacts"] == [] and obstruction["contacts_total"] is None
+        assert obstruction["joints_at_limit"] == [
+            {"joint": "wrist_roll", "pos": span[1], "limit": span[1], "side": "upper"}
+        ]
+        text = result["content"][0]["text"]
+        assert "commanded joint(s) at a limit: 'wrist_roll' at its upper limit" in text
+        assert "contacts were not read on this backend" not in text  # a bound WAS found
+
+    def test_a_timeout_clear_of_its_bounds_says_contacts_were_not_read(self):
+        sim, _ = _make_sim(servo_rate=0.0)
+        result = sim.rotate_wrist(robot_name="arm", target_yaw=0.7, tol=0.01, max_steps=4)
+        obstruction = _json_block(result)["obstruction"]
+        assert obstruction["joints_at_limit"] == [] and obstruction["contacts_total"] is None
+        assert "contacts were not read on this backend" in result["content"][0]["text"]
+
     def test_jaw_is_never_selected_as_wrist_on_so101_style_model(self, monkeypatch):
         # Numeric joint names carry no wrist hint, so the fallback picks the
         # last NON-GRIPPER joint - which must be "5", not the jaw "6" the raw
