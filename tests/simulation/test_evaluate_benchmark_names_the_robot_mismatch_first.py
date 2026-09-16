@@ -31,9 +31,20 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-from strands_robots.simulation.benchmark import register_benchmark
+from strands_robots.simulation.benchmark import _BENCHMARK_REGISTRY, register_benchmark
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 from strands_robots.simulation.mujoco.simulation import Simulation
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry():
+    """House isolation: the specs below are registered globally, so they are
+    kept out of whatever runs next in the same process."""
+    snapshot = dict(_BENCHMARK_REGISTRY)
+    _BENCHMARK_REGISTRY.clear()
+    yield
+    _BENCHMARK_REGISTRY.clear()
+    _BENCHMARK_REGISTRY.update(snapshot)
 
 
 @pytest.fixture
