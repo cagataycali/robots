@@ -7232,7 +7232,12 @@ class MuJoCoSimEngine(
             The agent-tool envelope. On success its ``json`` block reports
             ``was_running`` - whether a rollout really was in flight when the
             stop arrived - so a caller aggregating several of these answers
-            reads the verdict rather than matching on the sentence.
+            reads the verdict rather than matching on the sentence - and
+            ``exited``: ``True`` when the worker was joined and is gone, so the
+            robot is free for the caller's next action; ``False`` when it was
+            still live after ``_POLICY_STOP_JOIN_TIMEOUT`` (the text says so);
+            ``None`` when there was nothing to join - no rollout, or a blocking
+            ``run_policy`` driven on its caller's thread.
         """
         if not robot_name:
             return {
@@ -7254,7 +7259,38 @@ class MuJoCoSimEngine(
         # own return stays in the OR because the claim can be raised in the
         # window between the read above and this write.
         was_running = robot.request_policy_stop() or was_running
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        # The flag is lowered; the worker exits at its next control tick. Wait
+        # for that (bounded) before answering, because "Stopped" used to be
+        # reported while the worker was still winding down - the caller's very
+        # next ``start_policy`` (or any joint write) on the same robot was then
+        # refused "while its policy is running", and a second ``stop_policy``
+        # in that window answered "Was not running" against a
+        # ``list_policies_running`` that still listed the robot. Only a
+        # ``start_policy`` Future can be joined: a blocking ``run_policy`` is
+        # driven on its caller's own thread, so its stop is the flag alone.
+        exited: bool | None = None
+        fut = registry_entry(self._policy_threads, robot_name) if was_running else None
+        if fut is not None:
+            with contextlib.suppress(Exception):
+                # Either outcome of ``result`` means the same thing here (the
+                # worker's own raise = it exited; the join timeout = it did
+                # not); ``fut.done()`` decides, as in ``remove_robot``.
+                fut.result(timeout=self._POLICY_STOP_JOIN_TIMEOUT)
+            exited = fut.done()
+            if exited:
+                self._prune_done_futures()
+        if not was_running:
+            msg = f"Was not running on '{robot_name}'"
+        elif exited is False:
+            msg = (
+                f"Stop requested on '{robot_name}', but its policy worker is still live after "
+                f"{self._POLICY_STOP_JOIN_TIMEOUT:.1f}s (queued behind other rollouts, or blocked "
+                "inside one policy inference or send_action, where the stop flag is not read). "
+                "It exits at its next control tick; until then action='list_policies_running' "
+                "still reports it and action='start_policy' on this robot is refused."
+            )
+        else:
+            msg = f"Stopped on '{robot_name}'"
         # The verdict travels as data as well as prose. A programmatic caller -
         # the Device Connect ``stop`` RPC aggregates one of these answers per
         # robot - otherwise has to re-derive "was a rollout in flight" from its
@@ -7269,7 +7305,10 @@ class MuJoCoSimEngine(
         # and opposite on that case is the drift worth spending a word to avoid.
         return {
             "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+            "content": [
+                {"text": msg},
+                {"json": {"robot": robot_name, "was_running": was_running, "exited": exited}},
+            ],
         }
 
     # Cleanup
@@ -7287,6 +7326,15 @@ class MuJoCoSimEngine(
     # refuses the scene rebuild.
     # Override in tests via ``cleanup(policy_stop_timeout=...)`` if needed.
     _DEFAULT_POLICY_STOP_TIMEOUT = 5.0
+
+    # How long ``stop_policy`` waits for the worker it just flagged to exit
+    # before answering. A healthy rollout leaves within one control period
+    # (20 ms at the default 50 Hz), so the wait is normally a few ms; the bound
+    # exists for a worker blocked inside a policy inference, where the flag is
+    # not read, and it is shorter than the teardown budget above because
+    # ``stop_policy`` also serves the Device Connect ``stop`` RPC and the mesh
+    # emergency-stop fanout, whose callers wait on the answer.
+    _POLICY_STOP_JOIN_TIMEOUT = 1.0
 
     # Bounded wait for the world-handoff lock (seconds). A motion primitive
     # holds ``self._lock`` only for one control tick (a few physics substeps,

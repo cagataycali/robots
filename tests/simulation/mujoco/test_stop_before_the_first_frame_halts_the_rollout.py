@@ -57,7 +57,7 @@ def _start(sim: Any) -> Any:
     return sim._policy_threads["arm"]
 
 
-def test_a_stop_lands_on_a_running_worker_that_has_not_taken_a_frame(sim: Any) -> None:
+def test_a_stop_lands_on_a_running_worker_that_has_not_taken_a_frame(sim: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """The worker is inside ``run_policy`` but before the first frame."""
     at_the_hook = threading.Event()
     release = threading.Event()
@@ -77,9 +77,14 @@ def test_a_stop_lands_on_a_running_worker_that_has_not_taken_a_frame(sim: Any) -
     # rollout in flight" must agree, and the stop must be reported as a stop.
     assert sim._active_policy_robots() == ["arm"]
     assert "arm" in sim.list_policies_running()["content"][0]["text"]
+    # The worker is parked, so the bounded join stop_policy now performs
+    # lapses: the answer says the stop landed but the worker is still live,
+    # rather than "Stopped" over a robot the next start_policy would refuse.
+    monkeypatch.setattr(type(sim), "_POLICY_STOP_JOIN_TIMEOUT", 0.1)
     stopped = sim.stop_policy("arm")
     assert stopped["status"] == "success"
-    assert stopped["content"][0]["text"] == "Stopped on 'arm'"
+    assert stopped["content"][0]["text"].startswith("Stop requested on 'arm', but its policy worker is still live")
+    assert stopped["content"][1]["json"] == {"robot": "arm", "was_running": True, "exited": False}
 
     release.set()
     future.result(timeout=60)
@@ -87,7 +92,7 @@ def test_a_stop_lands_on_a_running_worker_that_has_not_taken_a_frame(sim: Any) -
     assert sim._world.robots["arm"].policy_running is False
 
 
-def test_a_stop_lands_on_a_rollout_that_is_still_queued(sim: Any) -> None:
+def test_a_stop_lands_on_a_rollout_that_is_still_queued(sim: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """Every worker is busy, so the rollout's Future has not started at all."""
     release = threading.Event()
     for _ in range(sim._executor._max_workers):
@@ -97,8 +102,10 @@ def test_a_stop_lands_on_a_rollout_that_is_still_queued(sim: Any) -> None:
     try:
         assert not future.running(), "executor was not saturated; the rollout started"
         assert sim._active_policy_robots() == ["arm"]
+        monkeypatch.setattr(type(sim), "_POLICY_STOP_JOIN_TIMEOUT", 0.1)
         stopped = sim.stop_policy("arm")
-        assert stopped["content"][0]["text"] == "Stopped on 'arm'"
+        assert stopped["content"][0]["text"].startswith("Stop requested on 'arm', but its policy worker is still live")
+        assert stopped["content"][1]["json"]["exited"] is False
     finally:
         release.set()
 
