@@ -601,7 +601,7 @@ class TestReadyMeansItRenders:
             def get_frame(self, *a, **kw):
                 raise RuntimeError("no OpenGL context")
 
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: NoGL(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", NoGL)
         r = client.post("/api/sim", json={"robot": "so101"})
         assert r.status_code == 500 and "no OpenGL context" in r.json()["error"]
         assert client.get("/api/sim").json()["sessions"] == []
@@ -618,7 +618,7 @@ class TestReadyMeansItRenders:
                 return super().get_frame(*a, **kw)
 
         monkeypatch.setattr(routes_sim, "_READY_TIMEOUT", 0.2)
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: ParksInTheFirstRender(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", ParksInTheFirstRender)
         try:
             r = client.post("/api/sim", json={"robot": "so101"})
             assert r.status_code == 504, r.text
@@ -627,7 +627,7 @@ class TestReadyMeansItRenders:
         finally:
             hold.set()
         # The slot it held is free again: a working engine still starts afterwards.
-        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: FakeEngine(robot))
+        monkeypatch.setattr(sim_session, "_default_factory", FakeEngine)
         assert _create(client)["state"] == "running"
 
 
