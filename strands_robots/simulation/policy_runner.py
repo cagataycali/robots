@@ -45,6 +45,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -569,6 +570,62 @@ def _criterion_verdict(
             "criterion cannot be evaluated, so the evaluation is aborted rather than reporting "
             "a success_rate over episodes whose outcome was never determined."
         ) from e
+
+
+def missing_dataset_text(verb: str, repo_id: str, root: str | None, exc: BaseException, sim: Any = None) -> str:
+    """What a dataset that could not be opened reads as on the tool surface.
+
+    ``LeRobotDataset`` resolves a miss on disk into a Hub download, so a typo'd
+    or never-recorded ``repo_id`` surfaced as a raw ``huggingface_hub`` 404 -
+    request id, ``repo_type`` advice, a gated-repo paragraph - seven seconds
+    later, with no mention of the directory that was actually checked or of
+    the dataset this session just recorded. Name the directory, the Hub
+    verdict, the neighbours on disk and the last recording instead; any
+    other exception keeps its own text.
+    """
+    text = f"{exc}"
+    lowered = text.lower()
+    not_found = "repository not found" in lowered or type(exc).__name__ == "RepositoryNotFoundError"
+    offline = not not_found and any(
+        k in lowered for k in ("connection", "max retries", "name resolution", "timed out", "offline")
+    )
+    if not (not_found or offline):
+        return text
+
+    checked: Path | None
+    try:
+        from strands_robots.dataset_recorder import _lerobot_home, local_dataset_dir
+
+        checked = Path(root) if root else (local_dataset_dir(repo_id) or _lerobot_home() / repo_id)
+    except Exception:  # noqa: BLE001 - the report must not fail on its own resolver
+        checked = Path(root) if root else None
+
+    if not_found:
+        head = (
+            f"{verb}: no dataset '{repo_id}' - not on disk at {checked} and not on the Hugging Face Hub "
+            f"(Repository Not Found)."
+        )
+    else:
+        head = f"{verb}: no local copy of '{repo_id}' at {checked}, and the Hugging Face Hub could not be reached."
+
+    hints: list[str] = []
+    if checked is not None and checked.parent.is_dir() and not checked.exists():
+        siblings = sorted(p.name for p in checked.parent.iterdir() if p.is_dir() and (p / "meta").is_dir())
+        if siblings:
+            shown = ", ".join(siblings[:8]) + (", ..." if len(siblings) > 8 else "")
+            hints.append(f"Datasets on disk beside it ({checked.parent}): {shown}.")
+    last = None
+    if sim is not None:
+        try:
+            last = sim._active_dataset_root()
+        except Exception:  # noqa: BLE001 - optional hint
+            last = None
+    if last:
+        hints.append(f"This session's most recent recording is at {last}.")
+    hints.append(
+        "Pass root= for a dataset written elsewhere, or record one with start_recording + run_policy + stop_recording."
+    )
+    return head + " " + " ".join(hints)
 
 
 def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
@@ -3429,7 +3486,10 @@ class PolicyRunner:
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except Exception as e:  # noqa: BLE001 - library errors are opaque
-            return {"status": "error", "content": [{"text": f"{e}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": missing_dataset_text("replay_episode", repo_id, root, e, self.sim)}],
+            }
 
         # Resolve the action-key ordering for action-vector index -> action
         # dict. The recorded ``action`` column is written in the robot's
