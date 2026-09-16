@@ -3260,6 +3260,8 @@ class SimEngine(ABC):
                     requested=1, completed=completed, saved=0, flush_deferred=recording
                 )
                 self._merge_json_fields(result, contract)
+                if recording and completed:
+                    self._append_open_episode_note(result)
                 return result
 
             # Multi-episode path: one rollout per episode, flushing a dataset
@@ -4156,6 +4158,37 @@ class SimEngine(ABC):
                 },
             ],
         }
+
+    def _append_open_episode_note(self, result: dict[str, Any]) -> None:
+        """Tell a single-episode ``run_policy`` answer where its frames went.
+
+        Under an open recording the fast path buffers into the OPEN episode and
+        flushes nothing (``episode_flush_deferred``), and the json block said
+        so - but the prose did not, and ``start_recording`` used to promise
+        "one call per episode". An agent that looped ``run_policy`` per
+        demonstration, each with its own instruction, got one merged
+        ``episode_index=0``. The note names the buffer and the three ways to
+        close it. Best-effort: a recorder without the counters gets no note.
+        """
+        recorder = self._active_recorder()
+        if recorder is None:
+            return
+        try:
+            in_episode = int(recorder.episode_frame_count)
+            episode_index = int(recorder.episode_count)
+        except (AttributeError, TypeError, ValueError):
+            return
+        result.setdefault("content", []).append(
+            {
+                "text": (
+                    f"Recording: frames buffered into the OPEN episode (episode_index {episode_index}, "
+                    f"{in_episode} frames in it so far) - not yet a saved dataset episode. Another "
+                    "run_policy joins this same episode; reset closes it as its own episode; "
+                    "run_policy(n_episodes=N) records N distinct episodes in one call; "
+                    "stop_recording saves it and closes the dataset."
+                )
+            }
+        )
 
     def _episode_contract_fields(
         self, *, requested: int, completed: int, saved: int, flush_deferred: bool = False

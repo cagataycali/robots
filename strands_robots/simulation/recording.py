@@ -1281,8 +1281,9 @@ class DatasetRecordingMixin:
                             "set_joint_positions(hold=True) + step is a scripted demonstration "
                             "(a step call covering less sim time than one frame period captures "
                             "nothing, and its reply says so). To record a dataset: "
-                            "start_recording -> run_policy (once per episode) or step through "
-                            "the motion -> stop_recording."
+                            "start_recording -> run_policy(n_episodes=N), or run_policy then reset "
+                            "per episode (reset closes the open episode), or step through the "
+                            "motion -> stop_recording."
                         )
                     }
                 ],
@@ -1572,7 +1573,7 @@ class DatasetRecordingMixin:
                     {
                         "text": (
                             "save_episode: not recording. Call start_recording first, "
-                            "then run_policy (once per episode) -> save_episode -> stop_recording."
+                            "then run_policy -> save_episode per episode -> stop_recording."
                         )
                     }
                 ],
@@ -1737,15 +1738,38 @@ class DatasetRecordingMixin:
         recording = state.get("recording", False)
         steps = len(state.get("trajectory", []))
 
-        if recording:
-            text = f"[recording] {steps} steps captured"
-        else:
-            text = f"[idle] Not recording (last episode: {steps} steps)"
+        if not recording:
+            return {
+                "status": "success",
+                "content": [{"text": f"[idle] Not recording (last episode: {steps} steps)"}],
+            }
 
-        return {
-            "status": "success",
-            "content": [{"text": text}],
+        # The trajectory mirror is the OPEN episode only - it empties at every
+        # flush. Read alone it said "0 steps captured" right after
+        # run_policy(n_episodes=3) had saved 45 frames, so the dataset's own
+        # counts stand beside it.
+        recorder = state.get("dataset_recorder")
+        saved_episodes = int(getattr(recorder, "episode_count", 0) or 0)
+        saved_frames = int(getattr(recorder, "frame_count", 0) or 0) - int(
+            getattr(recorder, "episode_frame_count", 0) or 0
+        )
+        repo_id = getattr(recorder, "repo_id", None)
+        text = (
+            f"[recording] {steps} steps buffered in the open episode (episode_index {saved_episodes}); "
+            f"{saved_episodes} episode(s) / {max(saved_frames, 0)} frames saved so far"
+            + (f" to {repo_id}" if repo_id else "")
+            + ". reset closes the open episode as its own; run_policy(n_episodes=N) records N distinct; "
+            "stop_recording saves the open episode and closes the dataset."
+        )
+        payload = {
+            "recording": True,
+            "open_episode_steps": steps,
+            "open_episode_index": saved_episodes,
+            "episodes_saved": saved_episodes,
+            "frames_saved": max(saved_frames, 0),
+            "repo_id": repo_id,
         }
+        return {"status": "success", "content": [{"text": text}, {"json": payload}]}
 
     def _verify_resume_schema(
         self,
