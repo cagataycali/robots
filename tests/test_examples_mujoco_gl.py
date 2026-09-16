@@ -67,8 +67,12 @@ from __future__ import annotations
 
 import ast
 import json
+import platform
 import re
+import sys
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _NOTEBOOKS_DIR = _REPO_ROOT / "examples" / "notebooks"
@@ -80,8 +84,21 @@ _NOTEBOOKS_DIR = _REPO_ROOT / "examples" / "notebooks"
 _CGL_VALUE_RE = re.compile(r'MUJOCO_GL"[^\n]*?"cgl"')
 
 
-def _is_guarded(line: str) -> bool:
-    return "darwin" in line or "sys.platform" in line
+def _is_guarded(text: str) -> bool:
+    """Does this MUJOCO_GL value choose per platform, so a one-platform name is fine?
+
+    Takes either a whole source line or an unparsed value expression: the rules
+    below apply this one test to both, and the notebook fallback grades a raw
+    line with it when a cell will not parse.
+
+    Python names macOS three ways and only ``sys.platform`` spells it in
+    lowercase -- ``platform.system()`` and ``os.uname().sysname`` both return
+    ``"Darwin"`` -- so the match is case-insensitive. A case-sensitive one
+    reported the two capitalised spellings as having *no* platform guard, which
+    is both a refusal of a correct line and a wrong reason: the reported cause
+    ("breaks headless Linux") is what those lines already avoid.
+    """
+    return "darwin" in text.casefold() or "sys.platform" in text
 
 
 def _lines_of(text: str) -> list[str]:
@@ -233,11 +250,6 @@ def _module_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
     return found
 
 
-def _is_guarded_expr(expr_src: str) -> bool:
-    """Does this value expression choose per platform, so a windowed name is fine?"""
-    return "darwin" in expr_src or "sys.platform" in expr_src
-
-
 def _names_a_platform_bound_backend(expr_src: str) -> bool:
     return any(f'"{backend}"' in expr_src or f"'{backend}'" in expr_src for backend in _PLATFORM_BOUND_BACKENDS)
 
@@ -247,7 +259,7 @@ def _unguarded_platform_bound_defaults(source: str) -> list[str]:
     return [
         f"line {line}: {expr}"
         for line, expr in _module_scope_gl_defaults(source)
-        if _names_a_platform_bound_backend(expr) and not _is_guarded_expr(expr)
+        if _names_a_platform_bound_backend(expr) and not _is_guarded(expr)
     ]
 
 
@@ -262,7 +274,7 @@ def _unguarded_platform_bound_in_notebook(path: Path) -> list[str]:
         try:
             bad = _unguarded_platform_bound_defaults(source)
         except SyntaxError:
-            bad = [ln.strip() for ln in _lines_of(source) if _BACKEND_VALUE_RE.search(ln) and not _is_guarded_expr(ln)]
+            bad = [ln.strip() for ln in _lines_of(source) if _BACKEND_VALUE_RE.search(ln) and not _is_guarded(ln)]
         offending.extend(f"cell {index} {entry}" for entry in bad)
     return offending
 
@@ -326,7 +338,7 @@ def _unguarded_offscreen_defaults(source: str) -> list[str]:
     return [
         f"line {line}: {expr}"
         for line, expr in _all_scope_gl_defaults(source)
-        if _names_offscreen(expr) and not _is_guarded_expr(expr)
+        if _names_offscreen(expr) and not _is_guarded(expr)
     ]
 
 
@@ -426,3 +438,46 @@ class TestTheRuleIsScopedToWhatSelectsTheBackend:
             'import os\nimport sys\nif sys.version_info >= (3, 12):\n    os.environ.setdefault("MUJOCO_GL", "glfw")\n'
         )
         assert _unguarded_platform_bound_defaults(source) == ["line 4: 'glfw'"]
+
+
+class TestAGuardIsRecognisedHoweverTheLineNamesMacOS:
+    """Every rule accepts each of the three ways Python names macOS.
+
+    The three rules and the fleet-example rule share one guard test, so a
+    spelling one of them misses, all four miss. ``sys.platform`` is the only
+    API of the three that answers in lowercase, so a case-sensitive match read
+    the other two as no guard at all -- refusing a line that does pick per
+    platform, and blaming it for the headless-Linux breakage it avoids.
+    """
+
+    #: The three stdlib ways to ask whether this host is macOS. Each is a
+    #: correct guard: on headless Linux every one of them yields ``egl``.
+    _DARWIN_TESTS = (
+        'sys.platform == "darwin"',
+        'platform.system() == "Darwin"',
+        'os.uname().sysname == "Darwin"',
+    )
+
+    def test_only_sys_platform_answers_in_lowercase(self):
+        """The premise, measured on this host: one API capitalises, the other does not."""
+        assert sys.platform == sys.platform.lower()
+        assert platform.system() != platform.system().lower()
+
+    @pytest.mark.parametrize("darwin_test", _DARWIN_TESTS, ids=lambda t: t.split()[0])
+    def test_a_cgl_default_guarded_by_any_of_them_is_accepted(self, darwin_test, tmp_path):
+        source = f'import os\nos.environ.setdefault("MUJOCO_GL", "cgl" if {darwin_test} else "egl")\n'
+        path = tmp_path / "guarded.py"
+        path.write_text(source, encoding="utf-8")
+        assert _scan_py(path) == []  # rule 1, line-scoped
+        assert _unguarded_platform_bound_defaults(source) == []  # rule 2, module scope
+        assert _unguarded_offscreen_defaults(source) == []  # rule 3, any scope
+        assert _is_guarded(ast.unparse(ast.parse(source).body[1].value.args[1]))  # fleet rule
+
+    def test_an_unguarded_cgl_default_is_still_reported_by_every_rule(self, tmp_path):
+        """The control: recognising more guards must not stop reporting a line with none."""
+        source = 'import os\nos.environ.setdefault("MUJOCO_GL", "cgl")\n'
+        path = tmp_path / "unguarded.py"
+        path.write_text(source, encoding="utf-8")
+        assert _scan_py(path) == ['os.environ.setdefault("MUJOCO_GL", "cgl")']
+        assert _unguarded_platform_bound_defaults(source) == ["line 2: 'cgl'"]
+        assert not _is_guarded('"cgl"')
