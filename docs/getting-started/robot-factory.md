@@ -1,5 +1,5 @@
 ---
-description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, orientation, keyframe, **kwargs) - the full signature with every kwarg explained.
+description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, orientation, keyframe, driver, tool_name, **kwargs) - the full signature with every kwarg explained.
 ---
 
 # Robot factory
