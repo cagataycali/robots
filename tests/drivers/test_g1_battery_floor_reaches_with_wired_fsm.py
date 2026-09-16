@@ -148,16 +148,21 @@ def test_a_driver_with_no_motion_switcher_factory_still_refuses_with_fsm_unknown
     assert driver._motion_switcher_open_error is not None
     # The exact failure text depends on whether ``unitree_sdk2py`` is
     # installed on the box running the tests.  On CI (SDK absent) the
-    # importlib call raises ``ModuleNotFoundError`` and the message names
-    # the SDK package or the client class.  On a developer box with the SDK
-    # installed but no DDS bus reachable, ``Init()`` raises deep inside the
-    # C bindings (``AttributeError: 'NoneType' object has no attribute
-    # '_ref'``) and the message names neither.  Both are the same defect
-    # from the caller's perspective -- the client did not open -- so we
-    # grade the invariant the driver actually preserves: an error string
-    # was captured on the driver rather than raised through the gate.
+    # importlib call raises ``ModuleNotFoundError`` and the driver answers
+    # with the install recipe (:func:`sdk_missing`) -- the one refusal that
+    # has a remedy carries it.  On a developer box with the SDK installed
+    # but no DDS bus reachable, ``Init()`` raises deep inside the C bindings
+    # (``AttributeError: 'NoneType' object has no attribute '_ref'``) and
+    # the message is the opaque "could not be opened" prefix.  Both are the
+    # same defect from the caller's perspective -- the client did not open
+    # -- so we grade the invariant the driver actually preserves: an error
+    # string was captured on the driver rather than raised through the gate,
+    # and it is one of the two shapes the driver spells.
     assert isinstance(driver._motion_switcher_open_error, str)
-    assert "motion-switcher client could not be opened" in driver._motion_switcher_open_error
+    assert (
+        "unitree_sdk2py is not installed" in driver._motion_switcher_open_error
+        or "motion-switcher client could not be opened" in driver._motion_switcher_open_error
+    ), driver._motion_switcher_open_error
 
 
 def test_battery_floor_reaches_with_a_wired_fsm_and_a_critical_pack() -> None:
