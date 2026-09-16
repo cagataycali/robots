@@ -348,21 +348,66 @@ def _constructor_keywords(PolicyClass: type) -> tuple[tuple[str, ...], bool]:
     return accepted, tolerates_unknown
 
 
+def _mistyped_in_place(name: str, candidate: str) -> bool:
+    """Whether ``name`` is ``candidate`` with a character mistyped in place.
+
+    One wrong character, or two adjacent characters in each other's place - the
+    two typos that leave a name's length alone, and the only ones
+    :data:`_MISSPELLING_RATIO` cannot see. ``difflib``'s ratio is
+    ``2 * matches / total``: a dropped or doubled character costs one match but
+    also changes the total (0.857 and 0.889 against a four-letter name, and
+    higher for every longer one), while a wrong character costs a match with the
+    total unchanged, scoring ``2 * (n - 1) / 2n`` - 0.750 at four characters,
+    0.800 at five. So the cutoff screens every length-changing typo of every
+    parameter this package declares, and leaves exactly one class open: a wrong
+    character in a four-letter name. Five parameters are four characters -
+    ``host``, ``port``, ``mode``, ``seed``, ``walk`` - and ``host`` and ``port``
+    are the two the most providers declare.
+
+    Args:
+        name: The keyword the caller spelled.
+        candidate: A parameter the constructor binds.
+
+    Returns:
+        Whether one typo in ``candidate`` produces ``name``.
+    """
+    if len(name) != len(candidate):
+        return False
+    differing = [i for i, (a, b) in enumerate(zip(name, candidate, strict=True)) if a != b]
+    if len(differing) == 1:
+        return True
+    if len(differing) == 2:
+        first, second = differing
+        # Adjacency is implied by the swap identity below (the character between
+        # two non-adjacent differences matches, which the identity contradicts),
+        # and stated because it is the invariant a reader needs.
+        return second == first + 1 and name[first] == candidate[second] and name[second] == candidate[first]
+    return False
+
+
 def _misspelling_of(name: str, accepted: tuple[str, ...]) -> str | None:
     """The accepted parameter ``name`` misspells, or ``None``.
 
-    Two tests: a close match at :data:`_MISSPELLING_RATIO`, and the letters of
-    one accepted name in another order - ``hots`` for ``host``, ``prot`` for
-    ``port``. A transposition of two adjacent letters in a four-letter word
-    scores 0.75, under the cutoff, and it is the typo a hand makes most; no
-    pass-through option is an anagram of a parameter this constructor binds.
+    Two tests, because neither covers the other. A close match at
+    :data:`_MISSPELLING_RATIO` catches a name off a parameter by a character it
+    dropped, doubled, or by several characters. :func:`_mistyped_in_place`
+    catches the one class the ratio scores too low to see - a wrong character
+    in a four-letter name: ``hoat`` and ``hots`` for ``host``, ``porr`` and
+    ``prot`` for ``port`` all score 0.750. A provider whose constructor has a
+    ``**kwargs`` sink drops such a name silently, which is byte-identical to
+    omitting the argument, so the policy dials the default host and reports
+    success.
+
+    Nothing legitimate is one typo from a parameter the same constructor binds:
+    a pass-through option is another subsystem's name, not a near-miss of this
+    one's. Measured over the parameters of every registered provider, no name
+    any of them declares is one typo from a parameter of another.
     """
     match = difflib.get_close_matches(name, list(accepted), n=1, cutoff=_MISSPELLING_RATIO)
     if match:
         return match[0]
-    letters = sorted(name)
     for candidate in accepted:
-        if len(candidate) == len(name) and sorted(candidate) == letters:
+        if _mistyped_in_place(name, candidate):
             return candidate
     return None
 

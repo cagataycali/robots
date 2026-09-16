@@ -7,15 +7,28 @@ logged "ignoring unexpected constructor kwarg(s)" where no agent reads it; a
 constructor without a sink raised CPython's ``__init__() got an unexpected
 keyword argument 'acton_space'``, naming neither the provider nor the
 parameter meant. ``create_policy`` now screens the resolved kwargs against the
-constructor's own signature before constructing anything.
+constructor's own signature before constructing anything, and judges a
+misspelling without reference to the name's length: ``difflib``'s ratio alone
+scores one substituted character 0.75 in a four-letter name and 0.90 in a
+ten-letter one, so a cutoff on it screens ``pretrained_name_or_path`` and
+leaves ``host`` and ``port`` - the parameters the most providers declare - open.
 """
 
 from __future__ import annotations
 
+import difflib
+
 import pytest
 
 from strands_robots.policies import Policy, create_policy, register_policy
-from strands_robots.policies.factory import policy_kwargs_error
+from strands_robots.policies.factory import (
+    _MISSPELLING_RATIO,
+    _constructor_keywords,
+    _misspelling_of,
+    _resolve_policy_class,
+    policy_kwargs_error,
+)
+from strands_robots.registry import list_policy_providers
 
 
 class _Tolerant(Policy):
@@ -110,6 +123,81 @@ class TestAConstructorWithoutAPassThrough:
         assert "does not accept 'totally_unknown': its constructor declares no **kwargs" in text
         assert "It accepts: host, port." in text
         assert "unexpected keyword argument" not in text
+
+
+class TestATypoIsJudgedWithoutRegardToTheNameSLength:
+    """``host`` is four characters, and one of them being wrong is one typo."""
+
+    @pytest.mark.parametrize(
+        ("spelling", "ratio", "form"),
+        [
+            ("hoat", 0.750, "one wrong character - under the cutoff, so the ratio alone drops it"),
+            ("hots", 0.750, "two adjacent characters swapped - the same arithmetic"),
+            ("hos", 0.857, "one dropped character - the ratio already sees this"),
+            ("hosst", 0.889, "one doubled character - the ratio already sees this"),
+        ],
+    )
+    def test_every_typo_of_a_four_letter_parameter_is_refused(self, spelling: str, ratio: float, form: str) -> None:
+        assert round(difflib.SequenceMatcher(None, spelling, "host").ratio(), 3) == ratio, form
+        with pytest.raises(TypeError) as info:
+            create_policy("tolerant_test", **{spelling: "10.0.0.2"})
+        assert f"{spelling!r} (did you mean 'host'?)" in str(info.value), form
+
+    @pytest.mark.parametrize(
+        ("spelling", "why"),
+        [
+            ("hostname", "a name of its own, not a misspelling of `host`"),
+            ("hoab", "two wrong characters is two typos, not one"),
+        ],
+    )
+    def test_a_name_further_than_one_typo_from_a_parameter_passes_through(self, spelling: str, why: str) -> None:
+        # The boundary: a sink's pass-through is what it is for, and widening
+        # the screen past one typo would start eating the names it forwards.
+        policy = create_policy("tolerant_test", **{spelling: "gr00t.local"})
+        assert isinstance(policy, _Tolerant)
+        assert policy.extra == {spelling: "gr00t.local"}, why
+        assert policy.host == "localhost"
+
+    def test_a_name_in_the_ratio_s_grey_band_is_forwarded_rather_than_renamed(self) -> None:
+        """The 0.80 cutoff is what keeps a shared ``policy_config`` working.
+
+        Twenty-five of the parameter names the registered providers declare sit
+        between 0.70 and 0.80 of a *different* provider's parameter - ``api_key``
+        against ``api_token``, ``strict`` against ``strict_keys``, ``device``
+        against ``device_cfg``, ``config`` against ``data_config``. Loosening the
+        cutoff would answer each of them with the other provider's name instead
+        of forwarding it, and forwarding is what a ``**kwargs`` sink is for.
+        """
+        ratio = difflib.SequenceMatcher(None, "actions", "action_space").ratio()
+        assert 0.70 < ratio < _MISSPELLING_RATIO
+        policy = create_policy("tolerant_test", actions=[1, 2])
+        assert isinstance(policy, _Tolerant)
+        assert policy.extra == {"actions": [1, 2]}
+        assert policy.action_space == "joint"
+
+    def test_no_declared_parameter_of_any_provider_is_left_unscreened(self) -> None:
+        """Every registered provider, every parameter, every single-typo spelling.
+
+        The pin is the whole domain rather than the names that happened to be
+        reported, because the hole was a property of *length*: nothing about
+        ``host`` made it special except being short, so the next four-letter
+        parameter added to any provider would have inherited the same silence.
+        """
+        unscreened: list[tuple[str, str, str]] = []
+        for provider in sorted(set(list_policy_providers())):
+            _canonical, PolicyClass, _kwargs = _resolve_policy_class(provider)
+            accepted, _sink = _constructor_keywords(PolicyClass)
+            for declared in accepted:
+                for index in range(len(declared)):
+                    for form in (
+                        declared[:index] + "q" + declared[index + 1 :],  # substituted
+                        declared[:index] + declared[index + 1 :],  # dropped
+                        declared[:index] + declared[index] * 2 + declared[index + 1 :],  # doubled
+                    ):
+                        if form in accepted or _misspelling_of(form, accepted) is not None:
+                            continue
+                        unscreened.append((provider, declared, form))
+        assert unscreened == []
 
 
 class TestTheHelperItself:
