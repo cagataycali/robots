@@ -1378,8 +1378,6 @@ class DatasetRecorder:
             use_videos=use_videos,
             image_writer_threads=image_writer_threads,
         )
-        import inspect
-
         create_sig = inspect.signature(LeRobotDatasetCls.create)
         create_params = create_sig.parameters
 
@@ -1489,8 +1487,6 @@ class DatasetRecorder:
             RuntimeError: The installed LeRobot has no ``LeRobotDataset.resume``
                 (append needs ``lerobot>=0.5.2``).
         """
-        import inspect
-
         # Same posture flag as :meth:`create` forwards, on the same domain and
         # ahead of the same lerobot probe, so the two creation entry points cannot
         # disagree about which values are usable. Read by truthiness,
