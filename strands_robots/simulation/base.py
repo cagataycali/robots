@@ -3992,6 +3992,16 @@ class SimEngine(ABC):
         """
         return None
 
+    def _active_dataset_repo_id(self) -> str | None:
+        """Id of the active (or most recent) recording, or ``None``.
+
+        The counterpart of :meth:`_active_dataset_root`: a reader handed only a
+        dataset id needs both halves to tell whether that root is where THIS id
+        was recorded. Backends that record override it; the base has none, so it
+        returns ``None``.
+        """
+        return None
+
     def verify_dataset_episodes(self, expected: int) -> dict[str, Any]:
         """Verify the recorded dataset holds exactly ``expected`` episodes.
 

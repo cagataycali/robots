@@ -183,8 +183,8 @@ def lerobot_version() -> str:
 DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
 
 
-def get_base_dir() -> Path:
-    """Get the base directory for strands-robots user data.
+def base_dir_path() -> Path:
+    """Where the base directory for strands-robots user data resolves to.
 
     Resolution (in priority order):
 
@@ -192,6 +192,12 @@ def get_base_dir() -> Path:
        you want to relocate *all* strands-robots user data (assets,
        user registry, caches) to a non-default location.
     2. ``~/.strands_robots/`` - default.
+
+    This answers where the directory *is* without creating it, which is what
+    a caller that only compares paths needs: a validator asking whether a
+    host path lies under the base dir must not write to the filesystem to
+    answer, and must not fail when the home directory is unwritable.
+    :func:`get_base_dir` is the same resolution plus creation.
 
     Note:
         ``STRANDS_ASSETS_DIR`` **only** controls the assets subdirectory
@@ -201,10 +207,23 @@ def get_base_dir() -> Path:
         to be pointed.
 
     Returns:
-        Path to the base directory (created if needed).
+        Path to the base directory, whether or not it exists.
     """
     custom = os.getenv("STRANDS_BASE_DIR")
-    d = Path(custom) if custom else DEFAULT_BASE_DIR
+    return Path(custom) if custom else DEFAULT_BASE_DIR
+
+
+def get_base_dir() -> Path:
+    """Get the base directory for strands-robots user data, creating it if needed.
+
+    Resolves through :func:`base_dir_path` - see it for the resolution order
+    and for the read-only spelling to use when the directory only has to be
+    compared against, not written to.
+
+    Returns:
+        Path to the base directory (created if needed).
+    """
+    d = base_dir_path()
     d.mkdir(parents=True, exist_ok=True)
     return d
 

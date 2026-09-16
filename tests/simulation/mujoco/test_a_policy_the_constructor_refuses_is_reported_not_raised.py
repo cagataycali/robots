@@ -3,9 +3,8 @@
 ``_preflight_policy_config`` reports what can be judged without constructing: an
 unresolvable provider name, and the provider's own ``preflight`` hook. What a
 constructor judges for itself only exists once it runs -- ``Gr00tPolicy: invalid
-port: 70000 (expected 1-65535)``, or a keyword a constructor without a
-``**kwargs`` sink does not bind -- and it used to escape differently on each
-surface. Measured on ``so101`` before this change:
+port: 70000 (expected 1-65535)``, or a keyword no pre-construction screen can
+judge -- and it used to escape differently on each surface. Measured on ``so101`` before this change:
 
 * ``run_policy``, ``eval_policy`` and ``evaluate_benchmark`` raised the bare
   ``ValueError`` past the ``status=error`` envelope every sibling refusal (an
@@ -27,6 +26,9 @@ import pytest
 
 pytest.importorskip("mujoco")
 
+from strands_robots.policies import factory as policy_factory
+from strands_robots.policies import register_policy
+from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.benchmark import register_benchmark, unregister_benchmark
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
@@ -35,11 +37,24 @@ from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 # point -- no screen that runs before construction can know this rule.
 _BAD_PORT = {"host": "127.0.0.1", "port": 70000, "data_config": "so101"}
 _PORT_VERDICT = "Gr00tPolicy: invalid port: 70000"
-# Cosmos3Policy declares no **kwargs sink, so an unbound keyword is CPython's
-# own TypeError -- the other arm of the refusal this envelope has to carry.
+# A misspelling of a parameter the provider does read. Cosmos3Policy declares no
+# **kwargs sink and its signature is readable, so ``policy_kwargs_error`` judges
+# this keyword before anything is constructed and names the parameter meant.
 _UNBOUND_KEYWORD = {"hots": "127.0.0.1"}
+# The other arm. ``policy_kwargs_error`` screens against the constructor's own
+# signature, so a constructor that binds nothing at all leaves it with an empty
+# accepted set and nothing to screen -- the one route on which CPython's own
+# TypeError still reaches this seam, and the reason it stays in the caught tuple.
+_BINDS_NOTHING = "constructor_binds_nothing_probe"
 
 _BENCHMARK = "constructor_refusal_probe"
+
+
+class _BindsNothingPolicy(MockPolicy):
+    """A provider whose constructor binds no keyword, so no screen can judge one."""
+
+    def __init__(self) -> None:
+        super().__init__()
 
 
 def _text(result: dict) -> str:
@@ -53,6 +68,16 @@ def sim():
     engine.add_robot("so101")
     yield engine
     engine.cleanup()
+
+
+@pytest.fixture
+def binds_nothing_provider():
+    """A registered provider whose constructor ``policy_kwargs_error`` cannot screen."""
+    register_policy(_BINDS_NOTHING, lambda: _BindsNothingPolicy)
+    try:
+        yield _BINDS_NOTHING
+    finally:
+        policy_factory._runtime_registry.pop(_BINDS_NOTHING, None)
 
 
 @pytest.fixture
@@ -117,12 +142,13 @@ class TestTheBlockingSurfaces:
             f"so no rollout was started. {_PORT_VERDICT}"
         )
 
-    def test_a_keyword_the_constructor_does_not_bind_is_the_same_envelope(self, sim):
-        """The ``TypeError`` arm: a provider whose ``__init__`` has no ``**kwargs``.
+    def test_a_keyword_the_screen_can_judge_names_the_parameter_meant(self, sim):
+        """The screened arm: the refusal is reached without constructing anything.
 
-        A ``ValueError`` the constructor raises on purpose and CPython's own
-        ``TypeError`` for an unbound keyword reach this seam by different
-        routes, and both used to leave the library as a traceback.
+        ``create_policy`` screens the resolved kwargs against the constructor's
+        own signature first (``policy_kwargs_error``), so for a provider whose
+        signature it can read the report names the parameter the keyword
+        misspells rather than only the keyword CPython would have named.
         """
         result = sim.run_policy(
             robot_name="so101", policy_provider="cosmos3", policy_config=_UNBOUND_KEYWORD, duration=0.2
@@ -130,6 +156,31 @@ class TestTheBlockingSurfaces:
         assert result["status"] == "error"
         assert _text(result).startswith(
             "run_policy: policy provider 'cosmos3' refused its configuration, so no rollout was started."
+        )
+        # The keyword is named, and so is the parameter no other name could mean.
+        assert "does not accept 'hots' (did you mean 'host'?)" in _text(result)
+
+    def test_a_keyword_no_screen_can_judge_is_the_same_envelope(self, sim, binds_nothing_provider):
+        """The ``TypeError`` arm: the keyword reaches the constructor and CPython refuses it.
+
+        A ``ValueError`` the constructor raises on purpose and CPython's own
+        ``TypeError`` for an unbound keyword reach this seam by different
+        routes, and both used to leave the library as a traceback. The screen
+        closed the route every registered provider took to get here -- each one
+        has a signature it can read -- so the arm is measured on the case it
+        still cannot judge, which is what keeps ``TypeError`` in the caught
+        tuple honest rather than defensive.
+        """
+        result = sim.run_policy(
+            robot_name="so101",
+            policy_provider=binds_nothing_provider,
+            policy_config=_UNBOUND_KEYWORD,
+            duration=0.2,
+        )
+        assert result["status"] == "error"
+        assert _text(result).startswith(
+            f"run_policy: policy provider {binds_nothing_provider!r} refused its configuration, "
+            "so no rollout was started."
         )
         # The constructor's own words, not a paraphrase: the keyword is named.
         assert "unexpected keyword argument 'hots'" in _text(result)

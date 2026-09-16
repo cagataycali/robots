@@ -28,6 +28,7 @@ msgpack = pytest.importorskip(
     reason="msgpack not installed - pip install 'strands-robots[moveit2]'",
 )
 
+from strands_robots import utils  # noqa: E402
 from strands_robots.policies.moveit2.server import zmq_node  # noqa: E402
 
 
@@ -267,9 +268,18 @@ def test_build_moveit_py_wires_optional_packages(monkeypatch: pytest.MonkeyPatch
     moveit_pkg.planning = planning_mod  # type: ignore[attr-defined]
     configs_mod = types.ModuleType("moveit_configs_utils")
     configs_mod.MoveItConfigsBuilder = _ConfigsBuilder  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "moveit", moveit_pkg)
-    monkeypatch.setitem(sys.modules, "moveit.planning", planning_mod)
-    monkeypatch.setitem(sys.modules, "moveit_configs_utils", configs_mod)
+    for name, module in (
+        ("moveit", moveit_pkg),
+        ("moveit.planning", planning_mod),
+        ("moveit_configs_utils", configs_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, module)
+        # ``_build_moveit_py`` gates these through ``require_optional``, which
+        # memoises what it imports, so the memo has to be restored as well.
+        # Left leaking, these fakes answer every later require_optional for the
+        # module in the same session: measured, with the gate hoisted out of
+        # the seam this file substitutes, all 36 cells still passed.
+        monkeypatch.setitem(utils._lazy_modules, name, module)
 
     args = zmq_node._parse_args(
         ["--robot-description-package", "my_robot_desc", "--moveit-config-package", "my_moveit_cfg"]
