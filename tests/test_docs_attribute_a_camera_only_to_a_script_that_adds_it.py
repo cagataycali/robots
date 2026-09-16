@@ -9,17 +9,21 @@ from somewhere else and no traceback. Docs therefore point at a shipped script
 as the worked version - "X records a walking robot this way" - and that pointer
 is only worth following if the script really does it.
 
-Measured on ``82169fa4``, before this module: ``docs/policies/wbc.md`` closed its
-new "Recording it" subsection with
+Measured on ``82169fa4``, before this module: a draft of ``docs/policies/wbc.md``
+closed its new "Recording it" subsection with
 
     [`examples/locomotion/scripted_g1.py`](...) does the pelvis mount before its
     first segment.
 
-and that example contains zero ``add_camera`` calls - it records
+and that example then contained zero ``add_camera`` calls - it recorded
 ``video={"camera": "default"}``, the very fixed view the paragraph above tells
-the reader to stop using. The same paragraph attributed a pose
-(``position=[1.7, -4.6, 1.4]``, ``fov=42``) to the clip rendered further down the
-page; the pose appears nowhere in the repository, and that clip is rendered by
+the reader to stop using. That one was settled from the other end: #3708 gave
+``scripted_g1.py`` the pelvis mount the sentence had promised, which is the
+argument for grading the pair rather than either half - the same claim was
+false in the page and true in the script within one day, and nothing said so.
+The same paragraph attributed a pose (``position=[1.7, -4.6, 1.4]``, ``fov=42``)
+to the clip rendered further down the page; that pose appears nowhere in the
+repository, and the clip is rendered by
 ``examples/wbc/wbc_g1_torque_deploy.py`` through ``mujoco.Renderer`` with
 ``camera=-1``, the free camera. Both are invisible to the link grader
 (``tests/test_markdown_links_resolve.py``): the paths resolve, the claims about
@@ -70,9 +74,9 @@ _MOUNT_BODY = re.compile(r"`([a-z][\w-]*/[a-z][\w-]*)`")
 _MOUNTS = re.compile(r"mount(?:s|ed|ing)?\b")
 
 
-def _documentation_files() -> list[Path]:
-    files = sorted((_REPO_ROOT / "docs").rglob("*.md"))
-    readme = _REPO_ROOT / "README.md"
+def _documentation_files(root: Path) -> list[Path]:
+    files = sorted((root / "docs").rglob("*.md"))
+    readme = root / "README.md"
     return [*files, readme] if readme.is_file() else files
 
 
@@ -94,17 +98,17 @@ def _sentence_around(text: str, start: int, end: int) -> str:
     return " ".join(text[opens:closes].split())
 
 
-def _camera_claims(files: list[Path] | None = None) -> list[tuple[str, str, str]]:
+def _camera_claims(files: list[Path] | None = None, root: Path = _REPO_ROOT) -> list[tuple[str, str, str]]:
     """Every ``(where, script, sentence)`` that credits a script with a camera."""
     claims: list[tuple[str, str, str]] = []
-    for path in files if files is not None else _documentation_files():
+    for path in files if files is not None else _documentation_files(root):
         text = path.read_text(encoding="utf-8")
         for match in _LINK.finditer(text):
             sentence = _sentence_around(text, match.start(), match.end())
             if not _CLAIMS_A_CAMERA.search(sentence):
                 continue
             line = text.count("\n", 0, match.start()) + 1
-            claims.append((f"{_relative(path)}:{line}", match.group(1), sentence))
+            claims.append((f"{_relative(path, root)}:{line}", match.group(1), sentence))
     return claims
 
 
@@ -112,16 +116,16 @@ def _squeezed(text: str) -> str:
     return " ".join(text.split())
 
 
-def _relative(path: Path) -> str:
-    """``path`` under the repository root, or its own name if it lies outside."""
-    return str(path.relative_to(_REPO_ROOT)) if path.is_relative_to(_REPO_ROOT) else path.name
+def _relative(path: Path, root: Path) -> str:
+    """``path`` under ``root``, or its own name if it lies outside."""
+    return str(path.relative_to(root)) if path.is_relative_to(root) else path.name
 
 
-def _offenders(claims: list[tuple[str, str, str]]) -> list[str]:
+def _offenders(claims: list[tuple[str, str, str]], root: Path = _REPO_ROOT) -> list[str]:
     """Every claim whose script does not hold up, in the order the pages state them."""
     offenders: list[str] = []
     for where, script, sentence in claims:
-        source = _REPO_ROOT / script
+        source = root / script
         if not source.is_file():
             offenders.append(f"{where} credits {script}, which does not exist")
             continue
@@ -146,30 +150,57 @@ def test_a_script_credited_with_a_camera_adds_the_camera_the_page_shows() -> Non
 
 
 def test_the_reader_resolves_the_shapes_the_pages_are_written_in(tmp_path: Path) -> None:
-    """An empty offender list and a reader that resolves nothing are the same list."""
+    """An empty offender list and a reader that resolves nothing are the same list.
+
+    The tree is written here rather than pointed at shipped examples. An earlier
+    revision made its negative case a real script - ``scripted_g1.py``, which
+    added no camera - and #3708 then gave that script a pelvis mount, so an
+    offender this test pins stopped being produced and the reader was reported
+    broken by an unrelated improvement to an example. A grader's own shapes have
+    to be fixed for the assertion to mean anything; whether the shipped pages
+    hold up is the other test in this module, which reads the real tree.
+    """
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "mounts.py").write_text(
+        'sim.add_camera(name="chase", parent_body="microduck/trunk_base",\n               position=[0.0, -0.8, 0.4])\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "examples" / "fixed.py").write_text(
+        'sim.add_camera(name="side", position=[3.0, 0.0, 1.2])\n', encoding="utf-8"
+    )
+    (tmp_path / "examples" / "no_camera.py").write_text(
+        'sim.run_policy(video={"camera": "default"})\n', encoding="utf-8"
+    )
     page = tmp_path / "page.md"
     page.write_text(
         "A `chase` camera mounted on `microduck/trunk_base` -\n"
-        "[`examples/microduck/eval_rl_policy.py`](examples/microduck/eval_rl_policy.py)\n"
+        "[`examples/mounts.py`](examples/mounts.py)\n"
         "adds it with `position=[0.0, -0.8, 0.4]` before the rollout.\n\n"
-        "[`examples/locomotion/scripted_g1.py`](https://github.com/strands-labs/robots/"
-        "blob/main/examples/locomotion/scripted_g1.py) does the pelvis mount too.\n\n"
-        "The clip was shot from `add_camera` at `position=[1.7, -4.6, 1.4]` in\n"
-        "[`examples/kimodo/kimodo_g1_walking.py`](examples/kimodo/kimodo_g1_walking.py).\n",
+        "[`examples/no_camera.py`](https://github.com/strands-labs/robots/"
+        "blob/main/examples/no_camera.py) does the pelvis mount too.\n\n"
+        "The clip was shot from `add_camera` at `position=[1.7, -4.6, 1.4]`, a pose\n"
+        "this page keeps beside the others under `docs/policies`, in\n"
+        "[`examples/fixed.py`](examples/fixed.py).\n\n"
+        "[`examples/gone.py`](examples/gone.py) mounts one as well.\n",
         encoding="utf-8",
     )
-    claims = _camera_claims([page])
+    claims = _camera_claims([page], root=tmp_path)
     assert [script for _, script, _ in claims] == [
-        "examples/microduck/eval_rl_policy.py",
-        "examples/locomotion/scripted_g1.py",
-        "examples/kimodo/kimodo_g1_walking.py",
+        "examples/mounts.py",
+        "examples/no_camera.py",
+        "examples/fixed.py",
+        "examples/gone.py",
     ], claims
     sentence = claims[0][2]
     assert _POSE_LITERAL.findall(sentence) == ["position=[0.0, -0.8, 0.4]"]
     assert _MOUNT_BODY.findall(sentence) == ["microduck/trunk_base"]
-    # The checker accepts the script that does it, and names both ways a claim
-    # fails: a script that adds no camera, and a pose it does not use.
-    assert _offenders(claims) == [
-        "page.md:5 credits examples/locomotion/scripted_g1.py with a camera it never adds",
-        "page.md:8 attributes position=[1.7, -4.6, 1.4] to examples/kimodo/kimodo_g1_walking.py, which does not use it",
+    # The checker accepts the script that does it, and names all three ways a
+    # claim fails: a script that adds no camera, a pose it does not use, and a
+    # path that is not there at all. `docs/policies` sits in a sentence about a
+    # fixed camera, so it is a directory the page mentions and not a mount body:
+    # reading it as one would credit examples/fixed.py with a body too.
+    assert _offenders(claims, root=tmp_path) == [
+        "page.md:5 credits examples/no_camera.py with a camera it never adds",
+        "page.md:9 attributes position=[1.7, -4.6, 1.4] to examples/fixed.py, which does not use it",
+        "page.md:11 credits examples/gone.py, which does not exist",
     ]
