@@ -213,7 +213,7 @@ def _inapplicable_image_target_error(
         # explicit image_keys, owned by _undeclared_image_feature_error.
         return None
 
-    declared = declared_image_features(reference)
+    declared = declared_image_features(reference, policy_config.get("revision"))
     if declared is None:
         return None
 

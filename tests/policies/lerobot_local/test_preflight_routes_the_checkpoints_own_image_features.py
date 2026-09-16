@@ -201,3 +201,33 @@ def test_declared_image_features_reads_only_the_visual_inputs(tmp_path):
 def test_declared_image_features_is_unknown_when_the_config_declares_none(tmp_path):
     (tmp_path / "config.json").write_text('{"model_type": "molmoact2"}')
     assert declared_image_features(str(tmp_path)) is None
+
+
+def test_revision_is_forwarded_to_declared_image_features(monkeypatch):
+    """The revision the policy honours must reach the pre-flight feature read.
+
+    Without it, a pinned load reads the default branch's config.json instead of
+    the pinned revision's, so the pre-flight verdict can diverge from the
+    post-download validate in both directions.
+    """
+    captured = {}
+
+    def _spy(reference, revision=None):
+        captured["reference"] = reference
+        captured["revision"] = revision
+        return DECLARED
+
+    monkeypatch.setattr(policy_mod, "declared_image_features", _spy)
+
+    pinned_config = {**BASE_CONFIG, "revision": "v1.0.0"}
+    policy_mod._inapplicable_image_target_error(
+        {t: [t.rsplit(".", 1)[-1]] for t in _targets()},
+        EMBODIMENT,
+        pinned_config,
+        [*JOINTS, *CAMERAS],
+    )
+    assert captured["reference"] == CHECKPOINT
+    assert captured["revision"] == "v1.0.0", (
+        "declared_image_features must receive the revision the policy honours; "
+        "got {!r}".format(captured["revision"])
+    )
