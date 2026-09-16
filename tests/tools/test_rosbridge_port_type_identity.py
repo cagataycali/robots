@@ -164,7 +164,9 @@ class TestAnIntSubclassPortDials:
             timeout=0.05,
             topic="/odom" if action in {"echo", "publish"} else None,
             service="/rosapi/topics" if action == "service_call" else None,
-            type="nav_msgs/Odometry" if action in {"echo", "publish"} else None,
+            type={"echo": "nav_msgs/Odometry", "publish": "nav_msgs/Odometry", "service_call": "rosapi/Topics"}.get(
+                action
+            ),
             count=1,
         )
 
