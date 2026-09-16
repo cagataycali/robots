@@ -61,7 +61,7 @@ from strands_robots.drivers.base import (
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, sdk_missing
 from strands_robots.tools.g1._motion_switcher import FSMReading, read_fsm_id
 from strands_robots.utils import (
     finite_number_error,
@@ -1204,7 +1204,7 @@ class G1Driver:
         try:
             from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return _refuse(f"unitree_sdk2py is not installed: {exc}")
+            return _refuse(sdk_missing(exc))
         pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
             return _refuse(pub_err)
@@ -1864,7 +1864,7 @@ def _build_lowcmd_from_action(
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
         from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return None, f"unitree_sdk2py is not installed: {exc}"
+        return None, sdk_missing(exc)
     cmd = _default_lowcmd()
     # Wire-frame contract: PR mode, echo mode_machine, enable the touched slots.
     cmd.mode_pr = 0
@@ -1973,7 +1973,7 @@ def _build_zero_torque_lowcmd(
         from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_ as _default_lowcmd
         from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return None, f"unitree_sdk2py is not installed: {exc}"
+        return None, sdk_missing(exc)
     cmd = _default_lowcmd()
     # Wire-frame contract: PR mode, echo mode_machine, Enable every named slot.
     cmd.mode_pr = 0
@@ -2313,7 +2313,7 @@ class _ControlLoop:
                     try:
                         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
                     except ImportError as exc:  # pragma: no cover - hardware-only
-                        self._set_exit("publish", f"unitree_sdk2py is not installed: {exc}")
+                        self._set_exit("publish", sdk_missing(exc))
                         publish_reason = "sdk missing"
                         break
                     pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
@@ -2395,7 +2395,7 @@ class _ControlLoop:
         try:
             from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - hardware-only
-            logger.debug("g1 control loop: zero-torque sdk missing: %s", exc)
+            logger.debug("g1 control loop: zero-torque frame not sent: %s", sdk_missing(exc))
             return
         pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:

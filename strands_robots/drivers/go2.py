@@ -84,7 +84,7 @@ from strands_robots.drivers.base import (
 )
 from strands_robots.mesh.pacing import Ticker
 from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, sdk_missing
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -289,7 +289,7 @@ def _new_lowcmd() -> tuple[Any, str | None]:
     try:
         from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as _default_lowcmd
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return None, f"unitree_sdk2py is not installed: {exc}"
+        return None, sdk_missing(exc)
     cmd = _default_lowcmd()
     # The array length is part of the wire contract, so it is checked rather
     # than assumed: an SDK whose ``motor_cmd`` is shorter than the slots this
@@ -322,7 +322,7 @@ def _seal(cmd: Any) -> str | None:
     try:
         from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return f"unitree_sdk2py is not installed: {exc}"
+        return sdk_missing(exc)
     cmd.crc = _CRC().Crc(cmd)
     return None
 
@@ -1055,7 +1055,7 @@ class Go2Driver:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return _refuse(f"unitree_sdk2py is not installed: {exc}")
+            return _refuse(sdk_missing(exc))
         pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
             return _refuse(pub_err)
@@ -1515,7 +1515,7 @@ class _ControlLoop:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", exc)
+            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", sdk_missing(exc))
             return
         pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
@@ -1594,7 +1594,7 @@ class _ControlLoop:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return f"unitree_sdk2py is not installed: {exc}"
+            return sdk_missing(exc)
         return pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
 
 
