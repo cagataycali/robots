@@ -3518,8 +3518,11 @@ class MuJoCoSimEngine(
             "(cameras=None, output_dir=None, fps=30, width=None, height=None, "
             "name=None, max_frames_per_camera=3000) -> dict  # start a "
             "dependency-free background recorder that writes one MP4 per camera "
-            "(no lerobot / dataset); cameras=None records every camera. The "
-            "raw-MP4 sibling of start_recording's LeRobotDataset"
+            "(no lerobot / dataset); cameras=None records every camera. Samples "
+            "WALL time (one frame per 1/fps s of real time), not sim steps - a "
+            "step() burst that returns in milliseconds records ~0 frames. The "
+            "raw-MP4 sibling of start_recording's LeRobotDataset (which records "
+            "one frame per control step)"
         )
         base["methods"]["stop_cameras_recording"] = (
             "() -> dict  # stop start_cameras_recording, flush each camera's "
@@ -7136,8 +7139,26 @@ class MuJoCoSimEngine(
     # The motion primitives (move_to / set_gripper / rotate_wrist) lock per
     # control tick (the step() pattern) so stop_policy / renders can
     # interleave during a long primitive.
+    #: ``start_cameras_recording`` / ``stop_cameras_recording`` are here because
+    #: the recorder thread they start and join renders under ``self._lock``
+    #: (``render`` serializes its mjData read against ``mj_step``). Dispatched
+    #: under the blanket lock, start waited its whole readiness timeout for a
+    #: warmup render that was waiting for the lock start held (6 s of nothing,
+    #: "not ready" warning, first frames lost), and stop joined a thread that was
+    #: blocked in render on the lock stop held - the join expired every time,
+    #: nothing was encoded, and the recording stayed registered. Both take the
+    #: lock themselves around the world reads they do make.
     _SELF_LOCKING_ACTIONS: frozenset[str] = frozenset(
-        {"step", "stop_policy", "remove_robot", "move_to", "set_gripper", "rotate_wrist"}
+        {
+            "step",
+            "stop_policy",
+            "remove_robot",
+            "move_to",
+            "set_gripper",
+            "rotate_wrist",
+            "start_cameras_recording",
+            "stop_cameras_recording",
+        }
     )
 
     _ACTION_ALIASES = {

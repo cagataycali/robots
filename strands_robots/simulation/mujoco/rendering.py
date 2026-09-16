@@ -2405,6 +2405,72 @@ class RenderingMixin:
     ):
         """Start background capture of one ndarray buffer per camera.
 
+        Locking: this verb is dispatched OUTSIDE the blanket action lock
+        (``Simulation._SELF_LOCKING_ACTIONS``) and takes ``self._lock`` itself
+        around the validation + registration in
+        :meth:`_start_cameras_recording_under_lock`, then waits for the
+        recorder thread's readiness with the lock released. The thread's
+        warmup ``render`` needs that lock; waiting for it while holding it
+        spent the whole readiness timeout on nothing and returned success over
+        a recorder that had not captured a frame.
+        """
+        with self._lock:
+            prepared = self._start_cameras_recording_under_lock(
+                cameras=cameras,
+                output_dir=output_dir,
+                fps=fps,
+                width=width,
+                height=height,
+                name=name,
+                max_frames_per_camera=max_frames_per_camera,
+            )
+        if prepared.get("status") == "error":
+            return prepared
+        state = prepared["state"]
+        names = state["cameras"]
+        tag = state["name"]
+        out_dir = state["output_dir"]
+
+        # Wait for the recorder thread to warm its GL context and enter the
+        # capture loop before reporting success. Worst case is the 30-attempt
+        # warmup cap (~1s/cam at 64x48, more for larger frames) plus a small
+        # margin; the common case is ~0.5s. If warmup somehow stalls we still
+        # return after the timeout rather than blocking forever - the thread
+        # keeps trying and ``get_cameras_recording_status`` exposes errors.
+        _ready_timeout = 5.0 + 1.0 * len(names)
+        if not state["ready"].wait(timeout=_ready_timeout):
+            logger.warning(
+                "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
+                tag,
+                _ready_timeout,
+            )
+
+        # The clock the recorder samples is the one thing a caller cannot see
+        # from the frame counts: it is wall time. A ``step(n_steps=500)`` that
+        # finishes in 10 ms advances the world 1 s and yields no frame.
+        msg = (
+            f"Recording {len(names)} camera(s) @ {fps} FPS -> {out_dir}\n   tag: {tag}\n   cameras: {', '.join(names)}\n"
+            f"   clock: wall time - one frame every {1.0 / fps:.3f}s of real time while the recorder runs, "
+            f"not one per sim step; a step() burst that returns in milliseconds records ~0 frames. "
+            f"For one frame per control step record with start_recording (dataset) instead."
+        )
+        return {"status": "success", "content": [{"text": msg}]}
+
+    def _start_cameras_recording_under_lock(
+        self,
+        cameras=None,
+        output_dir=None,
+        fps=30,
+        width=None,
+        height=None,
+        name=None,
+        max_frames_per_camera=3000,
+    ):
+        """Validate, register and start the recorder thread; caller holds ``self._lock``.
+
+        Returns the error envelope on refusal, else ``{"state": state}`` for
+        :meth:`start_cameras_recording` to wait on and report.
+
         Strategy: the background thread collects raw RGB frames in memory
         (one list per camera). ``stop_cameras_recording`` then flushes each
         list to an MP4 on the main thread. This avoids a long-lived ffmpeg
@@ -2738,24 +2804,7 @@ class RenderingMixin:
                 ],
             }
 
-        # Wait for the recorder thread to warm its GL context and enter the
-        # capture loop before reporting success. Worst case is the 30-attempt
-        # warmup cap (~1s/cam at 64x48, more for larger frames) plus a small
-        # margin; the common case is ~0.5s. If warmup somehow stalls we still
-        # return after the timeout rather than blocking forever - the thread
-        # keeps trying and ``get_cameras_recording_status`` exposes errors.
-        _ready_timeout = 5.0 + 1.0 * len(names)
-        if not state["ready"].wait(timeout=_ready_timeout):
-            logger.warning(
-                "camera recorder '%s' not ready after %.1fs; returning anyway (first frames may be delayed)",
-                tag,
-                _ready_timeout,
-            )
-
-        msg = (
-            f"Recording {len(names)} camera(s) @ {fps} FPS -> {out_dir}\n   tag: {tag}\n   cameras: {', '.join(names)}"
-        )
-        return {"status": "success", "content": [{"text": msg}]}
+        return {"state": state}
 
     def stop_cameras_recording(self):
         """Stop capture, flush buffers to MP4 on the MAIN thread.
@@ -2763,6 +2812,12 @@ class RenderingMixin:
         Runs ``imageio.get_writer``/``append_data``/``close`` here instead of
         the recording thread so the ffmpeg pipe doesn't race with policy
         timing jitter. Returns per-camera frame counts and paths.
+
+        Locking: dispatched OUTSIDE the blanket action lock
+        (``Simulation._SELF_LOCKING_ACTIONS``) and takes none itself - it
+        touches the recorder registration and the frame buffers, not mjData.
+        The thread it joins renders under ``self._lock``; joining it while
+        holding that lock expired the join every time.
 
         Idempotent and safe whichever ``start_cameras_recording*`` variant
         was used:
@@ -2950,10 +3005,16 @@ class RenderingMixin:
                     )
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
-            line = (
-                f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
-                f"({errors} errors)  -> {_os.path.basename(path)}"
-            )
+            if frames_buffer:
+                line = (
+                    f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
+                    f"({errors} errors)  -> {_os.path.basename(path)}"
+                )
+            else:
+                # No frame was ever buffered, so no clip exists: say so instead
+                # of naming a file that was never written (a caller fed that
+                # path onward and found nothing there).
+                line = f"   {cam:20s}     0 frames - no clip written ({errors} errors)"
             if frames_skipped:
                 line += f"  [{frames_skipped} skipped: size mismatch]"
             if flush_error:
@@ -2961,7 +3022,7 @@ class RenderingMixin:
             lines.append(line)
             artifact = {
                 "camera": cam,
-                "path": path,
+                "path": path if frames_buffer else None,
                 "frames": frames_written,
                 "errors": errors,
                 "size_kb": size_kb,
