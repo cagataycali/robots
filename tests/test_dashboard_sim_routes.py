@@ -9,6 +9,7 @@ runs the same session on the real engine and is skipped without ``mujoco``.
 
 from __future__ import annotations
 
+import importlib.util
 import threading
 import time
 from types import SimpleNamespace
@@ -17,6 +18,11 @@ import numpy as np
 import pytest
 
 pytest.importorskip("fastapi")
+
+#: Only ``test_real_engine_*`` needs MuJoCo. Asking for it with
+#: ``importorskip`` inside a decorator skips this whole module, because
+#: that call raises at import time - so the flag is read instead.
+_HAS_MUJOCO = importlib.util.find_spec("mujoco") is not None
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -531,7 +537,7 @@ class TestFleet:
 # -- the real engine -----------------------------------------------------------
 
 
-@pytest.mark.skipif(pytest.importorskip("mujoco", reason="mujoco not installed") is None, reason="mujoco")
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="mujoco not installed")
 def test_real_engine_session_steps_and_renders(monkeypatch):
     s = sim_session.SimSession("so101")
     assert s.wait_ready(60), "engine did not start"
