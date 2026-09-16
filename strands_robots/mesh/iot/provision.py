@@ -1183,8 +1183,6 @@ def verify_ca_pin(ca_path: Path) -> bool:
     symlinked path, etc.). The caller should treat False as "do not
     trust this CA".
     """
-    import os
-
     try:
         if ca_path.is_symlink():
             logger.warning(

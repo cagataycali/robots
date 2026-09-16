@@ -45,6 +45,7 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -3432,10 +3433,18 @@ class PolicyRunner:
                 "content": [{"text": f"Robot '{resolved_robot}' not found in sim. Available robots: {robots}"}],
             }
 
+        # A dataset this session recorded to a custom ``root=`` lives nowhere
+        # LeRobot derives from the id alone: forwarding an absent root sent the
+        # read to ``$HF_LEROBOT_HOME/{repo_id}`` and, on the miss, to the Hub,
+        # which answered a "Repository Not Found" 404 with request ids - for a
+        # dataset written a moment ago by the same sim. The sim knows where it
+        # put it, so resolve that first and say so in the reply.
+        root, root_note = self._replay_root(repo_id, root)
+
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except Exception as e:  # noqa: BLE001 - library errors are opaque
-            return {"status": "error", "content": [{"text": f"{e}"}]}
+            return {"status": "error", "content": [{"text": self._replay_load_failure(repo_id, root, e)}]}
 
         # Resolve the action-key ordering for action-vector index -> action
         # dict. The recorded ``action`` column is written in the robot's
@@ -3659,7 +3668,7 @@ class PolicyRunner:
                         f"Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
                         f"Frames: {frames_applied}/{episode_length} "
                         f"(actions applied: {frames_with_action}) | "
-                        f"Duration: {duration:.1f}s | Speed: {speed}x"
+                        f"Duration: {duration:.1f}s | Speed: {speed}x{root_note}"
                     )
                 },
                 {
@@ -3671,10 +3680,82 @@ class PolicyRunner:
                         "total_frames": episode_length,
                         "duration_s": round(duration, 2),
                         "speed": speed,
+                        "root": root,
                     }
                 },
             ],
         }
+
+    def _last_recorded(self) -> tuple[str | None, str | None]:
+        """``(repo_id, root)`` of the dataset this sim last recorded, or Nones."""
+        # Through the engine's own seams rather than ``_world._backend_state``:
+        # this runner serves every backend, and the Isaac backend's ``_world``
+        # is the Isaac Sim ``World`` handle, which holds no such mapping - so
+        # reading it directly would resolve nothing on exactly one backend.
+        return self.sim._active_dataset_repo_id(), self.sim._active_dataset_root()
+
+    def _replay_root(self, repo_id: str, root: str | None) -> tuple[str | None, str]:
+        """Resolve the directory a replay reads when the caller named only the id.
+
+        An explicit ``root`` and an id that is itself a path are left to
+        :func:`~strands_robots.dataset_recorder.load_lerobot_episode`, which
+        resolves them by the rule recording wrote through. An ``owner/name`` id
+        with no root normally keeps its absent root (LeRobot's Hub snapshot
+        cache) - except when THIS sim recorded that very id to a directory
+        LeRobot would not derive, in which case the recording is read back from
+        where it was written and the reply names the directory. The default
+        location wins when it exists, so a dataset there is never shadowed.
+
+        Returns:
+            ``(root, note)``: the root to read and a reply suffix (``""`` when
+            nothing was resolved here).
+        """
+        if root:
+            return root, ""
+        from strands_robots.dataset_recorder import local_dataset_dir, resolve_dataset_dir
+
+        if local_dataset_dir(repo_id) is not None:
+            return None, ""
+        last_repo, last_root = self._last_recorded()
+        if last_repo != repo_id or not last_root:
+            return None, ""
+        last_dir = Path(last_root)
+        default_dir = resolve_dataset_dir(repo_id, None)
+        if not last_dir.is_dir() or last_dir.resolve() == default_dir.resolve():
+            return None, ""
+        if (default_dir / "meta").exists():
+            # A finalized dataset already at the default location is what an
+            # absent root has always read. A recording elsewhere must not move
+            # the directory under a call that already worked.
+            return None, ""
+        return str(
+            last_dir
+        ), f"\nRoot: {last_dir} (where this session recorded {repo_id}; pass root= to read elsewhere)"
+
+    def _replay_load_failure(self, repo_id: str, root: str | None, error: BaseException) -> str:
+        """The text for a dataset that could not be opened.
+
+        A Hub 404 for an ``owner/name`` id is translated: the caller almost
+        always means a local dataset that lives somewhere other than the
+        default, and the raw message (request ids, authentication advice) names
+        neither the directory that was tried nor the remedy. Everything else is
+        reported as the library said it.
+        """
+        text = f"{error}"
+        looks_like_hub_miss = "Repository Not Found" in text or type(error).__name__ == "RepositoryNotFoundError"
+        if root or not looks_like_hub_miss:
+            return text
+        from strands_robots.dataset_recorder import resolve_dataset_dir
+
+        default_dir = resolve_dataset_dir(repo_id, None)
+        last_repo, last_root = self._last_recorded()
+        hint = f" This session last recorded {last_repo} to {last_root}." if last_repo and last_root else ""
+        return (
+            f"No dataset {repo_id!r} at the local default {default_dir} and no Hub repository by that "
+            f"name. A dataset recorded with root= is read back with the same root= - pass "
+            f"root='<the directory start_recording was given>' to replay_episode, or record without "
+            f"root= so the default location is used.{hint}"
+        )
 
     # evaluate(): multi-episode success metrics
 

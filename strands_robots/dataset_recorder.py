@@ -23,6 +23,7 @@ Usage:
 
 import difflib
 import importlib.util
+import inspect
 import logging
 import re
 import sys
@@ -32,6 +33,7 @@ from typing import Any
 
 import numpy as np
 
+from strands_robots._dyld import quiet_video_backend
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
@@ -45,6 +47,19 @@ from strands_robots.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _quiet_backend_kwargs(dataset_cls: Any) -> dict[str, Any]:
+    """``{"video_backend": "pyav"}`` when torchcodec cannot load, else ``{}``.
+
+    For the read-back constructors, which take no ``video_backend`` from the
+    caller: the same one-line choice :func:`quiet_video_backend` makes for the
+    recorder, guarded on the LeRobot version accepting the parameter.
+    """
+    if "video_backend" not in inspect.signature(dataset_cls).parameters:
+        return {}
+    resolved = quiet_video_backend()
+    return {"video_backend": resolved} if resolved is not None else {}
 
 
 # Every LeRobot codec surface validates the requested codec against the same
@@ -1363,8 +1378,6 @@ class DatasetRecorder:
             use_videos=use_videos,
             image_writer_threads=image_writer_threads,
         )
-        import inspect
-
         create_sig = inspect.signature(LeRobotDatasetCls.create)
         create_params = create_sig.parameters
 
@@ -1378,8 +1391,15 @@ class DatasetRecorder:
         # streaming_encoding / video_backend only in newer LeRobot versions
         if "streaming_encoding" in create_params:
             create_kwargs["streaming_encoding"] = streaming_encoding
-        if "video_backend" in create_params and video_backend is not None:
-            create_kwargs["video_backend"] = video_backend
+        if "video_backend" in create_params:
+            # A caller who named no backend gets LeRobot's default - unless
+            # torchcodec is installed and cannot load, where LeRobot's resolver
+            # logs its ~150-line loader exception before picking pyav anyway.
+            # :func:`strands_robots._dyld.quiet_video_backend` makes that
+            # choice in one line.
+            resolved = video_backend if video_backend is not None else quiet_video_backend()
+            if resolved is not None:
+                create_kwargs["video_backend"] = resolved
 
         # Resolve create-vs-crash for an existing target BEFORE calling
         # LeRobotDataset.create(), which mkdir()s with exist_ok=False and would
@@ -1467,8 +1487,6 @@ class DatasetRecorder:
             RuntimeError: The installed LeRobot has no ``LeRobotDataset.resume``
                 (append needs ``lerobot>=0.5.2``).
         """
-        import inspect
-
         # Same posture flag as :meth:`create` forwards, on the same domain and
         # ahead of the same lerobot probe, so the two creation entry points cannot
         # disagree about which values are usable. Read by truthiness,
@@ -1508,8 +1526,10 @@ class DatasetRecorder:
             resume_kwargs["streaming_encoding"] = streaming_encoding
         if "image_writer_threads" in resume_sig:
             resume_kwargs["image_writer_threads"] = image_writer_threads
-        if "video_backend" in resume_sig and video_backend is not None:
-            resume_kwargs["video_backend"] = video_backend
+        if "video_backend" in resume_sig:
+            resolved = video_backend if video_backend is not None else quiet_video_backend()
+            if resolved is not None:
+                resume_kwargs["video_backend"] = resolved
 
         dataset = LeRobotDatasetCls.resume(**resume_kwargs)
         recorder = cls(dataset=dataset, task=task, camera_key_map=camera_key_map)
@@ -2201,7 +2221,11 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
     # derives. Resolving it here would move Hub downloads out of that cache for
     # no gain.
     read_root = Path(root) if root else local_dataset_dir(repo_id)
-    ds = LeRobotDataset(repo_id=repo_id, root=str(read_root) if read_root is not None else None)
+    ds = LeRobotDataset(
+        repo_id=repo_id,
+        root=str(read_root) if read_root is not None else None,
+        **_quiet_backend_kwargs(LeRobotDataset),
+    )
 
     num_episodes = ds.meta.total_episodes if hasattr(ds.meta, "total_episodes") else len(ds.meta.episodes)
     if episode >= num_episodes:

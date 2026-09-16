@@ -33,6 +33,17 @@ from strands_robots import (
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
+### `pose_tool` and `serial_tool` need pyserial
+
+Both drive the servo bus through pyserial, and no extra of this project declares
+it on its own - it arrives only inside `lerobot[feetech]`. Without it neither
+tool imports, and the refusal names the remedy rather than leaving the
+interpreter's `No module named 'serial'` as the only hint:
+
+```bash
+pip install pyserial
+```
+
 ### Numeric options are checked before the session starts
 
 A teleop session runs in a detached subprocess, so a value the lerobot CLI

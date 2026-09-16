@@ -9,7 +9,9 @@ something the page never installs was covered by "everything else".
   PyPI - it ships with a system ROS 2 install - so on a machine with no sourced
   distro the constructor raises ``ImportError`` naming
   ``source /opt/ros/<distro>/setup.bash``.
-* Step 4 is ``follower.mesh.tell(follower.mesh.peers[0]["peer_id"], ...)``. The
+* Step 4 is ``follower.mesh.tell(peer, ...)`` with ``peer`` read off
+  ``follower.mesh.peers[0]["peer_id"]`` (two lines since the call grew its
+  policy kwargs; the cell pins both, not one spelling of them). The
   mesh transport comes from the ``[mesh]`` extra (``eclipse-zenoh``), which the
   install command at the top of the page does not pull in, and the mesh also
   declines to start until a posture is chosen (``STRANDS_MESH_LOCAL_DEV`` or an
@@ -113,12 +115,20 @@ def _requirements(extra: str, seen: frozenset[str] = frozenset()) -> set[str]:
 @pytest.mark.parametrize(
     ("step", "snippet"),
     [
-        (4, 'follower.mesh.tell(follower.mesh.peers[0]["peer_id"]'),
+        (4, 'follower.mesh.peers[0]["peer_id"]'),
+        (4, "follower.mesh.tell(peer,"),
         (5, "Simulation(ros2_bridge=True)"),
     ],
 )
 def test_the_needs_line_describes_the_steps_that_are_there(step: int, snippet: str) -> None:
-    """Steps 4 and 5 are still the mesh call and the ROS 2 bridge."""
+    """Steps 4 and 5 are still the mesh call and the ROS 2 bridge.
+
+    Step 4 is pinned to its two halves - the ``peers[0]`` read that raises
+    ``IndexError`` with the mesh off, and the ``tell`` it feeds - rather than
+    to one line joining them: the call carries policy kwargs now, so the page
+    splits it, and a cell that pinned the joined spelling went red the moment
+    a sibling change split it, while the sentence it guards stayed true.
+    """
     assert snippet in _numbered_steps()[step]
 
 

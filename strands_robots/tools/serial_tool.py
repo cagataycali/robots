@@ -63,8 +63,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import serial
-import serial.tools.list_ports
 from strands import tool
 from strands.types.tools import ToolContext
 
@@ -83,7 +81,16 @@ from strands_robots.utils import (
     non_negative_count_error,
     positive_count_error,
     refusal_str,
+    require_optional,
 )
+
+# pyserial is what the tool talks to the bus through, and no extra of this
+# project declares it on its own: it arrives only inside ``lerobot[feetech]``.
+# Bound here, at import, so ``from strands_robots import serial_tool`` on an
+# install without it is refused with the install line rather than the
+# interpreter's ``No module named 'serial'`` (AGENTS.md convention 7).
+serial: Any = require_optional("serial", pip_install="pyserial", purpose="the Feetech serial bus tool (serial_tool)")
+require_optional("serial.tools.list_ports", pip_install="pyserial", purpose="the Feetech serial bus tool (serial_tool)")
 
 # Bit index carrying the direction in the two STS/SMS registers this module
 # writes. ``Goal_Position`` (0x2A) and ``Goal_Velocity`` (0x2E) are both
@@ -292,6 +299,55 @@ def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
     return bool(agent_hitl.consume_grant("serial_tool", tool_input))
 
 
+def _write_payload_error(
+    action: str,
+    *,
+    data: str | None,
+    hex_data: str | None,
+    motor_id: int | None,
+    position: int | None,
+    velocity: int | None,
+) -> str | None:
+    """The checks that decide a write's fate with no operator and no port.
+
+    Every write action asks the operator before the port is opened, then
+    checks what it was given: ``send``/``send_read`` with neither ``data`` nor
+    ``hex_data``, or with ``hex_data`` that is not hex; ``feetech_position``
+    without a motor id or a position; ``feetech_velocity`` without a motor id
+    or a velocity. Each is decided by the call alone, so a call that fails
+    one was never going to reach the bus - asking first spends an approval
+    on nothing, and a bad hex string used to surface as a ``ValueError`` from
+    the write itself, after the port was opened. This runs before the gate;
+    the action's own branch still checks the payload again.
+
+    Args:
+        action: One of :data:`WRITE_ACTIONS`.
+        data: As supplied.
+        hex_data: As supplied.
+        motor_id: As supplied.
+        position: As supplied.
+        velocity: As supplied.
+
+    Returns:
+        An error message, or ``None`` when the call reaches the operator.
+    """
+    if action in ("send", "send_read"):
+        if hex_data:
+            try:
+                bytes.fromhex(hex_data.replace(" ", ""))
+            except ValueError:
+                return f"{action}: hex_data must be hex byte pairs such as 'FF FF 01 04', got {refusal_str(hex_data)}."
+            return None
+        if data:
+            return None
+        return "No data or hex_data provided" if action == "send" else "No data to send"
+    if action == "feetech_position" and (motor_id is None or position is None):
+        return "motor_id and position required"
+    if action == "feetech_velocity" and (motor_id is None or velocity is None):
+        return "motor_id and velocity required"
+    return None
+
+
 def _gate_write(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
     """Operator approval for one bus write, before the port is opened.
 
@@ -456,6 +512,12 @@ def serial_tool(
                 )
                 if value is not None and value != ""
             }
+            # A write the action's own branch would refuse on its payload is
+            # refused here, before the operator is asked to approve it.
+            if payload_error := _write_payload_error(
+                action, data=data, hex_data=hex_data, motor_id=motor_id, position=position, velocity=velocity
+            ):
+                return {"status": "error", "content": [{"text": payload_error}]}
             if refusal := _gate_write(action, tool_input, tool_context):
                 # The port is not open yet: a refused write is exactly as inert
                 # as a call that never happened.
