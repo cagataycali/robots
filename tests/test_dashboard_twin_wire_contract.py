@@ -16,6 +16,7 @@ These cells read the width from ``describe`` and grade the other two against it.
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import re
 from collections.abc import Iterator
@@ -27,12 +28,7 @@ from strands_robots.dashboard import scene, sim_session
 
 TWIN_JS = pathlib.Path(sim_session.__file__).parent / "static" / "twin.js"
 
-try:  # pragma: no cover - import guard, not behaviour
-    import mujoco  # noqa: F401
-
-    _HAS_MUJOCO = True
-except Exception:  # pragma: no cover
-    _HAS_MUJOCO = False
+_HAS_MUJOCO = importlib.util.find_spec("mujoco") is not None
 
 
 @pytest.fixture(scope="module")
