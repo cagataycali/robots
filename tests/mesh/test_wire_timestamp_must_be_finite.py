@@ -69,6 +69,15 @@ def _decoded_from_the_wire(token: str) -> float:
     return json.loads(f'{{"t": {token}}}')["t"]
 
 
+#: A stamp of the shape the gates really receive - epoch seconds with
+#: sub-second precision - written down rather than read from the clock. A
+#: ``parametrize`` table is built once per process, so ``time.time()`` here gave
+#: every pytest-xdist worker a different test ID and the suite failed to collect
+#: in parallel before running anything. Nothing below reads the value: the cells
+#: assert that a finite number is returned as the same object, of the same type.
+_A_WALL_CLOCK_STAMP = 1789586171.0399623
+
+
 class TestTheHelperNamesTheDomain:
     """The rule itself: a finite real number of seconds, and nothing else."""
 
@@ -77,7 +86,7 @@ class TestTheHelperNamesTheDomain:
         assert as_wire_timestamp(value) is None
         assert as_wire_timestamp(_decoded_from_the_wire(token)) is None
 
-    @pytest.mark.parametrize("value", [0, 1, 1.5, time.time(), -1.0, 10**9])
+    @pytest.mark.parametrize("value", [0, 1, 1.5, _A_WALL_CLOCK_STAMP, -1.0, 10**9])
     def test_a_finite_number_is_returned_as_it_arrived(self, value):
         # Identity, not equality: ``_on_safety_resume`` verifies an HMAC whose
         # input binds ``t`` through ``json.dumps``, which writes ``1`` and
