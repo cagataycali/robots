@@ -379,6 +379,51 @@ def _copy_external_tree(src: Path, dst: Path, *, drop_docs: bool = True) -> None
     shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore)
 
 
+def _declared_model_absent(info: dict[str, Any], dst: Path) -> str | None:
+    """Return why *dst* is not the robot the registry declares, or ``None``.
+
+    A fetched tree is graded against the registry entry that asked for it,
+    because ``asset.model_xml`` is the file every reader that names one names:
+    :func:`~strands_robots.assets.manager.resolve_model_path` resolves that
+    entry and nothing else, and :func:`_needs_download` decides "already
+    present?" from it too. So a copy that lands without it has not delivered
+    this robot, and reporting it as ``downloaded`` leaves those two readings of
+    one entry disagreeing - the download says the robot is here, the resolver
+    says to run the download.
+
+    That is reachable on shipped registry entries, not only on a malformed one:
+    the clone routes fetch their source repository at HEAD, so an upstream
+    rename retires the declared name for every robot whose directory survives
+    it, and the copy still succeeds.
+
+    The fetched files are LEFT IN PLACE. They are a usable tree - a robot whose
+    entry also declares ``scene_xml`` is still reachable through it - and the
+    cache directory is where a user's own files sit, which is why
+    :func:`_copy_external_tree` filters on read rather than deleting afterwards.
+    Nothing here is undone; only the verdict changes.
+
+    Args:
+        info: Registry entry for the robot.
+        dst: Directory the tree was fetched into.
+
+    Returns:
+        ``None`` when the declared model is on disk; otherwise a ``failed: ...``
+        detail naming the declared file and the model files that did arrive.
+    """
+    model_xml = str(info["asset"]["model_xml"])
+    try:
+        declared = safe_join(dst, model_xml)
+    except ValueError as exc:
+        # An entry whose model_xml escapes its own asset directory yields no
+        # candidate from the resolver either, so no fetch can make it present.
+        return f"failed: {exc}"
+    if declared.exists():
+        return None
+    arrived = sorted(str(x.relative_to(dst)) for x in dst.rglob("*.xml")) if dst.is_dir() else []
+    detail = f"failed: fetched tree has no {model_xml}, the model this robot's registry entry declares"
+    return f"{detail} - it holds {', '.join(arrived)}" if arrived else detail
+
+
 def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]:
     """Download robots using the ``robot_descriptions`` package.
 
@@ -412,13 +457,13 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
 
             dst = safe_join(dest_dir, asset_dir)
             if dst.is_symlink() and dst.resolve() == package_path.resolve():
-                # Validate existing symlink still has the expected XML.
-                # Joined through ``safe_join`` so the validation cannot be
-                # satisfied by a file outside the linked directory: raw, an
-                # absolute ``model_xml`` discards *dst* and any existing host
-                # file passes this check for a link that holds no model at all.
-                expected_xml = safe_join(dst, str(info["asset"]["model_xml"]))
-                if expected_xml.exists():
+                # Graded by the one owner of "is the declared model on disk?"
+                # (:func:`_declared_model_absent`), which joins through
+                # ``safe_join`` so the check cannot be satisfied by a file
+                # outside the linked directory: raw, an absolute ``model_xml``
+                # discards *dst* and any existing host file passes it for a link
+                # that holds no model at all.
+                if _declared_model_absent(info, dst) is None:
                     results[name] = "downloaded"
                     continue
                 # Stale symlink - remove and re-download via git
@@ -438,9 +483,8 @@ def _download_via_robot_descriptions(robots: dict[str, dict], dest_dir: Path) ->
                 # copytree that would follow a symlink out of the description.
                 _copy_external_tree(package_path, dst, drop_docs=False)
 
-            # Validate: expected XML must exist in the linked/copied dir
-            expected_xml = safe_join(dst, str(info["asset"]["model_xml"]))
-            if not expected_xml.exists():
+            # Validate: the declared model must exist in the linked/copied dir
+            if _declared_model_absent(info, dst) is not None:
                 logger.warning(
                     "robot_descriptions module '%s' linked for %s but "
                     "expected XML '%s' not found - falling back to git",
@@ -488,8 +532,9 @@ def _download_via_git(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]
                 if not src.exists():
                     results[name] = f"failed: {asset_dir} not in menagerie"
                     continue
-                _copy_external_tree(src, safe_join(dest_dir, asset_dir))
-                results[name] = "downloaded"
+                dst = safe_join(dest_dir, asset_dir)
+                _copy_external_tree(src, dst)
+                results[name] = _declared_model_absent(info, dst) or "downloaded"
             except Exception as exc:
                 results[name] = f"failed: {exc}"
 
@@ -531,7 +576,7 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
         dst = safe_join(dest_dir, asset_dir)
         try:
             _copy_external_tree(src, dst)
-            return "downloaded"
+            return _declared_model_absent(info, dst) or "downloaded"
         except Exception as exc:
             return f"failed: {exc}"
 
