@@ -34,7 +34,7 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 ```bash
 # inside the activated venv from above
 uv pip install "strands-robots[sim-mujoco]"                  # sim only
-uv pip install "strands-robots[all]"                         # the 22-extra bundle
+uv pip install "strands-robots[all]"                         # the 21-extra bundle
 uv pip install "strands-robots[sim-mujoco,cosmos3-service]"  # Cosmos 3
 uv pip install "strands-robots[sim-mujoco,lerobot,mesh]"     # pick and choose
 ```

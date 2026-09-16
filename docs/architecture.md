@@ -108,7 +108,7 @@ graph TB
 | `[rl]` | `sim-mujoco` + `torch`, `gymnasium` | From-scratch RL trainers (`create_trainer("ppo")`) |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |
 | `[mesh-iot]` | above + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport |
-| `[all]` | 21 of the 33 extras - not a union; see [installation](getting-started/installation.md) for the 12 it leaves opt-in | CI / exploration |
+| `[all]` | 21 of the 33 extras - not a union; see [installation](getting-started/installation.md) for the 11 it leaves opt-in | CI / exploration |
 
 ## See also
 

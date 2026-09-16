@@ -57,6 +57,19 @@ _NEGATED_CLAIM = re.compile(
 )
 _EXTRA_IN_TEXT = re.compile(r"`\[([a-z0-9][a-z0-9-]*)\]`")
 
+#: The pages that describe ``[all]``.
+_PAGES = (_INSTALL_PAGE, _ARCHITECTURE_PAGE, _INDEX_PAGE)
+
+#: Counts restated in prose, outside the extras table, as ``kind -> (pattern,
+#: index into the ``_membership()`` set to derive from)``. installation.md
+#: repeats the bundle's size in the install code block's comment and
+#: architecture.md points at "the N it leaves opt-in"; both are the same facts
+#: the table row states, so both are derivable.
+_PROSE_COUNTS = {
+    "bundle-size": (re.compile(r"the (\d+)-extra bundle"), 0),
+    "opt-in": (re.compile(r"the (\d+) it leaves opt-in"), 1),
+}
+
 
 def _extras() -> dict[str, list[str]]:
     """Every entry of ``[project.optional-dependencies]``."""
@@ -120,6 +133,34 @@ class TestThePagesAgreeWithPyproject:
         assert wanted in row, (
             f"{page.name}: the `[all]` row must state {wanted!r}, so a reader is not told the bundle is "
             f"narrower (or wider) than it is. The row reads:\n  {row}"
+        )
+
+    @pytest.mark.parametrize("kind", sorted(_PROSE_COUNTS), ids=sorted(_PROSE_COUNTS))
+    def test_a_count_restated_outside_the_table_agrees_with_it(self, kind: str) -> None:
+        """A page states these counts twice, and only the table row was derived.
+
+        ``installation.md`` repeats the bundle's size in the install code
+        block's comment five lines under the table, and ``architecture.md``
+        points a reader at "the N it leaves opt-in" in that table. Both are the
+        facts the row above already derives, so an ungraded copy is one that
+        drifts - and both had, each by one, because each counted ``[all]``
+        itself while the derivation excludes it.
+        """
+        pattern, index = _PROSE_COUNTS[kind]
+        wanted = len(_membership()[index])
+        found = [
+            (page.name, int(match.group(1)), match.group(0))
+            for page in _PAGES
+            for match in pattern.finditer(page.read_text(encoding="utf-8"))
+        ]
+        assert found, (
+            f"no page states a {kind} count matching {pattern.pattern!r}, so this rule grades nothing. "
+            f"Either a page dropped the wording or the pattern needs updating."
+        )
+        wrong = [f"{name}: {text!r} should state {wanted}" for name, got, text in found if got != wanted]
+        assert not wrong, (
+            f"a count restated outside the extras table must be derived from pyproject.toml too, or the "
+            f"page contradicts its own table: {wrong}"
         )
 
     def test_the_install_row_names_every_extra_left_opt_in(self) -> None:

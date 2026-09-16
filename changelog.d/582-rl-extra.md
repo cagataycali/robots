@@ -10,4 +10,7 @@ backend the env adapters step (it is part of `[all]`); the four modules that
 imported torch bare bind it through `require_optional(..., extra="rl")`, so an
 install without the extra is refused with its name at every door, and the
 existing trainer / `GymSimEnv` gates name it too. `docs/training/rl.md` gains
-the install line.
+the install line, and the two places the extras pages restate a count outside
+their table - the install block's "N-extra bundle" and architecture.md's
+pointer at "the N it leaves opt-in" - are derived from the manifest as well,
+which corrected both: each had counted `[all]` itself.
