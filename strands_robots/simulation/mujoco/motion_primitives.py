@@ -164,7 +164,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         if robot.policy_running:
             return _err(
                 f"{action}: a policy started on '{robot_name}' mid-run; aborting. "
-                f"Stop it first: action='stop_policy', name='{robot_name}'."
+                f"Stop it first: action='stop_policy', robot_name='{robot_name}'."
             )
         return None
 
