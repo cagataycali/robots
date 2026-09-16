@@ -12,9 +12,11 @@ from a single prompt - see #148 for the motivation.
 """
 
 import os
+import posixpath
 import re
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,7 @@ from typing import Any
 from strands import tool
 
 from strands_robots.utils import (
+    base_dir_path,
     boolean_flag_error,
     get_base_dir,
     positive_count_error,
@@ -37,6 +40,11 @@ _DEFAULT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T"
 _DEFAULT_REPO_TAG = "n1.7-release"
 _DEFAULT_IMAGE_NAME = "gr00t:latest"
 _DEFAULT_CONTAINER_COMMAND = "tail -f /dev/null"
+
+#: Default TensorRT engine cache directory. Relative, so the server resolves
+#: it against its own working directory rather than against a bind mount -
+#: which is what lets the checkpoint mount be read-only by default.
+_DEFAULT_TRT_ENGINE_PATH = "gr00t_engine"
 
 # Fixed in-container path the determinism wrapper is mounted at when
 # ``deterministic=True``. Constant on purpose: the agent never chooses the
@@ -103,15 +111,21 @@ _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
 # of these hands the container (and anything that can influence its command)
 # control over the host: root fs, the docker socket (daemon takeover),
 # credential/identity dirs, and kernel/proc/sys pseudo-filesystems.
-# NOTE (#384, item 1): ``/home`` is blocked wholesale, not narrowed to the
-# sensitive subpaths (~/.ssh, ~/.aws, ~/.config). Rationale: this guard is
-# defence-in-depth for an untrusted/prompt-injected caller, and any home
-# directory may hold credentials, tokens, or dotfiles whose names we cannot
-# enumerate ahead of time. Operators who need a checkpoint bind-mount must
-# place it OUTSIDE ``/home`` (e.g. ``/data/checkpoints`` or ``/opt/...``); the
-# auto-derived default (``~/.cache/huggingface``) is never agent-controlled
-# and reaches docker only via the curated ``effective_volumes`` set. See the
-# README Configuration section for the operator-facing guidance.
+# NOTE (#384, item 1): ``/home``, ``/root`` and ``/var`` are blocked wholesale
+# rather than narrowed to the sensitive subpaths (~/.ssh, ~/.aws, ~/.config),
+# because any home directory may hold credentials, tokens, or dotfiles whose
+# names we cannot enumerate ahead of time. Read as a prefix rule, those three
+# also cover the two trees this tool mounts on its own - its checkpoints dir
+# and the Hugging Face cache, both under ``~`` by default - and, on macOS, the
+# system temp dir under ``/var/folders``. :func:`_own_directory_allowance`
+# admits exactly those three places and nothing else under the prefixes. An
+# arbitrary visible directory of the caller's home stays refused on purpose:
+# ``hf_local_dir`` is agent-supplied and ``download_checkpoint`` writes to it
+# directly on the host, so admitting ``~/<anything>`` would let a prompt-
+# injected call drop a repository of its choosing into a directory the user's
+# shell or build reads. Refusing the path is what prevents that write; the
+# container's own mount of an admitted directory is separately read-only
+# wherever it can be (:func:`_checkpoint_mount_is_read_only`).
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -316,6 +330,138 @@ def _with_resolved(paths: tuple[str, ...]) -> set[str]:
     return out
 
 
+def _user_home() -> str:
+    """The resolved home directory of the user running the tool."""
+    return os.path.realpath(os.path.expanduser("~"))
+
+
+def _temp_root() -> str:
+    """The resolved system temporary directory (``/tmp``; ``/var/folders/.../T`` on macOS)."""
+    return os.path.realpath(tempfile.gettempdir())
+
+
+def _own_directory_allowance(resolved: str, blocked_dirs: set[str]) -> str | None:
+    """Admit a mount in one of the tool's own trees or the system temp dir, or say why not.
+
+    The blocklist names ``/home``, ``/root`` and ``/var`` so an agent cannot
+    mount another user's home, root's, or the tree that holds
+    ``docker.sock`` - but read as a prefix rule those three also cover the
+    two directories this tool mounts on its own: its checkpoints dir
+    (``~/.strands_robots/checkpoints`` by default) and the Hugging Face cache
+    (``~/.cache/huggingface``). Spelled out as ``hf_local_dir`` either was
+    refused as "under protected host path '/home'", and on macOS the system
+    temp dir lives under ``/var/folders``, so every ``$TMPDIR`` path was
+    refused with them.
+
+    Those three places are admitted and nothing else under the prefixes is.
+    A visible directory of the caller's own home (``~/checkpoints``) is not:
+    ``hf_local_dir`` is an agent-supplied string, the mount is read-write and
+    ``hf_repo`` is any repository, so admitting it would let a prompt-injected
+    ``download_checkpoint`` drop that repository's files into a directory the
+    user's shell, editor or build reads. A home path outside the two trees is
+    refused naming them, so the caller learns where a checkpoint may go rather
+    than that ``/home`` is protected. The judgement is on the resolved path,
+    because that is the directory docker mounts: a symlink in the home that
+    points at ``/etc`` resolves out of the home and falls to the blocklist.
+
+    A blocklist entry that is itself inside the home or the temp dir is more
+    specific than this allowance and wins: the path falls to the prefix rule.
+    A zone that the blocklist *names* is not an allowance zone at all, so the
+    tool running as root (where ``~`` is the protected ``/root``) or with
+    ``TMPDIR`` pointed at a protected directory admits nothing new.
+
+    Args:
+        resolved: The symlink-resolved spelling of one host path.
+        blocked_dirs: The resolved blocklist, so a protected directory placed
+            inside the allowance zone is still refused.
+
+    Returns:
+        ``"allowed"`` when the path is admitted here, a refusal reason naming
+        the admitted places when it is elsewhere under the caller's own home,
+        or None when this allowance does not apply and the blocklist decides.
+    """
+    temp_root = _temp_root()
+    home = _user_home()
+    # A directory the blocklist names in its own right is never an allowance
+    # zone, however the environment spells it. Both zones are read from the
+    # environment, so both can be pointed at a protected directory: running
+    # the tool as root makes ``~`` the blocked ``/root``, and ``TMPDIR`` is an
+    # ordinary env var, so a temp dir pointed at ``/etc`` would otherwise
+    # admit every path under it. Filtering here keeps "``/root``, ``/etc`` and
+    # other users' homes are refused" true of every caller.
+    zones = tuple(zone for zone in (temp_root, home) if zone not in blocked_dirs)
+    for blocked in blocked_dirs:
+        inside_a_zone = any(blocked.startswith(zone + os.sep) for zone in zones)
+        if inside_a_zone and (resolved == blocked or resolved.startswith(blocked + os.sep)):
+            return None
+    if temp_root in zones and resolved.startswith(temp_root + os.sep):
+        return "allowed"
+    if home not in zones or not resolved.startswith(home + os.sep):
+        return None
+    checkpoints = os.path.realpath(_checkpoints_dir(create=False))
+    hf_cache = os.path.realpath(os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface"))
+    for own in (checkpoints, hf_cache):
+        if resolved == own or resolved.startswith(own + os.sep):
+            return "allowed"
+    return (
+        f"under your home directory only the tool's own checkpoints dir ({checkpoints!r}) and the "
+        f"Hugging Face cache ({hf_cache!r}) are mounted; use a directory under one of those or under "
+        f"the system temp dir ({temp_root!r}), or leave hf_local_dir unset for the default"
+    )
+
+
+#: Container path the default volume layout mounts the checkpoint directory at.
+#: Named because two decisions read it: where the checkpoint is mounted, and
+#: whether the TensorRT engine cache would be written inside that mount.
+_CHECKPOINT_CONTAINER_PATH = "/data/checkpoints"
+
+
+def _checkpoint_mount_is_read_only(*, use_tensorrt: bool, trt_engine_path: str) -> bool:
+    """Whether the default checkpoint mount can be handed to docker as ``:ro``.
+
+    The checkpoint is fetched by :func:`_download_checkpoint`, which writes it
+    **on the host** through ``snapshot_download`` with no docker mediation, and
+    the inference server only ever reads it back. So the container has no
+    reason to hold that directory read-write, and mounting it ``:ro`` means a
+    checkpoint that executes on load - a torch pickle is arbitrary code - cannot
+    rewrite the checkpoint corpus the operator trusts, nor drop a new file into
+    a directory the host reads. It is the mount half of the narrowing in #3755:
+    that change decided *which* directories may be mounted, this one decides
+    *how*.
+
+    The one exception is the TensorRT engine cache. ``--trt-engine-path`` is a
+    container-side path the server *writes* on first compile so that (per this
+    tool's own docstring) "subsequent runs load from ``trt_engine_path``", and
+    the checkpoint mount is today the only writable place in the default layout
+    where such an engine could persist across container recreation. An operator
+    who pointed the cache inside the checkpoint mount is therefore relying on
+    it being writable, and an unconditional ``:ro`` would break them the way
+    this file least wants - a permission error minutes later in the container
+    log rather than as the call's result. That case keeps the mount read-write.
+
+    A relative ``trt_engine_path`` (the ``"gr00t_engine"`` default) resolves
+    against the server's working directory, not against a mount, so it does not
+    hold the checkpoint directory open.
+
+    Args:
+        use_tensorrt: Whether ``--trt-engine-path`` is emitted at all; when it
+            is not, the engine cache is never written and the path is inert.
+        trt_engine_path: The engine cache directory, as it will be passed to
+            the server - a container-side path.
+
+    Returns:
+        True when the mount may be read-only, False when the engine cache
+        would be written inside it.
+    """
+    if not use_tensorrt:
+        return True
+    # A container-side path is POSIX regardless of the host this tool runs on.
+    engine = posixpath.normpath(trt_engine_path)
+    if not posixpath.isabs(engine):
+        return True
+    return not (engine == _CHECKPOINT_CONTAINER_PATH or engine.startswith(_CHECKPOINT_CONTAINER_PATH + "/"))
+
+
 def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     """Return None if all bind-mount host paths are safe, else a reason.
 
@@ -340,6 +486,15 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
         candidates = {norm, resolved}
         if blocked_exact & candidates:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
+        # The tool's own checkpoints dir, the Hugging Face cache and the system
+        # temp dir sit under blocked prefixes on every host; admit them here,
+        # refuse the rest of the caller's home naming them, and leave everything
+        # else to the prefix rule.
+        allowance = _own_directory_allowance(resolved, blocked_dirs)
+        if allowance == "allowed":
+            continue
+        if allowance is not None:
+            return f"refusing to mount {host_path!r}: {allowance}"
         # Prefix check: reject the protected dir itself AND any child of it, so
         # mounting /etc/shadow, /root/.ssh/id_rsa, /home/<u>/.aws/credentials,
         # /proc/1/environ, /var/run/docker.sock.bak, etc. is blocked too. Root
@@ -378,9 +533,24 @@ def _isaac_gr00t_dir() -> Path:
     return get_base_dir() / "Isaac-GR00T"
 
 
-def _checkpoints_dir() -> Path:
-    """Default download destination for HuggingFace checkpoints."""
-    return get_base_dir() / "checkpoints"
+def _checkpoints_dir(*, create: bool = True) -> Path:
+    """Default download destination for HuggingFace checkpoints.
+
+    Args:
+        create: Whether to create the directory (and the base dir above it).
+            A caller that downloads into the directory or bind-mounts it wants
+            it to exist, so this defaults to True. A caller that only compares
+            paths against it passes False: :func:`_own_directory_allowance`
+            asks whether a candidate mount lies under this directory, and a
+            question must not write to the host filesystem to be answered -
+            nor raise ``PermissionError`` when the home directory is not
+            writable, which would turn a mount refusal into a traceback.
+
+    Returns:
+        Path to the checkpoints directory.
+    """
+    base = get_base_dir() if create else base_dir_path()
+    return base / "checkpoints"
 
 
 # Which numeric options each action actually consumes.
@@ -691,7 +861,7 @@ def gr00t_inference(
     container_name: str | None = None,
     timeout: int = 60,
     use_tensorrt: bool = False,
-    trt_engine_path: str = "gr00t_engine",
+    trt_engine_path: str = _DEFAULT_TRT_ENGINE_PATH,
     vit_dtype: str = "fp8",
     llm_dtype: str = "nvfp4",
     dit_dtype: str = "fp8",
@@ -920,8 +1090,10 @@ def gr00t_inference(
             ``<subfolder>/*`` are downloaded.
         hf_local_dir: Where to download the checkpoint. Defaults to
             ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``. Also the host
-            side of the ``/data/checkpoints`` bind mount, so it is confined to
-            the base directory rather than accepted anywhere on the host.
+            side of the ``/data/checkpoints`` bind mount, so under ``/home`` it
+            is confined to that checkpoints dir and the Hugging Face cache; the
+            system temp dir is admitted too. Anywhere else under a protected
+            prefix is refused.
         hf_token: HuggingFace API token, for gated repos. Falls back to the
             ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars, which is the
             preferred way to supply it - a token passed here travels through the
@@ -1151,6 +1323,8 @@ def gr00t_inference(
             hf_local_dir=hf_local_dir,
             deterministic=deterministic,
             force=force,
+            use_tensorrt=use_tensorrt,
+            trt_engine_path=trt_engine_path,
         )
     elif action == "lifecycle":
         image_name = _resolve_image_name()
@@ -2054,6 +2228,8 @@ def _start_container(
     hf_local_dir: str | None,
     force: bool,
     deterministic: bool = False,
+    use_tensorrt: bool = False,
+    trt_engine_path: str = _DEFAULT_TRT_ENGINE_PATH,
 ) -> dict[str, Any]:
     """``docker run -d`` the GR00T container so subsequent ``start`` actions can
     ``docker exec`` into it.
@@ -2156,11 +2332,20 @@ def _start_container(
     # and the host's HF cache so `huggingface_hub` reuses already-downloaded
     # snapshots. Override with explicit ``volumes={...}`` to customise.
     effective_volumes = dict(volumes) if volumes is not None else {}
+    # Container paths mounted read-only. Only the default layout's checkpoint
+    # mount qualifies: the host writes it and the server reads it back. The HF
+    # cache stays read-write because the container's ``huggingface_hub`` writes
+    # into it - reusing already-downloaded snapshots means adding to them - and
+    # a caller-supplied ``volumes`` dict is left exactly as the operator wrote
+    # it, since only they know what their container needs to write.
+    read_only_container_paths: set[str] = set()
     if not volumes:
         if hf_local_dir:
-            effective_volumes[str(Path(hf_local_dir).expanduser())] = "/data/checkpoints"
+            effective_volumes[str(Path(hf_local_dir).expanduser())] = _CHECKPOINT_CONTAINER_PATH
         else:
-            effective_volumes[str(_checkpoints_dir())] = "/data/checkpoints"
+            effective_volumes[str(_checkpoints_dir())] = _CHECKPOINT_CONTAINER_PATH
+        if _checkpoint_mount_is_read_only(use_tensorrt=use_tensorrt, trt_engine_path=trt_engine_path):
+            read_only_container_paths.add(_CHECKPOINT_CONTAINER_PATH)
         hf_cache = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
         effective_volumes[hf_cache] = "/root/.cache/huggingface"
 
@@ -2178,7 +2363,8 @@ def _start_container(
         return {"status": "error", "message": _hf_dir_reason}
 
     for host_path, container_path in effective_volumes.items():
-        cmd.extend(["-v", f"{host_path}:{container_path}"])
+        mode = ":ro" if container_path in read_only_container_paths else ""
+        cmd.extend(["-v", f"{host_path}:{container_path}{mode}"])
 
     # deterministic=True: mount the packaged determinism wrapper read-only at
     # the fixed container path and forward the operator determinism env vars.
@@ -2373,6 +2559,8 @@ def _lifecycle(
         hf_local_dir=resolved_local_dir,
         deterministic=deterministic,
         force=force,
+        use_tensorrt=use_tensorrt,
+        trt_engine_path=trt_engine_path,
     )
     steps.append({"step": "start_container", "result": container_result})
     if container_result["status"] != "success":

@@ -59,7 +59,15 @@ sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
 ```
 
 The refusal lands before any frame is written, so nothing is lost - pass either
-rate. It matters beyond the label: that per-frame interval is the control period
+rate. Through the **agent tool** an omitted rate needs no second call: a caller
+who named no `control_frequency` expressed no preference between the two
+defaults, and only one of them can be honored, so the rollout runs at the open
+recording's `fps` and its reply says so (`control_frequency=30 followed the
+active recording's 30 fps (no rate was passed); pass control_frequency= to
+choose.`). The mirror holds for the other ordering - `start_recording` with no
+`fps` while one rollout is in flight opens at that rollout's whole rate. A rate
+the caller *passed* is a decision, not a default, and a mismatch is still
+refused; the Python defaults above are unchanged. It matters beyond the label: that per-frame interval is the control period
 a policy trains on, and `replay_episode` derives its per-frame physics budget
 from the dataset rate, so a mislabelled episode also replays at the wrong speed.
 To record at a lower rate than you control at, run the rollout at that rate -
@@ -260,6 +268,31 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 `overwrite=True`, which wipes and recreates it. A `root` that exists, is not a
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
+
+A resume says so, and names what is already on disk, so the reply that opens the
+session tells you the episodes you are about to record will join others:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=30)
+# -> "Recording to LeRobotDataset: user/my_dataset
+#     Resuming the existing dataset (1 episode(s), 19 frames); this session's
+#     episodes are appended. Pass overwrite=True to record from scratch instead.
+#     ..."
+```
+
+`stop_recording` then measures **that session** rather than the dataset. A
+resumed session that captured no frames is refused, naming the dataset it left
+unchanged - the counters a resumed recorder carries are the dataset's totals, so
+reading them alone reported the previous sessions' episodes as one just saved:
+
+```python
+sim.stop_recording()   # resumed, nothing captured
+# -> error: "This session captured no frames: the resumed dataset user/my_dataset
+#            (19 frames, 1 episode(s)) is unchanged and no episode was saved. ..."
+
+sim.stop_recording()   # resumed, one episode captured
+# -> "user/my_dataset -- 37 frames, 2 episode(s) (+18 frames, +1 episode(s) this session)"
+```
 
 Because `overwrite=True` is the one posture that deletes a dataset without
 asking, it is applied as the last step before the recorder is built: every
@@ -753,6 +786,7 @@ for four unrelated reasons that need four different instructions - so the
 | lerobot is installed, but a package its dataset stack needs (`datasets`, `pandas`, `pyarrow`, `av`, `torchcodec`) is not | `pip install 'lerobot[dataset]'` - installing lerobot alone does not pull those in |
 | lerobot is installed but does not provide that module (an out-of-range or from-source lerobot) | `pip install 'strands-robots[lerobot]'`, which pins the supported range |
 | the import failed with nothing missing (a binary conflict between installed packages) | No install fixes it; reconcile the conflicting packages |
+| `torchcodec is installed but cannot load in this process; decoding video with pyav instead` (one warning line) | Nothing is broken - recording and read-back use pyav. To use torchcodec, follow the remedy the line names (`export DYLD_FALLBACK_LIBRARY_PATH=...` when Homebrew ffmpeg is installed but invisible to a notebook/REPL, else install ffmpeg or the torchcodec matching your torch); `strands-robots doctor` has the full diagnosis |
 
 ### Schema column names must be distinct
 

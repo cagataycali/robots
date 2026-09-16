@@ -603,9 +603,12 @@ device-connect = [
 # 11.0.1, so under `requires-python = ">=3.12"` every version below 11 resolves
 # to the sdist, whose build needs a CycloneDDS C install (`CYCLONEDDS_HOME`).
 # A ceiling below 11 therefore contradicts the "self-contained pip wheel" this
-# extra exists to deliver. `tests/test_lockfile_parity_gate.py` pins that the
-# locked artifact is a wheel, since a resolution inside the declared bounds is
-# what `uv lock --check` grades.
+# extra exists to deliver. That wheel exists for macOS, Windows and Linux x86_64
+# only: no cyclonedds release publishes a linux aarch64 wheel, so on a Jetson /
+# onboard PC the extra resolves to the sdist and needs a Cyclone DDS C install
+# (CYCLONEDDS_HOME) - docs/rtps-integration.md#linux-aarch64-jetson.
+# `tests/test_lockfile_parity_gate.py` pins that the locked artifact is a wheel,
+# since a resolution inside the declared bounds is what `uv lock --check` grades.
 ros2 = [
     "cyclonedds>=0.10.2,<12",
 ]

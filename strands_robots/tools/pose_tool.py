@@ -38,8 +38,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypedDict
 
-import serial
-import serial.tools.list_ports
 from strands import tool
 from strands.types.tools import ToolContext
 
@@ -52,7 +50,16 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     refusal_str,
+    require_optional,
 )
+
+# pyserial is what the tool talks to the bus through, and no extra of this
+# project declares it on its own: it arrives only inside ``lerobot[feetech]``.
+# Bound here, at import, so ``from strands_robots import pose_tool`` on an
+# install without it is refused with the install line rather than the
+# interpreter's ``No module named 'serial'`` (AGENTS.md convention 7).
+serial: Any = require_optional("serial", pip_install="pyserial", purpose="the servo pose tool (pose_tool)")
+require_optional("serial.tools.list_ports", pip_install="pyserial", purpose="the servo pose tool (pose_tool)")
 
 logger = logging.getLogger(__name__)
 
@@ -468,7 +475,8 @@ def _joint_target_error(action: str, label: str, motor_name: str | None, value: 
     are decided here, because they are a property of the arm this module drives.
 
     A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no bounds to check
-    against and is left to the action's own unknown-motor path.
+    against and is left to :func:`_unknown_motor_error`, which refuses the name
+    itself before the operator is asked.
 
     Args:
         action: The requested action, used as the message prefix.
@@ -510,11 +518,9 @@ def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str |
 
     A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no travel to bound a
     displacement against, so this domain defers exactly as
-    :func:`_joint_target_error` does. What it defers to is the action itself:
-    ``incremental_move`` needs a current position before it can compute anything,
-    and neither ``read_motor_position`` nor ``move_motor`` can address a motor
-    absent from that table, so the move is refused before any ``Goal_Position``
-    is written.
+    :func:`_joint_target_error` does - to :func:`_unknown_motor_error`, which
+    refuses the name before the operator is asked, so no ``Goal_Position`` is
+    computed from a displacement this function could not bound.
 
     Args:
         action: The requested action, used as the message prefix.
@@ -1078,6 +1084,94 @@ def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
     return bool(agent_hitl.consume_grant("pose_tool", tool_input))
 
 
+def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
+    """Refuse a motor name the arm's table does not carry.
+
+    :class:`MotorController` builds its table from :data:`_DEFAULT_MOTOR_CONFIGS`
+    for every port, so whether a name is known is decided by the call alone;
+    the controller raising ``Unknown motor`` after the port is opened is the
+    same verdict, reached late. This is also where :func:`_joint_target_error`
+    and :func:`_joint_delta_error` send an unknown name, neither having bounds
+    to judge a target against without it.
+
+    Args:
+        action: The requested action, used as the message prefix.
+        label: How the motor is named in the message.
+        name: The caller-supplied motor name.
+
+    Returns:
+        An error message, or ``None`` when the motor is in the table.
+    """
+    if name in _DEFAULT_MOTOR_CONFIGS:
+        return None
+    known = ", ".join(_DEFAULT_MOTOR_CONFIGS)
+    return f"{action}: {label} names an unknown motor {refusal_str(name)}; this arm has {known}."
+
+
+def _motion_input_error(
+    action: str,
+    pose_manager: PoseManager,
+    *,
+    pose_name: str | None,
+    motor_name: str | None,
+    position: float | None,
+    delta: float | None,
+    positions: dict[str, float] | None,
+) -> str | None:
+    """The checks that decide a motion's fate with no operator and no port.
+
+    Every motion action asks the operator before the controller exists, then
+    checks what it was given: ``move_motor`` without a position, ``move_multiple``
+    with an empty dict, ``incremental_move`` without a delta, ``load_pose`` of a
+    pose the library does not hold or holds with a target outside a motor's
+    travel, a motor name the arm's table does not carry. Each is decided by
+    the call and the pose library alone, so a call that fails one was never
+    going to move the arm - asking first spends an approval on nothing and
+    leaves the operator reading an error under the "y" they just typed, with
+    the corrected retry costing a second round. This runs before the gate,
+    with the wording the action's own branch uses; that branch still checks
+    again, which is defence in depth rather than a second answer.
+
+    Args:
+        action: One of :data:`MOTION_ACTIONS`.
+        pose_manager: The library ``load_pose`` reads from.
+        pose_name: As supplied.
+        motor_name: As supplied.
+        position: As supplied.
+        delta: As supplied.
+        positions: As supplied.
+
+    Returns:
+        An error message, or ``None`` when the call reaches the operator.
+    """
+    if action == "load_pose":
+        if not pose_name:
+            return "pose_name required"
+        pose = pose_manager.get_pose(pose_name)
+        if not pose:
+            return f"Pose '{pose_name}' not found"
+        is_valid, msg = pose_manager.validate_pose(pose)
+        if not is_valid:
+            return f"Pose validation failed: {msg}"
+        return _stored_pose_target_error(pose)
+    if action == "move_motor":
+        if not motor_name or position is None:
+            return "motor_name and position required"
+        return _unknown_motor_error(action, "motor_name", motor_name)
+    if action == "move_multiple":
+        if not positions:
+            return "positions dict required"
+        for name in positions:
+            if error := _unknown_motor_error(action, f"positions[{name!r}]", name):
+                return error
+        return None
+    if action == "incremental_move":
+        if not motor_name or delta is None:
+            return "motor_name and delta required"
+        return _unknown_motor_error(action, "motor_name", motor_name)
+    return None
+
+
 def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
     """Operator approval for one arm motion, before the controller is built.
 
@@ -1362,6 +1456,18 @@ def pose_tool(
                 )
                 if value is not None and value != ""
             }
+            # A motion the action's own branch would refuse on its inputs is
+            # refused here, before the operator is asked to approve it.
+            if input_error := _motion_input_error(
+                action,
+                pose_manager,
+                pose_name=pose_name,
+                motor_name=motor_name,
+                position=position,
+                delta=delta,
+                positions=positions,
+            ):
+                return {"status": "error", "content": [{"text": input_error}]}
             if refusal := _gate_motion(action, tool_input, tool_context):
                 # The controller does not exist yet: a refused motion is exactly
                 # as inert as a call that never happened.

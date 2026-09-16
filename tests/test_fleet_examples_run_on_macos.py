@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots._mujoco_gl import _mujoco_gl_valid_values
-from tests.test_examples_mujoco_gl import _is_guarded_expr, _module_scope_gl_defaults
+from tests.test_examples_mujoco_gl import _is_guarded, _module_scope_gl_defaults
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _FLEET_DIR = _REPO_ROOT / "examples" / "fleet"
@@ -40,7 +40,7 @@ def test_fleet_example_gl_default_is_platform_guarded(path: Path) -> None:
     defaults = _module_scope_gl_defaults(source)
     assert defaults, f"{path.name}: no module-scope MUJOCO_GL default found"
     for lineno, expr_src in defaults:
-        assert _is_guarded_expr(expr_src), (
+        assert _is_guarded(expr_src), (
             f"{path.name}:{lineno} MUJOCO_GL default {expr_src!r} is not platform-guarded; "
             'use \'"cgl" if sys.platform == "darwin" else "egl"\''
         )
