@@ -2914,6 +2914,41 @@ class Robot(TeleopMixin, AgentTool):
             return False
         return bool(agent_hitl.consume_grant(self.tool_name_str, tool_input))
 
+    def _pre_gate_error(
+        self, action: str, policy_port: Any, policy_provider: str, duration: Any
+    ) -> dict[str, Any] | None:
+        """The input checks that decide a command's fate with no operator and no hardware.
+
+        ``execute``/``start`` ask the operator before dispatch, and the
+        dispatcher (:meth:`execute_task` / :meth:`start_task`) then checks
+        the inputs. Every check here is a pure function of the call and of
+        this object - a shut-down robot, a duration that is not a positive
+        number, a ``policy_port`` outside 1-65535 or missing for a provider
+        that needs one - so a call that fails one was never going to move
+        the arm. Asking first would spend an approval on nothing and leave
+        the operator reading an error under the "y" they just typed, with
+        the agent's corrected retry costing a second round. Run them before
+        the gate; the dispatcher runs them again, which is defence in depth,
+        not a second answer.
+
+        Args:
+            action: ``"execute"`` or ``"start"``; names the dispatcher the
+                refusal speaks for.
+            policy_port: As supplied by the tool input.
+            policy_provider: As supplied by the tool input.
+            duration: As supplied by the tool input.
+
+        Returns:
+            The dispatcher's error envelope, or None when the call reaches
+            the operator.
+        """
+        method = "execute_task" if action == "execute" else "start_task"
+        if err := self._shutdown_error(method):
+            return err
+        if err := self._duration_error(duration, method):
+            return err
+        return self._policy_port_error(policy_port, method, policy_provider)
+
     def _gate_motion(
         self, action: str, tool_input: Mapping[str, Any], tool_use: ToolUse, invocation_state: Mapping[str, Any]
     ) -> str | None:
@@ -2999,6 +3034,12 @@ class Robot(TeleopMixin, AgentTool):
                     )
                     return
 
+                # A call the dispatcher would refuse on its inputs alone is
+                # refused here, before the operator is asked to approve it.
+                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
+                    return
+
                 # Ask the operator before anything is dispatched: a refused or
                 # unanswered call is exactly as inert as one that never happened.
                 try:
@@ -3041,6 +3082,10 @@ class Robot(TeleopMixin, AgentTool):
                             },
                         )
                     )
+                    return
+
+                if err := self._pre_gate_error(action, policy_port, policy_provider, duration):
+                    yield ToolResultEvent(self._make_tool_result(tool_use_id, err))
                     return
 
                 try:
