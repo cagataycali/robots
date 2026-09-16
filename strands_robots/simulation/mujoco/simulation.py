@@ -2082,8 +2082,10 @@ class MuJoCoSimEngine(
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
         OPTIONAL: when omitted (``None``, or ``""``) it is auto-derived from
         ``data_config`` (or the URDF filename), with a numeric suffix appended
-        if that label is already taken -- so ``add_robot(data_config="so101")``
-        twice yields ``so101`` and ``so101_2`` instead of erroring. Any other
+        if that label is already taken by another robot OR by an object -- so
+        ``add_robot(data_config="so101")`` twice yields ``so101`` and
+        ``so101_2`` instead of erroring, and the short form still works when an
+        object happens to carry the model's name. Any other
         value must be a ``str`` containing no NUL: those two are the documented
         derive-a-label short form, while another falsy value (``0``, ``[]``)
         would take the same branch and report success under a label that was
@@ -2199,7 +2201,17 @@ class MuJoCoSimEngine(
             base = data_config or (os.path.splitext(os.path.basename(urdf_path))[0] if urdf_path else None) or "robot"
             name = base
             i = 2
-            while name in self._world.robots:
+            # Auto-number past a label taken by EITHER registry. The
+            # object-collision refusal below offers "omit name= to
+            # auto-number" as the remedy, and a loop that only skipped robot
+            # labels dead-ended that advice: with an object ``cube`` in the
+            # world, ``add_robot(urdf_path=".../cube.xml")`` derived ``cube``,
+            # found no robot holding it, and was then refused by the very
+            # message telling the caller to do what they had just done - the
+            # robot could be added under no label at all. Skipping object
+            # labels too keeps the derive-a-label short form total, so that
+            # refusal is only ever reachable for a name the caller CHOSE.
+            while name in self._world.robots or name in self._world.objects:
                 name = f"{base}_{i}"
                 i += 1
 
@@ -2212,6 +2224,23 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' already exists. Pick a different "
                             f"name, or omit name= to auto-number. Existing: {taken}."
+                        )
+                    }
+                ],
+            }
+        # The mirror of add_object's rule: a robot labelled like an existing
+        # object shares a name with a body every by-name reader resolves to the
+        # object first, so "state of 'cube'" would keep answering for the box
+        # after an arm called 'cube' joined the world.
+        if name in self._world.objects:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Robot name '{name}' is already an object in this world; by-name reads "
+                            f"(get_body_state, attach_bodies, add_camera) would keep resolving to that object. "
+                            f"Pick another name, or omit name= to auto-number."
                         )
                     }
                 ],
@@ -4322,6 +4351,30 @@ class MuJoCoSimEngine(
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
+        # A robot's label is not one of its body names (those are
+        # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
+        # repeated-name check does not see the collision an object named after
+        # a robot creates - but every by-name reader does. Measured: with robot
+        # ``so101`` in the world, ``get_body_state(body_name="so101")`` answered
+        # "not found. Did you mean: so101/base, ..." until
+        # ``add_object(name="so101")`` succeeded, after which the same call
+        # answered with the box's pose, and ``add_camera(parent_body="so101")``
+        # or ``attach_bodies(parent="so101", ...)`` would have taken the box for
+        # the arm. Refuse before anything is registered under the label.
+        if name in self._world.robots:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_object: '{name}' is the name of a robot in this world, and an object under "
+                            f"that name would answer get_body_state / attach_bodies / add_camera calls meant "
+                            f"for the robot (its bodies are '{name}/<body>'; see list_bodies). Pick another name."
+                        )
+                    }
+                ],
+            }
+
         # ``is_static`` selects a posture, so it is checked rather than read by
         # truthiness. The resolution below tests it by IDENTITY and every later
         # read is a truthiness one, so a non-boolean escaped both: ``0`` is the
@@ -6060,7 +6113,7 @@ class MuJoCoSimEngine(
                         {
                             "text": (
                                 f"Cannot '{action_name}' on '{robot_name}' while its policy is running. "
-                                f"Stop it first: action='stop_policy', name='{robot_name}'."
+                                f"Stop it first: action='stop_policy', robot_name='{robot_name}'."
                             )
                         }
                     ],
@@ -6074,10 +6127,7 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [
                     {
-                        "text": (
-                            f"Cannot '{action_name}' while a policy is running on {names}. "
-                            "Stop it first: action='stop_policy'."
-                        )
+                        "text": f"Cannot '{action_name}' while a policy is running on {names}. {self._stop_policy_remedy(active)}"
                     }
                 ],
             }
@@ -7561,8 +7611,9 @@ class MuJoCoSimEngine(
         stop_policy unconditionally. The only error case is an unknown
         robot_name.
 
-        empty robot_name returns a clear error instead of a silent
-        match against the first robot.
+        An empty robot_name means the only rollout in flight when there is
+        exactly one, and is otherwise refused naming what is running - never
+        a silent match against the first robot (:meth:`_stop_policy_target`).
 
         Returns:
             The agent-tool envelope. On success its ``json`` block reports
@@ -7570,11 +7621,15 @@ class MuJoCoSimEngine(
             stop arrived - so a caller aggregating several of these answers
             reads the verdict rather than matching on the sentence.
         """
-        if not robot_name:
-            return {
-                "status": "error",
-                "content": [{"text": "stop_policy requires 'robot_name'."}],
-            }
+        # An empty name means "the only rollout in flight" when there is exactly
+        # one - the case every "Stop it first: action='stop_policy'" remedy was
+        # written for - and is refused, naming what IS running, otherwise. See
+        # :meth:`SimEngine._stop_policy_target`.
+        target, refusal = self._stop_policy_target(robot_name)
+        if target is None:
+            assert refusal is not None
+            return refusal
+        robot_name = target
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]

@@ -21,11 +21,13 @@ instead of a sourced ROS 2 distro:
 
 Why this exists alongside ``HardwareRosBridge``: ``rclpy`` needs a *sourced ROS 2
 distro* (apt / RoboStack / docker), which is heavy and version-pinned (Humble vs
-Jazzy vs Rolling). ``cyclonedds`` is a single self-contained pip wheel that
-speaks the RTPS wire protocol every ROS 2 distro shares, so this bridge runs on
-a bare dev laptop or a minimal robot image with ``pip install
-'strands-robots[ros2]'`` and nothing else. The trade-off is type coverage: RTPS
-publishing needs a *local* IDL definition, so only the messages in
+Jazzy vs Rolling). ``cyclonedds`` is a single self-contained pip wheel (macOS,
+Windows, Linux x86_64; Linux aarch64 builds it from source against a Cyclone DDS
+C install - ``docs/rtps-integration.md#linux-aarch64-jetson``) that speaks the
+RTPS wire protocol every ROS 2 distro shares, so this bridge runs on a bare dev
+laptop or a minimal robot image with ``pip install 'strands-robots[ros2]'`` and
+nothing else. The trade-off is type coverage: RTPS publishing needs a *local*
+IDL definition, so only the messages in
 :mod:`strands_robots.rtps.idl` work (now ``geometry_msgs`` + the ``sensor_msgs``
 ``JointState``/``Image`` chain this bridge needs). The rclpy bridge keeps full
 ``sensor_msgs`` fidelity for anything outside the bundle.
