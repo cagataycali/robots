@@ -18,6 +18,7 @@ in-process provider as running ``on localhost:None``.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 
 import pytest
@@ -123,7 +124,7 @@ class TestTheHardwareEnvelope:
 @pytest.mark.skipif(os.environ.get("MUJOCO_GL", "") == "disabled", reason="needs a MuJoCo context")
 class TestTheSimulationEnvelope:
     def test_run_policy_with_mock_says_the_instruction_was_not_read(self) -> None:
-        os.environ.setdefault("MUJOCO_GL", "cgl" if os.uname().sysname == "Darwin" else "egl")
+        os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
         from strands_robots import Robot
 
         arm = Robot("so101", mode="sim")
