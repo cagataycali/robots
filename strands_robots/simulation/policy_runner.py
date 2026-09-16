@@ -3426,10 +3426,43 @@ class PolicyRunner:
                 "content": [{"text": f"Robot '{resolved_robot}' not found in sim. Available robots: {robots}"}],
             }
 
+        # ``root`` omitted: before LeRobot resolves the id to the Hub, ask the
+        # sim whether THIS session recorded that id somewhere - a ``lab/demo``
+        # recorded to an explicit ``root`` exists only there, and the Hub's
+        # answer for it was a raw 404 for a directory ``stop_recording`` had
+        # just reported.
+        root_note = ""
+        recorded_dir = getattr(self.sim, "recorded_dataset_dir", None)
+        session_dir = recorded_dir(repo_id) if callable(recorded_dir) else None
+        if root is None and session_dir:
+            root = session_dir
+            root_note = f" (root omitted - using the directory this session recorded '{repo_id}' to: {root})"
+
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
         except Exception as e:  # noqa: BLE001 - library errors are opaque
-            return {"status": "error", "content": [{"text": f"{e}"}]}
+            # huggingface_hub's 404 is six lines of which one names the cause;
+            # keep the lines that do and drop the request id / boilerplate.
+            lines = [
+                ln.strip()
+                for ln in str(e).splitlines()
+                if ln.strip()
+                and "Request ID" not in ln
+                and not ln.lstrip().startswith(("If you are trying", "For more details", "Please make sure"))
+            ]
+            first_line = " ".join(lines[:2]) if lines else type(e).__name__
+            hint = ""
+            if root is None:
+                hint = (
+                    f" root was omitted, so '{repo_id}' was looked up on the Hub. For a dataset recorded "
+                    "locally pass root=<its directory> - stop_recording reports it as 'Local:'."
+                )
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"replay_episode: could not open episode {episode} of '{repo_id}': {first_line}.{hint}"}
+                ],
+            }
 
         # Resolve the action-key ordering for action-vector index -> action
         # dict. The recorded ``action`` column is written in the robot's
@@ -3650,7 +3683,7 @@ class PolicyRunner:
             "content": [
                 {
                     "text": (
-                        f"Replayed episode {episode} from {repo_id} on '{resolved_robot}'\n"
+                        f"Replayed episode {episode} from {repo_id} on '{resolved_robot}'{root_note}\n"
                         f"Frames: {frames_applied}/{episode_length} "
                         f"(actions applied: {frames_with_action}) | "
                         f"Duration: {duration:.1f}s | Speed: {speed}x"
@@ -3665,6 +3698,7 @@ class PolicyRunner:
                         "total_frames": episode_length,
                         "duration_s": round(duration, 2),
                         "speed": speed,
+                        "root": root,
                     }
                 },
             ],

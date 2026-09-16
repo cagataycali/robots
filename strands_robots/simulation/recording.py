@@ -1723,6 +1723,22 @@ class DatasetRecordingMixin:
 
         return stream_dataset(repo_id, **kwargs)
 
+    def recorded_dataset_dir(self, repo_id: str) -> str | None:
+        """The directory this session's ``start_recording`` resolved ``repo_id`` to.
+
+        ``None`` when this session never recorded that id (or holds no world).
+        Read by ``replay_episode`` when ``root`` is omitted: a ``lab/demo`` id
+        recorded to an explicit ``root`` is not on the Hub, and asking there
+        answered a 404 for a dataset sitting in a directory the sim itself had
+        just reported.
+        """
+        state = self._recording_state()
+        if state is None:
+            return None
+        dirs = state.get("recorded_dataset_dirs") or {}
+        value = dirs.get(repo_id)
+        return str(value) if value else None
+
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can

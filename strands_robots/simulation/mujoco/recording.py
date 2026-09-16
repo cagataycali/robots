@@ -286,6 +286,10 @@ class RecordingMixin(DatasetRecordingMixin):
         # Stash the resolved root so verify_dataset_episodes can read the parquet
         # after stop_recording has finalized the dataset and dropped the recorder.
         self._world._backend_state["last_dataset_root"] = str(dataset_dir)
+        # And per repo_id, so a later replay_episode / verify that omits ``root``
+        # reads the directory this session wrote instead of asking the Hub for
+        # an id that only exists here.
+        self._world._backend_state.setdefault("recorded_dataset_dirs", {})[repo_id] = str(dataset_dir)
 
         try:
             # Collect joint names from every robot. When the scene contains
