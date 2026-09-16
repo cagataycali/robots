@@ -97,7 +97,10 @@ sim.step(100)
 4. Fleet coordination - [Mesh](../mesh.md).
 5. ROS 2 interop - [ROS 2](../ros2-integration.md).
 
-Steps 1 and 3-real need hardware; step 2 needs a GPU. Everything else runs in sim.
+Steps 1 and 3-real need hardware; step 2 needs a GPU; step 5 needs a sourced
+ROS 2 distro - `rclpy` is not on PyPI, and `Simulation(ros2_bridge=True)` raises
+an `ImportError` naming the `source /opt/ros/<distro>/setup.bash` to run first.
+Steps 3-twin and 4 run in sim on any machine.
 
 ## Next: the notebook series
 
