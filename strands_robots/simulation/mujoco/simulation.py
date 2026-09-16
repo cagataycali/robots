@@ -566,28 +566,71 @@ def _published_string_params(field_aliases: dict[str, str]) -> frozenset[str]:
 _PUBLISHED_PARAMS: frozenset[str] = frozenset(_TOOL_SPEC_SCHEMA["properties"]) - {"action"}
 
 
+# An annotation JSON cannot construct: a callable, or an already-built Policy.
+# Applied to one union member at a time, never to the whole annotation - see
+# :func:`_tool_call_can_carry`.
+_UNCARRIABLE_ANNOTATION = re.compile(r"Callable|\bPolicy\b")
+
+
+def _union_members(text: str) -> list[str]:
+    """The top-level ``|`` members of an annotation's text.
+
+    Splitting only at bracket depth zero keeps a union that appears *inside* a
+    subscript out of the result: the members of
+    ``Callable[[Started | Step | Ended], None] | None`` are the callable and
+    ``None``, not the three event types.
+
+    Args:
+        text: The annotation rendered as text.
+
+    Returns:
+        The stripped top-level members, in source order.
+    """
+    members: list[str] = []
+    depth = start = 0
+    for index, char in enumerate(text):
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth -= 1
+        elif char == "|" and depth == 0:
+            members.append(text[start:index])
+            start = index + 1
+    members.append(text[start:])
+    return [member.strip() for member in members if member.strip()]
+
+
 def _tool_call_can_carry(param: inspect.Parameter) -> bool:
     """Whether a JSON tool call can supply *param* at all.
 
-    A parameter annotated as a callable (``observer``, ``stop_when``,
-    ``on_frame``, ``success_fn``) or as a live :class:`Policy` instance
-    (``policy_object``) exists for the Python caller; no JSON value satisfies
-    it, so a refusal's "Valid:" list leaves it out. Everything else - including
-    an unannotated parameter - is kept: the list must never hide a key the
-    caller could have used.
+    A parameter that only ever holds a callback (``observer``, ``on_frame``) or
+    a live :class:`Policy` instance (``policy_object``) exists for the Python
+    caller; no JSON value satisfies it, so a refusal's "Valid:" list leaves it
+    out. Everything else is kept, an unannotated parameter included: the list
+    must never hide a key the caller could have used.
+
+    A union is judged member by member, because one alternative being
+    unreachable does not make the parameter unreachable. ``stop_when`` is
+    ``dict[str, Any] | Callable[[SimEngine], bool] | None`` - the schema
+    publishes it and documents the dict predicate DSL, and a tool call carries
+    that dict, so the callable alternative must not hide it. ``None`` alone is
+    not a value a caller passes to fill a parameter, so it never keeps one.
 
     Args:
         param: The method parameter as :func:`inspect.signature` reports it.
 
     Returns:
-        ``False`` for a callable- or ``Policy``-typed parameter, ``True``
-        otherwise.
+        ``False`` only when every alternative is a callable or a ``Policy``,
+        ``True`` otherwise.
     """
     annotation = param.annotation
     if annotation is inspect.Parameter.empty:
         return True
     text = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", None) or repr(annotation)
-    return "Callable" not in text and re.search(r"\bPolicy\b", text) is None
+    fillable = [member for member in _union_members(text) if member not in ("None", "NoneType")]
+    if not fillable:
+        return True
+    return any(_UNCARRIABLE_ANNOTATION.search(member) is None for member in fillable)
 
 
 def _reported_param_name(param: str, field_aliases: Mapping[str, str], received: Mapping[str, Any]) -> str:
