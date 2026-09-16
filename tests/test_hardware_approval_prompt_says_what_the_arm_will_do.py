@@ -19,6 +19,7 @@ import os
 import pytest
 
 from strands_robots import Robot
+from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies.base import instruction_not_read_notice
 from strands_robots.policies.mock import MockPolicy
 
@@ -116,3 +117,17 @@ class TestItReachesTheOperator:
         assert refusal.startswith("'start' drives the real robot 'so101' for up to 3s with 'Wave the arm' ")
         assert "MockPolicy does not read the instruction" in refusal
         assert "STRANDS_ROBOT_COMMAND_ALLOW" in refusal
+
+
+class TestTheStatusEnvelopeCarriesTheNoticeOnce:
+    def test_a_running_status_on_a_policy_that_ignores_the_words_says_so_once(self, arm) -> None:
+        """The same sentence, once: ``status`` is parsed by agents and operators,
+        and a merge that keeps two copies of the block that appends it doubles
+        the notice on every non-idle report. Graded by count, on the envelope."""
+        arm._task_state.status = TaskStatus.RUNNING
+        arm._task_state.instruction = "Wave the arm"
+        arm._task_state.policy = MockPolicy
+        notice = instruction_not_read_notice(MockPolicy, pending=True)
+        assert notice is not None
+        text = arm.get_task_status()["content"][0]["text"]
+        assert text.count(notice) == 1, text

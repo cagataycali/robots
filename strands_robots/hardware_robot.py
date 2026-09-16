@@ -3245,18 +3245,6 @@ class Robot(TeleopMixin, AgentTool):
             if notice:
                 status_text += f"{notice}\n"
 
-        # Same sentence the ``execute`` envelope carries, in the present tense
-        # while the task runs: a RUNNING / 18 steps report on a policy that
-        # never reads the instruction it is filed under otherwise says the task
-        # is being performed. Above the device lines, with the task state it
-        # qualifies - and so on the path that cannot read the device too.
-        if self._task_state.status not in (TaskStatus.IDLE, TaskStatus.CONNECTING):
-            notice = instruction_not_read_notice(
-                self._task_state.policy, pending=self._task_state.status == TaskStatus.RUNNING
-            )
-            if notice:
-                status_text += f"{notice}\n"
-
         try:
             facts = self._device_facts()
         except Exception as e:  # noqa: BLE001 - the task state must still be reported
