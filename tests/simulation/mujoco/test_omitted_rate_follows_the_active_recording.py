@@ -163,5 +163,34 @@ class TestARecordingAfterARollout:
         )
         assert rec["status"] == "error"
         assert "followed" not in _text(rec)
+        # The refusal describes the caller's own default, not a rate the router
+        # invented: truncating 12.5 to a whole 12 and filling it in would blame
+        # them for a number they never typed ("would declare 12 fps").
+        assert "this recording would declare 30 fps" in _text(rec)
         sim.stop_policy("arm")
         _wait_idle(sim, "arm")
+
+    def test_two_rollouts_at_different_rates_are_not_followed(self, sim, tmp_path):
+        """No single rate can describe two, so nothing is filled in."""
+        sim.add_robot(name="arm2", urdf_path=str(tmp_path / "arm.xml"))
+        for name, rate in (("arm", 40), ("arm2", 25)):
+            started = sim._dispatch_action(
+                "start_policy",
+                {"robot_name": name, "policy_provider": "mock", "duration": 3.0, "control_frequency": rate},
+            )
+            assert started["status"] == "success", started
+        time.sleep(0.05)
+        assert set(sim._active_rollout_rates().values()) == {40.0, 25.0}
+        rec = sim._dispatch_action(
+            "start_recording", {"repo_id": "local/i", "task": "hold", "root": str(tmp_path / "i")}
+        )
+        assert rec["status"] == "error"
+        assert "followed" not in _text(rec)
+        # Neither rate is adopted: the refusal still reports the untouched
+        # default and names both rollouts.
+        text = _text(rec)
+        assert "this recording would declare 30 fps" in text
+        assert "'arm' at 40 Hz" in text and "'arm2' at 25 Hz" in text
+        for name in ("arm", "arm2"):
+            sim.stop_policy(name)
+            _wait_idle(sim, name)
