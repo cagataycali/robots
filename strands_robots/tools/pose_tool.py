@@ -1053,6 +1053,92 @@ def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
     return bool(agent_hitl.consume_grant("pose_tool", tool_input))
 
 
+def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
+    """Refuse a motor name the arm's table does not carry.
+
+    :class:`MotorController` builds its table from :data:`_DEFAULT_MOTOR_CONFIGS`
+    for every port, so whether a name is known is decided by the call alone;
+    the controller raising ``Unknown motor`` after the port is opened is the
+    same verdict, reached late.
+
+    Args:
+        action: The requested action, used as the message prefix.
+        label: How the motor is named in the message.
+        name: The caller-supplied motor name.
+
+    Returns:
+        An error message, or ``None`` when the motor is in the table.
+    """
+    if name in _DEFAULT_MOTOR_CONFIGS:
+        return None
+    known = ", ".join(_DEFAULT_MOTOR_CONFIGS)
+    return f"{action}: {label} names an unknown motor {refusal_str(name)}; this arm has {known}."
+
+
+def _motion_input_error(
+    action: str,
+    pose_manager: PoseManager,
+    *,
+    pose_name: str | None,
+    motor_name: str | None,
+    position: float | None,
+    delta: float | None,
+    positions: dict[str, float] | None,
+) -> str | None:
+    """The checks that decide a motion's fate with no operator and no port.
+
+    Every motion action asks the operator before the controller exists, then
+    checks what it was given: ``move_motor`` without a position, ``move_multiple``
+    with an empty dict, ``incremental_move`` without a delta, ``load_pose`` of a
+    pose the library does not hold or holds with a target outside a motor's
+    travel, a motor name the arm's table does not carry. Each is decided by
+    the call and the pose library alone, so a call that fails one was never
+    going to move the arm - asking first spends an approval on nothing and
+    leaves the operator reading an error under the "y" they just typed, with
+    the corrected retry costing a second round. This runs before the gate,
+    with the wording the action's own branch uses; that branch still checks
+    again, which is defence in depth rather than a second answer.
+
+    Args:
+        action: One of :data:`MOTION_ACTIONS`.
+        pose_manager: The library ``load_pose`` reads from.
+        pose_name: As supplied.
+        motor_name: As supplied.
+        position: As supplied.
+        delta: As supplied.
+        positions: As supplied.
+
+    Returns:
+        An error message, or ``None`` when the call reaches the operator.
+    """
+    if action == "load_pose":
+        if not pose_name:
+            return "pose_name required"
+        pose = pose_manager.get_pose(pose_name)
+        if not pose:
+            return f"Pose '{pose_name}' not found"
+        is_valid, msg = pose_manager.validate_pose(pose)
+        if not is_valid:
+            return f"Pose validation failed: {msg}"
+        return _stored_pose_target_error(pose)
+    if action == "move_motor":
+        if not motor_name or position is None:
+            return "motor_name and position required"
+        return _unknown_motor_error(action, "motor_name", motor_name)
+    if action == "move_multiple":
+        if not positions:
+            return "positions dict required"
+        for name in positions:
+            if error := _unknown_motor_error(action, f"positions[{name!r}]", name):
+                return error
+        return None
+    if action == "incremental_move":
+        if not motor_name or delta is None:
+            return "motor_name and delta required"
+        return _unknown_motor_error(action, "motor_name", motor_name)
+    return None
+
+
 def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
     """Operator approval for one arm motion, before the controller is built.
 
@@ -1337,6 +1423,18 @@ def pose_tool(
                 )
                 if value is not None and value != ""
             }
+            # A motion the action's own branch would refuse on its inputs is
+            # refused here, before the operator is asked to approve it.
+            if input_error := _motion_input_error(
+                action,
+                pose_manager,
+                pose_name=pose_name,
+                motor_name=motor_name,
+                position=position,
+                delta=delta,
+                positions=positions,
+            ):
+                return {"status": "error", "content": [{"text": input_error}]}
             if refusal := _gate_motion(action, tool_input, tool_context):
                 # The controller does not exist yet: a refused motion is exactly
                 # as inert as a call that never happened.
