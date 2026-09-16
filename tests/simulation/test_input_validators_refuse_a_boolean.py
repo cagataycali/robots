@@ -519,6 +519,11 @@ _NOT_AN_INPUT_DOMAIN = {
     "rollout_rate_mismatch_reason": "compares already-validated rates",
     # Reads a pose back off the USD stage - not caller input.
     "_prim_body_state": "reads state out of the engine",
+    # Names a starting pose for a camera mounted on a body: the one float() is
+    # the norm of a site position read out of the compiled model (an engine
+    # measurement, never caller input - parent_body/parent_id are already
+    # resolved names/ids), so no boolean can reach it.
+    "_mounted_camera_start": "measures a site position read out of the engine",
     # Measures the distance between a target _validate_move_to_args has already
     # coerced (its position runs through coerce_pose_vector, which refuses a
     # boolean component) and the engine-owned robot base position - a boolean
