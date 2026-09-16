@@ -2590,8 +2590,6 @@ class Robot(TeleopMixin, AgentTool):
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Drive the rollout on its own event loop and report the outcome."""
-        # Import here to avoid conflicts
-        import asyncio
 
         # Run task without creating new event loop - let it run in thread
         async def task_runner() -> None:
