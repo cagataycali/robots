@@ -30,7 +30,28 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `orientation` | list | `None` | Robot base orientation `[w, x, y, z]` in sim world. Ignored when `mode="real"` (reported at debug level). |
 | `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. Ignored when `mode="real"` (reported at debug level). |
 | `driver` | str | `"auto"` | Which implementation drives a real robot: `"auto"` / `"lerobot"` / `"strands"`. `"auto"` honours the robot's registry `hardware.driver` and otherwise builds the lerobot driver. Checked in every mode; only `mode="real"` acts on it (sim reports it as ignored at debug level). See [Choosing a driver](#choosing-a-driver). |
+| `tool_name` | str | `None` | The name the agent sees this robot under. `None` means `"<name>_sim"` in sim, the canonical robot name on hardware - so two robots of one type collide in one agent unless you name them. Must be letters, digits, `_` or `-`, at most 64 characters; anything else is refused here rather than by the model's first call. See [Two robots in one agent](#two-robots-in-one-agent). |
 | `**kwargs` | | | Forwarded to the backend or driver constructor as given. A name it does not recognize is ignored, not refused, so check the spelling against the forwardable list below. |
+
+## Two robots in one agent
+
+A tool's name must be unique in an agent, and by default a robot's is derived
+from its type - so a bimanual pair, or a real arm beside its sim twin, needs
+`tool_name`:
+
+```python
+from strands import Agent
+
+agent = Agent(tools=[
+    Robot("so101", tool_name="left_arm"),
+    Robot("so101", tool_name="right_arm"),
+])
+```
+
+Without it, both robots ask to be registered as `so101_sim` and the second one
+raises `ValueError: Tool name 'so101_sim' already exists`. The registry folds
+`-` to `_`, so `left_arm` and `left-arm` count as the same name.
+
 
 ## Name resolution
 
