@@ -9,6 +9,9 @@ obvious escape, `Robot("so101", tool_name="left_arm")`, raised a `TypeError`
 from the factory's own internal forward.
 
 `tool_name` is now a keyword-only factory parameter on every path (simulation,
-lerobot hardware, native driver); the default is unchanged. A name the
-registry would refuse (empty, spaces, slashes, a non-string) is refused at the
-call site with the remedy, before any backend is built.
+lerobot hardware, native driver); the default is unchanged. A name Strands
+would refuse is refused at the call site with the remedy, before any backend is
+built - both of its rules: the character pattern (empty, spaces, slashes, a
+non-string) and the 64-character ceiling, which nothing checks at registration,
+so an over-long name of legal characters used to reach the model and fail on
+its first call to the robot.

@@ -192,15 +192,34 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
 
 
 _TOOL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_TOOL_NAME_MAX_LENGTH = 64
+"""Longest tool name Strands accepts.
+
+This and :data:`_TOOL_NAME_PATTERN` mirror the two rules in
+``strands.tools.tools.validate_tool_use_name``, which Strands states inline
+rather than exporting. The tests probe that function at this ceiling and one
+character past it, so a change on the Strands side fails here rather than
+drifting out of step.
+"""
 
 
 def _tool_name_error(tool_name: Any) -> str | None:
-    """Refuse a ``tool_name`` the Strands registry would reject, with the remedy.
+    """Refuse a ``tool_name`` Strands would reject, with the remedy.
 
-    ``None`` means "use the default" and is fine. Anything else must be a
-    non-empty string of letters, digits, ``_`` or ``-`` - the pattern the
-    Strands tool registry validates against - so the refusal lands here, naming
-    the parameter, instead of at ``Agent(tools=[...])`` naming an object repr.
+    ``None`` means "use the default" and is fine. Anything else must satisfy
+    both rules Strands validates a tool name against: the character pattern
+    (letters, digits, ``_``, ``-``) and a ceiling of
+    :data:`_TOOL_NAME_MAX_LENGTH` characters. Neither is checked when the tool
+    is registered - they are checked when the model calls it - so an unchecked
+    name reaches the agent, is advertised to the model, and only then raises
+    ``InvalidToolUseNameException`` mid-conversation. Refusing here names the
+    parameter and the fix while the caller is still holding it.
+
+    Args:
+        tool_name: The caller's ``tool_name``, unvalidated and of any type.
+
+    Returns:
+        The refusal to raise, or ``None`` when the name is usable.
     """
     if tool_name is None:
         return None
@@ -208,6 +227,12 @@ def _tool_name_error(tool_name: Any) -> str | None:
         return (
             f"Robot(tool_name={tool_name!r}) is not a valid tool name: use letters, digits, '_' or '-' "
             "(e.g. tool_name='left_arm'). Two robots in one Agent need two distinct names."
+        )
+    if len(tool_name) > _TOOL_NAME_MAX_LENGTH:
+        return (
+            f"Robot(tool_name={tool_name!r}) is {len(tool_name)} characters; Strands accepts at most "
+            f"{_TOOL_NAME_MAX_LENGTH}. Shorten it (e.g. tool_name='left_arm'), or the model's first "
+            "call to this robot fails instead."
         )
     return None
 
@@ -472,8 +497,12 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             used to fail at registration ("Tool name 'so101_sim' already
             exists"). Name each one (``tool_name="left_arm"``) to put a
             bimanual pair, or a real arm beside its sim twin, in one agent.
-            Must match the Strands tool-name pattern (letters, digits, ``_``,
-            ``-``); anything else is refused here, before the backend builds.
+            Must satisfy both rules Strands validates a tool name against -
+            the character pattern (letters, digits, ``_``, ``-``) and at most
+            :data:`_TOOL_NAME_MAX_LENGTH` characters - and each robot in one
+            agent needs a distinct one; the registry normalizes ``-`` to ``_``,
+            so ``"left_arm"`` and ``"left-arm"`` still collide. A name that
+            breaks a rule is refused here, before the backend builds.
         **kwargs: Forwarded to the underlying backend constructor.
 
     Returns:
