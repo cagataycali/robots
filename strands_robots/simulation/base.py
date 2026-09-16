@@ -715,8 +715,8 @@ def _rollout_error_report(failed: Mapping[str, str], exclude: Sequence[str] = ()
 
     A function of the failures rather than a method on the engine, because
     ``list_policies_running`` reads exactly two seams - the population and this
-    map - and is called unbound against backends that implement only those
-    (``tests/simulation/test_every_backend_names_the_rollouts_it_is_running.py``).
+    map - and is called unbound against backends that provide only those two, so
+    a method here would break on any such stand-in.
 
     Args:
         failed: ``robot_name -> reason``, from
