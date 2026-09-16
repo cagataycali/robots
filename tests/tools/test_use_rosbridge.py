@@ -620,9 +620,10 @@ def test_an_incomplete_publish_advertises_no_publisher(fake_roslibpy: _types.Mod
     """
     refused = use_rosbridge(action="publish", topic=_PLUMBING_TOPIC)
     assert refused["status"] == "error"
-    ros = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
-    assert ros.topics == []
+    # Nothing was even dialed: the refusal lands ahead of the connect.
+    assert fake_roslibpy.Ros.instances == []  # type: ignore[attr-defined]
 
     honored = use_rosbridge(action="publish", topic=_PLUMBING_TOPIC, type="geometry_msgs/Twist", count=1)
     assert honored["status"] == "success"
+    ros = fake_roslibpy.Ros.instances[0]  # type: ignore[attr-defined]
     assert [(t.name, t.advertised, t.unadvertised) for t in ros.topics] == [(_PLUMBING_TOPIC, True, True)]
