@@ -23,7 +23,7 @@ non-VLA reference implementation.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.utils import (
@@ -329,6 +329,20 @@ class Policy(ABC):
         """
         return True
 
+    #: Whether the ``instruction`` passed to :meth:`get_actions` shapes the actions.
+    #:
+    #: Default ``True``: a VLA, a planner given a goal, a scripted policy that
+    #: parses its task all act on the words. A policy that never reads them -
+    #: :class:`~strands_robots.policies.mock.MockPolicy` drives every joint in a
+    #: sinusoidal test motion whatever the task says - declares ``False``, and
+    #: the task envelopes (``run_policy``, the real robot's ``execute`` /
+    #: ``start`` / ``status`` / ``stop``) say so beside the instruction they
+    #: echo. Without that line "MockPolicy | wave the arm ... completed" read as
+    #: a wave that happened, and an agent relayed it as one. A class attribute
+    #: rather than a property so the class answers before an instance exists:
+    #: ``start`` reports before the executor thread builds the policy.
+    reads_instruction: ClassVar[bool] = True
+
     @property
     def required_bodies(self) -> tuple[str, ...]:
         """Named rigid bodies whose world pose this policy needs in its observation.
@@ -468,6 +482,71 @@ class Policy(ABC):
     def provider_name(self) -> str:
         """Get provider name for identification."""
         pass
+
+
+def instruction_not_read_notice(policy: object, *, pending: bool = False) -> str | None:
+    """One sentence for a task envelope when ``policy`` never reads the instruction.
+
+    Reads :attr:`Policy.reads_instruction` and returns ``None`` for a policy
+    that acts on the words (or for an object that does not declare the
+    attribute - a pre-built stand-in). Shared by the simulation's
+    ``run_policy`` and the real robot's ``execute`` / ``start`` / ``status`` /
+    ``stop`` envelopes so every surface describes the same policy in the same
+    words.
+
+    Args:
+        policy: The policy object the rollout drove, or its class before the
+            rollout has built one (``start`` answers before the executor
+            thread constructs the policy, so it can only name the class).
+        pending: ``True`` when the rollout has not finished - the envelope of
+            ``start`` and of ``status`` on a running task - so the sentence is
+            written in the present tense: the actions ARE being commanded,
+            nothing that follows WILL mean the task was performed.
+
+    Returns:
+        The notice naming the policy class, or ``None``.
+    """
+    if getattr(policy, "reads_instruction", True):
+        return None
+    name = policy.__name__ if isinstance(policy, type) else type(policy).__name__
+    if pending:
+        return (
+            f"Note: {name} does not read the instruction. Its actions - a test motion on "
+            "every joint - are commanded to the robot whatever the task says; no status or "
+            "completion that follows will mean the task was performed."
+        )
+    return (
+        f"Note: {name} does not read the instruction. Its actions - a test "
+        "motion on every joint - were commanded to the robot whatever the task says; nothing "
+        "above means the task was performed."
+    )
+
+
+def provider_policy_class(provider: str | None) -> type | None:
+    """The class the registry maps policy ``provider`` to, or ``None``.
+
+    Lets :func:`instruction_not_read_notice` answer for a provider that has
+    not been built yet: ``Robot.start_task`` returns "Task started" before the
+    executor thread constructs the policy, so the class - which declares
+    :attr:`Policy.reads_instruction` - is the only thing it can consult.
+    ``None`` when the name is not registered or the class cannot be imported
+    here; the build reports that itself, and a missing notice is the right
+    failure for a lookup that is only ever advisory.
+    """
+    if not provider:
+        return None
+    try:
+        from strands_robots.registry.policies import get_policy_provider
+
+        spec = get_policy_provider(provider)
+        if not spec or not spec.get("module") or not spec.get("class"):
+            return None
+        import importlib
+
+        cls = getattr(importlib.import_module(spec["module"]), spec["class"], None)
+    except Exception:  # noqa: BLE001 - advisory lookup; the build reports its own failure
+        return None
+    return cls if isinstance(cls, type) else None
 
 
 @runtime_checkable

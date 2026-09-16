@@ -74,6 +74,23 @@ from strands_robots.policies._log_safety import sanitize_log_value
 from strands_robots.policies.base import Policy, chunk_count_error
 from strands_robots.utils import name_list_error, require_optional
 
+#: The remedy :meth:`CuroboPolicy._build_motion_gen` hands a caller whose
+#: environment has no ``curobo``. It is a ``system_install=`` remedy, not a pip
+#: line, because neither pip line would supply the module: cuRobo is not
+#: published on PyPI (the ``nvidia-curobo`` package there is an unrelated v0.1
+#: squatter), and the ``[curobo]`` extra is kept empty on purpose so that
+#: ``pip install 'strands-robots[curobo]'`` is a no-op rather than an install of
+#: the squatter - an instruction that reports success and changes nothing is
+#: exactly what ``require_optional`` documents ``system_install`` as replacing.
+CUROBO_SYSTEM_INSTALL_HINT = (
+    "cuRobo is not published on PyPI (the nvidia-curobo package there is an unrelated "
+    "squatter) and the [curobo] extra is empty, so no pip line supplies it.\n"
+    "Install it from the upstream source checkout, then retry:\n"
+    "  git clone https://github.com/NVlabs/curobo.git\n"
+    "  pip install -e ./curobo\n"
+    "cuRobo needs a CUDA-enabled torch; docs/policies/curobo.md has the prerequisites."
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -610,8 +627,11 @@ class CuroboPolicy(Policy):
 
         Lives in its own method so the constructor seam stays clean and
         unit tests can override ``__init__`` paths without touching this
-        path. Importing cuRobo is gated by :func:`require_optional` so
-        the ``[curobo]`` extra is the actionable error.
+        path. Importing cuRobo is gated by :func:`require_optional` with
+        :data:`CUROBO_SYSTEM_INSTALL_HINT` as the remedy - the source
+        checkout, not a pip line: cuRobo is not on PyPI and the
+        ``[curobo]`` extra is empty, so ``pip install
+        'strands-robots[curobo]'`` would exit 0 having changed nothing.
 
         The method name ``_build_motion_gen`` is preserved for parity
         with the legacy 0.7.x test fixtures and external monkeypatches;
@@ -619,12 +639,7 @@ class CuroboPolicy(Policy):
         """
         require_optional(
             "curobo",
-            # cuRobo is NOT on PyPI (the ``nvidia-curobo`` v0.1 package
-            # is an unrelated squatter). Real install is from source:
-            #   git clone https://github.com/NVlabs/curobo.git
-            #   pip install -e ./curobo
-            pip_install="-e git+https://github.com/NVlabs/curobo.git#egg=curobo",
-            extra="curobo",
+            system_install=CUROBO_SYSTEM_INSTALL_HINT,
             purpose="CuroboPolicy motion planning",
         )
         # Import lazily so module load doesn't pay the CUDA-init cost
