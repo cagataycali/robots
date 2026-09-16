@@ -572,6 +572,49 @@ def _criterion_verdict(
         ) from e
 
 
+# The exception classes that mean "the Hub was not reachable", by class name
+# anywhere in the raised type's MRO. Measured against a closed port, a bad host
+# and HF_HUB_OFFLINE=1: httpx.ConnectError (TransportError, NOT a builtin
+# ConnectionError) and huggingface_hub.errors.OfflineModeIsEnabled (which IS
+# one). Names rather than imported classes so the set survives lerobot swapping
+# its HTTP client again, and covers requests' ConnectionError/Timeout too.
+_HUB_UNREACHABLE_ERRORS = frozenset(
+    {"ConnectionError", "ConnectError", "TransportError", "Timeout", "TimeoutException", "OfflineModeIsEnabled"}
+)
+
+# How many datasets a refusal names before the list is noise.
+_DATASETS_SHOWN = 8
+
+
+def _datasets_on_disk_near(checked: Path) -> str | None:
+    """The sentence naming the datasets that ARE on disk near ``checked``.
+
+    A dataset directory is the one holding ``meta/``, so a directory without
+    one is some other directory and is not offered. Which directory is worth
+    listing depends on how the read missed:
+
+    * ``checked`` does not exist - the datasets in the parent it would have
+      been created in, which answers a typo;
+    * ``checked`` exists but is not a dataset - the datasets inside IT, which
+      answers a ``root=`` aimed one level too high.
+
+    Returns ``None`` when there is nothing to offer.
+    """
+    scanned = checked if checked.is_dir() else checked.parent
+    try:
+        if not scanned.is_dir():
+            return None
+        names = sorted(p.name for p in scanned.iterdir() if (p / "meta").is_dir())
+    except OSError:  # an unreadable directory must not replace the refusal
+        return None
+    if not names:
+        return None
+    shown = ", ".join(names[:_DATASETS_SHOWN])
+    if len(names) > _DATASETS_SHOWN:
+        shown += ", ..."
+    return f"Datasets on disk in {scanned}: {shown}."
+
+
 def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     """Decode the PNG bytes emitted by ``SimEngine.render`` into an ndarray.
 
@@ -3735,27 +3778,63 @@ class PolicyRunner:
     def _replay_load_failure(self, repo_id: str, root: str | None, error: BaseException) -> str:
         """The text for a dataset that could not be opened.
 
-        A Hub 404 for an ``owner/name`` id is translated: the caller almost
-        always means a local dataset that lives somewhere other than the
-        default, and the raw message (request ids, authentication advice) names
-        neither the directory that was tried nor the remedy. Everything else is
-        reported as the library said it.
+        ``LeRobotDataset`` resolves a miss on disk into a Hub download, so the
+        two ways a dataset is simply not there both arrive as a library error
+        about the network. Both are translated, because in both the useful fact
+        is the DIRECTORY that was read and the raw message never names it:
+
+        * **no such repository** - the caller means a local dataset, and the
+          404 carries a request id, ``repo_type`` advice and a gated-repo
+          paragraph instead. An explicit ``root=`` is named as the directory
+          it is: passing one and being told about ``repo_type`` names the one
+          input the caller chose nowhere in the reply.
+        * **the Hub could not be reached** - ``[Errno 111] Connection refused``
+          or ``[Errno -2] Name or service not known`` verbatim, which names
+          neither the dataset, the directory, nor the Hub. The library's own
+          text is kept in parentheses here (it names the endpoint, and offline
+          mode names the variable to unset), the 404's is not.
+
+        Either way the datasets that ARE on disk beside the one asked for are
+        listed, which is the answer to the common cause - a typo, or a root
+        the reader forgot. Every other load error (an episode out of range, an
+        unreadable parquet) is reported as the library said it.
         """
         text = f"{error}"
-        looks_like_hub_miss = "Repository Not Found" in text or type(error).__name__ == "RepositoryNotFoundError"
-        if root or not looks_like_hub_miss:
+        hub_miss = "Repository Not Found" in text or type(error).__name__ == "RepositoryNotFoundError"
+        # By the exception's class names, not the message: lerobot's Hub client
+        # moved from requests to httpx, so "Max retries exceeded" is no longer
+        # the wording, and httpx's ConnectError is not a builtin
+        # ConnectionError - while OfflineModeIsEnabled is one.
+        unreachable = not hub_miss and any(c.__name__ in _HUB_UNREACHABLE_ERRORS for c in type(error).__mro__)
+        if not (hub_miss or unreachable):
             return text
         from strands_robots.dataset_recorder import resolve_dataset_dir
 
-        default_dir = resolve_dataset_dir(repo_id, None)
+        checked = resolve_dataset_dir(repo_id, root)
+        if unreachable:
+            parts = [
+                f"No local copy of {repo_id!r} at {checked} and the Hugging Face Hub could not be reached ({text}).",
+                "Pass root='<the directory start_recording was given>' to read a dataset written elsewhere.",
+            ]
+        elif root:
+            parts = [
+                f"No dataset {repo_id!r} in the root= directory {checked} and no Hub repository by that name.",
+                "A dataset directory is the one holding meta/ - pass root='<the directory start_recording "
+                "was given>', not its parent.",
+            ]
+        else:
+            parts = [
+                f"No dataset {repo_id!r} at the local default {checked} and no Hub repository by that name.",
+                "A dataset recorded with root= is read back with the same root= - pass "
+                "root='<the directory start_recording was given>' to replay_episode, or record without "
+                "root= so the default location is used.",
+            ]
+        if (on_disk := _datasets_on_disk_near(checked)) is not None:
+            parts.insert(1, on_disk)
         last_repo, last_root = self._last_recorded()
-        hint = f" This session last recorded {last_repo} to {last_root}." if last_repo and last_root else ""
-        return (
-            f"No dataset {repo_id!r} at the local default {default_dir} and no Hub repository by that "
-            f"name. A dataset recorded with root= is read back with the same root= - pass "
-            f"root='<the directory start_recording was given>' to replay_episode, or record without "
-            f"root= so the default location is used.{hint}"
-        )
+        if last_repo and last_root:
+            parts.append(f"This session last recorded {last_repo} to {last_root}.")
+        return " ".join(parts)
 
     # evaluate(): multi-episode success metrics
 
