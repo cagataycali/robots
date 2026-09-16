@@ -804,6 +804,79 @@ class TestCalibrationGateHoldsOnEveryCall:
         assert robot.configure_calls == 0, "a connect that was refused must not have configured anything"
         assert robot.bus.is_connected is False, "the refusal rolled back the bus the driver had opened"
 
+    def test_a_camera_whose_first_read_fails_is_still_handed_back(self, sandbox: Path) -> None:
+        """The ledger is written by the open, not by the success path.
+
+        Measured before the fix: the camera stayed open, the ``camera:front``
+        entry was never written (the failing ``render`` returned before it),
+        every later ``render`` found the camera open and reported
+        ``opened_camera=False``, and the next connect had nothing to hand back
+        - ``(True, "")`` with ``configure_calls == 0``, the exact state the
+        ledger exists to prevent.
+        """
+
+        class _CameraWhoseFirstReadTimesOut(FakeCamera):
+            def read(self) -> np.ndarray:
+                if self.reads == 0:
+                    self.reads += 1
+                    raise TimeoutError("Timed out waiting for the first frame")
+                return super().read()
+
+        cam = _CameraWhoseFirstReadTimesOut()
+        robot = FakeLeRobot(calibrated=True, cameras={"front": cam})
+        hw = _make_hw(robot)
+
+        failed = _call(hw, action="render", camera_name="front")
+        assert failed["status"] == "error"
+        assert cam.is_connected, "the read failed after the open; the camera is still open"
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert (ok, err) == (True, "")
+        assert robot.configure_calls == 1, "the open camera was on record and handed back, so configure() ran"
+        assert cam.connects == 2, "handed back, then reopened by the driver"
+
+    def test_a_bus_whose_first_read_fails_is_still_handed_back(self) -> None:
+        """Same gap on the bus path: ``ensure_bus_open`` succeeds, ``sync_read`` raises."""
+
+        class _BusWhoseFirstReadGlitches(FakeBus):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                self._glitched = False
+
+            def sync_read(self, register: str, *, normalize: bool = True, num_retry: int = 0) -> dict[str, float]:
+                if not self._glitched:
+                    self._glitched = True
+                    raise OSError("serial read returned 0 bytes")
+                return super().sync_read(register, normalize=normalize, num_retry=num_retry)
+
+        robot = FakeLeRobot(cameras={}, bus=_BusWhoseFirstReadGlitches(calibrated=True))
+        hw = _make_hw(robot)
+
+        failed = _call(hw, action="get_state")
+        assert failed["status"] == "error"
+        assert robot.bus.is_connected, "the read failed after the open; the bus is still open"
+
+        ok, err = asyncio.run(hw._connect_robot())
+
+        assert (ok, err) == (True, "")
+        assert robot.configure_calls == 1, (
+            "on a camera-less arm an unrecorded open bus would have skipped connect() entirely"
+        )
+
+    def test_a_refused_output_path_opens_no_camera(self, sandbox: Path) -> None:
+        """The path is validated before the camera opens: a typo leaves no device behind."""
+        cam = FakeCamera()
+        robot = FakeLeRobot(calibrated=True, cameras={"front": cam})
+        hw = _make_hw(robot)
+
+        refused = _call(hw, action="render", camera_name="front", output_path="/etc/frame.png")
+
+        assert refused["status"] == "error"
+        assert "STRANDS_ROBOTS_RENDER_ALLOW_ABS" in _text(refused)
+        assert cam.connects == 0 and not cam.is_connected, "nothing was opened for a request that was refused"
+        assert hw._observe_ledger() == set()
+
     def test_the_bus_is_handed_back_under_the_lock_an_observe_read_holds(self) -> None:
         """A read in flight finishes before the hand-back closes the port under it."""
         from strands_robots.bus_access import bus_lock

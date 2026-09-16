@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -101,8 +101,15 @@ def _bus(robot: Any) -> Any:
     return bus
 
 
-def ensure_bus_open(robot: Any) -> bool:
+def ensure_bus_open(robot: Any, on_open: Callable[[str], None] | None = None) -> bool:
     """Open the motor bus if it is closed. Returns True when this call opened it.
+
+    ``on_open`` is called with ``"bus"`` the moment the port opens - before any
+    read, so a read that then fails leaves the caller's ledger holding the open
+    bus. Recording only on success left the bus open *and* unrecorded when the
+    first ``sync_read`` raised; the next connect then found nothing to hand
+    back and skipped ``configure()`` (or, on a camera-less arm, ``connect()``
+    itself).
 
     Opens the *bus only*: the robot's own ``connect()`` also runs
     ``configure()``, which writes operating-mode and gain registers to every
@@ -119,6 +126,8 @@ def ensure_bus_open(robot: Any) -> bool:
         return False
     with bus_lock(robot):
         bus.connect()
+    if on_open is not None:
+        on_open("bus")
     logger.info("opened motor bus %s for a read", getattr(bus, "port", "?"))
     return True
 
@@ -170,8 +179,12 @@ def _read_register(bus: Any, register: str, motor: str) -> Any:
         return None
 
 
-def read_joint_state(robot: Any) -> dict[str, Any]:
+def read_joint_state(robot: Any, on_open: Callable[[str], None] | None = None) -> dict[str, Any]:
     """Read every motor's position, torque state and supply voltage. Writes nothing.
+
+    ``on_open`` reaches :func:`ensure_bus_open`: it is told ``"bus"`` when this
+    call opened the port, before the first read, so the port is on record even
+    when the read then raises.
 
     Returns a JSON-ready dict::
 
@@ -196,7 +209,7 @@ def read_joint_state(robot: Any) -> dict[str, Any]:
             so the caller can name the port in its refusal.
     """
     bus = _bus(robot)
-    opened = ensure_bus_open(robot)
+    opened = ensure_bus_open(robot, on_open)
     with bus_lock(robot):
         raw = bus.sync_read(_POSITION_REGISTER, normalize=False)
         calibrated, calibration_error = read_calibration_flag(bus)
@@ -360,6 +373,7 @@ def capture_frame(
     *,
     tool_name: str = "robot",
     sandbox_root: Path | None = None,
+    on_open: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Grab one frame from a configured camera and save it as PNG in the render sandbox.
 
@@ -368,7 +382,13 @@ def capture_frame(
     camera is configured. ``output_path`` defaults to
     ``<sandbox>/<tool>-<camera>-<unix ms>.png``; a path outside the sandbox is
     refused the way the simulation's ``render`` refuses it, naming
-    ``STRANDS_ROBOTS_RENDER_ALLOW_ABS``.
+    ``STRANDS_ROBOTS_RENDER_ALLOW_ABS`` - and refused *before* the camera
+    opens, so a bad path opens nothing.
+
+    ``on_open`` is called with ``"camera:<name>"`` the moment this call opens
+    the camera, before the first read: a read that then fails (OpenCV's
+    first-frame timeout is the usual one) leaves the camera open, and the
+    caller's ledger must already hold it or no connect will ever hand it back.
 
     Returns ``{"camera", "path", "png", "width", "height", "channels", "opened_camera", "read_ms"}``
     - ``png`` is the encoded frame, for the tool's ``image`` content block.
@@ -391,14 +411,8 @@ def capture_frame(
         raise ValueError(f"Camera {camera_name!r} not found. Available: {sorted(map(str, cameras))}")
     camera = cameras[camera_name]
 
-    opened = False
-    if not getattr(camera, "is_connected", False):
-        camera.connect()
-        opened = True
-    t0 = time.monotonic()
-    frame = camera.read()
-    read_ms = (time.monotonic() - t0) * 1000.0
-
+    # The path is checked before the camera opens: a refusal must leave no
+    # device behind it, and this one is reachable by an agent's typo alone.
     root = sandbox_root if sandbox_root is not None else resolve_sandbox_root(_RENDER_ROOT_ENV, "renders")
     if not output_path:
         output_path = f"{tool_name}-{camera_name}-{int(time.time() * 1000)}.png"
@@ -408,6 +422,17 @@ def capture_frame(
         allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
         allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
+
+    opened = False
+    if not getattr(camera, "is_connected", False):
+        camera.connect()
+        opened = True
+        if on_open is not None:
+            on_open(f"camera:{camera_name}")
+    t0 = time.monotonic()
+    frame = camera.read()
+    read_ms = (time.monotonic() - t0) * 1000.0
+
     safe.parent.mkdir(parents=True, exist_ok=True)
     png = _encode_png(frame)
     safe.write_bytes(png)

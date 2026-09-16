@@ -3141,9 +3141,10 @@ class Robot(TeleopMixin, AgentTool):
         """
         try:
             if action in ("get_state", "get_robot_state"):
-                state = hardware_observe.read_joint_state(self.robot)
-                if state["opened_bus"]:
-                    self._observe_ledger().add("bus")
+                # The ledger is written by the open itself, not by this success
+                # path: a read that opens the bus and then raises must still
+                # leave "bus" on record, or no connect will hand it back.
+                state = hardware_observe.read_joint_state(self.robot, on_open=self._observe_ledger().add)
                 state["robot"] = self.tool_name_str
                 state["task_status"] = self._task_state.status.value
                 return {
@@ -3170,9 +3171,8 @@ class Robot(TeleopMixin, AgentTool):
                 None if camera_name is None else str(camera_name),
                 None if output_path is None else str(output_path),
                 tool_name=self.tool_name_str,
+                on_open=self._observe_ledger().add,
             )
-            if frame["opened_camera"]:
-                self._observe_ledger().add(f"camera:{frame['camera']}")
             png = frame.pop("png")
             text = (
                 f"Saved one frame from camera {frame['camera']!r} to {frame['path']} "
