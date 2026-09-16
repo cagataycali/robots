@@ -21,7 +21,15 @@ alone on first use - not the robot's `connect()`, whose `configure()` writes
 operating mode and gains to every servo - and reads under the device's bus lock
 beside a rollout or the mesh probes. An arm with no calibration file is still
 readable: degrees are then the encoder estimate (`2048 ticks = 0°`) and the
-text says so, naming `lerobot-calibrate`. The tool description leads with the
+text says so, naming `lerobot-calibrate`. A reading the arm did not give is
+reported as unread, never as its reassuring opposite: a calibration flag whose
+own read fails - on a lerobot bus that read sweeps every servo for homing
+offsets - is `null` with the reason rather than `false`, so the degrees stay the
+arm's own and the operator is not sent to `lerobot-calibrate` for a serial
+fault; a bus with no notion of calibration is calibrated, by lerobot's contract
+for the property, which is the reading the connect gate takes; and a
+`Torque_Enable` register no motor answered is `null`, not `off`, because "torque
+OFF on all joints (the arm can be moved by hand)" is a claim about a live arm. The tool description leads with the
 observe actions, names the port, and says plainly that `set_joint_positions`
 and `move_to` do not exist on a real robot. Measured on an SO-101:
 `get_state` answered in 43 ms with six joints, torque off, 5.6 V.
