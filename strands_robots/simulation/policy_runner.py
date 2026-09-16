@@ -5055,7 +5055,12 @@ class PolicyRunner:
                 return bool(contact_any(sim))
 
             return _contact_check
-        raise ValueError(f"Unknown success_fn string: {success_fn!r}")
+        raise ValueError(
+            f"Unknown success_fn string: {success_fn!r}. The only named criterion is 'contact' (any "
+            "robot-object contact). For a condition on the scene pass success_when instead - a predicate "
+            "clause in the stop_when DSL, e.g. {'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2} or "
+            "{'predicate': 'base_beyond_x', 'x': 0.5}; or evaluate_benchmark with a registered benchmark."
+        )
 
 
 __all__ = [

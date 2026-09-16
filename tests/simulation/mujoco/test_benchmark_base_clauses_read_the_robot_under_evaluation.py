@@ -83,7 +83,6 @@ def test_naming_the_arm_is_refused_with_the_arm_named_as_the_robot_under_evaluat
 def test_compatibility_check_covers_only_the_bound_robot(two_robot_sim):
     import random
 
-
     spec = get_benchmark("go2_walk_forward")
     two_robot_sim.bind_predicate_robot("go2")
     spec.on_episode_start(two_robot_sim, random.Random(0))  # the arm is a bystander
