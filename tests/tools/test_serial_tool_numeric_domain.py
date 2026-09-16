@@ -277,7 +277,8 @@ class TestTheRequiredFieldCheckStillOwnsAnAbsentRegister:
 
         assert result["status"] == "error"
         assert "motor_id and position required" in _text(result)
-        assert opened[0].closed
+        # Refused before the gate and before the port is opened: nothing to close.
+        assert opened == []
 
     def test_an_absent_motor_id_still_reports_the_whole_missing_pair(self, opened: list[_FakeSerial]) -> None:
         result = _call(action="feetech_velocity", velocity=100)

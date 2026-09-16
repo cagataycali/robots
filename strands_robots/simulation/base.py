@@ -3992,6 +3992,16 @@ class SimEngine(ABC):
         """
         return None
 
+    def _active_dataset_repo_id(self) -> str | None:
+        """Id of the active (or most recent) recording, or ``None``.
+
+        The counterpart of :meth:`_active_dataset_root`: a reader handed only a
+        dataset id needs both halves to tell whether that root is where THIS id
+        was recorded. Backends that record override it; the base has none, so it
+        returns ``None``.
+        """
+        return None
+
     def verify_dataset_episodes(self, expected: int) -> dict[str, Any]:
         """Verify the recorded dataset holds exactly ``expected`` episodes.
 
@@ -4293,10 +4303,12 @@ class SimEngine(ABC):
         another thread (the Device Connect ``stop`` RPC and the mesh fanout).
 
         Args:
-            robot_name: The robot whose rollout to stop. Required: an empty name
-                is refused rather than silently matched against the sole robot,
-                because a stop aimed at the wrong robot reads as a stop that
-                worked.
+            robot_name: The robot whose rollout to stop. An empty name means
+                the only rollout in flight when there is exactly one - the
+                remedy every rollout gate names - and is otherwise refused
+                naming what is running; it is never silently matched against
+                the sole robot, because a stop aimed at the wrong robot reads
+                as a stop that worked (:meth:`_stop_policy_target`).
 
         Returns:
             The agent-tool envelope. On success the ``json`` block reports
@@ -4314,8 +4326,11 @@ class SimEngine(ABC):
             thing a worker that has not reached its first frame overwrites
             (#2833), so it refuses rather than reporting a stop it cannot keep.
         """
-        if not robot_name:
-            return {"status": "error", "content": [{"text": "stop_policy requires 'robot_name'."}]}
+        target, refusal = self._stop_policy_target(robot_name)
+        if target is None:
+            assert refusal is not None
+            return refusal
+        robot_name = target
         if robot_name not in self.list_robots():
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         was_running = self._request_policy_stop(robot_name)
@@ -4342,6 +4357,75 @@ class SimEngine(ABC):
             "status": "success",
             "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
         }
+
+    def _stop_policy_target(self, robot_name: str) -> tuple[str, None] | tuple[None, dict[str, Any]]:
+        """Resolve which robot an empty ``stop_policy`` name means, or refuse.
+
+        Every gate that refuses a mutation during a rollout ends with "Stop it
+        first: action='stop_policy'" - and that remedy, typed as written, was
+        answered ``stop_policy requires 'robot_name'`` (measured on
+        ``Robot("so101", mode="sim")``: start_policy, then set_joint_positions
+        refused, then stop_policy refused, then stop_policy refused again - the
+        tool named a remedy it would not accept). An empty name is still not
+        matched to *the sole robot*: a stop aimed at the wrong robot reads as a
+        stop that worked. It is matched to *the sole rollout*, because when
+        exactly one robot is running a policy there is no wrong robot to aim
+        at, and that is the case every gate's remedy was written for. With
+        several in flight the refusal names them; with none it says so and
+        names the robots, so the next call is a correct one instead of a
+        guess.
+
+        Args:
+            robot_name: The caller's ``robot_name``, possibly empty.
+
+        Returns:
+            ``(name, None)`` with the robot to stop, or ``(None, refusal)`` with
+            the ``status="error"`` envelope to return. A backend whose
+            :meth:`_rollouts_in_flight` reports ``None`` cannot resolve anything
+            and refuses as before.
+        """
+        if robot_name:
+            return robot_name, None
+        in_flight = self._rollouts_in_flight()
+        if in_flight is not None and len(in_flight) == 1:
+            return in_flight[0], None
+        if in_flight:
+            names = ", ".join(f"'{n}'" for n in in_flight)
+            text = f"stop_policy requires 'robot_name': policies are running on {names}. Name the one to stop."
+        elif in_flight is not None:
+            robots = self.list_robots()
+            listed = ", ".join(f"'{n}'" for n in robots) if robots else "none registered"
+            text = f"stop_policy requires 'robot_name'. No policy is running now; robots: {listed}."
+        else:
+            text = "stop_policy requires 'robot_name'."
+        return None, {"status": "error", "content": [{"text": text}]}
+
+    def _stop_policy_remedy(self, robot_names: Sequence[str]) -> str:
+        """The sentence a rollout gate ends with, as a call the tool accepts.
+
+        A gate that refuses a mutation during a rollout has to name the way out,
+        and the way out has to be typeable: the defect
+        :meth:`_stop_policy_target` closes was a remedy the tool would not
+        accept. A bare ``action='stop_policy'`` is that remedy exactly when the
+        empty name resolves, so the choice is made by asking the resolver rather
+        than by re-deriving its rule here - the gate's own population
+        (rollouts this thread is not driving) is not the resolver's (every
+        rollout in flight), and a gate naming one robot while two are in flight
+        would otherwise emit the bare form the resolver then refuses.
+
+        Args:
+            robot_names: The rollouts the gate is refusing on behalf of, named
+                in the remedy when the bare form would not resolve.
+
+        Returns:
+            A remedy sentence whose every clause is a call ``stop_policy``
+            accepts.
+        """
+        target, _ = self._stop_policy_target("")
+        if target is not None:
+            return "Stop it first: action='stop_policy'."
+        spelled = ", then ".join(f"robot_name='{n}'" for n in robot_names)
+        return f"Stop them first: action='stop_policy' with {spelled}."
 
     def _request_policy_stop(self, robot_name: str) -> bool | None:
         """Move ``robot_name``'s rollout claim out of date; report what was in flight.

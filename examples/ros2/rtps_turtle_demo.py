@@ -3,11 +3,15 @@
 
 This is the "act as a robot" demo: a bare cyclonedds participant publishes
 geometry_msgs/Twist on /turtle1/cmd_vel, and a real ROS 2 turtlesim moves. The
-only dependency is the pip-installable cyclonedds wheel - this script runs on
-macOS / Jetson / CI with NO ROS 2 installed in the Python environment.
+only dependency is the cyclonedds binding - this script runs on macOS / Jetson /
+CI with NO ROS 2 installed in the Python environment.
 
 Dependencies:
-  pip install "strands-robots[ros2]"   # cyclonedds, a self-contained wheel
+  pip install "strands-robots[ros2]"   # cyclonedds: a self-contained wheel on
+                                       # macOS / Windows / Linux x86_64. Linux
+                                       # aarch64 (Jetson) has no wheel and builds
+                                       # against a Cyclone DDS C install - see
+                                       # docs/rtps-integration.md#linux-aarch64-jetson
 
 A ROS 2 turtle on the same DDS domain (e.g. host networking):
   docker run -d --name turtle --net host ros:jazzy bash -lc \\
