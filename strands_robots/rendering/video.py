@@ -163,7 +163,9 @@ def encode_clip(
     MP4 output streams frames through ``imageio``'s ffmpeg writer (libx264)
     so the whole clip never has to be materialised twice in memory; ``.gif``
     output uses Pillow's GIF writer (which takes per-frame duration rather
-    than the libx264-only knobs).
+    than the libx264-only knobs) and loops indefinitely, since a clip is an
+    animation and a GIF without the looping extension block plays once and
+    freezes on its last frame.
 
     Args:
         frames: iterable of ``(H, W, 3) uint8`` RGB frames. All frames must
@@ -237,8 +239,12 @@ def encode_clip(
     if out.parent and not out.parent.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
     if out.suffix.lower() == _GIF_SUFFIX:
-        # Pillow's GIF writer takes per-frame duration (ms), not fps.
-        imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps))
+        # Pillow's GIF writer takes per-frame duration (ms), not fps. ``loop=0``
+        # writes the looping extension block: a clip is an animation, and
+        # without the block a GIF plays once and freezes on its last frame,
+        # which is not the artifact any caller of a *clip* encoder asked for
+        # (every animated GIF this repo ships loops).
+        imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps), loop=0)
     else:
         # ``float(quality)`` is load-bearing rather than cosmetic: the ffmpeg
         # writer gates the knob on ``isinstance(quality, (float, int))``, which

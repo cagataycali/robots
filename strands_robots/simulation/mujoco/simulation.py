@@ -90,6 +90,7 @@ from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, discover_ee_frame, 
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
+    registry_entry_key,
     resolve_model,
 )
 from strands_robots.simulation.model_registry import (
@@ -114,7 +115,12 @@ from strands_robots.simulation.mujoco.backend import (
 )
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
-from strands_robots.simulation.mujoco.physics import PhysicsMixin, _coerce_rgba
+from strands_robots.simulation.mujoco.physics import (
+    PhysicsMixin,
+    _coerce_rgba,
+    anchor_relative_scene_path,
+    scene_not_found_error,
+)
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin, render_dir_error, resolve_render_dir
@@ -1273,6 +1279,17 @@ class MuJoCoSimEngine(
         ``add_object`` / ``add_camera`` / ``add_robot`` calls mutate it via
         ``spec.recompile(model, data)`` and preserve the on-disk scene.
 
+        ``scene_path`` is read as given. When nothing is there and the path is
+        relative, the scenes directory
+        (:func:`~strands_robots.simulation.mujoco.physics.scene_root`:
+        ``~/.strands_robots/scenes``, or ``STRANDS_ROBOTS_SCENE_ROOT``) is
+        searched too, because that is where a relative
+        :meth:`~strands_robots.simulation.mujoco.physics.PhysicsMixin.export_xml`
+        destination lands - so ``export_xml {"output_path": "scene.xml"}``
+        followed by ``load_scene {"scene_path": "scene.xml"}`` is one round
+        trip in the spelling an agent actually uses. A refusal names both
+        directories it searched.
+
         Notes:
 
         * ``_backend_state["scene_loaded"] = True`` marks the live spec as one
@@ -1292,7 +1309,19 @@ class MuJoCoSimEngine(
         mj = self._mj
 
         if not os.path.exists(scene_path):
-            return {"status": "error", "content": [{"text": f"Scene file not found: {scene_path}"}]}
+            # A relative source is ALSO looked for in the scenes directory,
+            # because that is where a relative export_xml destination lands:
+            # `export_xml {"output_path": "scene.xml"}` followed by
+            # `load_scene {"scene_path": "scene.xml"}` is the documented round
+            # trip, and anchoring only the writer would have made the natural
+            # spelling of it fail. As given wins, so a path that resolves
+            # against the working directory today keeps resolving there; the
+            # scenes directory is consulted only when nothing is at the
+            # caller's path, which cannot change an answer anything got before.
+            anchored = anchor_relative_scene_path(scene_path)
+            if not os.path.exists(anchored):
+                return {"status": "error", "content": [{"text": scene_not_found_error(scene_path)}]}
+            scene_path = anchored
 
         # Compile the new scene into LOCAL model/data first. A malformed MJCF
         # must NOT destroy the currently-live world: previously self._world was
@@ -2140,6 +2169,19 @@ class MuJoCoSimEngine(
         # report - accusing a caller that passed data_config= correctly, and
         # naming the earlier robot.
         deprecation_hint: str | None = None
+        # The registry entry the robot was built from, when it was built from
+        # one - ``data_config`` as passed, or the instance name when the
+        # deprecated fallback below resolved it. This is what the robot's
+        # ``data_config`` records: the registry metadata keyed on it (the
+        # ``gripper`` block ``set_gripper`` resolves actuators from, the
+        # ``robot_type`` a recording declares, the ``Config:`` line of
+        # ``list_robots_info``) describes the model that was loaded, whichever
+        # argument named it. Left ``None`` on the fallback path,
+        # ``add_robot("so101")`` loaded so101's model and then ``set_gripper``
+        # reported "the registry carries no gripper metadata for this robot" -
+        # for an entry that has it - while ``Robot("so101")`` (which passes
+        # ``data_config``) worked on the same scene.
+        registry_key: str | None = data_config
         resolved_path = urdf_path
         if not resolved_path and data_config:
             resolved_path = resolve_model(data_config)
@@ -2152,6 +2194,7 @@ class MuJoCoSimEngine(
             # deprecated fallback - try registry by instance name.
             resolved_path = resolve_model(name)
             if resolved_path:
+                registry_key = name
                 logger.info(
                     "add_robot: resolved model via instance name '%s'. "
                     "Prefer: add_robot(name='<instance_label>', data_config='%s')",
@@ -2184,6 +2227,20 @@ class MuJoCoSimEngine(
         if not os.path.exists(resolved_path):
             return {"status": "error", "content": [{"text": f"File not found: {resolved_path}"}]}
 
+        # ``resolve_model`` accepts more strings than the registry has keys: a
+        # decorated variant of a key resolves to its model as a documented
+        # friction fix ("so101_arm" loads so101's model). The string that named
+        # the model is therefore not always the key its entry is filed under, so
+        # record the key - otherwise the decorated name loses exactly what the
+        # fallback above lost: ``add_robot("so101_arm")`` loaded so101's model
+        # and ``set_gripper`` then reported "the registry carries no gripper
+        # metadata for this robot" for an entry that has it. A name that names no
+        # entry at all is kept as passed: a URDF registered under a key the robot
+        # registry does not carry still describes its own model better than the
+        # instance label a recording would fall back to.
+        if registry_key:
+            registry_key = registry_entry_key(registry_key) or registry_key
+
         mj = self._mj
 
         robot = SimRobot(
@@ -2195,7 +2252,7 @@ class MuJoCoSimEngine(
             # the latter and normalized the former to plain floats.
             position=[0.0, 0.0, 0.0] if position is None else position,
             orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
-            data_config=data_config,
+            data_config=registry_key,
             namespace=f"{name}/",
         )
 
@@ -2203,7 +2260,7 @@ class MuJoCoSimEngine(
             # Propagate auto-download failure back to the agent instead of
             # silently eating it (previously this dict was discarded and
             # the next MuJoCo load threw a cryptic 'mesh not found').
-            mesh_err = self._ensure_meshes(resolved_path, data_config or name)
+            mesh_err = self._ensure_meshes(resolved_path, registry_key or name)
             if mesh_err is not None:
                 self._world.robots.pop(name, None)
                 return mesh_err

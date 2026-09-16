@@ -252,6 +252,20 @@ _STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
 _STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
 
 
+_STAT_KEY_SEPARATORS = (".", "/", "_", "-")
+
+
+def _is_prefixed_spelling(candidate: str, canonical: str) -> bool:
+    """Whether ``candidate`` is ``canonical`` carried under a dataset prefix.
+
+    ``so100.buffer.action`` is a prefixed spelling of ``action``; ``reaction``
+    is not, because the character preceding the match must be a separator.
+    """
+    if candidate == canonical or not candidate.endswith(canonical):
+        return False
+    return candidate[-len(canonical) - 1] in _STAT_KEY_SEPARATORS
+
+
 class ProcessorBridge:
     """Bridge between strands-robots observation/action format and LeRobot's processor pipeline.
 
@@ -909,6 +923,55 @@ class ProcessorBridge:
                         continue
                     targets.append((step, key, feature, ftype, mode, stat_keys))
         return targets
+
+    def prefixed_stat_key_candidates(self) -> dict[str, list[str]]:
+        """Dataset-prefixed spellings a checkpoint ships for each inert feature.
+
+        :meth:`inert_normalization_features` reports WHICH declared
+        normalizations will silently pass through. It cannot say where the
+        missing stats might come from, and for a pretraining base checkpoint
+        the answer is usually "the checkpoint you already downloaded": its
+        normalizer carries the pretraining datasets' stats under prefixed keys
+        (``so100.buffer.action``) rather than the canonical ``action`` /
+        ``observation.state`` LeRobot looks up. Without those names a caller has
+        to open the checkpoint's ``*_normalizer_processor.safetensors`` by hand
+        to discover that the remedy is already on disk.
+
+        The keys are NOT adopted automatically, because a checkpoint can ship
+        several prefixes describing different distributions and choosing one is
+        a silent guess: ``lerobot/smolvla_base`` carries ``so100.buffer``,
+        ``so100-blue.buffer`` and ``so100-red.buffer``, whose action std for
+        joint 0 is 26.4, 14.1 and 14.3 respectively. Naming them is the most
+        help that can be given without guessing on the caller's behalf.
+
+        A candidate must end with the canonical key AFTER a separator, so
+        ``so100.buffer.action`` is a spelling of ``action`` while ``reaction``
+        is not.
+
+        Returns:
+            One entry per inert canonical lookup key, mapping it to the sorted
+            prefixed spellings present in that step's stats. The list is EMPTY
+            when the checkpoint carries no candidate for that feature, which is
+            itself the useful answer (``observation.state`` typically has
+            none). Empty dict when nothing is inert or lerobot is unavailable.
+        """
+        try:
+            from lerobot.configs.types import FeatureType
+            from lerobot.utils.constants import ACTION
+        except ImportError:
+            return {}
+
+        candidates: dict[str, list[str]] = {}
+        for _step, key, _feature, ftype, _mode, stat_keys in self._declared_normalization_targets():
+            lookup = ACTION if ftype == FeatureType.ACTION else key
+            if lookup in stat_keys:
+                continue
+            found = candidates.setdefault(lookup, [])
+            for stat_key in stat_keys:
+                if _is_prefixed_spelling(stat_key, lookup) and stat_key not in found:
+                    found.append(stat_key)
+            found.sort()
+        return candidates
 
     def mismatched_normalization_widths(self) -> list[str]:
         """Declared normalizations whose supplied stats cannot broadcast onto the feature.
