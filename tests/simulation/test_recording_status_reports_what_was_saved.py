@@ -64,8 +64,12 @@ class _Recorder:
         self.frame_count += self.episode_frame_count
         self.episode_count += 1
         flushed, self.episode_frame_count = self.episode_frame_count, 0
-        return {"status": "success", "episode": self.episode_count, "episode_frames": flushed,
-                "total_frames": self.frame_count}
+        return {
+            "status": "success",
+            "episode": self.episode_count,
+            "episode_frames": flushed,
+            "total_frames": self.frame_count,
+        }
 
     def finalize(self) -> None:
         self.finalized = True
@@ -189,6 +193,24 @@ class TestTheReportedFactsAgreeWithEachOther:
         text = _text(engine.get_recording_status())
         assert "lab/ep" in text and "2 frames" in text
         assert " at None" not in text and " at \n" not in text
+
+
+class TestTheBookkeepingNeverBreaksTheSave:
+    def test_a_recorder_that_cannot_name_its_dataset_still_saves(self) -> None:
+        """The stash runs inside ``save_episode``; it must not be able to fail it.
+
+        Minimal recorders (the fakes several backend suites drive ``save_episode``
+        with, and any recorder predating the id) expose no ``repo_id``. Reading it
+        as an attribute made the SAVE raise for the benefit of a later reader, so
+        it is read defensively and an unnameable dataset is simply not reported.
+        """
+        recorder = _Recorder("lab/ep", "/tmp/x", pending=2)
+        del recorder.repo_id
+        engine = _recording_engine(recorder)
+
+        assert engine.save_episode()["status"] == "success"
+        assert engine._last_saved_dataset() is None
+        assert _text(engine.get_recording_status()).startswith("[recording] 0 steps captured")
 
 
 class TestTheOtherLifecycleStatesAreUntouched:

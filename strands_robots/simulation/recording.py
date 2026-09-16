@@ -1197,7 +1197,7 @@ class DatasetRecordingMixin:
         last = state.get("last_dataset_repo_id")
         return str(last) if last else None
 
-    def _stash_saved_dataset(self, repo_id: str, root: Any, *, frames: int, episodes: int) -> None:
+    def _stash_saved_dataset(self, repo_id: Any, root: Any, *, frames: int, episodes: int) -> None:
         """Record what a save just wrote, for the readers that run after it.
 
         ``save_episode`` and ``stop_recording`` both reset ``state["trajectory"]``
@@ -1210,6 +1210,10 @@ class DatasetRecordingMixin:
         reading the names from there and the counts from here would describe a
         dataset that was never saved.
 
+        A recorder that cannot name its dataset is skipped rather than reported
+        as one with an empty id: this runs inside the save, so an attribute a
+        reader wants must never be what makes the save itself fail.
+
         Args:
             repo_id: Dataset id the frames were written under.
             root: On-disk directory they were written to.
@@ -1217,7 +1221,7 @@ class DatasetRecordingMixin:
             episodes: Episodes the dataset holds.
         """
         state = self._recording_state()
-        if state is None:
+        if state is None or not repo_id:
             return
         state["last_dataset"] = {
             "repo_id": str(repo_id),
@@ -1797,7 +1801,7 @@ class DatasetRecordingMixin:
         # only thing get_recording_status counted, and zeroing it alone made a
         # poll straight after a successful flush read as "nothing recorded".
         self._stash_saved_dataset(
-            recorder.repo_id,
+            getattr(recorder, "repo_id", None),
             getattr(recorder, "root", None),
             frames=getattr(recorder, "frame_count", 0) or 0,
             episodes=getattr(recorder, "episode_count", 0) or 0,
@@ -1943,8 +1947,7 @@ class DatasetRecordingMixin:
                 text += f" in the open episode; saved so far: {saved}"
         elif last:
             text = (
-                f"[idle] Not recording. Last saved: {saved} "
-                f"(replay_episode(repo_id='{last['repo_id']}') reads it back)"
+                f"[idle] Not recording. Last saved: {saved} (replay_episode(repo_id='{last['repo_id']}') reads it back)"
             )
         else:
             text = "[idle] Not recording (nothing saved in this session)"
