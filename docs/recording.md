@@ -59,7 +59,15 @@ sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
 ```
 
 The refusal lands before any frame is written, so nothing is lost - pass either
-rate. It matters beyond the label: that per-frame interval is the control period
+rate. Through the **agent tool** an omitted rate needs no second call: a caller
+who named no `control_frequency` expressed no preference between the two
+defaults, and only one of them can be honored, so the rollout runs at the open
+recording's `fps` and its reply says so (`control_frequency=30 followed the
+active recording's 30 fps (no rate was passed); pass control_frequency= to
+choose.`). The mirror holds for the other ordering - `start_recording` with no
+`fps` while one rollout is in flight opens at that rollout's whole rate. A rate
+the caller *passed* is a decision, not a default, and a mismatch is still
+refused; the Python defaults above are unchanged. It matters beyond the label: that per-frame interval is the control period
 a policy trains on, and `replay_episode` derives its per-frame physics budget
 from the dataset rate, so a mislabelled episode also replays at the wrong speed.
 To record at a lower rate than you control at, run the rollout at that rate -
