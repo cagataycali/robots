@@ -26,7 +26,7 @@ _HAS_MUJOCO = importlib.util.find_spec("mujoco") is not None
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from strands_robots.dashboard import settings, sim_session  # noqa: E402
+from strands_robots.dashboard import routes_sim, settings, sim_session  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
 
 
@@ -605,6 +605,30 @@ class TestReadyMeansItRenders:
         r = client.post("/api/sim", json={"robot": "so101"})
         assert r.status_code == 500 and "no OpenGL context" in r.json()["error"]
         assert client.get("/api/sim").json()["sessions"] == []
+
+    def test_a_first_render_that_never_returns_is_dropped_not_served_as_running(self, client, monkeypatch):
+        """The state published before the first frame is ``running``. A renderer that
+        never comes back would be handed to the operator under that name, streaming
+        nothing and holding a session slot, so the create route drops it instead."""
+        hold = threading.Event()
+
+        class ParksInTheFirstRender(FakeEngine):
+            def get_frame(self, *a, **kw):
+                hold.wait(30)
+                return super().get_frame(*a, **kw)
+
+        monkeypatch.setattr(routes_sim, "_READY_TIMEOUT", 0.2)
+        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: ParksInTheFirstRender(robot))
+        try:
+            r = client.post("/api/sim", json={"robot": "so101"})
+            assert r.status_code == 504, r.text
+            assert "did not render a first frame" in r.json()["error"]
+            assert client.get("/api/sim").json()["sessions"] == [], "the session that cannot stream is kept"
+        finally:
+            hold.set()
+        # The slot it held is free again: a working engine still starts afterwards.
+        monkeypatch.setattr(sim_session, "_default_factory", lambda robot: FakeEngine(robot))
+        assert _create(client)["state"] == "running"
 
 
 # -- the real engine -----------------------------------------------------------
