@@ -83,6 +83,7 @@ from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import (
     SimEngine,
+    _rollout_error_note,
     close_match_hint,
     own_keyword_names,
     reject_misspelled_kwargs,
@@ -7741,7 +7742,9 @@ class MuJoCoSimEngine(
             if exited:
                 self._prune_done_futures()
         if not was_running:
-            msg = f"Was not running on '{robot_name}'"
+            # The verdict is right and the silence was not: a rollout that died
+            # on its first inference reads exactly like one that completed.
+            msg = f"Was not running on '{robot_name}'{_rollout_error_note(self._rollouts_ended_in_error(), robot_name)}"
         elif exited is False:
             msg = (
                 f"Stop requested on '{robot_name}', but its policy worker is still live after "

@@ -700,6 +700,58 @@ _BOOLEAN_STATE_REASON = (
 )
 
 
+def _rollout_error_report(failed: Mapping[str, str], exclude: Sequence[str] = ()) -> str:
+    """The asynchronous rollouts that died, as a block, for a reader of the population.
+
+    :meth:`SimEngine._rollouts_ended_in_error` exists because ``start_policy``
+    answers "Policy started" before the worker has built its policy or taken a
+    step, so a rollout that fails after that "fails where no caller is looking".
+    Only :meth:`SimEngine.list_policies_running` read it, and that is not the
+    verb an agent reaches for: every rollout gate names ``stop_policy`` as the
+    way out, so a caller whose policy died on its first inference typed that -
+    and both of its "nothing is running" answers were silent about the failure,
+    which is the same reading as a rollout that ran to completion. Rendered here
+    once so the two readers cannot drift.
+
+    A function of the failures rather than a method on the engine, because
+    ``list_policies_running`` reads exactly two seams - the population and this
+    map - and is called unbound against backends that implement only those
+    (``tests/simulation/test_every_backend_names_the_rollouts_it_is_running.py``).
+
+    Args:
+        failed: ``robot_name -> reason``, from
+            :meth:`SimEngine._rollouts_ended_in_error`.
+        exclude: Robots whose failure the caller reports another way -
+            ``list_policies_running`` omits one that is running again, since the
+            entry is the PREVIOUS rollout's.
+
+    Returns:
+        The block, leading newline included, or ``""`` when nothing to report.
+    """
+    lines = "".join(f"\n  - {n}: {reason}" for n, reason in failed.items() if n not in exclude)
+    return f"\nRollouts started with start_policy that ended in error ({len(failed)}):{lines}" if lines else ""
+
+
+def _rollout_error_note(failed: Mapping[str, str], robot_name: str) -> str:
+    """Why ``robot_name``'s last asynchronous rollout ended, for a stop that found nothing.
+
+    A stop on a robot with nothing in flight is ``status="success"`` with
+    ``was_running=False`` - correct, and idempotent by design - but "Was not
+    running" is also what a caller sees when the rollout they started died one
+    frame in. The verdict does not change here; the silence does.
+
+    Args:
+        failed: ``robot_name -> reason``, as above.
+        robot_name: The robot the stop named.
+
+    Returns:
+        The sentence to append, or ``""`` when that robot's last rollout did not
+        fail.
+    """
+    reason = failed.get(robot_name)
+    return f". Its last start_policy rollout ended in error: {reason}" if reason else ""
+
+
 def _bundled_benchmark_roster() -> str:
     """Name every bundled benchmark and the robot it defaults to.
 
@@ -4355,7 +4407,11 @@ class SimEngine(ABC):
                     }
                 ],
             }
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        msg = (
+            f"Stopped on '{robot_name}'"
+            if was_running
+            else f"Was not running on '{robot_name}'{_rollout_error_note(self._rollouts_ended_in_error(), robot_name)}"
+        )
         return {
             "status": "success",
             "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
@@ -4401,7 +4457,10 @@ class SimEngine(ABC):
             text = f"stop_policy requires 'robot_name'. No policy is running now; robots: {listed}."
         else:
             text = "stop_policy requires 'robot_name'."
-        return None, {"status": "error", "content": [{"text": text}]}
+        return None, {
+            "status": "error",
+            "content": [{"text": text + _rollout_error_report(self._rollouts_ended_in_error(), in_flight or ())}],
+        }
 
     def _stop_policy_remedy(self, robot_names: Sequence[str]) -> str:
         """The sentence a rollout gate ends with, as a call the tool accepts.
@@ -4567,13 +4626,7 @@ class SimEngine(ABC):
                     }
                 ],
             }
-        failed = self._rollouts_ended_in_error()
-        failed_lines = "".join(f"\n  - {n}: {reason}" for n, reason in failed.items() if n not in names)
-        failed_text = (
-            f"\nRollouts started with start_policy that ended in error ({len(failed)}):{failed_lines}"
-            if failed_lines
-            else ""
-        )
+        failed_text = _rollout_error_report(self._rollouts_ended_in_error(), names)
         if not names:
             return {"status": "success", "content": [{"text": f"No policies running.{failed_text}"}]}
         robot_lines = "\n".join(f"  - {n}" for n in names)
