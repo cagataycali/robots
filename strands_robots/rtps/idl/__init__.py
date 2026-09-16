@@ -53,7 +53,9 @@ _INSTALL_HINT = (
     "cyclonedds is required for the pure-RTPS ROS 2 backend. Install the extra:\n"
     "  pip install 'strands-robots[ros2]'\n"
     "Unlike use_ros this needs NO sourced ROS 2 distro - cyclonedds is a "
-    "self-contained pip wheel."
+    "self-contained pip wheel on macOS, Windows and Linux x86_64. On Linux aarch64 "
+    "(Jetson) there is no wheel: install Cyclone DDS C first and set CYCLONEDDS_HOME, "
+    "see docs/rtps-integration.md#linux-aarch64-jetson."
 )
 
 

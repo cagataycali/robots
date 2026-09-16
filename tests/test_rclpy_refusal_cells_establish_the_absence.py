@@ -27,8 +27,21 @@ None`` and dropping ``require_optional``'s memo - and restores both, so it holds
 wherever it runs. This grader reports a cell that expects the refusal without it.
 
 The rule is derived from the tree rather than listed: the surfaces are the
-classes whose own source calls ``require_optional("rclpy", ...)``, so a new
-rclpy-probing bridge is covered the day it lands.
+classes and the functions whose own source calls ``require_optional("rclpy",
+...)``, so a new rclpy-probing bridge or guard is covered the day it lands.
+
+Both shapes are needed, because a cell reaches the probe two ways. Constructing
+a bridge is one. Calling the function that carries the probe is the other, and
+it is the cheaper one to write: ``Robot._check_ros2_bridge_deps`` raises the
+refusal a ``Robot(..., ros2_bridge=True)`` would, with no lerobot install and no
+device, so a cell grading that message calls it directly. Covering only the
+classes left that shape unguarded, and a cell took it: it read the host with
+``importlib.util.find_spec("rclpy")`` and skipped when the module was there,
+which is the "assume the absence" this file exists to forbid wearing a guard.
+Measured, that cell skipped on a host with Jazzy sourced and failed in the full
+suite on a host without it -- ``tests/policies/moveit2/test_zmq_sidecar.py``
+leaves its fake ``rclpy`` in ``require_optional``'s memo, so the probe answered
+from there and raised nothing. Neither run graded the message.
 """
 
 from __future__ import annotations
@@ -93,6 +106,30 @@ def _rclpy_probing_classes() -> set[str]:
     return probing
 
 
+def _rclpy_probing_functions() -> set[str]:
+    """Function and method names whose own body calls ``require_optional("rclpy")``.
+
+    A cell that calls one of these reaches the probe without constructing
+    anything, so it carries the same obligation as a cell that builds a bridge.
+
+    ``__init__`` is deliberately left to :func:`_rclpy_probing_classes`, which
+    resolves it to the class it belongs to. Admitted here as a bare name it would
+    match every cell that constructs any object at all, and report cells that go
+    nowhere near rclpy.
+    """
+    return {
+        node.name
+        for path in sorted(_PACKAGE.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name != "__init__" and _probes_rclpy(node)
+    }
+
+
+def _surfaces() -> set[str]:
+    """Every name a cell can reach the rclpy probe through."""
+    return _rclpy_probing_classes() | _rclpy_probing_functions()
+
+
 def _expects_an_import_error(item: ast.withitem) -> bool:
     """True when this ``with`` item is ``pytest.raises(ImportError, ...)``."""
     call = item.context_expr
@@ -114,24 +151,32 @@ def _offending_cells(surfaces: set[str]) -> list[str]:
             # A patched probe names its target as a string: monkeypatch.setattr(
             # mod, "require_optional", double). That is establishing it too.
             names |= {n.value for n in ast.walk(func) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-            constructs = names & surfaces
+            reaches = names & surfaces
             expects = any(
                 _expects_an_import_error(item) for w in ast.walk(func) if isinstance(w, ast.With) for item in w.items
             )
-            if constructs and expects and not (names & set(_ESTABLISHES)):
+            if reaches and expects and not (names & set(_ESTABLISHES)):
                 rel = path.relative_to(_REPO_ROOT)
-                offenders.append(f"{rel}::{func.name} constructs {sorted(constructs)} expecting ImportError")
+                offenders.append(f"{rel}::{func.name} reaches {sorted(reaches)} expecting ImportError")
     return offenders
 
 
 def test_the_probing_surfaces_are_discovered() -> None:
-    """Non-vacuity: the derivation finds the bridges that really probe rclpy."""
-    surfaces = _rclpy_probing_classes()
+    """Non-vacuity: the derivation finds both shapes that really probe rclpy."""
+    surfaces = _surfaces()
 
     assert {"RosTelemetryBridge", "HardwareRosBridge"} <= surfaces, surfaces
+    assert "_check_ros2_bridge_deps" in surfaces, (
+        "a guard that probes rclpy from a method is reachable without constructing "
+        f"anything, so it is a surface too: {sorted(surfaces)}"
+    )
+    assert "__init__" not in surfaces, (
+        "as a bare name __init__ matches every cell that constructs anything; the "
+        "class rule resolves it to the class instead"
+    )
 
 
 def test_no_cell_assumes_rclpy_is_absent() -> None:
-    offenders = _offending_cells(_rclpy_probing_classes())
+    offenders = _offending_cells(_surfaces())
 
     assert offenders == [], "these cells expect an rclpy refusal the host may not give:\n  " + "\n  ".join(offenders)

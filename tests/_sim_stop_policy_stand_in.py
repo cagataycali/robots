@@ -47,7 +47,8 @@ def stop_policy_stand_in(world: Any) -> Callable[..., dict[str, Any]]:
         msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
         return {
             "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+            # No Future to join here, so ``exited`` is ``None`` as on a blocking rollout.
+            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running, "exited": None}}],
         }
 
     return stop_policy

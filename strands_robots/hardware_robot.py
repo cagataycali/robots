@@ -58,6 +58,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import read_observation, write_action
+from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.tools._command_gate import gate_motion
@@ -95,14 +96,20 @@ COMMAND_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 # The shared hint names the step that supplies rclpy; this adds the alternative
 # only a Robot can take, because ``ros2_transport`` is the caller's choice: the
 # pure-RTPS bridge publishes the same topics (both transports share the wire
-# contract in ``RosTelemetryBase``) over cyclonedds, which is a pip wheel, so it
-# is the one route here the ``[ros2]`` extra really does complete.
+# contract in ``RosTelemetryBase``) over cyclonedds, a pip wheel on macOS,
+# Windows and Linux x86_64.  No cyclonedds release publishes a Linux aarch64
+# wheel, so there the extra builds the sdist against a Cyclone DDS C install and
+# this alternative carries a condition: a caller already blocked on rclpy must be
+# told that, not sent into a second failing install.
 _RCLPY_TRANSPORT_INSTALL_HINT = (
     f"{ROS2_SYSTEM_INSTALL_HINT}\n"
     "Or select the pure-RTPS transport, which publishes the same topics and "
     "needs no sourced distro:\n"
     "  pip install 'strands-robots[ros2]'\n"
-    "  Robot(..., ros2_bridge=True, ros2_transport='rtps')"
+    "  Robot(..., ros2_bridge=True, ros2_transport='rtps')\n"
+    "On Linux aarch64 (Jetson) that extra has no wheel: install Cyclone DDS C "
+    "first and set CYCLONEDDS_HOME, see "
+    "docs/rtps-integration.md#linux-aarch64-jetson."
 )
 
 
@@ -633,6 +640,10 @@ class RobotTaskState:
     step_count: int = 0
     error_message: str = ""
     task_future: Future | None = None
+    #: The policy object the loop drove, set once it is built or handed in, so
+    #: the task envelope can describe it (see ``Policy.reads_instruction``).
+    #: Cleared with the rest of the state when a new task is claimed.
+    policy: Any = None
 
 
 class Robot(TeleopMixin, AgentTool):
@@ -1915,6 +1926,7 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = 0.0
             self._task_state.step_count = 0
             self._task_state.error_message = ""
+            self._task_state.policy = None
 
             # Connect to robot. Remember whether THIS call did the connecting:
             # lerobot's ``connect()`` ends in ``configure()``, whose
@@ -1960,6 +1972,7 @@ class Robot(TeleopMixin, AgentTool):
                     self._task_state.error_message = " ".join(p for p in (str(e), released) if p)
                     logger.error(f"Task execution failed: {e}")
                     return
+            self._task_state.policy = policy_instance
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
@@ -2673,8 +2686,6 @@ class Robot(TeleopMixin, AgentTool):
         **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Drive the rollout on its own event loop and report the outcome."""
-        # Import here to avoid conflicts
-        import asyncio
 
         # Run task without creating new event loop - let it run in thread
         async def task_runner() -> None:
@@ -2719,12 +2730,18 @@ class Robot(TeleopMixin, AgentTool):
             # No event loop running - safe to create one.
             asyncio.run(task_runner())
 
-        # Return final status
-        policy_desc = (
-            f"{type(policy_object).__name__} (pre-built object)"
-            if policy_object is not None
-            else f"{policy_provider} on {policy_host}:{policy_port}"
-        )
+        # Return final status. A provider that built in process has no
+        # server; "on localhost:None" described one anyway.
+        if policy_object is not None:
+            policy_desc = f"{type(policy_object).__name__} (pre-built object)"
+        elif policy_port is None:
+            policy_desc = f"{policy_provider} (built in process, no server)"
+        else:
+            policy_desc = f"{policy_provider} on {policy_host}:{policy_port}"
+        # The policy the loop drove, for the instruction notice: the pre-built
+        # object when given, else the one ``_get_policy`` built for the task.
+        driven = policy_object if policy_object is not None else self._task_state.policy
+        instruction_notice = instruction_not_read_notice(driven)
         return {
             "status": "success" if self._task_state.status == TaskStatus.COMPLETED else "error",
             "content": [
@@ -2739,6 +2756,7 @@ class Robot(TeleopMixin, AgentTool):
                         if self._task_state.error_message
                         else ""
                     )
+                    + (f"\n{instruction_notice}" if instruction_notice else "")
                 }
             ],
         }
@@ -2834,17 +2852,27 @@ class Robot(TeleopMixin, AgentTool):
             self._release_task()
             raise
 
+        # The policy is built on the executor thread after this returns, so
+        # the class the registry maps the provider to is what can be asked
+        # whether the instruction just echoed will be read at all.
+        start_notice = self._pending_instruction_notice(policy_provider)
         return {
             "status": "success",
             "content": [
                 {
                     "text": f"Task started: '{instruction}'\n"
                     f"Robot: {self.tool_name_str}\n"
-                    f"Use action='status' to check progress\n"
-                    f"Use action='stop' to interrupt"
+                    + (f"{start_notice}\n" if start_notice else "")
+                    + "Use action='status' to check progress\n"
+                    "Use action='stop' to interrupt"
                 }
             ],
         }
+
+    @staticmethod
+    def _pending_instruction_notice(policy_provider: str | None) -> str | None:
+        """The instruction-not-read notice for a provider that has not been built yet."""
+        return instruction_not_read_notice(provider_policy_class(policy_provider), pending=True)
 
     def run_policy(
         self,
@@ -3038,9 +3066,19 @@ class Robot(TeleopMixin, AgentTool):
         every idle arm.
 
         Every fact here is three-state for the same reason: ``True``/``False``
-        is a reading, ``None`` is "this was not readable". A port is not
-        always a device path - lerobot's network drivers carry a TCP port
-        (``Reachy2RobotConfig.port`` is ``50065``, reached at its
+        is a reading, ``None`` is "this was not readable" - including
+        ``is_connected``, which is a probe and not a stored flag. Every shipped
+        lerobot arm folds its cameras into it (``self.bus.is_connected and
+        all(cam.is_connected for cam in self.cameras.values())``, 8 drivers in
+        lerobot 0.6.2), so the camera whose probe raises - the one this method
+        already tolerates per-camera below - arrives through that aggregate
+        first. Read unguarded it took the whole probe down with it: the port, a
+        filesystem read that cannot raise, was discarded too, and
+        :meth:`get_status` answered ``is_connected: False`` for an arm that was
+        connected and driving.
+
+        A port is not always a device path - lerobot's network drivers carry a
+        TCP port (``Reachy2RobotConfig.port`` is ``50065``, reached at its
         ``ip_address``), and there is nothing on this host to stat for one, so
         ``port_present`` stays ``None`` and must not be reported as either
         answer.
@@ -3050,13 +3088,18 @@ class Robot(TeleopMixin, AgentTool):
             (``True``/``False`` from the filesystem for a path port; ``None``
             when the port is not a path, so presence was never read),
             ``address`` (the host a network port is reached at, ``None`` when
-            the config names none), ``is_connected``, ``is_calibrated``
+            the config names none), ``is_connected`` (``None`` when the
+            driver's probe raised, so it was not read), ``is_calibrated``
             (``None`` until connected), ``cameras`` (the configured names) and
             ``cameras_connected`` (per live camera, best-effort - a camera
             whose probe raises is omitted).
         """
         robot = self.robot
-        is_connected = bool(getattr(robot, "is_connected", False))
+        try:
+            is_connected: bool | None = bool(getattr(robot, "is_connected", False))
+        except Exception as e:  # noqa: BLE001 - an unreadable flag is None, not a probe that fails
+            logger.debug("%s could not read is_connected: %s", self.tool_name_str, e)
+            is_connected = None
         config = getattr(robot, "config", None)
         port = getattr(config, "port", None)
         port_present: bool | None = None
@@ -3105,13 +3148,23 @@ class Robot(TeleopMixin, AgentTool):
 
         Returns:
             Newline-terminated lines: the connection, the port and the
-            cameras. The port line reports what was read - present, absent
-            (with the remedy), or, for a network port, that presence on this
-            host was never a fact to read.
+            cameras. Each reports what was read - and an unreadable fact says
+            so rather than borrowing the negative answer: a connection that
+            could not be probed is not "not connected", and a camera missing
+            from ``cameras_connected`` is not "not connected" either. The port
+            line reports present, absent (with the remedy), or, for a network
+            port, that presence on this host was never a fact to read.
         """
         if facts["is_connected"]:
             calibrated = "calibrated" if facts["is_calibrated"] else "NOT calibrated"
             device = f"Device: connected on {facts['port']} ({calibrated})"
+        elif facts["is_connected"] is None:
+            device = (
+                "Device: whether the bus is open could not be read - the driver's is_connected "
+                "probe raised, so neither answer would be a reading. A lerobot arm reads it as the "
+                "bus AND every camera, so one camera that cannot answer lands here; the cameras "
+                "line names which one."
+            )
         else:
             device = "Device: not connected (the bus is opened by the first task)"
         lines = [device]
@@ -3137,7 +3190,8 @@ class Robot(TeleopMixin, AgentTool):
         if facts["cameras"]:
             states = facts["cameras_connected"]
             named = ", ".join(
-                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else n for n in facts["cameras"]
+                f"{n} ({'connected' if states[n] else 'not connected'})" if n in states else f"{n} (could not be read)"
+                for n in facts["cameras"]
             )
             lines.append(f"Cameras: {named}")
         else:
@@ -3178,6 +3232,18 @@ class Robot(TeleopMixin, AgentTool):
 
         if self._task_state.error_message:
             status_text += f"{self._task_message_label}: {self._task_state.error_message}\n"
+
+        # Same sentence the ``execute`` envelope carries, in the present tense
+        # while the task runs: a RUNNING / 18 steps report on a policy that
+        # never reads the instruction it is filed under otherwise says the task
+        # is being performed. Above the device lines, with the task state it
+        # qualifies - and so on the path that cannot read the device too.
+        if self._task_state.status not in (TaskStatus.IDLE, TaskStatus.CONNECTING):
+            notice = instruction_not_read_notice(
+                self._task_state.policy, pending=self._task_state.status == TaskStatus.RUNNING
+            )
+            if notice:
+                status_text += f"{notice}\n"
 
         try:
             facts = self._device_facts()
@@ -3253,6 +3319,11 @@ class Robot(TeleopMixin, AgentTool):
                     "text": f"Task stopped{stage}: '{self._task_state.instruction}'\n"
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps completed: {self._task_state.step_count}"
+                    + (
+                        f"\n{stop_notice}"
+                        if (stop_notice := instruction_not_read_notice(self._task_state.policy))
+                        else ""
+                    )
                 }
             ],
         }
@@ -3723,7 +3794,10 @@ class Robot(TeleopMixin, AgentTool):
         ``is_connected`` probe raises is omitted from ``cameras_connected``
         rather than failing the whole probe, so a name present in ``cameras``
         and absent from ``cameras_connected`` is one whose state could not be
-        read. A device exposing no live camera objects reports an empty map.
+        read. That same raise also reaches the arm's aggregate ``is_connected``,
+        which reports ``None`` for it rather than degrading this probe to its
+        error shape - so the attribution survives the failure it exists to
+        attribute. A device exposing no live camera objects reports an empty map.
 
         Returns:
             Status dict of measured facts. An unexpected failure anywhere in

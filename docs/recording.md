@@ -261,6 +261,31 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
 
+A resume says so, and names what is already on disk, so the reply that opens the
+session tells you the episodes you are about to record will join others:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=30)
+# -> "Recording to LeRobotDataset: user/my_dataset
+#     Resuming the existing dataset (1 episode(s), 19 frames); this session's
+#     episodes are appended. Pass overwrite=True to record from scratch instead.
+#     ..."
+```
+
+`stop_recording` then measures **that session** rather than the dataset. A
+resumed session that captured no frames is refused, naming the dataset it left
+unchanged - the counters a resumed recorder carries are the dataset's totals, so
+reading them alone reported the previous sessions' episodes as one just saved:
+
+```python
+sim.stop_recording()   # resumed, nothing captured
+# -> error: "This session captured no frames: the resumed dataset user/my_dataset
+#            (19 frames, 1 episode(s)) is unchanged and no episode was saved. ..."
+
+sim.stop_recording()   # resumed, one episode captured
+# -> "user/my_dataset -- 37 frames, 2 episode(s) (+18 frames, +1 episode(s) this session)"
+```
+
 Because `overwrite=True` is the one posture that deletes a dataset without
 asking, it is applied as the last step before the recorder is built: every
 refusal `start_recording` can make - the fps and camera domains, the boolean
@@ -753,6 +778,7 @@ for four unrelated reasons that need four different instructions - so the
 | lerobot is installed, but a package its dataset stack needs (`datasets`, `pandas`, `pyarrow`, `av`, `torchcodec`) is not | `pip install 'lerobot[dataset]'` - installing lerobot alone does not pull those in |
 | lerobot is installed but does not provide that module (an out-of-range or from-source lerobot) | `pip install 'strands-robots[lerobot]'`, which pins the supported range |
 | the import failed with nothing missing (a binary conflict between installed packages) | No install fixes it; reconcile the conflicting packages |
+| `torchcodec is installed but cannot load in this process; decoding video with pyav instead` (one warning line) | Nothing is broken - recording and read-back use pyav. To use torchcodec, follow the remedy the line names (`export DYLD_FALLBACK_LIBRARY_PATH=...` when Homebrew ffmpeg is installed but invisible to a notebook/REPL, else install ffmpeg or the torchcodec matching your torch); `strands-robots doctor` has the full diagnosis |
 
 ### Schema column names must be distinct
 
