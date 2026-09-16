@@ -2211,6 +2211,23 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
+        # The mirror of add_object's rule: a robot labelled like an existing
+        # object shares a name with a body every by-name reader resolves to the
+        # object first, so "state of 'cube'" would keep answering for the box
+        # after an arm called 'cube' joined the world.
+        if name in self._world.objects:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Robot name '{name}' is already an object in this world; by-name reads "
+                            f"(get_body_state, attach_bodies, add_camera) would keep resolving to that object. "
+                            f"Pick another name, or omit name= to auto-number."
+                        )
+                    }
+                ],
+            }
 
         # A model source the caller SUPPLIED but left empty is not one they
         # omitted. The resolution below reads both by truthiness, so `""` was
@@ -4315,6 +4332,30 @@ class MuJoCoSimEngine(
 
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+
+        # A robot's label is not one of its body names (those are
+        # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
+        # repeated-name check does not see the collision an object named after
+        # a robot creates - but every by-name reader does. Measured: with robot
+        # ``so101`` in the world, ``get_body_state(body_name="so101")`` answered
+        # "not found. Did you mean: so101/base, ..." until
+        # ``add_object(name="so101")`` succeeded, after which the same call
+        # answered with the box's pose, and ``add_camera(parent_body="so101")``
+        # or ``attach_bodies(parent="so101", ...)`` would have taken the box for
+        # the arm. Refuse before anything is registered under the label.
+        if name in self._world.robots:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_object: '{name}' is the name of a robot in this world, and an object under "
+                            f"that name would answer get_body_state / attach_bodies / add_camera calls meant "
+                            f"for the robot (its bodies are '{name}/<body>'; see list_bodies). Pick another name."
+                        )
+                    }
+                ],
+            }
 
         # ``is_static`` selects a posture, so it is checked rather than read by
         # truthiness. The resolution below tests it by IDENTITY and every later
