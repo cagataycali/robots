@@ -18,6 +18,7 @@ in-process provider as running ``on localhost:None``.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
@@ -61,12 +62,14 @@ class TestTheContract:
 
 
 @pytest.fixture
-def hw() -> HwRobot:
+def hw() -> Iterator[HwRobot]:
     from strands_robots import Robot
 
     robot = Robot("so101", mode="real", port=os.devnull)
-    yield robot  # type: ignore[misc]
-    robot.cleanup()
+    try:
+        yield robot
+    finally:
+        robot.cleanup()
 
 
 def _completed(hw: HwRobot, policy) -> None:
