@@ -585,6 +585,12 @@ _HUB_UNREACHABLE_ERRORS = frozenset(
 # How many datasets a refusal names before the list is noise.
 _DATASETS_SHOWN = 8
 
+# The one spelling of the remedy every replay refusal ends with. Named once so
+# the three branches cannot drift, and so no branch has to break the sentence
+# across two adjacent literals - a shape a reader cannot tell from a dropped
+# comma in the list these are joined from.
+_REPLAY_ROOT_REMEDY = "root='<the directory start_recording was given>'"
+
 
 def _datasets_on_disk_near(checked: Path) -> str | None:
     """The sentence naming the datasets that ARE on disk near ``checked``.
@@ -3814,20 +3820,18 @@ class PolicyRunner:
         if unreachable:
             parts = [
                 f"No local copy of {repo_id!r} at {checked} and the Hugging Face Hub could not be reached ({text}).",
-                "Pass root='<the directory start_recording was given>' to read a dataset written elsewhere.",
+                f"Pass {_REPLAY_ROOT_REMEDY} to read a dataset written elsewhere.",
             ]
         elif root:
             parts = [
                 f"No dataset {repo_id!r} in the root= directory {checked} and no Hub repository by that name.",
-                "A dataset directory is the one holding meta/ - pass root='<the directory start_recording "
-                "was given>', not its parent.",
+                f"A dataset directory is the one holding meta/ - pass {_REPLAY_ROOT_REMEDY}, not its parent.",
             ]
         else:
             parts = [
                 f"No dataset {repo_id!r} at the local default {checked} and no Hub repository by that name.",
-                "A dataset recorded with root= is read back with the same root= - pass "
-                "root='<the directory start_recording was given>' to replay_episode, or record without "
-                "root= so the default location is used.",
+                f"A dataset recorded with root= is read back with the same root= - pass {_REPLAY_ROOT_REMEDY} "
+                + "to replay_episode, or record without root= so the default location is used.",
             ]
         if (on_disk := _datasets_on_disk_near(checked)) is not None:
             parts.insert(1, on_disk)
