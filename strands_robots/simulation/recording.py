@@ -1425,8 +1425,9 @@ class DatasetRecordingMixin:
                 "set_joint_positions(hold=True) + step is a scripted demonstration "
                 "(a step call covering less sim time than one frame period captures "
                 "nothing, and its reply says so). To record a dataset: "
-                "start_recording -> run_policy (once per episode) or step through "
-                "the motion -> stop_recording."
+                "start_recording -> run_policy(n_episodes=N), or run_policy then reset "
+                "per episode (reset closes the open episode), or step through the "
+                "motion -> stop_recording."
             )
             return {"status": "error", "content": [{"text": resumed_note + recipe}]}
 
@@ -1730,7 +1731,7 @@ class DatasetRecordingMixin:
                     {
                         "text": (
                             "save_episode: not recording. Call start_recording first, "
-                            "then run_policy (once per episode) -> save_episode -> stop_recording."
+                            "then run_policy -> save_episode per episode -> stop_recording."
                         )
                     }
                 ],
@@ -1987,7 +1988,26 @@ class DatasetRecordingMixin:
             payload["repo_id"] = self._active_dataset_repo_id()
             payload["root"] = self._active_dataset_root()
             into = f" into {payload['repo_id']} at {payload['root']}" if payload["repo_id"] and payload["root"] else ""
-            text = f"[recording] {steps} steps captured{into}"
+            # `steps` mirrors the OPEN episode only - it empties at every flush,
+            # so read alone it said "0 steps captured" right after
+            # run_policy(n_episodes=3) had saved 45 frames. The dataset's own
+            # counts stand beside it.
+            recorder = self._active_recorder()
+            saved_episodes = int(getattr(recorder, "episode_count", 0) or 0)
+            saved_frames = max(
+                int(getattr(recorder, "frame_count", 0) or 0) - int(getattr(recorder, "episode_frame_count", 0) or 0),
+                0,
+            )
+            payload["open_episode_index"] = saved_episodes
+            payload["episodes_saved"] = saved_episodes
+            payload["frames_saved"] = saved_frames
+            text = (
+                f"[recording] {steps} steps buffered in the open episode "
+                f"(episode_index {saved_episodes}){into}; {saved_episodes} episode(s) / "
+                f"{saved_frames} frames saved so far. reset closes the open episode as its own; "
+                "run_policy(n_episodes=N) records N distinct; stop_recording saves the open "
+                "episode and closes the dataset."
+            )
         elif last is not None:
             text = (
                 f"[idle] Not recording. Last saved: {last['repo_id']} - {last['frame_count']} frames, "
