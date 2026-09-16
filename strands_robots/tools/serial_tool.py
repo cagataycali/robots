@@ -63,8 +63,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import serial
-import serial.tools.list_ports
 from strands import tool
 from strands.types.tools import ToolContext
 
@@ -83,7 +81,16 @@ from strands_robots.utils import (
     non_negative_count_error,
     positive_count_error,
     refusal_str,
+    require_optional,
 )
+
+# pyserial is what the tool talks to the bus through, and no extra of this
+# project declares it on its own: it arrives only inside ``lerobot[feetech]``.
+# Bound here, at import, so ``from strands_robots import serial_tool`` on an
+# install without it is refused with the install line rather than the
+# interpreter's ``No module named 'serial'`` (AGENTS.md convention 7).
+serial: Any = require_optional("serial", pip_install="pyserial", purpose="the Feetech serial bus tool (serial_tool)")
+require_optional("serial.tools.list_ports", pip_install="pyserial", purpose="the Feetech serial bus tool (serial_tool)")
 
 # Bit index carrying the direction in the two STS/SMS registers this module
 # writes. ``Goal_Position`` (0x2A) and ``Goal_Velocity`` (0x2E) are both
