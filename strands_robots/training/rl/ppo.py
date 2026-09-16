@@ -275,7 +275,7 @@ class PpoTrainer(BaseRLAlgo):
 
     def setup(self, spec: RLTrainSpec) -> None:
         """Build env, actor-critic, optimizer, normalizers, and rollout storage."""
-        require_optional("torch", purpose="PPO RL training (strands_robots.training.rl.ppo)")
+        require_optional("torch", extra="rl", purpose="PPO RL training (strands_robots.training.rl.ppo)")
         import torch
 
         from strands_robots.training.rl.normalization import EmpiricalNormalization

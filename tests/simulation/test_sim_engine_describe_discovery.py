@@ -11,6 +11,7 @@ it from the discovery surface rather than the API carrying a second name.
 """
 
 import ast
+import importlib.util
 import inspect
 import re
 import textwrap
@@ -19,6 +20,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+#: Presence of MuJoCo read as a spec rather than imported: only the live-sim
+#: class below needs it, and the rest of this module grades ``describe()``
+#: strings by AST and inspect alone.
+_HAS_MUJOCO = importlib.util.find_spec("mujoco") is not None
 
 
 def _advertised_param_names(sig_str: str) -> list[str]:
@@ -440,10 +446,7 @@ class TestDescribeABC:
         _assert_advertised_params_are_real(_make_minimal_engine())
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
-    reason="MuJoCo not available",
-)
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="MuJoCo not installed")
 class TestDescribeMuJoCo:
     """Tests for MuJoCoSimEngine.describe() with a live sim world."""
 
