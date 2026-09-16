@@ -138,11 +138,27 @@ async function saveSettings(ev) {
 
 /* ---- sim ---- */
 const sockets = new Map();
+/* The lockout as the server last reported it. Only lockoutLine() writes it, and
+   only from a server answer - a failed request is not an e-stop, so it is shown
+   as a message and the line is re-read from /api/safety rather than painted. */
+let lockout = { state: "unknown", reason: "not read yet" };
 
 function lockoutLine(l) {
+  lockout = l;
   const el = $("#lockout");
   el.className = `lockout ${l.state}`;
   el.textContent = l.state === "locked" ? `e-stop engaged · ${l.by || "dashboard"} · ${l.reason}` : l.state === "unknown" ? `lockout unknown · ${l.reason}` : `clear · ${l.reason}`;
+  // The red button's label and the action a click takes are both read from
+  // this state, so they cannot disagree: a page loaded under an engaged e-stop
+  // reads RESUME and resumes, and a button that reads E-STOP stops.
+  $("#estop").textContent = l.state === "locked" ? "RESUME" : "E-STOP";
+}
+
+function simMessage(text) { $("#sim-msg").textContent = text; }
+
+async function simFailed(e) {
+  simMessage(e.message);
+  try { lockoutLine((await api("/api/safety")).lockout); } catch (again) { simMessage(`${e.message} · ${again.message}`); }
 }
 
 async function loadSim() {
@@ -187,7 +203,7 @@ function mountSession(s) {
   el.append(head, view, joints, foot);
   $("#sessions").appendChild(el);
   el.querySelector('[data-act="stop"]').onclick = async () => { await api(`/api/sim/${s.id}`, { method: "DELETE" }); loadSim(); };
-  el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); } catch (e) { lockoutLine({ state: "locked", reason: e.message }); } };
+  el.querySelector('[data-act="reset"]').onclick = async () => { try { await api(`/api/sim/${s.id}/reset`, { method: "POST" }); simMessage(""); } catch (e) { await simFailed(e); } };
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/telemetry/${s.id}`);
   sockets.set(s.id, ws);
   const vals = el.querySelectorAll(".joint .val"), bars = el.querySelectorAll(".joint .bar i");
@@ -205,13 +221,13 @@ function mountSession(s) {
 
 $("#sim-new").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  try { await api("/api/sim", { method: "POST", body: JSON.stringify({ robot: $("#sim-robot").value }) }); await loadSim(); }
-  catch (e) { lockoutLine({ state: "locked", reason: e.message }); }
+  try { await api("/api/sim", { method: "POST", body: JSON.stringify({ robot: $("#sim-robot").value }) }); simMessage(""); await loadSim(); }
+  catch (e) { await simFailed(e); }
 });
 $("#estop").addEventListener("click", async () => {
-  const l = $("#lockout").className.includes("locked");
-  const r = await api(l ? "/api/safety/resume" : "/api/safety/estop", { method: "POST" });
-  lockoutLine(r.lockout); $("#estop").textContent = r.lockout.state === "locked" ? "RESUME" : "E-STOP";
+  const action = lockout.state === "locked" ? "resume" : "estop";
+  try { lockoutLine((await api(`/api/safety/${action}`, { method: "POST" })).lockout); simMessage(""); }
+  catch (e) { await simFailed(e); }
 });
 
 /* ---- ceremonies ---- */
