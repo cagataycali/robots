@@ -291,6 +291,30 @@ class BenchmarkProtocol(ABC):
         return False
 
 
+def spec_instruction(spec: Any) -> str:
+    """The benchmark's own task language, or ``""`` when it declares none.
+
+    One reader for the fallback #187 established: the eval loop
+    language-conditions the policy on ``instruction or spec.instruction``, and
+    ``evaluate_benchmark`` labels the frames it records with the same string, so
+    a recorded dataset's ``task`` column names the task the policy was actually
+    given instead of the caller's empty argument. A spec that predates the
+    property, or whose property raises, reports no language rather than failing
+    the evaluation.
+
+    Args:
+        spec: A :class:`BenchmarkProtocol` (or anything shaped like one).
+
+    Returns:
+        The declared instruction, or ``""``.
+    """
+    try:
+        return str(spec.instruction or "")
+    except Exception as e:  # noqa: BLE001 - back-compat for specs without the property
+        logger.debug("spec.instruction lookup raised %s; defaulting to empty", e)
+        return ""
+
+
 class BenchmarkCompatibilityError(ValueError):
     """Raised when a benchmark's robot compatibility check fails.
 

@@ -5165,7 +5165,7 @@ class SimEngine(ABC):
             Only this route reports it: :meth:`eval_policy` takes a ``success_fn``
             and has no failure criterion to sample.
         """
-        from strands_robots.simulation.benchmark import get_benchmark
+        from strands_robots.simulation.benchmark import get_benchmark, spec_instruction
 
         # Same rule as eval_policy: an uncallable hook is refused before any
         # other work, not absorbed frame by frame inside the shared eval loop.
@@ -5287,8 +5287,15 @@ class SimEngine(ABC):
             policy = policy_object
         policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
+        # Frames are labelled with the instruction the POLICY is conditioned on:
+        # the caller's, else the benchmark's own (#187 - LIBERO and friends ship
+        # the task language with the spec, and the eval loop falls back to it).
+        # Labelling them with the caller's empty argument instead wrote a dataset
+        # whose task column read "untitled" for a rollout the policy was told to
+        # "pick up the red cube" - the one column a language-conditioned policy
+        # trains on.
         on_frame, recording_claim = self._evaluation_recording(
-            resolved_robot, instruction, on_frame, "evaluate_benchmark"
+            resolved_robot, instruction or spec_instruction(spec), on_frame, "evaluate_benchmark"
         )
 
         result = PolicyRunner(self).evaluate(

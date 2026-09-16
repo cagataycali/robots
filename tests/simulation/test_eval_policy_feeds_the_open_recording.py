@@ -99,6 +99,9 @@ def test_no_recording_open_means_no_hook_and_no_note(sim):
     assert r["status"] == "success"
     assert "Recorded" not in _text(r)
     assert "recording" not in _json(r)
+    # And no hook at all, rather than one that no-ops per frame: an evaluation
+    # that is not recording takes none of the recorder's per-frame lock traffic.
+    assert sim._evaluation_recording("so101", "", None, "eval_policy") == (None, None)
 
 
 def test_a_caller_supplied_on_frame_is_kept_and_an_unfed_recorder_is_named(sim, tmp_path):
@@ -158,3 +161,78 @@ def test_run_policy_still_records_on_its_own(sim, tmp_path):
 
 def test_the_recording_hook_factory_is_none_for_an_unknown_robot(sim):
     assert sim._make_recording_on_frame("ghost", "") is None
+
+
+def _recorded_tasks(repo_id: str, root) -> set[str]:
+    """Every task string the finalized dataset's own frames carry.
+
+    Read through ``LeRobotDataset`` rather than the meta table: this is the
+    ``task`` column a training run conditions on.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    dataset = LeRobotDataset(repo_id, root=str(root))
+    return {str(dataset[i]["task"]) for i in range(len(dataset))}
+
+
+class _LabelledBenchmark(_TenStepBenchmark):
+    """Ships its own task language, the way LIBERO and Meta-World do."""
+
+    max_steps = 4
+
+    @property
+    def instruction(self) -> str:
+        return "pick up the red cube and lift it"
+
+
+@pytest.mark.parametrize(
+    ("caller_instruction", "session_task", "expected"),
+    [
+        # The benchmark's own language, which is what the policy is conditioned
+        # on (#187) and so what the frames are of. Labelled with the caller's
+        # empty argument they read "untitled" - add_frame's last resort.
+        (None, None, "pick up the red cube and lift it"),
+        # An explicit instruction still wins, for the policy and for the label.
+        ("wave at the camera", None, "wave at the camera"),
+        # Same precedence run_policy(instruction=...) has over the session's
+        # task: the frames name the task the rollout was actually given.
+        (None, "some session label", "pick up the red cube and lift it"),
+    ],
+)
+def test_a_recorded_benchmark_evaluation_labels_its_frames_with_the_task_the_policy_got(
+    sim, tmp_path, caller_instruction, session_task, expected
+):
+    register_benchmark("eval_records_label", _LabelledBenchmark())
+    root = tmp_path / "ds"
+    try:
+        kwargs = {"task": session_task} if session_task is not None else {}
+        assert sim.start_recording(repo_id="lab/label", root=str(root), fps=30, **kwargs)["status"] == "success"
+        r = sim.evaluate_benchmark(
+            "eval_records_label",
+            robot_name="so101",
+            policy_provider="mock",
+            n_episodes=1,
+            control_frequency=30.0,
+            **({"instruction": caller_instruction} if caller_instruction is not None else {}),
+        )
+        assert r["status"] == "success", _text(r)
+        assert "Recorded 1 episode(s), 4 frames" in _text(r)
+        assert sim.stop_recording()["status"] == "success"
+        assert _recorded_tasks("lab/label", root) == {expected}
+    finally:
+        unregister_benchmark("eval_records_label")
+
+
+def test_the_benchmarks_task_language_is_read_from_one_place(sim):
+    """``spec_instruction`` is that place - the eval loop and the recording label share it."""
+    from strands_robots.simulation.benchmark import spec_instruction
+
+    class _Raises(_TenStepBenchmark):
+        @property
+        def instruction(self) -> str:
+            raise RuntimeError("a spec that cannot answer does not fail the evaluation")
+
+    assert spec_instruction(_LabelledBenchmark()) == "pick up the red cube and lift it"
+    assert spec_instruction(_TenStepBenchmark()) == ""  # the protocol default
+    assert spec_instruction(_Raises()) == ""
+    assert spec_instruction(object()) == ""  # no such property at all

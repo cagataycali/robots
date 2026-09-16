@@ -1076,6 +1076,14 @@ if payload["recording_save_error"]:      # None on every healthy evaluation
     ...   # status is "error"; episodes_completed is the episode it stopped at
 ```
 
+Those frames are labelled with the instruction the *policy* was given: the
+caller's `instruction=`, else - on the `evaluate_benchmark` route - the
+benchmark's own `spec.instruction`, which is the language a LIBERO/Meta-World
+spec ships with the task and what the eval loop conditions the policy on (#187).
+That is the precedence `run_policy(instruction=...)` already has over the
+session's `start_recording(task=...)`, so a recorded evaluation's `task` column
+names the task the rollout was actually driven with rather than `"untitled"`.
+
 `episodes_completed` and `success_rate` then cover only the episodes that ran, so
 an aggregate is never reported over episodes whose frames reached no dataset. The
 `run_policy` tool reports the same way: `n_episodes_ok` counts the rollouts that

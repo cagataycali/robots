@@ -1314,11 +1314,12 @@ class TestSpecInstructionFallback:
         """A spec whose ``instruction`` property *raises* (a custom
         ``BenchmarkProtocol`` built against an older API, or one that computes
         its instruction lazily and hits an error) must not crash the eval.
-        ``_evaluate_with_spec`` swallows the lookup error, degrades to the
-        empty instruction, and still emits the empty-instruction warning so
-        the operator knows a language-conditioned policy is running blind. Pin
-        so a future refactor does not drop the defensive fallback and turn a
-        broken property into an uncaught crash mid-benchmark."""
+        The shared ``spec_instruction`` reader swallows the lookup error,
+        degrades to the empty instruction, and the eval still emits the
+        empty-instruction warning so the operator knows a language-conditioned
+        policy is running blind. Pin so a future refactor does not drop the
+        defensive fallback and turn a broken property into an uncaught crash
+        mid-benchmark."""
         import logging as _logging
 
         captured: list[str] = []
@@ -1338,7 +1339,11 @@ class TestSpecInstructionFallback:
         sim = FakeSim()
         policy = _LangPolicy()
         policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
-        with caplog.at_level(_logging.DEBUG, logger="strands_robots.simulation.policy_runner"):
+        # Package-wide: the eval loop and ``evaluate_benchmark``'s recording
+        # label read the spec's language through one helper
+        # (``benchmark.spec_instruction``), so the DEBUG line comes from
+        # whichever module owns that reader.
+        with caplog.at_level(_logging.DEBUG, logger="strands_robots.simulation"):
             result = PolicyRunner(sim).evaluate(
                 "fake_robot", policy, spec=_SpecWithRaisingInstruction(), n_episodes=1, seed=42
             )

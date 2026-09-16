@@ -4531,7 +4531,7 @@ class PolicyRunner:
         """
         # Lazy import to avoid circular reference (benchmark module imports
         # `SimEngine` from base which imports this module under TYPE_CHECKING).
-        from strands_robots.simulation.benchmark import BenchmarkCompatibilityError
+        from strands_robots.simulation.benchmark import BenchmarkCompatibilityError, spec_instruction
 
         # The per-episode horizon is read off the benchmark, so it is the one
         # rollout count with no parameter of its own to validate: every other
@@ -4598,12 +4598,8 @@ class PolicyRunner:
         # the per-task language with the benchmark, so the spec is the
         # right source of truth. User-provided ``instruction`` still
         # wins when non-empty, preserving back-compat.
-        spec_instruction = ""
-        try:
-            spec_instruction = spec.instruction or ""
-        except Exception as e:  # noqa: BLE001 - back-compat for specs without the property
-            logger.debug("spec.instruction lookup raised %s; defaulting to empty", e)
-        effective_instruction = instruction or spec_instruction
+        spec_language = spec_instruction(spec)
+        effective_instruction = instruction or spec_language
         if not effective_instruction:
             logger.warning(
                 "evaluate_benchmark: instruction is empty (user passed %r, spec.instruction=%r). "
@@ -4611,7 +4607,7 @@ class PolicyRunner:
                 "string and may produce off-task actions. Pass instruction=... explicitly or "
                 "override BenchmarkProtocol.instruction on your spec.",
                 instruction,
-                spec_instruction,
+                spec_language,
             )
 
         # Optional per-episode rollout video (evaluate_benchmark video=). One
