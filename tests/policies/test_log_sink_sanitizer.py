@@ -347,6 +347,7 @@ def test_a_state_key_mismatch_names_the_observation_keys_on_one_record(
         strict_keys=False,
         generic_state_keys_used=False,
         _state_key_mismatch_warned=False,
+        _embodiment_config_failed=False,
     )
     observation = {FORGED: 0.0, "gripper": 1.0}
     with caplog.at_level(logging.WARNING):
@@ -365,6 +366,7 @@ def test_missing_state_keys_name_the_absent_keys_on_one_record(caplog: pytest.Lo
         strict_keys=False,
         missing_state_keys_used=False,
         _state_missing_keys_warned=False,
+        _embodiment_config_failed=False,
     )
     with caplog.at_level(logging.WARNING):
         LerobotLocalPolicy._collect_state_values(policy, {"gripper": 1.0}, configured)

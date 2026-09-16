@@ -1,8 +1,11 @@
 """Rendering mixin - render, render_depth, get_contacts, observation helpers."""
 
+import atexit
 import io
 import logging
 import os
+import threading
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -34,9 +37,61 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
-from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error
+from strands_robots.utils import FREE_CAMERA_TOKENS, camera_schema_key, name_list_error, refusal_repr
 
 logger = logging.getLogger(__name__)
+
+# Every ``mujoco.Renderer`` this module builds, weakly, with the ident of the
+# thread that built it. Read by :func:`_close_renderers_at_exit`.
+_LIVE_RENDERERS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+_LIVE_RENDERERS_LOCK = threading.Lock()
+_EXIT_HOOK_REGISTERED = False
+
+
+def _close_renderers_at_exit() -> None:
+    """Close the renderers the exiting thread built, while their display is alive.
+
+    ``mujoco.Renderer`` frees its GL context in ``__del__``. Under EGL the
+    display those contexts belong to is torn down by an ``atexit`` hook mujoco
+    registers when it first opens the display, so a renderer that is still
+    alive at interpreter exit - the main-thread cache of a script that never
+    called ``cleanup()``, which is every ``Robot(...).run_policy(video=...)``
+    script - is finalised *after* ``eglTerminate`` and its ``free()`` raises
+    ``EGLError: EGL_NOT_INITIALIZED`` from ``eglMakeCurrent``; the context
+    object's own ``__del__`` then raises the same, so a successful rollout ends
+    in some thirty lines of ignored traceback.
+
+    ``atexit`` runs hooks last-registered first, and this one is registered by
+    :meth:`RenderingMixin._get_renderer` right after the first renderer is
+    built - by which point mujoco's own hook exists - so it runs before the
+    display goes away. Only renderers built on the thread that is running the
+    hooks are closed: a renderer's GL context is bound to its creating thread,
+    and closing one cross-thread SIGSEGVs in ``cgl.free()`` on macOS. Renderers
+    on worker threads need no help - a worker's thread-local cache is dropped
+    when the thread ends, which happens before the hooks run.
+    """
+    ident = threading.get_ident()
+    with _LIVE_RENDERERS_LOCK:
+        mine = [renderer for renderer, owner in list(_LIVE_RENDERERS.items()) if owner == ident]
+    for renderer in mine:
+        try:
+            renderer.close()
+        except Exception:  # noqa: BLE001 - exit path; a driver that refuses to free is not our error
+            logger.debug("renderer close at exit failed", exc_info=True)
+
+
+def _track_renderer(renderer: Any) -> None:
+    """Record ``renderer`` for :func:`_close_renderers_at_exit`, registering the hook once."""
+    global _EXIT_HOOK_REGISTERED
+    with _LIVE_RENDERERS_LOCK:
+        try:
+            _LIVE_RENDERERS[renderer] = threading.get_ident()
+        except TypeError:  # pragma: no cover - a renderer that cannot be weakly referenced (test stub)
+            return
+        if not _EXIT_HOOK_REGISTERED:
+            atexit.register(_close_renderers_at_exit)
+            _EXIT_HOOK_REGISTERED = True
+
 
 # render(output_path=...) is an LLM-callable tool: the path is attacker-influenced.
 # Confine writes to a sandbox root, reject shell metacharacters / traversal /
@@ -128,7 +183,41 @@ _RENDER_ALLOW_ABS_ENV = "STRANDS_ROBOTS_RENDER_ALLOW_ABS"
 _CAMS_REC_JOIN_TIMEOUT_S = 5.0
 
 
-def _validate_render_output_path(output_path: str) -> Path:
+def render_dir_error(value: Any) -> str | None:
+    """Return why ``value`` cannot be a Simulation's render sandbox root, else ``None``.
+
+    The constructor's ``render_dir`` is set by the developer, not the model, so
+    the only things refused are the ones that cannot name a directory at all:
+    a non-path type (``True``, ``0``, a list) and an empty or blank string. A
+    directory that does not exist yet is fine - the first ``render`` creates it,
+    the same way the default sandbox is created on first use.
+
+    The refused value is rendered through
+    :func:`~strands_robots.utils.refusal_repr`, like every other guard in the
+    package: a third-party type's ``__repr__`` may raise anything at all, and
+    the message describing an unusable argument must not be the thing that
+    fails to build.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, os.PathLike)):
+        return (
+            f"render_dir must be a directory path (str or PathLike), got {type(value).__name__} {refusal_repr(value)}"
+        )
+    if not os.fspath(value).strip():
+        return "render_dir must name a directory, got an empty path"
+    return None
+
+
+def resolve_render_dir(value: str | os.PathLike[str]) -> Path:
+    """Resolve a constructor ``render_dir`` the way the default sandbox root is resolved.
+
+    ``~`` expanded, ``..`` normalized, symlinks followed - so confinement
+    compares true on-disk locations, matching
+    :func:`strands_robots.simulation.safe_output.resolve_sandbox_root`.
+    """
+    return Path(os.fspath(value)).expanduser().resolve(strict=False)
+
+
+def _validate_render_output_path(output_path: str, sandbox_root: Path | None = None) -> Path:
     """Validate an LLM-supplied render path, confined to the render sandbox.
 
     Thin render-specific binding over
@@ -137,26 +226,34 @@ def _validate_render_output_path(output_path: str) -> Path:
     opts in. That variable's name is passed down as well as read, so a
     confinement refusal quotes the spelling the caller must set.
 
+    Args:
+        output_path: The model-supplied destination.
+        sandbox_root: The Simulation's own sandbox (its ``render_dir``), or
+            ``None`` for the process default (``STRANDS_ROBOTS_RENDER_ROOT`` /
+            ``~/.strands_robots/renders``).
+
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
     """
     return validate_output_path(
         output_path,
-        sandbox_root=_render_sandbox_root(),
+        sandbox_root=sandbox_root if sandbox_root is not None else _render_sandbox_root(),
         allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
         allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
 
-def _save_render_png(output_path: str, png_bytes: bytes) -> str:
+def _save_render_png(output_path: str, png_bytes: bytes, sandbox_root: Path | None = None) -> str:
     """Validate ``output_path``, enforce the size cap, and atomically persist ``png_bytes``.
 
-    Returns the resolved saved path as a string.
+    Returns the resolved saved path as a string. ``sandbox_root`` is the
+    Simulation's own render sandbox when its constructor set one, else ``None``
+    for the process default.
 
     Raises:
         ValueError: On an unsafe path or an oversized payload.
     """
-    safe = _validate_render_output_path(output_path)
+    safe = _validate_render_output_path(output_path, sandbox_root)
     max_bytes = _max_render_bytes()
     if len(png_bytes) > max_bytes:
         raise ValueError(f"png is {len(png_bytes)} bytes, exceeds limit {max_bytes}")
@@ -375,7 +472,11 @@ class RenderingMixin:
                 except Exception:
                     pass
                 del renderers[oldest_key]
-            renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
+            renderer = mj.Renderer(self._world._model, height=height, width=width)
+            # Registered after the build: mujoco's EGL display hook exists by
+            # now, so the close hook this registers runs before it (LIFO).
+            _track_renderer(renderer)
+            renderers[key] = renderer
         return renderers[key]
 
     def _get_viz_option(self) -> Any:
@@ -1184,8 +1285,9 @@ class RenderingMixin:
         for independent verification instead of only receiving the bytes inline.
 
         ``output_path`` is treated as untrusted (LLM-callable tool): writes are
-        confined to the render sandbox (``STRANDS_ROBOTS_RENDER_ROOT``, default
-        ``~/.strands_robots/renders``); paths with shell metacharacters,
+        confined to the render sandbox - this Simulation's ``render_dir`` when
+        its constructor set one, else ``STRANDS_ROBOTS_RENDER_ROOT``, default
+        ``~/.strands_robots/renders``; paths with shell metacharacters,
         backslash separators, ``..`` escapes, or a symlinked target, and PNGs
         larger than ``STRANDS_ROBOTS_RENDER_MAX_BYTES`` (default 50 MB) are
         rejected with ``status=error``. A bare filename (``"frame.png"``) is
@@ -1292,7 +1394,7 @@ class RenderingMixin:
                 # output_path is LLM-supplied: validate against traversal /
                 # symlink / oversize and write atomically (see _save_render_png).
                 try:
-                    saved_path = _save_render_png(output_path, png_bytes)
+                    saved_path = _save_render_png(output_path, png_bytes, getattr(self, "render_dir", None))
                 except ValueError as e:
                     return {"status": "error", "content": [{"text": f"render: {e}"}]}
 

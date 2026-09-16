@@ -997,6 +997,27 @@ def test_fragment_problems_is_empty_for_a_valid_fragment(repo: Path) -> None:
     assert check.fragment_problems(("changelog.d/2163-valid.md",), head, repo=repo) == ()
 
 
+def test_a_placeholder_numbered_fragment_is_refused_on_the_pull_request(repo: Path) -> None:
+    """The job named for the convention must refuse the placeholder name.
+
+    A ``0000-`` fragment is valid in every other respect, so while the rule lived
+    only in ``tests/test_changelog_fragments.py`` this job reported SUCCESS and
+    the branch learned about the rename from the required suite twenty minutes
+    later - and a branch that merged in between put an untraceable entry on the
+    log. The verdict is the assembler's, so asking for the rename here costs no
+    second copy of the rule.
+    """
+    _branch(repo)
+    _write(repo, "changelog.d/0000-a-placeholder.md", _VALID_FRAGMENT)
+    head = _commit(repo, "add a placeholder-numbered fragment")
+
+    problems = check.fragment_problems(("changelog.d/0000-a-placeholder.md",), head, repo=repo)
+
+    assert [path for path, _ in problems] == ["changelog.d/0000-a-placeholder.md"]
+    assert "placeholder" in problems[0][1], problems
+    assert _run(repo) == 1, "the job must exit non-zero on a fragment the assembler would refuse"
+
+
 def test_fragment_problems_names_the_path_it_was_given(repo: Path) -> None:
     """The path in the tuple is the one the annotation needs, not the basename."""
     _branch(repo)

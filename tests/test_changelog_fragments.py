@@ -298,14 +298,42 @@ def test_check_mode_exits_non_zero_on_an_invalid_fragment(workspace: tuple[Path,
     assert code == 1
 
 
+def test_check_mode_refuses_a_placeholder_number_and_says_what_to_rename(
+    workspace: tuple[Path, Path], capsys: pytest.CaptureFixture
+) -> None:
+    """``--check`` is the command the README hands a contributor before review.
+
+    While the rule lived only in this suite, that command answered "changelog
+    fragments OK" for a placeholder-named fragment, so the branch that wrote one
+    was told locally that it was fine and the failure arrived from the required
+    suite instead - the shape of #2163, one convention with two verdicts.
+    """
+    fragment_dir, changelog = workspace
+    body = "### Fixed: a real change under a placeholder name\n\nBody.\n"
+    _fragment(fragment_dir, "0000-a-placeholder.md", body)
+    _fragment(fragment_dir, "9999-the-other-placeholder.md", body)
+    _fragment(fragment_dir, "3703-a-real-change.md", body)
+
+    code = assemble.main(["--check", "--fragment-dir", str(fragment_dir), "--changelog", str(changelog)])
+
+    assert code == 1, "the documented local check must refuse what the required suite refuses"
+    message = capsys.readouterr().err
+    for placeholder in ("0000-a-placeholder.md", "9999-the-other-placeholder.md"):
+        assert placeholder in message, f"the refusal must name each file to rename: {message!r}"
+    assert "rename" in message, f"the refusal must say what to do: {message!r}"
+    assert "3703-a-real-change.md" not in message, f"a real number must not be refused: {message!r}"
+
+
 # --- fragment numbers name the change that landed them --------------------------
 
-#: Fragment numbers at or above this are treated as pre-PR placeholders and
-#: refused. The repository's PR/issue counter is a single monotonic sequence
-#: (highest so far: the 2900s), so this floor leaves several years of headroom
-#: while still catching the ``999x`` names a branch reaches for before a PR
-#: number exists.
-_PLACEHOLDER_FLOOR = 9000
+#: The rule has one owner, in the assembler beside the name regex it qualifies,
+#: so this suite, ``--check``/``--apply`` and the per-pull-request convention job
+#: (which imports ``validate_fragment``) cannot disagree about what a placeholder
+#: is. Restating it here is what let a placeholder pass both of those while this
+#: suite refused it.
+_PLACEHOLDER_FLOOR = assemble.PLACEHOLDER_FLOOR
+_PLACEHOLDER_ZERO = assemble.PLACEHOLDER_ZERO
+_is_placeholder_number = assemble.is_placeholder_number
 
 
 def _real_fragment_numbers() -> list[tuple[int, str]]:
@@ -334,12 +362,47 @@ def test_no_fragment_uses_a_reserved_placeholder_number() -> None:
     entry back to the change that made it, so a placeholder makes an entry
     untraceable. And because assembly orders by *descending* number, the
     placeholder sorts above every real entry - see the companion cell below.
+
+    The floor alone was not enough. ``0000-`` is the other placeholder shape,
+    and ten ``0000-`` fragments from ten merged PRs (#3526, #3529, #3534, #3537,
+    #3690, #3692, #3694, #3697, #3701, #3703) reached main under the old
+    ``>= 9000`` rule, which never looked at zero. Zero sorts *below* every real
+    entry instead of above it, so the same untraceable pointer lands at the
+    bottom of the section rather than the top.
     """
-    offenders = [name for number, name in _real_fragment_numbers() if number >= _PLACEHOLDER_FLOOR]
+    offenders = [name for number, name in _real_fragment_numbers() if _is_placeholder_number(number)]
     assert not offenders, (
-        f"fragment(s) named with a reserved placeholder number (>= {_PLACEHOLDER_FLOOR}): "
+        f"fragment(s) named with a reserved placeholder number ({_PLACEHOLDER_ZERO} or >= {_PLACEHOLDER_FLOOR}): "
         f"{offenders}. Rename each to the PR or issue number that carries it, so the "
         "release-note entry points back at the change and sorts in the right place."
+    )
+
+
+def test_a_zero_fragment_number_is_refused_as_a_placeholder(workspace: tuple[Path, Path]) -> None:
+    """``0000-x.md`` is the placeholder a branch writes before its PR exists.
+
+    The rule has one owner, ``_is_placeholder_number``, so the guard over the
+    repository's own fragments and this cell cannot drift apart.
+    """
+    fragment_dir, _ = workspace
+    _fragment(fragment_dir, "0000-x.md", "### Fixed: placeholder\n\nBody.\n")
+    _fragment(fragment_dir, "3703-a-real-change.md", "### Fixed: real\n\nBody.\n")
+
+    numbers = {
+        fragment.name: int(assemble.FRAGMENT_NAME.match(fragment.name).group("number"))
+        for fragment in assemble.collect_fragments(fragment_dir)
+    }
+
+    assert numbers["0000-x.md"] == _PLACEHOLDER_ZERO, "the name regex must parse 0000 as the number 0"
+    assert _is_placeholder_number(numbers["0000-x.md"]), "0000 is a placeholder and must be refused"
+    assert not _is_placeholder_number(numbers["3703-a-real-change.md"]), "a real PR number must pass"
+
+    problems = assemble.validate_fragments(fragment_dir)
+    assert [problem for problem in problems if problem.startswith("0000-x.md")], (
+        f"the assembler must refuse the placeholder, not only the suite: {problems}"
+    )
+    assert not [problem for problem in problems if problem.startswith("3703-")], (
+        f"a real number must not be refused: {problems}"
     )
 
 
