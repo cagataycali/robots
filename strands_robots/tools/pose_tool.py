@@ -753,7 +753,26 @@ class MotorController:
         return bytes(packet)
 
     def degrees_to_position(self, motor_name: str, degrees: float) -> int:
-        """Convert degrees to motor position."""
+        """Convert a target in the motor's own unit to a ``Goal_Position`` count.
+
+        The motor's configured ``range`` is the scale: its endpoints map onto the
+        ends of the encoder, so the same arithmetic serves a joint quoted in
+        degrees and the gripper quoted 0-100 percent open - the unit is a
+        property of the bounds, not of the name. Reading the bounds is what makes
+        the guard in :func:`_joint_target_error` meaningful, since it refuses a
+        target against those same bounds.
+
+        Args:
+            motor_name: A motor in :attr:`motor_configs`.
+            degrees: The target, in the unit that motor's ``range`` is quoted in.
+                A value outside the range is clamped to it.
+
+        Returns:
+            A count in ``0..resolution``.
+
+        Raises:
+            ValueError: ``motor_name`` is not in :attr:`motor_configs`.
+        """
         if motor_name not in self.motor_configs:
             raise ValueError(f"Unknown motor: {motor_name}")
 
@@ -766,27 +785,33 @@ class MotorController:
         # Convert to encoder counts. Each config's resolution is the STS/SMS
         # full scale, which is the series every motor in
         # ``_DEFAULT_MOTOR_CONFIGS`` is.
-        if motor_name == "gripper":
-            # Gripper uses 0-100 percentage
-            return int((degrees / 100.0) * config["resolution"])
-        else:
-            # Regular joints use degree range
-            normalized = (degrees - min_deg) / (max_deg - min_deg)
-            return int(normalized * config["resolution"])
+        normalized = (degrees - min_deg) / (max_deg - min_deg)
+        return int(normalized * config["resolution"])
 
     def position_to_degrees(self, motor_name: str, position: int) -> float:
-        """Convert motor position to degrees."""
+        """Convert a ``Goal_Position`` count back to the motor's own unit.
+
+        The inverse of :meth:`degrees_to_position`, off the same configured
+        ``range``, so a reading is quoted on the scale the joint is driven on.
+
+        Args:
+            motor_name: A motor in :attr:`motor_configs`.
+            position: The count the servo reported.
+
+        Returns:
+            The position in the unit that motor's ``range`` is quoted in.
+
+        Raises:
+            ValueError: ``motor_name`` is not in :attr:`motor_configs`.
+        """
         if motor_name not in self.motor_configs:
             raise ValueError(f"Unknown motor: {motor_name}")
 
         config = self.motor_configs[motor_name]
         min_deg, max_deg = config["range"]
 
-        if motor_name == "gripper":
-            return (position / config["resolution"]) * 100.0
-        else:
-            normalized = position / config["resolution"]
-            return min_deg + normalized * (max_deg - min_deg)
+        normalized = position / config["resolution"]
+        return min_deg + normalized * (max_deg - min_deg)
 
     def move_motor(self, motor_name: str, position_degrees: float) -> bool:
         """Move a single motor to position in degrees."""

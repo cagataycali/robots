@@ -82,8 +82,14 @@ twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
 follower.start_task("pick up the cube", policy_provider="lerobot_local",
                     policy_port=None, duration=10.0)
 
-# 4. COORDINATE a fleet - tell a mesh peer to assist, in natural language.
-follower.mesh.tell(follower.mesh.peers[0]["peer_id"], "hold the tray steady")
+# 4. COORDINATE a fleet - hand a mesh peer a task: the policy it runs, and
+#    the instruction it runs with. The wire boundary refuses an execute with
+#    no policy_provider, and takes checkpoints as Hub ids (an org in
+#    STRANDS_MESH_HF_REPO_ALLOW), not local paths. Presence arrives ~1 s
+#    after the peer starts.
+peer = follower.mesh.peers[0]["peer_id"]
+follower.mesh.tell(peer, "hold the tray steady", policy_provider="lerobot_local",
+                   pretrained_name_or_path="lerobot/smolvla_base", duration=10.0)
 
 # 5. EXPOSE the running sim on ROS 2 - rviz / nav2 / any ros2 node can subscribe.
 from strands_robots.simulation import Simulation
