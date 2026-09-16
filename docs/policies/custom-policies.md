@@ -84,6 +84,7 @@ implemented by it.
 | `control_frequency` (attribute) | no | `None` |
 | `set_rtc_observed_delay(steps)` | no | records the delay |
 | `rtc_observed_delay_steps` (attribute) | no | `None` |
+| `reads_instruction` (property) | no | `True` - return `False` when the instruction never shapes the actions (the rollout envelope then says so) |
 
 `preflight` is the fail-fast seam: the simulation calls it on your **class**,
 before `create_policy` constructs anything and therefore before any weight
