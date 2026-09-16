@@ -14,6 +14,13 @@ at. With several running the refusal names them; with none it says so and
 names the robots. A gate only offers the bare remedy when it would resolve:
 with several in flight it spells ``robot_name`` for each, so the sentence is
 a call the tool accepts at either cardinality.
+
+The envelope is read field by field rather than compared whole: what these
+cells are about is *which robot* the stop resolved to and whether a rollout
+really was in flight. ``exited`` - the MuJoCo override's report on whether the
+worker was joined and is gone - is pinned in
+``tests/simulation/test_stop_policy_waits_for_the_worker_to_exit.py``, across
+all three of its values, and is not this file's subject.
 """
 
 from __future__ import annotations
@@ -83,7 +90,8 @@ class TestTheOnlyRolloutIsTheTarget:
         _start(sim, "arm")
         result = sim._dispatch_action("stop_policy", {})
         assert result["status"] == "success", result
-        assert _json(result) == {"robot": "arm", "was_running": True}
+        answer = _json(result)
+        assert (answer["robot"], answer["was_running"]) == ("arm", True), answer
         assert "Stopped on 'arm'" in _text(result)
         _wait_idle(sim, "arm")
         assert "No policies running" in _text(sim.list_policies_running())
@@ -175,5 +183,6 @@ class TestAnythingElseIsRefusedNamingWhatIsRunning:
         _start(sim, "arm")
         result = sim.stop_policy("arm2")
         assert result["status"] == "success"
-        assert _json(result) == {"robot": "arm2", "was_running": False}
+        answer = _json(result)
+        assert (answer["robot"], answer["was_running"]) == ("arm2", False), answer
         assert sim._rollouts_in_flight() == ("arm",) or list(sim._rollouts_in_flight()) == ["arm"]
