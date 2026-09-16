@@ -234,12 +234,12 @@ async def telemetry(ws: WebSocket, session_id: str) -> None:
     try:
         access.caller(ws)  # type: ignore[arg-type]  # WebSocket answers headers/cookies/client like a Request
     except HTTPException:
-        await ws.close(code=4401)
+        await access.refuse_socket(ws, 4401)
         return
     store: SessionStore = ws.app.state.safety.store
     session = store.get(session_id)
     if session is None:
-        await ws.close(code=4404)
+        await access.refuse_socket(ws, 4404)
         return
     await ws.accept()
     try:
