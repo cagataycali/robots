@@ -2776,16 +2776,15 @@ class Robot(TeleopMixin, AgentTool):
         port_present: bool | None = None
         if isinstance(port, str) and port.startswith("/"):
             port_present = os.path.exists(port)
+        # A port that is not a device path is a network port, and the number
+        # alone does not say where. lerobot spells the host differently per
+        # driver family, so the first one the config carries wins.
         address: str | None = None
-        if port is not None and port_present is None:
-            # A port that is not a device path is a network port, and the port
-            # number alone does not say where. lerobot spells the host
-            # differently per driver, so the first one the config carries wins.
-            for field in _ADDRESS_FIELDS:
-                value = getattr(config, field, None)
-                if isinstance(value, str) and value:
-                    address = value
-                    break
+        for field in _ADDRESS_FIELDS:
+            value = getattr(config, field, None)
+            if isinstance(value, str) and value:
+                address = value
+                break
         is_calibrated: bool | None = None
         if is_connected:
             is_calibrated = bool(getattr(robot, "is_calibrated", True))

@@ -21,7 +21,6 @@ import threading
 from typing import Any
 
 import pytest
-
 from lerobot.robots.reachy2 import Reachy2RobotConfig
 
 from strands_robots.hardware_robot import Robot as HwRobot
@@ -153,6 +152,10 @@ class TestAPortThatIsNotAPath:
         assert "present on this host" not in text  # so presence is claimed neither way
         assert f"Port: {config.port} is a network port, reached at {config.ip_address}, not a device path" in text
         assert "this host has no such path to check" in text
+
+    def test_the_first_spelling_the_config_carries_wins(self):
+        config = type("Cfg", (), {"port": 50065, "cameras": {}, "ip_address": "reachy.local", "host": "kiwi.local"})()
+        assert _hw(_Device(config))._device_facts()["address"] == "reachy.local"
 
     @pytest.mark.parametrize(
         ("field", "value", "expected"),
