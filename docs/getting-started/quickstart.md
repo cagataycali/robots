@@ -97,10 +97,14 @@ sim.step(100)
 4. Fleet coordination - [Mesh](../mesh.md).
 5. ROS 2 interop - [ROS 2](../ros2-integration.md).
 
-Steps 1 and 3-real need hardware; step 2 needs a GPU; step 5 needs a sourced
-ROS 2 distro - `rclpy` is not on PyPI, and `Simulation(ros2_bridge=True)` raises
-an `ImportError` naming the `source /opt/ros/<distro>/setup.bash` to run first.
-Steps 3-twin and 4 run in sim on any machine.
+Steps 1 and 3-real need hardware; step 2 needs a GPU. Step 4 needs the `[mesh]`
+extra and a mesh posture - `eclipse-zenoh` is not in the `[sim-mujoco]` install
+above, and without it (or without `STRANDS_MESH_LOCAL_DEV=true` / an ACL file)
+the mesh stays off, so `mesh.peers` is empty and `peers[0]` raises `IndexError`.
+Step 5 needs a sourced ROS 2 distro - `rclpy` is not on PyPI, and
+`Simulation(ros2_bridge=True)` raises an `ImportError` naming the
+`source /opt/ros/<distro>/setup.bash` to run first. Step 3-twin runs in sim on
+the install line at the top of this page.
 
 ## Next: the notebook series
 
