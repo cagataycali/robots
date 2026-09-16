@@ -569,22 +569,28 @@ class TestWhatAnInterruptedBringUpStillReports:
         assert hw._task_state.step_count == 0
         assert bus.commands == []
 
-    def test_the_devices_the_parked_bring_up_opens_are_still_left_open(self, hw: HwRobot, bus: Bus):
-        """The boundary this gate does not move, stated so it is not assumed.
+    def test_the_devices_the_parked_bring_up_opens_are_released_again(self, hw: HwRobot, bus: Bus):
+        """The bring-up closes what it opened, on the thread that opened it.
 
         ``connect()`` is already inside its blocking handshake when the teardown
         lands, so it finishes either way -- and ``cleanup()`` disconnects the
         robot before it returns, which for a rollout it did not submit is before
-        that handshake completes. The devices are therefore open afterwards, on
-        both sides of this change. Closing them needs ``cleanup()`` to wait for
-        a rollout running on a caller's thread, which is a different fix.
+        that handshake completes. So this used to end with the motors bus and
+        every camera open for the life of the process, and the arm energized:
+        connecting turns torque on and nothing was ever going to drive it.
+        ``cleanup()`` cannot close them (it would have to wait for a rollout
+        running on a caller's thread), but the rollout can close them itself --
+        the stage gate below it abandons the task after ``connect()`` returned
+        and before the arm is ever commanded, which is exactly when releasing it
+        restores the state the caller had before the call.
         """
         _interrupted_bring_up(hw, bus, policy=CountingPolicy())
 
         assert bus.connect_calls == 1
         assert bus.cameras["wrist"].connect_calls == 1
-        assert bus.is_connected is True
-        assert bus.disconnect_calls == 0
+        assert bus.disconnect_calls == 1
+        assert bus.is_connected is False
+        assert bus.cameras["wrist"].is_connected is False
 
 
 def _rollout_module_ast() -> ast.Module:

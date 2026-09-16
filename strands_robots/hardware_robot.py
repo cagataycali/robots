@@ -1922,7 +1922,17 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.step_count = 0
             self._task_state.error_message = ""
 
-            # Connect to robot
+            # Connect to robot. Remember whether THIS call did the connecting:
+            # lerobot's ``connect()`` ends in ``configure()``, whose
+            # ``torque_disabled()`` block re-enables torque on exit, so the arm
+            # goes stiff where it stands the moment it connects - before any
+            # policy exists. A bring-up that then fails (checkpoint missing,
+            # server down, trust gate) would leave the caller's arm locked for
+            # the rest of the session with nothing to drive it. Measured on the
+            # SO-101 tool: policy refused, task ERROR, ``robot.is_connected``
+            # True, torque on until process exit. A connection the caller made
+            # BEFORE this task is theirs and is left alone.
+            connected_here = not self._robot_is_connected()
             connected, connect_error = await self._connect_robot()
             if not connected:
                 self._task_state.status = TaskStatus.ERROR
@@ -1933,8 +1943,13 @@ class Robot(TeleopMixin, AgentTool):
             # A stop pressed during the bring-up window above (a motors-bus
             # handshake plus per-camera warmup - seconds on a real arm) is
             # honored here, before the policy is even built, so the rollout is
-            # abandoned without commanding the arm.
+            # abandoned without commanding the arm. The arm this task just
+            # energized is released with it: an abandoned bring-up leaves
+            # nothing to drive it, exactly as a policy that cannot be built
+            # does, and the operator who pressed stop is told so rather than
+            # left holding a stiff arm.
             if self._honor_stop_request():
+                self._task_state.error_message = await self._release_uncommanded_arm(connected_here)
                 return
 
             # Get policy instance: a caller-supplied pre-built object wins;
@@ -1942,13 +1957,22 @@ class Robot(TeleopMixin, AgentTool):
             if policy_object is not None:
                 policy_instance = policy_object
             else:
-                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+                try:
+                    policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+                except Exception as e:
+                    self._task_state.status = TaskStatus.ERROR
+                    self._settle_task_duration()
+                    released = await self._release_uncommanded_arm(connected_here)
+                    self._task_state.error_message = " ".join(p for p in (str(e), released) if p)
+                    logger.error(f"Task execution failed: {e}")
+                    return
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
                 self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = "Failed to initialize policy"
                 self._settle_task_duration()
+                released = await self._release_uncommanded_arm(connected_here)
+                self._task_state.error_message = " ".join(p for p in ("Failed to initialize policy", released) if p)
                 return
 
             logger.info(f"Starting task: '{instruction}' on {self.tool_name_str}")
@@ -1990,8 +2014,11 @@ class Robot(TeleopMixin, AgentTool):
 
             # Building a server-backed policy is a second multi-second window
             # (a network connect plus a handshake), so the latch is re-checked
-            # before the arm is commanded for the first time.
+            # before the arm is commanded for the first time - and the arm is
+            # released here too, for the same reason as at the first gate: it
+            # has still never been commanded.
             if self._honor_stop_request():
+                self._task_state.error_message = await self._release_uncommanded_arm(connected_here)
                 return
 
             self._task_state.status = TaskStatus.RUNNING
@@ -2104,6 +2131,62 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
             self._settle_task_duration()
+
+    @property
+    def _task_message_label(self) -> str:
+        """``"Error"`` or ``"Note"`` for the message the task left behind.
+
+        ``error_message`` is also where an abandoned bring-up records that the
+        arm was released - true of a task an operator STOPPED, which is not an
+        error. Labelling that "Error" would report a handled interrupt as a
+        failure, so the label follows the terminal status.
+        """
+        return "Error" if self._task_state.status == TaskStatus.ERROR else "Note"
+
+    def _robot_is_connected(self) -> bool:
+        """``robot.is_connected`` as a plain bool, False when the driver cannot say."""
+        try:
+            return bool(getattr(self.robot, "is_connected", False))
+        except Exception:  # noqa: BLE001 - a bus that cannot answer is not connected
+            return False
+
+    async def _release_uncommanded_arm(self, connected_here: bool) -> str:
+        """Disconnect a robot THIS task connected and never commanded.
+
+        Called from every bring-up exit that ends the task after
+        :meth:`_connect_robot` and before the loop commands the arm: the policy
+        could not be built, it could not be initialized, or a stop/shutdown was
+        latched at one of the two stage gates. In all of them the arm has not
+        moved - it stands where the caller left it, now with torque on, because
+        lerobot's ``connect()`` ends in ``configure()``, whose
+        ``torque_disabled()`` block re-enables torque on exit. Disconnecting
+        (``disable_torque_on_disconnect`` defaults to True) returns it to
+        exactly the state the caller had before the call, and leaves nothing
+        energized that nothing is driving.
+
+        That the arm has not moved is also why a rollout which fails while
+        RUNNING is NOT released here: an arm mid-motion dropping under gravity
+        is the hazard, holding its pose is not.
+
+        Args:
+            connected_here: Whether this task opened the connection. One the
+                caller made before the task is theirs and is left alone.
+
+        Returns:
+            A sentence for the reply saying what was done, or ``""`` when there
+            was nothing to release. A disconnect that fails yields a sentence
+            saying the arm is still energized; the failure is logged and, on an
+            error path, the original cause stays the headline.
+        """
+        if not connected_here or not self._robot_is_connected():
+            return ""
+        try:
+            await asyncio.to_thread(self.robot.disconnect)
+        except Exception as exc:  # noqa: BLE001 - reported, must not mask the cause
+            logger.warning("Could not disconnect %s after the abandoned bring-up: %s", self.tool_name_str, exc)
+            return f"The robot is still connected (torque on); disconnecting it failed: {exc}"
+        logger.info("%s disconnected again: no policy to drive it", self.tool_name_str)
+        return "The robot was disconnected again (torque released) since nothing will drive it."
 
     @staticmethod
     def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
@@ -2657,7 +2740,11 @@ class Robot(TeleopMixin, AgentTool):
                     f"Policy: {policy_desc}\n"
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps: {self._task_state.step_count}"
-                    + (f"\nError: {self._task_state.error_message}" if self._task_state.error_message else "")
+                    + (
+                        f"\n{self._task_message_label}: {self._task_state.error_message}"
+                        if self._task_state.error_message
+                        else ""
+                    )
                 }
             ],
         }
@@ -3096,7 +3183,7 @@ class Robot(TeleopMixin, AgentTool):
             status_text += f"Total Steps: {self._task_state.step_count}\n"
 
         if self._task_state.error_message:
-            status_text += f"Error: {self._task_state.error_message}\n"
+            status_text += f"{self._task_message_label}: {self._task_state.error_message}\n"
 
         try:
             facts = self._device_facts()
