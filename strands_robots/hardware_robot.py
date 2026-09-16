@@ -1863,7 +1863,17 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.step_count = 0
             self._task_state.error_message = ""
 
-            # Connect to robot
+            # Connect to robot. Remember whether THIS call did the connecting:
+            # lerobot's ``connect()`` ends in ``configure()``, whose
+            # ``torque_disabled()`` block re-enables torque on exit, so the arm
+            # goes stiff where it stands the moment it connects - before any
+            # policy exists. A bring-up that then fails (checkpoint missing,
+            # server down, trust gate) would leave the caller's arm locked for
+            # the rest of the session with nothing to drive it. Measured on the
+            # SO-101 tool: policy refused, task ERROR, ``robot.is_connected``
+            # True, torque on until process exit. A connection the caller made
+            # BEFORE this task is theirs and is left alone.
+            connected_here = not self._robot_is_connected()
             connected, connect_error = await self._connect_robot()
             if not connected:
                 self._task_state.status = TaskStatus.ERROR
@@ -1882,12 +1892,20 @@ class Robot(TeleopMixin, AgentTool):
             if policy_object is not None:
                 policy_instance = policy_object
             else:
-                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+                try:
+                    policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
+                except Exception as e:
+                    self._task_state.status = TaskStatus.ERROR
+                    self._task_state.error_message = str(e) + await self._release_after_failed_bringup(connected_here)
+                    logger.error(f"Task execution failed: {e}")
+                    return
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
                 self._task_state.status = TaskStatus.ERROR
-                self._task_state.error_message = "Failed to initialize policy"
+                self._task_state.error_message = (
+                    "Failed to initialize policy" + await self._release_after_failed_bringup(connected_here)
+                )
                 return
 
             logger.info(f"Starting task: '{instruction}' on {self.tool_name_str}")
@@ -2042,6 +2060,40 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Task execution failed: {e}")
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
+
+    def _robot_is_connected(self) -> bool:
+        """``robot.is_connected`` as a plain bool, False when the driver cannot say."""
+        try:
+            return bool(getattr(self.robot, "is_connected", False))
+        except Exception:  # noqa: BLE001 - a bus that cannot answer is not connected
+            return False
+
+    async def _release_after_failed_bringup(self, connected_here: bool) -> str:
+        """Disconnect a robot THIS task connected when no policy will drive it.
+
+        Called on the policy-build and policy-initialize failure paths, both of
+        which run after ``_connect_robot`` and before the loop commands the arm.
+        The arm has not moved: it stands where the caller left it, now with
+        torque on. Disconnecting (lerobot disables torque on disconnect by
+        default) returns it to exactly the state the caller had before the
+        call - which is also why a rollout that fails while RUNNING is NOT
+        released here: an arm mid-motion dropping under gravity is a hazard,
+        holding its pose is not.
+
+        Returns:
+            A sentence for the error message saying what was done - or nothing
+            when the connection predates this task, or the driver would not let
+            go (the failure is logged, the original error stays the headline).
+        """
+        if not connected_here or not self._robot_is_connected():
+            return ""
+        try:
+            await asyncio.to_thread(self.robot.disconnect)
+        except Exception as exc:  # noqa: BLE001 - reported, must not mask the policy error
+            logger.warning("Could not disconnect %s after the failed bring-up: %s", self.tool_name_str, exc)
+            return f" The robot is still connected (torque on); disconnecting it failed: {exc}"
+        logger.info("%s disconnected again: no policy to drive it", self.tool_name_str)
+        return " The robot was disconnected again (torque released) since nothing will drive it."
 
     @staticmethod
     def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
