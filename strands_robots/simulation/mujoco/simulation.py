@@ -7741,7 +7741,7 @@ class MuJoCoSimEngine(
             if exited:
                 self._prune_done_futures()
         if not was_running:
-            msg = f"Was not running on '{robot_name}'"
+            msg = self._was_not_running_msg(robot_name)
         elif exited is False:
             msg = (
                 f"Stop requested on '{robot_name}', but its policy worker is still live after "

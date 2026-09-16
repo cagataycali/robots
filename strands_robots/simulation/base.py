@@ -4355,7 +4355,7 @@ class SimEngine(ABC):
                     }
                 ],
             }
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        msg = f"Stopped on '{robot_name}'" if was_running else self._was_not_running_msg(robot_name)
         return {
             "status": "success",
             "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
@@ -4429,6 +4429,42 @@ class SimEngine(ABC):
             return "Stop it first: action='stop_policy'."
         spelled = ", then ".join(f"robot_name='{n}'" for n in robot_names)
         return f"Stop them first: action='stop_policy' with {spelled}."
+
+    def _was_not_running_msg(self, robot_name: str) -> str:
+        """The verdict for a stop that halted nothing, naming any rollout still in flight.
+
+        A ``stop_policy`` on a robot with nothing running is a success by design
+        (idempotent, ``was_running=False``), and that sentence was the same one
+        whether the world was idle or another arm was mid-rollout - measured on
+        two so101s with a policy on the second, ``stop_policy(robot_name='alpha')``
+        answered ``status="success"``, "Was not running on 'alpha'", byte-identical
+        to the reply from a world with nothing in flight at all, while beta kept
+        driving. ``docs/simulation/overview.md`` reserves that reading for "the
+        genuinely idempotent case, where nothing is in flight at all", so an agent
+        that aimed a stop at the wrong arm was told its stop was a no-op without
+        being told the motion it meant to end continued. A stop that stopped
+        nothing now names what is running, in the phrase every rollout gate uses,
+        and ends with :meth:`_stop_policy_remedy` - the one builder that
+        guarantees the way out is a call the tool accepts, asked rather than
+        re-derived, so a remedy is never the bare form the resolver refuses.
+
+        A backend that keeps no rollout registry (:meth:`_rollouts_in_flight` is
+        ``None``) has no evidence about the other robots and keeps the bare
+        verdict, rather than an affirmative claim about a population it cannot
+        see - the same reason :meth:`_stop_policy_target` refuses there.
+
+        Args:
+            robot_name: The robot the caller aimed the stop at.
+
+        Returns:
+            ``"Was not running on '<robot>'"``, followed by the rollouts still in
+            flight and the remedy when there are any.
+        """
+        others = tuple(name for name in (self._rollouts_in_flight() or ()) if name != robot_name)
+        if not others:
+            return f"Was not running on '{robot_name}'"
+        names = ", ".join(f"'{name}'" for name in others)
+        return f"Was not running on '{robot_name}'. A policy is running on {names}. {self._stop_policy_remedy(others)}"
 
     def _request_policy_stop(self, robot_name: str) -> bool | None:
         """Move ``robot_name``'s rollout claim out of date; report what was in flight.
