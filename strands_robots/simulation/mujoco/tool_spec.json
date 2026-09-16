@@ -395,6 +395,35 @@
       "type": "boolean",
       "description": "Skip sleep between actions for faster data collection"
     },
+    "control_substeps": {
+      "type": "integer",
+      "description": "run_policy / eval_policy / evaluate_benchmark: physics steps integrated per applied action, overriding the value derived from control_frequency. Must be a positive whole number; omit to derive it from control_frequency and the scene timestep."
+    },
+    "reset_between": {
+      "type": "boolean",
+      "description": "run_policy: with n_episodes > 1, reset the sim to its initial state between episodes (default true; never after the last one). False chains each episode from the previous end state."
+    },
+    "async_rtc": {
+      "type": "boolean",
+      "description": "run_policy / eval_policy: overlap policy inference with action execution (latency masking). Omit to resolve it from the policy - chunk-emitting VLAs get it, single-step policies stay synchronous."
+    },
+    "rtc_inference_timeout_s": {
+      "type": "number",
+      "description": "run_policy / eval_policy: per-chunk deadline (seconds) for the async-RTC prefetch, so a stuck inference is reported as an error instead of hanging the sim. Omit to wait without a deadline; ignored on the synchronous path."
+    },
+    "wbc_install_torque_control": {
+      "type": "boolean",
+      "description": "run_policy: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
+    },
+    "max_onframe_failures": {
+      "type": "integer",
+      "description": "run_policy: consecutive video/dataset hook failures tolerated before the episode aborts. Must be a positive whole number; omit to use the runner's own limit of 5. A lost dataset frame aborts on the first occurrence whatever this is set to."
+    },
+    "policy_kwargs": {
+      "type": "object",
+      "description": "run_policy / start_policy / eval_policy / evaluate_benchmark: per-call goal payload forwarded verbatim to every policy.get_actions call. Carries target_pose / target_joints / target_velocity / world_update to providers that read their goal from kwargs (curobo, moveit2, wbc); VLA providers ignore keys they do not know.",
+      "additionalProperties": true
+    },
     "x": {
       "type": "number",
       "description": "World x coordinate (for get_ground_height)"
