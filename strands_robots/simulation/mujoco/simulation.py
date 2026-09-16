@@ -7734,10 +7734,127 @@ class MuJoCoSimEngine(
         #     defeat the batching.
         #   * stop_policy only flips a bool and needs no lock; keeping it off
         #     the blanket lock lets it interrupt a long-running step.
+        note = self._follow_active_recording_rate(method_name, sig, kwargs)
+        if note is None:
+            note = self._follow_active_rollout_rate(method_name, sig, kwargs)
         if method_name in self._SELF_LOCKING_ACTIONS:
-            return method(**kwargs)
-        with self._lock:
-            return method(**kwargs)
+            result = method(**kwargs)
+        else:
+            with self._lock:
+                result = method(**kwargs)
+        return self._append_rate_note(result, note)
+
+    # Rollout entry points whose ``control_frequency`` is the rate frames are
+    # captured at while a recording is open (every caller of
+    # ``_validate_recording_rate``).
+    _RATE_FOLLOWING_ROLLOUTS = frozenset(
+        {"run_policy", "start_policy", "run_multi_policy", "eval_policy", "evaluate_benchmark"}
+    )
+
+    def _follow_active_recording_rate(
+        self, method_name: str, sig: inspect.Signature, kwargs: dict[str, Any]
+    ) -> str | None:
+        """Fill an OMITTED ``control_frequency`` from the active recording's fps.
+
+        ``start_recording`` defaults to 30 fps and every rollout defaults to
+        ``control_frequency=50.0``; the recorder writes one frame per control
+        step with no decimation, so those two defaults cannot both be honored
+        and :meth:`_validate_recording_rate` refuses the rollout. Measured on
+        ``Robot("so101", mode="sim")``: ``start_recording(task=...)`` then
+        ``run_policy(instruction=...)`` - the documented record-then-rollout
+        sequence with no rate named anywhere - was refused on the first try,
+        and the remedy it named cost the agent a second round-trip to type a
+        number the tool already knew.
+
+        A caller who omitted ``control_frequency`` expressed no preference
+        between the two defaults, and only one of them can be honored, so the
+        omitted one follows the recording. A caller who PASSED a rate is still
+        refused on a mismatch: a number they typed is a decision, not a default,
+        and mislabelling it is the distortion that refusal exists to prevent.
+        The Python-level defaults are untouched; this is the tool router's
+        reading of an absent field.
+
+        Args:
+            method_name: The method the action resolved to.
+            sig: Its signature (must accept ``control_frequency``).
+            kwargs: The caller's validated kwargs; ``control_frequency`` is
+                added in place when it is absent and a recording is open.
+
+        Returns:
+            The note to append to a successful result naming the adopted rate,
+            or ``None`` when nothing was filled in - the caller passed a rate,
+            no recording is open, this is not a rollout entry point, or the
+            dataset reports no usable whole rate.
+        """
+        if method_name not in self._RATE_FOLLOWING_ROLLOUTS or "control_frequency" in kwargs:
+            return None
+        # No world, no recording: also keeps this off the path of test doubles
+        # built without ``__init__`` (``Simulation.__new__``) that route through
+        # the dispatcher.
+        if getattr(self, "_world", None) is None or "control_frequency" not in sig.parameters:
+            return None
+        if not self._is_recording():
+            return None
+        from strands_robots.simulation.recording import recorder_dataset_fps
+
+        fps = recorder_dataset_fps(self._active_recorder())
+        if fps is None:
+            return None
+        # ``fps`` is the dataset's validated whole rate, read back from the
+        # recorder - not caller input.
+        kwargs["control_frequency"] = fps * 1.0
+        return (
+            f"control_frequency={fps} followed the active recording's {fps} fps "
+            f"(no rate was passed); pass control_frequency= to choose."
+        )
+
+    def _follow_active_rollout_rate(
+        self, method_name: str, sig: inspect.Signature, kwargs: dict[str, Any]
+    ) -> str | None:
+        """The mirror for the other ordering: an omitted ``fps`` follows the rollout.
+
+        ``start_policy`` (default 50 Hz) then ``start_recording`` (default 30
+        fps) is the same pair of defaults met in the other order, and
+        :meth:`_validate_recording_start_rate` refuses it for the same reason.
+        When the caller named no ``fps`` and every rollout in flight captures
+        at one whole rate, the recording opens at that rate. Several rollouts
+        at different rates, or a fractional rate, have no single honest
+        answer, so nothing is filled in and the refusal stands.
+
+        Returns:
+            The note to append to a successful result, or ``None``.
+        """
+        if method_name != "start_recording" or "fps" in kwargs or "fps" not in sig.parameters:
+            return None
+        if getattr(self, "_world", None) is None:
+            return None
+        rates = set(self._active_rollout_rates().values())
+        if len(rates) != 1:
+            return None
+        rate = rates.pop()
+        # ``rate`` is the engine's own record of a rollout it validated when it
+        # started - not caller input - so no boolean can reach this coercion.
+        if rate <= 0 or int(rate) != rate:
+            return None
+        kwargs["fps"] = int(rate)
+        return f"fps={int(rate)} followed the running rollout's control_frequency={rate:g} (no fps was passed); pass fps= to choose."
+
+    @staticmethod
+    def _append_rate_note(result: dict[str, Any], note: str | None) -> dict[str, Any]:
+        """Tell the caller the rate their call ran at when it was not theirs.
+
+        Silent adoption would leave the result's timing unexplained - the same
+        "nothing reported it" failure the rate refusals were written against,
+        one level down. Appended only to a successful envelope; a refusal
+        already names the rate it saw.
+        """
+        if note is None or not isinstance(result, dict) or result.get("status") != "success":
+            return result
+        content = result.get("content")
+        if not isinstance(content, list):
+            return result
+        content.append({"text": note})
+        return result
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         """Stop a running policy on the given robot (cooperative cancellation).
