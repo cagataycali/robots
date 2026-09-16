@@ -3527,6 +3527,7 @@ class SimEngine(ABC):
         subject: str,
         consequence: str,
         err: Callable[[str], dict[str, Any]],
+        sole_robot: str | None = None,
     ) -> dict[str, Any] | None:
         """Structured error if any entity in *entities* does not resolve in this sim.
 
@@ -3554,6 +3555,9 @@ class SimEngine(ABC):
                 the remedy in each message.
             err: Builds the caller's error envelope from a message, so each
                 surface keeps its own prefix and json block.
+            sole_robot: The robot a clause with no robot of its own resolves
+                to, when the caller has already resolved it - spelled by name
+                in the message instead of the ``<the sole robot>`` placeholder.
 
         Returns:
             ``None`` when every entity resolves, else *err*'s envelope.
@@ -3594,7 +3598,8 @@ class SimEngine(ABC):
             except Exception:  # noqa: BLE001 - the refusal must not depend on the listing
                 known = []
             named = [r for r in unresolved_bases if r is not None and r not in known]
-            spelled = [r if r is not None else "<the sole robot>" for r in unresolved_bases]
+            placeholder = repr(sole_robot) if sole_robot is not None else "<the sole robot>"
+            spelled = [r if r is not None else placeholder for r in unresolved_bases]
             cause = (
                 f"no robot in the scene is named {named} (robots: {known})"
                 if named
@@ -4880,6 +4885,44 @@ class SimEngine(ABC):
 
     # Benchmark protocol facades
 
+    def _benchmark_robot_mismatch_error(self, spec: Any, benchmark_name: str, robot_name: str) -> dict[str, Any] | None:
+        """Structured error when *robot_name*'s model is outside *spec*'s ``supported_robots``.
+
+        The same test :meth:`BenchmarkProtocol.on_episode_start` makes before
+        episode 1 (a robot's registry ``data_config`` against the spec's
+        non-empty ``supported_robots``), asked up front by
+        :meth:`evaluate_benchmark` so it is the FIRST thing a caller hears
+        when the benchmark is written for another robot - ahead of the clause
+        probe, whose "no floating base" finding is the same mismatch seen
+        from further down. Reads the model the way ``on_episode_start`` does
+        (``_world.robots[name].data_config``); a backend without that surface,
+        a robot without a recorded model, or an any-robot benchmark (empty
+        list) returns ``None`` and leaves the decision to the runner.
+        """
+        supported = getattr(spec, "supported_robots", None)
+        if not supported or not isinstance(supported, list | tuple):
+            return None
+        world = getattr(self, "_world", None)
+        robots = getattr(world, "robots", None)
+        robot_obj = robots.get(robot_name) if isinstance(robots, dict) else None
+        data_config = getattr(robot_obj, "data_config", None)
+        if data_config is None or data_config in supported:
+            return None
+        loadable = list(supported)
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"evaluate_benchmark: benchmark {benchmark_name!r} is written for "
+                        f"{loadable}; robot {robot_name!r} in this scene is a {data_config!r}. "
+                        f"Load a supported robot (Robot({loadable[0]!r}, mode='sim')) or pick a "
+                        "benchmark for this robot - list_benchmarks names each one's robots."
+                    )
+                }
+            ],
+        }
+
     def evaluate_benchmark(
         self,
         benchmark_name: str,
@@ -5153,6 +5196,19 @@ class SimEngine(ABC):
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
 
+        # The benchmark's own robot list, checked BEFORE the clause probe below.
+        # The runner enforces it too (BenchmarkCompatibilityError before episode
+        # 1), but the probe ran first, and for a fixed-base arm asked to run a
+        # locomotion benchmark it fires first: g1_walk_forward on an so101 scene
+        # answered "['<the sole robot>'] has no floating base - a fixed-base
+        # arm reports no base_pos/base_quat" - a lecture about floating bases
+        # when the cause is that the benchmark is written for unitree_g1. The
+        # mismatch is the coarser fact, so it is named first, with the two ways
+        # out.
+        compat_error = self._benchmark_robot_mismatch_error(spec, benchmark_name, resolved_robot)
+        if compat_error is not None:
+            return compat_error
+
         # Probe the entities the spec's clauses name against the LIVE scene,
         # before any policy is built. A benchmark clause is authored in the
         # same predicate DSL as ``stop_when`` and compiles the same way, so it
@@ -5181,6 +5237,7 @@ class SimEngine(ABC):
                     "report a 0% success rate that reads as an honest policy failure."
                 ),
                 err=_benchmark_err,
+                sole_robot=resolved_robot,
             )
             if probe_error is not None:
                 return probe_error
