@@ -540,9 +540,12 @@ class RecordingMixin(DatasetRecordingMixin):
                             f"Recording to LeRobotDataset: {repo_id}\n"
                             f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
-                            f"Run policies to capture frames - or step through a scripted motion "
-                            f"(set_joint_positions(hold=True) + step records one frame per 1/{fps}s of sim "
-                            f"time) - then stop_recording to save episode"
+                            f"Frames are captured by a policy rollout - run_policy (one call per "
+                            f"episode), start_policy (async) or run_multi_policy (several robots "
+                            f"into one merged frame) - or by stepping a scripted motion: "
+                            f"set_joint_positions(hold=True) + step records one frame per 1/{fps}s "
+                            f"of sim time. teleoperate and replay_episode do not feed the "
+                            f"recorder. Then stop_recording to save the episode"
                         )
                     }
                 ],

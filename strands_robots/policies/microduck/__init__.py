@@ -29,7 +29,9 @@ from .observation import (
 from .policy import (
     MICRODUCK_DEFAULT_POSE,
     MICRODUCK_JOINT_NAMES,
+    MICRODUCK_POLICIES_HF_REPO,
     MicroduckPolicy,
+    resolve_microduck_weight,
 )
 
 __all__ = [
@@ -37,6 +39,8 @@ __all__ = [
     "MicroduckPolicyBundle",
     "MICRODUCK_JOINT_NAMES",
     "MICRODUCK_DEFAULT_POSE",
+    "MICRODUCK_POLICIES_HF_REPO",
+    "resolve_microduck_weight",
     "GRAVITY_SOURCE_PROJECTED",
     "GRAVITY_SOURCE_RAW_ACCEL",
     "build_observation",

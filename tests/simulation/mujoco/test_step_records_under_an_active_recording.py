@@ -253,7 +253,7 @@ class TestTheRealRecorderEndToEnd:
         pytest.importorskip("lerobot")
         opened = sim.start_recording(repo_id="local/step_records_e2e", fps=10, root=str(tmp_path), task="three poses")
         assert opened["status"] == "success", _text(opened)
-        assert "step through a scripted motion" in _text(opened)
+        assert "step records one frame per 1/10s of sim time" in _text(opened)
         keys = sim.robot_action_keys("so101")
         frames = 0
         for pose in (0.3, -0.3, 0.0):

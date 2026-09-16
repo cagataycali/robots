@@ -1118,9 +1118,11 @@ class DatasetRecordingMixin:
         #      wrongly fail an otherwise-complete dataset.
         #   3. Nothing ever captured (frame_count == 0): fail loudly instead of
         #      writing a 0-frame dataset. This happens when the rollout was
-        #      driven by eval_policy / evaluate / replay_episode without a hook,
-        #      or by a step loop on a backend other than MuJoCo (whose ``step``
-        #      feeds the recorder at the dataset fps). Previously stop_recording reported
+        #      driven by eval_policy / evaluate / replay_episode without a hook
+        #      (only a rollout's on_frame hook calls add_frame, and run_policy,
+        #      start_policy and run_multi_policy each launch one), or by a step
+        #      loop on a backend other than MuJoCo, whose ``step`` feeds the
+        #      recorder at the dataset fps. Previously stop_recording reported
         #      success with "0 frames, 0 episode(s)", silently producing a
         #      dataset with only meta/info.json (no parquet/video).
         pending = getattr(recorder, "episode_frame_count", 0)
