@@ -30,6 +30,21 @@ under the lock the e-stop latches under, so such a request answers 423 and the
 latch stands. A queued command that would move the robot is refused when the
 worker reaches it rather than applied, which is the promise `sim_session` states.
 
+Ready means the engine built *and* rendered once, because creating the GL
+context is the slow, machine-dependent half of starting a session - longer than
+the model compile, and longer still under software GL. Paying it before the
+create route answers means the first frame is already in the snapshot the caller
+receives, and a machine with no renderer reports `error` there rather than as a
+session that never streams.
+
+That wait is bounded, and the bound is now answered rather than assumed. The
+state published before the first frame is `running`, so a renderer that never
+returns was handed back as a robot the operator could watch - 201, `running`,
+nothing on the MJPEG stream, and one of the four session slots held for the life
+of the process. The route reads what `wait_ready` reports: a session that misses
+the budget is dropped and refused with 504, naming the robot and the budget, and
+the slot it held is free again.
+
 `/api/sim/{id}/joints` states its domain as `utils.finite_number_error`'s - the
 one every surface that carries a signed physical quantity to a robot shares
 instead of restating, the same ingress `3242-settings-non-finite-numeric-domain.md`
