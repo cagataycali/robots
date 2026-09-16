@@ -71,6 +71,10 @@ class _IdleRegistry:
     def _rollouts_in_flight(self) -> tuple[str, ...] | None:
         return ()
 
+    # The second seam the verb reads: how the last asynchronous rollout per
+    # robot failed. A backend with no asynchronous entry has nothing to say.
+    _rollouts_ended_in_error = SimEngine._rollouts_ended_in_error
+
 
 def _text(envelope: dict[str, Any]) -> str:
     return str(envelope["content"][0]["text"])
@@ -210,6 +214,7 @@ class TestIsaacAnswersItToo:
         # The verb lives on the ABC and reads the seam, so the stand-in answers
         # it with Isaac's own reader - both halves are the production code.
         stub._rollouts_in_flight = lambda: IsaacSimulation._rollouts_in_flight(stub)  # type: ignore[arg-type]
+        stub._rollouts_ended_in_error = lambda: IsaacSimulation._rollouts_ended_in_error(stub)  # type: ignore[arg-type]
         return stub
 
     def test_it_names_the_robot_holding_the_claim(self) -> None:

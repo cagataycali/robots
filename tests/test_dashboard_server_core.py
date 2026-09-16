@@ -238,20 +238,31 @@ class TestThePreSignInRouteSaysOnlyWhatTheLoginScreenNeeds:
 
     @staticmethod
     def _seal_with_two_passkeys(isolated) -> None:
-        """An owner who has already enrolled: the store decides the posture."""
+        """An owner who has already enrolled: the store decides the posture.
+
+        The secret is part of what makes the file a store rather than merely
+        JSON - every store this module writes carries one - and one that lacks
+        it is moved aside for a working default, which would leave the cell
+        below asserting that a dashboard with no passkeys publishes none.
+        """
         (isolated / "auth.json").write_text(
             json.dumps(
                 {
+                    "jwt_secret": "n" * 64,
+                    "created": 1789500000,
                     "credentials": [
                         {"id": "cred-touchid", "name": "macbook touchid", "created": 1789500000},
                         {"id": "cred-yubikey", "name": "yubikey 5c nano", "created": 1789500900},
-                    ]
+                    ],
                 }
             )
         )
 
     def test_the_enrolled_passkeys_are_not_published_to_a_caller_with_no_session(self, client, isolated):
         self._seal_with_two_passkeys(isolated)
+        # There is something to withhold: the store was read as written, so the
+        # two passkeys are enrolled rather than rescued away.
+        assert auth.has_credentials() is True
         rebound = {"host": "evil.example:8090", "origin": "http://evil.example:8090"}
         body = client.get("/api/auth/status", headers=rebound).json()
         assert "credentials" not in body

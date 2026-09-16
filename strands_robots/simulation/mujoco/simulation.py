@@ -61,6 +61,7 @@ real guard when the verb is called directly as a Python API.
 
 import atexit
 import contextlib
+import functools
 import inspect
 import json
 import logging
@@ -72,6 +73,7 @@ import time
 import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -154,6 +156,7 @@ from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.simulation.recording import undriven_robot_state
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
+from strands_robots.simulation.tool_frame import registry_tool_frame
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
@@ -203,6 +206,87 @@ def _drop_unrecorded_cameras(observation: dict[str, Any], recorded: set[str] | N
     return {
         k: v for k, v in observation.items() if not (isinstance(v, np.ndarray) and v.ndim >= 2 and k not in recorded)
     }
+
+
+@dataclass
+class _StepRecordingClock:
+    """The open dataset recording ``step`` feeds, with its frame clock.
+
+    ``due`` is the sim time at which the next frame is owed; ``advance`` moves
+    it one period past the frame just taken - anchored to the schedule, not to
+    the step that happened to cross it, so the frame rate stays ``fps`` over a
+    long run - and persists it to ``state`` for the next ``step`` call. A clock
+    that fell more than a period behind (a long batch, or ``step`` called far
+    apart in sim time) re-anchors to now rather than emitting a burst of
+    catch-up frames of one identical instant.
+    """
+
+    recorder: Any
+    period: float
+    due: float
+    state: dict[str, Any]
+    fps: float
+
+    def advance(self, now: float) -> None:
+        nxt = self.due + self.period
+        if nxt <= now:
+            nxt = now + self.period
+        self.due = nxt
+        self.state["step_recording_due"] = nxt
+
+
+def _step_recording_clock(world: Any) -> "_StepRecordingClock | None":
+    """The open dataset recording ``step`` feeds, or ``None``.
+
+    ``None`` when no recording is open, when the session has no dataset
+    recorder (a trajectory-only session), or when a policy rollout is running
+    on any robot - its ``on_frame`` hook owns the recorder for the duration,
+    and a second writer would double every frame. The due time lives in
+    ``_backend_state["step_recording_due"]`` so it survives across ``step``
+    calls and is dropped with the recorder at ``stop_recording``; a due time
+    ahead of the clock (after ``reset``) is pulled back to now rather than left
+    unreachable. A module function over the world rather than an engine method
+    so the cross-backend ``step`` contract tests, which drive the method on a
+    stand-in carrying only the state ``step`` reads, keep grading it. Caller
+    holds the engine lock.
+    """
+    if world is None or world._model is None or world._data is None:
+        return None
+    state = world._backend_state
+    if not state.get("recording", False):
+        return None
+    recorder = state.get("dataset_recorder")
+    if recorder is None:
+        return None
+    if any(getattr(robot, "policy_running", False) for robot in getattr(world, "robots", {}).values()):
+        return None
+    fps = state.get("recording_fps") or getattr(getattr(recorder, "dataset", None), "fps", None) or 30
+    period = 1.0 / float(fps)
+    now = float(world._data.time)
+    due = state.get("step_recording_due")
+    if due is None or due > now + period:
+        due = now
+    return _StepRecordingClock(recorder=recorder, period=period, due=due, state=state, fps=float(fps))
+
+
+def _step_recording_note(clock: "_StepRecordingClock", recorded_frames: int) -> str:
+    """The recording clause of ``step``'s success text.
+
+    Says what was captured, or - when the call covered less sim time than one
+    frame period - that nothing was and when the next frame is due, so a caller
+    stepping in small increments learns the rule from the reply rather than
+    from an empty dataset at ``stop_recording``.
+    """
+    pending = getattr(clock.recorder, "episode_frame_count", None)
+    if recorded_frames:
+        note = f" | recorded {recorded_frames} frame{'s' if recorded_frames != 1 else ''}"
+        if isinstance(pending, int):
+            note += f" (episode buffer: {pending})"
+        return note
+    return (
+        f" | recorded 0 frames: the recording captures one frame per {clock.period:.4f}s of sim time "
+        f"({clock.fps:g} fps) and the next is due at t={clock.due:.4f}s"
+    )
 
 
 def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
@@ -776,6 +860,10 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # How the last start_policy rollout per robot failed, recorded by the
+        # Future's done-callback and read by ``_rollouts_ended_in_error``.
+        # Replaced when that robot's next rollout is submitted.
+        self._rollout_failures: dict[str, str] = {}
         # Capture rate of each rollout in ``_policy_threads``, recorded where
         # the Future is tracked so it is readable from another thread the
         # instant ``start_policy`` returns (``start_recording`` compares against
@@ -2271,6 +2359,26 @@ class MuJoCoSimEngine(
                 self._world.robots.pop(name, None)
                 return mesh_err
 
+            # A tool point the registry declares for a model that ships none
+            # (so100: no sites, so move_to drove the wrist 16 cm short of the
+            # jaws). It describes the registry's OWN model, so it applies only
+            # when that model is what loads: a caller's urdf_path with
+            # data_config= as the metadata source keeps its own frames. Shape-
+            # checked before anything touches the scene; a malformed block is
+            # refused loudly, like the sibling gripper block, rather than
+            # silently falling back to the wrist.
+            # ``data_config or name`` is the registry key the model was
+            # resolved from on this path (the same key the mesh resolution
+            # above uses): ``data_config`` when it was passed, else the
+            # instance name that the deprecated name-as-registry-key fallback
+            # looked up.
+            tool_frame = None
+            if not urdf_path:
+                tool_frame, tool_frame_err = registry_tool_frame(data_config or name)
+                if tool_frame_err is not None:
+                    self._world.robots.pop(name, None)
+                    return {"status": "error", "content": [{"text": f"add_robot: {tool_frame_err}"}]}
+
             # Resolve the requested spawn keyframe from the robot's SOURCE
             # model BEFORE mutating the scene, so an unknown keyframe fails
             # cleanly (naming the available keyframes) without leaving a
@@ -2300,7 +2408,7 @@ class MuJoCoSimEngine(
                 # robot.joint_names from the source spec (pre-namespacing) and
                 # then scene_ops._recompile_preserving_state resolves the
                 # post-attach joint/actuator IDs on the compiled model.
-                ok = inject_robot_into_scene(self._world, robot, resolved_path)
+                ok = inject_robot_into_scene(self._world, robot, resolved_path, tool_frame=tool_frame)
                 if not ok:
                     del self._world.robots[name]
                     return {
@@ -5013,6 +5121,14 @@ class MuJoCoSimEngine(
         # parent every physics step. Resolved once here; the per-step call is
         # a fast no-op when the registry is empty.
         has_kinematic_attachments = bool(self._world._backend_state.get("kinematic_attachments"))
+        # An open dataset recording is fed from here: one frame per ``1/fps``
+        # seconds of sim time, so ``set_joint_positions(hold=True)`` + ``step``
+        # IS a scripted demonstration rather than a loop that records nothing
+        # and says so only at ``stop_recording``. ``_step_recording_clock``
+        # resolves the recorder, its period and the next due time under the
+        # lock; ``None`` when nothing is open or a rollout owns the recorder.
+        recorded_frames = 0
+        clock: _StepRecordingClock | None = None
         # Process in batches, releasing lock between batches so stop_policy
         # and other actions can interleave on long runs.
         remaining = n_steps
@@ -5032,10 +5148,39 @@ class MuJoCoSimEngine(
                         "status": "error",
                         "content": [{"text": step_aborted_msg(n_steps - remaining, n_steps)}],
                     }
+                clock = _step_recording_clock(self._world)
+                batch_start = remaining
                 for _ in range(batch):
                     mj.mj_step(self._world._model, self._world._data)
                     if has_kinematic_attachments:
                         self._apply_kinematic_attachments()
+                    if clock is not None and self._world._data.time >= clock.due:
+                        # Derived state (xpos, camera xforms) lags the
+                        # integrated qpos by one step after mj_step; forward
+                        # once so the frame's images and the state it carries
+                        # describe the same instant.
+                        mj.mj_forward(self._world._model, self._world._data)
+                        self._world.sim_time = self._world._data.time
+                        try:
+                            self._record_step_frame(clock)
+                        except Exception as e:  # noqa: BLE001 - the frame, not the physics, failed
+                            # Earlier batches are already counted; this one
+                            # ran up to and including the step just taken.
+                            self._world.step_count += batch_start - remaining + 1
+                            return {
+                                "status": "error",
+                                "content": [
+                                    {
+                                        "text": (
+                                            f"step: advanced {n_steps - remaining + 1} of {n_steps} steps, then the "
+                                            f"recording frame at t={self._world.sim_time:.4f}s failed: {e}"
+                                        )
+                                    }
+                                ],
+                            }
+                        recorded_frames += 1
+                        clock.advance(self._world._data.time)
+                    remaining -= 1
                 if has_kinematic_attachments:
                     # Re-forward so the carried bodies' derived state (xpos,
                     # cam xforms) reflects the final teleport for the next
@@ -5043,38 +5188,89 @@ class MuJoCoSimEngine(
                     mj.mj_forward(self._world._model, self._world._data)
                 self._world.sim_time = self._world._data.time
                 self._world.step_count += batch
-            remaining -= batch
         self._publish_ros_telemetry()
-        summary = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
-        # A dataset recording is fed by run_policy's per-step hook and by
-        # nothing else. A caller scripting a demonstration with
-        # set_joint_positions + step under an active recording therefore
-        # captures nothing, and until now learned that only from
-        # stop_recording's empty-dataset refusal - after the whole scripted
-        # motion had run. Say it here, on the call that does not record, while
-        # the motion is still ahead. A rollout in flight IS recording (its hook
-        # runs on the executor thread), so the note stays silent then - and
-        # ``policy_running``, the flag this guard reads, is raised for every
-        # rollout that records: ``_announce_rollout`` for run_policy and
-        # start_policy, and ``run_multi_policy`` for its own synchronized loop,
-        # which feeds the recorder by calling add_frame directly. So the note
-        # says "a policy rollout" rather than naming run_policy alone, and
-        # start_recording's advice names all three. The note
-        # LEADS the line: appended after the step summary it was read past
-        # three times in a row by an agent that then reported "all three poses
-        # captured" - the first token of a success result is what gets read.
-        if self._world._backend_state.get("recording") and not any(
-            r.policy_running for r in self._world.robots.values()
-        ):
-            summary = (
-                "NOT RECORDED: a dataset recording is active but step captures no frames - only "
-                "a policy rollout feeds the recorder (start_recording -> run_policy or start_policy "
-                "-> stop_recording) | " + summary
+        text = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
+        if clock is not None:
+            text += _step_recording_note(clock, recorded_frames)
+        return {"status": "success", "content": [{"text": text}]}
+
+    def _record_step_frame(self, clock: "_StepRecordingClock") -> None:
+        """Feed one frame of the whole scene to the open recording.
+
+        The frame's *observation* is what ``run_policy``'s hook would supply for
+        every robot at once: :meth:`_get_sim_observation` per robot (joint state
+        plus its cameras, the overview camera included), scalars prefixed
+        ``<robot>__<joint>`` when the scene holds more than one robot so they
+        match the schema ``start_recording`` declared, image arrays scoped to
+        ``start_recording(cameras=...)``. Its *action* is the command in force at
+        this instant: the position-servo target of every actuator
+        (``data.ctrl``), keyed the way :meth:`robot_action_keys` keys a policy's
+        output. No policy issued it - ``set_joint_positions(hold=True)`` or
+        ``send_action`` did - and that is the honest value: it is what the
+        controller was told to reach when this observation was taken. The
+        ``task`` column falls back to the recording's ``start_recording(task=)``
+        (``add_frame``'s default chain), so a scripted episode is labelled the
+        way the session was opened. One :class:`TrajectoryStep` per robot goes
+        to the in-memory trajectory, as the rollout hook appends. Caller holds
+        ``self._lock``; raises whatever the recorder raises so ``step`` reports
+        it instead of counting a frame that was not written.
+        """
+        import numpy as np
+
+        from strands_robots.simulation.models import TrajectoryStep
+
+        world = self._world
+        assert world is not None and world._model is not None and world._data is not None
+        mj = self._mj
+        model, data = world._model, world._data
+        multi = len(world.robots) > 1
+        task = world._backend_state.get("recording_task") or ""
+
+        observation: dict[str, Any] = {}
+        action: dict[str, Any] = {}
+        required: list[str] = []
+        now = time.time()
+        for robot_name, robot in world.robots.items():
+            obs = self._get_sim_observation(robot_name)
+            pfx = robot.namespace or ""
+            act: dict[str, Any] = {}
+            for key in self.robot_action_keys(robot_name):
+                # The key form mirrors _apply_action_by_name's lookup: the
+                # namespaced spelling first, then the raw one. An actuator
+                # actuate_robot injected is named "<robot>_act_<joint>" with no
+                # namespace, so the first spelling names nothing for it.
+                act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, pfx + key) if pfx else -1
+                if act_id < 0:
+                    act_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, key)
+                # Every advertised key is required whether or not it resolved:
+                # a declared column this frame cannot supply is the recorder's
+                # to refuse (unrecordable_action_columns_error), not to zero-fill
+                # under a step that reports success.
+                required.append(f"{robot_name}__{key}" if multi else key)
+                if act_id < 0:
+                    continue
+                act[key] = float(data.ctrl[act_id])
+            for k, v in obs.items():
+                observation[k if (isinstance(v, np.ndarray) or not multi) else f"{robot_name}__{k}"] = v
+            for k, v in act.items():
+                action[f"{robot_name}__{k}" if multi else k] = v
+            world._backend_state["trajectory"].append(
+                TrajectoryStep(
+                    timestamp=now,
+                    sim_time=world.sim_time,
+                    robot_name=robot_name,
+                    observation={k: v for k, v in obs.items() if not isinstance(v, np.ndarray)},
+                    action=act,
+                    instruction=task,
+                )
             )
-        return {
-            "status": "success",
-            "content": [{"text": summary}],
-        }
+        observation = _drop_unrecorded_cameras(observation, world._backend_state.get("recording_cameras"))
+        clock.recorder.add_frame(
+            observation=observation,
+            action=action,
+            task=task or None,
+            required_action_keys=required,
+        )
 
     def reset(self) -> dict[str, Any]:
         """Reset the world to its initial state, beginning a new rollout.
@@ -6238,11 +6434,38 @@ class MuJoCoSimEngine(
         )
         self._policy_threads[robot_name] = future
         self._policy_rates[robot_name] = float(control_frequency)
+        # The verdict below is given before the worker has built the policy.
+        # What the worker then finds - a constructor refusing its port, a
+        # server that never answers - is recorded on completion, where
+        # ``list_policies_running`` reports it; otherwise the exception lives
+        # in a Future nobody reads and "No policies running." is the same
+        # reading as a rollout that completed.
+        self._rollout_failures.pop(robot_name, None)
+        future.add_done_callback(functools.partial(self._record_rollout_outcome, robot_name, policy_provider))
 
         return {
             "status": "success",
             "content": [{"text": f"Policy started on '{robot_name}' (async)"}],
         }
+
+    def _record_rollout_outcome(self, robot_name: str, policy_provider: str, future: Future) -> None:
+        """Done-callback of a ``start_policy`` worker: keep a failure where a caller can read it."""
+        exc = future.exception()
+        if exc is not None:
+            reason = f"{type(exc).__name__}: {exc}"
+        else:
+            result = future.result()
+            if not (isinstance(result, dict) and result.get("status") == "error"):
+                return
+            content = result.get("content") or [{}]
+            reason = str(content[0].get("text", result)) if isinstance(content[0], dict) else str(result)
+        self._rollout_failures[robot_name] = reason
+        logger.error(
+            "start_policy rollout on %r (policy_provider %r) ended in error: %s", robot_name, policy_provider, reason
+        )
+
+    def _rollouts_ended_in_error(self) -> Mapping[str, str]:
+        return dict(self._rollout_failures)
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str):
         """MuJoCo override: recording + policy_running flag + lock.
@@ -6486,6 +6709,16 @@ class MuJoCoSimEngine(
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
+
+        # The same per-robot gate ``start_policy`` and every joint write pass.
+        # Without it a second rollout on a robot another thread is already
+        # driving ran concurrently - two policies writing one ``ctrl`` slice -
+        # and its ``finally`` then lowered the claim the first one still held.
+        # The driving thread of a rollout in flight is exempt (see
+        # ``_rollouts_driven_by_other_threads``), so ``start_policy``'s worker,
+        # which reaches this body through ``_drive_rollout``, is not refused.
+        if err := self._require_no_running_policy("run_policy", robot_name=robot_name):
+            return err
 
         # The blocking entry runs on the caller's own thread, so claiming the
         # robot here is synchronous with the call and opens no window.
