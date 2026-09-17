@@ -291,8 +291,14 @@ class SimSession:
         if cmd.kind == "reset":
             return dict(engine.reset())
         if cmd.kind == "set_joints":
-            # hold=True moves the position servos' setpoints with the pose; without it
-            # the actuators pull the joints straight back to where they were.
+            # A target, not a nudge: ``set_joint_positions`` is a kinematic qpos
+            # write, and this worker steps again the moment ``_drain`` returns.
+            # Without ``hold`` the position servos are still commanded to their
+            # previous setpoint and pull the pose back inside a few hundred
+            # steps (measured on ``so101``: 0.5 rad written, 0.03 rad half a
+            # second later) while the route has already answered 200.
+            # ``hold=True`` moves the setpoints with the pose, which is the
+            # "set joint targets" the route and the changelog promise.
             return dict(engine.set_joint_positions(cmd.payload["positions"], robot_name=self.robot, hold=True))
         if cmd.kind == "state":
             return dict(engine.get_robot_state(self.robot))

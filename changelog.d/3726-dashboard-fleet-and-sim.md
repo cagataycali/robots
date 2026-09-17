@@ -56,3 +56,12 @@ range, which is finite and has no float form, so `math.isfinite` raised
 `OverflowError` out of the guard written to answer rather than raise - a 500 for
 the caller. Both answer 400 now, and the reason names the joint, or the list
 index, that carried the value.
+
+A joints request is a target, so the pose it writes survives the steps that
+follow. The engine's `set_joint_positions` is a kinematic `qpos` write, and on a
+robot held by position servos - `so101`, the one the page defaults to - the
+servos are still commanded to their previous setpoint, so the worker's next
+`step` pulls the pose back: a `0.5` rad target on joint `2` answered `200` and
+read `0.03` rad half a second of sim time later. The session now writes with
+`hold=True`, which moves the servo setpoints with the pose, and a real-engine
+cell reads the joint back after that half second.

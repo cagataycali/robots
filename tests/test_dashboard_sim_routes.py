@@ -39,6 +39,7 @@ class FakeEngine:
         )
         self.steps = 0
         self.writes = 0
+        self.holds: list = []
         self.resets = 0
         self.closed = False
 
@@ -68,6 +69,7 @@ class FakeEngine:
         if isinstance(positions, dict) and any(k not in self.robot_joint_names(robot_name) for k in positions):
             return {"status": "error", "content": [{"text": "unknown joint"}]}
         self.writes += 1
+        self.holds.append(hold)
         return {"status": "success", "content": [{"text": "set"}]}
 
     def get_robot_state(self, robot_name=None):
@@ -321,6 +323,20 @@ class TestSimRoutes:
         assert client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.1}}).status_code == 200
         assert client.post(f"/api/sim/{sid}/reset").status_code == 200
 
+    def test_joints_are_written_as_a_target_the_servos_hold(self, client, fake_factory):
+        """The route says "set joint targets", so the write has to survive the next tick.
+
+        ``set_joint_positions`` is a kinematic qpos write; on a robot held by
+        position servos the servos are still commanded to their previous
+        setpoint and the worker's next ``step`` pulls the pose back. Passing
+        ``hold`` moves the setpoints with the pose. Without it the route answered
+        200 for a pose the robot had left before the next telemetry frame.
+        """
+        sid = _create(client)["id"]
+        assert client.post(f"/api/sim/{sid}/joints", json={"positions": {"j0": 0.5}}).status_code == 200
+        (engine,) = fake_factory
+        assert engine.holds == [True], "a joints request is a target, so the servo setpoints move with the pose"
+
     def test_stream_is_multipart_mjpeg_and_bounded_on_request(self, client):
         sid = _create(client)["id"]
         time.sleep(0.2)
@@ -525,6 +541,32 @@ class TestEstop:
         assert safety.lockout.state == "locked", "an in-flight create is not proof that the lockout lifted"
         assert safety.store.all() == [], "the refused session is not left running"
         assert session.snapshot.steps == 0
+
+    def test_an_estop_in_the_instant_before_the_create_is_folded_drops_the_session(self, client, monkeypatch):
+        """The build finished clear, and the red button lands as the create is about to be folded.
+
+        Between the last read of the lockout in the route and the fold in
+        ``accepted`` there is no work left for the request but the fold itself,
+        so the e-stop is fired on the way into it - the narrowest window the
+        latch can land in. The refusal is 423 as for the wider windows; what is
+        pinned here is that the refused session leaves the store with it. Left
+        behind it holds one of the slots, frozen, and thaws into a running robot
+        on the next resume - one no operator was ever handed.
+        """
+        safety = client.app.state.safety
+        fold = type(safety).accepted
+
+        def an_estop_lands_first():
+            safety.estop(by="operator")
+            fold(safety)
+
+        monkeypatch.setattr(safety, "accepted", an_estop_lands_first)
+        r = client.post("/api/sim", json={"robot": "so101"})
+
+        assert r.status_code == 423 and "e-stop engaged" in r.json()["error"]
+        assert safety.lockout.state == "locked", "the refused create is not proof that the lockout lifted"
+        assert safety.store.all() == [], "a create the caller was told was refused holds no slot"
+        assert safety.resume(by="operator")["thawed"] == [], "and there is nothing for a resume to set running"
 
     def test_an_estop_during_a_write_refuses_that_request_and_stays_latched(self, client, monkeypatch):
         """The joints request was admitted while clear, and the red button was pressed mid-write.
@@ -793,3 +835,27 @@ def test_real_engine_session_steps_and_renders(monkeypatch):
     assert scene.mesh_bytes(s.model, 0)[:4] == b"SRM1"
     assert s.command("set_joints", positions={"2": 0.3})["status"] == "success"
     s.stop()
+
+
+@pytest.mark.skipif(not _HAS_MUJOCO, reason="mujoco not installed")
+def test_real_engine_joints_target_survives_the_steps_that_follow():
+    """On ``so101`` a joints write that is not held springs back toward home.
+
+    Measured before the fix: ``{"2": 0.5}`` answered ``success`` and read 0.03 rad
+    half a second of sim time later - the position servo was still commanded to
+    its old setpoint. Held, it reads within a few hundredths of the target.
+    """
+    s = sim_session.SimSession("so101")
+    assert s.wait_ready(60), "engine did not start"
+    if s.snapshot.state == "error":
+        pytest.skip(f"no renderer here: {s.snapshot.error}")
+    try:
+        assert _until(lambda: s.snapshot.sim_time > 0.2, timeout=15.0), s.snapshot
+        joint = s.snapshot.joint_names.index("2")
+        assert s.command("set_joints", positions={"2": 0.5})["status"] == "success"
+        settled_at = s.snapshot.sim_time + 0.5
+        assert _until(lambda: s.snapshot.sim_time > settled_at, timeout=30.0), s.snapshot
+        held = s.snapshot.qpos[joint]
+        assert abs(held - 0.5) < 0.15, f"joint 2 read {held:.3f} rad half a second after a 0.5 rad target"
+    finally:
+        s.stop()
