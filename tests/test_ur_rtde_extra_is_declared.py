@@ -27,13 +27,21 @@ tests it.
 
 The last rule here is the general one rather than a fourth assertion about
 ``ur_rtde``: **no driver refusal may hand a reader a distribution when an extra
-could supply it.** Two hints legitimately name a distribution and both say why -
+could supply it.** Three hints legitimately name a distribution and each says why -
 ``panda-py`` is not published on PyPI at all (the Franka binding ships as a
 release asset, and a direct URL requirement is denylisted by
-``tests/test_dependency_audit.py``), and ``booster_robotics_sdk_python`` is a
+``tests/test_dependency_audit.py``), ``booster_robotics_sdk_python`` is a
 vendor wheel pinned to the robot's firmware, so the installed build's vocabulary
-is an input rather than something this project bounds. Anything else is the defect
-this file fixes, and the next native driver to land will be graded by it.
+is an input rather than something this project bounds, and ``cyclonedds`` is the
+first step of the Unitree SDK recipe whose second step - the SDK itself, a git
+checkout - no requirement can spell, so an extra carrying the prerequisite alone
+would exit 0 with the driver still refusing. Anything else is the defect this file
+fixes, and the next native driver to land will be graded by it.
+
+A hint may carry a specifier (``pip install 'cyclonedds>=0.10.2,<12'``), and the
+exemption table is keyed by the distribution, not the quoted text: the target is
+read through :class:`packaging.requirements.Requirement` before the lookup, so a
+recorded reason is found whatever bound the hint spells.
 """
 
 from __future__ import annotations
@@ -44,7 +52,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from packaging.requirements import Requirement
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
@@ -78,7 +86,29 @@ _UNDECLARABLE = {
         "a vendor wheel pinned to the robot's firmware, so the installed build's vocabulary is "
         "an input rather than a version this project bounds (strands_robots/drivers/booster.py)"
     ),
+    "cyclonedds": (
+        "the prerequisite of unitree_sdk2py, which is a git checkout - its PyPI wheel lacks the "
+        "g1 package and pins cyclonedds==0.10.2, which has no py>=3.12 wheel - and a direct URL "
+        "requirement is denylisted, so an extra could carry the prerequisite and not the SDK, "
+        "and installing it would exit 0 with the driver still refusing "
+        "(strands_robots/drivers/unitree/_common.py)"
+    ),
 }
+
+
+def _hint_distribution(target: str) -> str:
+    """The canonical distribution a hint's target names, whatever bound it carries.
+
+    ``'cyclonedds>=0.10.2,<12'`` is one target and names one distribution; read
+    whole, ``canonicalize_name`` folds the specifier into the name
+    (``cyclonedds>=0-10-2,<12``) and no table entry can match it. A target that
+    is not a requirement at all is canonicalised as written, so the offender
+    report still quotes what the reader was handed.
+    """
+    try:
+        return canonicalize_name(Requirement(target).name)
+    except InvalidRequirement:
+        return canonicalize_name(target)
 
 
 def _optional_dependencies() -> dict[str, list[str]]:
@@ -200,7 +230,7 @@ def test_no_driver_refusal_hands_a_reader_an_undeclarable_distribution() -> None
                 modules.add(rel)
                 named = re.fullmatch(r"strands-robots(?:\[([a-z0-9,_-]+)\])?", target.strip())
                 if named is None:
-                    if canonicalize_name(target) not in _UNDECLARABLE:
+                    if _hint_distribution(target) not in _UNDECLARABLE:
                         offenders.append(f"{rel}:{lineno} names the distribution {target!r} -- {line.strip()[:90]}")
                     continue
                 for part in (named.group(1) or "").split(","):
@@ -216,3 +246,23 @@ def test_no_driver_refusal_hands_a_reader_an_undeclarable_distribution() -> None
         f"owns. Declare it and name the extra, or record why no extra can carry it in "
         f"_UNDECLARABLE. Currently recorded: {sorted(_UNDECLARABLE)}\n" + "\n".join(offenders)
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "distribution"),
+    [
+        ("cyclonedds>=0.10.2,<12", "cyclonedds"),
+        ("panda_py", "panda-py"),
+        ("ur_rtde", "ur-rtde"),
+        ("strands-robots[ur]", "strands-robots"),
+    ],
+)
+def test_a_hint_is_keyed_by_its_distribution_not_its_quoted_text(target: str, distribution: str) -> None:
+    """A recorded reason is found whatever bound the hint spells.
+
+    The Unitree install line quotes its prerequisite with the bound the SDK's
+    own pin needs, and on the whole-text key that hint was unrecordable: the
+    grader reported ``'cyclonedds>=0.10.2,<12'`` as an undeclarable distribution
+    beside a table that could not name it.
+    """
+    assert _hint_distribution(target) == distribution
