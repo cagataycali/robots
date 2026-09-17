@@ -17,12 +17,18 @@ write, no robot_name            before                     after
 ``apply_force("gripper")``      latched on ``so101``        refused
 ``set_body_properties``         re-massed ``so101``         refused
 ``set_geom_properties``         recoloured the first robot  refused
-``get_body_state`` and the
-other two readers               resolve the first match     unchanged
+``get_body_state`` and the      answered about the first    answers, and names
+other two readers               robot, naming nobody        the entity it read
 ==============================  =========================  ==================
 
 The readers stay on the fallback deliberately: a read changes nothing and can be
-asked again, and they are the population the retry was written for.
+asked again, and they are the population the retry was written for. That premise
+is what the second half of this file pins - because the answer named the
+*request* (``Body 'base' (id=1)``, in a scene whose only bodies are
+``alice/base`` and ``bob/base``), so it named neither the entity that had been
+read nor the fact that a choice had been made, and "ask again" was not a remedy
+a caller could see. Each read now appends the name it resolved to, plus - when
+several robots carry it - who else carries it and the spelling that reads them.
 
 The refusal fires only when the retry is what decides. A name the model carries
 verbatim, and robots that resolve a name to the SAME joint, are not ambiguous -
@@ -84,6 +90,28 @@ WRITES: dict[str, _Door] = {
     ),
 }
 DOORS = sorted(WRITES)
+
+
+@dataclass(frozen=True)
+class _Read:
+    """One physics read, plus the names it needs to be driven."""
+
+    shared: str  # an entity name BOTH robots carry
+    unique: str  # an entity name only ``bob`` carries
+    obj: int  # the mjtObj the name names, to check the spellings offered exist
+    verbatim: str  # what ``add_object(name="widget")`` names of this type
+    call: Callable[[Any, str], dict[str, Any]]
+
+
+# The geom row is why each ``get_jacobian`` branch passes its own ``mjtObj``: a
+# geom id read back as a body names a different entity, or none at all.
+READS: dict[str, _Read] = {
+    "get_body_state": _Read("base", "tip", _BODY, "widget", lambda s, n: s.get_body_state(n)),
+    "get_jacobian": _Read("base", "tip", _BODY, "widget", lambda s, n: s.get_jacobian(body_name=n)),
+    "get_jacobian_geom": _Read("pad", "tip_pad", _GEOM, "widget_geom", lambda s, n: s.get_jacobian(geom_name=n)),
+    "forward_kinematics": _Read("base", "tip", _BODY, "widget", lambda s, n: s.forward_kinematics(n)),
+}
+WINDOWS = sorted(READS)
 
 
 def _scene(tmp_path, *robots: str) -> Simulation:
@@ -219,19 +247,95 @@ def test_a_name_the_scene_carries_verbatim_is_still_written(two_arms):
     assert touched == ["base"], touched
 
 
-@pytest.mark.parametrize("reader", ["get_body_state", "get_jacobian", "forward_kinematics"])
-def test_the_body_readers_still_resolve_a_bare_name(two_arms, reader):
+@pytest.mark.parametrize("window", WINDOWS)
+def test_a_bare_name_both_robots_carry_is_still_read(two_arms, window):
     """Deliberate: the readers are the population the first-match retry serves.
 
     They change nothing and can be asked again with a qualified name, so they
     keep the pre-namespacing UX ``test_body_readers_resolve_one_name`` pins.
     """
-    calls = {
-        "get_body_state": lambda: two_arms.get_body_state("base"),
-        "get_jacobian": lambda: two_arms.get_jacobian(body_name="base"),
-        "forward_kinematics": lambda: two_arms.forward_kinematics("base"),
-    }
-    assert calls[reader]()["status"] == "success"
+    spec = READS[window]
+    assert spec.call(two_arms, spec.shared)["status"] == "success"
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+def test_a_resolved_read_names_the_entity_it_answered_about(two_arms, window):
+    """The defect: the answer echoed the caller's bare name and named nobody."""
+    spec = READS[window]
+    text = _text(spec.call(two_arms, spec.shared))
+    assert f"resolved '{spec.shared}' to 'alice/{spec.shared}'" in text, text
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+def test_the_note_names_every_owner_and_only_spellings_that_exist(two_arms, window):
+    """Both owners, and the spelling offered is the one the caller does not have.
+
+    Offering the entity that just answered is not a remedy, and offering a name
+    the model does not carry sends the caller down a route that fails too.
+    """
+    spec = READS[window]
+    text = _text(spec.call(two_arms, spec.shared))
+    assert f"robots 'alice' and 'bob' each carry '{spec.shared}'" in text, text
+    # The remedy list itself, not the sentence around it: an offer that includes
+    # the entity the caller was just handed is not a route to the other one.
+    offered = text.rsplit("qualify the name to read another ", 1)[1]
+    assert f"'bob/{spec.shared}'" in offered, offered
+    assert f"'alice/{spec.shared}'" not in offered, offered
+    assert mj.mj_name2id(two_arms._world._model, spec.obj, f"bob/{spec.shared}") >= 0
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+def test_the_spelling_the_note_offers_reads_the_other_robot(two_arms, window):
+    """Control: the remedy works, and an answer the caller named needs no note."""
+    spec = READS[window]
+    result = spec.call(two_arms, f"bob/{spec.shared}")
+    assert result["status"] == "success", result
+    assert "resolved" not in _text(result), _text(result)
+
+
+def test_the_named_entity_is_the_one_whose_state_was_returned(two_arms):
+    """The note and the numbers agree: ``alice/base``, not ``bob/base``.
+
+    The resolved name is read back off the id the answer describes, so a note
+    naming the robot the answer is *not* about - a worse dead end than naming
+    nobody - is not reachable by the note and the read disagreeing. The two arms
+    stand half a metre apart, so the positions tell them apart.
+    """
+    bare = two_arms.get_body_state("base")
+    assert "resolved 'base' to 'alice/base'" in _text(bare)
+    position = next(block["json"]["position"] for block in bare["content"] if "json" in block)
+    named = two_arms.get_body_state("alice/base")["content"][1]["json"]["position"]
+    rival = two_arms.get_body_state("bob/base")["content"][1]["json"]["position"]
+    assert position == pytest.approx(named)
+    assert position != pytest.approx(rival)
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+def test_a_bare_name_one_robot_carries_is_named_without_rivals(two_arms, window):
+    """Control: the retry still serves the unambiguous case, with no rival list."""
+    spec = READS[window]
+    text = _text(spec.call(two_arms, spec.unique))
+    assert f"resolved '{spec.unique}' to 'bob/{spec.unique}'." in text, text
+    assert "each carry" not in text, text
+
+
+@pytest.mark.parametrize("window", WINDOWS)
+def test_a_name_the_scene_carries_verbatim_is_read_without_a_note(two_arms, window):
+    """Control: the note reports the retry, and the retry did not run here.
+
+    An ``add_object`` is answered by the verbatim lookup before any namespace is
+    tried, so the caller's name IS the entity's name and there is nothing to
+    disambiguate. The name is per type rather than per object, because
+    ``add_object(name="widget")`` builds the body ``widget`` and the geom
+    ``widget_geom`` - so the premise is asserted rather than assumed.
+    """
+    spec = READS[window]
+    added = two_arms.add_object(name="widget", shape="box", size=[0.05] * 3, position=[0, 0.6, 0.1])
+    assert added["status"] == "success", added
+    assert mj.mj_name2id(two_arms._world._model, spec.obj, spec.verbatim) >= 0, spec.verbatim
+    result = spec.call(two_arms, spec.verbatim)
+    assert result["status"] == "success", result
+    assert "resolved" not in _text(result), _text(result)
 
 
 def test_a_joint_name_one_robot_carries_outranks_another_robot_label(tmp_path):
@@ -312,6 +416,36 @@ def test_the_reported_so101_scene_refuses_by_joint_name_and_by_registry_label(ke
         sim.cleanup()
 
 
+def _mixin_methods() -> list[ast.FunctionDef]:
+    """Every method defined on ``PhysicsMixin``, parsed from its own source."""
+    source = inspect.getsourcefile(PhysicsMixin)
+    assert source is not None
+    tree = ast.parse(pathlib.Path(source).read_text(encoding="utf-8"))
+    mixin = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == PhysicsMixin.__name__)
+    return [node for node in mixin.body if isinstance(node, ast.FunctionDef)]
+
+
+def _calls(method: ast.FunctionDef, name: str) -> bool:
+    """Whether ``method`` calls ``self.<name>`` anywhere in its body."""
+    return any(
+        isinstance(node.func, ast.Attribute) and node.func.attr == name
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+    )
+
+
+def _writes_state(method: ast.FunctionDef) -> bool:
+    """Whether ``method`` assigns into the compiled model or its data."""
+    for node in ast.walk(method):
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if isinstance(node, ast.AugAssign):
+            targets = [node.target]
+        for target in targets:
+            if ast.unparse(target).startswith(("model.", "data.", "self._world._model.", "self._world._data.")):
+                return True
+    return False
+
+
 def _writes_resolving_a_name() -> dict[str, bool]:
     """Every ``PhysicsMixin`` method that resolves a caller's name AND writes state.
 
@@ -322,34 +456,12 @@ def _writes_resolving_a_name() -> dict[str, bool]:
     complies when the ambiguity guard is reached - directly, or through the
     joint-key resolver that carries it.
     """
-    source = inspect.getsourcefile(PhysicsMixin)
-    assert source is not None
-    tree = ast.parse(pathlib.Path(source).read_text(encoding="utf-8"))
-    mixin = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == PhysicsMixin.__name__)
-
-    def calls(method: ast.FunctionDef, name: str) -> bool:
-        return any(
-            isinstance(node.func, ast.Attribute) and node.func.attr == name
-            for node in ast.walk(method)
-            if isinstance(node, ast.Call)
-        )
-
-    def writes_state(method: ast.FunctionDef) -> bool:
-        for node in ast.walk(method):
-            targets = node.targets if isinstance(node, ast.Assign) else []
-            if isinstance(node, ast.AugAssign):
-                targets = [node.target]
-            for target in targets:
-                if ast.unparse(target).startswith(("model.", "data.", "self._world._model.", "self._world._data.")):
-                    return True
-        return False
-
     found: dict[str, bool] = {}
-    for method in [node for node in mixin.body if isinstance(node, ast.FunctionDef)]:
-        via_joint_keys = calls(method, "_resolve_joint_write_targets")
-        if not (calls(method, "_resolve_mj_name") or via_joint_keys) or not writes_state(method):
+    for method in _mixin_methods():
+        via_joint_keys = _calls(method, "_resolve_joint_write_targets")
+        if not (_calls(method, "_resolve_mj_name") or via_joint_keys) or not _writes_state(method):
             continue
-        found[method.name] = via_joint_keys or calls(method, "_refuse_ambiguous_bare_name")
+        found[method.name] = via_joint_keys or _calls(method, "_refuse_ambiguous_bare_name")
     return found
 
 
@@ -358,3 +470,32 @@ def test_every_physics_write_that_resolves_a_name_enforces_the_contract():
     writes = _writes_resolving_a_name()
     assert set(writes) == set(WRITES), "the table above no longer covers the mixin's writes"
     assert [name for name, guarded in writes.items() if not guarded] == []
+
+
+def _reads_resolving_a_name() -> dict[str, bool]:
+    """Every caller-facing ``PhysicsMixin`` method that resolves a name and reads.
+
+    Derived from the source so a fourth reader inherits the rule instead of
+    silently going back to naming the request: a method is in scope when it
+    resolves a name through ``_resolve_mj_name`` and assigns into neither the
+    model nor its data, and it complies when it reaches ``_resolved_name_note``.
+
+    Scoped to public methods, because the private ones the filter also catches
+    (``_resolve_joint_label``, ``_robot_joint_labels``,
+    ``_resolve_joint_write_targets``) resolve on behalf of a verb that answers -
+    and that verb carries the note, or the refusal, itself.
+    """
+    return {
+        method.name: _calls(method, "_resolved_name_note")
+        for method in _mixin_methods()
+        if not method.name.startswith("_") and _calls(method, "_resolve_mj_name") and not _writes_state(method)
+    }
+
+
+def test_every_physics_read_that_resolves_a_name_names_the_entity():
+    """The read family itself, so the next reader does not name the request."""
+    reads = _reads_resolving_a_name()
+    assert set(reads) == {"get_body_state", "get_jacobian", "forward_kinematics"}, (
+        "the read table above no longer covers the mixin's resolving readers"
+    )
+    assert [name for name, named in reads.items() if not named] == []

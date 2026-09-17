@@ -944,7 +944,11 @@ class PhysicsMixin:
         the caller MUST pass the namespaced form (``arm0/gripper``) to
         disambiguate. The fallback returns the first match it finds,
         which is non-deterministic - this is a deliberate
-        "unambiguous or explicit" contract.
+        "unambiguous or explicit" contract. A write that reaches this retry
+        refuses an ambiguous bare name outright
+        (:meth:`_refuse_ambiguous_bare_name`); a read answers and reports the
+        name it resolved to (:meth:`_resolved_name_note`), so which entity
+        answered is part of the answer rather than a caller's guess.
         """
 
         assert self._world is not None and self._world._model is not None
@@ -998,6 +1002,48 @@ class PhysicsMixin:
             owners = [r.name for r in self._world.robots.values() if self._resolve_joint_label(name, r.name) >= 0]
         return owners
 
+    def _resolved_name_note(self, obj_type: int, requested: object, entity_id: int) -> str:
+        """What a read owes when the namespace retry, not the caller, chose the entity.
+
+        The physics writes refuse a bare name several robots carry
+        (:meth:`_refuse_ambiguous_bare_name`); the readers keep resolving it, and
+        the reason they may is that a read "names one entity and the caller can
+        ask again". The answer named the *request*: ``Body 'base' (id=1)`` for a
+        scene whose only bodies are ``alice/base`` and ``bob/base``, so it named
+        neither the entity that was read nor the fact that a choice had been
+        made, and there was nothing for the caller to ask again about.
+
+        Returns the sentence such a read appends to its answer, and ``""`` when
+        the retry is not what decided - an entity the caller's own spelling
+        names, an unnamed one, or a lookup that found nothing. When several
+        robots carry the name it also names them and the spelling that reads
+        each other one, so the "ask again" the exemption rests on is a remedy
+        the caller can follow rather than a possibility they cannot see.
+
+        Args:
+            obj_type: The ``mjtObj`` type that was looked up.
+            requested: The name the caller passed.
+            entity_id: The id the lookup returned. The resolved name is read
+                back off it, so the note cannot name an entity other than the
+                one the answer describes.
+        """
+        if entity_id < 0 or self._world is None or self._world._model is None:
+            return ""
+        # ``mj_id2name`` has no module-level wrapper to borrow, unlike the
+        # ``mj_name_to_id`` the sibling lookups use, so resolve the module here.
+        resolved = _ensure_mujoco().mj_id2name(self._world._model, obj_type, entity_id)
+        if not resolved or resolved == requested:
+            return ""
+        note = f"resolved '{requested}' to '{resolved}'"
+        owners = self._bare_name_owners(obj_type, requested)
+        if len(owners) < 2:
+            return f"{note}."
+        listed = " and ".join(f"'{owner}'" for owner in owners)
+        # Every owner but the one that answered: the caller already has this
+        # entity, and the point of the list is the ones they have not seen.
+        others = " or ".join(f"'{owner}/{requested}'" for owner in owners if f"{owner}/{requested}" != resolved)
+        return f"{note}; robots {listed} each carry '{requested}' - qualify the name to read another ({others})."
+
     def _refuse_ambiguous_bare_name(
         self,
         obj_type: int,
@@ -1013,7 +1059,9 @@ class PhysicsMixin:
         explicit" contract: it returns the first robot that matches, and its
         docstring says the caller MUST qualify the name in a multi-robot scene.
         A read can live on that - it names one entity and the caller can ask
-        again - which is the population the fallback was written for. A WRITE
+        again, which is the population the fallback was written for, and
+        :meth:`_resolved_name_note` is what makes both halves of that true: the
+        answer names the entity it resolved and who else carries the name. A WRITE
         cannot: the state it changed belongs to a robot the caller never
         addressed, and no answer says which one it was. So every physics write
         enforces the contract the resolver only describes, on the same terms the
@@ -1354,6 +1402,11 @@ class PhysicsMixin:
         names, and a caller who pairs one robot's joint names with the leading
         columns silently reads another robot's Jacobian.
 
+        The body/site/geom name may be bare or namespaced; a bare name is
+        retried under each robot's namespace, and when that retry is what
+        resolved it the answer names the entity it landed on - so a Jacobian
+        spanning two robots also says which one's entity it is for.
+
         Returns:
             ``{"status": "success", "content": [{"text"}, {"json": {"jacp",
             "jacr", "nv", "dof_joint_names"}}]}`` on success, an error envelope
@@ -1383,25 +1436,33 @@ class PhysicsMixin:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 mj.mj_jacBody(model, data, jacp, jacr, obj_id)
                 label = f"body '{body_name}'"
+                note = self._resolved_name_note(mj.mjtObj.mjOBJ_BODY, body_name, obj_id)
             elif site_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
                 if obj_id < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Site", site_name)}]}
                 mj.mj_jacSite(model, data, jacp, jacr, obj_id)
                 label = f"site '{site_name}'"
+                note = self._resolved_name_note(mj.mjtObj.mjOBJ_SITE, site_name, obj_id)
             elif geom_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
                 if obj_id < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Geom", geom_name)}]}
                 mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
                 label = f"geom '{geom_name}'"
+                note = self._resolved_name_note(mj.mjtObj.mjOBJ_GEOM, geom_name, obj_id)
             else:
                 return {"status": "error", "content": [{"text": "Specify body_name, site_name, or geom_name."}]}
 
         return {
             "status": "success",
             "content": [
-                {"text": f"Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"},
+                {
+                    "text": (
+                        f"Jacobian for {label}: pos={jacp.shape}, rot={jacr.shape}, nv={model.nv}"
+                        + (f"\n{note}" if note else "")
+                    )
+                },
                 {
                     "json": {
                         "jacp": jacp.tolist(),
@@ -1578,6 +1639,12 @@ class PhysicsMixin:
         Returns Cartesian pose + 6D spatial velocity (linear + angular),
         computed at the current ``qpos``/``qvel`` (the forward pipeline is run
         first so pose and velocity are never a stale earlier state).
+
+        The name may be bare (``"gripper"``) or namespaced
+        (``"arm0/gripper"``); a bare name is retried under each robot's
+        namespace, and when that retry is what resolved it the answer names the
+        entity it landed on - plus, in a scene where several robots carry the
+        name, who else carries it and the spelling that reads them.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1631,6 +1698,8 @@ class PhysicsMixin:
             f"  angvel: [{angvel[0]:.4f}, {angvel[1]:.4f}, {angvel[2]:.4f}]\n"
             f"  mass: {mass:.4f}kg, com: {com}"
         )
+        if note := self._resolved_name_note(mj.mjtObj.mjOBJ_BODY, body_name, body_id):
+            text += f"\n  {note}"
 
         return {"status": "success", "content": [{"text": text}, {"json": state}]}
 
@@ -2969,7 +3038,9 @@ class PhysicsMixin:
         (``"arm0/gripper"``), on the same terms as :meth:`get_body_state`,
         :meth:`get_jacobian`, :meth:`apply_force` and
         :meth:`set_body_properties`: ``add_robot`` namespaces every compiled
-        body, and a bare name is retried under each robot's namespace.
+        body, and a bare name is retried under each robot's namespace. When that
+        retry is what resolved the name, the answer names the entity it landed
+        on rather than echoing the request.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2990,10 +3061,13 @@ class PhysicsMixin:
                     "position": data.xpos[bid].tolist(),
                     "quaternion": data.xquat[bid].tolist(),
                 }
+                text = f"FK for '{body_name}': pos={body_payload['position']}"
+                if note := self._resolved_name_note(mj.mjtObj.mjOBJ_BODY, body_name, bid):
+                    text += f"\n{note}"
                 return {
                     "status": "success",
                     "content": [
-                        {"text": f"FK for '{body_name}': pos={body_payload['position']}"},
+                        {"text": text},
                         {"json": {"body": body_name, **body_payload}},
                     ],
                 }
