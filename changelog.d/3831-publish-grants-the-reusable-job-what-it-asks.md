@@ -7,4 +7,6 @@ refused the run before any job existed (`startup_failure`), so the tag exists
 and PyPI still serves 0.5.1. The caller now grants it. The workflow also gains a
 `workflow_dispatch` with a `tag` input, checked out in the build job so
 hatch-vcs derives the version from that tag, so a refused publish is re-run
-against the same release instead of re-publishing it.
+against the same release instead of re-publishing it. A grader now compares every caller's
+`permissions` block against the scopes the workflow it calls asks for, so the
+next one is a failing test rather than a refused run with no job to read.
