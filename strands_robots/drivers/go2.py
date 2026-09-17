@@ -32,7 +32,7 @@ matter are both on the wire:
 
 The safety gate is also a different question. The G1 gate reads a high-level FSM
 id whose wire key is still unevidenced (see
-:mod:`strands_robots.tools.g1._motion_switcher` and issue #2765). The Go2's
+:mod:`strands_robots.drivers.unitree._motion_switcher` and issue #2765). The Go2's
 low-level write path has a simpler and fully-evidenced precondition: the onboard
 sport-mode service must be *released* before ``rt/lowcmd`` reaches the motors,
 and every SDK example tests exactly one key for it - ``CheckMode()``'s
@@ -82,9 +82,9 @@ from strands_robots.drivers.base import (
     telemetry_int_list,
     undeclared_verb_error,
 )
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, sdk_missing
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.mesh.pacing import Ticker
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -226,6 +226,8 @@ def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
 
         module = importlib.import_module(module_path)
     except ImportError as exc:
+        if module_path.split(".")[0] == "unitree_sdk2py":
+            return sdk_missing(f"{exc} (resolving {module_path})")
         return f"cannot import {module_path}: {exc}"
     if not hasattr(module, class_name):
         return f"{module_path} has no {class_name}"
@@ -289,7 +291,7 @@ def _new_lowcmd() -> tuple[Any, str | None]:
     try:
         from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as _default_lowcmd
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return None, f"unitree_sdk2py is not installed: {exc}"
+        return None, sdk_missing(exc)
     cmd = _default_lowcmd()
     # The array length is part of the wire contract, so it is checked rather
     # than assumed: an SDK whose ``motor_cmd`` is shorter than the slots this
@@ -322,7 +324,7 @@ def _seal(cmd: Any) -> str | None:
     try:
         from unitree_sdk2py.utils.crc import CRC as _CRC
     except ImportError as exc:  # pragma: no cover - exercised on hardware
-        return f"unitree_sdk2py is not installed: {exc}"
+        return sdk_missing(exc)
     cmd.crc = _CRC().Crc(cmd)
     return None
 
@@ -834,11 +836,11 @@ class Go2Driver:
         refuses on its own terms.
 
         The client is opened under
-        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`. ``Init()``
+        :data:`~strands_robots.drivers.unitree._common._DDS_INIT_LOCK`. ``Init()``
         builds the client's DDS request/response endpoints, and the CycloneDDS
         bindings segfault when an endpoint is constructed concurrently with
         another - which this driver does on its own threads, because
-        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` creates
+        :class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet` creates
         every subscriber under that same lock. A segfault is not catchable by the
         "record the error and stay usable for reads" boundary above: the process
         dies, possibly while the robot stands under its own controller.
@@ -854,7 +856,7 @@ class Go2Driver:
         factory = self._motion_switcher_client_factory
         try:
             if factory is None:
-                from strands_robots.tools.g1._motion_switcher import _load_motion_switcher_client
+                from strands_robots.drivers.unitree._motion_switcher import _load_motion_switcher_client
 
                 # The import stays outside the lock: it creates no endpoint, and
                 # holding the shared lock across a lazy SDK import would stall
@@ -868,7 +870,14 @@ class Go2Driver:
                 with _DDS_INIT_LOCK:
                     client = factory(self._network_interface)
         except Exception as exc:  # noqa: BLE001 - any SDK/transport failure is one reason
-            self._sport_mode_client_error = f"cannot open MotionSwitcherClient: {exc}"
+            # The import is indirected through ``_load_motion_switcher_client``,
+            # which lets the ImportError propagate here - so this handler is the
+            # one that answers a missing SDK for :meth:`release_sport_mode`, the
+            # gate that hands the legs over. It owes the remedy, and on the PyPI
+            # wheel (no ``comm`` package) it is the only refusal a user sees.
+            self._sport_mode_client_error = (
+                sdk_missing(exc) if isinstance(exc, ImportError) else f"cannot open MotionSwitcherClient: {exc}"
+            )
             logger.debug("%s: %s", self._tool_name, self._sport_mode_client_error, exc_info=True)
             return None
         self._sport_mode_client_error = None
@@ -1055,7 +1064,7 @@ class Go2Driver:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return _refuse(f"unitree_sdk2py is not installed: {exc}")
+            return _refuse(sdk_missing(exc))
         pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
             return _refuse(pub_err)
@@ -1515,7 +1524,7 @@ class _ControlLoop:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", exc)
+            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", sdk_missing(exc))
             return
         pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
         if pub_err is not None:
@@ -1594,7 +1603,7 @@ class _ControlLoop:
         try:
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
         except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return f"unitree_sdk2py is not installed: {exc}"
+            return sdk_missing(exc)
         return pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
 
 

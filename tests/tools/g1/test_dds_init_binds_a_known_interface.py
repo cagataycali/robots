@@ -33,7 +33,8 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.g1 import _g1_common, reset_dds_state
+from strands_robots.drivers.unitree import _common
+from strands_robots.drivers.unitree._common import reset_dds_state
 
 #: The attribute name the SDK mangles ``ChannelFactory.__initialized`` to.
 #: Stated here rather than read from the module so a cell that asserts the
@@ -114,8 +115,8 @@ class TestTheDoubleIsFaithfulToTheCallSite:
 
     def test_the_probe_reads_the_flag_the_factory_publishes(self, fake_sdk: Any) -> None:
         """Both flag states are reported, so the probe is not a constant."""
-        assert _g1_common._sdk_factory_already_bound(fake_sdk(already_bound=True)) is True
-        assert _g1_common._sdk_factory_already_bound(fake_sdk(already_bound=False)) is False
+        assert _common._sdk_factory_already_bound(fake_sdk(already_bound=True)) is True
+        assert _common._sdk_factory_already_bound(fake_sdk(already_bound=False)) is False
 
 
 # =========================================================================
@@ -130,13 +131,13 @@ class TestABusBoundElsewhereIsNotRecordedAsOurs:
         """A bind that cannot be confirmed is a reason, not a success."""
         fake_sdk(already_bound=True)
 
-        assert _g1_common.ensure_dds("eth-not-the-bound-one") is not None
+        assert _common.ensure_dds("eth-not-the-bound-one") is not None
 
     def test_the_refusal_names_the_cause(self, fake_sdk: Any) -> None:
         """ "the bus is down" and "someone else brought it up" need different fixes."""
         fake_sdk(already_bound=True)
 
-        err = _g1_common.ensure_dds("eth-not-the-bound-one")
+        err = _common.ensure_dds("eth-not-the-bound-one")
 
         assert err is not None
         assert "already initialised outside ensure_dds" in err
@@ -145,7 +146,7 @@ class TestABusBoundElsewhereIsNotRecordedAsOurs:
         """A caller with two interfaces needs to know which one was refused."""
         fake_sdk(already_bound=True)
 
-        err = _g1_common.ensure_dds("eth-not-the-bound-one")
+        err = _common.ensure_dds("eth-not-the-bound-one")
 
         assert err is not None
         assert "eth-not-the-bound-one" in err
@@ -154,7 +155,7 @@ class TestABusBoundElsewhereIsNotRecordedAsOurs:
         """The remedy is actionable: the caller is told what to drop."""
         fake_sdk(already_bound=True)
 
-        err = _g1_common.ensure_dds("eth-not-the-bound-one")
+        err = _common.ensure_dds("eth-not-the-bound-one")
 
         assert err is not None
         assert "ChannelFactoryInitialize" in err
@@ -163,16 +164,16 @@ class TestABusBoundElsewhereIsNotRecordedAsOurs:
         """The record stays empty, so no later refusal can quote a false NIC."""
         fake_sdk(already_bound=True)
 
-        _g1_common.ensure_dds("eth-not-the-bound-one")
+        _common.ensure_dds("eth-not-the-bound-one")
 
-        assert _g1_common._dds_state["initialized"] is False
-        assert _g1_common._dds_state["interface"] is None
+        assert _common._dds_state["initialized"] is False
+        assert _common._dds_state["interface"] is None
 
     def test_no_second_initialize_is_issued_against_a_bound_factory(self, fake_sdk: Any) -> None:
         """The probe runs before the call, so the no-op is never made."""
         module = fake_sdk(already_bound=True)
 
-        _g1_common.ensure_dds("eth-not-the-bound-one")
+        _common.ensure_dds("eth-not-the-bound-one")
 
         assert module.init_calls == []
 
@@ -190,12 +191,12 @@ class TestABusBoundElsewhereIsNotRecordedAsOurs:
 
         module.ChannelFactoryInitialize = refuse
 
-        err = _g1_common.ensure_dds("wlan0")
+        err = _common.ensure_dds("wlan0")
 
         assert err is not None
         assert "already" in err
         assert "wlan0" in err
-        assert _g1_common._dds_state["interface"] is None
+        assert _common._dds_state["interface"] is None
 
 
 # =========================================================================
@@ -210,30 +211,30 @@ class TestAnAttestedBindIsUnchanged:
         """Success is reported and the interface is recorded."""
         module = fake_sdk(already_bound=False)
 
-        assert _g1_common.ensure_dds("eth0") is None
+        assert _common.ensure_dds("eth0") is None
         assert module.init_calls == [(0, "eth0")]
-        assert _g1_common._dds_state["initialized"] is True
-        assert _g1_common._dds_state["interface"] == "eth0"
+        assert _common._dds_state["initialized"] is True
+        assert _common._dds_state["interface"] == "eth0"
 
     def test_a_repeat_call_with_the_same_interface_is_idempotent(self, fake_sdk: Any) -> None:
         """The second call succeeds without a second init."""
         module = fake_sdk(already_bound=False)
-        assert _g1_common.ensure_dds("eth0") is None
+        assert _common.ensure_dds("eth0") is None
 
-        assert _g1_common.ensure_dds("eth0") is None
+        assert _common.ensure_dds("eth0") is None
         assert module.init_calls == [(0, "eth0")]
 
     def test_a_repeat_call_with_another_interface_is_refused(self, fake_sdk: Any) -> None:
         """The refusal names both the bound interface and the requested one."""
         fake_sdk(already_bound=False)
-        assert _g1_common.ensure_dds("eth0") is None
+        assert _common.ensure_dds("eth0") is None
 
-        err = _g1_common.ensure_dds("wlan0")
+        err = _common.ensure_dds("wlan0")
 
         assert err is not None
         assert "eth0" in err
         assert "wlan0" in err
-        assert _g1_common._dds_state["interface"] == "eth0"
+        assert _common._dds_state["interface"] == "eth0"
 
     def test_a_failing_bind_is_reported_and_records_nothing(self, fake_sdk: Any) -> None:
         """A genuine init failure keeps its own wording."""
@@ -244,11 +245,11 @@ class TestAnAttestedBindIsUnchanged:
 
         module.ChannelFactoryInitialize = fail
 
-        err = _g1_common.ensure_dds("eth-nonexistent")
+        err = _common.ensure_dds("eth-nonexistent")
 
         assert err is not None
         assert "ChannelFactoryInitialize failed" in err
-        assert _g1_common._dds_state["initialized"] is False
+        assert _common._dds_state["initialized"] is False
 
 
 class TestAnUnreadableSdkKeepsTheOlderBehaviour:
@@ -258,19 +259,19 @@ class TestAnUnreadableSdkKeepsTheOlderBehaviour:
         """No flag where we look means "cannot tell", not "already bound"."""
         module = fake_sdk(already_bound=True, bound_attr="_SomeOtherName__initialized")
 
-        assert _g1_common._sdk_factory_already_bound(module) is None
+        assert _common._sdk_factory_already_bound(module) is None
 
     def test_a_bind_still_succeeds_when_the_flag_cannot_be_read(self, fake_sdk: Any) -> None:
         """The caller keeps the behaviour it had before the probe existed."""
         module = fake_sdk(already_bound=True, bound_attr="_SomeOtherName__initialized")
 
-        assert _g1_common.ensure_dds("eth0") is None
+        assert _common.ensure_dds("eth0") is None
         assert module.init_calls == [(0, "eth0")]
-        assert _g1_common._dds_state["interface"] == "eth0"
+        assert _common._dds_state["interface"] == "eth0"
 
     def test_a_module_without_a_factory_reports_unknown(self) -> None:
         """A channel module with no ``ChannelFactory`` at all is not a crash."""
-        assert _g1_common._sdk_factory_already_bound(types.ModuleType("bare")) is None
+        assert _common._sdk_factory_already_bound(types.ModuleType("bare")) is None
 
 
 # =========================================================================
@@ -296,7 +297,7 @@ class TestTheRealSdkBehavesTheWayTheDoubleDoes:
         flag = getattr(channel.ChannelFactory, SDK_BOUND_ATTR, None)
 
         assert isinstance(flag, bool), f"{SDK_BOUND_ATTR} is not a bool on this SDK build"
-        assert _g1_common._SDK_FACTORY_BOUND_ATTR == SDK_BOUND_ATTR
+        assert _common._SDK_FACTORY_BOUND_ATTR == SDK_BOUND_ATTR
 
     def test_init_short_circuits_without_looking_at_the_interface(self) -> None:
         """``Init`` returns early on the flag, so a re-init binds nothing."""

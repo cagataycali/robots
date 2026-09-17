@@ -201,7 +201,7 @@ def live_handle_refusal(
 ) -> dict[str, Any] | None:
     """Return the refusal envelope for an unusable live-handle ``driver``, or ``None``.
 
-    The Reachy sibling of :func:`strands_robots.tools.g1._g1_common.live_handle_refusal`,
+    The Reachy sibling of :func:`strands_robots.drivers.unitree._common.live_handle_refusal`,
     kept as a second copy because the two packages must not import each other
     (each stays out of the other's SDK-load path). Every ``reachy_*`` verb that
     takes a wired :class:`~strands_robots.drivers.reachy.ReachyDriver` reads it

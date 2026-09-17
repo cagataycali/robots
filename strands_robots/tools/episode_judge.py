@@ -36,7 +36,7 @@ from typing import Any
 
 from strands import Agent, tool
 
-from strands_robots.tools._path_validation import validate_save_path
+from strands_robots._path_validation import validate_save_path
 from strands_robots.utils import boolean_flag_error, non_negative_whole_number_error, positive_count_error
 
 logger = logging.getLogger(__name__)
@@ -215,7 +215,9 @@ def _decoded_image_blocks(root: Path, episode: int, positions: list[int]) -> lis
 
     # The dataset is addressed by its on-disk root; the repo_id is only a
     # display name once a root is given.
-    ds = LeRobotDataset(repo_id=f"local/{root.name}", root=str(root))
+    from strands_robots.dataset_recorder import _quiet_backend_kwargs
+
+    ds = LeRobotDataset(repo_id=f"local/{root.name}", root=str(root), **_quiet_backend_kwargs(LeRobotDataset))
     # Episode -> global frame range. LeRobot 0.6 records it per episode in
     # the episodes metadata (dataset_from_index); older builds expose the
     # same fact as episode_data_index tensors.

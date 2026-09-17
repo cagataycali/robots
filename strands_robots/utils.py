@@ -183,8 +183,8 @@ def lerobot_version() -> str:
 DEFAULT_BASE_DIR = Path.home() / ".strands_robots"
 
 
-def get_base_dir() -> Path:
-    """Get the base directory for strands-robots user data.
+def base_dir_path() -> Path:
+    """Where the base directory for strands-robots user data resolves to.
 
     Resolution (in priority order):
 
@@ -192,6 +192,12 @@ def get_base_dir() -> Path:
        you want to relocate *all* strands-robots user data (assets,
        user registry, caches) to a non-default location.
     2. ``~/.strands_robots/`` - default.
+
+    This answers where the directory *is* without creating it, which is what
+    a caller that only compares paths needs: a validator asking whether a
+    host path lies under the base dir must not write to the filesystem to
+    answer, and must not fail when the home directory is unwritable.
+    :func:`get_base_dir` is the same resolution plus creation.
 
     Note:
         ``STRANDS_ASSETS_DIR`` **only** controls the assets subdirectory
@@ -201,10 +207,23 @@ def get_base_dir() -> Path:
         to be pointed.
 
     Returns:
-        Path to the base directory (created if needed).
+        Path to the base directory, whether or not it exists.
     """
     custom = os.getenv("STRANDS_BASE_DIR")
-    d = Path(custom) if custom else DEFAULT_BASE_DIR
+    return Path(custom) if custom else DEFAULT_BASE_DIR
+
+
+def get_base_dir() -> Path:
+    """Get the base directory for strands-robots user data, creating it if needed.
+
+    Resolves through :func:`base_dir_path` - see it for the resolution order
+    and for the read-only spelling to use when the directory only has to be
+    compared against, not written to.
+
+    Returns:
+        Path to the base directory (created if needed).
+    """
+    d = base_dir_path()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -1623,8 +1642,9 @@ def groot_version_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` names no Isaac-GR00T release with a loader.
 
     ``groot_version=`` overrides Isaac-GR00T auto-detection and is read as a
-    loader selector, so only the spellings in :data:`SUPPORTED_GROOT_VERSIONS`
-    name anything. A value outside that set used to match no dispatch branch and
+    release selector - a loader in local mode, and the observation wire shape in
+    service mode, which loads nothing - so only the spellings in
+    :data:`SUPPORTED_GROOT_VERSIONS` name anything. A value outside that set used to match no dispatch branch and
     fall through to the same ``ImportError`` a missing package raises, reporting
     the environment as lacking Isaac-GR00T even when the release was installed
     and auto-detected - so a misspelling was answered with an install
@@ -1633,9 +1653,9 @@ def groot_version_error(value: Any, param: str, context: str) -> str | None:
 
     ``None`` is the not-supplied sentinel, as it is for every other optional
     parameter on that policy: it means "auto-detect the installed release", and
-    passes. Every other value is a claim about which loader to run, so a blank
-    or mis-cased one (``""``, ``"N1.7"``) is a claim that cannot be honoured
-    rather than an absent one - and ``""`` in particular is what an unset
+    passes. Every other value is a claim about which release the policy is
+    dealing with, so a blank or mis-cased one (``""``, ``"N1.7"``) is a claim
+    that cannot be honoured rather than an absent one - and ``""`` in particular is what an unset
     environment variable interpolates to.
 
     Args:
@@ -2788,6 +2808,64 @@ def free_camera_routing_rank(name: Any) -> int:
         ``1`` for a free-camera routing token, ``0`` for every other name.
     """
     return 1 if name in FREE_CAMERA_TOKENS else 0
+
+
+def mounted_camera_pose_error(
+    method: str,
+    name: str,
+    parent_body: str | None,
+    position: Any,
+    target: Any,
+    *,
+    start: str | None = None,
+) -> str | None:
+    """Return an error message when a camera is mounted on a body with no pose of its own.
+
+    ``add_camera(parent_body=...)`` reads ``position`` and ``target`` in the
+    parent body's LOCAL frame. The free-camera defaults - ``[1, 1, 1]`` looking
+    at ``[0, 0, 0]`` - are a sensible world-frame overview, and a mistake in a
+    body frame: they place the camera 1.73 m from the body looking back at it,
+    a third-person view that rides along with the arm and shows the arm, which
+    is not the wrist view the mount exists for. Measured on
+    ``add_camera(name="wrist", parent_body="so101/gripper")`` (the exact
+    call ``list_bodies`` and the camera-naming guide suggested): a 320x240
+    render of the whole arm from above, the gripper a few pixels wide. Under
+    ``status="success"`` an agent has no reason to look twice, so a "wrist"
+    stream recorded into a dataset carried the wrong view end to end.
+
+    Both backends mount cameras (MuJoCo and Newton), so the rule lives here
+    beside :func:`camera_fov_error` for the same reason that one does: a call
+    one backend refuses must be refused by the other.
+
+    Args:
+        method: The calling method, opening the message (``"add_camera"``).
+        name: The camera's name, so the caller running several knows which.
+        parent_body: The mount, or ``None``/``""`` for a free camera - a free
+            camera never trips this rule.
+        position: The ``position`` argument as passed (``None`` = omitted).
+        target: The ``target`` argument as passed (``None`` = omitted).
+        start: Optional backend-computed starting pose for THIS body, appended
+            verbatim; when absent a generic hint closes the message.
+
+    Returns:
+        ``None`` when the camera is free or carries a pose of its own (either
+        of ``position`` / ``target`` supplied), else the refusal.
+    """
+    if not parent_body:
+        return None
+    if position is not None or target is not None:
+        return None
+    tail = start or (
+        "A few centimetres off the body's origin, looking along its approach axis, is the "
+        "usual start; render the camera and adjust."
+    )
+    return (
+        f"{method}: camera {name!r} is mounted on {parent_body!r}, so position and target are "
+        f"read in that body's LOCAL frame - and both were omitted. The free-camera defaults "
+        f"(position [1, 1, 1] looking at [0, 0, 0]) would place it 1.73 m from the body looking "
+        f"back at it: a third-person view that rides along with the arm, not a wrist view. Pass "
+        f"both in the body frame. {tail}"
+    )
 
 
 def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:

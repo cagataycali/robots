@@ -42,8 +42,8 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers import DRIVER_SURFACE, get_native_driver_class, list_native_drivers
+from strands_robots.drivers.unitree._common import HANDSHAKE_FSMS
 from strands_robots.tools.g1 import g1_state
-from strands_robots.tools.g1._g1_common import HANDSHAKE_FSMS
 from strands_robots.tools.g1.g1_state import g1_get_state
 
 

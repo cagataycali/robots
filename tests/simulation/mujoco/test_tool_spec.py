@@ -606,6 +606,7 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         # MuJoCoSimEngine - lifecycle and introspection, plus the two
         # move-the-robot paths the motion primitives and run_policy front.
         "bind_policy_sim_context",
+        "bind_predicate_robot",
         "cleanup",
         "describe",
         "get_observation",
@@ -622,6 +623,7 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "save_episode",
         "stream_dataset",
         # SimEngine
+        "bind_predicate_robot",
         "verify_dataset_episodes",
         # ManipulationMixin
         "attachment_involving",

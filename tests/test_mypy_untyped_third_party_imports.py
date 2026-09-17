@@ -52,8 +52,8 @@ _PYARROW_IMPORTERS = (
 # First-party modules that import the Unitree DDS SDK (unitree_sdk2py), which is
 # not on PyPI and so is absent from every CI and developer environment.
 _UNITREE_IMPORTERS = (
-    "strands_robots/tools/g1/_g1_common.py",
-    "strands_robots/tools/g1/_dds_engine.py",
+    "strands_robots/drivers/unitree/_common.py",
+    "strands_robots/drivers/unitree/_dds_engine.py",
 )
 
 

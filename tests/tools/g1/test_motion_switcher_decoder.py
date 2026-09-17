@@ -29,8 +29,8 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.g1._motion_switcher as _motion_switcher
-from strands_robots.tools.g1._motion_switcher import (
+import strands_robots.drivers.unitree._motion_switcher as _motion_switcher
+from strands_robots.drivers.unitree._motion_switcher import (
     FSMReading,
     decode_fsm_id,
     read_fsm_id,
@@ -350,7 +350,7 @@ class TestReadFsmIdCallsCheckMode:
 class TestModuleImportsWithoutTheSDK:
     """The whole module loads on hosts without ``unitree_sdk2py`` installed.
 
-    The invariant :mod:`._dds_engine` and :mod:`._g1_common` already carry --
+    The invariant :mod:`._dds_engine` and :mod:`._common` already carry --
     "``unitree_sdk2py`` is not imported at module load" -- extends to this
     module too. Every SDK read goes through ``_load_motion_switcher_client``,
     which lazy-imports on first call. This class asserts the import itself
@@ -387,7 +387,7 @@ class TestModuleImportsWithoutTheSDK:
         before = {k for k in sys.modules if k.startswith("unitree_sdk2py")}
 
         # Force a fresh import so the module's top-level runs again.
-        reimport(monkeypatch, "strands_robots.tools.g1._motion_switcher")
+        reimport(monkeypatch, "strands_robots.drivers.unitree._motion_switcher")
 
         after = {k for k in sys.modules if k.startswith("unitree_sdk2py")}
         # The re-import must not have added any new ``unitree_sdk2py`` entries.

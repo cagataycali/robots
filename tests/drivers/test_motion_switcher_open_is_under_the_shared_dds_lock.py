@@ -1,6 +1,6 @@
 """Opening a motion-switcher client holds the shared DDS lock, in every driver.
 
-``_g1_common``'s module docstring states the contract graded here: "A
+``_common``'s module docstring states the contract graded here: "A
 ``ChannelSubscriber`` and a ``ChannelPublisher`` cannot be constructed
 concurrently: the CycloneDDS bindings segfault. ``_DDS_INIT_LOCK`` is the
 *shared* lock the driver and the tools both hold while creating readers or
@@ -9,7 +9,7 @@ writers. One lock; two consumers."
 An RPC client's ``Init()`` is an endpoint construction - it builds the client's
 DDS request/response channels - so it belongs on the same lock. Both native
 Unitree drivers opened one without it while
-:class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` constructed
+:class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet` constructed
 subscribers under it on the *same driver instance's* streaming, rollout and
 mesh-telemetry threads. A shared-device lock is only a guarantee where every
 caller takes it, and the caller that loses the race is the one holding nothing,
@@ -45,8 +45,8 @@ import pytest
 
 from strands_robots.drivers.g1 import G1Driver
 from strands_robots.drivers.go2 import Go2Driver
-from strands_robots.tools.g1 import _motion_switcher
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree import _motion_switcher
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
 
 #: How long a cell waits for something that should already have happened, and
 #: how long it waits to conclude that something is correctly still blocked.

@@ -173,6 +173,53 @@ def _check_trust_remote_code(provider: str) -> None:
     )
 
 
+def _is_smart_string(provider: str) -> bool:
+    """Whether ``provider`` is a spelling :func:`resolve_policy` interprets (HF id, URL)."""
+    return (
+        "/" in provider
+        or (":" in provider and not provider.replace("_", "").isalpha())
+        or provider.startswith("ws://")
+        or provider.startswith("grpc://")
+        or provider.startswith("zmq://")
+    )
+
+
+def provider_can_be_created(provider: Any) -> bool:
+    """Whether :func:`create_policy` could resolve ``provider`` - without importing it.
+
+    A pre-flight check refuses a provider *before* spending something expensive
+    on it (energizing an arm, asking an operator), so it must answer exactly the
+    question :func:`create_policy` answers, from the same three stages
+    :func:`_resolve_policy_class` walks - the runtime registry that the public
+    :func:`register_policy` API fills (a name or one of its aliases), a smart
+    string :func:`resolve_policy` interprets, then the shipped registry and the
+    ``strands_robots.policies.<name>`` auto-discovery that
+    :func:`~strands_robots.registry.policies.policy_provider_resolves` mirrors.
+    Asking only the last stage refused every runtime-registered provider as
+    unknown at every hardware entry point, while ``create_policy`` built it.
+
+    Optimistic where resolution is: a smart string is reported as resolving
+    (its refusal, if any, needs the network or the Hub), and a registered
+    loader is never invoked here.
+
+    Args:
+        provider: Any spelling a caller may supply. ``None``/empty/non-string
+            resolves to nothing.
+
+    Returns:
+        True when ``create_policy(provider)`` would get past provider lookup.
+    """
+    if not provider or not isinstance(provider, str):
+        return False
+    if _runtime_aliases.get(provider, provider) in _runtime_registry:
+        return True
+    if _is_smart_string(provider):
+        return True
+    from strands_robots.registry.policies import policy_provider_resolves
+
+    return policy_provider_resolves(provider)
+
+
 def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:
     """Resolve ``provider`` to its policy class WITHOUT instantiating it.
 
@@ -200,14 +247,7 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
         return resolved_name, _runtime_registry[resolved_name](), dict(kwargs)
 
     # 2. Smart string (HF ID, URL, etc.).
-    _needs_resolution = (
-        "/" in provider
-        or (":" in provider and not provider.replace("_", "").isalpha())
-        or provider.startswith("ws://")
-        or provider.startswith("grpc://")
-        or provider.startswith("zmq://")
-    )
-    if _needs_resolution:
+    if _is_smart_string(provider):
         try:
             resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
         except ImportError:

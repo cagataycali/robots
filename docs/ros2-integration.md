@@ -35,7 +35,7 @@ have and what you want to do:
 | Surface | Role | Backend | Needs sourced ROS 2 | Use it to |
 |---------|------|---------|---------------------|-----------|
 | **`use_ros`** tool | client / observer + commander | in-process `rclpy` | yes | List/echo/publish topics, call services on any ROS 2 graph - full type coverage |
-| **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Jetson, all distros |
+| **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Linux x86_64 from the wheel, all distros; Linux aarch64 (Jetson) builds from source - see [rtps integration](rtps-integration.md#linux-aarch64-jetson) |
 | **`use_rosbridge`** tool + **`RosbridgeRobot`** | ROS1 / remote robots over a rosbridge WebSocket | pure-pip `roslibpy` | **no** | Drive ROS1 robots (e.g. the NASA Curiosity Gazebo sim) or any remote rosbridge robot from a machine with no ROS install - see [rosbridge integration](rosbridge-integration.md) |
 | **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
 | **`AckermannRosRobot`** | an Ackermann ROS 2 car as a strands `Robot` | `use_ros` | yes | `drive()`/`get_scan()` a steering-geometry car (AWS DeepRacer servo stack) with bicycle-model conversion and an automatic enable handshake |
@@ -68,6 +68,12 @@ still need a real sourced distro.
 ```bash
 pip install 'strands-robots[ros2]'   # optional cyclonedds RMW binding only
 ```
+
+The binding is a pre-built wheel on macOS, Windows and Linux x86_64. No
+cyclonedds release publishes a Linux **aarch64** wheel, so on a Jetson or a
+robot's onboard computer the extra resolves to the sdist, which builds against
+an existing Cyclone DDS C install (`CYCLONEDDS_HOME`) - the recipe is in
+[rtps integration](rtps-integration.md#linux-aarch64-jetson).
 
 ## Actions
 

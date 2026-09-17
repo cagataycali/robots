@@ -4,39 +4,44 @@ site_description: "Robot control, simulation, and training for Strands Agents"
 repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
 extra_css:
-- stylesheets/extra.css?v=2
-- stylesheets/robot-cards.css
+- stylesheets/extra.css?v=3
 extra_javascript:
 - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 - assets/mermaid-init.js
+- assets/docs.js
 nav:
-- Home: index.md
-- AI Agents: agents.md
-- Getting Started:
+- Start:
+  - index.md
   - Quickstart: getting-started/quickstart.md
   - Installation: getting-started/installation.md
   - Robot Factory: getting-started/robot-factory.md
 - Robots:
-  - Catalog: robots/index.md
+  - robots/index.md
   - Arms: robots/arms.md
   - Bimanual: robots/bimanual.md
   - Hands: robots/hands.md
   - Humanoids: robots/humanoids.md
   - Mobile: robots/mobile.md
-- Simulation:
-  - Overview: simulation/overview.md
+- Simulate:
+  - simulation/overview.md
+  - Physics and Actions: simulation/physics.md
+  - Policy Rollouts: simulation/rollouts.md
+  - Rollout Observers: simulation/observers.md
+  - Predicates: simulation/predicates.md
   - World Building: simulation/world-building.md
   - Domain Randomization: simulation/domain-randomization.md
   - Newton Backend (GPU): simulation/newton.md
   - Isaac Sim Backend (GPU): simulation/isaac.md
-- Device Connect: device-connect.md
-- Multi-robot Mesh: mesh.md
-- Dashboard: dashboard.md
-- ROS 2 Integration: ros2-integration.md
-- rosbridge Integration: rosbridge-integration.md
-- Pure-RTPS ROS 2: rtps-integration.md
-- Policy Providers:
-  - Overview: policies/overview.md
+- Real Hardware:
+  - Robot Control: hardware/robot-control.md
+  - Teleoperation: hardware/teleoperation.md
+  - Tools: hardware/tools.md
+  - ROS 2 Integration: ros2-integration.md
+  - rosbridge Integration: rosbridge-integration.md
+  - Pure-RTPS ROS 2: rtps-integration.md
+  - Device Connect: device-connect.md
+- Policies:
+  - policies/overview.md
   - GR00T: policies/groot.md
   - Cosmos 3: policies/cosmos3.md
   - cuRobo: policies/curobo.md
@@ -54,31 +59,35 @@ nav:
   - Persistent Worker (long-lived inference): policies/persistent-worker.md
   - Camera Naming: policies/camera-naming.md
   - Custom Policies: policies/custom-policies.md
-- Real Hardware:
-  - Robot Control: hardware/robot-control.md
-  - Teleoperation: hardware/teleoperation.md
-  - Tools: hardware/tools.md
-- Training:
-  - Overview: training/overview.md
-  - VLA-on-G1 Workflow: training/vla_workflow.md
-  - Reinforcement Learning: training/rl.md
-- Datasets:
+- Agents & Dashboard:
+  - AI Agents: agents.md
+  - Dashboard: dashboard.md
+  - Multi-robot Mesh: mesh.md
+  - Tool Result Contract: contracts.md
+- Data & Training:
   - Recording: recording.md
+  - DatasetRecorder API: data/dataset-recorder.md
+  - Verify a Dataset: data/verifying-datasets.md
+  - Read Back & Replay: data/reading-back.md
   - Steerable Annotation: data/annotation.md
   - Episode Labels (VLM judge): data/episode-labels.md
-- Remote Inference: inference/remote.md
-- Examples:
-  - Overview: examples/overview.md
-- Architecture: architecture.md
-- API Reference: api-reference.md
-- Configuration: reference/configuration.md
-- Security: security.md
-- Tool Result Contract: contracts.md
-- Contributing: contributing.md
-- Troubleshooting: troubleshooting.md
+  - Training: training/overview.md
+  - VLA-on-G1 Workflow: training/vla_workflow.md
+  - Reinforcement Learning: training/rl.md
+  - Remote Inference: inference/remote.md
+  - Examples: examples/overview.md
+- Reference:
+  - Architecture: architecture.md
+  - API Reference: api-reference.md
+  - Tool Reference: reference/tools.md
+  - Configuration: reference/configuration.md
+  - Security: security.md
+  - Troubleshooting: troubleshooting.md
+  - Contributing: contributing.md
 hooks:
   - docs/hooks/numbers.py
   - docs/hooks/robot_cards.py
+  - docs/hooks/tool_reference.py
 validation:
   links:
     anchors: warn
@@ -101,8 +110,6 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-  - navigation.sections
-  - navigation.expand
   - navigation.indexes
   - toc.follow
   - content.code.copy

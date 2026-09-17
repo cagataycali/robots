@@ -266,6 +266,15 @@ class RecordingMixin(DatasetRecordingMixin):
         ):
             return error
 
+        # A second start while one recording is live used to fall through: it
+        # replaced the recorder object (the frames buffered since the last
+        # save_episode went with it - never saved, never mentioned) and, when
+        # the new dataset then refused (schema mismatch on resume), left
+        # ``recording`` False with the first session's frames gone too. Refuse
+        # up front and leave the live recording exactly as it was.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
         self._world._backend_state["recording"] = True
         self._world._backend_state["trajectory"] = []
         self._world._backend_state["push_to_hub"] = push_to_hub
@@ -276,16 +285,11 @@ class RecordingMixin(DatasetRecordingMixin):
         self._world._backend_state["recording_task"] = task
         self._world._backend_state.pop("step_recording_due", None)
 
-        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
-        # Delegates to the same resolver DatasetRecorder.create() uses so the
-        # facade and the low-level recorder agree on where a dataset lives
-        # (honouring $HF_LEROBOT_HOME).
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        # Stash the resolved root so verify_dataset_episodes can read the parquet
-        # after stop_recording has finalized the dataset and dropped the recorder.
-        self._world._backend_state["last_dataset_root"] = str(dataset_dir)
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic)
+        # and stash it with the id it is recorded under, so the consumers that
+        # run after the recorder is dropped can find the parquet and a reader
+        # handed only that id can find a custom directory.
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             # Collect joint names from every robot. When the scene contains
@@ -524,9 +528,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names, fps=fps)
-                self._world._backend_state["dataset_recorder"] = resumed
+                recorder = resumed
             else:
-                self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                recorder = _DatasetRecorder.create(
                     repo_id=repo_id,
                     fps=fps,
                     robot_type=robot_type,
@@ -541,20 +545,25 @@ class RecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            resumed_line = self._arm_dataset_recorder(self._world._backend_state, recorder, resumed=resume_existing)
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
                             f"Recording to LeRobotDataset: {repo_id}\n"
+                            f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, list(raw_to_safe), cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
-                            f"Frames are captured by a policy rollout - run_policy (one call per "
-                            f"episode), start_policy (async) or run_multi_policy (several robots "
-                            f"into one merged frame) - or by stepping a scripted motion: "
+                            f"Frames are captured by a policy rollout - run_policy (one rollout; "
+                            f"it closes NO episode, so call reset between rollouts or pass "
+                            f"n_episodes=N in one call, else consecutive rollouts merge into one "
+                            f"episode), start_policy (async), eval_policy / evaluate_benchmark "
+                            f"(one dataset episode per evaluation episode) or run_multi_policy "
+                            f"(several robots into one merged frame) - or by stepping a scripted motion: "
                             f"set_joint_positions(hold=True) + step records one frame per 1/{fps}s "
                             f"of sim time. teleoperate and replay_episode do not feed the "
-                            f"recorder. Then stop_recording to save the episode"
+                            f"recorder. Then stop_recording to save the open episode"
                         )
                     }
                 ],

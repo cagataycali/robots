@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import numpy as np
@@ -39,7 +39,7 @@ from .embodiment import (
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
-from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
+from .resolution import declared_image_features, resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,105 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 # kinova_gen3 is joint_1..joint_7), which is why the run, not the prefix, is
 # what identifies a placeholder.
 _GENERIC_STATE_KEY_PREFIX = "joint_"
+
+
+def _inapplicable_image_target_error(
+    targets: dict[str, list[str]],
+    embodiment_name: str,
+    policy_config: dict[str, Any],
+    observation_keys: Iterable[str],
+) -> str | None:
+    """Report embodiment image renames the checkpoint's own features cannot accept.
+
+    The camera pre-flight check requires a source key for every image rename
+    TARGET the embodiment feeds, on the premise that a target IS a feature the
+    model declares. That premise holds only where the feature set is BUILT from
+    the embodiment - the MolmoAct2 path, whose ``build_policy`` derives it via
+    :func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`.
+    A pretrained LeRobot checkpoint instead records its own ``input_features``,
+    and an embodiment has no say in them: ``so101`` feeds
+    ``observation.images.image`` + ``observation.images.wrist_image`` while
+    ``lerobot/smolvla_base`` declares ``observation.images.camera1..3``.
+
+    For such a pair no camera name can satisfy the target, so the source-key
+    remedy cannot be followed, and ``EmbodimentMap.validate`` refuses the same
+    rename after the weight download - discarding the whole processor pipeline,
+    including the embodiment's state/action unit conversion, and falling back to
+    the raw flow. That is the verdict this reports up front instead, naming the
+    ``obs_rename_override`` drop that :func:`_merge_obs_rename` documents as the
+    only way to remove a rename whose target the model never declares.
+
+    Reported before the source-availability check for the same reason
+    :func:`_undeclared_image_feature_error` is: the contradiction is independent
+    of the runtime camera names and no rename can resolve it.
+
+    Args:
+        targets: Image rename target -> its source keys, as collected by
+            :meth:`LerobotLocalPolicy.preflight` after routing both maps.
+        embodiment_name: Resolved embodiment name, for the message.
+        policy_config: Provider kwargs (``pretrained_name_or_path``,
+            ``policy_type``, ...).
+        observation_keys: Runtime observation keys, used to build the override
+            the message prints: a declared feature whose bare stem names a
+            present camera is routed from it, so the printed remedy is complete
+            for the common case where the scene is already named for the model.
+
+    Returns:
+        The refusal message, or ``None`` when the configuration is consistent -
+        every target declared, a MolmoAct2 checkpoint (features built from the
+        embodiment), or a checkpoint whose declared set cannot be read, which is
+        reported as unknown rather than guessed at.
+    """
+    reference = policy_config.get("pretrained_name_or_path") or ""
+    if not reference:
+        return None
+
+    from . import molmoact2 as _molmoact2
+
+    if _molmoact2.is_molmoact2(reference, policy_config.get("policy_type")):
+        # Features are CONSTRUCTED from the embodiment here, so its targets are
+        # declared by construction; the only contradiction on that path is an
+        # explicit image_keys, owned by _undeclared_image_feature_error.
+        return None
+
+    declared = declared_image_features(reference, policy_config.get("revision"))
+    if declared is None:
+        return None
+
+    inapplicable = {dst: srcs for dst, srcs in targets.items() if dst not in declared}
+    if not inapplicable:
+        return None
+
+    # The remedy is BOTH halves: dropping the inapplicable renames alone leaves
+    # the declarative path with no camera routing at all, and the model then
+    # raises "All image features are missing from the batch". So every feature
+    # the checkpoint DOES declare needs a source too - taken from a camera whose
+    # bare name is the feature's stem where one exists.
+    override: dict[str, str | None] = {src: None for srcs in inapplicable.values() for src in sorted(srcs)}
+    present = set(observation_keys)
+    unmatched: list[str] = []
+    for feature in sorted(declared):
+        stem = feature.rsplit(".", 1)[-1]
+        if stem in present:
+            override[stem] = feature
+        elif feature not in targets:
+            unmatched.append(feature)
+    trailer = (
+        f" No camera is named for {unmatched}, so add {{'<your_camera_name>': {unmatched[0]!r}}} to"
+        f" that override as well - every declared feature needs a source."
+        if unmatched
+        else ""
+    )
+    return (
+        f"Embodiment {embodiment_name!r} feeds image feature(s) {sorted(inapplicable)}, which "
+        f"{reference!r} does not declare - it declares {sorted(declared)}. A pretrained checkpoint "
+        f"records its own input_features, so renaming a camera cannot create the missing feature: "
+        f"this same rename is refused by the embodiment's own validation after the weight download, "
+        f"and the whole processor pipeline - including the embodiment's state/action unit "
+        f"conversion - is then discarded for the raw flow. Route the features it does declare "
+        f"instead: policy_config={{'obs_rename_override': {override!r}}} - a falsy value drops a "
+        f"rename this checkpoint cannot accept.{trailer}"
+    )
 
 
 def _route_camera_key_map(base: dict[str, str], camera_key_map: Mapping[str, str] | None) -> dict[str, str]:
@@ -287,6 +386,13 @@ _RTC_FALLBACK_FPS: float = 30.0
 # Two wrappers driving the SAME checkpoint+device CONCURRENTLY would share that
 # state; opt out with ``cache_model=False`` for that (rare) case. Call
 # :func:`clear_model_cache` to evict and free the held GPU/CPU memory.
+#
+# RTC is part of the key because RTC state lives ON the model, not beside it:
+# ``_init_rtc`` writes ``config.rtc_config`` and has lerobot build the model's
+# ``rtc_processor`` from it, and lerobot then branches on that same field -
+# ``select_action`` asserts ``not self._rtc_enabled()``. Two wrappers that asked
+# for different RTC therefore cannot share one module, so they get one entry
+# each; wrappers that asked for the same RTC still share one.
 _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
@@ -475,7 +581,7 @@ class LerobotLocalPolicy(Policy):
         pad_short_actions: bool = False,
         cache_model: bool = True,
         revision: str | None = None,
-        **kwargs,
+        **ignored_kwargs: Any,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
         # Optional Hub revision (branch, tag, or commit SHA) to pin the
@@ -648,6 +754,17 @@ class LerobotLocalPolicy(Policy):
             if error:
                 raise ValueError(error)
         self._rtc_max_guidance_weight = rtc_max_guidance_weight
+        # The caller's RTC request exactly as given, frozen here because it is
+        # part of the model cache key (see ``_model_cache_key``) and the live
+        # attributes above cannot serve: ``_init_rtc`` resolves the horizon and
+        # the ceiling in place from the checkpoint, so by the time a policy
+        # reloads its model (``get_actions`` on a released policy) they no longer
+        # describe what was asked for.
+        self._rtc_identity: tuple[Any, ...] = (
+            rtc_enabled,
+            rtc_execution_horizon,
+            rtc_max_guidance_weight,
+        )
         # The previous chunk as it was handed to the consumer - LeRobot's
         # ``ActionQueue.original_queue``. The prefix the denoiser receives is a
         # SLICE of this taken at the next inference, once the number of steps the
@@ -713,6 +830,20 @@ class LerobotLocalPolicy(Policy):
         # (robot "runs the policy" but never moves) instead of swallowing them.
         self._zero_action_monitor = ZeroActionMonitor()
         self._action_dim_warned = False
+
+        # Same contract as LerobotAsyncPolicy: create_policy forwards one shared
+        # kwargs bag to every provider, so a key this provider does not own is
+        # tolerated - but named. Dropped silently, a misspelt option (``rtc=``
+        # for ``rtc_enabled=``) built a policy with the feature off and no line
+        # anywhere saying the request was never read.
+        if ignored_kwargs:
+            logger.warning(
+                "LerobotLocalPolicy ignoring unexpected constructor kwarg(s) %s; "
+                "loading %s. See the LerobotLocalPolicy signature for the "
+                "options this provider reads.",
+                sorted(ignored_kwargs),
+                pretrained_name_or_path or "no checkpoint yet",
+            )
 
         if pretrained_name_or_path:
             self._load_model()
@@ -993,13 +1124,28 @@ class LerobotLocalPolicy(Policy):
     def _model_cache_key(self, namespace: str, *extra: Any) -> tuple[Any, ...] | None:
         """Build the process-cache key for the underlying model load.
 
+        The key carries the caller's RTC request (``_rtc_identity``) alongside
+        the checkpoint, device and ``namespace``-specific fields, because
+        ``_init_rtc`` configures RTC by mutating the shared model: without it, a
+        policy built with ``rtc_enabled=True`` handed its RTC to every later
+        policy loaded from the same checkpoint, and left the ones built before it
+        driving an RTC-enabled module through ``select_action``. The first three
+        fields stay in place so :func:`clear_model_cache` and
+        :func:`list_cached_models` keep reading the checkpoint and device.
+
         Returns ``None`` when caching is disabled or there is no checkpoint
         path to key on (a from-scratch / parameterless policy), which makes the
         cache a transparent no-op for those cases.
         """
         if not self.cache_model or not self.pretrained_name_or_path:
             return None
-        return (namespace, self.pretrained_name_or_path, self.requested_device, *extra)
+        return (
+            namespace,
+            self.pretrained_name_or_path,
+            self.requested_device,
+            *self._rtc_identity,
+            *extra,
+        )
 
     def _cache_get(self, key: tuple[Any, ...] | None) -> Any:
         if key is None:
@@ -1369,7 +1515,17 @@ class LerobotLocalPolicy(Policy):
             trained model that is out of distribution and the shift compounds
             every chunk. When left at the default ``1`` we adopt
             ``n_action_steps`` so the chunk is consumed as trained. An explicit
-            ``actions_per_step > 1`` from the caller is respected here.
+            ``actions_per_step > 1`` from the caller is respected here - but one
+            strictly BELOW ``n_action_steps`` is named in a warning, because it
+            truncates the chunk into the same out-of-distribution regime this
+            branch corrects the default away from. A config that itself declares
+            ``n_action_steps`` below ``chunk_size`` reaches that regime without a
+            caller doing anything, so it is named too: the model emits
+            ``chunk_size`` actions and only the first ``n_action_steps`` are ever
+            executed. Every LeRobot policy ships the two equal, so this fires
+            only for a config that was edited. A caller who asked for RTC is
+            not warned: RTC blends the seam and ``rtc_execution_horizon`` owns
+            the interval.
 
         Observation history (``config.n_obs_steps > 1``):
             Diffusion (2) and VQBeT (5) consume a short observation history and
@@ -1410,6 +1566,37 @@ class LerobotLocalPolicy(Policy):
             )
             return
         if self.actions_per_step != 1:
+            # A pinned horizon is never overridden, but one BELOW the trained
+            # chunk lands in the same out-of-distribution regime the default
+            # ``1`` is corrected away from further down: the chunk is truncated
+            # to its first ``actions_per_step`` actions and every re-query
+            # starts from a state the checkpoint was never trained to replay
+            # from. That passed silently, so shortening the interval for
+            # reactivity degraded the motion with nothing said. RTC is the
+            # supported way to shorten it - it blends the unexecuted tail of
+            # the previous chunk into the next one - so a caller who asked for
+            # RTC is not warned: there ``rtc_execution_horizon`` owns the
+            # interval and ``actions_per_step`` stays the trained chunk.
+            trained = getattr(config, "n_action_steps", None)
+            if self._rtc_requested is not True and isinstance(trained, int) and self.actions_per_step < trained:
+                remedy = (
+                    "Pass rtc_enabled=True (with rtc_execution_horizon) to shorten the "
+                    "re-query interval instead - RTC blends the unexecuted tail of the "
+                    "previous chunk into the next one, so the seam is not a discontinuity."
+                    if hasattr(config, "rtc_config")
+                    else f"Leave actions_per_step at {trained} to consume the chunk as trained."
+                )
+                logger.warning(
+                    "lerobot_local: %s was trained to replay %d actions per inference "
+                    "(config.n_action_steps) but actions_per_step=%d was pinned, so each "
+                    "chunk is truncated to its first %d actions and every re-query is "
+                    "out of distribution. %s",
+                    type(self._policy).__name__,
+                    trained,
+                    self.actions_per_step,
+                    self.actions_per_step,
+                    remedy,
+                )
             return  # caller pinned an explicit horizon - never override it
         # Observation-history policies (``n_obs_steps > 1``, e.g. Diffusion=2,
         # VQBeT=5) MUST be driven per-step through ``select_action()``. That path
@@ -1435,6 +1622,21 @@ class LerobotLocalPolicy(Policy):
             )
             return
         n_action_steps = getattr(config, "n_action_steps", None)
+        chunk_size = getattr(config, "chunk_size", None)
+        if isinstance(n_action_steps, int) and isinstance(chunk_size, int) and n_action_steps < chunk_size:
+            logger.warning(
+                "lerobot_local: %s emits a %d-action chunk (config.chunk_size) but its "
+                "config declares n_action_steps=%d, so every chunk is truncated to its "
+                "first %d and each re-query starts from a state the checkpoint never "
+                "replayed to. Set n_action_steps=%d to consume the chunk as trained, or "
+                "temporal_ensemble_coeff to consume it per step (LeRobot then averages "
+                "every prediction of each instant and requires n_action_steps=1).",
+                type(self._policy).__name__,
+                chunk_size,
+                n_action_steps,
+                n_action_steps,
+                chunk_size,
+            )
         if isinstance(n_action_steps, int) and n_action_steps > 1:
             self.actions_per_step = n_action_steps
             logger.info(
@@ -1458,7 +1660,6 @@ class LerobotLocalPolicy(Policy):
         renames + state packing on the preprocessor via ``_configure_embodiment``.
         """
         from . import molmoact2 as _molmoact2
-        from .processor import ProcessorBridge
 
         self.policy_type = _molmoact2.MOLMOACT2_TYPE
 
@@ -1685,6 +1886,14 @@ class LerobotLocalPolicy(Policy):
         undeclared_error = _undeclared_image_feature_error(sorted(targets), embodiment.name, policy_config)
         if undeclared_error:
             raise ValueError(undeclared_error)
+
+        # Same precedence, for the converse contradiction: a target the
+        # CHECKPOINT does not declare is unreachable by any camera name, so it is
+        # reported before the source-availability check below rather than as a
+        # missing camera the caller could rename.
+        inapplicable_error = _inapplicable_image_target_error(targets, embodiment.name, policy_config, observation_keys)
+        if inapplicable_error:
+            raise ValueError(inapplicable_error)
 
         obs = set(observation_keys)
         unsatisfied = {dst: srcs for dst, srcs in targets.items() if not any(s in obs for s in srcs)}
@@ -2647,8 +2856,6 @@ class LerobotLocalPolicy(Policy):
         Returns:
             Dict with all values as properly shaped device tensors.
         """
-        import torch
-
         device = self._device or "cpu"
         fixed: dict[str, Any] = {}
 

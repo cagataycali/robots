@@ -54,7 +54,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
-_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "codeql.yml"
+_WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 _PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
 _AGENTS_PATH = _REPO_ROOT / "AGENTS.md"
 
@@ -137,7 +137,7 @@ class TestTheConfigIsReachable:
     def test_the_workflow_passes_the_config_file(self):
         workflow = _WORKFLOW_PATH.read_text(encoding="utf-8")
         assert "config-file: ./.github/codeql/codeql-config.yml" in workflow, (
-            "codeql.yml must pass config-file, or the filters above are dead text: an "
+            "ci.yml must pass config-file, or the filters above are dead text: an "
             "unreferenced CodeQL config silently filters nothing and every alert keeps gating."
         )
 
@@ -145,12 +145,12 @@ class TestTheConfigIsReachable:
         """The comment that was false is the reason #1810 was filed."""
         workflow = _WORKFLOW_PATH.read_text(encoding="utf-8")
         assert "PRs are not blocked on" not in workflow, (
-            "codeql.yml used to state that PRs are not blocked on CodeQL alerts. Thread-resolution "
+            "ci.yml (formerly codeql.yml) used to state that PRs are not blocked on CodeQL alerts. Thread-resolution "
             "on bot-authored review threads makes every new alert a merge gate, so that sentence "
             "described a policy the repository does not implement. Do not restore it."
         )
         assert "hard merge gate" in workflow, (
-            "codeql.yml must say what actually happens, not merely stop saying the wrong thing. A "
+            "ci.yml must say what actually happens, not merely stop saying the wrong thing. A "
             "contributor reading it needs to know an alert blocks the merge before they spend a "
             "round wondering why an approved, green PR will not go in."
         )

@@ -3,9 +3,9 @@
 The Unitree G1 SDK returns integer rc codes for every RPC and handler
 response (``0`` OK, ``3104`` RPC timeout, ``7302`` invalid FSM id,
 ``7404`` gate-refused write, ...); the
-:mod:`strands_robots.tools.g1._g1_common` module snapshots the
+:mod:`strands_robots.drivers.unitree._common` module snapshots the
 observed name for each of those codes into
-:data:`~strands_robots.tools.g1._g1_common.ERR_CODES` and every verb in
+:data:`~strands_robots.drivers.unitree._common.ERR_CODES` and every verb in
 this package that surfaces a refusal quotes the same entry verbatim.
 The :mod:`strands_robots.tools.g1.g1_error_codes` module ports that
 lookup to the ``@tool`` surface so an agent that receives a
@@ -18,7 +18,7 @@ is loadable on a host without ``unitree_sdk2py`` (the same
 SDK-load-hygiene rule every other file under
 :mod:`strands_robots.tools.g1` carries, refs
 strands-labs/robots#358), and every decoded text answer is read off
-:data:`~strands_robots.tools.g1._g1_common.ERR_CODES` rather than
+:data:`~strands_robots.drivers.unitree._common.ERR_CODES` rather than
 restated in the tests, so a widen or narrow to the catalogue surfaces
 here as a shape change rather than as a diverging table this file
 would need to manually update.
@@ -32,7 +32,7 @@ Two things this file's cells deliberately do not pin:
   returning a new rc without a snapshot update surfaces the gap
   through the ``unknown`` marker rather than as a KeyError.
 * The exact decoded text for every code. The catalogue lives in
-  :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` and every
+  :data:`~strands_robots.drivers.unitree._common.ERR_CODES` and every
   cell here reads the same source; a re-word of one entry lands in
   the constant once and this file picks it up without an assertion
   update.
@@ -44,7 +44,7 @@ import importlib
 import sys
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import ERR_CODES
+from strands_robots.drivers.unitree._common import ERR_CODES
 from strands_robots.tools.g1.g1_error_codes import (
     _UNKNOWN_CODE_TEXT,
     g1_decode_error_code,
@@ -72,7 +72,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
     with the SDK absent; a module that pulled a submodule at import
     time would break every headless CI runner and Thor before an
     office bring-up. The driver enforces the same rule against itself
-    (:func:`~strands_robots.tools.g1._g1_common.ensure_dds` is the only
+    (:func:`~strands_robots.drivers.unitree._common.ensure_dds` is the only
     path that loads the SDK); this cell holds the error-code lookup
     verbs to it too (refs strands-labs/robots#358).
     """
@@ -224,7 +224,7 @@ def test_g1_decode_error_code_flags_an_unknown_code() -> None:
     caller composing an error message never has to branch on a
     missing key: the returned envelope always names something. This
     matches the contract
-    :func:`~strands_robots.tools.g1._g1_common.decode_code` would
+    :func:`~strands_robots.drivers.unitree._common.decode_code` would
     render for the same number.
     """
     result = _call(g1_decode_error_code, code=9999)
@@ -240,7 +240,7 @@ def test_g1_decode_error_code_admits_a_negative_rc_as_unknown() -> None:
     The catalogue's own keys are all non-negative, so a negative rc is
     by construction outside it. It is admitted rather than refused
     because the in-tree renderer of a rc is already total over every
-    integer: :func:`~strands_robots.tools.g1._g1_common.decode_code`
+    integer: :func:`~strands_robots.drivers.unitree._common.decode_code`
     answers ``"-1 (unknown)"``, and a lookup verb that refused the
     same value would be narrower than the renderer whose text it
     quotes. The ``-1`` convention itself comes from the neon bundle's

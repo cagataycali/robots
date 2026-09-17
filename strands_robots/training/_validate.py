@@ -44,7 +44,7 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.tools._path_validation import validate_save_path
+from strands_robots._path_validation import validate_save_path
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,

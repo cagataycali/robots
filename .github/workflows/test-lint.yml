@@ -30,6 +30,13 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      # The guards step's check_closing_reference.py reads closingIssuesReferences
+      # over GraphQL. A called workflow's job-level block sets every scope it
+      # does not name to none - the caller's grant is only a ceiling - so the
+      # scope has to be asked for HERE as well as in ci.yml. Without it the
+      # query errors, the script maps that to `unknown-links` / exit 0, and the
+      # guard passes every pull request while rendering like a working one.
+      pull-requests: read
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -44,6 +51,35 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+
+      # The pull-request guards, before anything is installed: a branch that
+      # writes into CHANGELOG.md, whose title claims a close its body does not
+      # link, whose uv.lock no longer resolves pyproject.toml, that edits a file
+      # main also changed since it forked, or that interpolates LLM input into a
+      # shell or an MJCF string hears about it here, in under a minute, instead
+      # of after the suite. These were ten advisory workflow rows, each with
+      # its own checkout and setup-python; scripts/ci_guards.py runs the same
+      # scripts with the same arguments and folds their exit statuses. The
+      # verdicts are in the step summary. Not a pull request: nothing to guard.
+      #
+      # HEAD_SHA is the pull request head, deliberately not the merge commit
+      # this job checks out, because the overlap and fragment checks are
+      # defeated by a merge commit - it already contains the base tip
+      # (tests/test_merge_base_overlap.py::test_a_merge_commit_head_defeats_the_check).
+      # The head is the merge commit's second parent, so it is reachable.
+      - name: Guards
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "${BASE_REF}" || true
+          # uv for `uv lock --check`; pip rather than a setup action, so this
+          # adds no third-party action to pin (lockfile-parity.yml's reasoning).
+          pip install --no-cache-dir uv
+          python3 scripts/ci_guards.py guards
 
       - name: Install system dependencies (OpenGL for MuJoCo)
         # The step's own ceiling, so a stall is reaped here rather than at the
@@ -172,6 +208,36 @@ jobs:
         env:
           UV_TORCH_BACKEND: cpu
         run: hatch run lint
+
+      # Informational, after the install so both trees import: griffe over the
+      # public Python surface and the AgentTool action-contract diff
+      # (.github/scripts/agent_api_snapshot.py). The report goes to the step
+      # summary only - the two bot comments those checks used to post are gone.
+      # A finding is a warning annotation, never a failure; only a broken tool
+      # fails the step.
+      - name: Report public-API and AgentTool-contract drift
+        if: github.event_name == 'pull_request'
+        env:
+          MUJOCO_GL: osmesa
+          UV_TORCH_BACKEND: cpu
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          pip install --no-cache-dir griffe==2.1.0
+          python3 scripts/ci_guards.py api-drift
+
+      # Only when the pull request touches the docs: the strict build that used
+      # to be docs.yml's pull_request half. docs.yml now only deploys from main.
+      - name: Build the docs when they changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qE '^(docs/|mkdocs\.yml$)'; then
+            pip install --no-cache-dir -r docs/requirements.txt
+            mkdocs build --strict
+          else
+            echo "docs/ and mkdocs.yml unchanged; skipping the docs build"
+          fi
 
       # The hatch env exists once `Run lint` has created it, and the suite has
       # not started yet, so a pin that did not take is reported here, in under a

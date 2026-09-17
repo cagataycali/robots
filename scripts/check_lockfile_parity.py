@@ -3,11 +3,12 @@
 
 Why this exists
 ---------------
-#2039 added ``.github/workflows/lockfile-parity.yml``, which runs ``uv lock
+#2039 added ``.github/workflows/lockfile-parity.yml``, which ran ``uv lock
 --check``. That is the authoritative comparison and it catches everything below.
-It is also **advisory**: the ``default`` ruleset lists exactly one required check
-(``call-test-lint / Test and Lint``), so a drifted lock reaches a reviewer as a
-red advisory context beside a green required one.
+It now runs inside the one required check (``call-test-lint / Test and Lint``)
+as one of the guards ``scripts/ci_guards.py`` executes before the install, so a
+drifted lock fails the pull request in under a minute rather than reaching a
+reviewer as a red advisory context beside a green required one.
 
 The offline half #2039 shipped -- ``tests/test_lockfile_parity_gate.py`` -- runs
 *inside* the required check, and it asserts two properties of the lock rather

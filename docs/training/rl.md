@@ -11,7 +11,14 @@ the only path to a locomotion / whole-body-control policy where no expert
 trajectories exist.
 
 RL trainers live in `strands_robots.training.rl` and are selected through the
-**same** `create_trainer` factory:
+**same** `create_trainer` factory. They compute in torch, and the environment
+adapters step a MuJoCo `SimEngine`, so install the `[rl]` extra first (it folds
+`[sim-mujoco]` in, and `gymnasium` for the `GymSimEnv` wrapper that presents a
+`SimEnv` to external RL libraries):
+
+```bash
+pip install 'strands-robots[rl]'
+```
 
 ```python
 from strands_robots.training import create_trainer
@@ -148,8 +155,9 @@ checkpoint_dir=...)` loads it and presents the trained actor as an ordinary
 ```python
 result = create_trainer("ppo").train(spec)
 
+sim = sr.Robot("so100", mode="sim")     # the robot make_env trained on
 sim.run_policy(
-    robot_name="so101",
+    robot_name="so100",
     policy_provider="rl",
     policy_config={"checkpoint_dir": result.checkpoint_dir},
     duration=10.0,

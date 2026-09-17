@@ -342,17 +342,33 @@ def _shipped_surfaces() -> dict[str, tuple[bool, bool]]:
 class TestEveryPortTakingSurfaceIsAccountedFor:
     """A new task entry point cannot ship without deciding what it does with the port."""
 
-    # The two public/chokepoint entries that must judge the port themselves.
-    ENTRY_POINTS = frozenset({"_execute_task_sync", "start_task"})
+    # The two public/chokepoint entries that must judge the port themselves,
+    # and the pre-gate check the agent-tool stream runs before the operator is
+    # asked, so a port the dispatcher would refuse never costs an approval.
+    ENTRY_POINTS = frozenset({"_execute_task_sync", "start_task", "_pre_gate_error"})
     # Relays that hand it on unchanged, plus the private builder that is the
     # floor for a direct call.
     RELAYS = frozenset({"_drive_claimed_task", "_run_control_loop", "_execute_task_async"})
     FLOOR = frozenset({"_get_policy"})
     # The rule itself, which takes the value in order to judge it.
     OWNER = frozenset({"_policy_port_error"})
+    # Takes the port to render it for the operator's approval prompt, not to
+    # decide anything, so neither rule above applies: it judges nothing, and the
+    # only thing it hands the value to is the shared refusal renderer rather than
+    # a policy. Listed rather than renamed out of the scan - a surface that reads
+    # the port is accounted for here or it is a defect.
+    DESCRIBERS = frozenset({"_policy_description"})
 
     def test_the_surface_set_is_the_expected_one(self) -> None:
-        assert set(_shipped_surfaces()) == self.ENTRY_POINTS | self.RELAYS | self.FLOOR | self.OWNER
+        assert set(_shipped_surfaces()) == self.ENTRY_POINTS | self.RELAYS | self.FLOOR | self.OWNER | self.DESCRIBERS
+
+    def test_a_describer_judges_nothing_about_the_port(self) -> None:
+        """Non-vacuity for the exemption: a describer that started judging the
+        port would belong in ``ENTRY_POINTS``, so pin that it does not."""
+        surfaces = _shipped_surfaces()
+        for name in self.DESCRIBERS:
+            checks, _forwards = surfaces[name]
+            assert checks is False, f"{name} now judges the port and is no longer only a describer"
 
     def test_each_entry_point_checks_the_port(self) -> None:
         surfaces = _shipped_surfaces()
@@ -434,8 +450,11 @@ class TestAPortTheProviderDoesNotReadIsRefused:
     def test_an_unregistered_provider_is_not_treated_as_port_less(self) -> None:
         """Unknown is not the same as declares-none, so it is not refused here.
 
-        ``create_policy`` owns the refusal for a provider that does not exist;
+        ``Robot._policy_provider_error`` owns the refusal for a provider that
+        does not exist, and runs before this check at every call site;
         answering it here would report a port problem for a provider problem.
+        The missing-port direction of that rule is pinned in
+        ``tests/test_hardware_policy_provider_domain.py``.
         """
         from strands_robots.registry.policies import provider_reads_a_port
 

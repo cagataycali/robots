@@ -33,9 +33,9 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers.g1 import G1Driver
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 
-_ENGINE_LOGGER = "strands_robots.tools.g1._dds_engine"
+_ENGINE_LOGGER = "strands_robots.drivers.unitree._dds_engine"
 
 
 class _RecordingEndpoint:

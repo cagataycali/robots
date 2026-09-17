@@ -162,10 +162,16 @@ class BenchmarkProtocol(ABC):
           scene: :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.evaluate`
           converts it into a structured error naming this benchmark, which a
           caller can tell apart from a policy that scored zero.
-        * Otherwise, validate that every loaded robot's ``data_config`` is
-          in :attr:`supported_robots` (when non-empty). Mismatches raise
-          :class:`BenchmarkCompatibilityError` - the eval loop catches that
-          and returns a structured error with the allowed list.
+        * Otherwise, validate that the robot under evaluation's ``data_config``
+          is in :attr:`supported_robots` (when non-empty) - the robot
+          ``evaluate_benchmark`` resolved and bound via
+          :meth:`~strands_robots.simulation.base.SimEngine.bind_predicate_robot`;
+          when nothing is bound, every loaded robot is checked. Mismatches
+          raise :class:`BenchmarkCompatibilityError` - the eval loop catches
+          that and returns a structured error with the allowed list. Checking
+          every robot regardless meant a scene holding an arm and a
+          quadruped could never run a quadruped benchmark on the quadruped:
+          ``robot_name='go2'`` was refused for the arm's data_config.
 
         Override to layer on per-episode randomization, goal sampling, or
         procedural scene generation. Always call ``super().on_episode_start``
@@ -214,6 +220,11 @@ class BenchmarkProtocol(ABC):
         world = getattr(sim, "_world", None)
         if world is None or not hasattr(world, "robots"):
             return
+        # Only the robot under evaluation has to be one this benchmark
+        # supports; a bystander robot in the same scene is not being scored.
+        bound = getattr(sim, "predicate_robot", None)
+        if bound in robots:
+            robots = [bound]
         for rname in robots:
             robot_obj = world.robots.get(rname)
             if robot_obj is None:
@@ -289,6 +300,30 @@ class BenchmarkProtocol(ABC):
         episode; it does not count as a success.
         """
         return False
+
+
+def spec_instruction(spec: Any) -> str:
+    """The benchmark's own task language, or ``""`` when it declares none.
+
+    One reader for the fallback #187 established: the eval loop
+    language-conditions the policy on ``instruction or spec.instruction``, and
+    ``evaluate_benchmark`` labels the frames it records with the same string, so
+    a recorded dataset's ``task`` column names the task the policy was actually
+    given instead of the caller's empty argument. A spec that predates the
+    property, or whose property raises, reports no language rather than failing
+    the evaluation.
+
+    Args:
+        spec: A :class:`BenchmarkProtocol` (or anything shaped like one).
+
+    Returns:
+        The declared instruction, or ``""``.
+    """
+    try:
+        return str(spec.instruction or "")
+    except Exception as e:  # noqa: BLE001 - back-compat for specs without the property
+        logger.debug("spec.instruction lookup raised %s; defaulting to empty", e)
+        return ""
 
 
 class BenchmarkCompatibilityError(ValueError):

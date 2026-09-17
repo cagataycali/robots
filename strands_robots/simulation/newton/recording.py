@@ -254,6 +254,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         if error := camera_schema_key_collision_error("start_recording", list(self._world.cameras)):
             return error
 
+        # A second start while one recording is live used to fall through here
+        # too: it replaced the recorder object (the frames buffered since the
+        # last save_episode went with it - never saved, never mentioned) and,
+        # when the new dataset then refused, left ``recording`` False with the
+        # first session's frames gone as well. Refused on the shared domain, so
+        # the three backends answer a second start identically.
+        if error := self._already_recording_error("start_recording", repo_id):
+            return error
+
         world = self._world
         world._backend_state["recording"] = True
         world._backend_state["trajectory"] = []
@@ -273,10 +282,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         # bypass this method, and ``last_dataset_root`` - which
         # ``stop_recording(bucket=...)`` syncs and ``verify_dataset_episodes``
         # reads once the recorder is dropped - named the stale path.
-        from strands_robots.dataset_recorder import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        world._backend_state["last_dataset_root"] = str(dataset_dir)
+        dataset_dir = self._stash_dataset_target(repo_id, root)
 
         try:
             (
@@ -394,9 +400,9 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
                 resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
                 self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, fps=fps)
-                world._backend_state["dataset_recorder"] = resumed
+                recorder = resumed
             else:
-                world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                recorder = _DatasetRecorder.create(
                     repo_id=repo_id,
                     fps=fps,
                     robot_type=robot_type,
@@ -411,12 +417,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     video_width=self.default_width,
                     video_height=self.default_height,
                 )
+            resumed_line = self._arm_dataset_recorder(world._backend_state, recorder, resumed=resume_existing)
             return {
                 "status": "success",
                 "content": [
                     {
                         "text": (
                             f"Recording Newton scene to LeRobotDataset: {repo_id}\n"
+                            f"{resumed_line}"
                             f"{recorded_cameras_line(joint_names, recorded_cameras, scene_cameras, cameras, fps)}"
                             f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
                             f"Run policies to capture frames, then stop_recording to save the episode"
@@ -494,8 +502,8 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             recording_cameras.append((cam_name, safe_name, width, height))
         return joint_names, action_names, camera_keys, camera_dims, robot_type, recording_cameras
 
-    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
-        """Build the per-step ``on_frame`` recording hook for Newton.
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """The recording half of the per-step ``on_frame`` hook for Newton.
 
         Returns an ``on_frame(step, observation, action)`` closure that, while a
         recording session is active, augments the joint-state observation with a
@@ -505,8 +513,11 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         schema declared in :meth:`start_recording`; camera ndarrays keep their
         sanitized names.
 
-        Returns ``None`` when there is no world or the robot is unknown, so the
-        base run-policy loop runs without recording.
+        Returns ``None`` when there is no world or the robot is unknown. No
+        rollout claim is made here: :meth:`_make_run_policy_hook` layers that
+        on top, and the evaluation facades (``eval_policy``,
+        ``evaluate_benchmark``) install this hook alone when a recording is
+        open and the caller passed no ``on_frame``.
         """
         from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
@@ -514,10 +525,6 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         if world is None or not registered(world.robots, robot_name):
             return None
 
-        robot = world.robots[robot_name]
-        robot.policy_running = True
-        robot.policy_instruction = instruction
-        robot.policy_steps = 0
         multi_robot = len(world.robots) > 1
 
         # Action columns this rollout is responsible for: the driven robot's own
@@ -543,8 +550,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 action_key_cache[prefixed] = cached
             return cached
 
-        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
-            robot.policy_steps = step + 1
+        def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             if not world._backend_state.get("recording", False):
                 return
             rec = world._backend_state.get("dataset_recorder")
@@ -584,6 +590,31 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     task=instruction,
                     required_action_keys=_required_action_keys(False),
                 )
+
+        return _record
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
+        """Build the per-step ``on_frame`` hook for a rollout: claim + recording.
+
+        Marks the robot as driven (``policy_running`` / ``policy_instruction`` /
+        ``policy_steps``, released by :meth:`_release_run_policy_hook`) and
+        forwards every frame to :meth:`_make_recording_on_frame`. ``None``
+        when there is no world or the robot is unknown, so the base
+        run-policy loop runs without recording.
+        """
+        world = self._world
+        if world is None or not registered(world.robots, robot_name):
+            return None
+        robot = world.robots[robot_name]
+        robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+        record_frame = self._make_recording_on_frame(robot_name, instruction)
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            robot.policy_steps = step + 1
+            if record_frame is not None:
+                record_frame(step, observation, action)
 
         return _hook
 

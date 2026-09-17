@@ -10,7 +10,7 @@ its motion gates, rc decoding and refusal shapes apply.
 
 Every verb holds the package's four ``@tool`` invariants (envelope not
 exception; names the verb; names the parameter; names the received type) via
-two shared implementations: :func:`~strands_robots.tools.g1._g1_common.live_handle_refusal`
+two shared implementations: :func:`~strands_robots.drivers.unitree._common.live_handle_refusal`
 for the ``driver`` handle (the ``_ACTIONS`` table carries each verb's accessor
 and refusal prose) and the shared numeric validators from
 :mod:`strands_robots.utils` for the data parameters. The ``driver`` parameter
@@ -25,7 +25,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import live_handle_refusal
+from strands_robots.drivers.unitree._common import live_handle_refusal
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 
 

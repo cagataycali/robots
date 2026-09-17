@@ -76,7 +76,12 @@ from strands_robots.simulation.benchmark import (
     StepInfo,
     register_benchmark,
 )
-from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate, predicate_kind
+from strands_robots.simulation.predicates import (
+    PREDICATE_REGISTRY,
+    make_predicate,
+    predicate_kind,
+    predicate_reads_robot_base,
+)
 from strands_robots.utils import name_list_error, positive_count_error, require_optional
 
 if TYPE_CHECKING:
@@ -363,8 +368,6 @@ def stop_when_referenced_entities(stop_when: Any) -> tuple[list[str], list[str],
         ``(bodies, joints, robot_bases)`` - deduplicated, insertion-ordered.
         ``robot_bases`` entries are a robot name or ``None`` for the sole robot.
     """
-    from strands_robots.simulation.predicates import PREDICATE_REGISTRY, predicate_reads_robot_base
-
     bodies: dict[str, None] = {}
     joints: dict[str, None] = {}
     robot_bases: dict[str | None, None] = {}

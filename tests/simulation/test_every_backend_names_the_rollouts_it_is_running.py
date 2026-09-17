@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests: ``list_policies_running`` answers on every backend.
 
-``docs/simulation/overview.md`` lists ``list_policies_running`` in the Policy
+``docs/simulation/rollouts.md`` lists ``list_policies_running`` in the action
 action table beside ``run_policy`` / ``start_policy`` / ``stop_policy``, with no
 backend qualifier, and documents ``stop_policy`` -- a base contract since a
 robot's stop was promoted to the ABC -- as deriving its verdict from "the same

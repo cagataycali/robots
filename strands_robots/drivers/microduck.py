@@ -47,7 +47,6 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots.drivers.base import undeclared_verb_error
-from strands_robots.policies.microduck import MICRODUCK_JOINT_NAMES
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,
@@ -99,10 +98,15 @@ HARDWARE_JOINT_NAMES: tuple[str, ...] = (
 #: Index of ``"mouth"`` in :data:`HARDWARE_JOINT_NAMES`; dropped to map 15->14.
 MOUTH_INDEX: int = 9
 
-#: The 14 locomotion joints the policy/sim contract speaks, in contract order.
-#: Equal to :data:`HARDWARE_JOINT_NAMES` with index 9 removed - asserted in the
-#: tests so a divergence between the wire map and the policy contract is caught.
-LOCOMOTION_JOINT_NAMES: tuple[str, ...] = MICRODUCK_JOINT_NAMES
+#: The 14 locomotion joints the policy/sim contract speaks, in contract order:
+#: :data:`HARDWARE_JOINT_NAMES` with :data:`MOUTH_INDEX` removed. Derived from
+#: this driver's own wire map rather than read back from
+#: :data:`~strands_robots.policies.microduck.MICRODUCK_JOINT_NAMES`, so the
+#: driver does not take its joint roster from a policy's tensor ordering; that
+#: the two still agree is asserted in the tests.
+LOCOMOTION_JOINT_NAMES: tuple[str, ...] = tuple(
+    name for index, name in enumerate(HARDWARE_JOINT_NAMES) if index != MOUTH_INDEX
+)
 
 # robotd method names (duck-ipc-proto ``method`` module).
 _M_HELLO = "hello"

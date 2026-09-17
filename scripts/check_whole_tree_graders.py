@@ -213,6 +213,10 @@ UNDERIVABLE_GRADERS: tuple[tuple[str, str], ...] = (
         "tests/tools/test_agent_tool_parameter_descriptions.py",
         "enumerates the tool package with pkgutil.iter_modules, so it walks no path",
     ),
+    (
+        "tests/test_import_layers_are_a_dag.py",
+        "delegates the walk to scripts/check_import_layers.py, so it names no path itself",
+    ),
 )
 
 

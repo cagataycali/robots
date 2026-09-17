@@ -159,6 +159,30 @@ def _extract_json(result: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def _bound_robot(sim: SimEngine, robot: str | None) -> str | None:
+    """The robot a ``robot=None`` base clause reads: the one bound for this rollout.
+
+    ``base_*`` predicates default ``robot`` to "the sole robot", and every
+    reader below spelled that as ``get_observation(robot_name=None)`` - which
+    in a multi-robot scene is the FIRST registered robot, whichever one the
+    rollout is evaluating. ``run_policy`` / ``eval_policy`` /
+    ``evaluate_benchmark`` bind the robot they resolved on
+    ``sim.predicate_robot`` (:meth:`SimEngine.bind_predicate_robot`) before the
+    probe and the rollout, so an unnamed base clause scores THAT robot. An
+    explicit ``robot`` always wins; a stale binding (its robot since removed)
+    falls back to the sole-robot default.
+    """
+    if robot is not None:
+        return robot
+    bound = getattr(sim, "predicate_robot", None)
+    if bound is None:
+        return None
+    try:
+        return bound if bound in sim.list_robots() else None
+    except Exception:  # noqa: BLE001 - predicates never raise
+        return None
+
+
 def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     """Best-effort body-position lookup. Returns ``None`` on any failure.
 
@@ -366,7 +390,7 @@ def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float]
     spec referencing ``base_velocity`` on a fixed-base arm.
     """
     try:
-        obs = sim.get_observation(robot_name=robot, skip_images=True)
+        obs = sim.get_observation(robot_name=_bound_robot(sim, robot), skip_images=True)
     except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
         logger.debug("base_velocity get_observation(%r) failed: %s", robot, e)
         return None
@@ -385,7 +409,7 @@ def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float]
     ):
         # A floating base surfaces all three; their absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     v_body = _quat_rotate_inverse_wxyz(quat, lin)
     return float(v_body[0]), float(v_body[1]), float(ang[2])
@@ -405,7 +429,7 @@ def _base_body_velocity(sim: SimEngine, robot: str | None) -> tuple[list[float],
     base-velocity regularizer terms (``base_lin_vel_z`` / ``base_ang_vel_xy``).
     """
     try:
-        obs = sim.get_observation(robot_name=robot, skip_images=True)
+        obs = sim.get_observation(robot_name=_bound_robot(sim, robot), skip_images=True)
     except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
         logger.debug("base motion get_observation(%r) failed: %s", robot, e)
         return None
@@ -424,7 +448,7 @@ def _base_body_velocity(sim: SimEngine, robot: str | None) -> tuple[list[float],
     ):
         # A floating base surfaces all three; their absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     v_body = _quat_rotate_inverse_wxyz(quat, lin)
     return (
@@ -443,7 +467,7 @@ def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
     almost always a spec referencing a base term on a fixed-base arm.
     """
     try:
-        obs = sim.get_observation(robot_name=robot, skip_images=True)
+        obs = sim.get_observation(robot_name=_bound_robot(sim, robot), skip_images=True)
     except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
         logger.debug("base_height get_observation(%r) failed: %s", robot, e)
         return None
@@ -453,7 +477,7 @@ def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
     if not (isinstance(pos, list) and len(pos) == 3):
         # A floating base surfaces base_pos; its absence means this robot has no
         # floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     return [float(pos[0]), float(pos[1]), float(pos[2])]
 
@@ -467,7 +491,7 @@ def _base_quaternion(sim: SimEngine, robot: str | None) -> list[float] | None:
     referencing a base term on a robot that has no base orientation.
     """
     try:
-        obs = sim.get_observation(robot_name=robot, skip_images=True)
+        obs = sim.get_observation(robot_name=_bound_robot(sim, robot), skip_images=True)
     except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
         logger.debug("base_orientation get_observation(%r) failed: %s", robot, e)
         return None
@@ -477,7 +501,7 @@ def _base_quaternion(sim: SimEngine, robot: str | None) -> list[float] | None:
     if not (isinstance(quat, list) and len(quat) == 4):
         # A floating base surfaces base_quat; its absence means this robot has
         # no floating base (a fixed-base arm) - almost always a spec error.
-        _warn_unresolved("robot base", robot or "<sole robot>")
+        _warn_unresolved("robot base", _bound_robot(sim, robot) or "<sole robot>")
         return None
     return [float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
 

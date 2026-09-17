@@ -175,6 +175,13 @@ def _module_available(name: str) -> bool:
 # (see :func:`_policy_supports_relative_actions`); the static set below is the
 # offline FALLBACK and the only written roster - prose that re-lists it goes
 # stale silently, so the docs roster is graded against this gate instead.
+#
+# The snapshot answers for the lerobot the manifest FLOORS at, not for every
+# release it admits: lerobot gave ``VLAJEPAConfig`` this field after v0.6.1, so a
+# newer in-range lerobot accepts a type this set omits. The live probe above
+# reports that type correctly; the snapshot gains it when the floor is raised
+# onto the release that added it, and never before - naming it earlier would make
+# an offline gate accept a run the floor's lerobot has no field for.
 _RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "groot"})
 
 # LeRobot policy types whose config exposes ``train_expert_only`` (freeze the
@@ -1578,8 +1585,6 @@ class LerobotTrainer(Trainer):
                 f"method '{spec.method}' applies to policy training; reward-model training uses method='full'"
             )
 
-        import importlib.util
-
         if importlib.util.find_spec("lerobot.rewards") is None:
             problems.append(
                 "the installed lerobot has no reward-model support (no 'lerobot.rewards'); "
@@ -1935,7 +1940,6 @@ class LerobotTrainer(Trainer):
 
     def _build_policy_config(self, spec: TrainSpec) -> TrainPipelineConfig:
         """Build a policy ``TrainPipelineConfig`` (``cfg.policy`` set)."""
-        import dataclasses
         from pathlib import Path
 
         from lerobot.configs.default import PeftConfig

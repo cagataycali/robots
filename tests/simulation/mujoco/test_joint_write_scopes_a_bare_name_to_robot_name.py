@@ -189,11 +189,34 @@ def test_bare_name_absent_from_the_addressed_robot_still_resolves(sim):
     assert _qpos(sim, "bob/shoulder") == pytest.approx(0.3)
 
 
-def test_bare_name_without_robot_name_is_unchanged(sim):
-    """No ``robot_name`` means the pre-existing first-match lookup, untouched."""
+def test_bare_name_both_robots_carry_without_robot_name_is_refused(sim):
+    """A bare name both robots carry, with no ``robot_name``, is refused.
+
+    The previous pin here recorded the first-match lookup as "untouched": with
+    no scope, ``{"j1": 0.7}`` wrote *alice*, the first robot attached, and
+    reported success. That is #2453's wrong-robot write reached through the one
+    door the scoping fix left open - the shared lookup's fallback is documented
+    as "unambiguous or explicit", and the list form, ``get_robot_state``,
+    ``move_to`` and ``run_policy`` all refuse to guess on this same scene, so
+    the dict form now refuses too. Nothing is written, both owners are named
+    in attachment order, and both remedies are spelled out.
+    """
+    before = sim._world._data.qpos.copy()
     result = sim.set_joint_positions({"j1": 0.7})
+    assert result["status"] == "error", result
+    text = result["content"][0]["text"]
+    assert text.startswith(
+        "set_joint_positions: joint key 'j1' is ambiguous - robots 'alice' and 'bob' each carry it, so nothing was written."
+    )
+    assert "Pass robot_name= to scope the write, or qualify the key ('alice/j1' or 'bob/j1')." in text
+    assert (sim._world._data.qpos == before).all()
+
+
+def test_bare_name_only_one_robot_carries_still_resolves_without_robot_name(sim):
+    """The fallback is kept for the case it was written for: a name only one robot has."""
+    result = sim.set_joint_positions({"shoulder": 0.3})
     assert result["status"] == "success", result
-    assert _qpos(sim, "alice/j1") == pytest.approx(0.7)
+    assert _qpos(sim, "bob/shoulder") == pytest.approx(0.3)
 
 
 def test_unknown_robot_name_is_refused(sim):

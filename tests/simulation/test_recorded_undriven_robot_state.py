@@ -199,12 +199,29 @@ _SYNCHRONIZED_ENGINES = [
 ]
 
 
+def _calls(func: Any, name: str) -> bool:
+    """Whether ``func``'s source really CALLS ``name``, bare or on an attribute.
+
+    A call, not a mention: a ``:meth:`` reference in the docstring satisfies a
+    substring search of the same source and satisfied an earlier spelling of
+    the delegation check below, so a backend that stopped delegating still
+    passed it.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    called: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            called.add(node.func.attr)
+    return name in called
+
+
 def _calls_the_shared_owner(func: Any) -> bool:
     """Whether ``func``'s source calls ``undriven_robot_state`` by name."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
-    return "undriven_robot_state" in {
-        node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
+    return _calls(func, "undriven_robot_state")
 
 
 class TestAnUndrivenRobotsStateIsRecordedAsMeasured:
@@ -378,11 +395,22 @@ class TestEveryRecordingEntryPointConsultsTheSharedOwner:
 
     @pytest.mark.parametrize(("backend", "engine"), _BACKEND_ENGINES, ids=[backend for backend, _ in _BACKEND_ENGINES])
     def test_the_single_policy_hook_fills_undriven_columns(self, backend: str, engine: Any) -> None:
-        """Each backend's per-step hook resolves the undriven columns here."""
-        assert _calls_the_shared_owner(engine._make_run_policy_hook), (
-            f"{backend}'s _make_run_policy_hook does not call undriven_robot_state, so a "
+        """Each backend's per-step recording hook resolves the undriven columns here.
+
+        The recording half of the rollout hook lives in
+        ``_make_recording_on_frame`` (shared by ``run_policy`` and the
+        evaluation facades); ``_make_run_policy_hook`` layers the rollout claim
+        on top of it and must delegate to it.
+        """
+        assert _calls_the_shared_owner(engine._make_recording_on_frame), (
+            f"{backend}'s _make_recording_on_frame does not call undriven_robot_state, so a "
             "multi-robot recording made through it writes the other robots' declared "
             "observation.state columns as add_frame's 0.0 fill"
+        )
+        assert _calls(engine._make_run_policy_hook, "_make_recording_on_frame"), (
+            f"{backend}'s _make_run_policy_hook does not call _make_recording_on_frame, so a "
+            "rollout through it records by some other route than the one the evaluation "
+            "facades install, and the two can drift apart"
         )
 
     @pytest.mark.parametrize(

@@ -13,9 +13,9 @@ from strands_robots.training import create_trainer
 
 result = create_trainer("ppo").train(spec)      # -> result.checkpoint_dir
 
-sim = Robot("so101", mode="sim")
+sim = Robot("so100", mode="sim")        # the robot the training spec's make_env built
 sim.run_policy(
-    robot_name="so101",
+    robot_name="so100",
     policy_provider="rl",
     policy_config={"checkpoint_dir": result.checkpoint_dir},
     duration=10.0,

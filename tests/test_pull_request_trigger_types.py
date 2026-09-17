@@ -1,6 +1,6 @@
 """Contract pins for which pull_request events may start a workflow.
 
-``pr-and-push.yml`` carries the repository's one required check
+``ci.yml`` carries the repository's one required check
 (``call-test-lint / Test and Lint``) and cancels its own in-flight run for the
 same pull request (``cancel-in-progress: true``). Those two facts together make
 the trigger list load-bearing: an event that cannot change the head sha, but is
@@ -76,7 +76,7 @@ without ``edited`` the report would ask for a fix it could never observe.
 
 The measured harm cannot reach the *required check* from it either, and that is a
 premise rather than an assurance: cancellation is per concurrency group,
-``pr-and-push.yml`` keys its group on its own ``github.workflow`` name and does
+``ci.yml`` keys its group on its own ``github.workflow`` name and does
 not subscribe to ``edited``, so an edit starts no run in that group. Both halves
 are read back by ``test_an_exempt_workflow_cannot_cancel_the_required_check``, so
 an exemption cannot outlive the reasoning that admitted it.
@@ -121,7 +121,7 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _WORKFLOW_DIR = _REPO_ROOT / ".github" / "workflows"
-_REQUIRED_CHECK_WORKFLOW = _WORKFLOW_DIR / "pr-and-push.yml"
+_REQUIRED_CHECK_WORKFLOW = _WORKFLOW_DIR / "ci.yml"
 
 #: The only ``pull_request`` activity types that can change
 #: ``github.event.pull_request.head.sha``, and therefore the only ones that can
@@ -133,15 +133,18 @@ _SHA_CHANGING_TYPES = frozenset({"opened", "synchronize", "reopened"})
 #: Workflows whose input is not the tree, mapped to the sha-invariant activity
 #: types they consequently need. An entry here is not a waiver of the rule above
 #: but an application of it -- the rule asks whether an event can change what the
-#: workflow reads, and for these the answer is yes. Safety rests on the required
-#: check being unreachable by the event, which
-#: ``test_an_exempt_workflow_cannot_cancel_the_required_check`` reads back.
-_INPUT_IS_NOT_THE_TREE = {
-    # Reads the title and the link set (scripts/check_closing_reference.py), and
-    # ``edited`` is both the only event that changes them and the event its own
-    # remedy produces.
-    "closing-reference.yml": frozenset({"edited"}),
-}
+#: workflow reads, and for these the answer is yes.
+#:
+#: Empty since the pull-request guards moved into the required check as one
+#: step (scripts/ci_guards.py). ``closing-reference.yml`` was the one entry: it
+#: read the title and the link set and subscribed to ``edited`` so its own
+#: remedy re-ran it. Inside the required check the same script runs on the
+#: sha-changing events only, and after moving a keyword into the body the
+#: verdict is refreshed by re-running the check, not by a push. An entry added
+#: back here needs the two premises the deleted pins read back: the required
+#: check must not subscribe to the exempt event, and the exempt workflow must
+#: declare no ``concurrency`` block (#2216).
+_INPUT_IS_NOT_THE_TREE: dict[str, frozenset[str]] = {}
 
 #: Matches a top-level trigger key inside an ``on:`` mapping, e.g.
 #: ``  pull_request:`` or ``  push:``.
@@ -215,11 +218,11 @@ def test_the_scanner_finds_the_pull_request_workflows() -> None:
     assert paths, f"no workflows under {_WORKFLOW_DIR}"
     with_pull_request = [p.name for p in paths if "pull_request:" in p.read_text(encoding="utf-8")]
     assert _REQUIRED_CHECK_WORKFLOW.name in with_pull_request
-    # Seven siblings plus the required-check workflow itself at the time of
-    # writing. Asserted as a floor, not an equality: adding a pull_request
-    # workflow is routine and must not fail this pin, while a scanner that stops
-    # seeing them is exactly what this test is for.
-    assert len(with_pull_request) >= 8, with_pull_request
+    # The required-check workflow is the one pull_request workflow since the
+    # advisory guards were folded into it. Asserted as a floor, not an
+    # equality: adding a pull_request workflow is routine and must not fail
+    # this pin, while a scanner that stops seeing them is what this test is for.
+    assert len(with_pull_request) >= 1, with_pull_request
 
 
 def test_no_pull_request_trigger_subscribes_to_a_sha_invariant_type() -> None:
@@ -264,34 +267,6 @@ def test_the_required_check_workflow_takes_the_default_types() -> None:
     )
 
 
-def test_an_exempt_workflow_cannot_cancel_the_required_check() -> None:
-    """The premise every entry in :data:`_INPUT_IS_NOT_THE_TREE` rests on.
-
-    An exemption is safe only while the exempt event cannot reach the required
-    check, and that holds for two independent reasons which are both read back
-    here: the required check does not subscribe to the event, and cancellation is
-    scoped to a concurrency group keyed on the workflow's own name. If either
-    stops being true, the exempt workflow starts discarding the required check's
-    progress and this fails with the entry that did it.
-    """
-    required = _REQUIRED_CHECK_WORKFLOW.read_text(encoding="utf-8")
-    required_types = set(_pull_request_types(required) or _SHA_CHANGING_TYPES)
-
-    assert _INPUT_IS_NOT_THE_TREE, "the exemption table is empty; this pin has nothing to check"
-    for name, exempt_types in _INPUT_IS_NOT_THE_TREE.items():
-        path = _WORKFLOW_DIR / name
-        assert path.exists(), f"{name} is exempt but does not exist"
-        text = path.read_text(encoding="utf-8")
-
-        assert not exempt_types & required_types, (
-            f"{name} is exempt for {sorted(exempt_types)}, but the required check now subscribes to "
-            f"{sorted(exempt_types & required_types)} too, so those events do discard its run"
-        )
-        assert _workflow_name(text) != _workflow_name(required), (
-            f"{name} now shares the required check's workflow name, so it shares its concurrency group"
-        )
-
-
 def test_the_required_check_discards_its_in_flight_run() -> None:
     """Premise: this is why a redundant trigger is destructive rather than idle.
 
@@ -330,46 +305,4 @@ def test_no_workflow_gates_on_draft_status() -> None:
     assert not gating, (
         f"these workflows mention 'draft': {gating}. If one now skips draft pull requests, "
         "re-derive whether ready_for_review must start it"
-    )
-
-
-def test_an_exempt_workflow_cannot_cancel_its_own_run() -> None:
-    """The second premise every entry in :data:`_INPUT_IS_NOT_THE_TREE` rests on.
-
-    ``test_an_exempt_workflow_cannot_cancel_the_required_check`` establishes that
-    an exempt event cannot reach ``pr-and-push.yml``'s concurrency group. That is
-    necessary and not sufficient: the run an exempt event cancels first is the
-    exempt workflow's own, which shares a workflow name and a pull request number
-    with the run already in flight, so a group keyed on either holds both.
-
-    Being exempt is what makes it reachable -- an exempt workflow is the only kind
-    that can be started twice on one head sha -- and the cancelled context then
-    sits on the live head rather than on a superseded one, where the roll-up reads
-    it. Measured on #1722 and #2205 (#2216), each carrying its check as
-    ``SUCCESS`` and ``CANCELLED`` at once with every other context ``SUCCESS``.
-
-    Asserted of the table rather than of the single file in it, so a future
-    exemption inherits the requirement instead of rediscovering it the same way.
-    """
-    assert _INPUT_IS_NOT_THE_TREE, "the exemption table is empty; this pin has nothing to check"
-
-    offenders: dict[str, list[str]] = {}
-    for name in _INPUT_IS_NOT_THE_TREE:
-        path = _WORKFLOW_DIR / name
-        assert path.exists(), f"{name} is exempt but does not exist"
-        cancelling = [
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if not line.lstrip().startswith("#") and line.strip().startswith("cancel-in-progress:")
-        ]
-        if cancelling:
-            offenders[name] = cancelling
-
-    assert not offenders, (
-        f"these workflows are exempted for a sha-invariant activity type and still cancel in "
-        f"progress: {offenders}. An exempt workflow can be started twice on one head sha, so its "
-        "own in-flight run is what it cancels, and the cancelled check run is permanent, sits on "
-        "the live head and drags statusCheckRollup.state to FAILURE from behind a same-named "
-        "SUCCESS. Drop the concurrency block: a superseded head is the only case cancelling helps "
-        "with, and a sha-invariant trigger does not produce one."
     )

@@ -345,34 +345,18 @@ def test_a_lookup_failure_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # --------------------------------------------------------------------------
-# The workflow that runs it.
+# The step that runs it.
 #
-# Read as text rather than parsed, which is how every other workflow pin in this
-# suite reads one (tests/test_dependabot_config_location.py,
-# tests/test_codeql_query_filters.py): ``pyyaml`` is an optional dependency here,
-# so a pin that imports it becomes a pin that skips, and skipping is how a
-# structural guard stops guarding without anyone noticing.
+# The check used to be its own workflow (closing-reference.yml). It is now one
+# of the guards scripts/ci_guards.py runs as the first step of the required
+# check, so the two properties that were pinned on the workflow are pinned on
+# that step instead. Read as text rather than parsed, which is how every other
+# workflow pin in this suite reads one: ``pyyaml`` is an optional dependency
+# here, so a pin that imports it becomes a pin that skips.
 # --------------------------------------------------------------------------
-def _workflow() -> str:
-    return _WORKFLOW.read_text(encoding="utf-8")
-
-
-def test_the_gate_reruns_when_the_title_or_body_is_edited() -> None:
-    """``edited`` is the trigger that makes the remedy verifiable.
-
-    The report asks the author to move the keyword into the body, which changes no
-    code. #1914 narrowed the required test job away from exactly such events --
-    correctly, since its input is the code -- so the opposite choice here is
-    pinned rather than left as a line in a comment: without ``edited`` the only
-    way to re-run this check would be an unrelated push, and a self-clearing gate
-    that needs a push to clear is not self-clearing.
-    """
-    match = re.search(r"^\s*types:\s*\[([^\]]*)\]", _workflow(), re.MULTILINE)
-    assert match, "the pull_request trigger declares no explicit types"
-    types = {t.strip() for t in match.group(1).split(",")}
-
-    assert "edited" in types
-    assert {"opened", "reopened", "synchronize"} <= types
+_WORKFLOW_DIR = _ROOT / ".github" / "workflows"
+_TEST_LINT_WORKFLOW = _WORKFLOW_DIR / "test-lint.yml"
+_GUARDS = _ROOT / "scripts" / "ci_guards.py"
 
 
 def test_the_gate_asks_for_the_scope_the_link_set_needs() -> None:
@@ -380,83 +364,57 @@ def test_the_gate_asks_for_the_scope_the_link_set_needs() -> None:
 
     Without it the query returns errors, the script reports ``unknown-links``, and
     the check passes everything -- a silent no-op rather than a visible failure,
-    which is the failure mode worth pinning.
+    which is the failure mode worth pinning. The scope has to be declared where
+    the step runs: a called workflow's job-level ``permissions`` block sets every
+    scope it does not name to ``none``, so the request has to be made here, in the
+    workflow that runs the step. Whether each caller admits it is the other half,
+    and naming one caller was how a second one went unnoticed until a release day;
+    it is graded over every discovered call site by
+    test_workflow_call_grants_declared_scopes.py.
     """
-    assert re.search(r"^permissions:$", _workflow(), re.MULTILINE)
-    assert re.search(r"^\s+pull-requests:\s*read\s*$", _workflow(), re.MULTILINE)
+    callee = _TEST_LINT_WORKFLOW.read_text(encoding="utf-8")
+    job = callee[callee.index("\n  test-lint:") :]
+    job_header = job[: job.index("steps:")]
+    assert re.search(r"^\s+pull-requests:\s*read\s*$", job_header, re.MULTILINE), job_header
 
 
-def test_the_gate_runs_the_script_from_the_base_checkout() -> None:
-    """#1791: a branch that forked before this job landed does not carry the script.
+def test_only_main_can_publish_the_docs_site() -> None:
+    """The ``deploy`` job publishes to the live Pages site, so its ref is gated.
 
-    Checking out the base also means the job never executes the code it is
-    reviewing, which matters for a job holding a token on a fork's pull request.
+    docs.yml's ``push`` trigger is bound to main, but ``workflow_dispatch`` runs
+    on whatever ref dispatched it. Folding the pull-request build into the
+    required check dropped the ``if:`` on ``deploy`` along with the
+    ``pull_request`` half of the condition, so a dispatch from a topic branch
+    would have published that branch while the comment above the job still read
+    "only from main". The gate is graded on the job header rather than inferred
+    from the trigger list, since the trigger that makes it necessary is the one
+    still subscribed.
     """
-    workflow = _workflow()
-    assert "ref: ${{ github.base_ref }}" in workflow
-    assert "python3 scripts/check_closing_reference.py" in workflow
-
-
-def test_the_gate_passes_when_the_base_carries_no_copy_of_the_check() -> None:
-    """The residual case a base checkout cannot cover: the branch that adds the script.
-
-    Measured on this pull request's own first run, which died with
-    ``can't open file ... check_closing_reference.py`` and exit 2 -- neither of the
-    script's own statuses, and rendered by the checks UI as the same red X as a
-    real finding, which is the argument #1791 makes about exit 2.
-
-    This is a bounded condition and not a bypass: the ref checked out is the base
-    branch tip rather than the merge base, so the file is missing only for runs
-    that happen before this lands. A later deletion is caught by the module-level
-    load at the top of this file, which fails at import, in the required check.
-    """
-    workflow = _workflow()
-    assert "if [ ! -f scripts/check_closing_reference.py ]; then" in workflow
-    assert "::notice title=No closing-reference rule on this base::" in workflow
-    assert _SCRIPT.exists()
+    docs = (_WORKFLOW_DIR / "docs.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in docs, "docs.yml takes no dispatch any more; re-derive whether the gate is needed"
+    header = docs[docs.index("\n  deploy:") :].split("steps:")[0]
+    assert "if: github.ref == 'refs/heads/main'" in header, header
 
 
 def test_the_title_is_not_handed_to_the_script_by_the_workflow() -> None:
     """#2216: the payload's title outranks the API's, and would go stale.
 
-    ``main()`` resolves ``title = args.title or api_title``, so a ``PR_TITLE``
-    from the event payload wins for the life of the run that received it. The
-    workflow cancels nothing (it carries no ``concurrency`` block, pinned by
-    ``test_the_gate_does_not_cancel_its_own_run``), so a run started by
-    ``synchronize`` can still be going when an ``edited`` run passes; handed the
-    payload title it would report the pre-edit verdict afterwards and strand a red
-    context on a head that had already cleared.
-
-    Not passing it makes ``resolve_pull_request``'s copy authoritative, so any run
-    on a pull request computes the current verdict and two runs on one head agree.
-    The script keeps reading ``PR_TITLE`` and ``--title`` for the command line,
-    which is what the tests above exercise; this pin is about the workflow.
+    ``main()`` resolves ``title = args.title or api_title``, so a ``PR_TITLE`` from
+    the event payload wins for the life of the run that received it. Not passing
+    it makes ``resolve_pull_request``'s copy authoritative, so a run overlapping a
+    title edit computes the current verdict. The script keeps reading
+    ``PR_TITLE`` and ``--title`` for the command line, which is what the tests
+    above exercise; this pin is about the step and the runner that calls it.
     """
-    workflow = _workflow()
+    workflow = _TEST_LINT_WORKFLOW.read_text(encoding="utf-8")
     setters = [
         line.strip()
         for line in workflow.splitlines()
         if not line.lstrip().startswith("#") and re.match(r"^\s*PR_TITLE\s*:", line)
     ]
     assert not setters, f"the workflow still hands the script a title: {setters}"
+    assert "ci_guards.py guards" in workflow
 
-    invocation = [line for line in workflow.splitlines() if "check_closing_reference.py" in line]
-    assert invocation
-    assert all("${{" not in line for line in invocation)
-
-
-def test_the_gate_does_not_cancel_its_own_run() -> None:
-    """The premise the pin above leans on, and #2216's own finding.
-
-    This workflow is the only one here started by an activity type that cannot
-    change the head sha, so it is the only one that can have two runs on one head
-    -- and a concurrency group keyed on the pull request number would hold both.
-    Cancelling one leaves a permanent ``CANCELLED`` context on a head that
-    satisfies the check, which is unclearable without a push and so defeats the
-    self-clearing property ``test_the_gate_reruns_when_the_title_or_body_is_edited``
-    exists to protect. The fleet-wide form of this rule is
-    ``test_an_exempt_workflow_cannot_cancel_its_own_run``.
-    """
-    workflow = _workflow()
-    assert not re.search(r"^concurrency:", workflow, re.MULTILINE)
-    assert not re.search(r"^\s*cancel-in-progress:", workflow, re.MULTILINE)
+    guards = _GUARDS.read_text(encoding="utf-8")
+    assert "check_closing_reference.py" in guards
+    assert 'env.pop("PR_TITLE", None)' in guards, "ci_guards.py must not forward a payload title to the script"

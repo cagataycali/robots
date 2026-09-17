@@ -31,6 +31,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import click
 import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -39,7 +40,7 @@ from strands_robots import dataset_recorder
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_README = _REPO_ROOT / "docs" / "recording.md"  # the bucket / streamed-training guidance page (was README)
+_BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "data" / "dataset-recorder.md"  # where sync_to_bucket is documented
 _RECORDER_SRC = Path(dataset_recorder.__file__)
 
 _FLOOR = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
@@ -155,7 +156,7 @@ class TestEveryDeclaredFloorAgrees:
     """Guidance, packaging and the gate name one version."""
 
     @pytest.mark.parametrize(
-        "path", [_README, _RECORDER_SRC, _PYPROJECT], ids=["README", "dataset_recorder", "pyproject"]
+        "path", [_BUCKET_GUIDANCE, _RECORDER_SRC, _PYPROJECT], ids=["docs", "dataset_recorder", "pyproject"]
     )
     def test_no_documented_floor_is_below_the_capability(self, path):
         floors = _install_hint_floors(path.read_text())
@@ -191,10 +192,24 @@ class TestTheFloorsClaimIsExecutable:
         buckets = pytest.importorskip("huggingface_hub.cli.buckets")
         assert hasattr(buckets, "buckets_cli"), "the `hf buckets` command group is gone"
         assert hasattr(buckets, "sync"), "the `hf sync` command is gone"
-        entry = Path(huggingface_hub.__file__).parent / "cli" / "hf.py"
-        registration = entry.read_text()
-        assert 'name="buckets"' in registration, "`hf` no longer registers the buckets group"
-        assert "(sync)" in registration, "`hf` no longer registers the sync command"
+        # Ask the `hf` entry point what it registers rather than grepping its
+        # source: 1.32.0 moved registration into lazy tables and the literal
+        # `name="buckets"` vanished while the command stayed (main went red on
+        # the day it shipped). A typer app is unwrapped to its click group;
+        # 1.31+ already hands back the group.
+        from huggingface_hub.cli.hf import app
+
+        command = app
+        try:
+            import typer
+        except ImportError:  # pragma: no cover - typer is a hub dependency
+            pass
+        else:
+            if isinstance(app, typer.Typer):
+                command = typer.main.get_command(app)
+        registered = command.list_commands(click.Context(command))
+        assert "buckets" in registered, "`hf` no longer registers the buckets group"
+        assert "sync" in registered, "`hf` no longer registers the sync command"
 
 
 class TestTheGateStillFailsOpen:

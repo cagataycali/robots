@@ -174,6 +174,12 @@ lerobot reads (names the converter); `val_episodes` on a streamed, multi-task,
 or count-less dataset (lerobot splits by fraction per task); `extra["relative_actions"]`
 on any policy other than `groot` / `pi0` / `pi05` / `pi0_fast`.
 
+Those rosters name what the lowest lerobot this package supports accepts. A
+newer lerobot inside the supported range can carry a capability on more policy
+types than the page lists, and the gate reads your installed lerobot rather than
+this page, so it accepts them; the page gains them when the supported floor
+moves onto that release.
+
 **Reward models train through the same trainer.** `extra["reward_model"]`
 selects a lerobot reward model (`sarm`, `robometer`, `topreward`,
 `reward_classifier`) with that type's own fields, and

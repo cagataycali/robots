@@ -222,7 +222,7 @@ class TestDocsCiteTheDeclaredFloor:
     @pytest.mark.parametrize(
         "relpath",
         [
-            "docs/recording.md",
+            "docs/data/reading-back.md",
             "docs/examples/overview.md",
             "examples/notebooks/README.md",
         ],

@@ -411,7 +411,8 @@ hatch run format            # ruff check --fix, ruff format
    round that reviews no changed behaviour. A fragment is its own file, so there
    is nothing to conflict on. `CHANGELOG.md` is assembled from the accumulated
    fragments when a tag is cut (`python scripts/assemble_changelog.py --apply`).
-   This is enforced by `.github/workflows/changelog-fragment.yml`: the rule was
+   This is enforced by the `Guards` step of the required check
+   (`scripts/ci_guards.py` runs `scripts/check_changelog_fragment.py`): the rule was
    documented in two places and enforced by nothing until #1784, and a pull
    request reached `APPROVED` / `SUCCESS` / `CLEAN` having appended to the log.
 
@@ -624,9 +625,12 @@ hatch run format            # ruff check --fix, ruff format
    | #1923 | `closes #1912` | none | #1912 had to be closed by hand |
 
    So put the keyword in the **body** - a line reading `Closes #N` - and leave the
-   title free to describe the change. This is now surfaced by
-   `.github/workflows/closing-reference.yml`, the same documented-and-enforced-by-
-   nothing shape as the changelog rule in step 3 before #1784.
+   title free to describe the change. This is now refused by the `Guards` step
+   of the required check (`scripts/ci_guards.py` runs
+   `scripts/check_closing_reference.py`), the same documented-and-enforced-by-
+   nothing shape as the changelog rule in step 3 before #1784. After moving the
+   keyword into the body, re-run the failed check: the script reads the title and
+   the link set from the API, so the re-run reports the edited state.
 
    It deliberately does **not** scan the body for the keyword, because that
    implementation passes the incident it was written for: #1894's body *does* say
@@ -1195,8 +1199,8 @@ hatch run format            # ruff check --fix, ruff format
                                                 = ["call-test-lint / Test and Lint"]
    ```
 
-   so every other context - `CodeQL`, `dependency-review`, `Detect Breaking
-   Changes` - is advisory, and any one of them non-`SUCCESS` drags the rollup to
+   so every other context - now only `Security` - is advisory, and any one of
+   them non-`SUCCESS` drags the rollup to
    `FAILURE` or `NEUTRAL` while the PR remains perfectly mergeable. #1879, #1880
    and #1881 were each merged at rollup `FAILURE`/`NEUTRAL` with
    `mergeStateStatus` `CLEAN`. `mergeStateStatus` is the field that already
@@ -1277,7 +1281,7 @@ hatch run format            # ruff check --fix, ruff format
    queued, so it was reported as waiting on CI for two consecutive scheduled
    cycles.
 
-   **Reopen it; do not re-push it.** `pr-and-push.yml` takes the default
+   **Reopen it; do not re-push it.** `ci.yml` takes the default
    `pull_request` types, so `reopened` recomputes the *unchanged* head sha: no
    commit, therefore no push, therefore neither `dismiss_stale_reviews_on_push` nor
    a new last pusher, and the approval survives. Re-pushing the same tree with
@@ -1492,14 +1496,20 @@ hatch run format            # ruff check --fix, ruff format
    was reporting - both read `mergeStateStatus: CLEAN`.
 
    Three properties of that sweep are worth knowing before leaning on it. A
-   truncated path set is named as unevaluated rather than intersected: a capped
-   list is indistinguishable from a complete one in the payload, and this check's
+   truncated path set is never intersected as if it were complete: a capped list
+   is indistinguishable from a complete one in the payload, and this check's
    failure mode is a *missed* overlap, so quietly intersecting a truncated set is
    how one goes missing. The two sides differ in how far away that is - the head
    side is read from the paginated `pulls/{n}/files` endpoint and stops at 3000
-   entries, while the base side has no paginated equivalent and keeps the compare
+   entries, while the base side has no paginated `files` and keeps the compare
    endpoint's 300 - and the head side is the input to the pairwise mode, so it is
-   the one that must not drop a large diff.
+   the one that must not drop a large diff. The base side reaches its 300 often,
+   because `M..base` grows for as long as a branch sits in review, so a range that
+   reaches it is read as its halves instead: the same payload carries the range's
+   `commits`, and one of them splits the compare into two narrower ones whose
+   union is the set the capped list was hiding. Only a range with no boundary
+   inside it - a single commit whose own diff reaches the cap - is still named as
+   unevaluated.
    And the two path sets skip apart: the base-side set is the one that grows
    without bound, so it is the one that hits its cap - #1035 was 265 commits
    behind - and dropping the whole pull request for it would discard the pairwise
@@ -1747,12 +1757,13 @@ hatch run format            # ruff check --fix, ruff format
    harmless.
 
    All of the above was documented here and enforced by nothing, which is the
-   same shape as the changelog rule in step 3 before #1784. It is now surfaced by
-   `.github/workflows/last-push-approval.yml`, which names the pusher and the
-   approvers on every review event and reports when they are the same single
-   account. It **reports** rather than fails: a finding leaves the job green and
-   lands in the step summary and in a `Needs an approver who did not push the
-   head` annotation, because a red X drags `statusCheckRollup.state` to
+   same shape as the changelog rule in step 3 before #1784. The ruleset enforces
+   it; the workflow that re-reported it per pull request
+   (`last-push-approval.yml`) is gone, because a report that can never fail is
+   a check row that says nothing. The reader that replaces it is the
+   `--all-open` sweep below. The report-not-fail reasoning it carried
+   still applies to any check whose remedy the branch cannot supply: a red X
+   drags `statusCheckRollup.state` to
    `FAILURE`, where it cannot be told apart from the branch's own tests failing -
    measured on #1722 at head `3a32a14`, whose rollup read `FAILURE` with every
    required context `SUCCESS` and this check as the only non-`SUCCESS` context,
@@ -1761,9 +1772,9 @@ hatch run format            # ruff check --fix, ruff format
    `SUCCESS` under its present name, and #1722's rollup is still `FAILURE` for an
    unrelated producer - a cancelled duplicate of the closing-reference check
    (#2216). The decision rests on the `3a32a14` measurement; re-deriving it from
-   #1722 today finds this job green and the reasoning apparently unfounded. Red on that job now means the check itself could not
-   compute an answer. The check row is named `Report the last-push-approval
-   state` for the same reason: green must not assert the absence of a finding. The point of automating it is not that the check is clever - it is
+   #1722 today finds this job green and the reasoning apparently unfounded. That
+   row was named `Report the last-push-approval state` for the same reason:
+   green must not assert the absence of a finding. The point of automating it is not that the check is clever - it is
    that the state it reports is *invisible*: `REVIEW_REQUIRED` / `BLOCKED` is
    byte for byte what an unreviewed pull request looks like, so the two are
    indistinguishable in every field a sweep reads and they need opposite actions.
@@ -2395,7 +2406,7 @@ Corrections from code review that apply to all future contributions:
   `required_review_thread_resolution: true`, so the merge waits on that thread
   whatever the alert's severity. This file used to assert the opposite - that a
   finding does not block a pull request - which is the half that is false and the
-  sentence #1810 was filed about; `.github/workflows/codeql.yml` carries the
+  sentence #1810 was filed about; `.github/workflows/ci.yml` (`security` job) carries the
   corrected wording and `tests/test_codeql_query_filters.py` pins it for both
   files. #1890 measured both halves at once: required check `SUCCESS`, `CodeQL`
   `NEUTRAL`, `APPROVED` - and it sat for 53 minutes on one unresolved
@@ -2663,10 +2674,12 @@ Corrections from code review that apply to all future contributions:
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."
-- **The LLM-input-safety workflow is a hint, not a gate.** Inline annotations
-  on `subprocess + f-string` and `name-into-XML` patterns flag code that needs
-  validation review. Confirm validation is present, then ignore the annotation
-  in review.
+- **The LLM-input-safety guard is a gate.** `scripts/ci_guards.py` fails the
+  required check on a `subprocess + f-string` or `name-into-XML` match in
+  `strands_robots/{tools,simulation,mesh}` (zero matches on `main` when it
+  became one). It is a regex, so a false positive is possible; the remedy is to
+  bind the validated value to a name before the call, not to weaken the guard -
+  a guard that cannot fail does not ship.
 
 ### Action Pinning
 - **All `uses:` references in workflows pin to a full 40-character commit SHA**,

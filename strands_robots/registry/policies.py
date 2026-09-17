@@ -6,8 +6,10 @@ classes, and building provider-specific kwargs.
 """
 
 import importlib
+import importlib.util
 import logging
 import re
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from .loader import _load
@@ -66,6 +68,51 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     return reg.get("providers", {}).get(_canonical_provider_name(name))
 
 
+def policy_provider_resolves(name: str | None) -> bool:
+    """Whether :func:`import_policy_class` could resolve this provider spelling.
+
+    Callers validate a provider name before spending something expensive on it -
+    energizing an arm, asking an operator to approve a rollout - and the only
+    authority on whether a name resolves is :func:`import_policy_class`. Asking
+    it directly would import the provider's module (``lerobot_local`` imports
+    torch), which a pre-flight check must not do, so this answers the same
+    question from the two things that decide it, without importing anything:
+
+    - a registry entry under the canonical name, which is how the declared
+      providers and every alias/shorthand they declare resolve - ``lerobot``,
+      ``random`` and ``c3`` are legal spellings that
+      :func:`list_policy_providers` does not list;
+    - failing that, an importable ``strands_robots.policies.<name>`` module,
+      which is the auto-discovery fallback ``import_policy_class`` tries next -
+      ``composite`` and ``persistent`` build through it while declaring no
+      registry entry.
+
+    Deliberately optimistic at one edge: a module that exists but exposes no
+    :class:`~strands_robots.policies.Policy` subclass (``base``, ``factory``)
+    is reported as resolving, and :func:`import_policy_class` refuses it later.
+    A caller uses this to refuse, so a false ``False`` would reject a name that
+    works - the expensive error - while a false ``True`` only defers to the
+    refusal that already existed.
+
+    Args:
+        name: Any spelling a caller may supply - canonical name, alias,
+            shorthand, or a mistake. ``None``/empty resolves to nothing.
+
+    Returns:
+        True when the name is one :func:`import_policy_class` could resolve.
+    """
+    if not name:
+        return False
+    canonical = _canonical_provider_name(name)
+    if get_policy_provider(canonical) is not None:
+        return True
+    try:
+        return importlib.util.find_spec(f"strands_robots.policies.{canonical}") is not None
+    except (ImportError, ValueError):
+        # A dotted or otherwise unimportable spelling is not a provider name.
+        return False
+
+
 def provider_reads_a_port(name: str | None) -> bool | None:
     """Report whether *name*'s policy constructor reads a ``port`` keyword.
 
@@ -112,6 +159,86 @@ def port_reading_providers() -> tuple[str, ...]:
     supplied to a provider that declares none.
     """
     return tuple(name for name in list_policy_providers() if provider_reads_a_port(name))
+
+
+def policy_requires_error(
+    policy_provider: str | None,
+    supplied: Mapping[str, Any],
+    context: str,
+    consequence: str,
+    ignore: Collection[str] = (),
+) -> str | None:
+    """Error text when a provider is missing a keyword it cannot be built without.
+
+    The policy registry's ``requires`` lists the keywords a caller MUST supply
+    for a provider to be buildable. Judging them is the difference between a
+    refusal and a doomed rollout: several providers construct happily without
+    them and only fail once the rollout asks for its first action, on a worker
+    thread, with the arm already energized and nobody left to tell.
+    ``LerobotLocalPolicy`` defaults ``pretrained_name_or_path=""`` and loads
+    lazily, so it builds and then raises "No model loaded and no
+    pretrained_name_or_path set"; ``Gr00tPolicy`` builds with no ``port`` and
+    then blocks ~15 s dialing a server nobody serves. Both end at ``steps: 0``
+    after a success envelope said the task had started.
+
+    This lives beside :func:`provider_reads_a_port` rather than beside either
+    caller: the two surfaces that build a policy from the registry sit in
+    different layers (:mod:`strands_robots.hardware_robot` and
+    :mod:`strands_robots.drivers.ur`, which must not import each other), the
+    keywords a provider needs -- and the hint each one is explained with --
+    must not diverge between them, and the field read here is the registry's
+    own ``requires``, the sibling of the ``config_keys`` that function reads.
+
+    An empty string counts as missing: it is ``lerobot_local``'s own default
+    and the one value its lazy load cannot use. ``None`` likewise. An unknown
+    or unregistered provider is passed over, because resolving the name is the
+    caller's next step and its refusal names the spelling that failed.
+
+    Args:
+        policy_provider: Provider name, in any spelling the registry accepts.
+            A falsy value is passed over as "not named".
+        supplied: The keywords the caller actually supplied, by name.
+        context: Message prefix identifying the surface -- normally the public
+            method name.
+        consequence: What would happen if the build were allowed, stated as a
+            clause completing "Without it/them ...". The harm is
+            surface-specific -- one surface energizes the arm itself, the other
+            claims an arm already live -- while the domain judged here is not.
+        ignore: Required keywords this caller judges elsewhere. A surface that
+            takes a keyword as a named parameter rather than in ``supplied``
+            must name it here, or its absence from ``supplied`` would refuse a
+            value that WAS given.
+
+    Returns:
+        An error message naming the missing keyword(s) and the provider, or
+        ``None`` when every required keyword is present.
+    """
+    if not policy_provider:
+        return None
+    try:
+        spec = get_policy_provider(policy_provider)
+    except Exception:  # noqa: BLE001 - a registry read must not decide a refusal
+        return None
+    if not spec:
+        return None
+    missing = [
+        key
+        for key in (spec.get("requires") or ())
+        if key not in ignore and ((value := supplied.get(key)) is None or value == "")
+    ]
+    if not missing:
+        return None
+    hints = {
+        "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
+        "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
+        "port": "the port the policy server listens on",
+    }
+    asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
+    return (
+        f"{context}: policy_provider={policy_provider!r} builds its policy from "
+        f"{' and '.join(missing)}, and none was given. Pass {asks}. "
+        f"Without {'it' if len(missing) == 1 else 'them'} {consequence}."
+    )
 
 
 def list_policy_providers() -> list[str]:

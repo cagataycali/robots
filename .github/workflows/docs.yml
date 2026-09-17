@@ -8,13 +8,6 @@ on:
       - "mkdocs.yml"
       - "docs/requirements.txt"
       - ".github/workflows/docs.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "mkdocs.yml"
-      - "docs/requirements.txt"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 concurrency:
@@ -25,7 +18,9 @@ permissions:
   contents: read
 
 jobs:
-  # Build on every PR/push to catch broken nav, links, and config early.
+  # Build and publish from main. Pull requests that touch docs/ or mkdocs.yml
+  # get the same `mkdocs build --strict` inside the required check
+  # (test-lint.yml, "Build the docs when they changed").
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -43,14 +38,15 @@ jobs:
       - name: Build (strict)
         run: mkdocs build --strict
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
         with:
           path: site
 
-  # Deploy to GitHub Pages only from main.
+  # Deploy to GitHub Pages only from main. The push trigger is already bound
+  # to main, but workflow_dispatch runs on whatever ref dispatched it, so
+  # without this gate a dispatch from a topic branch publishes that branch.
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:

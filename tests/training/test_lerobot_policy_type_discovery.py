@@ -27,11 +27,13 @@ contains a type outside the stale sets.
 
 Offline the static snapshots ARE the gates' answers, so ``TestOfflineFallback``
 pins that each one is consulted and ``TestOfflineFallbackContent`` pins what is
-in it: equal to the live registry (so a lerobot release that moves a type fails
-here instead of drifting), and - with no lerobot needed - a subset of the
-native-type snapshot, because a capability snapshot naming a type the native
-snapshot omits makes two offline gates contradict each other about the same
-policy.
+in it: graded against the live registry by the DIRECTION it differs (see
+:mod:`tests.training._lerobot_capability_range` - a snapshot naming a type the
+registry has no such field on is always wrong, while a snapshot lagging a
+lerobot newer than the declared floor is the drift a frozen snapshot cannot
+avoid), and - with no lerobot needed - a subset of the native-type snapshot,
+because a capability snapshot naming a type the native snapshot omits makes two
+offline gates contradict each other about the same policy.
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ from strands_robots.training.lerobot import (
     _policy_tune_components,
     _policy_uses_quantile_norm,
 )
+from tests.training._lerobot_capability_range import roster_problem
 
 #: Each per-capability offline snapshot with the live probe that answers the same
 #: question when lerobot IS importable. The probe consults the live registry for
@@ -279,11 +282,14 @@ class TestOfflineFallbackContent:
         reg = _policy_registry()
         if reg is None:
             pytest.skip("lerobot not installed; nothing to compare the snapshot against")
-        assert set(_LEROBOT_POLICY_TYPES_FALLBACK) == set(reg), (
-            "_LEROBOT_POLICY_TYPES_FALLBACK drifted from lerobot's policy registry: "
-            f"snapshot-only={sorted(set(_LEROBOT_POLICY_TYPES_FALLBACK) - set(reg))} "
-            f"registry-only={sorted(set(reg) - set(_LEROBOT_POLICY_TYPES_FALLBACK))}"
+        problem = roster_problem(
+            "_LEROBOT_POLICY_TYPES_FALLBACK",
+            _LEROBOT_POLICY_TYPES_FALLBACK,
+            set(reg),
+            written_label="snapshot-only",
+            accepted_label="registry-only",
         )
+        assert not problem, problem
 
     @pytest.mark.parametrize(
         ("name", "snapshot", "probe"), _CAPABILITY_SNAPSHOTS, ids=[r[0] for r in _CAPABILITY_SNAPSHOTS]
@@ -293,10 +299,8 @@ class TestOfflineFallbackContent:
         if reg is None:
             pytest.skip("lerobot not installed; nothing to compare the snapshot against")
         live = {ptype for ptype in reg if probe(ptype)}
-        assert set(snapshot) == live, (
-            f"{name} drifted from lerobot's configs: "
-            f"snapshot-only={sorted(set(snapshot) - live)} live-only={sorted(live - set(snapshot))}"
-        )
+        problem = roster_problem(name, snapshot, live, written_label="snapshot-only", accepted_label="live-only")
+        assert not problem, problem
 
     @pytest.mark.parametrize(
         ("name", "snapshot", "probe"), _CAPABILITY_SNAPSHOTS, ids=[r[0] for r in _CAPABILITY_SNAPSHOTS]

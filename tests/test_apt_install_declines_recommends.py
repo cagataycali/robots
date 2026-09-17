@@ -106,9 +106,10 @@ _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
 _APT_INSTALL = re.compile(r"\bapt-get\s+install\b")
 _DECLINES_RECOMMENDS = re.compile(r"--no-install-recommends\b")
 
-# The two call sites this module was written against. Named so that a rename or a
-# deletion is a visible failure here rather than a silent loss of coverage.
-_KNOWN_CALL_SITES = {"test-lint.yml", "agent-api-check.yml"}
+# The call site this module was written against (agent-api-check.yml was the
+# other until its snapshot diff moved into test-lint.yml). Named so that a rename
+# or a deletion is a visible failure here rather than a silent loss of coverage.
+_KNOWN_CALL_SITES = {"test-lint.yml"}
 
 
 def _is_an_install(line: str) -> bool:

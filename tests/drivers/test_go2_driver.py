@@ -112,7 +112,7 @@ class _RecordingPublisher:
     """Records ``publish`` calls without touching a DDS bus.
 
     Same acceptance contract as
-    :class:`~strands_robots.tools.g1._dds_engine.DDSPublisher`: ``publish``
+    :class:`~strands_robots.drivers.unitree._dds_engine.DDSPublisher`: ``publish``
     returns ``None`` on success and a reason string on failure. Every call lands
     in :attr:`writes` so a test can walk the wire capture.
     """
@@ -855,19 +855,19 @@ class TestMotionSwitcherClientImportPath:
 
         # The method must import from the shared helper module, not directly
         # from the SDK
-        helper_imports = [node for node in imports if node.module and "g1._motion_switcher" in node.module]
+        helper_imports = [node for node in imports if node.module == "strands_robots.drivers.unitree._motion_switcher"]
         sdk_direct_imports = [node for node in imports if node.module and "unitree_sdk2py" in node.module]
 
         assert helper_imports, (
             "_open_motion_switcher_client must delegate to the shared "
-            "strands_robots.tools.g1._motion_switcher helper (one-owner "
+            "strands_robots.drivers.unitree._motion_switcher helper (one-owner "
             "pattern for the SDK module path); found no such import"
         )
         assert not sdk_direct_imports, (
             "_open_motion_switcher_client must not import directly from "
             f"unitree_sdk2py; found: {[n.module for n in sdk_direct_imports]}. "
             "The correct import path lives in "
-            "strands_robots.tools.g1._motion_switcher._SDK_MODULE"
+            "strands_robots.drivers.unitree._motion_switcher._SDK_MODULE"
         )
 
 

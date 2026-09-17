@@ -336,7 +336,11 @@ class TestAHealthyEvaluationIsNotRefused:
         assert payload["episodes_completed"] == 3
 
     def test_an_empty_buffer_is_not_a_lost_episode(self) -> None:
-        """A recorder nothing fed has no episode to lose, so no flush is tried."""
+        """A recorder nothing fed has no episode to lose, so no flush is tried.
+
+        The caller's own ``on_frame`` is what keeps the recorder unfed: with
+        none passed, ``eval_policy`` feeds an open recording itself.
+        """
         ds = _Dataset(fail_from_episode=0)
         recorder = DatasetRecorder(dataset=ds, task="t")
         sim = _recording_sim(recorder)
@@ -347,6 +351,7 @@ class TestAHealthyEvaluationIsNotRefused:
                 n_episodes=3,
                 max_steps=2,
                 control_frequency=50.0,
+                on_frame=lambda step, obs, action: None,
             )
         finally:
             sim.cleanup()

@@ -1,6 +1,6 @@
 """Every DDS endpoint in the process is constructed under the one shared lock.
 
-``_g1_common``'s module docstring states the contract this file grades: "A
+``_common``'s module docstring states the contract this file grades: "A
 ``ChannelSubscriber`` and a ``ChannelPublisher`` cannot be constructed
 concurrently: the CycloneDDS bindings segfault. ``_DDS_INIT_LOCK`` is the
 *shared* lock the driver and the tools (issue #358) both hold while creating
@@ -80,7 +80,7 @@ from typing import Any
 import pytest
 
 import strands_robots
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
 
 # ``strands_robots.tools.g1`` lazy-exports a ``use_unitree`` *tool* under the
 # same name as the module declaring it, so an attribute import would bind the
@@ -219,15 +219,15 @@ class TestTheRuleHasASubject:
     @pytest.mark.parametrize(
         "module",
         [
-            "tools/g1/_g1_common.py",
-            "tools/g1/_dds_engine.py",
+            "drivers/unitree/_common.py",
+            "drivers/unitree/_dds_engine.py",
             "drivers/booster.py",
         ],
     )
     def test_the_contract_owners_are_found(self, module: str) -> None:
         """Each vendor's vocabulary reaches the rule only via its own owner.
 
-        ``_g1_common`` defines the lock and ``_dds_engine`` is its second
+        ``_common`` defines the lock and ``_dds_engine`` is its second
         consumer; ``drivers/booster`` is the first non-Unitree owner, and the
         only source of the ``B1*`` / ``InitChannel`` spellings below.
         """

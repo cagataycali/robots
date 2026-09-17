@@ -1,6 +1,6 @@
 # CodeQL configuration for strands-labs/robots.
 #
-# Wired in from .github/workflows/codeql.yml via `config-file`. It exists for
+# Wired in from .github/workflows/ci.yml (`security` job) via `config-file`. It exists for
 # one reason: two note-severity *quality* rules in the `security-and-quality`
 # suite fire only on idioms this codebase is obliged to use, and a CodeQL alert
 # on a pull request is a hard merge gate here. See #1810.

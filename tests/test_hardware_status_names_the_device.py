@@ -37,19 +37,44 @@ class _Camera:
         self.is_connected = connected
 
 
-class _Arm:
-    """A lerobot-shaped arm: ``is_calibrated`` refuses until connected."""
-
-    def __init__(self, *, port: str | None, connected: bool = False, cameras: dict[str, bool] | None = None) -> None:
-        self.name = "so101"
-        self.robot_type = "so_follower"
-        self._connected = connected
-        self.config = type("Cfg", (), {"port": port, "cameras": dict.fromkeys(cameras or {}, object())})()
-        self.cameras = {n: _Camera(c) for n, c in (cameras or {}).items()}
+class _YankedCamera:
+    """A camera unplugged mid-session: its probe raises instead of answering."""
 
     @property
     def is_connected(self) -> bool:
-        return self._connected
+        raise OSError("VIDIOC_QUERYCAP: No such device")
+
+
+class _Arm:
+    """A lerobot-shaped arm: ``is_calibrated`` refuses until connected.
+
+    ``is_connected`` is spelled the way every shipped lerobot arm spells it -
+    the bus AND every camera (``SOFollower``, ``koch_follower``, ``lekiwi``,
+    ``omx``, ``openarm``, both ``hope_jr`` hands) - so a camera that cannot
+    answer reaches a caller through the aggregate, as it does on real hardware,
+    and the ``and`` short-circuits while the bus is closed.
+    """
+
+    def __init__(
+        self,
+        *,
+        port: str | None,
+        connected: bool = False,
+        cameras: dict[str, bool] | None = None,
+        yanked: str | None = None,
+    ) -> None:
+        self.name = "so101"
+        self.robot_type = "so_follower"
+        self._connected = connected
+        names = list(cameras or {}) + ([yanked] if yanked else [])
+        self.config = type("Cfg", (), {"port": port, "cameras": dict.fromkeys(names, object())})()
+        self.cameras: dict[str, Any] = {n: _Camera(c) for n, c in (cameras or {}).items()}
+        if yanked:
+            self.cameras[yanked] = _YankedCamera()
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected and all(cam.is_connected for cam in self.cameras.values())
 
     @property
     def is_calibrated(self) -> bool:
@@ -125,12 +150,79 @@ class TestTheToolStatus:
         assert result["content"][1]["json"]["port"] is None
         assert result["content"][1]["json"]["port_present"] is None
 
-    def test_the_task_state_still_leads_when_the_device_cannot_answer(self):
+    def test_a_robot_that_carries_no_facts_still_reads_as_not_connected(self):
         hw = _hw(_Arm(port=None))
         hw.robot = None  # nothing to read facts from
         result = hw.get_task_status()
         assert _text(result).startswith("Robot Status: IDLE\n")
         assert result["status"] == "success"
+        # absent is not unreadable: there is no probe to raise, so False is a reading
+        assert result["content"][1]["json"]["is_connected"] is False
+
+    def test_the_task_state_still_leads_when_a_fact_cannot_be_gathered(self):
+        hw = _hw(_Arm(port=None))
+        hw.robot = type("Hostile", (), {"config": property(lambda self: 1 / 0)})()
+        result = hw.get_task_status()
+        assert _text(result) == "Robot Status: IDLE\n"  # the task state, and no invented device line
+        assert result["status"] == "success"
+        assert len(result["content"]) == 1  # no facts block: none were gathered
+
+
+class TestAConnectionThatCannotBeRead:
+    """One unreadable fact must not delete the facts that were read.
+
+    ``is_connected`` is the only fact here that is a live probe, and on every
+    shipped lerobot arm it folds in the cameras. So the camera whose probe
+    raises - which :meth:`_device_facts` already tolerates per camera - arrives
+    through the aggregate, where reading it unguarded took the whole probe
+    down: the tool printed the bare task state again (the defect the device
+    lines exist to fix) and the Python probe answered ``is_connected: False``
+    for an arm that was connected and driving a task.
+    """
+
+    @pytest.fixture
+    def running(self, tmp_path):
+        port = tmp_path / "cu.usbmodem-here"
+        port.write_bytes(b"")
+        hw = _hw(_Arm(port=str(port), connected=True, cameras={"top": True}, yanked="wrist"))
+        hw._task_state.instruction = "pick up the red cube"  # the arm is mid-task
+        return hw, port
+
+    def test_an_unreadable_connection_is_not_reported_as_disconnected(self, running):
+        hw, _ = running
+        assert hw._device_facts()["is_connected"] is None  # not False: nothing was read
+        text = _text(hw.get_task_status())
+        assert "Device: whether the bus is open could not be read" in text
+        assert "Device: not connected" not in text
+        assert "Device: connected on" not in text
+
+    def test_the_facts_that_were_read_survive_the_one_that_was_not(self, running):
+        hw, port = running
+        result = hw.get_task_status()
+        text = _text(result)
+        assert f"Port: {port} is present on this host" in text  # a filesystem read cannot raise
+        assert len(result["content"]) == 2  # the facts block still ships
+        assert result["content"][1]["json"]["port_present"] is True
+
+    def test_the_camera_that_could_not_answer_is_named_beside_the_one_that_did(self, running):
+        hw, _ = running
+        text = _text(hw.get_task_status())
+        assert "Cameras: top (connected), wrist (could not be read)" in text
+        assert "wrist (not connected)" not in text  # unread is not a negative reading
+
+    def test_the_python_probe_does_not_degrade_to_its_error_shape(self, running):
+        hw, port = running
+        status = asyncio.run(hw.get_status())
+        assert "error" not in status  # the whole probe used to fail on this one fact
+        assert status["is_connected"] is None
+        assert status["cameras_connected"] == {"top": True}  # the attribution survives
+        assert status["port"] == str(port)
+
+    def test_a_closed_bus_short_circuits_before_the_camera_is_asked(self, tmp_path):
+        # lerobot's `bus and all(cameras)` never reaches the cameras while the bus
+        # is closed, so an unplugged camera on an idle arm is still a plain False.
+        hw = _hw(_Arm(port=str(tmp_path / "gone"), connected=False, yanked="wrist"))
+        assert hw._device_facts()["is_connected"] is False
 
 
 class TestAPortThatIsNotAPath:

@@ -2,7 +2,7 @@
 
 The Earth Rover (FrodoBots) is a mobile outdoor base reached over HTTP: the
 vendor's `earth-rovers-sdk <https://github.com/frodobots-org/earth-rovers-sdk>`_
-runs on the host (default ``http://localhost:8001``), proxies commands to the
+runs on the host (default ``http://localhost:8000``), proxies commands to the
 rover over WebRTC/RTM, and exposes four endpoints this driver speaks:
 
 * ``POST /control`` - one twist frame, ``{"command": {"linear", "angular",
@@ -88,8 +88,9 @@ MAX_MOVE_DURATION_S: float = 30.0
 #: off the coast of Antarctica rather than as no fix.
 NO_FIX_LATITUDE: float = 1000.0
 
-#: Where the vendor's SDK listens when started as documented.
-DEFAULT_SDK_URL = "http://localhost:8001"
+#: Where the vendor's SDK listens when started as documented: its Dockerfile
+#: binds ``0.0.0.0:8000`` and every README example is ``localhost:8000``.
+DEFAULT_SDK_URL = "http://localhost:8000"
 
 #: The schemes this driver speaks. Compared case-insensitively, because a URI
 #: scheme is case-insensitive (RFC 3986 section 3.1) and ``requests`` honours

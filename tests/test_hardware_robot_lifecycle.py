@@ -737,16 +737,17 @@ class TestStatusSurface:
 
         ``get_status`` is the operator's health probe; a raising serial/USB
         backend must never propagate out of it and crash the caller. Instead
-        it reports ``task_status="error"`` with the failure text and a safe
+        it reports ``task_status="error"`` with the failure text and
         ``is_connected=False``, so a supervising agent can react rather than
         take an unhandled exception.
         """
 
         class _RaisingDevice:
             name = "raising_arm"
+            is_connected = False
 
             @property
-            def is_connected(self) -> bool:
+            def config(self) -> object:
                 raise RuntimeError("serial bus fault")
 
         hw = _make_robot()
@@ -756,6 +757,32 @@ class TestStatusSurface:
         assert status["is_connected"] is False
         assert status["robot_name"] == "test_arm"
         assert "serial bus fault" in status["error"]
+        hw.cleanup()
+
+    def test_a_connection_that_cannot_be_probed_is_not_a_failed_probe(self):
+        """``is_connected`` raising is one unreadable fact, not a dead probe.
+
+        It is the only fact here that is a live probe, and every shipped
+        lerobot arm folds its cameras into it, so a camera unplugged mid-run
+        raises through it. Degrading the whole probe then reported
+        ``is_connected=False`` and ``task_status="error"`` for an arm that was
+        connected and driving - two false statements about a healthy task.
+        """
+
+        class _UnreadableConnection:
+            name = "raising_arm"
+            config = None
+
+            @property
+            def is_connected(self) -> bool:
+                raise OSError("VIDIOC_QUERYCAP: No such device")
+
+        hw = _make_robot()
+        hw.robot = _UnreadableConnection()
+        status = asyncio.run(hw.get_status())
+        assert "error" not in status
+        assert status["is_connected"] is None  # not read, so not False
+        assert status["task_status"] == "idle"  # the task was never the thing that failed
         hw.cleanup()
 
     def test_get_status_surfaces_task_error_message(self):
@@ -791,7 +818,16 @@ class TestStatusSurface:
         spec = hw.tool_spec
         assert spec["name"] == "test_arm"
         enum = spec["inputSchema"]["json"]["properties"]["action"]["enum"]
-        assert set(enum) == {"execute", "start", "status", "stop"}
+        assert set(enum) == {
+            "get_state",
+            "get_robot_state",
+            "list_cameras",
+            "render",
+            "execute",
+            "start",
+            "status",
+            "stop",
+        }
         assert hw.tool_type == "robot"
         assert hw.tool_name == "test_arm"
         hw.cleanup()

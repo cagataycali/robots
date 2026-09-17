@@ -5,7 +5,7 @@ direction.
 
 **Bring-up releases too late.**
 :meth:`~strands_robots.drivers.go2.Go2Driver.connect_eagerly` builds a
-:class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet`, subscribes the
+:class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet`, subscribes the
 two ``unitree_go`` topics through it, then starts a publisher, and records the
 set on ``self._subs`` only once all of that has succeeded. On every exit before
 that, ``self._subs`` is still ``None`` - and
@@ -53,7 +53,7 @@ from typing import Any
 import pytest
 
 import strands_robots.drivers.go2 as go2_module
-import strands_robots.tools.g1._dds_engine as engine_module
+import strands_robots.drivers.unitree._dds_engine as engine_module
 from strands_robots.drivers.go2 import GO2_JOINT_INDEX, Go2Driver
 from tests.drivers.test_g1_dds_engine_release import _install_channel, _RecordingEndpoint
 from tests.drivers.test_go2_driver import (

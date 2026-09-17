@@ -32,17 +32,24 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
 
 from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
+    require_optional,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import torch
+
     from strands_robots.simulation.base import SimEngine
     from strands_robots.simulation.predicates import RewardTerm
+else:
+    # torch arrives with the ``[rl]`` extra. Bound through ``require_optional`` so
+    # an install without it is refused with that name instead of the
+    # interpreter's ``No module named 'torch'`` (AGENTS.md convention 7).
+    torch = require_optional("torch", extra="rl", purpose="from-scratch RL training (strands_robots.training.rl)")
 
 
 #: Accepted domain of every numeric :class:`SimEnv` stores, by parameter name.

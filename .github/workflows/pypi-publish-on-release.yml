@@ -4,14 +4,34 @@ on:
   release:
     types:
       - published
+  # A publish that GitHub refused at startup (v0.5.2: the caller granted the
+  # reusable job less than it asks for) can be re-run against the same tag
+  # without re-publishing the release. The PyPI trusted publisher is bound to
+  # this file and the `pypi` environment, not to the event.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to build and publish (for example v0.5.2)
+        required: true
+        type: string
 
 jobs:
   call-test-lint:
     uses: ./.github/workflows/test-lint.yml
+    # A reusable workflow's job may hold no permission its caller did not grant;
+    # test-lint.yml asks for pull-requests: read (#3822), so this caller grants
+    # it or GitHub refuses the whole run before any job starts (startup_failure).
     permissions:
       contents: read
+      pull-requests: read
     with:
-      ref: ${{ github.event.release.target_commitish }}
+      # Test the branch the release (or the dispatch) came from, not the tag:
+      # on a release event GitHub already hands over target_commitish (main),
+      # and a dispatched re-publish must not re-run a frozen tag's tests
+      # against today's unpinned dependencies (v0.5.2's tag tree greps
+      # huggingface_hub's hf.py, which 1.32.0 rewrote the day of the
+      # re-publish). The tag is still what `build` checks out below.
+      ref: ${{ github.event.release.target_commitish || github.ref_name }}
 
   build:
     name: Build distribution
@@ -25,6 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
+          # The tag, so hatch-vcs derives the release version from it; on a
+          # release event github.ref already is the tag.
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
           fetch-depth: 0
 
@@ -34,9 +57,16 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
+        # hatchling 1.32+ (2026-08-11) writes Metadata-Version 2.5, which the
+        # twine bundled in the pinned pypa/gh-action-pypi-publish rejects
+        # ("'2.5' is not a valid metadata version") — that is how v0.5.2's
+        # first publish run died at the very last step (run 35206733145).
+        # v0.5.1 built with hatchling 1.31 and Metadata 2.4. Build without
+        # isolation so this pin, not the tag's [build-system], decides the
+        # backend; the pyproject pin covers local `uv pip install -e .`.
         run: |
           python -m pip install --upgrade pip
-          pip install hatch twine
+          pip install hatch twine build 'hatchling<1.32' hatch-vcs
 
       - name: Validate version
         run: |
@@ -51,7 +81,20 @@ jobs:
 
       - name: Build
         run: |
-          hatch build
+          python -m build --no-isolation
+          python - <<'PY'
+          # Fail here, not in the deploy job, if the backend ever moves the
+          # metadata version past what the publisher's twine understands.
+          import glob, zipfile
+          for whl in glob.glob("dist/*.whl"):
+              with zipfile.ZipFile(whl) as z:
+                  meta = next(n for n in z.namelist() if n.endswith("/METADATA"))
+                  first = z.read(meta).decode().splitlines()[0]
+              print(whl, first)
+              assert first in ("Metadata-Version: 2.1", "Metadata-Version: 2.2",
+                               "Metadata-Version: 2.3", "Metadata-Version: 2.4"), first
+          PY
+          twine check --strict dist/*
 
       - name: Store the distribution packages
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2

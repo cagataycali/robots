@@ -1,6 +1,6 @@
 """Contract pins for the concurrency group of every workflow a pull_request can start.
 
-A concurrency group is per workflow: ``pr-and-push.yml`` keys its own on
+A concurrency group is per workflow: ``ci.yml`` keys its own on
 ``github.workflow``, so cancelling a superseded run of the required check says
 nothing about the ten other workflows a pull request starts. Each of those has to
 declare its own group or it declares none, and five of them declared none -
@@ -86,19 +86,14 @@ _WORKFLOW_DIR = _REPO_ROOT / ".github" / "workflows"
 #: there an entry excuses a group that collapses two commits, here it excuses the
 #: absence of a group entirely. An entry has to name where the remaining question
 #: is settled, so a deferral cannot hide here as a decision.
-_MUST_NOT_CANCEL_ITS_OWN_RUN = {
-    "closing-reference.yml": (
-        "Subscribed to `edited`, which cannot change the head sha, so it is the only "
-        "workflow here that can have two runs on one head. #2216 measured the result of "
-        "cancelling one of them: the head carried the same check as SUCCESS and CANCELLED "
-        "together and its roll-up read SUCCESS, then FAILURE, then SUCCESS across three "
-        "reads of one unchanged sha. A cancelled context on a head that satisfies the check "
-        "needs a push to clear, which is the self-clearing property the gate exists to have. "
-        "Pinned from the other side by tests/test_closing_reference_gate.py::"
-        "test_the_gate_does_not_cancel_its_own_run and stated fleet-wide by "
-        "tests/test_pull_request_trigger_types.py::test_an_exempt_workflow_cannot_cancel_its_own_run."
-    ),
-}
+#:
+#: Empty since the pull-request guards moved into the required check as one
+#: step. ``closing-reference.yml`` was the one entry: subscribed to ``edited``,
+#: it was the only workflow that could have two runs on one head, and #2216
+#: measured what cancelling one of them cost. No workflow here subscribes to a
+#: sha-invariant event any more (tests/test_pull_request_trigger_types.py), so
+#: every pull-request workflow supersedes its own previous run.
+_MUST_NOT_CANCEL_ITS_OWN_RUN: dict[str, str] = {}
 
 #: Matches a ``pull_request:`` trigger key. Read as a key rather than as a
 #: substring: ``paths`` filters, job conditions and prose mention the event freely,
@@ -175,9 +170,8 @@ def test_the_scanner_finds_the_pull_request_workflows() -> None:
     an empty fleet.
     """
     workflows = _pull_request_workflows()
-    assert len(workflows) >= 8, sorted(workflows)
-    assert "pr-and-push.yml" in workflows, sorted(workflows)
-    assert "codeql.yml" in workflows, sorted(workflows)
+    assert workflows, "no pull_request workflow found; the trigger regex stopped matching"
+    assert "ci.yml" in workflows, sorted(workflows)
     assert "pypi-publish-on-release.yml" not in workflows, "the trigger regex is matching prose"
 
 
@@ -238,91 +232,3 @@ def test_a_group_split_by_head_sha_is_reported() -> None:
     faults = _faults({"invented.yml": text})
     assert "invented.yml" in faults
     assert "different groups" in faults["invented.yml"]
-
-
-def test_the_exempt_workflow_is_not_graded_by_the_sweep() -> None:
-    """Vacuity in the other direction: an exemption that grades nothing is noise.
-
-    The exempt file declares no block, which is the first fault ``_faults``
-    reports, so a table that had stopped being consulted would show up here rather
-    than as a silently passing sweep.
-    """
-    for name in _MUST_NOT_CANCEL_ITS_OWN_RUN:
-        text = (_WORKFLOW_DIR / name).read_text(encoding="utf-8")
-        assert name not in _faults({name: text})
-        assert _faults({"copy-of-" + name: text}), (
-            f"{name} would not be reported even without its exemption, so the entry is "
-            "documenting a fault that no longer exists; drop it"
-        )
-
-
-def test_one_workflow_cannot_cancel_another_ones_run() -> None:
-    """The premise every exemption elsewhere in the tree leans on.
-
-    ``tests/test_pull_request_trigger_types.py`` admits ``closing-reference.yml``'s
-    sha-invariant trigger on the grounds that an edit starts no run in the required
-    check's group. That is only true while every group is keyed on the workflow, so
-    it is a property of the whole fleet rather than of either file, and it is read
-    back here for one pull request across every group at once.
-
-    Whether every workflow *has* a group is the sweep's question, so the floor here
-    is two rather than the fleet's size: this one is about the groups that exist not
-    colliding, and it should not fail a second time for the reason already reported.
-    """
-    workflows = _pull_request_workflows()
-    groups: dict[str, str] = {}
-    for name, text in sorted(workflows.items()):
-        concurrency = _concurrency(text)
-        if concurrency is None:
-            continue
-        group, _ = concurrency
-        groups[name] = _render(group, _pull_request_context(_workflow_name(text), "4242", "aaaaaaaaaaaa"))
-
-    assert len(groups) >= 2, groups
-    collisions = {value: [name for name in groups if groups[name] == value] for value in set(groups.values())}
-    shared = {value: names for value, names in collisions.items() if len(names) > 1}
-    assert not shared, (
-        f"these workflows share a concurrency group on one pull request: {shared}. One of them "
-        "then cancels the other's run, and the cancelled context lands on a live head"
-    )
-
-
-def test_every_exemption_still_applies_to_a_workflow_a_pull_request_can_start() -> None:
-    """An exemption may not outlive the situation that justified it.
-
-    Each entry claims three things - the workflow exists, a pull request starts it,
-    and it declares no group - and cites where the question is settled. If any of
-    them stops holding, the next reader inherits a reason for a rule that is not
-    there.
-    """
-    assert _MUST_NOT_CANCEL_ITS_OWN_RUN, "the exemption table is empty; this pin has nothing to check"
-    for name, reason in _MUST_NOT_CANCEL_ITS_OWN_RUN.items():
-        path = _WORKFLOW_DIR / name
-        assert path.exists(), f"{name} is exempt but does not exist"
-        text = path.read_text(encoding="utf-8")
-        assert _subscribes_to_pull_request(text), f"{name} is exempt but no pull request can start it; drop the entry"
-        assert _concurrency(text) is None, (
-            f"{name} is exempt from declaring a concurrency group and declares one anyway; either "
-            "the exemption is stale or the block is the defect #2216 measured"
-        )
-        assert "#" in reason, (
-            f"the exemption for {name} cites no issue. An exemption without somewhere the "
-            "remaining question is being settled is a deferral, and reads as a decision"
-        )
-
-
-def test_the_exempt_workflow_still_needs_the_exemption() -> None:
-    """The exemption's own premise: the trigger that makes cancelling harmful.
-
-    Without a sha-invariant activity type, ``closing-reference.yml`` could not have
-    two runs on one head, the #2216 measurement would not be reachable, and the
-    entry would be excusing a workflow that should simply follow the rule. Read
-    back here so the table cannot outlive its cause even if the trigger list is
-    edited for an unrelated reason.
-    """
-    for name in _MUST_NOT_CANCEL_ITS_OWN_RUN:
-        text = (_WORKFLOW_DIR / name).read_text(encoding="utf-8")
-        assert re.search(r"^\s+types:.*\bedited\b", text, re.MULTILINE), (
-            f"{name} no longer subscribes to a type that cannot change the head sha, so it can no "
-            "longer have two runs on one head; drop the exemption and let the sweep cover it"
-        )

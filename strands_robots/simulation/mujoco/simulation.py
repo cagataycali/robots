@@ -68,10 +68,11 @@ import logging
 import math
 import numbers
 import os
+import re
 import threading
 import time
 import weakref
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,9 +143,11 @@ from strands_robots.simulation.mujoco.scene_ops import (
     install_compiled_model,
     patch_scene_mjcf,
     persist_world_option,
+    rediscover_robot_ids,
     registry_rebuild_loss_error,
     replace_scene_mjcf,
     reposition_body_in_scene,
+    robot_subtree_in_model,
     torque_only_actuation,
 )
 from strands_robots.simulation.mujoco.spec_builder import (
@@ -165,6 +168,7 @@ from strands_robots.utils import (
     coerce_pose_vector,
     entity_name_error,
     finite_vector_error,
+    mounted_camera_pose_error,
     non_negative_whole_number_error,
     optional_callable_error,
     positive_count_error,
@@ -565,6 +569,73 @@ def _published_string_params(field_aliases: dict[str, str]) -> frozenset[str]:
 _PUBLISHED_PARAMS: frozenset[str] = frozenset(_TOOL_SPEC_SCHEMA["properties"]) - {"action"}
 
 
+# An annotation JSON cannot construct: a callable, or an already-built Policy.
+# Applied to one union member at a time, never to the whole annotation - see
+# :func:`_tool_call_can_carry`.
+_UNCARRIABLE_ANNOTATION = re.compile(r"Callable|\bPolicy\b")
+
+
+def _union_members(text: str) -> list[str]:
+    """The top-level ``|`` members of an annotation's text.
+
+    Splitting only at bracket depth zero keeps a union that appears *inside* a
+    subscript out of the result: the members of
+    ``Callable[[Started | Step | Ended], None] | None`` are the callable and
+    ``None``, not the three event types.
+
+    Args:
+        text: The annotation rendered as text.
+
+    Returns:
+        The stripped top-level members, in source order.
+    """
+    members: list[str] = []
+    depth = start = 0
+    for index, char in enumerate(text):
+        if char in "[(":
+            depth += 1
+        elif char in "])":
+            depth -= 1
+        elif char == "|" and depth == 0:
+            members.append(text[start:index])
+            start = index + 1
+    members.append(text[start:])
+    return [member.strip() for member in members if member.strip()]
+
+
+def _tool_call_can_carry(param: inspect.Parameter) -> bool:
+    """Whether a JSON tool call can supply *param* at all.
+
+    A parameter that only ever holds a callback (``observer``, ``on_frame``) or
+    a live :class:`Policy` instance (``policy_object``) exists for the Python
+    caller; no JSON value satisfies it, so a refusal's "Valid:" list leaves it
+    out. Everything else is kept, an unannotated parameter included: the list
+    must never hide a key the caller could have used.
+
+    A union is judged member by member, because one alternative being
+    unreachable does not make the parameter unreachable. ``stop_when`` is
+    ``dict[str, Any] | Callable[[SimEngine], bool] | None`` - the schema
+    publishes it and documents the dict predicate DSL, and a tool call carries
+    that dict, so the callable alternative must not hide it. ``None`` alone is
+    not a value a caller passes to fill a parameter, so it never keeps one.
+
+    Args:
+        param: The method parameter as :func:`inspect.signature` reports it.
+
+    Returns:
+        ``False`` only when every alternative is a callable or a ``Policy``,
+        ``True`` otherwise.
+    """
+    annotation = param.annotation
+    if annotation is inspect.Parameter.empty:
+        return True
+    text = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", None) or repr(annotation)
+    fillable = [member for member in _union_members(text) if member not in ("None", "NoneType")]
+    if not fillable:
+        return True
+    return any(_UNCARRIABLE_ANNOTATION.search(member) is None for member in fillable)
+
+
 def _reported_param_name(param: str, field_aliases: Mapping[str, str], received: Mapping[str, Any]) -> str:
     """The spelling a refusal names when it is about method parameter *param*.
 
@@ -661,6 +732,75 @@ def _release_live_engines() -> None:
 
 
 atexit.register(_release_live_engines)
+
+
+def _load_scene_dropped_line(
+    robots: list[str],
+    objects: list[str],
+    cameras: list[str],
+    robot_specs: dict[str, Any] | None = None,
+    in_loaded_file: frozenset[str] | None = None,
+) -> str:
+    """The line ``load_scene`` adds when the swap discarded registered robots, objects or cameras.
+
+    Empty string when nothing was registered (a fresh world), so the historical
+    text is unchanged for that case. Otherwise names each dropped group and the
+    verb that puts it back into the LOADED scene (``add_robot`` mutates the
+    loaded spec in place), spelling the ``add_robot`` call with the data_config
+    the robot was registered under when it is known.
+
+    ``in_loaded_file`` names the dropped objects/cameras the loaded file still
+    carries under the same name - the ``export_xml`` -> ``load_scene`` round
+    trip. Those are untracked, not absent, and ``add_object`` under that name is
+    refused with MuJoCo's "repeated name", so they get their own sentence
+    instead of an ``add_object`` call that cannot work. Likewise the "No robots
+    registered" warning is only true when a robot was actually dropped: when the
+    robot was carried instead, robot-scoped actions keep working.
+    """
+    if not (robots or objects or cameras):
+        return ""
+    present = in_loaded_file or frozenset()
+    groups: list[str] = []
+    if robots:
+        groups.append(f"robot(s) {robots}")
+    if objects:
+        groups.append(f"object(s) {objects}")
+    if cameras:
+        groups.append(f"camera(s) {cameras}")
+    # Only a dropped robot makes robot-scoped actions refuse.
+    consequence = " (robot-scoped actions refuse with 'No robots registered' until then)" if robots else ""
+    remedy: list[str] = []
+    if robots:
+        calls = []
+        for name in robots:
+            cfg = (robot_specs or {}).get(name)
+            calls.append(
+                f"add_robot(name='{name}', data_config='{cfg}')"
+                if cfg
+                else f"add_robot(name='{name}', data_config=...)"
+            )
+        remedy.append(" / ".join(calls) + " puts the arm back INTO the loaded scene")
+    if [o for o in objects if o not in present]:
+        remedy.append("add_object re-adds objects")
+    if [c for c in cameras if c not in present]:
+        remedy.append("add_camera re-adds cameras")
+    line = (
+        f"REPLACED the live world: dropped {', '.join(groups)} - the loaded file is now the whole scene{consequence}."
+    )
+    if remedy:
+        line += f" {'; '.join(remedy)}."
+    still: list[str] = []
+    if [o for o in objects if o in present]:
+        still.append(f"object(s) {[o for o in objects if o in present]}")
+    if [c for c in cameras if c in present]:
+        still.append(f"camera(s) {[c for c in cameras if c in present]}")
+    if still:
+        line += (
+            f" The loaded file already carries {', '.join(still)} under the same name: they are scene "
+            f"geometry now but no longer tracked, and re-adding them is refused ('repeated name') - "
+            f"use a different name for a new one."
+        )
+    return line + "\n"
 
 
 class MuJoCoSimEngine(
@@ -860,6 +1000,12 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # Futures :meth:`_request_policy_stop_all` flagged, kept until the
+        # :meth:`stop_policy` for that robot reads them. A flagged worker can
+        # exit - and be pruned from ``_policy_threads`` - before its turn in a
+        # sequential fanout, and then the flag is lowered and the table is
+        # empty: nothing left says a rollout was in flight. This is that record.
+        self._pre_stopped: dict[str, Future] = {}
         # How the last start_policy rollout per robot failed, recorded by the
         # Future's done-callback and read by ``_rollouts_ended_in_error``.
         # Replaced when that robot's next rollout is submitted.
@@ -1452,6 +1598,36 @@ class MuJoCoSimEngine(
         # world (load_scene runs under the blanket dispatch lock, so this
         # acquisition is a reentrant no-op there and the real guard when the
         # method is called directly).
+        # The swap below discards the live registries: every robot, object and
+        # camera added so far is gone, the loaded file is the whole scene. The
+        # result names them, because through the tool the caller is a Robot
+        # facade named after the very arm this drops - "Scene loaded, Bodies: 3"
+        # followed later by "No robots registered" is how it used to surface.
+        prior = self._world
+        # A robot whose namespaced joints are ALL in the loaded model was
+        # exported with the scene (export_xml -> load_scene, the documented
+        # round trip): its bodies and actuators are in the file, so it is
+        # carried over - registration and ids re-resolved against the new
+        # model - instead of being dropped. Dropping it left the arm in the
+        # scene but unreachable ("No robots registered"), and add_robot under
+        # the same name then collided on every mesh name.
+        carried_robots = (
+            [name for name, robot in prior.robots.items() if robot_subtree_in_model(robot, model, mj)]
+            if prior is not None
+            else []
+        )
+        dropped_robots = [name for name in prior.robots if name not in carried_robots] if prior is not None else []
+        dropped_objects = list(prior.objects) if prior is not None else []
+        # "default" is the free camera create_world seeds into every world -
+        # nobody added it and the loaded world renders from it too, so it is
+        # not something the swap took away.
+        dropped_cameras = [c for c in prior.cameras if c != "default"] if prior is not None else []
+        dropped_specs = (
+            {name: getattr(robot, "data_config", None) for name, robot in prior.robots.items()}
+            if prior is not None
+            else {}
+        )
+
         with self._lock:
             world = SimWorld()
             world._backend_state["spec"] = spec
@@ -1467,8 +1643,45 @@ class MuJoCoSimEngine(
 
             world._backend_state["scene_loaded"] = True
             world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
+            if carried_robots and prior is not None:
+                for name in carried_robots:
+                    robot = prior.robots[name]
+                    # Re-point the mesh bridge at the world the robot now
+                    # lives in. ``_attach_robot_to_mesh`` sets ``_world`` so
+                    # the child Mesh's ``_read_state`` can read joint
+                    # positions; left pointing at the world just discarded,
+                    # the child peer would publish state from a dead model.
+                    # An off-mesh robot keeps None - the documented value for
+                    # a standalone robot (see SimRobot._world).
+                    if robot._world is not None:
+                        robot._world = world
+                    world.robots[name] = robot
+                if prior._backend_state.get("robot_base_xml"):
+                    world._backend_state["robot_base_xml"] = prior._backend_state["robot_base_xml"]
+                rediscover_robot_ids(world, model, mj)
             self._world = world
 
+        # Which dropped names the loaded file still carries under the same
+        # name (the export_xml -> load_scene round trip). Those are untracked,
+        # not absent: telling the caller to add_object them is advice MuJoCo
+        # refuses with "repeated name".
+        in_loaded_file = frozenset(
+            name
+            for name, kind in (
+                *((o, mj.mjtObj.mjOBJ_BODY) for o in dropped_objects),
+                *((c, mj.mjtObj.mjOBJ_CAMERA) for c in dropped_cameras),
+            )
+            if mj_name_to_id(model, kind, name) >= 0
+        )
+        dropped_line = _load_scene_dropped_line(
+            dropped_robots, dropped_objects, dropped_cameras, dropped_specs, in_loaded_file
+        )
+        if carried_robots:
+            dropped_line = (
+                f"Robot(s) {carried_robots} found in the loaded file (same namespaced joints) and kept "
+                f"registered - robot-scoped actions keep working; do NOT add_robot them again (the names "
+                f"would collide).\n" + dropped_line
+            )
         return {
             "status": "success",
             "content": [
@@ -1476,9 +1689,19 @@ class MuJoCoSimEngine(
                     "text": (
                         f"Scene loaded from {os.path.basename(scene_path)}\n"
                         f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}\n"
+                        f"{dropped_line}"
                         "Use action='get_state' to inspect, action='step' to simulate"
                     )
-                }
+                },
+                {
+                    "json": {
+                        "carried_robots": carried_robots,
+                        "dropped_robots": dropped_robots,
+                        "dropped_objects": dropped_objects,
+                        "dropped_cameras": dropped_cameras,
+                        "still_in_loaded_file": sorted(in_loaded_file),
+                    }
+                },
             ],
         }
 
@@ -2082,8 +2305,10 @@ class MuJoCoSimEngine(
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
         OPTIONAL: when omitted (``None``, or ``""``) it is auto-derived from
         ``data_config`` (or the URDF filename), with a numeric suffix appended
-        if that label is already taken -- so ``add_robot(data_config="so101")``
-        twice yields ``so101`` and ``so101_2`` instead of erroring. Any other
+        if that label is already taken by another robot OR by an object -- so
+        ``add_robot(data_config="so101")`` twice yields ``so101`` and
+        ``so101_2`` instead of erroring, and the short form still works when an
+        object happens to carry the model's name. Any other
         value must be a ``str`` containing no NUL: those two are the documented
         derive-a-label short form, while another falsy value (``0``, ``[]``)
         would take the same branch and report success under a label that was
@@ -2199,7 +2424,17 @@ class MuJoCoSimEngine(
             base = data_config or (os.path.splitext(os.path.basename(urdf_path))[0] if urdf_path else None) or "robot"
             name = base
             i = 2
-            while name in self._world.robots:
+            # Auto-number past a label taken by EITHER registry. The
+            # object-collision refusal below offers "omit name= to
+            # auto-number" as the remedy, and a loop that only skipped robot
+            # labels dead-ended that advice: with an object ``cube`` in the
+            # world, ``add_robot(urdf_path=".../cube.xml")`` derived ``cube``,
+            # found no robot holding it, and was then refused by the very
+            # message telling the caller to do what they had just done - the
+            # robot could be added under no label at all. Skipping object
+            # labels too keeps the derive-a-label short form total, so that
+            # refusal is only ever reachable for a name the caller CHOSE.
+            while name in self._world.robots or name in self._world.objects:
                 name = f"{base}_{i}"
                 i += 1
 
@@ -2212,6 +2447,23 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' already exists. Pick a different "
                             f"name, or omit name= to auto-number. Existing: {taken}."
+                        )
+                    }
+                ],
+            }
+        # The mirror of add_object's rule: a robot labelled like an existing
+        # object shares a name with a body every by-name reader resolves to the
+        # object first, so "state of 'cube'" would keep answering for the box
+        # after an arm called 'cube' joined the world.
+        if name in self._world.objects:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Robot name '{name}' is already an object in this world; by-name reads "
+                            f"(get_body_state, attach_bodies, add_camera) would keep resolving to that object. "
+                            f"Pick another name, or omit name= to auto-number."
                         )
                     }
                 ],
@@ -2519,7 +2771,18 @@ class MuJoCoSimEngine(
             # Clean up on failure
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
-            return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+            hint = ""
+            if "repeated name" in str(e) and f"'{name}/" in str(e):
+                # MuJoCo refused the attach because a subtree namespaced under
+                # this robot's name is already in the live model: a scene loaded
+                # from a file exported with the robot in it (load_scene keeps
+                # such a robot registered), or an earlier add under this name.
+                hint = (
+                    f" A subtree named '{name}/' is already in the scene. If it came from load_scene of a "
+                    f"file exported with this robot, it is already registered (see list_robots) and needs no "
+                    f"add_robot; otherwise pick a different name."
+                )
+            return {"status": "error", "content": [{"text": f"Failed to load: {e}{hint}"}]}
 
     def _next_step_after_add(self, name: str, robot: SimRobot) -> str:
         """Name the next step the robot just added can actually take.
@@ -3061,6 +3324,7 @@ class MuJoCoSimEngine(
                     ],
                 }
             del self._policy_threads[name]
+        self._pre_stopped.pop(name, None)
 
         # Step 2: after stopping our own, there must be no OTHER policy
         # running - an XML round-trip will invalidate cached IDs everywhere.
@@ -3446,7 +3710,8 @@ class MuJoCoSimEngine(
         base["methods"]["randomize"] = (
             "(randomize_colors=True, randomize_lighting=True, "
             "randomize_physics=False, randomize_positions=False, "
-            "position_noise=0.02, seed=None, ...) -> dict  # domain randomization "
+            "position_noise=0.02, color_range=(0.1, 1.0), friction_range=(0.5, 1.5), "
+            "mass_range=(0.5, 2.0), seed=None) -> dict  # domain randomization "
             "(each axis opt-in; no flags = no-op). Destructive - recompile to undo"
         )
         # Scene-construction cameras: the SO-101 rollout rig is built with
@@ -3518,8 +3783,11 @@ class MuJoCoSimEngine(
             "(cameras=None, output_dir=None, fps=30, width=None, height=None, "
             "name=None, max_frames_per_camera=3000) -> dict  # start a "
             "dependency-free background recorder that writes one MP4 per camera "
-            "(no lerobot / dataset); cameras=None records every camera. The "
-            "raw-MP4 sibling of start_recording's LeRobotDataset"
+            "(no lerobot / dataset); cameras=None records every camera. Samples "
+            "WALL time (one frame per 1/fps s of real time), not sim steps - a "
+            "step() burst that returns in milliseconds records ~0 frames. The "
+            "raw-MP4 sibling of start_recording's LeRobotDataset (which records "
+            "one frame per control step)"
         )
         base["methods"]["stop_cameras_recording"] = (
             "() -> dict  # stop start_cameras_recording, flush each camera's "
@@ -3727,7 +3995,7 @@ class MuJoCoSimEngine(
         # MuJoCo-scoped like the sibling describe() families.)
         base["methods"]["run_multi_policy"] = (
             "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
-            "control_frequency=50.0, action_horizon=8 | dict, n_steps=None, "
+            "control_frequency=None (the open recording's fps, else 50.0), action_horizon=8 | dict, n_steps=None, "
             "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
             "Policy, in one synchronized loop that records ALL robots into ONE "
             "merged frame per timestep (prefixed state/action, e.g. "
@@ -4136,8 +4404,8 @@ class MuJoCoSimEngine(
 
         text = (
             f"Bodies ({len(bodies)}): {bodies}\n"
-            "Use any of these as add_camera(parent_body=...) to mount a "
-            "wrist/gripper camera."
+            "Use any of these as add_camera(parent_body=..., position=..., target=...) to mount a "
+            "wrist/gripper camera; position and target are then in that body's frame."
         )
         if robot_name is not None and json_payload.get("gripper_body"):
             text += f"\nGripper/EEF mount: '{json_payload['gripper_body']}'"
@@ -4320,6 +4588,30 @@ class MuJoCoSimEngine(
 
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+
+        # A robot's label is not one of its body names (those are
+        # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
+        # repeated-name check does not see the collision an object named after
+        # a robot creates - but every by-name reader does. Measured: with robot
+        # ``so101`` in the world, ``get_body_state(body_name="so101")`` answered
+        # "not found. Did you mean: so101/base, ..." until
+        # ``add_object(name="so101")`` succeeded, after which the same call
+        # answered with the box's pose, and ``add_camera(parent_body="so101")``
+        # or ``attach_bodies(parent="so101", ...)`` would have taken the box for
+        # the arm. Refuse before anything is registered under the label.
+        if name in self._world.robots:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_object: '{name}' is the name of a robot in this world, and an object under "
+                            f"that name would answer get_body_state / attach_bodies / add_camera calls meant "
+                            f"for the robot (its bodies are '{name}/<body>'; see list_bodies). Pick another name."
+                        )
+                    }
+                ],
+            }
 
         # ``is_static`` selects a posture, so it is checked rather than read by
         # truthiness. The resolution below tests it by IDENTITY and every later
@@ -4789,6 +5081,72 @@ class MuJoCoSimEngine(
 
     # Camera Management
 
+    def _mounted_camera_start(self, parent_body: str, parent_id: int) -> str | None:
+        """A starting pose, in *parent_body*'s frame, for a camera mounted on it.
+
+        Uses the robot's end-effector SITE (the tool point
+        :func:`~strands_robots.simulation.ik.discover_ee_frame` picks) when it
+        sits on this body or a direct child of it - a gripper and its jaws. Then
+        the start is 6 cm beside the
+        approach axis (body origin -> site), 30 % of the way out, looking 20 cm
+        past the site - on SO-101 that frames the fingertips over the
+        workspace. The text is a suggestion for the refusal in
+        :func:`~strands_robots.utils.mounted_camera_pose_error`; ``None`` when
+        the body has no such site (a torso, a base, an object), so the generic
+        hint is used.
+        """
+        try:
+            import numpy as np
+
+            mj = self._mj
+            world = self._world
+            if world is None:
+                return None
+            model = world._model
+            data = world._data
+            namespace = parent_body.split("/", 1)[0] + "/" if "/" in parent_body else None
+            # The body and its direct children only: a gripper and its jaws.
+            # The whole subtree would hand a base mount the fingertips 40 cm
+            # down the chain and call that a wrist view.
+            subtree: set[int] = {parent_id}
+            for b in range(model.nbody):
+                if int(model.body_parentid[b]) == parent_id and b != parent_id:
+                    subtree.add(b)
+            frame = discover_ee_frame(model, namespace)
+            if frame is None or frame[1] != "site":
+                return None
+            site_name = frame[0]
+            site_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, site_name)
+            if site_id < 0 or int(model.site_bodyid[site_id]) not in subtree:
+                return None
+            rot = np.asarray(data.xmat[parent_id]).reshape(3, 3)
+            origin = np.asarray(data.xpos[parent_id])
+            site_local = rot.T @ (np.asarray(data.site_xpos[site_id]) - origin)
+            reach = float(np.linalg.norm(site_local))
+            if not math.isfinite(reach) or reach < 1e-4:
+                return None
+            approach = site_local / reach
+            # The first body axis that is not the approach axis carries the
+            # sideways offset, so the camera sits beside the gripper, not in it.
+            side = next(
+                (np.eye(3)[i] for i in range(3) if abs(float(approach[i])) < 0.5),
+                np.eye(3)[0],
+            )
+            pos = 0.3 * site_local + 0.06 * side
+            tgt = site_local + 0.2 * approach
+
+            def fmt(v: Any) -> str:
+                return "[" + ", ".join(f"{(0.0 if abs(float(x)) < 5e-4 else float(x)):.3f}" for x in v) + "]"
+
+            return (
+                f"For this body the end-effector site {site_name!r} sits at {fmt(site_local)} in its "
+                f"frame; a wrist view to start from: position={fmt(pos)}, target={fmt(tgt)} "
+                f"(6 cm beside the approach axis, looking past the fingertips) - then render and adjust."
+            )
+        except Exception:  # noqa: BLE001 - a hint must never turn a refusal into a crash
+            logger.debug("mounted-camera start could not be computed for %r", parent_body, exc_info=True)
+            return None
+
     def add_camera(
         self,
         name: str,
@@ -4938,7 +5296,8 @@ class MuJoCoSimEngine(
         if parent_body:
             mj = self._mj
             model = self._world._model
-            if mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent_body) < 0:
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent_body)
+            if parent_id < 0:
                 available = [
                     mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
                     for i in range(model.nbody)
@@ -4956,6 +5315,22 @@ class MuJoCoSimEngine(
                         }
                     ],
                 }
+
+            # A mount with no pose of its own would take the free-camera
+            # defaults in the body's frame - 1.73 m from the wrist, looking back
+            # at the arm. Refused with a starting pose computed for THIS body
+            # (see ``_mounted_camera_start``) rather than a success that renders
+            # the wrong view.
+            mount_err = mounted_camera_pose_error(
+                "add_camera",
+                name,
+                parent_body,
+                position,
+                target,
+                start=self._mounted_camera_start(parent_body, parent_id),
+            )
+            if mount_err is not None:
+                return {"status": "error", "content": [{"text": mount_err}]}
 
         cam = SimCamera(
             name=name,
@@ -5927,7 +6302,7 @@ class MuJoCoSimEngine(
         well, so it and ``list_policies_running`` reported opposite facts about
         the same instant ("Stopped on 'arm'" with ``was_running=True`` against
         "No policies running.") - the two-sources drift #2833 is about, and the
-        thing ``docs/simulation/overview.md`` promised could not happen. The
+        thing ``docs/simulation/rollouts.md`` promised could not happen. The
         union is spelled once, here, and every reader inherits it.
 
         ``policy_running`` is the flag the launching thread raises around every
@@ -5958,6 +6333,59 @@ class MuJoCoSimEngine(
             if name not in registered_names and getattr(robot, "policy_running", False)
         )
         return names
+
+    def _request_policy_stop_all(self, robot_names: Iterable[str]) -> None:
+        """Lower the cooperative stop flag on several robots, joining none of them.
+
+        The first pass a SEQUENTIAL fanout over :meth:`stop_policy` needs.
+        That verb waits (bounded by :attr:`_POLICY_STOP_JOIN_TIMEOUT`) for the
+        worker it just flagged to exit, so a caller looping over robots pays
+        that wait between one robot's request and the next robot's - and a
+        robot whose policy server is wedged inside inference pays it in full,
+        holding the stop REQUEST off every robot behind it in the loop while
+        those arms keep executing. Lowering every flag up front makes the
+        workers wind down concurrently, and each later
+        :meth:`stop_policy` still reports that robot's own verdict.
+
+        :meth:`cleanup` sequences its own multi-robot teardown the same way and
+        for the same reason: request on every robot, then join.
+
+        Only rollouts with a Future are flagged, and that is what keeps each
+        later ``stop_policy`` answer honest. Such a rollout stays in
+        :meth:`_active_policy_robots` on its live Future alone, so lowering its
+        flag early costs no evidence - that union is exactly why a second
+        ``stop_policy`` still reported ``Stopped``. A BLOCKING ``run_policy``
+        registers no Future, so the flag is the only record that it was in
+        flight: pre-lowering it would make ``stop_policy`` answer
+        ``Was not running`` for a rollout it really did halt, and the fleet stop
+        would then name nothing under ``stopped``. Such a rollout is also the
+        one shape with nothing to join, so it has nothing to gain here.
+
+        Args:
+            robot_names: Names to flag. A name that is unknown, idle, or
+                driving a blocking rollout is skipped - this is a best-effort
+                pre-pass, and :meth:`stop_policy` is what answers for each
+                robot.
+        """
+        world = self._world
+        if world is None:
+            return
+        for name in robot_names:
+            robot = registry_entry(world.robots, name)
+            future = registry_entry(self._policy_threads, name)
+            if robot is None or future is None or future.done():
+                continue
+            # Keep the Future as evidence for this robot's ``stop_policy``. A
+            # healthy worker exits within a control tick of this flag going
+            # down, and a sequential fanout can spend up to the join bound on
+            # an earlier robot before it asks this one: by then the worker is
+            # done, ``_prune_done_futures`` has dropped it, and the flag is
+            # already low, so without this record the answer would be "Was
+            # not running" for a rollout this very call halted - and the fleet
+            # stop would then leave it out of ``stopped``.
+            self._pre_stopped[name] = future
+            with contextlib.suppress(Exception):
+                robot.request_policy_stop()
 
     def _rollouts_in_flight(self) -> tuple[str, ...]:
         """MuJoCo override: the population :meth:`_active_policy_robots` owns.
@@ -6059,7 +6487,7 @@ class MuJoCoSimEngine(
                         {
                             "text": (
                                 f"Cannot '{action_name}' on '{robot_name}' while its policy is running. "
-                                f"Stop it first: action='stop_policy', name='{robot_name}'."
+                                f"Stop it first: action='stop_policy', robot_name='{robot_name}'."
                             )
                         }
                     ],
@@ -6073,10 +6501,7 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [
                     {
-                        "text": (
-                            f"Cannot '{action_name}' while a policy is running on {names}. "
-                            "Stop it first: action='stop_policy'."
-                        )
+                        "text": f"Cannot '{action_name}' while a policy is running on {names}. {self._stop_policy_remedy(active)}"
                     }
                 ],
             }
@@ -6277,7 +6702,7 @@ class MuJoCoSimEngine(
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -6345,6 +6770,7 @@ class MuJoCoSimEngine(
         # that named no problem.
         if err := self._validate_posture_flags("start_policy", fast_mode=fast_mode):
             return err
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
             return err
         resolved_duration, resolved_n_steps, horizon_error = self._resolve_horizon(
@@ -6467,15 +6893,20 @@ class MuJoCoSimEngine(
     def _rollouts_ended_in_error(self) -> Mapping[str, str]:
         return dict(self._rollout_failures)
 
-    def _make_run_policy_hook(self, robot_name: str, instruction: str):
-        """MuJoCo override: recording + policy_running flag + lock.
+    def _make_recording_on_frame(self, robot_name: str, instruction: str) -> Any:
+        """MuJoCo override: the recording half of the rollout hook, on its own.
 
-        Returns an ``on_frame(step, obs, action)`` closure that:
-        * READS ``robot.policy_running`` so ``stop_policy`` can interrupt (the
-          launching thread raises it - see :meth:`_announce_rollout`),
-        * appends to ``_backend_state["trajectory"]`` when recording,
-        * forwards frames to the LeRobot ``dataset_recorder`` if attached,
-        * raises ``PolicyStopped`` when the user calls ``stop_policy``.
+        Returns an ``(step, observation, action) -> None`` closure that appends
+        the frame to ``_backend_state["trajectory"]`` and forwards it to the
+        attached LeRobot ``dataset_recorder`` while a recording is open - the
+        same writes :meth:`_make_run_policy_hook` performs, without that
+        hook's ``policy_running`` claim and mesh telemetry. The closure reads
+        the recording flag per frame, so a recording opened or closed during a
+        rollout is honoured from that frame on. ``None`` when the robot is not
+        registered. The single-robot evaluation facades (``eval_policy``,
+        ``evaluate_benchmark``) install it when the caller passes no
+        ``on_frame`` and a recording is open: before that, an evaluation run
+        under an open recording advanced every episode and wrote no frame.
         """
         import numpy as np
 
@@ -6484,25 +6915,6 @@ class MuJoCoSimEngine(
         world = self._world
         if world is None or not registered(world.robots, robot_name):
             return None
-
-        robot = world.robots[robot_name]
-        # Raise the flag for a rollout whose claim is still current, and ONLY
-        # then. This factory runs on the executor worker for a ``start_policy``
-        # rollout, so an unconditional raise here landed after the launch
-        # returned - it overwrote a stop issued in the launch window and the
-        # rollout ran to full duration having reported that it stopped (#2833).
-        # A claim carries the stop count its launcher observed
-        # (:meth:`_announce_rollout`); once a stop has landed against it the
-        # count has moved, and leaving the flag down here is what makes the
-        # hook's own first-frame check refuse the rollout. ``None`` means no
-        # launcher claimed the robot - a caller driving ``PolicyRunner`` with
-        # this hook directly - and that rollout is claimed here, on its own
-        # thread, exactly as before.
-        if robot.policy_claim_stops is None or robot.policy_claim_stops == robot.policy_stops:
-            robot.policy_running = True
-        robot.policy_instruction = instruction
-        robot.policy_steps = 0
-
         lock = self._lock
 
         # Action columns this rollout is responsible for: the driven robot's own
@@ -6528,59 +6940,7 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
-        # N4: stream per-step telemetry on the mesh. publish_step existed with
-        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
-        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
-        # transport caps. Prefer the robot's own child-peer mesh (per-robot
-        # topic), fall back to the parent sim's mesh.
-        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
-        # ``-inf`` rather than ``0.0``: a monotonic reading is only meaningful
-        # relative to another one, so the first step of a rollout is due
-        # wherever this platform's monotonic epoch happens to sit instead of
-        # depending on it being far from zero. It also means the gate's
-        # subtraction is ``inf`` on the first step, which clears any period at
-        # all - see ``_stream_enabled`` below.
-        _stream_state = {"last": float("-inf")}
-        from strands_robots.mesh.session import stream_min_period_from_env
-
-        # inf when step telemetry is off / misconfigured. A bare division here
-        # killed run_policy hook setup on STRANDS_MESH_STREAM_HZ=0.
-        _stream_min_period = stream_min_period_from_env()
-        # An infinite period is the operator's opt-out, and no finite elapsed
-        # time reaches it - but the sentinel above is below every reading, so
-        # the subtraction alone would read ``inf >= inf`` and let exactly one
-        # publish per rollout past the opt-out. The period is therefore read
-        # directly, once here rather than on every step.
-        _stream_enabled = math.isfinite(_stream_min_period)
-
-        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
-            # Cooperative cancellation: stop_policy flips this flag.
-            if not robot.policy_running:
-                raise CooperativeStop(f"Policy stopped on '{robot_name}'")
-
-            robot.policy_steps = step + 1
-
-            if _mesh is not None and _stream_enabled:
-                # ``time.monotonic()``: this is an elapsed interval, and it
-                # carries its own base forward as it goes - each publish
-                # records when it happened and the next is due a period
-                # later. On ``time.time()`` a backward wall-clock step (an
-                # NTP correction, a ``date -s``, a resume from suspend)
-                # landing between two publishes made the difference
-                # negative, so the throttle refused every later step until
-                # the date caught up. The gaps that did land stay correctly
-                # spaced, so the shortfall is indistinguishable afterwards
-                # from a rollout that simply ran for less time. The
-                # hardware control loop throttles the same publish on the
-                # same period and already reads this clock.
-                _now = time.monotonic()
-                if _now - _stream_state["last"] >= _stream_min_period:
-                    _stream_state["last"] = _now
-                    try:
-                        _mesh.publish_step(step, observation, action, instruction=instruction)
-                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
-                        pass
-
+        def _record(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             with lock:
                 if world._backend_state.get("recording", False):
                     world._backend_state["trajectory"].append(
@@ -6640,6 +7000,99 @@ class MuJoCoSimEngine(
                                 required_action_keys=_required_action_keys(False),
                             )
 
+        return _record
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str):
+        """MuJoCo override: recording + policy_running flag + lock.
+
+        Returns an ``on_frame(step, obs, action)`` closure that:
+        * READS ``robot.policy_running`` so ``stop_policy`` can interrupt (the
+          launching thread raises it - see :meth:`_announce_rollout`),
+        * appends to ``_backend_state["trajectory"]`` when recording,
+        * forwards frames to the LeRobot ``dataset_recorder`` if attached,
+        * raises ``PolicyStopped`` when the user calls ``stop_policy``.
+        """
+        world = self._world
+        if world is None or not registered(world.robots, robot_name):
+            return None
+
+        robot = world.robots[robot_name]
+        # Raise the flag for a rollout whose claim is still current, and ONLY
+        # then. This factory runs on the executor worker for a ``start_policy``
+        # rollout, so an unconditional raise here landed after the launch
+        # returned - it overwrote a stop issued in the launch window and the
+        # rollout ran to full duration having reported that it stopped (#2833).
+        # A claim carries the stop count its launcher observed
+        # (:meth:`_announce_rollout`); once a stop has landed against it the
+        # count has moved, and leaving the flag down here is what makes the
+        # hook's own first-frame check refuse the rollout. ``None`` means no
+        # launcher claimed the robot - a caller driving ``PolicyRunner`` with
+        # this hook directly - and that rollout is claimed here, on its own
+        # thread, exactly as before.
+        if robot.policy_claim_stops is None or robot.policy_claim_stops == robot.policy_stops:
+            robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+
+        record_frame = self._make_recording_on_frame(robot_name, instruction) or (
+            lambda step, observation, action: None
+        )
+
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        # ``-inf`` rather than ``0.0``: a monotonic reading is only meaningful
+        # relative to another one, so the first step of a rollout is due
+        # wherever this platform's monotonic epoch happens to sit instead of
+        # depending on it being far from zero. It also means the gate's
+        # subtraction is ``inf`` on the first step, which clears any period at
+        # all - see ``_stream_enabled`` below.
+        _stream_state = {"last": float("-inf")}
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when step telemetry is off / misconfigured. A bare division here
+        # killed run_policy hook setup on STRANDS_MESH_STREAM_HZ=0.
+        _stream_min_period = stream_min_period_from_env()
+        # An infinite period is the operator's opt-out, and no finite elapsed
+        # time reaches it - but the sentinel above is below every reading, so
+        # the subtraction alone would read ``inf >= inf`` and let exactly one
+        # publish per rollout past the opt-out. The period is therefore read
+        # directly, once here rather than on every step.
+        _stream_enabled = math.isfinite(_stream_min_period)
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            # Cooperative cancellation: stop_policy flips this flag.
+            if not robot.policy_running:
+                raise CooperativeStop(f"Policy stopped on '{robot_name}'")
+
+            robot.policy_steps = step + 1
+
+            if _mesh is not None and _stream_enabled:
+                # ``time.monotonic()``: this is an elapsed interval, and it
+                # carries its own base forward as it goes - each publish
+                # records when it happened and the next is due a period
+                # later. On ``time.time()`` a backward wall-clock step (an
+                # NTP correction, a ``date -s``, a resume from suspend)
+                # landing between two publishes made the difference
+                # negative, so the throttle refused every later step until
+                # the date caught up. The gaps that did land stay correctly
+                # spaced, so the shortfall is indistinguishable afterwards
+                # from a rollout that simply ran for less time. The
+                # hardware control loop throttles the same publish on the
+                # same period and already reads this clock.
+                _now = time.monotonic()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
+
+            record_frame(step, observation, action)
+
         return _hook
 
     def run_policy(
@@ -6649,7 +7102,7 @@ class MuJoCoSimEngine(
         policy_config: dict[str, Any] | None = None,
         instruction: str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int = 8,
         fast_mode: bool = False,
         video: dict[str, Any] | None = None,
@@ -6754,7 +7207,7 @@ class MuJoCoSimEngine(
         policies: dict[str, "Policy"],
         instructions: dict[str, str] | str = "",
         duration: float = 10.0,
-        control_frequency: float = 50.0,
+        control_frequency: float | None = None,
         action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
@@ -6869,6 +7322,7 @@ class MuJoCoSimEngine(
         # hand-rolled check only fired on the n_steps path, leaving the default
         # duration path to compute total_steps = int(duration * frequency) = 0
         # and report a rollout that never ran as a success.
+        control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "run_multi_policy"):
             return err
         if err := self._validate_recording_rate(control_frequency, "run_multi_policy"):
@@ -7136,8 +7590,26 @@ class MuJoCoSimEngine(
     # The motion primitives (move_to / set_gripper / rotate_wrist) lock per
     # control tick (the step() pattern) so stop_policy / renders can
     # interleave during a long primitive.
+    #: ``start_cameras_recording`` / ``stop_cameras_recording`` are here because
+    #: the recorder thread they start and join renders under ``self._lock``
+    #: (``render`` serializes its mjData read against ``mj_step``). Dispatched
+    #: under the blanket lock, start waited its whole readiness timeout for a
+    #: warmup render that was waiting for the lock start held (6 s of nothing,
+    #: "not ready" warning, first frames lost), and stop joined a thread that was
+    #: blocked in render on the lock stop held - the join expired every time,
+    #: nothing was encoded, and the recording stayed registered. Both take the
+    #: lock themselves around the world reads they do make.
     _SELF_LOCKING_ACTIONS: frozenset[str] = frozenset(
-        {"step", "stop_policy", "remove_robot", "move_to", "set_gripper", "rotate_wrist"}
+        {
+            "step",
+            "stop_policy",
+            "remove_robot",
+            "move_to",
+            "set_gripper",
+            "rotate_wrist",
+            "start_cameras_recording",
+            "stop_cameras_recording",
+        }
     )
 
     _ACTION_ALIASES = {
@@ -7349,13 +7821,28 @@ class MuJoCoSimEngine(
             # exists to prevent, surviving in the one branch that read the loop
             # variable directly.
             reported_unknown = _reported_param_name(unknown[0], self._FIELD_ALIASES, received)
-            valid_sorted = sorted(
-                _reported_param_name(param, self._FIELD_ALIASES, received) for param in method_param_names - {"action"}
-            )
+            # The "Valid:" list is what the caller will pick from next, so it
+            # names only parameters a tool call can carry. A method may also
+            # take a callback or a live object (``observer``, ``stop_when``,
+            # ``on_frame``, ``success_fn``, ``policy_object``) for the Python
+            # caller; listing those to a model that just sent ``policy=`` sends
+            # it to keys it cannot fill, and the one it needs
+            # (``policy_provider`` / ``policy_config``) is buried between them.
+            reachable = {name for name in method_param_names - {"action"} if _tool_call_can_carry(named_params[name])}
+            valid_sorted = sorted(_reported_param_name(param, self._FIELD_ALIASES, received) for param in reachable)
+            # ...and the nearest of them is named, the way an unknown action or
+            # an unknown robot already is: ``policy`` is answered with
+            # ``policy_provider, policy_config`` instead of a 20-name list to
+            # scan.
+            hint = close_match_hint(reported_unknown, valid_sorted)
             return None, {
                 "status": "error",
                 "content": [
-                    {"text": (f"Unknown parameter '{reported_unknown}' for action '{action}'. Valid: {valid_sorted}")}
+                    {
+                        "text": (
+                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
+                        )
+                    }
                 ],
             }
 
@@ -7539,10 +8026,127 @@ class MuJoCoSimEngine(
         #     defeat the batching.
         #   * stop_policy only flips a bool and needs no lock; keeping it off
         #     the blanket lock lets it interrupt a long-running step.
+        note = self._follow_active_recording_rate(method_name, sig, kwargs)
+        if note is None:
+            note = self._follow_active_rollout_rate(method_name, sig, kwargs)
         if method_name in self._SELF_LOCKING_ACTIONS:
-            return method(**kwargs)
-        with self._lock:
-            return method(**kwargs)
+            result = method(**kwargs)
+        else:
+            with self._lock:
+                result = method(**kwargs)
+        return self._append_rate_note(result, note)
+
+    # Rollout entry points whose ``control_frequency`` is the rate frames are
+    # captured at while a recording is open (every caller of
+    # ``_validate_recording_rate``).
+    _RATE_FOLLOWING_ROLLOUTS = frozenset(
+        {"run_policy", "start_policy", "run_multi_policy", "eval_policy", "evaluate_benchmark"}
+    )
+
+    def _follow_active_recording_rate(
+        self, method_name: str, sig: inspect.Signature, kwargs: dict[str, Any]
+    ) -> str | None:
+        """Fill an OMITTED ``control_frequency`` from the active recording's fps.
+
+        ``start_recording`` defaults to 30 fps and every rollout defaults to
+        ``control_frequency=50.0``; the recorder writes one frame per control
+        step with no decimation, so those two defaults cannot both be honored
+        and :meth:`_validate_recording_rate` refuses the rollout. Measured on
+        ``Robot("so101", mode="sim")``: ``start_recording(task=...)`` then
+        ``run_policy(instruction=...)`` - the documented record-then-rollout
+        sequence with no rate named anywhere - was refused on the first try,
+        and the remedy it named cost the agent a second round-trip to type a
+        number the tool already knew.
+
+        A caller who omitted ``control_frequency`` expressed no preference
+        between the two defaults, and only one of them can be honored, so the
+        omitted one follows the recording. A caller who PASSED a rate is still
+        refused on a mismatch: a number they typed is a decision, not a default,
+        and mislabelling it is the distortion that refusal exists to prevent.
+        The Python-level defaults are untouched; this is the tool router's
+        reading of an absent field.
+
+        Args:
+            method_name: The method the action resolved to.
+            sig: Its signature (must accept ``control_frequency``).
+            kwargs: The caller's validated kwargs; ``control_frequency`` is
+                added in place when it is absent and a recording is open.
+
+        Returns:
+            The note to append to a successful result naming the adopted rate,
+            or ``None`` when nothing was filled in - the caller passed a rate,
+            no recording is open, this is not a rollout entry point, or the
+            dataset reports no usable whole rate.
+        """
+        if method_name not in self._RATE_FOLLOWING_ROLLOUTS or "control_frequency" in kwargs:
+            return None
+        # No world, no recording: also keeps this off the path of test doubles
+        # built without ``__init__`` (``Simulation.__new__``) that route through
+        # the dispatcher.
+        if getattr(self, "_world", None) is None or "control_frequency" not in sig.parameters:
+            return None
+        if not self._is_recording():
+            return None
+        from strands_robots.simulation.recording import recorder_dataset_fps
+
+        fps = recorder_dataset_fps(self._active_recorder())
+        if fps is None:
+            return None
+        # ``fps`` is the dataset's validated whole rate, read back from the
+        # recorder - not caller input.
+        kwargs["control_frequency"] = fps * 1.0
+        return (
+            f"control_frequency={fps} followed the active recording's {fps} fps "
+            f"(no rate was passed); pass control_frequency= to choose."
+        )
+
+    def _follow_active_rollout_rate(
+        self, method_name: str, sig: inspect.Signature, kwargs: dict[str, Any]
+    ) -> str | None:
+        """The mirror for the other ordering: an omitted ``fps`` follows the rollout.
+
+        ``start_policy`` (default 50 Hz) then ``start_recording`` (default 30
+        fps) is the same pair of defaults met in the other order, and
+        :meth:`_validate_recording_start_rate` refuses it for the same reason.
+        When the caller named no ``fps`` and every rollout in flight captures
+        at one whole rate, the recording opens at that rate. Several rollouts
+        at different rates, or a fractional rate, have no single honest
+        answer, so nothing is filled in and the refusal stands.
+
+        Returns:
+            The note to append to a successful result, or ``None``.
+        """
+        if method_name != "start_recording" or "fps" in kwargs or "fps" not in sig.parameters:
+            return None
+        if getattr(self, "_world", None) is None:
+            return None
+        rates = set(self._active_rollout_rates().values())
+        if len(rates) != 1:
+            return None
+        rate = rates.pop()
+        # ``rate`` is the engine's own record of a rollout it validated when it
+        # started - not caller input - so no boolean can reach this coercion.
+        if rate <= 0 or int(rate) != rate:
+            return None
+        kwargs["fps"] = int(rate)
+        return f"fps={int(rate)} followed the running rollout's control_frequency={rate:g} (no fps was passed); pass fps= to choose."
+
+    @staticmethod
+    def _append_rate_note(result: dict[str, Any], note: str | None) -> dict[str, Any]:
+        """Tell the caller the rate their call ran at when it was not theirs.
+
+        Silent adoption would leave the result's timing unexplained - the same
+        "nothing reported it" failure the rate refusals were written against,
+        one level down. Appended only to a successful envelope; a refusal
+        already names the rate it saw.
+        """
+        if note is None or not isinstance(result, dict) or result.get("status") != "success":
+            return result
+        content = result.get("content")
+        if not isinstance(content, list):
+            return result
+        content.append({"text": note})
+        return result
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:
         """Stop a running policy on the given robot (cooperative cancellation).
@@ -7560,20 +8164,30 @@ class MuJoCoSimEngine(
         stop_policy unconditionally. The only error case is an unknown
         robot_name.
 
-        empty robot_name returns a clear error instead of a silent
-        match against the first robot.
+        An empty robot_name means the only rollout in flight when there is
+        exactly one, and is otherwise refused naming what is running - never
+        a silent match against the first robot (:meth:`_stop_policy_target`).
 
         Returns:
             The agent-tool envelope. On success its ``json`` block reports
             ``was_running`` - whether a rollout really was in flight when the
             stop arrived - so a caller aggregating several of these answers
-            reads the verdict rather than matching on the sentence.
+            reads the verdict rather than matching on the sentence - and
+            ``exited``: ``True`` when the worker was joined and is gone, so the
+            robot is free for the caller's next action; ``False`` when it was
+            still live after ``_POLICY_STOP_JOIN_TIMEOUT`` (the text says so);
+            ``None`` when there was nothing to join - no rollout, or a blocking
+            ``run_policy`` driven on its caller's thread.
         """
-        if not robot_name:
-            return {
-                "status": "error",
-                "content": [{"text": "stop_policy requires 'robot_name'."}],
-            }
+        # An empty name means "the only rollout in flight" when there is exactly
+        # one - the case every "Stop it first: action='stop_policy'" remedy was
+        # written for - and is refused, naming what IS running, otherwise. See
+        # :meth:`SimEngine._stop_policy_target`.
+        target, refusal = self._stop_policy_target(robot_name)
+        if target is None:
+            assert refusal is not None
+            return refusal
+        robot_name = target
         if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]
@@ -7584,12 +8198,56 @@ class MuJoCoSimEngine(
         # reported opposite facts about a blocking rollout at the same instant
         # (#2833).
         was_running = robot_name in self._active_policy_robots()
+        # A rollout :meth:`_request_policy_stop_all` already flagged for this
+        # call counts as having been in flight even when its worker has exited
+        # and been pruned since: the pre-pass is part of this same stop, not
+        # an earlier one, so the verdict it earned belongs to this answer.
+        pre_stopped = self._pre_stopped.pop(robot_name, None)
+        was_running = was_running or pre_stopped is not None
         # Durable: moves this robot's claim out of date, so a worker that has
         # not yet reached its first frame cannot raise the flag back over it. Its
         # own return stays in the OR because the claim can be raised in the
         # window between the read above and this write.
         was_running = robot.request_policy_stop() or was_running
-        msg = f"Stopped on '{robot_name}'" if was_running else f"Was not running on '{robot_name}'"
+        # The flag is lowered; the worker exits at its next control tick. Wait
+        # for that (bounded) before answering, because "Stopped" used to be
+        # reported while the worker was still winding down - the caller's very
+        # next ``start_policy`` (or any joint write) on the same robot was then
+        # refused "while its policy is running", and a second ``stop_policy``
+        # in that window answered "Was not running" against a
+        # ``list_policies_running`` that still listed the robot. Only a
+        # ``start_policy`` Future can be joined: a blocking ``run_policy`` is
+        # driven on its caller's own thread, so its stop is the flag alone.
+        exited: bool | None = None
+        fut = registry_entry(self._policy_threads, robot_name) if was_running else None
+        if fut is None and pre_stopped is not None:
+            # Pruned from the table already, so joinable here only through the
+            # record the pre-pass kept; ``done()`` still decides.
+            fut = pre_stopped
+        if fut is not None:
+            with contextlib.suppress(Exception):
+                # Either outcome of ``result`` means the same thing here (the
+                # worker's own raise = it exited; the join timeout = it did
+                # not); ``fut.done()`` decides, as in ``remove_robot``.
+                fut.result(timeout=self._POLICY_STOP_JOIN_TIMEOUT)
+            exited = fut.done()
+            if exited:
+                self._prune_done_futures()
+        if not was_running:
+            # The verdict is right and the silence was not: a rollout that died
+            # on its first inference reads exactly like one that completed. The
+            # shared renderer carries that reason and the in-flight population.
+            msg = self._was_not_running_msg(robot_name)
+        elif exited is False:
+            msg = (
+                f"Stop requested on '{robot_name}', but its policy worker is still live after "
+                f"{self._POLICY_STOP_JOIN_TIMEOUT:.1f}s (queued behind other rollouts, or blocked "
+                "inside one policy inference or send_action, where the stop flag is not read). "
+                "It exits at its next control tick; until then action='list_policies_running' "
+                "still reports it and action='start_policy' on this robot is refused."
+            )
+        else:
+            msg = f"Stopped on '{robot_name}'"
         # The verdict travels as data as well as prose. A programmatic caller -
         # the Device Connect ``stop`` RPC aggregates one of these answers per
         # robot - otherwise has to re-derive "was a rollout in flight" from its
@@ -7604,7 +8262,10 @@ class MuJoCoSimEngine(
         # and opposite on that case is the drift worth spending a word to avoid.
         return {
             "status": "success",
-            "content": [{"text": msg}, {"json": {"robot": robot_name, "was_running": was_running}}],
+            "content": [
+                {"text": msg},
+                {"json": {"robot": robot_name, "was_running": was_running, "exited": exited}},
+            ],
         }
 
     # Cleanup
@@ -7622,6 +8283,15 @@ class MuJoCoSimEngine(
     # refuses the scene rebuild.
     # Override in tests via ``cleanup(policy_stop_timeout=...)`` if needed.
     _DEFAULT_POLICY_STOP_TIMEOUT = 5.0
+
+    # How long ``stop_policy`` waits for the worker it just flagged to exit
+    # before answering. A healthy rollout leaves within one control period
+    # (20 ms at the default 50 Hz), so the wait is normally a few ms; the bound
+    # exists for a worker blocked inside a policy inference, where the flag is
+    # not read, and it is shorter than the teardown budget above because
+    # ``stop_policy`` also serves the Device Connect ``stop`` RPC and the mesh
+    # emergency-stop fanout, whose callers wait on the answer.
+    _POLICY_STOP_JOIN_TIMEOUT = 1.0
 
     # Bounded wait for the world-handoff lock (seconds). A motion primitive
     # holds ``self._lock`` only for one control tick (a few physics substeps,
@@ -7772,6 +8442,7 @@ class MuJoCoSimEngine(
                         e,
                     )
             self._policy_threads.clear()
+            self._pre_stopped.clear()
 
         # Step 3: hand the world off UNDER ``self._lock``.
         #
