@@ -40,7 +40,7 @@ from strands_robots import dataset_recorder
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
-_README = _REPO_ROOT / "docs" / "recording.md"  # the bucket / streamed-training guidance page (was README)
+_BUCKET_GUIDANCE = _REPO_ROOT / "docs" / "data" / "dataset-recorder.md"  # where sync_to_bucket is documented
 _RECORDER_SRC = Path(dataset_recorder.__file__)
 
 _FLOOR = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
@@ -156,7 +156,7 @@ class TestEveryDeclaredFloorAgrees:
     """Guidance, packaging and the gate name one version."""
 
     @pytest.mark.parametrize(
-        "path", [_README, _RECORDER_SRC, _PYPROJECT], ids=["README", "dataset_recorder", "pyproject"]
+        "path", [_BUCKET_GUIDANCE, _RECORDER_SRC, _PYPROJECT], ids=["docs", "dataset_recorder", "pyproject"]
     )
     def test_no_documented_floor_is_below_the_capability(self, path):
         floors = _install_hint_floors(path.read_text())

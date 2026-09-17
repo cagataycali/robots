@@ -17,7 +17,7 @@ pelvis (``microduck/trunk_base``) so the duck stays centered as it walks - this
 reads far better than the fixed "default" cam. It talks to the underlying
 ``mujoco.Renderer`` + ``mujoco.MjvCamera`` directly (via ``sim.mj_model`` /
 ``sim.mj_data``); if that offscreen GL path is unreachable, it falls back to
-``sim.render(camera_name=...)``.
+``sim.get_frame(camera_name=...)``.
 
 Encodes an MP4 (h264 / yuv420p) - and optionally a looping GIF - through
 :func:`strands_robots.rendering.encode_clip`, the encoder every recorder in the
@@ -133,6 +133,28 @@ def _encode(frames, out_path, fps, gif_path=None, gif_fps=13, gif_width=480):
 
     if gif_path:
         _encode_gif(frames, gif_path, gif_fps, gif_width)
+
+
+def free_camera_frame(sim, width: int, height: int) -> np.ndarray:
+    """One RGB frame of the free camera, as pixels.
+
+    ``sim.render()`` answers the agent-tool PNG envelope - a ``{"status",
+    "content": [...]}`` dict - so appending it to ``frames`` collected dicts and
+    the first/last spread read then raised ``TypeError: int() argument must be
+    ... not 'dict'``, killing every ``--camera default`` run before it encoded
+    anything. ``sim.get_frame()`` is the raw-pixel counterpart the engine
+    documents for in-process consumers and returns ``(H, W, 3) uint8`` RGB.
+
+    Args:
+        sim: The simulation handle the rollout is stepping.
+        width: Frame width in pixels.
+        height: Frame height in pixels.
+
+    Returns:
+        The ``(height, width, 3) uint8`` RGB frame.
+    """
+    rgb, _depth = sim.get_frame(camera_name="default", width=width, height=height)
+    return np.asarray(rgb)
 
 
 def _downscale(frames, width):
@@ -402,8 +424,7 @@ async def _rollout(args):
             renderer.update_scene(data, camera=cam)
             frames.append(renderer.render().copy())
         else:
-            img = sim.render(width=args.width, height=args.height, camera_name="default")
-            frames.append(np.asarray(img))
+            frames.append(free_camera_frame(sim, args.width, args.height))
 
     if renderer is not None:
         renderer.close()
