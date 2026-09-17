@@ -156,6 +156,11 @@ nothing to the servos and never ask the operator:
 | `list_cameras` | the cameras passed as `cameras=` and whether each is open |
 | `render` | one PNG from a camera (`camera_name`, optional `output_path` inside `~/.strands_robots/renders`) |
 
+The `render` PNG holds the colour the camera saw: a camera configured
+`color_mode="bgr"` delivers frames in OpenCV's own channel order, and they are
+encoded in it rather than converted a second time (which transposed red and
+blue - a red object was saved, and shown to the model, as pure blue).
+
 ```python
 from strands import Agent
 from strands_robots import Robot

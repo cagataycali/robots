@@ -38,8 +38,9 @@ Three facts about real arms shape it:
 
 Nothing here imports lerobot: the bus is duck-typed on the surface lerobot's
 ``MotorsBus`` exposes (``motors``, ``sync_read``, ``read``, ``is_connected``,
-``is_calibrated``, ``connect``, ``port``), which is what lets the tests run on a
-fake bus and the same code run on the real one.
+``is_calibrated``, ``connect``, ``port``) and the camera on its ``Camera``
+surface (``is_connected``, ``connect``, ``read``, ``color_mode``), which is what
+lets the tests run on a fake bus and the same code run on the real one.
 """
 
 from __future__ import annotations
@@ -360,12 +361,33 @@ def format_cameras(tool_name: str, cameras: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _encode_png(frame: Any) -> bytes:
-    """PNG bytes from an RGB uint8 array, through whichever encoder is installed."""
+def _delivers_bgr(camera: Any) -> bool:
+    """True when this camera hands back BGR, the order OpenCV encodes natively.
+
+    A lerobot camera honours its configured ``color_mode`` on the way out: an
+    ``OpenCVCameraConfig(color_mode=ColorMode.BGR)`` returns the capture in the
+    order the driver read it, while ``RGB`` converts it first. The setting is an
+    enum whose value is the spelling (``"rgb"``/``"bgr"``), read here off
+    ``.value`` when there is one and compared case-insensitively so a camera
+    configured with the bare string answers the same. A camera with no notion of
+    channel order delivers RGB, which is lerobot's own default.
+    """
+    mode = getattr(camera, "color_mode", None)
+    return str(getattr(mode, "value", mode)).lower() == "bgr"
+
+
+def _encode_png(frame: Any, *, bgr: bool = False) -> bytes:
+    """PNG bytes from a uint8 frame, through whichever encoder is installed.
+
+    ``bgr`` says the frame already arrived in OpenCV's channel order, so it is
+    encoded as it is. Converting it as though it were RGB transposes red and
+    blue - a photograph of a red object is written blue - in the file and in the
+    bytes handed to the model alike, under a result that reports success.
+    """
     try:
         import cv2  # lerobot's OpenCV camera already depends on it
 
-        ok, buf = cv2.imencode(".png", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        ok, buf = cv2.imencode(".png", frame if bgr else cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
         if not ok:
             raise RuntimeError("cv2.imencode returned False")
         return bytes(buf.tobytes())
@@ -375,7 +397,7 @@ def _encode_png(frame: Any) -> bytes:
         from PIL import Image
 
         out = io.BytesIO()
-        Image.fromarray(frame).save(out, format="PNG")
+        Image.fromarray(frame[:, :, ::-1] if bgr else frame).save(out, format="PNG")
         return out.getvalue()
 
 
@@ -402,6 +424,11 @@ def capture_frame(
     the camera, before the first read: a read that then fails (OpenCV's
     first-frame timeout is the usual one) leaves the camera open, and the
     caller's ledger must already hold it or no connect will ever hand it back.
+
+    The frame is encoded in the channel order its camera delivers, so a
+    ``color_mode="bgr"`` camera - a legitimate
+    lerobot setting, and the order a policy stack downstream of OpenCV usually
+    asks for - no longer writes a red object blue.
 
     Returns ``{"camera", "path", "png", "width", "height", "channels", "opened_camera", "read_ms"}``
     - ``png`` is the encoded frame, for the tool's ``image`` content block.
@@ -454,7 +481,7 @@ def capture_frame(
         read_ms = (time.monotonic() - t0) * 1000.0
 
     safe.parent.mkdir(parents=True, exist_ok=True)
-    png = _encode_png(frame)
+    png = _encode_png(frame, bgr=_delivers_bgr(camera))
     safe.write_bytes(png)
 
     shape = tuple(getattr(frame, "shape", ()))

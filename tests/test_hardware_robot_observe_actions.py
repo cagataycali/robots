@@ -20,7 +20,8 @@ asked for, so they grade the observable facts without a serial port:
   degrees stay the arm's own), and a torque register no motor answered is not
   "off" (which reads as "safe to grab").
 * ``render`` opens the named camera lazily and saves a PNG inside the render
-  sandbox; an unknown camera or an outside path is refused with the remedy.
+  sandbox; an unknown camera or an outside path is refused with the remedy, and
+  the PNG holds the colour the camera saw whichever channel order it delivers.
 * ``get_status()`` on a never-connected arm is a verdict, not the degraded
   ``{"error": ...}`` dict (``is_calibrated`` used to be read off a closed bus).
 * ``_connect_robot()`` refusing an uncalibrated arm closes what it opened, and
@@ -42,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import threading
 from enum import Enum
 from pathlib import Path
@@ -49,6 +51,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from lerobot.cameras.configs import ColorMode
 from lerobot.utils.errors import DeviceAlreadyConnectedError
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolUse
@@ -214,6 +217,33 @@ class FakeCamera:
         self.reads += 1
         frame = np.zeros(self.shape, dtype=np.uint8)
         frame[..., 0] = 200
+        return frame
+
+
+#: One flat colour, and the pixel each channel order delivers it as. Red is the
+#: half of the transposition a caller notices: RGB red is BGR blue and back.
+_RED_RGB = (255, 0, 0)
+_RED_BGR = (0, 0, 255)
+
+
+class _FlatColourCamera(FakeCamera):
+    """A camera looking at one flat colour, handed over in the order it declares.
+
+    lerobot's cameras honour their configured ``color_mode`` on the way out, so a
+    ``BGR`` camera returns the capture as OpenCV read it. ``color_mode=None``
+    stands for a camera that declares nothing, which lerobot treats as RGB.
+    """
+
+    def __init__(self, delivered: tuple[int, int, int], color_mode: Any = None) -> None:
+        super().__init__(shape=(4, 8, 3))
+        self.delivered = delivered
+        if color_mode is not None:
+            self.color_mode = color_mode
+
+    def read(self) -> np.ndarray:
+        self.reads += 1
+        frame = np.zeros(self.shape, dtype=np.uint8)
+        frame[..., :] = self.delivered
         return frame
 
 
@@ -623,6 +653,56 @@ class TestCameras:
         again = _call(hw, action="render", camera_name="front", output_path="second.png")
         assert _json(again)["opened_camera"] is False
         assert Path(_json(again)["path"]) == sandbox / "second.png"
+
+    @pytest.mark.parametrize(
+        ("color_mode", "delivered"),
+        [
+            (ColorMode.RGB, _RED_RGB),
+            (ColorMode.BGR, _RED_BGR),
+            ("bgr", _RED_BGR),
+            ("BGR", _RED_BGR),
+            (None, _RED_RGB),
+        ],
+        ids=["enum-rgb", "enum-bgr", "str-bgr", "str-upper-bgr", "declares-nothing"],
+    )
+    def test_render_saves_the_colour_the_camera_saw(
+        self, sandbox: Path, color_mode: Any, delivered: tuple[int, int, int]
+    ) -> None:
+        """A red object is a red PNG: a BGR camera's frame is not converted twice.
+
+        ``color_mode="bgr"`` is a legitimate lerobot camera setting - the order a
+        policy stack downstream of OpenCV usually asks for - and its frames arrive
+        in OpenCV's own channel order. Encoded as though they were RGB, red and
+        blue are transposed: the saved file *and* the bytes the model is handed
+        showed a red object as pure blue, under a result reporting success.
+        """
+        from PIL import Image
+
+        cam = _FlatColourCamera(delivered, color_mode)
+        hw = _make_hw(FakeLeRobot(calibrated=True, cameras={"front": cam}))
+
+        result = _call(hw, action="render", camera_name="front")
+
+        assert result["status"] == "success", _text(result)
+        path = Path(_json(result)["path"])
+        assert Image.open(path).convert("RGB").getpixel((0, 0)) == _RED_RGB
+        # the model looks at the bytes, not the path: they must be the same frame
+        image = next(block["image"] for block in result["content"] if "image" in block)
+        assert image["source"]["bytes"] == path.read_bytes()
+
+    def test_render_saves_the_colour_the_camera_saw_without_opencv(
+        self, sandbox: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Pillow fallback honours the channel order too (no OpenCV installed)."""
+        from PIL import Image
+
+        monkeypatch.setitem(sys.modules, "cv2", None)  # `import cv2` then raises ImportError
+        hw = _make_hw(FakeLeRobot(calibrated=True, cameras={"front": _FlatColourCamera(_RED_BGR, ColorMode.BGR)}))
+
+        result = _call(hw, action="render", camera_name="front")
+
+        assert result["status"] == "success", _text(result)
+        assert Image.open(Path(_json(result)["path"])).convert("RGB").getpixel((0, 0)) == _RED_RGB
 
     def test_render_with_one_camera_needs_no_name(self, sandbox: Path) -> None:
         hw = _make_hw(FakeLeRobot(calibrated=True, cameras={"only": FakeCamera()}))
