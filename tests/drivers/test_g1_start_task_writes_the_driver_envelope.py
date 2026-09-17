@@ -101,7 +101,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
     importable with the SDK absent; a module that pulled a submodule
     at import time would break every headless CI runner and Thor
     before an office bring-up.  The driver enforces the same rule
-    against itself (:func:`~strands_robots.tools.g1._g1_common.ensure_dds`
+    against itself (:func:`~strands_robots.drivers.unitree._common.ensure_dds`
     is the only path that loads the SDK); this cell holds the
     start-task verb to it too.
     """
@@ -206,7 +206,7 @@ def test_a_missing_driver_is_refused_with_a_message_naming_the_parameter() -> No
     it.  A model that leaves the parameter out reaches the verb with
     ``None``, and the verb owes an envelope-shaped refusal instead of
     an exception the ``@tool`` wrapper cannot format.  The shared
-    :func:`~strands_robots.tools.g1._g1_common.live_handle_refusal`
+    :func:`~strands_robots.drivers.unitree._common.live_handle_refusal`
     guard produces it; this cell fixes that the guard is called
     before the accessor path.
     """
@@ -296,7 +296,7 @@ def test_a_default_call_passes_the_signature_defaults_to_the_driver() -> None:
 def test_the_wrong_shape_driver_is_not_called() -> None:
     """A wrong-shape driver is refused before the accessor path.
 
-    The shared :func:`~strands_robots.tools.g1._g1_common.live_handle_refusal`
+    The shared :func:`~strands_robots.drivers.unitree._common.live_handle_refusal`
     guard is called first; a ``str`` handle is refused with an
     envelope and the driver's method is never reached.  This cell
     holds the ordering by grading a handle that would raise if

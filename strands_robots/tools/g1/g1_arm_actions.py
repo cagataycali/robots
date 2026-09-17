@@ -34,7 +34,7 @@ Two things this module is deliberately *not*:
   An SDK release that widens or narrows the id set is a driver-side
   update; when the driver's arm-execute method lands, its refusal
   will name the ``rc=7402`` error the same
-  :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` entry this
+  :data:`~strands_robots.drivers.unitree._common.ERR_CODES` entry this
   lookup returns, so both sides quote the same text.
 
 What this module does not decide.
@@ -42,7 +42,7 @@ What this module does not decide.
 * Whether the FSM currently admits an arm-SDK write. Arm-action
   execution is arm-SDK-shaped: it runs only while
   :attr:`~strands_robots.drivers.g1.G1Driver._fsm_id` is inside
-  :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS`. That
+  :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS`. That
   membership is a live driver read and belongs on
   :mod:`~strands_robots.tools.g1.g1_motion_gates` /
   :mod:`~strands_robots.tools.g1.g1_state`, which already answer it.
@@ -59,7 +59,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import ERR_CODES, HANDSHAKE_FSMS
+from strands_robots.drivers.unitree._common import ERR_CODES, HANDSHAKE_FSMS
 
 #: Snapshot of ``unitree_sdk2py.g1.arm.g1_arm_action_client.action_map``
 #: as shipped by the Unitree SDK today. The map is small and stable
@@ -133,7 +133,7 @@ def g1_list_arm_actions() -> dict[str, Any]:
         naming the id ``ExecuteAction`` uses to drop the arm-action
         hold, an ``arm_ready_fsm_ids`` list naming the FSM ids the
         arm-SDK gate admits on (from
-        :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS`,
+        :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS`,
         surfaced here because arm-action execution is arm-SDK-shaped
         and shares the same gate), and a ``refusals`` list carrying
         the three SDK-side refusal codes and their decoded text

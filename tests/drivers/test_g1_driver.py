@@ -22,16 +22,16 @@ from strands_robots.drivers import (
     missing_driver_members,
 )
 from strands_robots.drivers.g1 import G1Driver
-from strands_robots.tools.g1 import (
+from strands_robots.drivers.unitree import _dds_engine
+from strands_robots.drivers.unitree._common import (
+    _DDS_INIT_LOCK,
     HANDSHAKE_FSMS,
     WALK_FSMS,
-    _dds_engine,
     decode_code,
     ensure_dds,
     reset_dds_state,
 )
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
 from tests.drivers.test_g1_control_loop import _StubCRC, _StubLowCmd
 
 # =========================================================================
@@ -312,7 +312,7 @@ def test_mode_machine_and_fsm_id_have_disjoint_value_ranges() -> None:
     assert mode_machine == 9
     assert driver._fsm_id is None  # the FSM gate's input is a different source
     # Ranges: uint8 vs the SDK's error-table constants.
-    from strands_robots.tools.g1 import HANDSHAKE_FSMS
+    from strands_robots.drivers.unitree._common import HANDSHAKE_FSMS
 
     assert all(v > 255 for v in HANDSHAKE_FSMS)
     assert 0 <= mode_machine <= 255
@@ -817,7 +817,7 @@ def test_dds_init_lock_is_a_lock() -> None:
     produce under that race is what this lock exists to prevent. Test what
     matters: same object, acquirable, releasable.
 
-    The lock is private to ``_g1_common`` and reached there rather than through
+    The lock is private to ``_common`` and reached there rather than through
     the package, so ``_dds_engine`` binding a *copy* would be invisible at the
     import site. The identity assertion is what makes "same object" a fact.
     """

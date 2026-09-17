@@ -32,8 +32,8 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers.g1 import G1Driver
+from strands_robots.drivers.unitree._common import ERR_CODES
 from strands_robots.mesh.core import Mesh
-from strands_robots.tools.g1._g1_common import ERR_CODES
 
 #: Every field ``unitree_go.msg.dds_.LidarState_`` declares, as shipped by
 #: ``unitree_sdk2py`` 1.0.1. Frozen here because that SDK is installed from a

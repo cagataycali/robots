@@ -3,7 +3,7 @@
 Two docstrings in this driver claimed :data:`HANDSHAKE_FSMS` gates writes to
 ``rt/armsdk``:
 
-* ``strands_robots/tools/g1/_g1_common.py`` on the ``HANDSHAKE_FSMS`` constant
+* ``strands_robots/drivers/unitree/_common.py`` on the ``HANDSHAKE_FSMS`` constant
   itself: "so :meth:`~strands_robots.drivers.g1.G1Driver.send_action` checks
   membership before writing ``rt/armsdk``".
 * ``strands_robots/drivers/g1.py`` on ``_check_motion_gates``: ":data:`HANDSHAKE_FSMS`
@@ -55,7 +55,7 @@ import re
 from pathlib import Path
 
 import strands_robots
-from strands_robots.tools.g1 import _g1_common
+from strands_robots.drivers.unitree import _common
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 
@@ -65,14 +65,14 @@ def _read(rel: str) -> str:
 
 
 def _handshake_docstring_in_common() -> str:
-    """The ``#:``-prefixed docstring above ``HANDSHAKE_FSMS`` in ``_g1_common``.
+    """The ``#:``-prefixed docstring above ``HANDSHAKE_FSMS`` in ``_common``.
 
     Sphinx renders ``#:`` lines that precede a module-level assignment as the
     docstring for the assigned name, so the reader who follows
     :data:`HANDSHAKE_FSMS` sees exactly this block.  The scan collects the
     contiguous run of ``#:`` lines immediately above the assignment.
     """
-    text = _read("tools/g1/_g1_common.py")
+    text = _read("drivers/unitree/_common.py")
     lines = text.splitlines()
     for idx, line in enumerate(lines):
         if line.startswith("HANDSHAKE_FSMS"):
@@ -81,7 +81,7 @@ def _handshake_docstring_in_common() -> str:
             while top > 0 and lines[top - 1].lstrip().startswith("#:"):
                 top -= 1
             return "\n".join(lines[top:idx])
-    raise AssertionError("HANDSHAKE_FSMS assignment not found in _g1_common.py")
+    raise AssertionError("HANDSHAKE_FSMS assignment not found in _common.py")
 
 
 def _check_motion_gates_docstring() -> str:
@@ -107,10 +107,10 @@ def _check_motion_gates_docstring() -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_premise_handshake_fsms_still_declared_in_g1_common() -> None:
+def test_premise_handshake_fsms_still_declared_in_the_transport() -> None:
     """The constant this file grades is at the location it grades."""
-    assert isinstance(_g1_common.HANDSHAKE_FSMS, frozenset)
-    assert _g1_common.HANDSHAKE_FSMS == frozenset({500, 501, 801})
+    assert isinstance(_common.HANDSHAKE_FSMS, frozenset)
+    assert _common.HANDSHAKE_FSMS == frozenset({500, 501, 801})
 
 
 def test_premise_send_action_writes_rt_lowcmd() -> None:
@@ -132,7 +132,7 @@ def test_premise_send_action_writes_rt_lowcmd() -> None:
 
 
 def test_handshake_fsms_docstring_does_not_name_a_topic_send_action_does_not_write() -> None:
-    """The ``HANDSHAKE_FSMS`` docstring in ``_g1_common`` cites ``rt/lowcmd`` where it names a topic.
+    """The ``HANDSHAKE_FSMS`` docstring in ``_common`` cites ``rt/lowcmd`` where it names a topic.
 
     The defect was a docstring that said :meth:`send_action` writes ``rt/armsdk``.
     The fix does not have to strip every mention of ``rt/armsdk`` - it may
@@ -187,5 +187,5 @@ def test_scope_the_sdk_error_table_still_names_rt_armsdk_because_that_is_the_sdk
     grew to blanket-ban the substring, it would fire here and this file's
     scope would need re-stating.
     """
-    text = _read("tools/g1/_g1_common.py")
+    text = _read("drivers/unitree/_common.py")
     assert "rt/armsdk topic is occupied" in text

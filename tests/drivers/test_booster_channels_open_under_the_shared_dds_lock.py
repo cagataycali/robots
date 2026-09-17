@@ -1,6 +1,6 @@
 """Opening the Booster T1's channels holds the shared DDS lock.
 
-``_g1_common``'s module docstring states the contract graded here: "A
+``_common``'s module docstring states the contract graded here: "A
 ``ChannelSubscriber`` and a ``ChannelPublisher`` cannot be constructed
 concurrently: the CycloneDDS bindings segfault. ``_DDS_INIT_LOCK`` is the
 *shared* lock the driver and the tools both hold while creating readers or
@@ -9,7 +9,7 @@ writers. One lock; two consumers."
 :meth:`~strands_robots.drivers.booster.BoosterDriver.connect_eagerly` builds six
 endpoints in a row - the channel factory, an RPC client, and four
 subscriber/publisher channels - while
-:class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` constructs
+:class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet` constructs
 subscribers under that same lock on other threads in the same process
 (streaming, a policy rollout, mesh telemetry). A shared lock is only a guarantee
 where every caller takes it, and the caller that loses the race is the one
@@ -53,7 +53,7 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers.booster import BoosterDriver
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
 
 #: Every endpoint-creating operation the driver performs, by the name the vendor
 #: gives it. ``Init`` is the only one the package-wide source rule recognises.

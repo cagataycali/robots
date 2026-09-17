@@ -70,7 +70,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
     with the SDK absent; a module that pulled a submodule at import time
     would break every headless CI runner and Thor before an office
     bring-up.  The driver enforces the same rule against itself
-    (:func:`~strands_robots.tools.g1._g1_common.ensure_dds` is the only
+    (:func:`~strands_robots.drivers.unitree._common.ensure_dds` is the only
     path that loads the SDK); this cell holds the task-status verb to it
     too.
     """

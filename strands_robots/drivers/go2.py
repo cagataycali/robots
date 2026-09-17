@@ -32,7 +32,7 @@ matter are both on the wire:
 
 The safety gate is also a different question. The G1 gate reads a high-level FSM
 id whose wire key is still unevidenced (see
-:mod:`strands_robots.tools.g1._motion_switcher` and issue #2765). The Go2's
+:mod:`strands_robots.drivers.unitree._motion_switcher` and issue #2765). The Go2's
 low-level write path has a simpler and fully-evidenced precondition: the onboard
 sport-mode service must be *released* before ``rt/lowcmd`` reaches the motors,
 and every SDK example tests exactly one key for it - ``CheckMode()``'s
@@ -82,9 +82,9 @@ from strands_robots.drivers.base import (
     telemetry_int_list,
     undeclared_verb_error,
 )
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, sdk_missing
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 from strands_robots.mesh.pacing import Ticker
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, sdk_missing
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -836,11 +836,11 @@ class Go2Driver:
         refuses on its own terms.
 
         The client is opened under
-        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`. ``Init()``
+        :data:`~strands_robots.drivers.unitree._common._DDS_INIT_LOCK`. ``Init()``
         builds the client's DDS request/response endpoints, and the CycloneDDS
         bindings segfault when an endpoint is constructed concurrently with
         another - which this driver does on its own threads, because
-        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` creates
+        :class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet` creates
         every subscriber under that same lock. A segfault is not catchable by the
         "record the error and stay usable for reads" boundary above: the process
         dies, possibly while the robot stands under its own controller.
@@ -856,7 +856,7 @@ class Go2Driver:
         factory = self._motion_switcher_client_factory
         try:
             if factory is None:
-                from strands_robots.tools.g1._motion_switcher import _load_motion_switcher_client
+                from strands_robots.drivers.unitree._motion_switcher import _load_motion_switcher_client
 
                 # The import stays outside the lock: it creates no endpoint, and
                 # holding the shared lock across a lazy SDK import would stall

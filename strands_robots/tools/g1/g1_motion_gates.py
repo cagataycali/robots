@@ -2,16 +2,16 @@
 
 ``G1Driver._check_motion_gates`` refuses every arm-SDK-shaped write while
 :attr:`~strands_robots.drivers.g1.G1Driver._fsm_id` is outside
-:data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS`, and every
+:data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS`, and every
 locomotion-shaped write while it is outside
-:data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`. This module surfaces
+:data:`~strands_robots.drivers.unitree._common.WALK_FSMS`. This module surfaces
 those two sets to an agent so a caller can decide the refusal decidably
 before ``send_action`` / ``run_policy`` is attempted, rather than triggering
 it from the driver at wire time.
 
 The verb here reads the driver's own gate constants -
-:data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` and
-:data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` - so a gate widened
+:data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` and
+:data:`~strands_robots.drivers.unitree._common.WALK_FSMS` - so a gate widened
 or narrowed in the driver's admission table moves both the write path and
 this lookup together. No SDK, no DDS, no cache: this module is a pure reader
 over module-level tables, so ``import strands_robots.tools.g1.g1_motion_gates``
@@ -32,7 +32,7 @@ What this module does not decide.
   the driver actually gates on rather than a translated label a reader could
   drift from. The write-path refusal quotes those same integers verbatim
   (see the driver's ``_check_motion_gates`` and the ``7404`` entry in
-  :data:`~strands_robots.tools.g1._g1_common.ERR_CODES`), so a caller
+  :data:`~strands_robots.drivers.unitree._common.ERR_CODES`), so a caller
   comparing this verb's output to the refusal string sees the same numbers
   on both sides.
 """
@@ -43,7 +43,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import (
+from strands_robots.drivers.unitree._common import (
     ERR_CODES,
     HANDSHAKE_FSMS,
     WALK_FSMS,

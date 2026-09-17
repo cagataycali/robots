@@ -1,10 +1,10 @@
 """A teardown racing a subscribe/publish leaves no live endpoint behind.
 
-:meth:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet.close` and
-:meth:`~strands_robots.tools.g1._dds_engine.DDSPublisher.close` swap their
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet.close` and
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSPublisher.close` swap their
 collection out under ``_lock`` and then release what they took.
-:meth:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet.subscribe` and
-:meth:`~strands_robots.tools.g1._dds_engine.DDSPublisher.get_publisher` build
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet.subscribe` and
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSPublisher.get_publisher` build
 their endpoint under ``_DDS_INIT_LOCK`` - a different lock, held for the whole
 construction because the CycloneDDS bindings segfault on concurrent
 construction.
@@ -22,7 +22,7 @@ at length: ``subscribe`` asks for ``queueLen=10``, and at any queue length
 above zero ``unitree_sdk2py`` starts a ``ch_reader`` daemon thread whose target
 is a bound method of the channel's reader, so the reader stays matched and the
 decoder callback keeps filling caches for a driver that believes it is
-disconnected. :func:`~strands_robots.tools.g1._dds_engine._release_partial`
+disconnected. :func:`~strands_robots.drivers.unitree._dds_engine._release_partial`
 already exists to uphold exactly this invariant on the path where construction
 *fails*; these cells grade it on the path where construction succeeds and the
 recording is what could not happen.
@@ -46,10 +46,11 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.g1 import _dds_engine, reset_dds_state
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.drivers.unitree import _dds_engine
+from strands_robots.drivers.unitree._common import reset_dds_state
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 
-_ENGINE_LOGGER = "strands_robots.tools.g1._dds_engine"
+_ENGINE_LOGGER = "strands_robots.drivers.unitree._dds_engine"
 
 # How long a cell waits for the other thread to reach its barrier. Generous:
 # it bounds a hang, it does not pace anything.

@@ -23,11 +23,11 @@ robot-free.
 
 Client singletons: each SDK client is cached after first ``Init()``
 because a second ``Init()`` on the same client class can crash the
-process (the same rule :func:`~strands_robots.tools.g1._g1_common.ensure_dds`
+process (the same rule :func:`~strands_robots.drivers.unitree._common.ensure_dds`
 serialises DDS factory construction for). ``Init()`` builds the client's
 DDS request/response endpoints, so it runs under the *shared*
-``_DDS_INIT_LOCK`` from :mod:`~strands_robots.tools.g1._g1_common` - the
-same lock the driver and :mod:`~strands_robots.tools.g1._dds_engine` hold
+``_DDS_INIT_LOCK`` from :mod:`~strands_robots.drivers.unitree._common` - the
+same lock the driver and :mod:`~strands_robots.drivers.unitree._dds_engine` hold
 while creating readers or writers, because concurrent endpoint
 construction segfaults the CycloneDDS bindings. All RPC execution is
 serialised on one further lock - the SDK clients are not thread-safe;
@@ -77,8 +77,8 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, ensure_dds
 from strands_robots.tools._command_gate import gate_motion
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds
 
 logger = logging.getLogger(__name__)
 
@@ -236,8 +236,8 @@ def _get_client(service_name: str) -> Any:
     channel endpoints, so this is a *bus* construction and not merely a cache
     fill: it has to be serialised against every other endpoint construction
     in the process, not just against other callers of this function.
-    :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK` is the shared
-    lock the driver and :mod:`~strands_robots.tools.g1._dds_engine` already
+    :data:`~strands_robots.drivers.unitree._common._DDS_INIT_LOCK` is the shared
+    lock the driver and :mod:`~strands_robots.drivers.unitree._dds_engine` already
     hold while creating readers or writers, and these tools are the second
     consumer that lock was introduced for (issue #358). Holding only the
     module-private ``_CLIENTS_LOCK`` would serialise this path against itself
