@@ -458,10 +458,14 @@ class TestPremises:
         the DDS transport the verbs read, so looking in a single directory would
         report "one owner" for a tree that had grown a second.
         """
+        package_dirs = (
+            Path(g1_package.__file__).parent,
+            Path(unitree_transport.__file__).parent,
+        )
         definitions = [
             path.name
-            for package in (g1_package, unitree_transport)
-            for path in sorted(Path(package.__file__).parent.glob("*.py"))
+            for package_dir in package_dirs
+            for path in sorted(package_dir.glob("*.py"))
             if any(
                 isinstance(node, ast.FunctionDef) and node.name == guard
                 for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
