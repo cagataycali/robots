@@ -1504,7 +1504,12 @@ class LerobotLocalPolicy(Policy):
             ``actions_per_step > 1`` from the caller is respected here - but one
             strictly BELOW ``n_action_steps`` is named in a warning, because it
             truncates the chunk into the same out-of-distribution regime this
-            branch corrects the default away from. A caller who asked for RTC is
+            branch corrects the default away from. A config that itself declares
+            ``n_action_steps`` below ``chunk_size`` reaches that regime without a
+            caller doing anything, so it is named too: the model emits
+            ``chunk_size`` actions and only the first ``n_action_steps`` are ever
+            executed. Every LeRobot policy ships the two equal, so this fires
+            only for a config that was edited. A caller who asked for RTC is
             not warned: RTC blends the seam and ``rtc_execution_horizon`` owns
             the interval.
 
@@ -1603,6 +1608,21 @@ class LerobotLocalPolicy(Policy):
             )
             return
         n_action_steps = getattr(config, "n_action_steps", None)
+        chunk_size = getattr(config, "chunk_size", None)
+        if isinstance(n_action_steps, int) and isinstance(chunk_size, int) and n_action_steps < chunk_size:
+            logger.warning(
+                "lerobot_local: %s emits a %d-action chunk (config.chunk_size) but its "
+                "config declares n_action_steps=%d, so every chunk is truncated to its "
+                "first %d and each re-query starts from a state the checkpoint never "
+                "replayed to. Set n_action_steps=%d to consume the chunk as trained, or "
+                "temporal_ensemble_coeff to consume it per step (LeRobot then averages "
+                "every prediction of each instant and requires n_action_steps=1).",
+                type(self._policy).__name__,
+                chunk_size,
+                n_action_steps,
+                n_action_steps,
+                chunk_size,
+            )
         if isinstance(n_action_steps, int) and n_action_steps > 1:
             self.actions_per_step = n_action_steps
             logger.info(
