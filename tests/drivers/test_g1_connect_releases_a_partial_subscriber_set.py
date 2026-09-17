@@ -1,7 +1,7 @@
 """A connect that gives up part way releases the subscribers it already made.
 
 :meth:`~strands_robots.drivers.g1.G1Driver.connect_eagerly` builds a
-:class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet`, subscribes four
+:class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet`, subscribes four
 topics through it, then starts a publisher, and records the set on
 ``self._subs`` only once all of that has succeeded. So a ladder that gave up
 part way left the topics it had already subscribed running with nothing holding
@@ -41,9 +41,9 @@ from typing import Any
 import pytest
 
 import strands_robots.drivers.g1 as g1_module
-import strands_robots.tools.g1._dds_engine as engine_module
+import strands_robots.drivers.unitree._dds_engine as engine_module
 from strands_robots.drivers.g1 import G1Driver
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
+from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
 from tests.drivers.test_g1_dds_engine_release import _install_channel, _RecordingEndpoint
 
 

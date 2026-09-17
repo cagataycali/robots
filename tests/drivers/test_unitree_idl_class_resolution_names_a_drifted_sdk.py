@@ -40,7 +40,7 @@ import strands_robots.drivers.g1 as g1_module
 import strands_robots.drivers.go2 as go2_module
 from strands_robots.drivers.g1 import G1Driver
 from strands_robots.drivers.go2 import Go2Driver
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
+from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
 
 # The two copies of the resolver, and the drivers that consume them. Every cell
 # below runs against both, because a reason that differs between them is a

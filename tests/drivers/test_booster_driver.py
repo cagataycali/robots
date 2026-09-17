@@ -41,7 +41,7 @@ from strands_robots.drivers.booster import (
     parse_low_state,
     resolve_targets,
 )
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
 from strands_robots.utils import MAX_DDS_DOMAIN_ID
 
 # The width a T1 reports. Every frame the driver builds is bounded by what the
@@ -781,7 +781,7 @@ class TestEndpointsAreBuiltUnderTheSharedDdsLock:
     Constructing one CycloneDDS endpoint while another is being constructed
     segfaults the bindings, and the loss is not catchable: the process dies,
     possibly while a 1.2 m biped is standing under its own controller. The
-    subscriber set in MODULE ``strands_robots.tools.g1._dds_engine`` builds every
+    subscriber set in MODULE ``strands_robots.drivers.unitree._dds_engine`` builds every
     subscriber under ``_DDS_INIT_LOCK``, so this driver has to take the *same*
     lock rather than one of its own - a private lock would exclude nothing.
 

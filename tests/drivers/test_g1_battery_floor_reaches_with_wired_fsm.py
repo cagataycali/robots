@@ -63,7 +63,7 @@ _HEALTHY_MODE_MACHINE = 9
 
 # ``501`` is in :data:`HANDSHAKE_FSMS` and :data:`WALK_FSMS`; the gate admits
 # it for every scope.  Literal, not derived, so a set-membership change in
-# ``_g1_common`` (which would legitimately want a different value here) does
+# ``_common`` (which would legitimately want a different value here) does
 # not silently pass this file.
 _HEALTHY_FSM_ID = 501
 
@@ -71,7 +71,7 @@ _HEALTHY_FSM_ID = 501
 class _RecordingMotionSwitcherClient:
     """A minimally-real ``MotionSwitcherClient`` stand-in.
 
-    :func:`strands_robots.tools.g1._motion_switcher.read_fsm_id` calls
+    :func:`strands_robots.drivers.unitree._motion_switcher.read_fsm_id` calls
     ``CheckMode()`` and decodes the return.  Queuing the return here lets
     each cell fabricate the wire it wants graded, without importing the SDK.
 

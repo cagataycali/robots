@@ -72,7 +72,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
     the SDK absent; a module that pulled a submodule at import time would
     break every headless CI runner and Thor before an office bring-up. The
     driver enforces the same rule against itself
-    (:func:`~strands_robots.tools.g1._g1_common.ensure_dds` is the only path
+    (:func:`~strands_robots.drivers.unitree._common.ensure_dds` is the only path
     that loads the SDK); this cell holds the lidar-state verb to it too.
     """
     before = set(sys.modules)
@@ -118,7 +118,7 @@ def test_a_healthy_lidar_reports_every_field_the_decoder_wrote() -> None:
 
     ``_on_lidar_state`` writes ``code`` (the integer fault code off
     ``error_state``), ``code_text`` (the same code rendered through
-    :func:`~strands_robots.tools.g1._g1_common.decode_code`), ``freq`` (the
+    :func:`~strands_robots.drivers.unitree._common.decode_code`), ``freq`` (the
     cloud frequency in Hz off ``cloud_frequency``, float),
     ``sys_rotation_speed`` (float) and ``t`` (wall time of decode). The
     verb is not the place to reword or convert those -- a caller reading

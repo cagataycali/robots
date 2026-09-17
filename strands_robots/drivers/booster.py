@@ -59,7 +59,7 @@ from strands_robots.drivers.base import (
     telemetry_float_list,
     undeclared_verb_error,
 )
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
 from strands_robots.utils import boolean_flag_error, dds_domain_id_error, finite_number_error
 
 if TYPE_CHECKING:
@@ -560,12 +560,12 @@ class BoosterDriver:
         write, which is the state hardest to diagnose from the outside.
 
         Every endpoint is constructed under
-        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`. The channel
+        :data:`~strands_robots.drivers.unitree._common._DDS_INIT_LOCK`. The channel
         factory, the loco client's ``Init()`` and each of the four channels build
         DDS readers and writers, and the CycloneDDS bindings segfault when one
         endpoint is constructed concurrently with another - which happens as soon
         as anything else in the process touches DDS, because
-        :class:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet` creates
+        :class:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet` creates
         every subscriber under that same lock. A segfault is not catchable by the
         "record the reason and stay usable for reads" boundary below: the process
         dies, possibly while the robot is standing under its own controller.
@@ -574,7 +574,7 @@ class BoosterDriver:
         holding the shared lock across it would stall every subscriber
         construction in the process for its duration. So does the teardown of a
         partial set, matching
-        :meth:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet.close`:
+        :meth:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet.close`:
         the lock serialises construction, not release.
         """
         if self._connected:

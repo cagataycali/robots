@@ -55,7 +55,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import HANDSHAKE_FSMS, WALK_FSMS
+from strands_robots.drivers.unitree._common import HANDSHAKE_FSMS, WALK_FSMS
 
 #: The status fields only a G1 envelope carries.
 #:
@@ -104,8 +104,8 @@ async def g1_get_state(driver: Any) -> dict[str, Any]:
 
     Read-only. Calls :meth:`~strands_robots.drivers.g1.G1Driver.get_status` once, then
     decides membership of the reported ``fsm_id``
-    against :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` (the arm-SDK gate)
-    and :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` (the locomotion gate). The
+    against :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` (the arm-SDK gate)
+    and :data:`~strands_robots.drivers.unitree._common.WALK_FSMS` (the locomotion gate). The
     membership answer is the same
     one :func:`~strands_robots.tools.g1.g1_motion_gates.g1_fsm_admits` would compute for the
     given ``fsm_id``; this verb saves the caller a second tool call by carrying it alongside

@@ -39,7 +39,7 @@ import importlib
 import sys
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import ERR_CODES, HANDSHAKE_FSMS
+from strands_robots.drivers.unitree._common import ERR_CODES, HANDSHAKE_FSMS
 from strands_robots.tools.g1.g1_arm_actions import (
     _ARM_ACTION_MAP,
     _ARM_RELEASE_ACTION_ID,
@@ -70,7 +70,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
     with the SDK absent; a module that pulled a submodule at import
     time would break every headless CI runner and Thor before an office
     bring-up. The driver enforces the same rule against itself
-    (:func:`~strands_robots.tools.g1._g1_common.ensure_dds` is the only
+    (:func:`~strands_robots.drivers.unitree._common.ensure_dds` is the only
     path that loads the SDK); this cell holds the arm-action lookup
     verbs to it too (refs strands-labs/robots#358).
     """
@@ -121,7 +121,7 @@ def test_g1_list_arm_actions_returns_the_whole_table() -> None:
     list of the values, and ``refusals`` names the three SDK-side
     refusal codes (``7402`` id-not-in-set, ``7401`` holding, ``7400``
     topic-busy) with the decoded text
-    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` carries.
+    :data:`~strands_robots.drivers.unitree._common.ERR_CODES` carries.
     """
     result = _call(g1_list_arm_actions)
     assert result["status"] == "success"

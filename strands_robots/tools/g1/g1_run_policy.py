@@ -42,7 +42,7 @@ refs strands-labs/robots#358).
 The driver argument is typed :class:`~typing.Any` at runtime rather
 than as ``G1Driver`` for the same reason ``g1_stop_task`` and
 ``g1_send_action`` give: the driver module imports
-:func:`~strands_robots.tools.g1._g1_common.ensure_dds` from this
+:func:`~strands_robots.drivers.unitree._common.ensure_dds` from this
 package at load, so a runtime import of ``G1Driver`` here would close
 a cycle, and ``@tool`` calls :func:`typing.get_type_hints` at
 decoration time so a string forward reference cannot resolve without
@@ -94,7 +94,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import live_handle_refusal
+from strands_robots.drivers.unitree._common import live_handle_refusal
 
 
 def _refusal_envelope(text: str) -> dict[str, Any]:
@@ -140,7 +140,7 @@ def g1_run_policy(
             practice a :class:`~strands_robots.drivers.g1.G1Driver`).
             Typed :class:`~typing.Any` rather than as ``G1Driver`` to
             keep this module out of the import cycle the driver's own
-            :func:`~strands_robots.tools.g1._g1_common.ensure_dds` reach
+            :func:`~strands_robots.drivers.unitree._common.ensure_dds` reach
             into this package would close - see the module docstring's
             SDK-load-hygiene note.  The verb is duck-typed on
             ``run_policy``; any object with that method returning the

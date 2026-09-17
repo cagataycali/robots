@@ -25,7 +25,7 @@ import importlib
 import sys
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import HANDSHAKE_FSMS, WALK_FSMS
+from strands_robots.drivers.unitree._common import HANDSHAKE_FSMS, WALK_FSMS
 from strands_robots.tools.g1.g1_state import g1_get_state
 
 
@@ -124,7 +124,7 @@ def test_the_admission_sets_are_read_off_the_driver_constants() -> None:
     """The returned ``handshake_fsms`` / ``walk_fsms`` name the driver's own sets.
 
     A caller quoting the gate's admitted ids in its own voice reads them
-    off this verb's return value rather than the ``_g1_common`` module. A
+    off this verb's return value rather than the ``_common`` module. A
     drift between the two would let the caller quote one set while the
     driver's write path enforces another; this test refuses that drift.
     """

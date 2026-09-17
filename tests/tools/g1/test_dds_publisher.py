@@ -21,8 +21,9 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.g1 import _dds_engine, reset_dds_state
-from strands_robots.tools.g1._dds_engine import DDSPublisher
+from strands_robots.drivers.unitree import _dds_engine
+from strands_robots.drivers.unitree._common import reset_dds_state
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher
 
 # =========================================================================
 # Fixtures - a fake unitree_sdk2py that records what a caller did.        #
@@ -104,11 +105,11 @@ def dds_ready(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     on teardown.
     """
     monkeypatch.setattr(
-        "strands_robots.tools.g1._g1_common.ensure_dds",
+        "strands_robots.drivers.unitree._common.ensure_dds",
         lambda interface: None,
     )
     monkeypatch.setattr(
-        "strands_robots.tools.g1._dds_engine.ensure_dds",
+        "strands_robots.drivers.unitree._dds_engine.ensure_dds",
         lambda interface: None,
     )
     yield
@@ -320,8 +321,8 @@ def test_publisher_and_subscriber_share_the_init_lock() -> None:
     driver that constructs a subscriber and a publisher on two threads.
     """
     # The module-level import binds the same object; a copy would be a bug.
-    from strands_robots.tools.g1 import _dds_engine as engine
-    from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK as canonical
+    from strands_robots.drivers.unitree import _dds_engine as engine
+    from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK as canonical
 
     # Both classes read the module-level name inside their methods; assert
     # the module binding is the canonical lock object.

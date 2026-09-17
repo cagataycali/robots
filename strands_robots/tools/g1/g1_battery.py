@@ -11,7 +11,7 @@ driver's decoder actually wrote rather than the pack percentage alone.
 
 This verb does not subscribe DDS. The driver's own subscriber already
 delivers ``rt/lf/bmsstate`` under the singleton ``_DDS_INIT_LOCK`` from
-:mod:`~strands_robots.tools.g1._g1_common`, and a second subscriber path
+:mod:`~strands_robots.drivers.unitree._common`, and a second subscriber path
 on the same topic would compete for the wire and duplicate the bus load
 that lock is meant to prevent (this is the same rule the ``g1_state``
 module names, refs strands-labs/robots#358).  The verb is duck-typed on
@@ -61,7 +61,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+from strands_robots.drivers.unitree._common import snapshot_handle_refusal
 
 
 @tool

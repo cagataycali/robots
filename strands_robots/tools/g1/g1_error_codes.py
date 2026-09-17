@@ -5,9 +5,9 @@ integer return codes (``rc=3104`` for an RPC timeout, ``rc=7302`` for an
 invalid FSM id, ``rc=7404`` for a write on an FSM the driver's gate
 refuses). Every verb this package already ships that surfaces one of
 those codes quotes the same
-:data:`~strands_robots.tools.g1._g1_common.ERR_CODES` entry verbatim so
+:data:`~strands_robots.drivers.unitree._common.ERR_CODES` entry verbatim so
 the caller and the driver both read the SDK's refusal by the same
-sentence. That table has lived in :mod:`._g1_common` since the package
+sentence. That table has lived in :mod:`strands_robots.drivers.unitree._common` since the package
 was created but no ``@tool``-callable verb has ever exposed it: an agent
 that reads the ``refusal_text`` a verb like
 ``g1_fsm_target_admits`` (removed lookup verb; clamps now live inline)
@@ -20,7 +20,7 @@ tool surface every other verb here answers on.
 Two things this module is deliberately *not*:
 
 * An execution path. No SDK call runs here; the lookup answers by
-  reading :data:`~strands_robots.tools.g1._g1_common.ERR_CODES`
+  reading :data:`~strands_robots.drivers.unitree._common.ERR_CODES`
   directly, and every field the verbs return is a snapshot of that
   dict. A verb like
   ``g1_fsm_target_admits`` (removed lookup verb; clamps now live inline)
@@ -32,14 +32,14 @@ Two things this module is deliberately *not*:
 * An SDK re-import. ``ERR_CODES`` is a Python literal snapshot of the
   return-code lexicon the SDK's :mod:`unitree_sdk2py.g1.loco` /
   :mod:`unitree_sdk2py.g1.arm` handlers observed against the real
-  robot; the mapping lives in :mod:`._g1_common` (which never imports
+  robot; the mapping lives in :mod:`strands_robots.drivers.unitree._common` (which never imports
   the SDK either) so ``import
   strands_robots.tools.g1.g1_error_codes`` pulls no
   ``unitree_sdk2py`` submodule - the import-hygiene contract every
   other file in this package carries, refs
   strands-labs/robots#358. An SDK release that widens or renames the
   code set is a
-  :mod:`~strands_robots.tools.g1._g1_common`-side update; every verb
+  :mod:`~strands_robots.drivers.unitree._common`-side update; every verb
   quoting the text picks up the same change without a second
   copy-paste.
 
@@ -67,10 +67,10 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import ERR_CODES
+from strands_robots.drivers.unitree._common import ERR_CODES
 
 #: The rc value the catalogue quotes on a lookup miss. Mirrors the same
-#: contract as :func:`~strands_robots.tools.g1._g1_common.decode_code`:
+#: contract as :func:`~strands_robots.drivers.unitree._common.decode_code`:
 #: a code outside the snapshot's keys renders as ``"unknown"`` so a
 #: caller can distinguish a name the package has ("Invalid FSM id
 #: (loco)") from a name the package does not (a code the SDK may have
@@ -99,7 +99,7 @@ def g1_list_error_codes() -> dict[str, Any]:
     """Return the SDK error codes the G1 locomotion / arm handlers surface.
 
     Read-only. No driver instance, no DDS, no SDK: every field is a
-    snapshot of :data:`~strands_robots.tools.g1._g1_common.ERR_CODES`
+    snapshot of :data:`~strands_robots.drivers.unitree._common.ERR_CODES`
     read at call time. Useful when a caller receives a ``refusal_code``
     from any other verb in this package and wants to compare it
     against the catalogue of names the package quotes verbatim, or to
@@ -114,7 +114,7 @@ def g1_list_error_codes() -> dict[str, Any]:
         caller who only needs the set. Every field is a snapshot of a
         module-level constant; no dynamic decode runs here. The
         catalogue mirrors what
-        :func:`~strands_robots.tools.g1._g1_common.decode_code`
+        :func:`~strands_robots.drivers.unitree._common.decode_code`
         would render for the same numbers, so a caller reading a
         refusal text from any other verb reads the same sentence
         here.
@@ -133,10 +133,10 @@ def g1_decode_error_code(code: int) -> dict[str, Any]:
     """Decode one SDK return code against the catalogued name.
 
     Read-only. Answers the same
-    lookup :func:`~strands_robots.tools.g1._g1_common.decode_code` would compute internally,
+    lookup :func:`~strands_robots.drivers.unitree._common.decode_code` would compute internally,
     exposed through the ``@tool`` surface so a caller who received a ``refusal_code`` from
     any other verb can resolve it without importing the private constant. A code
-    inside :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` returns ``known=True`` with
+    inside :data:`~strands_robots.drivers.unitree._common.ERR_CODES` returns ``known=True`` with
     the decoded ``text``; a code outside returns ``known=False`` and the catalogue's
     ``unknown`` marker, so a caller can distinguish a name the package has from a name the
     package does not.
@@ -147,7 +147,7 @@ def g1_decode_error_code(code: int) -> dict[str, Any]:
             passed-through boolean is a caller mistake, not a valid
             decode query). A negative value is admitted decidably as
             ``unknown`` rather than refused: the catalogue carries no
-            negative codes, but ``_g1_common.decode_code`` already
+            negative codes, but ``_common.decode_code`` already
             renders any integer, so refusing one here would make this
             verb narrower than the renderer whose text it quotes. A
             transport-level -1 is the convention for an SDK call that

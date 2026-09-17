@@ -180,6 +180,24 @@ class TestTheContract:
         ]
         assert offenders == []
 
+    def test_no_unitree_driver_reaches_into_the_g1_verb_package(self, graph: Any) -> None:
+        """The DDS transport three drivers share is theirs, not a verb package's.
+
+        Graded across all three import kinds rather than the runtime graph
+        alone: a late import of the transport from inside a driver method is the
+        same inversion, deferred to first call, and the Go2's motion-switcher
+        read is exactly that shape.
+        """
+        offenders = sorted(
+            (importer, target)
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if importer.startswith("strands_robots.drivers.")
+            for target in targets
+            if target == "strands_robots.tools.g1" or target.startswith("strands_robots.tools.g1.")
+        )
+        assert offenders == []
+
     def test_the_path_sandbox_reads_nothing_from_the_package(self, graph: Any) -> None:
         """A core guard is standard-library-only, which is what lets it sit there.
 

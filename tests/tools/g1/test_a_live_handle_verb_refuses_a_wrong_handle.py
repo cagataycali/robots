@@ -68,8 +68,9 @@ from typing import Any
 
 import pytest
 
+import strands_robots.drivers.unitree as unitree_transport
 import strands_robots.tools.g1 as g1_package
-from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+from strands_robots.drivers.unitree._common import snapshot_handle_refusal
 
 
 class _AccessorIsData:
@@ -195,7 +196,7 @@ def _live_handle_verbs_from_source() -> set[str]:
     It is deliberately *wider* than the runtime scan in two ways, so that either
     kind of narrowing fails rather than passing quietly:
 
-    * Private modules are read too.  A ``@tool`` in ``_g1_common.py`` is
+    * Private modules are read too.  A ``@tool`` in an ``_``-prefixed module is
       invisible to the runtime scan, which skips a leading underscore.  A verb
       belongs in a public module and a shared helper is not a verb, so the two
       routes disagreeing here is the right outcome and it names the file.
@@ -439,7 +440,7 @@ class TestPremises:
     def test_the_shared_module_pulls_no_vendor_sdk_at_import(self) -> None:
         """Calling the guard cannot break the import-hygiene pin each verb carries."""
         before = {name for name in sys.modules if "unitree" in name or "cyclonedds" in name}
-        importlib.import_module("strands_robots.tools.g1._g1_common")
+        importlib.import_module("strands_robots.drivers.unitree._common")
         after = {name for name in sys.modules if "unitree" in name or "cyclonedds" in name}
         assert after - before == set(), sorted(after - before)
 
@@ -452,14 +453,22 @@ class TestPremises:
         accessor the five sensor verbs read.  A verb that reimplemented either
         would pass the rules above on the day it landed and drift afterwards,
         which is the failure a single definition site prevents.
+
+        Both packages are searched, not just the verb one: the guard lives with
+        the DDS transport the verbs read, so looking in a single directory would
+        report "one owner" for a tree that had grown a second.
         """
-        package_dir = Path(g1_package.__file__).parent
+        package_dirs = (
+            Path(g1_package.__file__).parent,
+            Path(unitree_transport.__file__).parent,
+        )
         definitions = [
             path.name
+            for package_dir in package_dirs
             for path in sorted(package_dir.glob("*.py"))
             if any(
                 isinstance(node, ast.FunctionDef) and node.name == guard
                 for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             )
         ]
-        assert definitions == ["_g1_common.py"], definitions
+        assert definitions == ["_common.py"], definitions

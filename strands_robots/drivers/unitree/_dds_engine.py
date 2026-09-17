@@ -25,7 +25,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, ensure_dds, sdk_missing
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, ensure_dds, sdk_missing
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class DDSSubscriberSet:
 
         Args:
             network_interface: The interface to bind subscribers to. Passed
-                through to :func:`~strands_robots.tools.g1.ensure_dds`.
+                through to :func:`~strands_robots.drivers.unitree._common.ensure_dds`.
         """
         self._interface = network_interface
         self._subs: list[Any] = []
@@ -225,7 +225,7 @@ class DDSPublisher:
 
         Args:
             network_interface: The interface to bind publishers to. Passed
-                through to :func:`~strands_robots.tools.g1.ensure_dds`.
+                through to :func:`~strands_robots.drivers.unitree._common.ensure_dds`.
         """
         self._interface = network_interface
         self._pubs: dict[tuple[str, type], Any] = {}

@@ -10,7 +10,7 @@ named ``pip install booster_robotics_sdk_python``.
 
 Two things are pinned here:
 
-* the shared text, :func:`strands_robots.tools.g1._g1_common.sdk_missing`,
+* the shared text, :func:`strands_robots.drivers.unitree._common.sdk_missing`,
   names the install line, the platform caveat and the doc section, and keeps
   the original exception verbatim (a half-installed SDK fails differently from
   an absent one, and that difference is the diagnosis);
@@ -44,12 +44,12 @@ from strands_robots.drivers.g1 import G1Driver
 from strands_robots.drivers.g1 import _resolve_message_class as _g1_resolve
 from strands_robots.drivers.go2 import Go2Driver
 from strands_robots.drivers.go2 import _resolve_message_class as _go2_resolve
-from strands_robots.tools.g1 import _g1_common
-from strands_robots.tools.g1._dds_engine import DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import UNITREE_SDK_INSTALL, ensure_dds, reset_dds_state, sdk_missing
+from strands_robots.drivers.unitree import _common
+from strands_robots.drivers.unitree._common import UNITREE_SDK_INSTALL, ensure_dds, reset_dds_state, sdk_missing
+from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
 from tests.drivers.test_go2_driver import _released_driver, _text, install_unitree_sdk_stub
 
-_PACKAGE = Path(_g1_common.__file__).resolve().parents[2]
+_PACKAGE = Path(_common.__file__).resolve().parents[2]
 
 #: Every fragment a missing-SDK answer must carry to be actionable.
 _REQUIRED = (
@@ -75,10 +75,18 @@ def test_the_text_names_the_install_line_and_keeps_the_exception() -> None:
 
 
 def test_the_install_line_is_the_recipe_that_was_proven() -> None:
-    """The three commands, in order; a wheel for the binding, a checkout for the SDK."""
+    """The three commands, in order; this project's extra for the binding, a checkout for the SDK.
+
+    The binding step names ``[ros2]`` rather than a bare ``cyclonedds`` range.
+    That extra declares the same requirement, so the manifest owns the version
+    and a refusal read off a robot cannot quote a bound the project has moved -
+    which is the rule ``tests/test_ur_rtde_extra_is_declared.py`` grades across
+    the whole drivers tree. Only the vendor SDK stays a literal command: it has
+    no usable PyPI build, so no requirement can carry it.
+    """
     steps = [s.strip() for s in UNITREE_SDK_INSTALL.split("&&")]
 
-    assert steps[0].startswith("pip install 'cyclonedds>=0.10.2,<12'")
+    assert steps[0] == "pip install 'strands-robots[ros2]'"
     assert steps[1] == "git clone https://github.com/unitreerobotics/unitree_sdk2_python"
     assert steps[2] == "pip install --no-deps -e ./unitree_sdk2_python"
 

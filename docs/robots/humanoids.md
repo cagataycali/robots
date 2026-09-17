@@ -123,13 +123,14 @@ motion-switcher open - reported as `motion_switcher_open_error` by the G1's
 name the same recipe and keep the SDK's own exception, so the module that is
 actually missing is in the text.
 
-The upstream checkout installed beside a `cyclonedds` wheel is what works. On
-macOS arm64 and x86_64 Linux (Python 3.12):
+The upstream checkout installed beside a `cyclonedds` wheel is what works, and
+the binding comes from this project's `[ros2]` extra - the one place the range is
+declared. On macOS arm64 and x86_64 Linux (Python 3.12):
 
 ```bash
-pip install 'cyclonedds>=0.10.2,<12'
+pip install 'strands-robots[ros2]'                # the cyclonedds binding
 git clone https://github.com/unitreerobotics/unitree_sdk2_python
-pip install --no-deps -e ./unitree_sdk2_python     # --no-deps skips the ==0.10.2 pin
+pip install --no-deps -e ./unitree_sdk2_python    # --no-deps skips the ==0.10.2 pin
 python -c "from unitree_sdk2py.core.channel import ChannelFactoryInitialize; print('ok')"
 ```
 

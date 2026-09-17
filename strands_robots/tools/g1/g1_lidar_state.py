@@ -12,7 +12,7 @@ alone, at the same shape ``_on_lidar_state`` writes them.
 
 This verb does not subscribe DDS. The driver's own subscriber already delivers
 ``rt/utlidar/lidar_state`` under the singleton ``_DDS_INIT_LOCK`` from
-:mod:`~strands_robots.tools.g1._g1_common`, and a second subscriber path on
+:mod:`~strands_robots.drivers.unitree._common`, and a second subscriber path on
 the same topic would compete for the wire and duplicate the bus load that
 lock is meant to prevent (this is the same rule the ``g1_battery`` module
 names, refs ``strands-labs/robots#358``). The verb is duck-typed on
@@ -58,7 +58,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+from strands_robots.drivers.unitree._common import snapshot_handle_refusal
 
 
 @tool
@@ -90,7 +90,7 @@ def g1_lidar_state(driver: Any) -> dict[str, Any]:
         driver has a cached reading yet, and the five fields
         ``_on_lidar_state`` writes: ``code`` (the MID-360's fault code as
         an integer, or ``None``), ``code_text`` (the same code rendered
-        through :func:`~strands_robots.tools.g1._g1_common.decode_code`,
+        through :func:`~strands_robots.drivers.unitree._common.decode_code`,
         or ``None``), ``freq`` (the cloud frequency in Hz reported off
         the message's ``cloud_frequency`` field, ``float`` or ``None``),
         ``sys_rotation_speed`` (the system rotation speed off the

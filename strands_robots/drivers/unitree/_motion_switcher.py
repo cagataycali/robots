@@ -44,7 +44,7 @@ Wire-side invariants this decoder enforces.
   through :func:`_load_motion_switcher_client`, which lazy-imports the class
   and is the seam every unit test mocks. This keeps the module importable
   on Thor and CI (mirrors the invariant :mod:`._dds_engine` and
-  :mod:`._g1_common` already carry).
+  :mod:`._common` already carry).
 * The mapping from ``CheckMode()`` return-shape to ``_fsm_id`` value is
   spelled once, here, in :func:`decode_fsm_id`. A driver-side wire (the
   step #2765 defers) reads the return of this function; there is no second
@@ -54,7 +54,7 @@ Wire-side invariants this decoder enforces.
   message naming the received shape, rather than defaulting to a value
   the gate might silently open on.
 
-Related: :mod:`._g1_common` carries ``HANDSHAKE_FSMS = {500, 501, 801}`` and
+Related: :mod:`._common` carries ``HANDSHAKE_FSMS = {500, 501, 801}`` and
 ``WALK_FSMS = {501, 801}``; membership in those sets is the gate's admission
 question. This decoder does not evaluate membership -- that is the driver's
 job, and stays there -- it only produces the value the gate compares.
@@ -67,7 +67,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from strands_robots.tools.g1._g1_common import decode_code
+from strands_robots.drivers.unitree._common import decode_code
 from strands_robots.utils import sequence_length
 
 logger = logging.getLogger(__name__)
@@ -95,8 +95,8 @@ class FSMReading:
     """A single ``CheckMode()`` reading, decoded for the driver's gate.
 
     :attr:`fsm_id` is what the gate compares against
-    :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` and
-    :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS`. When it is
+    :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` and
+    :data:`~strands_robots.drivers.unitree._common.WALK_FSMS`. When it is
     ``None`` the reason is on :attr:`refusal` -- either the SDK reported a
     non-OK status code, or the result dict was a shape ``CheckMode`` does
     not return on this SDK version.
@@ -119,9 +119,9 @@ def _load_motion_switcher_client() -> Any:
     """Lazy-import :class:`MotionSwitcherClient`.
 
     The SDK module is imported on first call and never at import time, so
-    ``strands_robots.tools.g1`` still loads on hosts without
+    ``strands_robots.drivers.unitree`` still loads on hosts without
     ``unitree_sdk2py`` installed -- same invariant as
-    :mod:`._dds_engine` and :mod:`._g1_common`. Every test in this file
+    :mod:`._dds_engine` and :mod:`._common`. Every test in this file
     mocks the returned class rather than the module attribute, so no test
     depends on the SDK's presence.
     """

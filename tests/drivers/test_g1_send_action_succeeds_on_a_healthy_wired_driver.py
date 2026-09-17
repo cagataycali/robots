@@ -72,7 +72,7 @@ class _RecordingPublisher:
 class _RecordingMotionSwitcherClient:
     """A minimally-real ``MotionSwitcherClient`` stand-in.
 
-    :func:`strands_robots.tools.g1._motion_switcher.read_fsm_id` calls
+    :func:`strands_robots.drivers.unitree._motion_switcher.read_fsm_id` calls
     ``CheckMode()`` and decodes ``(status, {"name", "form"})``.  This class
     is the wire the driver's new FSM producer reads through.
     """

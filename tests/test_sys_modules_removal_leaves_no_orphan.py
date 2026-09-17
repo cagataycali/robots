@@ -36,7 +36,7 @@ tree binds nearly every submodule - a submodule is what a test wants to patch
 attributes on. Reading ``import`` alone left the protected set at 43 modules of
 95, and the 52 it could not see included two removals with live symptoms:
 ``tests/tools/g1/test_motion_switcher_decoder.py`` dropped
-``strands_robots.tools.g1._motion_switcher``, orphaning the reference
+``strands_robots.drivers.unitree._motion_switcher``, orphaning the reference
 ``tests/drivers/test_motion_switcher_open_is_under_the_shared_dds_lock.py``
 patches ``_load_motion_switcher_client`` on, so the driver's lazy import reached
 the real loader and the open returned ``None`` - that file's cells grade whether
@@ -434,7 +434,7 @@ class TestNoRemovalOrphansAPatchedModule:
         protected = protected_modules()
         expected = {
             "strands_robots.simulation.policy_runner",
-            "strands_robots.tools.g1._motion_switcher",
+            "strands_robots.drivers.unitree._motion_switcher",
         }
         assert expected <= set(protected), (
             "a module bound by `from package import module` and then attribute-"
@@ -892,7 +892,7 @@ class TestAReimportPutsTheParentBindingBack:
         )
         expected = {
             ("tests/simulation/test_policy_runner.py", "strands_robots.simulation.policy_runner"),
-            ("tests/tools/g1/test_motion_switcher_decoder.py", "strands_robots.tools.g1._motion_switcher"),
+            ("tests/tools/g1/test_motion_switcher_decoder.py", "strands_robots.drivers.unitree._motion_switcher"),
         }
         assert expected <= found, (
             "these cells remove an entry and import the module again, so the rule has "

@@ -1,10 +1,12 @@
-"""G1 hardware layer - DDS engine + agent ``@tool`` verbs for the Unitree G1.
+"""Agent ``@tool`` verbs for the Unitree G1.
 
 The Unitree G1 speaks raw Unitree IDL over CycloneDDS: ``rt/lowstate`` for IMU
 and joints, ``rt/lf/bmsstate`` for battery, ``rt/utlidar/cloud_livox_mid360``
 and ``rt/utlidar/lidar_state`` for the Livox Mid-360, ``rt/lowcmd`` and
 ``rt/armsdk`` for motion. Neither ROS 2 nor the lerobot serial bus can reach
-those topics, so the driver owns its own subscriber layer.
+those topics, so the driver owns its own subscriber layer, which lives with the
+other Unitree-protocol drivers in :mod:`strands_robots.drivers.unitree` and is
+read back here for the verbs that need it.
 
 Organizing principle (post-consolidation, refs #2928):
     Anything that is a 1:1 SDK call is reachable via ``use_unitree`` - the
@@ -39,7 +41,7 @@ the top-level ``strands_robots.tools`` does it: a caller who only wants
 
 import importlib as _importlib
 
-from strands_robots.tools.g1._g1_common import (
+from strands_robots.drivers.unitree._common import (
     ERR_CODES,
     HANDSHAKE_FSMS,
     WALK_FSMS,

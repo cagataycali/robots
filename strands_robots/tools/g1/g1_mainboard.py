@@ -12,7 +12,7 @@ mainboard decoder actually wrote rather than computing anything new.
 
 This verb does not subscribe DDS.  The driver's own subscriber already
 delivers ``rt/mainboardstate`` under the singleton ``_DDS_INIT_LOCK`` from
-:mod:`~strands_robots.tools.g1._g1_common`, and a second subscriber path
+:mod:`~strands_robots.drivers.unitree._common`, and a second subscriber path
 on the same topic would compete for the wire and duplicate the bus load
 that lock is meant to prevent (this is the same rule the sibling readers
 ``g1_battery``, ``g1_imu`` and ``g1_lidar_state`` state in their own
@@ -68,7 +68,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import snapshot_handle_refusal
+from strands_robots.drivers.unitree._common import snapshot_handle_refusal
 
 
 @tool

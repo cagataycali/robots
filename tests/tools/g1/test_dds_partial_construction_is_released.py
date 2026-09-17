@@ -1,7 +1,7 @@
 """A DDS endpoint whose construction failed part way is closed, not dropped.
 
-:meth:`~strands_robots.tools.g1._dds_engine.DDSSubscriberSet.subscribe` and
-:meth:`~strands_robots.tools.g1._dds_engine.DDSPublisher.get_publisher` each
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSSubscriberSet.subscribe` and
+:meth:`~strands_robots.drivers.unitree._dds_engine.DDSPublisher.get_publisher` each
 build an SDK endpoint in two steps - construct, then ``Init`` - and report a
 named reason if either step raises. Neither step is atomic, and the endpoint
 that failed holds real DDS state: ``ChannelSubscriber.__init__`` creates a live
@@ -38,10 +38,11 @@ from typing import Any
 
 import pytest
 
-from strands_robots.tools.g1 import _dds_engine, reset_dds_state
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.drivers.unitree import _dds_engine
+from strands_robots.drivers.unitree._common import reset_dds_state
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
 
-_ENGINE_LOGGER = "strands_robots.tools.g1._dds_engine"
+_ENGINE_LOGGER = "strands_robots.drivers.unitree._dds_engine"
 
 # The queue length ``subscribe`` asks the SDK for. Stated here rather than read
 # off the engine so a change to either side has to be a deliberate one.

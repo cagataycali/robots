@@ -71,7 +71,7 @@ from typing import Any
 
 from strands import tool
 
-from strands_robots.tools.g1._g1_common import live_handle_refusal
+from strands_robots.drivers.unitree._common import live_handle_refusal
 
 
 @tool

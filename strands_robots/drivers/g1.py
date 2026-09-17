@@ -18,7 +18,7 @@ What the driver actually does:
   is read by the ``g1_mainboard`` verb and ``_pressure`` by the
   ``g1_pressure`` verb).
 * Gates writes on the FSM: :meth:`send_action` refuses when the FSM state
-  is outside :data:`~strands_robots.tools.g1.HANDSHAKE_FSMS` or the battery
+  is outside :data:`~strands_robots.drivers.unitree._common.HANDSHAKE_FSMS` or the battery
   is under the floor.  The gate consults :attr:`_fsm_id` (the high-level
   FSM state from the motion-switcher API) rather than :attr:`_mode_machine`
   (the uint8 hardware-layout id from ``LowState``); those two fields have
@@ -58,11 +58,16 @@ from strands_robots.drivers.base import (
     telemetry_int_list,
     undeclared_verb_error,
 )
+from strands_robots.drivers.unitree._common import (
+    _DDS_INIT_LOCK,
+    HANDSHAKE_FSMS,
+    WALK_FSMS,
+    decode_code,
+    sdk_missing,
+)
+from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.drivers.unitree._motion_switcher import FSMReading, read_fsm_id
 from strands_robots.mesh.pacing import Ticker
-from strands_robots.tools.g1 import HANDSHAKE_FSMS, WALK_FSMS, decode_code
-from strands_robots.tools.g1._dds_engine import DDSPublisher, DDSSubscriberSet
-from strands_robots.tools.g1._g1_common import _DDS_INIT_LOCK, sdk_missing
-from strands_robots.tools.g1._motion_switcher import FSMReading, read_fsm_id
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -412,7 +417,7 @@ class G1Driver:
                 driver: CycloneDDS binds to a NIC, not an address. Kept for
                 logging and future SSH-side helpers.
             network_interface: The interface CycloneDDS binds to. Passed to
-                :func:`~strands_robots.tools.g1.ensure_dds`.
+                :func:`~strands_robots.drivers.unitree._common.ensure_dds`.
             battery_floor_pct: Percentage below which :meth:`send_action`
                 refuses to write. The floor is separate from the FSM gate so
                 a caller can see which check refused.
@@ -420,7 +425,7 @@ class G1Driver:
                 interface and returning an open ``MotionSwitcherClient``.
                 Injected so a unit test can hand in a recording double
                 without patching the SDK module (mirrors the seam
-                :mod:`strands_robots.tools.g1._motion_switcher` already
+                :mod:`strands_robots.drivers.unitree._motion_switcher` already
                 names: ``read_fsm_id`` accepts any object with a callable
                 ``CheckMode`` attribute, so the factory only has to return
                 that shape).  ``None`` selects the default lazy loader,
@@ -488,7 +493,7 @@ class G1Driver:
         # both the import and the DDS bring-up, which is how the unit tests
         # drive the wire without ``unitree_sdk2py``.  See issue #2765 for the
         # wire-format decisions this producer answers, and
-        # :mod:`strands_robots.tools.g1._motion_switcher` for the decoder it
+        # :mod:`strands_robots.drivers.unitree._motion_switcher` for the decoder it
         # feeds.
         self._motion_switcher_client_factory: Callable[[str], Any] | None = motion_switcher_client_factory
         self._motion_switcher_client: Any | None = None
@@ -699,7 +704,7 @@ class G1Driver:
         through here too: the rule is that every exit past the constructor
         releases the set, with no exception a later reader has to remember.
         This is the driver-level counterpart of
-        :func:`~strands_robots.tools.g1._dds_engine._release_partial`, which
+        :func:`~strands_robots.drivers.unitree._dds_engine._release_partial`, which
         owns the same question one layer in for a single subscriber.
 
         Args:
@@ -901,7 +906,7 @@ class G1Driver:
         only caller and holds the lock across both the open and the read.
 
         The open itself additionally holds
-        :data:`~strands_robots.tools.g1._g1_common._DDS_INIT_LOCK`, the lock
+        :data:`~strands_robots.drivers.unitree._common._DDS_INIT_LOCK`, the lock
         this driver's own :class:`DDSSubscriberSet` holds while constructing
         every subscriber.  ``Init()`` builds the client's DDS
         request/response endpoints and the CycloneDDS bindings segfault on a
