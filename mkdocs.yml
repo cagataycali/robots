@@ -66,6 +66,9 @@ nav:
   - Tool Result Contract: contracts.md
 - Data & Training:
   - Recording: recording.md
+  - DatasetRecorder API: data/dataset-recorder.md
+  - Verify a Dataset: data/verifying-datasets.md
+  - Read Back & Replay: data/reading-back.md
   - Steerable Annotation: data/annotation.md
   - Episode Labels (VLM judge): data/episode-labels.md
   - Training: training/overview.md

@@ -10,7 +10,7 @@ reservoir buffer of ``buffer_size`` yielded from at a random index.
 
 Two of the recipes a caller reads first - the ``StreamingDatasetReader`` class
 docstring's "in-process eval / replay" Example and the streaming section of
-``docs/recording.md`` - passed ``shuffle=False`` alone and commented it
+``docs/data/reading-back.md`` - passed ``shuffle=False`` alone and commented it
 "chronological for replay/eval". It is not: on a 60-frame recorded dataset that
 recipe yields frame indices ``28, 55, 18, 24, 7, ...``, and passing
 ``shuffle=True`` alongside ``buffer_size=1`` reads in capture order anyway. So
@@ -202,7 +202,7 @@ def test_every_surface_claiming_capture_order_names_the_knob_that_delivers_it() 
     ``buffer_size=1`` is the knob that stops the reservoir reordering; a surface
     that claims capture order without it is documenting an order the reader does
     not deliver, which is exactly what the class docstring and
-    ``docs/recording.md`` did.
+    the streaming page did.
     """
     offenders = [
         (where, window)
