@@ -4,11 +4,11 @@ site_description: "Robot control, simulation, and training for Strands Agents"
 repo_url: https://github.com/strands-labs/robots
 repo_name: strands-labs/robots
 extra_css:
-- stylesheets/extra.css?v=2
-- stylesheets/robot-cards.css
+- stylesheets/extra.css?v=3
 extra_javascript:
 - https://unpkg.com/mermaid@10/dist/mermaid.min.js
 - assets/mermaid-init.js
+- assets/docs.js
 nav:
 - Home: index.md
 - AI Agents: agents.md
@@ -101,8 +101,6 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-  - navigation.sections
-  - navigation.expand
   - navigation.indexes
   - toc.follow
   - content.code.copy

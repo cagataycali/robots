@@ -1,489 +1,199 @@
-/* Strands Robots - Minimal with glassmorphic dark mode */
+/* Strands Robots docs: one look, set on Material's own custom properties.
+   Paper light and true dark share one accent; prose sits on a 760px measure
+   while tables, cards and figures use the full column. Styling the theme's
+   variables instead of fighting its rules is what keeps this file short.
+   The accent is the two --sr-accent declarations below; nothing else spells it. */
 
-/* ---- Light mode ---- */
+/* ---- Paper (light) ---- */
 [data-md-color-scheme="default"] {
-    --bg: #fafafa;
-    --bg-surface: #f5f5f5;
-    --bg-elevated: #eeeeee;
-    --fg: #333333;
-    --fg-muted: #888888;
-    --fg-heading: #111111;
-    --border: rgba(0, 0, 0, 0.08);
-    --accent: #555555;
-    --link-underline: rgba(0, 0, 0, 0.15);
-    --link-underline-hover: rgba(0, 0, 0, 0.5);
-    --header-bg: rgba(250, 250, 250, 0.85);
-    --sidebar-bg: rgba(250, 250, 250, 0.6);
-    --glass-bg: rgba(245, 245, 245, 0.7);
-    --glass-border: rgba(0, 0, 0, 0.06);
-    --glass-blur: blur(12px);
-    --scrollbar-thumb: rgba(0, 0, 0, 0.1);
-    --scrollbar-hover: rgba(0, 0, 0, 0.2);
-    --mermaid-node-fill: #ffffff;
-    --mermaid-stroke: #cccccc;
-    --mermaid-edge: #bbbbbb;
-    --code-fg: #444;
+  --sr-accent: #0b6e4f; --sr-surface: #f2efe9; --sr-real: #8a5300;
+  --md-default-bg-color: #fbfaf8; --md-default-fg-color: #1b1a18;
+  --md-default-fg-color--light: #55524b; --md-default-fg-color--lighter: #706c65;
+  --md-default-fg-color--lightest: #e3dfd6;
+  --md-primary-fg-color: #fbfaf8; --md-primary-bg-color: #1b1a18;
+  --md-accent-fg-color: var(--sr-accent); --md-typeset-a-color: var(--sr-accent);
+  --md-code-bg-color: #f8f6f3; --md-code-fg-color: #33302b;
 }
 
-/* ---- Dark mode - true black + glass ---- */
+/* ---- True dark ---- */
 [data-md-color-scheme="slate"] {
-    --bg: #0a0a0a;
-    --bg-surface: rgba(255, 255, 255, 0.04);
-    --bg-elevated: rgba(255, 255, 255, 0.06);
-    --fg: #c8c8c8;
-    --fg-muted: #666666;
-    --fg-heading: #f0f0f0;
-    --border: rgba(255, 255, 255, 0.06);
-    --accent: #00FF77;
-    --link-underline: rgba(255, 255, 255, 0.1);
-    --link-underline-hover: rgba(0, 255, 119, 0.4);
-    --header-bg: rgba(10, 10, 10, 0.75);
-    --sidebar-bg: rgba(10, 10, 10, 0.5);
-    --glass-bg: rgba(255, 255, 255, 0.03);
-    --glass-border: rgba(255, 255, 255, 0.06);
-    --glass-blur: blur(20px);
-    --scrollbar-thumb: rgba(255, 255, 255, 0.08);
-    --scrollbar-hover: rgba(255, 255, 255, 0.15);
-    --mermaid-node-fill: rgba(255, 255, 255, 0.04);
-    --mermaid-stroke: rgba(255, 255, 255, 0.1);
-    --mermaid-edge: rgba(255, 255, 255, 0.12);
-    --code-fg: #b8b8b8;
-
-    --md-default-bg-color: #0a0a0a;
-    --md-default-fg-color: #c8c8c8;
-    --md-default-fg-color--light: #888888;
-    --md-default-fg-color--lighter: #555555;
-    --md-default-fg-color--lightest: #333333;
-    --md-primary-fg-color: #f0f0f0;
-    --md-primary-bg-color: #0a0a0a;
-    --md-accent-fg-color: #00FF77;
-    --md-code-bg-color: rgba(255, 255, 255, 0.04);
-    --md-code-fg-color: #b8b8b8;
-    --md-code-hl-color: rgba(0, 255, 119, 0.1);
-    --md-typeset-a-color: #f0f0f0;
+  --sr-accent: #3ddc91; --sr-surface: #16161a; --sr-real: #e0a44a;
+  --md-default-bg-color: #0b0b0c; --md-default-fg-color: #dcdad5;
+  --md-default-fg-color--light: #b4b1ab; --md-default-fg-color--lighter: #918d86;
+  --md-default-fg-color--lightest: #2a2a2f;
+  --md-primary-fg-color: #0b0b0c; --md-primary-bg-color: #dcdad5;
+  --md-accent-fg-color: var(--sr-accent); --md-typeset-a-color: var(--sr-accent);
+  --md-code-bg-color: var(--sr-surface); --md-code-fg-color: #cdcbc6;
 }
 
-/* ---- Base ---- */
-body {
-    background: var(--bg) !important;
-    color: var(--fg) !important;
-    font-feature-settings: "kern" 1;
-    -webkit-font-smoothing: antialiased;
+/* ---- Type: 16px/1.65 body, headings tight ---- */
+.md-typeset { font-size: 0.8rem; line-height: 1.65; }
+
+.md-typeset h1, .md-typeset h2, .md-typeset h3, .md-typeset h4 {
+  color: var(--md-default-fg-color); font-weight: 600;
+  letter-spacing: -0.015em; line-height: 1.2;
 }
 
-/* ---- Typography ---- */
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-    color: var(--fg-heading) !important;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    text-shadow: none !important;
-}
+.md-typeset h1 { font-size: 1.6rem; margin: 0 0 0.8rem; }
+.md-typeset h2 { font-size: 1.2rem; margin: 1.8rem 0 0.6rem; }
+.md-typeset h3 { font-size: 0.95rem; margin: 1.3rem 0 0.4rem; }
 
-h1 {
-    font-weight: 700;
-}
+/* ---- Measure: a 760px column for prose inside a wider page for matrices ---- */
+.md-grid { max-width: 76rem; }
+.md-typeset > * { max-width: 38rem; }
 
-.md-content {
-    color: var(--fg) !important;
-}
+.md-typeset > .md-typeset__scrollwrap, .md-typeset > .robot-grid,
+.md-typeset > .grid, .md-typeset > figure, .md-typeset > .mermaid,
+.md-typeset > .tabbed-set { max-width: none; }
 
-.md-typeset p {
-    color: var(--fg) !important;
-    line-height: 1.7;
-}
-
-.md-typeset li {
-    color: var(--fg) !important;
-    line-height: 1.7;
-}
-
-/* ---- Links ---- */
+/* ---- Links and chrome ---- */
 .md-typeset a {
-    color: var(--fg-heading) !important;
-    text-decoration: underline;
-    text-decoration-color: var(--link-underline);
-    text-underline-offset: 2px;
-    transition: text-decoration-color 0.2s;
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: var(--md-default-fg-color--lightest);
 }
 
-.md-typeset a:hover {
-    text-decoration-color: var(--link-underline-hover);
+.md-typeset a:hover, .md-typeset a:focus { text-decoration-color: currentcolor; }
+.md-header, .md-tabs { box-shadow: none; }
+.md-header { border-bottom: 1px solid var(--md-default-fg-color--lightest); }
+.md-nav { font-size: 0.68rem; }
+.md-nav__link--active { font-weight: 600; }
+.md-sidebar--secondary .md-nav { border-left: 1px solid var(--md-default-fg-color--lightest); }
+* { scrollbar-width: thin; }
+
+/* The footer carries no content of its own; the section nav is the way around. */
+.md-footer { display: none; }
+
+/* ---- Code: a lighter surface than --sr-surface keeps Material's light
+   highlight tokens at 4.5:1 (4.57 at #f8f6f3, 4.30 at #f2efe9) ---- */
+.md-typeset code { border-radius: 4px; }
+.md-typeset .highlight, .md-typeset pre > code { border-radius: 10px; }
+.md-clipboard { color: var(--md-default-fg-color--lighter); }
+.md-clipboard:hover { color: var(--sr-accent); }
+
+/* ---- Admonitions and details: flat callouts, no icon chrome ---- */
+.md-typeset .admonition, .md-typeset details {
+  background: var(--sr-surface); border: 0; box-shadow: none;
+  border-left: 2px solid var(--sr-accent); border-radius: 0 6px 6px 0;
+  font-size: inherit;
 }
 
-/* ---- Header - glass ---- */
-.md-header {
-    background: var(--header-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border-bottom: 1px solid var(--glass-border);
-    box-shadow: none !important;
-    color: var(--fg-heading) !important;
+.md-typeset .admonition-title, .md-typeset summary {
+  background: transparent; font-weight: 600; padding-left: 0.8rem;
 }
 
-.md-header__title {
-    color: var(--fg-heading) !important;
-}
+.md-typeset .admonition-title::before, .md-typeset summary::before { display: none; }
+.md-typeset details > summary::after { top: 0.5rem; }
 
-.md-header .md-icon {
-    color: var(--fg) !important;
-}
-
-/* ---- Sidebar - glass ---- */
-.md-sidebar {
-    background: var(--sidebar-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-}
-
-.md-nav__link {
-    color: var(--fg-muted) !important;
-    font-size: 0.82rem;
-}
-
-.md-nav__link:hover {
-    color: var(--fg-heading) !important;
-}
-
-.md-nav__link--active {
-    color: var(--fg-heading) !important;
-    font-weight: 600;
-}
-
-/* ---- Code - glass card ---- */
-.md-typeset pre {
-    background: var(--glass-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border) !important;
-    border-radius: 8px;
-}
-
-.md-typeset code {
-    background: var(--bg-surface) !important;
-    color: var(--code-fg) !important;
-    border-radius: 4px;
-    font-size: 0.85em;
-}
-
-/* ---- Admonitions - glass card ---- */
-.md-typeset .admonition,
-.md-typeset details {
-    background: var(--glass-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border) !important;
-    border-radius: 8px;
-    box-shadow: none !important;
-}
-
-/* ---- Tables - glass ---- */
+/* ---- Tables ---- */
 .md-typeset table:not([class]) {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: 8px;
-    overflow: hidden;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 10px; font-size: 0.72rem;
 }
 
-.md-typeset table:not([class]) th {
-    background: var(--bg-elevated);
-    color: var(--fg-heading);
-    font-weight: 600;
+.md-typeset table:not([class]) th { background: var(--sr-surface); font-weight: 600; }
+.md-typeset table:not([class]) td { border-top: 1px solid var(--md-default-fg-color--lightest); }
+
+/* Phones: a table of three or more columns becomes one card per row. docs.js
+   marks it data-sr-stack and copies each column header into the cell's data-th,
+   because CSS can neither count columns nor read another element's text. */
+@media screen and (max-width: 44.9375em) {
+  .md-typeset table[data-sr-stack], .md-typeset table[data-sr-stack] tbody,
+  .md-typeset table[data-sr-stack] tr, .md-typeset table[data-sr-stack] td { display: block; width: auto; }
+
+  .md-typeset table[data-sr-stack] { border: 0; }
+  .md-typeset table[data-sr-stack] thead { display: none; }
+
+  .md-typeset table[data-sr-stack] tr {
+    border: 1px solid var(--md-default-fg-color--lightest); border-radius: 10px;
+    margin: 0 0 0.6rem; padding: 0.5rem 0.7rem;
+  }
+
+  .md-typeset table[data-sr-stack] td { border: 0; padding: 0.15rem 0; white-space: normal; }
+
+  .md-typeset table[data-sr-stack] td::before {
+    content: attr(data-th); display: block; font-size: 0.6rem;
+    color: var(--md-default-fg-color--lighter);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
 }
 
-.md-typeset table:not([class]) td {
-    border-color: var(--glass-border);
-    color: var(--fg);
+/* ---- Cards: one component for the generated robot cards and Material's
+   grid-cards lists ---- */
+.robot-grid, .md-typeset .grid.cards > ul {
+  display: grid; gap: 0.8rem; list-style: none; margin: 1rem 0 1.5rem; padding: 0;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
 }
 
-/* ---- Blockquotes ---- */
-.md-typeset blockquote {
-    border-left: 3px solid var(--glass-border);
-    background: transparent;
-    color: var(--fg-muted) !important;
+.robot-card, .md-typeset .grid.cards > ul > li {
+  background: var(--md-default-bg-color); box-shadow: none;
+  border: 1px solid var(--md-default-fg-color--lightest); border-radius: 12px;
+  display: flex; flex-direction: column; gap: 0.45rem;
+  margin: 0; padding: 0.9rem; transition: border-color 0.15s;
 }
 
-/* ---- Buttons - glass ---- */
-.md-button {
-    background: var(--glass-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border) !important;
-    color: var(--fg-heading) !important;
-    border-radius: 6px;
-    transition: border-color 0.2s, background 0.2s;
+.robot-card:hover, .md-typeset .grid.cards > ul > li:hover { border-color: var(--sr-accent); }
+.robot-card figure, .robot-card pre { margin: 0; }
+.robot-card figcaption { color: var(--md-default-fg-color--lighter); font-size: 0.6rem; text-align: right; }
+
+.robot-card img {
+  aspect-ratio: 4 / 3; background: var(--md-code-bg-color);
+  border-radius: 8px; object-fit: contain; width: 100%;
 }
 
-.md-button:hover {
-    border-color: var(--accent) !important;
-    background: var(--bg-elevated) !important;
+.robot-card h3 {
+  align-items: center; display: flex; flex-wrap: wrap; font-size: 0.85rem; gap: 0.4rem; margin: 0;
 }
 
-/* ---- Search - glass ---- */
-.md-search__input {
-    background: var(--glass-bg) !important;
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--glass-border) !important;
-    color: var(--fg) !important;
+.robot-card p, .robot-card dl, .robot-card dd, .robot-card details { font-size: 0.7rem; margin: 0; }
+.robot-card details code { margin-right: 0.3rem; }
+
+.rc-badge {
+  border: 1px solid currentcolor; border-radius: 999px; font-size: 0.58rem;
+  font-weight: 500; padding: 0.05rem 0.4rem;
 }
 
-.md-search__input::placeholder {
-    color: var(--fg-muted) !important;
+.rc-sim { color: var(--sr-accent); }
+.rc-real { color: var(--sr-real); }
+
+/* ---- Media: a demo clip stays clip-sized, brand figures span the column ---- */
+.md-typeset img, .md-typeset video { height: auto; max-width: 100%; }
+.md-typeset p > img[src$=".gif"] { max-width: min(480px, 100%); }
+.brand-figure { margin: 1.2rem 0 1.6rem; text-align: center; }
+.brand-figure figcaption { color: var(--md-default-fg-color--lighter); font-size: 0.68rem; margin-top: 0.4rem; }
+
+.brand-figure .brand-svg, img.brand-svg {
+  background: #0a0a0a; border-radius: 12px; height: auto; max-width: 980px; width: 100%;
+  border: 1px solid var(--md-default-fg-color--lightest);
 }
 
-/* ---- TOC ---- */
-.md-nav--secondary {
-    border-left: 1px solid var(--glass-border);
-}
-
-/* ---- Tabs ---- */
-.md-typeset .tabbed-set>input:checked+label {
-    border-color: var(--fg-heading);
-    color: var(--fg-heading);
-}
-
-.md-typeset .tabbed-set>label {
-    color: var(--fg-muted);
-}
-
-.md-typeset .tabbed-set>label:hover {
-    color: var(--fg);
-}
-
-/* ---- Content tabs - glass ---- */
-.md-typeset .tabbed-content {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: 0 0 8px 8px;
-}
-
-/* ---- Scrollbar ---- */
-::-webkit-scrollbar {
-    width: 6px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thumb);
-    border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--scrollbar-hover);
-}
-
-/* ---- Footer: hidden ---- */
-.md-footer {
-    display: none !important;
-}
-
-/* ---- Grid cards (dark mode glass) ---- */
-[data-md-color-scheme="slate"] .md-typeset .grid.cards>ul>li,
-[data-md-color-scheme="slate"] .md-typeset .grid.cards>ol>li {
-    background: rgba(255, 255, 255, 0.03) !important;
-    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-radius: 10px;
-}
-
-/* ---- Mermaid ---- */
+/* ---- Mermaid: the diagram reads as page text, in either scheme ---- */
 .mermaid {
-    border: 1px solid var(--glass-border);
-    border-radius: 8px;
-    padding: 1rem;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--md-code-bg-color); border-radius: 10px; padding: 0.8rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
 }
 
-.mermaid .node rect,
-.mermaid .node circle,
-.mermaid .node ellipse,
-.mermaid .node polygon,
-.mermaid .node path {
-    fill: var(--mermaid-node-fill) !important;
-    stroke: var(--mermaid-stroke) !important;
-    stroke-width: 1px !important;
+.mermaid .node rect, .mermaid .node circle, .mermaid .node polygon,
+.mermaid .node path, .mermaid .cluster rect {
+  fill: var(--md-default-bg-color) !important;
+  stroke: var(--md-default-fg-color--lighter) !important;
 }
 
-.mermaid .node .label,
-.mermaid .nodeLabel,
-.mermaid .node text,
-.mermaid text {
-    fill: var(--fg) !important;
-    color: var(--fg) !important;
+.mermaid text, .mermaid .nodeLabel, .mermaid span {
+  color: var(--md-default-fg-color) !important; fill: var(--md-default-fg-color) !important;
 }
 
-.mermaid .edgePath .path,
-.mermaid .flowchart-link,
-.mermaid path.path {
-    stroke: var(--mermaid-edge) !important;
-    stroke-width: 1px !important;
+.mermaid .edgePath .path, .mermaid .flowchart-link { stroke: var(--md-default-fg-color--lighter) !important; }
+
+.mermaid .marker, .mermaid marker path {
+  fill: var(--md-default-fg-color--lighter) !important; stroke: var(--md-default-fg-color--lighter) !important;
 }
 
-.mermaid .edgeLabel,
-.mermaid .edgeLabel rect {
-    background-color: var(--bg) !important;
-    fill: var(--bg) !important;
-}
+.mermaid .edgeLabel, .mermaid .edgeLabel rect { background: var(--md-code-bg-color) !important; fill: var(--md-code-bg-color) !important; }
 
-.mermaid .edgeLabel text,
-.mermaid .edgeLabel span {
-    fill: var(--fg-muted) !important;
-    color: var(--fg-muted) !important;
-}
-
-.mermaid .marker,
-.mermaid marker path {
-    fill: var(--mermaid-edge) !important;
-    stroke: var(--mermaid-edge) !important;
-}
-
-.mermaid .cluster rect {
-    fill: rgba(128, 128, 128, 0.05) !important;
-    stroke: var(--glass-border) !important;
-    stroke-width: 1px !important;
-    rx: 8px !important;
-}
-
-.mermaid .cluster text,
-.mermaid .cluster span {
-    fill: var(--fg-muted) !important;
-    color: var(--fg-muted) !important;
-}
-
-.mermaid .actor {
-    fill: var(--mermaid-node-fill) !important;
-    stroke: var(--mermaid-stroke) !important;
-}
-
-.mermaid .actor text {
-    fill: var(--fg) !important;
-}
-
-.mermaid .messageLine0,
-.mermaid .messageLine1 {
-    stroke: var(--mermaid-edge) !important;
-}
-
-.mermaid .messageText {
-    fill: var(--fg) !important;
-}
-
-.mermaid .task {
-    fill: var(--glass-bg) !important;
-    stroke: var(--mermaid-stroke) !important;
-}
-
-.mermaid .taskText {
-    fill: var(--fg) !important;
-}
-
-/* ---- Mobile nav drawer - dark mode fix ---- */
-[data-md-color-scheme="slate"] .md-nav__title {
-    color: var(--fg-heading) !important;
-    background: var(--bg) !important;
-}
-
-[data-md-color-scheme="slate"] .md-nav__title .md-nav__button {
-    color: var(--fg) !important;
-}
-
-[data-md-color-scheme="slate"] .md-nav--primary .md-nav__title {
-    background: var(--bg) !important;
-    color: var(--fg-heading) !important;
-}
-
-[data-md-color-scheme="slate"] .md-nav--primary .md-nav__title[for="__drawer"] {
-    background: var(--bg) !important;
-    color: var(--fg-heading) !important;
-}
-
-[data-md-color-scheme="slate"] .md-nav--primary>.md-nav__title {
-    background: var(--bg) !important;
-    color: var(--fg-heading) !important;
-}
-
-/* Mobile drawer background */
-[data-md-color-scheme="slate"] .md-sidebar--primary {
-    background: var(--bg) !important;
-}
-
-[data-md-color-scheme="slate"] .md-overlay {
-    background: rgba(0, 0, 0, 0.7) !important;
-}
-/* ---- Robot Gallery ---- */
-.robot-gallery {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    justify-content: center;
-    margin: 1.5rem 0;
-}
-
-.robot-gallery figure {
-    margin: 0;
-    text-align: center;
-    flex: 0 1 240px;
-}
-
-.robot-gallery figcaption {
-    font-size: 0.85rem;
-    color: var(--fg-muted);
-    margin-top: 0.3rem;
-}
-
-.robot-gallery img {
-    border-radius: 8px;
-    border: 1px solid var(--glass-border);
-}
-
-/* ---- Brand figures (animated SVG hero / architecture / mesh) ---- */
-.brand-figure {
-    margin: 1.5rem 0 2rem;
-    text-align: center;
-}
-
-.brand-figure .brand-svg,
-img.brand-svg {
-    width: 100%;
-    max-width: 980px;
-    height: auto;
-    border-radius: 14px;
-    border: 1px solid var(--glass-border);
-    background: #0a0a0a;
-    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
-}
-
-/* The SVGs are authored on true black; in dark mode let them blend into the
-   page with the brand-green edge glow instead of a hard frame. */
-[data-md-color-scheme="slate"] .brand-figure .brand-svg,
-[data-md-color-scheme="slate"] img.brand-svg {
-    border-color: rgba(0, 255, 119, 0.18);
-    box-shadow: 0 0 0 1px rgba(0, 255, 119, 0.06),
-        0 12px 48px rgba(0, 0, 0, 0.5);
-}
-
-.brand-figure figcaption {
-    margin-top: 0.5rem;
-    font-size: 0.82rem;
-    color: var(--fg-muted);
-}
-
-/* Respect reduced-motion: the SVGs use SMIL, which the OS pause cannot stop,
-   so at least keep the surrounding hover/transition still. */
+/* ---- Motion is decoration: honour the OS setting ---- */
 @media (prefers-reduced-motion: reduce) {
-    .brand-figure .brand-svg,
-    img.brand-svg {
-        transition: none;
-    }
+  *, *::before, *::after {
+    animation-duration: 1ms !important; animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important; transition-duration: 1ms !important;
+  }
 }
