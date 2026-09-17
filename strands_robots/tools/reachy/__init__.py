@@ -11,29 +11,26 @@ data depends on the hardware variant the daemon reports:
 Both live in :mod:`strands_robots.device_connect.reachy_transport`, which the
 Device Connect driver already ships and which
 :class:`~strands_robots.drivers.reachy.ReachyDriver` reuses rather than
-re-implements. This package holds only what the *two* Reachy consumers must
-agree on and neither owns: the motion envelope.
+re-implements. The travel envelope the two drivers must agree on is
+:mod:`strands_robots.drivers.reachy_envelope`, beside the drivers that enforce
+it; this package holds only the agent surface.
 
 The agent ``@tool``s that sit on the same daemon live in two sibling modules -
 :mod:`~strands_robots.tools.reachy.reachy_actions` (the execution verbs) and
 :mod:`~strands_robots.tools.reachy.reachy_reads` (the read-only pair) - and are
 re-exported here lazily so importing the package costs nothing until a verb is
-actually used. They import
-:func:`~strands_robots.tools.reachy._reachy_common.envelope_error` machinery
-from here so a limit is defined once for the robot rather than once per caller.
+actually used. What they do share is
+:func:`~strands_robots.tools.reachy._reachy_common.live_handle_refusal`, so a
+verb handed something other than a live driver refuses the same way whichever
+module it lives in.
 
-Nothing here imports a transport, a daemon client or the driver, so this package
-is importable and fully testable on a machine with no Reachy attached.
+Nothing here imports a transport or a daemon client, so this package is
+importable and fully testable on a machine with no Reachy attached.
 """
 
 import importlib as _importlib
 
-from strands_robots.tools.reachy._reachy_common import (
-    HEAD_BODY_YAW_DELTA_LIMIT_DEG,
-    MOTION_ENVELOPE_DEG,
-    envelope_error,
-    live_handle_refusal,
-)
+from strands_robots.tools.reachy._reachy_common import live_handle_refusal
 
 #: verb -> (relative module, attribute). Lazy so ``import strands_robots.tools.reachy``
 #: stays free of the ``strands`` import the verb modules need.
@@ -55,9 +52,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
 }
 
 __all__ = [
-    "HEAD_BODY_YAW_DELTA_LIMIT_DEG",
-    "MOTION_ENVELOPE_DEG",
-    "envelope_error",
     "live_handle_refusal",
     *_LAZY_IMPORTS.keys(),
 ]

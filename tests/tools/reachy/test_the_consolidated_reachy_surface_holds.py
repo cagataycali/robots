@@ -34,6 +34,7 @@ import pytest
 import strands_robots.drivers.reachy as reachy_driver_module
 import strands_robots.tools.reachy as reachy_package
 from strands_robots.drivers.reachy import ReachyDriver
+from strands_robots.drivers.reachy_envelope import HEAD_BODY_YAW_DELTA_LIMIT_DEG
 from strands_robots.tools.reachy import reachy_actions, reachy_reads
 
 ALL_VERBS: dict[str, Any] = {
@@ -327,7 +328,7 @@ class TestNoVerbPromisesACouplingLimitItsOwnActionCannotReach:
 
     @pytest.mark.parametrize("verb", sorted(reachy_actions._ACTIONS))
     def test_a_verb_that_can_send_one_member_states_the_condition(self, verb: str) -> None:
-        limit = f"{reachy_package.HEAD_BODY_YAW_DELTA_LIMIT_DEG:g} deg"
+        limit = f"{HEAD_BODY_YAW_DELTA_LIMIT_DEG:g} deg"
         description = ALL_VERBS[verb].tool_spec["description"]
         if limit not in description:
             return  # says nothing about the coupling, so it promises nothing

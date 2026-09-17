@@ -1,8 +1,8 @@
 """A body-only turn is held to the head-body coupling limit, not just to its axis.
 
-:data:`~strands_robots.tools.reachy.HEAD_BODY_YAW_DELTA_LIMIT_DEG` bounds
-``head_yaw - body_yaw``, and ``envelope_error`` only reached it when one action
-carried both names. Every motion verb that sends one member routed around it:
+:data:`~strands_robots.drivers.reachy_envelope.HEAD_BODY_YAW_DELTA_LIMIT_DEG`
+bounds ``head_yaw - body_yaw``, and ``envelope_error`` only reached it when one
+action carried both names. Every motion verb that sends one member routed around it:
 ``reachy_body_turn`` sends ``body_yaw`` alone, ``reachy_look`` omits ``body_yaw``
 at its ``None`` default, and an action naming a head axis other than the yaw
 (``{"head_pitch": 10, "body_yaw": 160}``) commands the head yaw to zero without
@@ -56,7 +56,7 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers.reachy import ReachyDriver, _head_yaw_of
-from strands_robots.tools.reachy import HEAD_BODY_YAW_DELTA_LIMIT_DEG, MOTION_ENVELOPE_DEG, envelope_error
+from strands_robots.drivers.reachy_envelope import HEAD_BODY_YAW_DELTA_LIMIT_DEG, MOTION_ENVELOPE_DEG, envelope_error
 
 #: Comfortably outside the coupling limit while inside the body axis itself, so
 #: a refusal here can only be the coupling and never per-axis travel.

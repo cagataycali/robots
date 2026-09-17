@@ -24,8 +24,8 @@ from strands_robots.device_connect.reachy_transport import (
     identity_pose,
     rpy_to_pose,
 )
+from strands_robots.drivers.reachy_envelope import envelope_error
 from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
-from strands_robots.tools.reachy import envelope_error
 from strands_robots.utils import dial_host_error, finite_number_error, tcp_port_error
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def _key_prefix_error(value: Any, param: str, cls_name: str) -> str | None:
 
 #: Per-RPC map from a movement RPC's own parameter name to the envelope axis it
 #: commands. This surface spells the head axes ``pitch`` / ``roll`` / ``yaw``
-#: where :data:`~strands_robots.tools.reachy.MOTION_ENVELOPE_DEG` keys them
+#: where :data:`~strands_robots.drivers.reachy_envelope.MOTION_ENVELOPE_DEG` keys them
 #: ``head_pitch`` / ``head_roll`` / ``head_yaw``, so the values have to be
 #: re-keyed before the envelope can bound them - handing it this RPC's own
 #: keyword dict would bound nothing, because it ignores a key it has no limit
@@ -165,13 +165,13 @@ def _motion_domain_error(rpc_name: str, values: dict[str, Any]) -> dict[str, str
     :func:`~strands_robots.utils.finite_number_error`; both signs and zero are
     legitimate there (a negative pitch looks down, zero re-centres). Then every
     parameter that names a bounded joint is held to the shared travel envelope,
-    :func:`~strands_robots.tools.reachy.envelope_error`, through
+    :func:`~strands_robots.drivers.reachy_envelope.envelope_error`, through
     :data:`_ENVELOPE_AXIS_BY_PARAM`.
 
     That second bound used to be excused as the daemon's to enforce, on the
     grounds that it depends on hardware this library does not model. That was
     true when this helper was written and is no longer: the library models the
-    envelope. :data:`~strands_robots.tools.reachy.MOTION_ENVELOPE_DEG` gives
+    envelope. :data:`~strands_robots.drivers.reachy_envelope.MOTION_ENVELOPE_DEG` gives
     every bounded axis its travel in degrees, in a package whose own purpose
     statement is "what the *two* Reachy consumers must agree on and neither
     owns: the motion envelope", and which is importable with no Reachy and no
