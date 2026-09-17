@@ -25,7 +25,13 @@ jobs:
       contents: read
       pull-requests: read
     with:
-      ref: ${{ inputs.tag || github.event.release.target_commitish }}
+      # Test the branch the release (or the dispatch) came from, not the tag:
+      # on a release event GitHub already hands over target_commitish (main),
+      # and a dispatched re-publish must not re-run a frozen tag's tests
+      # against today's unpinned dependencies (v0.5.2's tag tree greps
+      # huggingface_hub's hf.py, which 1.32.0 rewrote the day of the
+      # re-publish). The tag is still what `build` checks out below.
+      ref: ${{ github.event.release.target_commitish || github.ref_name }}
 
   build:
     name: Build distribution

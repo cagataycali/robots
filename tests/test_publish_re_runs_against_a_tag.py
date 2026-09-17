@@ -9,11 +9,16 @@ release was published, the run was refused before any job existed, and PyPI kept
 serving the previous version.
 
 So the workflow also accepts a ``workflow_dispatch`` carrying the tag, read from
-``main``: the two places that decide which tree is graded and built - the
-reusable call's ``ref`` and the build job's checkout - both prefer that input,
-which is what makes ``hatch version`` derive the released version rather than the
-branch's.  Each falls back to the release's own ref, so the ``release`` path is
-unchanged.
+``main``.  The build job's checkout prefers that input, which is what makes
+``hatch version`` derive the released version rather than the branch's; it falls
+back to the release's own ref, so the ``release`` path is unchanged.
+
+The reusable test job grades the *branch* the run came from - the release's
+``target_commitish`` or the dispatched ``ref_name`` - never the tag.  A tag's
+tree is frozen while its unpinned dependencies keep moving: the first
+``v0.5.2`` re-publish would have re-run the tag's tests against a
+``huggingface_hub`` released that morning, whose CLI rewrite the tag's own test
+could not know about, while ``main`` already carried the fix.
 
 Parsing is line-based rather than via ``yaml``, for the reason
 ``tests/test_workflow_jobs_are_bounded.py`` gives: ``tests/`` is type-checked
@@ -26,8 +31,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _PUBLISH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "pypi-publish-on-release.yml"
 
 #: The dispatch input every assertion below is about.
@@ -35,6 +38,11 @@ _INPUT = "tag"
 
 #: How a job or step names that input, whatever it falls back to.
 _READS_THE_INPUT = re.compile(r"\$\{\{\s*inputs\." + _INPUT + r"\s*\|\|")
+
+#: The `ref:` line under the reusable call's `with:` (6 spaces) and under the
+#: build job's checkout `with:` (10 spaces).
+_TEST_REF = re.compile(r"^ {6}ref:")
+_BUILD_REF = re.compile(r"^ {10}ref:")
 
 
 def _text() -> str:
@@ -77,19 +85,27 @@ def test_the_publish_accepts_a_dispatch_carrying_the_release_tag() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("what", "line_pattern"),
-    [
-        ("the tree the reusable test job grades", re.compile(r"^ {6}ref:")),
-        ("the tree the build job checks out", re.compile(r"^ {10}ref:")),
-    ],
-    ids=("call-test-lint", "build"),
-)
-def test_a_dispatched_re_run_grades_and_builds_the_tag(what: str, line_pattern: re.Pattern[str]) -> None:
-    """Both ref decisions prefer the dispatch input, or the re-run builds a branch."""
-    reads = [line for line in _text().splitlines() if line_pattern.match(line) and _READS_THE_INPUT.search(line)]
+def test_a_dispatched_re_run_builds_the_tag() -> None:
+    """The build checkout prefers the dispatch input, or the re-run builds a branch."""
+    reads = [line for line in _text().splitlines() if _BUILD_REF.match(line) and _READS_THE_INPUT.search(line)]
     assert reads, (
-        f"{what} does not read the workflow_dispatch `{_INPUT}` input, so a dispatched "
-        "re-run builds the default branch and hatch-vcs derives a development version "
-        "the Validate step rejects"
+        f"the tree the build job checks out does not read the workflow_dispatch `{_INPUT}` "
+        "input, so a dispatched re-run builds the default branch and hatch-vcs derives a "
+        "development version the Validate step rejects"
+    )
+
+
+def test_the_test_job_grades_the_branch_not_the_tag() -> None:
+    """The reusable test job's ref is the run's source branch on both paths."""
+    lines = [line for line in _text().splitlines() if _TEST_REF.match(line)]
+    assert len(lines) == 1, "expected exactly one `ref:` under the reusable call's `with:`"
+    (line,) = lines
+    assert not _READS_THE_INPUT.search(line), (
+        "the reusable test job grades the dispatched tag, so a re-publish re-runs a frozen "
+        "tree's tests against today's unpinned dependencies and fails on drift the branch "
+        "already fixed (v0.5.2 vs huggingface_hub 1.32.0)"
+    )
+    assert "github.event.release.target_commitish" in line and "github.ref_name" in line, (
+        "the reusable test job must grade the release's target_commitish and, on a "
+        "dispatch, the branch the run was started from"
     )
