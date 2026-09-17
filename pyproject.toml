@@ -1,5 +1,8 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+# hatchling 1.32+ emits Metadata-Version 2.5, which the PyPI publisher's twine
+# rejects (v0.5.2 publish, run 35206733145); 1.31 built v0.5.1. Lift the pin
+# once pypa/gh-action-pypi-publish ships a twine that knows 2.5.
+requires = ["hatchling<1.32", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
