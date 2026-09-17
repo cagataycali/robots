@@ -65,8 +65,11 @@ sim.run_policy(
     policy_provider="lerobot_async",
     policy_config={
         "server_address": "gpu-box:8080",
-        "policy_type": "act",
-        "pretrained_name_or_path": "lerobot/act_so101",
+        "policy_type": "smolvla",
+        "pretrained_name_or_path": "lerobot/smolvla_base",
+        # The checkpoint's cameras. A sim world also carries an implicit
+        # `default` free camera, which no checkpoint declares - see image_keys.
+        "image_keys": ["camera1", "camera2", "camera3"],
     },
     instruction="pick up the cube",
     duration=10.0,
@@ -87,6 +90,7 @@ sim.run_policy(
 | `actions_per_step`         | `actions_per_chunk` | Actions executed from one chunk before re-querying (the re-query interval). Positive `int`, or `None` for the default |
 | `connect_timeout`          | `10.0`        | Seconds to wait for the gRPC `Ready` handshake              |
 | `request_timeout`          | `60.0`        | Seconds to wait for each observation/action RPC             |
+| `image_keys`               | `None`        | Ordered subset of the robot's camera names to send. `None` declares every camera in the observation; name the checkpoint's cameras when the robot exposes more. Async analog of `lerobot_local`'s `image_keys` |
 | `rename_map`               | `{}`          | `{robot_obs_key: model_feature_key}` map. Camera entries (`observation.images.*`) are applied client-side (the server resizes images before its rename step); state entries are forwarded to the server. Async analog of `lerobot_local`'s `obs_rename` |
 
 ## Notes
@@ -95,7 +99,23 @@ sim.run_policy(
   constructing the policy does not require the server to be up yet.
 - If the server returns no actions for an observation (filtered out, or a
   server-side inference error), the client **raises** rather than fabricating a
-  zero action - check the `PolicyServer` logs.
+  zero action - check the `PolicyServer` logs. The refusal names the cameras it
+  sent, because **a camera the checkpoint does not declare is one such error**:
+  the server resizes each declared image by its own `policy_image_features`, so
+  an undeclared one is a `KeyError` there (`Error in StreamActions:
+  'observation.images.default'`) and returns an empty chunk. Scope the cameras
+  with `image_keys` when the robot exposes more than the checkpoint - a MuJoCo
+  world always carries its implicit `default` free camera:
+
+  ```python
+  policy = create_policy(
+      "lerobot_async",
+      server_address="gpu-box:8080",
+      policy_type="smolvla",
+      pretrained_name_or_path="lerobot/smolvla_base",
+      image_keys=["camera1", "camera2", "camera3"],  # the checkpoint's cameras
+  )
+  ```
 - `set_robot_state_keys([...])` must be called with the robot's joint/motor
   names before inference; those scalars are concatenated into
   `observation.state` and any RGB/depth camera arrays are declared as image

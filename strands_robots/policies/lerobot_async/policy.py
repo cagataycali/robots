@@ -165,6 +165,23 @@ class LerobotAsyncPolicy(Policy):
             camera/state keys that differ from the ones the robot exposes (e.g.
             ``{"observation.images.front": "observation.images.laptop"}``); keys
             not present in the map pass through unchanged.
+        image_keys: Optional ordered subset of the robot's camera names to send.
+            The server resizes every declared image by the checkpoint's own
+            ``policy_image_features`` (lerobot's ``prepare_raw_observation``), so
+            a camera the checkpoint does NOT declare is a ``KeyError`` there and
+            comes back as an empty action chunk - the same dead end
+            ``rename_map`` exists for, reached by sending one camera too many.
+            Default ``None`` declares every camera array in the observation,
+            which is right for a robot whose cameras are exactly the
+            checkpoint's; name the checkpoint's cameras here when the robot
+            exposes more (a MuJoCo world always carries its implicit ``default``
+            free camera, so a 3-camera checkpoint needs the three named). Held to
+            :func:`~strands_robots.utils.name_list_error`'s domain - several
+            distinct non-blank names - so a single name passed as a bare string
+            is refused instead of scoping to one camera per character. A named
+            camera missing from the observation is refused at inference, naming
+            the cameras the observation does carry. The async analog of
+            ``lerobot_local``'s ``image_keys``.
         pad_short_actions: When a server chunk is NARROWER than the robot's
             actuator keys, command the unmatched actuators to ``0.0`` instead of
             omitting them. Defaults to False: an omitted actuator holds its
@@ -183,8 +200,9 @@ class LerobotAsyncPolicy(Policy):
     Raises:
         ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing,
             ``policy_type`` is not server-supported, ``connect_timeout`` /
-            ``request_timeout`` is not a positive finite number, or
-            ``pad_short_actions`` is not a boolean.
+            ``request_timeout`` is not a positive finite number, ``image_keys``
+            is not a list of distinct names, or ``pad_short_actions`` is not a
+            boolean.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -202,6 +220,7 @@ class LerobotAsyncPolicy(Policy):
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         rename_map: dict[str, str] | None = None,
+        image_keys: list[str] | None = None,
         pad_short_actions: bool = False,
         **ignored_kwargs: Any,
     ) -> None:
@@ -276,6 +295,13 @@ class LerobotAsyncPolicy(Policy):
                 f"key to the model's expected feature key, got {type(rename_map).__name__}."
             )
         self.rename_map: dict[str, str] = dict(rename_map) if rename_map else {}
+        # Scopes which cameras are declared and sent. Gated on a truthy value so
+        # None and [] both mean "every camera in the observation" - the default
+        # this provider shipped with - while a supplied list is held to the
+        # shared key-name domain.
+        if image_keys and (error := name_list_error(image_keys, "image_keys", "lerobot_async")):
+            raise ValueError(error)
+        self.image_keys: list[str] | None = list(image_keys) if image_keys else None
         # A server chunk narrower than robot_state_keys leaves the trailing
         # actuators unmatched. False (the default) omits them so they hold
         # position; True commands them 0.0, which is an absolute target on a
@@ -433,18 +459,49 @@ class LerobotAsyncPolicy(Policy):
         resizes every declared image by the checkpoint's own image features
         (``prepare_raw_observation``) BEFORE its rename step runs, so a camera
         declared under the robot's name is a ``KeyError`` there, not a rename.
+
+        That same lookup is why ``image_keys`` scopes this list: an EXTRA camera
+        - one the checkpoint does not declare at all - is the same ``KeyError``,
+        and the server reports it only as an empty action chunk. When
+        ``image_keys`` is set, exactly those cameras are sent, in that order, and
+        a named one missing from the observation is refused here rather than
+        silently dropped.
+
+        Raises:
+            RuntimeError: When ``image_keys`` names a key the observation does
+                not carry as a camera array.
         """
         from lerobot.utils.constants import OBS_IMAGES
 
-        cams: list[tuple[str, np.ndarray]] = []
+        def wire(key: str) -> str:
+            target = self.rename_map.get(f"{OBS_IMAGES}.{key}", "")
+            return target.removeprefix(f"{OBS_IMAGES}.") if target.startswith(f"{OBS_IMAGES}.") else key
+
+        def camera_array(key: str, value: Any) -> np.ndarray | None:
+            arr = np.asarray(value)
+            return arr if arr.ndim == 3 and arr.shape[2] in (1, 3) else None
+
+        if self.image_keys is not None:
+            cams = []
+            for key in self.image_keys:
+                arr = camera_array(key, observation_dict[key]) if key in observation_dict else None
+                if arr is None:
+                    available = sorted(k for k, v in observation_dict.items() if camera_array(k, v) is not None)
+                    raise RuntimeError(
+                        f"lerobot_async: image_keys names {key!r}, which the observation does not "
+                        f"carry as a camera array. Cameras in this observation: {available}; "
+                        f"image_keys: {self.image_keys}."
+                    )
+                cams.append((wire(key), arr))
+            return cams
+
+        cams = []
         for key, value in observation_dict.items():
             if key in self.robot_state_keys or key == "task":
                 continue
-            arr = np.asarray(value)
-            if arr.ndim == 3 and arr.shape[2] in (1, 3):
-                target = self.rename_map.get(f"{OBS_IMAGES}.{key}", "")
-                wire_key = target.removeprefix(f"{OBS_IMAGES}.") if target.startswith(f"{OBS_IMAGES}.") else key
-                cams.append((wire_key, arr))
+            arr = camera_array(key, value)
+            if arr is not None:
+                cams.append((wire(key), arr))
         return cams
 
     def _build_lerobot_features(self, observation_dict: dict[str, Any]) -> dict[str, Any]:
@@ -507,10 +564,18 @@ class LerobotAsyncPolicy(Policy):
         actions = self._stub.GetActions(self._pb2.Empty(), timeout=self.request_timeout)
         data = getattr(actions, "data", b"")
         if not data:
+            cameras = sorted(k for k, v in raw_obs.items() if isinstance(v, np.ndarray) and v.ndim == 3)
             raise RuntimeError(
                 "lerobot_async: server returned no actions for the observation. The "
                 "observation was filtered out or server-side inference failed; check "
-                "the PolicyServer logs."
+                "the PolicyServer logs. A camera the checkpoint does not declare is "
+                "one such failure (the server resizes by its own image features, so "
+                f"an undeclared one is a KeyError there); cameras sent: {cameras}"
+                + (
+                    ". Scope them with image_keys=[...] (the checkpoint's cameras)."
+                    if self.image_keys is None
+                    else f", scoped by image_keys={self.image_keys}."
+                )
             )
         return pickle.loads(data)  # nosec B301
 
