@@ -180,6 +180,31 @@ class TestTheContract:
         ]
         assert offenders == []
 
+    def test_the_path_sandbox_reads_nothing_from_the_package(self, graph: Any) -> None:
+        """A core guard is standard-library-only, which is what lets it sit there.
+
+        ``_path_validation`` is the sandbox every filesystem-writing surface runs
+        a caller's directory and file name through - ``training/_validate`` and
+        three tool modules - so it belongs under the lowest of them rather than
+        beside the one that first needed it. It earns ``core`` by importing
+        nothing internal, in any of the three kinds: an internal import here
+        would either invert the graph or make this guard's own import order
+        load-bearing.
+        """
+        sandbox = "strands_robots._path_validation"
+        assert sandbox in graph.modules
+        assert mod.layer_of(sandbox) == mod.LAYER_NAMES.index("core")
+        for kind in ("runtime", "typing_only", "late"):
+            reads = set(getattr(graph, kind).get(sandbox, frozenset()))
+            assert reads == set(), f"{kind} imports from a core guard: {sorted(reads)}"
+        importers = {
+            importer
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if sandbox in targets
+        }
+        assert len(importers) >= 4, f"only {sorted(importers)} read the sandbox, so the rule above is vacuous"
+
     def test_the_script_reports_the_tree_as_conforming(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert mod.main([]) == 0
         assert "OK: no runtime cycle, no undeclared inversion" in capsys.readouterr().out

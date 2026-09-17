@@ -41,9 +41,9 @@ from typing import Any, TypedDict
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION, decode_word, encode_word
 from strands_robots.tools._command_gate import gate_motion
-from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,

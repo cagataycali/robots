@@ -1,7 +1,7 @@
-"""Shared path validation utilities for tools that write to the filesystem.
+"""The path sandbox every surface that writes a caller-supplied path runs first.
 
-Provides two helpers all tool modules can import to reject dangerous path values
-before any I/O occurs, one per half of a write target:
+Two helpers, one per half of a write target, rejecting a dangerous path value
+before any I/O occurs:
 
 * :func:`validate_save_path` validates the *directory* a tool writes into.
 * :func:`resolve_output_path` resolves the *file name* a caller asks for inside
@@ -12,6 +12,11 @@ validating only the directory leaves the composition unchecked - the defect
 :func:`resolve_output_path` exists to close.
 
 Cross-platform: blocks sensitive directories on Linux, macOS, and Windows.
+
+It lives in the package root rather than beside its first caller because its
+consumers span layers - :mod:`strands_robots.training._validate` and three tool
+modules - and it imports nothing but the standard library, so the layer it
+belongs to is the lowest one (``scripts/check_import_layers.py``).
 """
 
 import os

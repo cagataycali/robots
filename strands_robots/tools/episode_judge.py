@@ -36,7 +36,7 @@ from typing import Any
 
 from strands import Agent, tool
 
-from strands_robots.tools._path_validation import validate_save_path
+from strands_robots._path_validation import validate_save_path
 from strands_robots.utils import boolean_flag_error, non_negative_whole_number_error, positive_count_error
 
 logger = logging.getLogger(__name__)

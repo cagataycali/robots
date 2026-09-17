@@ -1,4 +1,4 @@
-"""Tests for strands_robots.tools._path_validation module."""
+"""Tests for strands_robots._path_validation module."""
 
 import os
 import sys
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from strands_robots.tools._path_validation import (
+from strands_robots._path_validation import (
     _LINUX_BLOCKED_PREFIXES,
     _MACOS_BLOCKED_PREFIXES,
     _WINDOWS_BLOCKED_PREFIXES,
