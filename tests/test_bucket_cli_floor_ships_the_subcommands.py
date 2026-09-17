@@ -31,6 +31,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+import click
 import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -191,10 +192,24 @@ class TestTheFloorsClaimIsExecutable:
         buckets = pytest.importorskip("huggingface_hub.cli.buckets")
         assert hasattr(buckets, "buckets_cli"), "the `hf buckets` command group is gone"
         assert hasattr(buckets, "sync"), "the `hf sync` command is gone"
-        entry = Path(huggingface_hub.__file__).parent / "cli" / "hf.py"
-        registration = entry.read_text()
-        assert 'name="buckets"' in registration, "`hf` no longer registers the buckets group"
-        assert "(sync)" in registration, "`hf` no longer registers the sync command"
+        # Ask the `hf` entry point what it registers rather than grepping its
+        # source: 1.32.0 moved registration into lazy tables and the literal
+        # `name="buckets"` vanished while the command stayed (main went red on
+        # the day it shipped). A typer app is unwrapped to its click group;
+        # 1.31+ already hands back the group.
+        from huggingface_hub.cli.hf import app
+
+        command = app
+        try:
+            import typer
+        except ImportError:  # pragma: no cover - typer is a hub dependency
+            pass
+        else:
+            if isinstance(app, typer.Typer):
+                command = typer.main.get_command(app)
+        registered = command.list_commands(click.Context(command))
+        assert "buckets" in registered, "`hf` no longer registers the buckets group"
+        assert "sync" in registered, "`hf` no longer registers the sync command"
 
 
 class TestTheGateStillFailsOpen:

@@ -63,6 +63,8 @@ that equivalence first.
 
 **JSON registries** - new robots and policies are JSON edits + tests. No hardcoded lookups in `.py` files.
 
+**Imports point downward** - the package reads as seven layers, `core -> registry -> drivers|mesh -> sim|policies -> app -> tools -> dashboard`, and a module imports only its own layer or below. Check with `python scripts/check_import_layers.py` (source-only, imports nothing). It fails on a cycle in the runtime graph and on an upward import that is not declared in `KNOWN_UPWARD_EDGES` - the roster of inversions left to fix, which shrinks by deleting a line. `if TYPE_CHECKING:` and in-function imports are reported separately and are the two sanctioned ways to break a cycle.
+
 **A dependency change and its relock are one commit** - editing `pyproject.toml` without running `uv lock` leaves the lock describing a manifest that no longer exists. `uv.lock` is one of the manifests GitHub's dependency graph parses, so a stale lock is a stale *security surface*, not just a stale install. Check it before pushing with `python scripts/check_lockfile_parity.py` (offline, no resolver) or `uv lock --check`.
 
 **Tool errors return, don't raise:**

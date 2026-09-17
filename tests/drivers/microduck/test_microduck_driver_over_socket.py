@@ -19,6 +19,7 @@ from strands_robots.drivers.microduck import (
     MOUTH_INDEX,
     MicroduckDriver,
 )
+from strands_robots.policies.microduck import MICRODUCK_JOINT_NAMES
 from tests.mocks.microduck_robotd import STATE_PARAMS, MockRobotd
 
 
@@ -151,6 +152,15 @@ def test_disconnect_is_idempotent() -> None:
 
 
 def test_the_14_locomotion_joints_are_the_15_minus_mouth() -> None:
+    """The wire map's 15 joints minus ``mouth`` are the policy's 14, in order.
+
+    The driver derives :data:`LOCOMOTION_JOINT_NAMES` from its own
+    :data:`HARDWARE_JOINT_NAMES` rather than importing the policy constant, so
+    the agreement between the two layers is a property to check rather than an
+    assignment: a rename on either side, or a permutation of the ONNX tensor
+    order, parts the wire map from the policy contract and fails here.
+    """
     assert LOCOMOTION_JOINT_NAMES == tuple(name for i, name in enumerate(HARDWARE_JOINT_NAMES) if i != MOUTH_INDEX)
+    assert LOCOMOTION_JOINT_NAMES == MICRODUCK_JOINT_NAMES
     assert HARDWARE_JOINT_NAMES[MOUTH_INDEX] == "mouth"
     assert len(STATE_PARAMS["joints"]) == 15

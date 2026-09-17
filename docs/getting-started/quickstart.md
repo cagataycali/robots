@@ -1,5 +1,5 @@
 ---
-description: Five minutes from install to a robot picking up a cube.
+description: Five minutes from install to an arm moving in MuJoCo, and the reference pick that lifts a cube.
 ---
 
 # Quickstart
@@ -37,6 +37,14 @@ sim.run_policy(
     duration=10.0,
 )
 ```
+
+`mock` exercises the loop, not the task. `MockPolicy` declares
+`reads_instruction = False` and drives every joint through a test motion, so the
+envelope it returns says nothing above means the task was performed - and after
+ten seconds the cube has not moved. For a cube that really leaves the table on
+this same install, run `examples/18_so101_pick_and_lift.py` (scripted, CPU-only,
+lifts it about 150 mm). For a policy that acts on the words, pass
+`lerobot_local` with a checkpoint.
 
 ## Drive with an agent
 
