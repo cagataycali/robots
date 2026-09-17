@@ -6302,7 +6302,7 @@ class MuJoCoSimEngine(
         well, so it and ``list_policies_running`` reported opposite facts about
         the same instant ("Stopped on 'arm'" with ``was_running=True`` against
         "No policies running.") - the two-sources drift #2833 is about, and the
-        thing ``docs/simulation/overview.md`` promised could not happen. The
+        thing ``docs/simulation/rollouts.md`` promised could not happen. The
         union is spelled once, here, and every reader inherits it.
 
         ``policy_running`` is the flag the launching thread raises around every

@@ -22,7 +22,7 @@ table alone, so for as long as a blocking rollout drove the arm it was invisible
 ``policy_running`` claim, so it and ``list_policies_running`` reported opposite
 facts about the same instant ("Stopped on 'arm'" with ``was_running=True``
 against "No policies running.") -- the two-sources drift #2833 is about, and the
-thing ``docs/simulation/overview.md`` promised could not happen.
+thing ``docs/simulation/rollouts.md`` promised could not happen.
 
 Pinned here: both launch shapes put the robot in the population, every reader
 inherits that from the one verb that owns it, the fleet stop actually halts a
@@ -179,7 +179,7 @@ class TestEveryReaderInheritsTheOneDefinition:
         assert readings["state_topic"] == ["arm"]
 
     def test_the_stop_verb_and_the_public_reader_agree_about_one_instant(self, sim: Any) -> None:
-        """The invariant ``docs/simulation/overview.md`` states, at the instant it broke.
+        """The invariant ``docs/simulation/rollouts.md`` states, at the instant it broke.
 
         ``stop_policy`` already unioned the claim in, so before the population
         did, these two answered "Stopped on 'arm'" with ``was_running=True`` and

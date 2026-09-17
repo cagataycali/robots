@@ -4,7 +4,7 @@ An empty ``robot_name`` resolves to the sole rollout and is refused naming what
 is running (#3788), but a *named* stop that finds nothing was answered "Was not
 running on '<robot>'" whatever else was in flight: the same sentence, and the
 same ``status="success"``, whether the world was idle or another arm was
-mid-rollout. ``docs/simulation/overview.md`` reserves that reading for "the
+mid-rollout. ``docs/simulation/rollouts.md`` reserves that reading for "the
 genuinely idempotent case, where nothing is in flight at all", so an agent that
 aimed its stop at the wrong arm was told the stop was a no-op and nothing about
 the motion still running.

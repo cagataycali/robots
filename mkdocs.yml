@@ -25,6 +25,10 @@ nav:
   - Mobile: robots/mobile.md
 - Simulation:
   - Overview: simulation/overview.md
+  - Physics and Actions: simulation/physics.md
+  - Policy Rollouts: simulation/rollouts.md
+  - Rollout Observers: simulation/observers.md
+  - Predicates: simulation/predicates.md
   - World Building: simulation/world-building.md
   - Domain Randomization: simulation/domain-randomization.md
   - Newton Backend (GPU): simulation/newton.md
