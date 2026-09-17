@@ -27,16 +27,20 @@ tests it.
 
 The last rule here is the general one rather than a fourth assertion about
 ``ur_rtde``: **no driver refusal may hand a reader a distribution when an extra
-could supply it.** Three hints legitimately name a distribution and each says why -
+could supply it.** Two hints legitimately name a distribution and both say why -
 ``panda-py`` is not published on PyPI at all (the Franka binding ships as a
 release asset, and a direct URL requirement is denylisted by
-``tests/test_dependency_audit.py``), ``booster_robotics_sdk_python`` is a
+``tests/test_dependency_audit.py``), and ``booster_robotics_sdk_python`` is a
 vendor wheel pinned to the robot's firmware, so the installed build's vocabulary
-is an input rather than something this project bounds, and ``cyclonedds`` is the
-first step of the Unitree SDK recipe whose second step - the SDK itself, a git
-checkout - no requirement can spell, so an extra carrying the prerequisite alone
-would exit 0 with the driver still refusing. Anything else is the defect this file
-fixes, and the next native driver to land will be graded by it.
+is an input rather than something this project bounds. Anything else is the defect
+this file fixes, and the next native driver to land will be graded by it.
+
+That a hint is only one step of a longer recipe is not a reason to name a
+distribution. The Unitree SDK recipe installs its DDS binding, then clones the
+vendor SDK; the binding step names ``[ros2]``, which declares ``cyclonedds`` at
+the range this project bounds, and the checkout stays a literal command because
+no requirement can spell it. The reader gets the bounded half from the manifest
+either way.
 
 A hint may carry a specifier (``pip install 'cyclonedds>=0.10.2,<12'``), and the
 exemption table is keyed by the distribution, not the quoted text: the target is
@@ -85,13 +89,6 @@ _UNDECLARABLE = {
     "booster-robotics-sdk-python": (
         "a vendor wheel pinned to the robot's firmware, so the installed build's vocabulary is "
         "an input rather than a version this project bounds (strands_robots/drivers/booster.py)"
-    ),
-    "cyclonedds": (
-        "the prerequisite of unitree_sdk2py, which is a git checkout - its PyPI wheel lacks the "
-        "g1 package and pins cyclonedds==0.10.2, which has no py>=3.12 wheel - and a direct URL "
-        "requirement is denylisted, so an extra could carry the prerequisite and not the SDK, "
-        "and installing it would exit 0 with the driver still refusing "
-        "(strands_robots/drivers/unitree/_common.py)"
     ),
 }
 

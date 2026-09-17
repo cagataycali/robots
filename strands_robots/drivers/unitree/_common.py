@@ -44,10 +44,16 @@ logger = logging.getLogger(__name__)
 # ``cyclonedds`` wheel imports and binds a ChannelFactory on macOS arm64 and
 # x86_64 Linux; Linux aarch64 (the Jetson the robot ships with) has no
 # ``cyclonedds`` wheel at any version, so the C library comes first there.
+#
+# The binding half *is* declared here, though: ``[ros2]`` is the extra that
+# carries ``cyclonedds`` at the range this project bounds, so the recipe names
+# the extra rather than repeating the range - the manifest decides the version
+# and this refusal cannot drift from it. Only the vendor checkout stays a
+# literal command, because no requirement can express it.
 # ---------------------------------------------------------------------------
 #: The pip line a missing-SDK refusal names.
 UNITREE_SDK_INSTALL = (
-    "pip install 'cyclonedds>=0.10.2,<12' && "
+    "pip install 'strands-robots[ros2]' && "
     "git clone https://github.com/unitreerobotics/unitree_sdk2_python && "
     "pip install --no-deps -e ./unitree_sdk2_python"
 )

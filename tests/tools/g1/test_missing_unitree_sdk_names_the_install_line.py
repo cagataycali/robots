@@ -75,10 +75,18 @@ def test_the_text_names_the_install_line_and_keeps_the_exception() -> None:
 
 
 def test_the_install_line_is_the_recipe_that_was_proven() -> None:
-    """The three commands, in order; a wheel for the binding, a checkout for the SDK."""
+    """The three commands, in order; this project's extra for the binding, a checkout for the SDK.
+
+    The binding step names ``[ros2]`` rather than a bare ``cyclonedds`` range.
+    That extra declares the same requirement, so the manifest owns the version
+    and a refusal read off a robot cannot quote a bound the project has moved -
+    which is the rule ``tests/test_ur_rtde_extra_is_declared.py`` grades across
+    the whole drivers tree. Only the vendor SDK stays a literal command: it has
+    no usable PyPI build, so no requirement can carry it.
+    """
     steps = [s.strip() for s in UNITREE_SDK_INSTALL.split("&&")]
 
-    assert steps[0].startswith("pip install 'cyclonedds>=0.10.2,<12'")
+    assert steps[0] == "pip install 'strands-robots[ros2]'"
     assert steps[1] == "git clone https://github.com/unitreerobotics/unitree_sdk2_python"
     assert steps[2] == "pip install --no-deps -e ./unitree_sdk2_python"
 
