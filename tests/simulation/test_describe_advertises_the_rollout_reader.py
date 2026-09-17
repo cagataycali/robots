@@ -15,7 +15,7 @@ defect rather than a gap:
 * the base ``start_policy`` entry tells the caller a backend "advertises
   ``list_policies_running`` beside it, so this entry is how to tell which one
   you hold" - a promise about the same mapping that omitted it;
-* ``docs/simulation/overview.md`` states the verb "answers on every backend ...
+* ``docs/simulation/rollouts.md`` states the verb "answers on every backend ...
   a MuJoCo, Newton or Isaac engine names the robots it is driving";
 * :meth:`SimEngine.list_policies_running` documents itself as "promoted here
   from the MuJoCo engine so it answers on every backend".
@@ -62,7 +62,7 @@ _PROMISE = re.compile(r"advertis\w*\s+(?:it\s+)?(?:the\s+)?([a-z_][a-z0-9_]*)")
 #: caller reading the entry is already holding this method's output.
 _SELF_REFERENCE = "describe"
 
-#: The two halves of the rollout-reporting pair. ``docs/simulation/overview.md``
+#: The two halves of the rollout-reporting pair. ``docs/simulation/rollouts.md``
 #: derives one verdict from the other's population, so a surface that offers one
 #: and hides the other tells a caller half a contract.
 _ROLLOUT_REPORTING_PAIR = ("stop_policy", "list_policies_running")

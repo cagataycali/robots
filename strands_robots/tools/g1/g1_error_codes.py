@@ -132,15 +132,13 @@ def g1_list_error_codes() -> dict[str, Any]:
 def g1_decode_error_code(code: int) -> dict[str, Any]:
     """Decode one SDK return code against the catalogued name.
 
-    Read-only. Answers the same lookup
-    :func:`~strands_robots.tools.g1._g1_common.decode_code` would
-    compute internally, exposed through the ``@tool`` surface so a
-    caller who received a ``refusal_code`` from any other verb can
-    resolve it without importing the private constant. A code inside
-    :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` returns
-    ``known=True`` with the decoded ``text``; a code outside returns
-    ``known=False`` and the catalogue's ``unknown`` marker, so a
-    caller can distinguish a name the package has from a name the
+    Read-only. Answers the same
+    lookup :func:`~strands_robots.tools.g1._g1_common.decode_code` would compute internally,
+    exposed through the ``@tool`` surface so a caller who received a ``refusal_code`` from
+    any other verb can resolve it without importing the private constant. A code
+    inside :data:`~strands_robots.tools.g1._g1_common.ERR_CODES` returns ``known=True`` with
+    the decoded ``text``; a code outside returns ``known=False`` and the catalogue's
+    ``unknown`` marker, so a caller can distinguish a name the package has from a name the
     package does not.
 
     Args:

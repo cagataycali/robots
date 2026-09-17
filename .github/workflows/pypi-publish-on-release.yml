@@ -10,6 +10,12 @@ jobs:
     uses: ./.github/workflows/test-lint.yml
     permissions:
       contents: read
+      # test-lint.yml's job asks for this scope for its guards step (#3822). A
+      # called workflow may not hold a scope its caller did not grant, and the
+      # mismatch is a startup failure with no job to read: the v0.5.2 release
+      # fired this workflow and it never ran, so the tag reached GitHub and not
+      # PyPI. ci.yml grants the same scope for the same reason.
+      pull-requests: read
     with:
       ref: ${{ github.event.release.target_commitish }}
 

@@ -4657,7 +4657,7 @@ class SimEngine(ABC):
         two so101s with a policy on the second, ``stop_policy(robot_name='alpha')``
         answered ``status="success"``, "Was not running on 'alpha'", byte-identical
         to the reply from a world with nothing in flight at all, while beta kept
-        driving. ``docs/simulation/overview.md`` reserves that reading for "the
+        driving. ``docs/simulation/rollouts.md`` reserves that reading for "the
         genuinely idempotent case, where nothing is in flight at all", so an agent
         that aimed a stop at the wrong arm was told its stop was a no-op without
         being told the motion it meant to end continued. A stop that stopped
@@ -4794,7 +4794,7 @@ class SimEngine(ABC):
         """Name the robots a rollout is driving right now.
 
         The public reader of the in-flight population, promoted here from the
-        MuJoCo engine so it answers on every backend: ``docs/simulation/overview.md``
+        MuJoCo engine so it answers on every backend: ``docs/simulation/rollouts.md``
         lists it in the Policy action table with no backend qualifier, and
         documents :meth:`stop_policy` -- on this ABC since a robot's stop became
         a base contract -- as deriving its verdict from "the same in-flight

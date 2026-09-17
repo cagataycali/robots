@@ -33,6 +33,9 @@ from strands_robots import (
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
+Every parameter, default and refusal of every tool in the package - these and the G1 and
+Reachy Mini verbs - is on the generated [tool reference](../reference/tools.md).
+
 ### `pose_tool` and `serial_tool` need pyserial
 
 Both drive the servo bus through pyserial, and no extra of this project declares

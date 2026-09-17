@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``docs/simulation/overview.md`` documents the posture-flag domain the facades enforce.
+"""``docs/simulation/rollouts.md`` documents the posture-flag domain the facades enforce.
 
 The page documents every numeric domain ``SimEngine.run_policy`` and
 ``SimEngine.eval_policy`` hold their knobs to - ``n_steps``, ``duration``,
@@ -32,7 +32,7 @@ import pytest
 from strands_robots.simulation import policy_runner as runner_mod
 from strands_robots.simulation.base import SimEngine
 
-_PAGE = Path(inspect.getfile(SimEngine)).resolve().parents[2] / "docs" / "simulation" / "overview.md"
+_PAGE = Path(inspect.getfile(SimEngine)).resolve().parents[2] / "docs" / "simulation" / "rollouts.md"
 
 _BOOL_ANNOTATIONS = ("bool", "bool | None", bool, bool | None)
 
@@ -64,7 +64,7 @@ class TestTheParagraphNamesEveryFlagTheFacadesCheck:
         missing = _boolean_parameters(facade) - named
         assert not missing, (
             f"{facade.__name__} declares boolean parameter(s) {sorted(missing)} that the posture-flag "
-            f"paragraph of docs/simulation/overview.md does not name"
+            f"paragraph of docs/simulation/rollouts.md does not name"
         )
 
     def test_the_paragraph_names_the_binding_that_exists(self) -> None:
