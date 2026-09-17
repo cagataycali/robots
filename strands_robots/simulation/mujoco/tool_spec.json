@@ -225,10 +225,11 @@
     },
     "policy_provider": {
       "type": "string",
-      "description": "Policy provider name (e.g. groot, lerobot_local, lerobot_async, cosmos3, mock). See list_providers()."
+      "description": "Which policy backend runs: one of cosmos3, curobo, groot, kimodo, lerobot_async, lerobot_local, microduck, mock, moveit2, protomotions, remote, rl, wbc, wbc_gait (default mock - a no-op policy for smoke tests). The model or checkpoint itself is named inside policy_config (lerobot_local: pretrained_name_or_path; groot: host/port). Not an action - an unknown name is refused listing the current registry (strands_robots.policies.list_providers())."
     },
     "instruction": {
-      "type": "string"
+      "type": "string",
+      "description": "The natural-language task the policy is conditioned on (run_policy, start_policy, eval_policy), e.g. 'pick up the red cube'. This is the field for what a caller might otherwise call task= or prompt=."
     },
     "duration": {
       "type": "number"
@@ -237,7 +238,8 @@
       "type": "integer"
     },
     "control_frequency": {
-      "type": "number"
+      "type": "number",
+      "description": "run_policy/start_policy/run_multi_policy/eval_policy/evaluate_benchmark: control-loop rate in Hz - one policy query and one applied action per 1/control_frequency s of sim time (duration = n_steps / control_frequency). Unset = the active recording's fps when a recording is open (the dataset recorder writes one frame per control step, so the two rates must agree), else 50. A value you pass that disagrees with an open recording is refused, naming both rates"
     },
     "camera_name": {
       "type": "string"

@@ -72,7 +72,22 @@ _RULE: list[tuple[Any, float | None, int | None, list[float] | None, list[int] |
 ]
 
 
-@pytest.mark.parametrize(("value", "as_float", "as_int", "as_floats", "as_ints"), _RULE, ids=repr)
+def _case_id(value: Any) -> str:
+    """A label for a table row that is the same in every process.
+
+    ``repr`` is the package's usual ``ids=`` for a domain table and reads well
+    for the literals above, but two rows have no literal spelling: ``object()``
+    and ``memoryview(...)`` inherit the default ``__repr__``, which prints the
+    instance's address. That address differs per interpreter, so the row's test
+    ID differed between pytest-xdist workers and the whole suite failed to
+    collect in parallel - "Different tests were collected between gw0 and gw1",
+    before a single test ran. Those rows are labelled by type instead.
+    """
+    text = repr(value)
+    return type(value).__name__ if " at 0x" in text else text
+
+
+@pytest.mark.parametrize(("value", "as_float", "as_int", "as_floats", "as_ints"), _RULE, ids=_case_id)
 def test_one_rule_decides_what_counts_as_a_reading(
     value: Any,
     as_float: float | None,

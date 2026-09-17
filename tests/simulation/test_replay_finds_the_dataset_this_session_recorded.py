@@ -23,7 +23,10 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
+import requests
+from huggingface_hub.errors import OfflineModeIsEnabled
 
 from strands_robots.dataset_recorder import resolve_dataset_dir
 from strands_robots.simulation.policy_runner import PolicyRunner
@@ -178,12 +181,98 @@ class TestAHubMissIsTranslated:
             "lab/wave", None, Exception(HUB_404)
         )
 
-    def test_an_explicit_root_reports_the_library_error_verbatim(self) -> None:
-        assert _runner({})._replay_load_failure("lab/wave", "/x", Exception(HUB_404)) == HUB_404
+    def test_an_explicit_root_names_the_directory_that_was_read(self, tmp_path) -> None:
+        # Was pinned verbatim ("explicit roots ... are untouched"), so the one
+        # caller who DID name a directory got the raw 404 - request id,
+        # repo_type advice, a gated-repo paragraph - and the directory they
+        # chose appeared nowhere in the reply.
+        text = _runner({})._replay_load_failure("lab/wave", str(tmp_path), Exception(HUB_404))
+        assert text.startswith(f"No dataset 'lab/wave' in the root= directory {tmp_path} ")
+        assert "no Hub repository by that name" in text
+        assert "the one holding meta/" in text
+        assert "Request ID" not in text and "authenticated" not in text
 
     def test_other_errors_are_verbatim(self) -> None:
         err = ValueError("Episode 5 out of range (0-0)")
         assert _runner({})._replay_load_failure("lab/wave", None, err) == str(err)
+
+
+class TestAnUnreachableHubIsNotAMissingDataset:
+    """A Hub that could not be reached said only ``[Errno 111] Connection refused``.
+
+    Measured on the real door with ``HF_ENDPOINT`` closed, an unresolvable host
+    and ``HF_HUB_OFFLINE=1``: the reply named neither the dataset, the
+    directory that was read, nor the Hub. The classes are the real ones, so a
+    Hub client whose exception hierarchy moves again is caught here - lerobot
+    swapped ``requests`` for ``httpx``, which is why matching the message
+    ("Max retries exceeded") does not hold.
+    """
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(httpx.ConnectError("[Errno 111] Connection refused"), id="connection-refused"),
+            pytest.param(httpx.ConnectError("[Errno -2] Name or service not known"), id="no-such-host"),
+            pytest.param(httpx.ConnectTimeout("timed out"), id="timeout"),
+            pytest.param(
+                OfflineModeIsEnabled(
+                    "Cannot reach https://huggingface.co/api/datasets/lab/wave/refs: offline mode is "
+                    "enabled. To disable it, please unset the `HF_HUB_OFFLINE` environment variable."
+                ),
+                id="offline-mode",
+            ),
+            pytest.param(requests.exceptions.ConnectionError("Max retries exceeded"), id="requests-client"),
+        ],
+    )
+    def test_it_names_the_dataset_the_directory_and_the_hub(self, error, tmp_path) -> None:
+        text = _runner({})._replay_load_failure("lab/wave", str(tmp_path), error)
+        assert text.startswith(
+            f"No local copy of 'lab/wave' at {tmp_path} and the Hugging Face Hub could not be reached "
+        )
+        # The library's own text is kept here (it names the endpoint, and
+        # offline mode names the variable to unset) - unlike the 404's.
+        assert f"({error})" in text
+        assert "pass root=" in text.lower()
+
+    def test_a_404_is_still_read_as_a_missing_repository(self) -> None:
+        assert "could not be reached" not in _runner({})._replay_load_failure(
+            "lab/wave", None, _RepositoryNotFoundError(HUB_404)
+        )
+
+
+class TestTheDatasetsOnDiskAreNamed:
+    """The answer to a typo, or to a ``root=`` aimed one directory too high."""
+
+    @staticmethod
+    def _make(parent: Path, names, decoys=()) -> None:
+        for name in names:
+            (parent / name / "meta").mkdir(parents=True)
+        for name in decoys:
+            (parent / name).mkdir(parents=True)
+
+    def test_a_typo_is_answered_with_the_datasets_beside_it(self, tmp_path, monkeypatch) -> None:
+        from strands_robots import dataset_recorder
+
+        self._make(tmp_path / "lab", ["wave"], decoys=["notes"])
+        monkeypatch.setattr(dataset_recorder, "_lerobot_home", lambda: tmp_path)
+        text = _runner({})._replay_load_failure("lab/waev", None, _RepositoryNotFoundError(HUB_404))
+        assert f"Datasets on disk in {tmp_path / 'lab'}: wave." in text
+        assert "notes" not in text
+
+    def test_a_root_one_level_too_high_is_answered_with_what_is_inside_it(self, tmp_path) -> None:
+        self._make(tmp_path, ["wave"])
+        text = _runner({})._replay_load_failure("lab/wave", str(tmp_path), _RepositoryNotFoundError(HUB_404))
+        assert f"Datasets on disk in {tmp_path}: wave." in text
+
+    def test_a_long_list_is_capped(self, tmp_path) -> None:
+        self._make(tmp_path, [f"ds{i}" for i in range(10)])
+        text = _runner({})._replay_load_failure("lab/wave", str(tmp_path), _RepositoryNotFoundError(HUB_404))
+        assert f"Datasets on disk in {tmp_path}: ds0, ds1, ds2, ds3, ds4, ds5, ds6, ds7, ...." in text
+
+    def test_nothing_is_offered_when_no_dataset_is_there(self, tmp_path) -> None:
+        assert "Datasets on disk" not in _runner({})._replay_load_failure(
+            "lab/wave", str(tmp_path), _RepositoryNotFoundError(HUB_404)
+        )
 
 
 class TestOnTheRealSim:

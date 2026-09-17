@@ -1,6 +1,7 @@
 """A real robot tool refusing a verb it does not have names where that verb lives.
 
-``Robot(mode="real")`` publishes four actions: execute, start, status, stop. The
+``Robot(mode="real")`` publishes the observe verbs (get_state, get_robot_state,
+list_cameras, render) and the motion/task ones (execute, start, status, stop). The
 quickstart once asked it, in one prompt, for ``start_recording``, ``teleoperate``
 and ``stop_recording`` - every call came back "Unknown action" with nothing about
 where the verb went. Measured against the simulation tool's 77 published actions,
@@ -30,12 +31,15 @@ from pathlib import Path
 import pytest
 from strands.types._events import ToolResultEvent
 
+from strands_robots.hardware_robot import _PUBLISHED_ACTIONS, RobotTaskState
 from strands_robots.hardware_robot import Robot as HwRobot
-from strands_robots.hardware_robot import RobotTaskState
 from tests._daemon_executor import DaemonThreadExecutor
 
 QUICKSTART = Path(__file__).resolve().parents[1] / "docs" / "getting-started" / "quickstart.md"
-REAL_ROBOT_ACTIONS = {"execute", "start", "status", "stop"}
+REAL_ROBOT_ACTIONS = set(_PUBLISHED_ACTIONS)
+# The refusal opens with the vocabulary, read from the same tuple the schema's
+# enum is built from - so a verb added to one cannot go unnamed by the other.
+VALID = f"Valid actions: {', '.join(_PUBLISHED_ACTIONS)}"
 
 
 class _Arm:
@@ -84,7 +88,7 @@ def _call(hw: HwRobot, action: object) -> str:
 @pytest.mark.parametrize("action", ["teleoperate", "start_teleop", "stop_teleoperate"])
 def test_a_teleoperation_verb_is_sent_to_the_tool_that_teleoperates(action):
     text = _call(_hw(), action)
-    assert text.startswith(f"Unknown action: {action}. Valid actions: execute, start, status, stop")
+    assert text.startswith(f"Unknown action: {action}. {VALID}")
     assert "lerobot_teleoperate" in text
     assert "attach_teleop" in text
     assert "does not teleoperate from an agent" in text
@@ -93,7 +97,7 @@ def test_a_teleoperation_verb_is_sent_to_the_tool_that_teleoperates(action):
 @pytest.mark.parametrize("action", ["record", "start_recording", "stop_recording", "record_episode"])
 def test_a_recording_verb_is_sent_to_the_tool_that_records(action):
     text = _call(_hw(), action)
-    assert text.startswith(f"Unknown action: {action}. Valid actions: execute, start, status, stop")
+    assert text.startswith(f"Unknown action: {action}. {VALID}")
     assert "lerobot_teleoperate" in text
     assert "dataset_repo_id" in text
     assert "simulation tool's actions" in text
@@ -108,7 +112,7 @@ def test_a_policy_verb_is_sent_back_to_this_tools_own_verbs(action):
     that runs it.
     """
     text = _call(_hw(), action)
-    assert text.startswith(f"Unknown action: {action}. Valid actions: execute, start, status, stop")
+    assert text.startswith(f"Unknown action: {action}. {VALID}")
     assert "does drive policies" in text
     for verb in ("action='execute'", "action='start'", "action='stop'"):
         assert verb in text
@@ -159,13 +163,29 @@ def test_building_the_refusal_cannot_raise_on_the_action_it_reports():
             raise RuntimeError("no repr")
 
     text = _call(_hw(), _Unprintable())
-    assert text.endswith("Valid actions: execute, start, status, stop")
+    assert text.endswith(VALID)
     assert "Unknown action: <" in text
+
+
+def test_the_refusal_names_the_observe_verbs_and_not_only_the_motion_ones():
+    """A misspelled observe verb must not read as "this arm cannot be read".
+
+    The enum publishes get_state / get_robot_state / list_cameras / render, and
+    reading the arm is the half of this tool that needs no operator approval -
+    the reason those verbs exist. While the refusal named only the four motion
+    verbs, ``get_stat`` came back with a valid-actions list from which every
+    reading verb was absent, so the next thing an agent could reasonably do was
+    request a policy rollout on real actuators to read a joint angle. That is
+    the harm the observe actions were added to remove.
+    """
+    text = _call(_hw(), "get_stat")
+    for verb in ("get_state", "get_robot_state", "list_cameras", "render"):
+        assert verb in text, f"the refusal does not name {verb!r}: {text!r}"
 
 
 def test_an_unknown_spelling_gets_the_plain_refusal():
     text = _call(_hw(), "bogus")
-    assert text == "Unknown action: bogus. Valid actions: execute, start, status, stop"
+    assert text == f"Unknown action: bogus. {VALID}"
 
 
 def test_the_refusal_is_one_content_block_of_text():
@@ -184,7 +204,7 @@ def test_the_refusal_is_one_content_block_of_text():
 
 
 class TestTheQuickstartAsksTheRealRobotToolOnlyForVerbsItHas:
-    """The prompt handed to ``Agent(tools=[follower])`` may only use the four real actions."""
+    """The prompt handed to ``Agent(tools=[follower])`` may only use verbs this tool has."""
 
     def _agent_prompts_over_a_real_robot(self) -> list[str]:
         text = QUICKSTART.read_text()

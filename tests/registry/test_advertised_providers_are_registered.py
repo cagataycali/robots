@@ -35,8 +35,9 @@ and grades whatever it finds: a schema entry added later is graded on arrival.
 Two spellings of the same literal are graded, because a provider name reaches a
 caller by two routes:
 
-* a ``policy_provider`` entry in a tool ``inputSchema`` -- its ``e.g.``
-  examples and its ``default`` -- which is what an agent reads;
+* a ``policy_provider`` entry in a tool ``inputSchema`` -- the providers it
+  lists (``e.g. ...`` or ``one of ...``) and its ``default`` -- which is what
+  an agent reads;
 * a ``policy_provider=`` default in a function signature, which is what a
   Python caller gets when the argument is omitted.
 
@@ -80,8 +81,15 @@ def _registered_spellings() -> set[str]:
 
 
 def _eg_names(text: str) -> list[str]:
-    """Extract provider tokens from an ``e.g. a, b, c`` clause in ``text``."""
-    match = re.search(r"e\.g\.\s*([^).]*)", text)
+    """Extract provider tokens from an ``e.g. a, b, c`` or ``one of a, b, c`` clause in ``text``.
+
+    The two forms advertise the same thing at different strengths - a sample
+    of the registry, or the whole of it - and both are read here, so an
+    exhaustive list is graded name by name exactly as a sample is. The clause
+    ends at a period, a closing bracket or an opening one, so a trailing
+    ``(default groot)`` is not read as part of the last name.
+    """
+    match = re.search(r"(?:e\.g\.|one of)\s*([^().]*)", text)
     if not match:
         return []
     return [tok.strip() for tok in re.split(r"[,/]", match.group(1)) if tok.strip()]
@@ -196,16 +204,16 @@ def test_the_sweep_reaches_every_known_provider_schema() -> None:
 
 
 def test_every_provider_schema_advertises_examples_in_a_readable_form() -> None:
-    """Each schema must list its examples as ``e.g. a, b, c``.
+    """Each schema must list its providers as ``e.g. a, b, c`` or ``one of a, b, c``.
 
-    The form is what makes the examples gradable at all. ``Robot.tool_spec``
+    The form is what makes the names gradable at all. ``Robot.tool_spec``
     advertised ``"Policy provider (groot, openai, etc.)"``, which names two
-    providers and matches no ``e.g.`` clause, so the phantom one was invisible
+    providers and matches neither clause, so the phantom one was invisible
     to a guard that reads the clause.
     """
     silent = [site for site, entry in _SCHEMA_ENTRIES if not _eg_names(str(entry.get("description", "")))]
     assert not silent, (
-        f"policy_provider schemas at {silent} state no 'e.g. ...' provider examples, "
+        f"policy_provider schemas at {silent} state no 'e.g. ...' or 'one of ...' provider list, "
         "so the names they advertise cannot be graded against the registry"
     )
 

@@ -135,31 +135,82 @@ def _frames_on_disk(root: str) -> int:
     return sum(len(pd.read_parquet(p)) for p in parquets)
 
 
-class TestTheLibraryDefaultsAreRefused:
-    """The out-of-the-box pair is the mismatch, so it is the headline case."""
+class TestTheLibraryDefaultsAdoptTheRecording:
+    """``start_recording()`` then ``run_policy()`` with nothing else passed records cleanly.
+
+    The recorder's default is 30 fps and a rollout's, with no recording open,
+    is 50 Hz; before, the plain two-call sequence refused itself every time
+    with a remedy the caller could only satisfy by learning both numbers. An
+    UNSET ``control_frequency`` now adopts the open recording's fps.
+    """
+
+    def test_recording_at_30_then_rolling_with_no_rate_steps_at_30(self, sim, tmp_path):
+        root = _record(sim, tmp_path, 30)
+        result = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), duration=0.5)
+        assert result["status"] == "success", result["content"][0]["text"]
+        assert result["content"][1]["json"]["n_steps"] == 15  # 0.5 s at 30 Hz, not 25 at 50 Hz
+        sim.stop_recording()
+        assert _frames_on_disk(root) == 15
+
+    def test_start_policy_with_no_rate_adopts_the_recording_too(self, sim, tmp_path):
+        """The async entry point resolves the rate too, so its episode is captured.
+
+        Graded on the frames that reached disk rather than the returned
+        envelope: ``start_policy`` returns while the rollout continues, so its
+        ``status="success"`` is only a claim that the rollout STARTED, and at
+        the unresolved 50 Hz the rate guard would have refused it and written
+        nothing.
+        """
+        root = _record(sim, tmp_path, 30)
+        result = sim.start_policy("arm", policy_object=_Hold(["a1", "a2"]), duration=0.2)
+        assert result["status"] == "success", result["content"][0]["text"]
+        # Wait through the public in-flight reader: the private Future is
+        # PRUNED the moment the rollout exits, so a short rollout can finish
+        # before the test looks and reaching for it is a race, not a join.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline and "arm" in sim.list_policies_running()["content"][0]["text"]:
+            time.sleep(0.02)
+        sim.stop_recording()
+        assert _frames_on_disk(root) == 6  # 0.2 s at 30 Hz
+
+    def test_with_no_recording_open_the_default_is_still_50(self, sim):
+        result = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), duration=0.2)
+        assert result["status"] == "success"
+        assert result["content"][1]["json"]["n_steps"] == 10
+
+    def test_the_class_constant_is_the_number_the_tool_spec_promises(self):
+        assert MuJoCoSimEngine.DEFAULT_CONTROL_FREQUENCY == 50.0
+
+
+class TestAnExplicitMismatchIsRefused:
+    """A rate the caller DID pass is never corrected behind their back."""
 
     def test_recording_at_30_then_rolling_at_50_is_refused(self, sim, tmp_path):
         _record(sim, tmp_path, 30)
-        result = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), n_steps=10)
+        result = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=50.0, n_steps=10)
         assert result["status"] == "error"
 
     def test_the_refusal_names_both_rates_and_the_distortion(self, sim, tmp_path):
         _record(sim, tmp_path, 30)
-        text = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), n_steps=10)["content"][0]["text"]
+        text = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=50.0, n_steps=10)[
+            "content"
+        ][0]["text"]
         assert "30 fps" in text
         assert "control_frequency=50" in text
         assert "1.667x" in text
 
     def test_the_refusal_names_both_remedies(self, sim, tmp_path):
         _record(sim, tmp_path, 30)
-        text = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), n_steps=10)["content"][0]["text"]
+        text = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=50.0, n_steps=10)[
+            "content"
+        ][0]["text"]
         assert "control_frequency=30" in text
         assert "start_recording(fps=50, overwrite=True)" in text
 
     def test_no_frame_is_written(self, sim, tmp_path):
         """The refusal precedes capture, so the caller loses no episode."""
         root = _record(sim, tmp_path, 30)
-        sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), n_steps=10)
+        sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=50.0, n_steps=10)
         assert _frames_on_disk(root) == 0
 
 
@@ -191,7 +242,9 @@ class TestTheAdvisedRemedyIsUsable:
 
     def test_following_the_control_frequency_remedy_records_cleanly(self, sim, tmp_path):
         root = _record(sim, tmp_path, 30)
-        refused = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), n_steps=10)
+        refused = sim.run_policy(
+            robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=50.0, n_steps=10
+        )
         assert refused["status"] == "error"
         # The message says: pass control_frequency=30. Do exactly that.
         result = sim.run_policy(robot_name="arm", policy_object=_Hold(["a1", "a2"]), control_frequency=30.0, n_steps=10)

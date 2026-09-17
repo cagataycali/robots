@@ -58,7 +58,7 @@ class TestTheSentenceTheOperatorApproves:
         """Graded as one string: an operator reads one sentence, not three facts."""
         assert warning_for(arm, monkeypatch, policy_provider="mock", duration=3) == (
             "'execute' drives the real robot 'so101' for up to 3s with 'Wave the arm' "
-            "(policy mock at localhost:None); it needs operator approval before it is dispatched. "
+            "(policy mock built in this process, no server); it needs operator approval before it is dispatched. "
             "Note: MockPolicy does not read the instruction. Its actions - a test motion on every "
             "joint - are commanded to the robot whatever the task says; no status or completion "
             "that follows will mean the task was performed."

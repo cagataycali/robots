@@ -9,10 +9,12 @@ motion they were not told about - and the wall-clock budget the control loop
 honours went unstated, so "y" bought an unknown length of that motion.
 
 It now reads `'execute' drives the real robot 'so101' for up to 3s with 'Wave
-the arm' (policy mock at localhost:None); it needs operator approval before it
-is dispatched. Note: MockPolicy does not read the instruction. Its actions - a
-test motion on every joint - are commanded to the robot whatever the task says;
-no status or completion that follows will mean the task was performed.`
+the arm' (policy mock built in this process, no server); it needs operator
+approval before it is dispatched. Note: MockPolicy does not read the
+instruction. Its actions - a test motion on every joint - are commanded to the
+robot whatever the task says; no status or completion that follows will mean
+the task was performed.` (The policy phrase is #3761's; this change adds the
+budget and the notice around it.)
 
 The budget is the horizon `duration` sets, defaulted like the entry points
 (30s), and dropped rather than crashing for a value `_pre_gate_error` has
