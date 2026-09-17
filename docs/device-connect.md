@@ -4,6 +4,13 @@ description: Device Connect — the device-aware networking layer (discovery, RP
 
 # Device Connect
 
+!!! warning "Device Connect leaves in 0.7"
+
+    The [roadmap](https://github.com/strands-labs/robots/issues/3818) retires this layer in 0.7:
+    its drivers move into `strands_robots.drivers` and the RPC/edge layer is removed. Everything
+    on this page except `Robot().run()` already falls back to the built-in
+    [Zenoh mesh](mesh.md), which needs no extra.
+
 [Device Connect](https://github.com/arm/device-connect) by Arm is the **recommended networking layer** for Strands Robots — a device-aware runtime that handles discovery, presence, structured RPC, event routing, and safety. `Robot("…").run()` brings a robot online as a Device Connect device, and the [`robot_mesh`](mesh.md#agent-driven-mesh) tool dispatches through it.
 
 <video controls playsinline width="100%">
