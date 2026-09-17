@@ -102,25 +102,23 @@ def _inner_json(envelope: Any) -> dict[str, Any] | None:
 async def g1_get_state(driver: Any) -> dict[str, Any]:
     """Return the driver's status plus the arm / loco gate membership answers.
 
-    Read-only. Calls :meth:`~strands_robots.drivers.g1.G1Driver.get_status`
-    once, then decides membership of the reported ``fsm_id`` against
-    :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` (the arm-SDK
-    gate) and :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` (the
-    locomotion gate). The membership answer is the same one
-    :func:`~strands_robots.tools.g1.g1_motion_gates.g1_fsm_admits` would
-    compute for the given ``fsm_id``; this verb saves the caller a second
-    tool call by carrying it alongside the state read.
+    Read-only. Calls :meth:`~strands_robots.drivers.g1.G1Driver.get_status` once, then
+    decides membership of the reported ``fsm_id``
+    against :data:`~strands_robots.tools.g1._g1_common.HANDSHAKE_FSMS` (the arm-SDK gate)
+    and :data:`~strands_robots.tools.g1._g1_common.WALK_FSMS` (the locomotion gate). The
+    membership answer is the same
+    one :func:`~strands_robots.tools.g1.g1_motion_gates.g1_fsm_admits` would compute for the
+    given ``fsm_id``; this verb saves the caller a second tool call by carrying it alongside
+    the state read.
 
     Args:
-        driver: An object with an ``async get_status`` method returning
-            the driver's status envelope (in practice a
-            :class:`~strands_robots.drivers.g1.G1Driver`). The driver may
-            be connected or not; ``get_status`` reports which, and every
-            field it does not have yet comes back ``None`` rather than
-            raising. Typed :class:`~typing.Any` rather than as ``G1Driver``
-            to keep this module out of the import cycle the driver's own
-            ``ensure_dds`` reach into this package would close - see the
-            module docstring's SDK-load-hygiene note.
+        driver: An object with an ``async get_status`` method returning the driver's status
+            envelope (in practice a :class:`~strands_robots.drivers.g1.G1Driver`). The
+            driver may be connected or not; ``get_status`` reports which, and every field it
+            does not have yet comes back ``None`` rather than raising.
+            Typed :class:`~typing.Any` rather than as ``G1Driver`` to keep this module out
+            of the import cycle the driver's own ``ensure_dds`` reach into this package
+            would close - see the module docstring's SDK-load-hygiene note.
 
     Returns:
         A dict with ``status``, the driver's ``tool_name`` and ``connected``
