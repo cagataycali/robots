@@ -66,13 +66,13 @@ class _Link:
     """A link that starts and stops and does nothing else."""
 
     async def start(self, on_joints: Any, on_imu: Any) -> None:
-        del on_joints, on_imu
+        """Accept the driver's callbacks and never call them."""
 
     async def stop(self) -> None:
         return None
 
     async def send_cmd(self, cmd: dict[str, Any]) -> None:
-        del cmd
+        """Swallow a command; this link grades discovery, not the wire."""
 
 
 def _wire(monkeypatch: pytest.MonkeyPatch, by_host: dict[str, Any]) -> _HostTable:

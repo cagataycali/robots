@@ -120,6 +120,7 @@ _PATH_WOBBLE_DISABLE = "/api/media/wobbling/disable"
 _PATH_TRACKING_ENABLE = "/api/media/tracking/enable"
 _PATH_TRACKING_DISABLE = "/api/media/tracking/disable"
 _PATH_TRACKING_FACE = "/api/media/tracking/face"
+_PATH_STATE = "/api/state/full"
 _PATH_STATE_DOA = "/api/state/full?with_doa=true&with_head_pose=true&with_body_yaw=true"
 #: A tracked face older than this no longer vetoes a DoA turn.
 _FACE_FRESH_S = 1.5
@@ -340,6 +341,9 @@ class ReachyDriver(AgentTool):
         self._imu: dict[str, Any] | None = None
         self._pose: dict[str, Any] | None = None
         self._battery: dict[str, Any] | None = None
+        #: ``(daemon face stamp, this host's monotonic time when first seen)``.
+        #: The daemon stamps on its own clock, so only the local age is usable.
+        self._face_stamp: tuple[float, float] | None = None
         self._joints: dict[str, Any] | None = None
         self._joints_received_at: float | None = None
 
@@ -437,7 +441,7 @@ class ReachyDriver(AgentTool):
                                     "express: play a recorded emotion or dance by name (emotion, library) - plain words "
                                     "like happy/curious/yes/no resolve to library moves; "
                                     "list_moves: the library's move names (library=emotions|dances); "
-                                    "motors: torque mode (mode=enabled|disabled|gravity_compensation); "
+                                    "motors: torque mode (mode=enabled|disabled|gravity_compensation), or omit mode to read it - a move is accepted with torque off and holds nothing; "
                                     "say: speak text through the robot's TTS sidecar + speaker (text, wobble); "
                                     "play_sound: play a WAV the daemon can read (sound_file, wobble); "
                                     "volume: read the speaker level; "
@@ -503,7 +507,7 @@ class ReachyDriver(AgentTool):
                             },
                             "mode": {
                                 "type": "string",
-                                "description": "Torque mode for motors: enabled, disabled or gravity_compensation.",
+                                "description": "Torque mode for motors: enabled, disabled or gravity_compensation; omit to read the current mode.",
                             },
                             "text": {"type": "string", "description": "What to say (say), up to 500 characters."},
                             "sound_file": {
@@ -1367,6 +1371,32 @@ class ReachyDriver(AgentTool):
         self._remember_head_yaw_target(None)
         return {"status": "success", "content": [{"json": {"motors": mode}}]}
 
+    def read_motors(self) -> dict[str, Any]:
+        """Report the torque mode the robot is in, as the daemon sees it.
+
+        The read for :meth:`set_motors`, the same way :meth:`get_volume` answers
+        for :meth:`set_volume`. It matters because the daemon accepts a ``goto``
+        in every mode: a move commanded while torque is off is acknowledged with
+        a move uuid and moves nothing, so without this an agent whose ``look``
+        succeeded and changed no pose had no way to learn why.
+
+        Returns:
+            A success envelope carrying the daemon's ``control_mode`` and
+            whether a commanded pose will be held - only ``'enabled'`` holds
+            one; ``'disabled'`` is limp and ``'gravity_compensation'`` floats.
+            A refusal names what refused: no link, a transport failure, or a
+            daemon body carrying no mode.
+        """
+        if not self._connected:
+            return _refuse("read_motors: not connected - call connect_eagerly() first")
+        result = self._daemon_get(_PATH_STATE)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"read_motors: {error}")
+        mode = result.get("control_mode")
+        if not isinstance(mode, str):
+            return _refuse(f"read_motors: daemon reported no control_mode (got {mode!r})")
+        return {"status": "success", "content": [{"json": {"motors": mode, "holds_a_pose": mode == "enabled"}}]}
+
     # ------------------------------------------------------------------ #
     # Expressive verbs: smooth moves, speech, sound, volume, tracking.   #
     # ------------------------------------------------------------------ #
@@ -1854,13 +1884,44 @@ class ReachyDriver(AgentTool):
         """The turner's motion sink: one bounded :meth:`goto` in degrees."""
         return self.goto(head={"pitch": pitch, "roll": roll, "yaw": yaw}, body_yaw=body_yaw, duration=duration)
 
+    def _face_lock_is_fresh(self, stamp: Any) -> bool:
+        """Whether the face tracker's lock is recent enough to veto a DoA turn.
+
+        The daemon's ``ts`` is stamped on the robot's OWN clock: a Wireless Mini
+        reports an uptime (71708.0 while this host's epoch read 1.79e9), so
+        neither ``time.time()`` nor this host's ``time.monotonic()`` is
+        subtractable from it - doing so made every difference vastly larger than
+        the window, and a live lock never vetoed anything.
+
+        What is measurable here is how long ago THIS driver first saw that value,
+        on one monotonic clock: a tracker still detecting hands back a new stamp
+        each read, and a lock nobody refreshed keeps the stamp it had.
+
+        Args:
+            stamp: The daemon's ``face_target.ts``, whatever it sent.
+
+        Returns:
+            ``True`` while the lock counts as current - including when the daemon
+            sends no usable stamp, because a reported detection is not made
+            safer by being unstamped.
+        """
+        if not isinstance(stamp, int | float) or isinstance(stamp, bool):
+            return True
+        now = time.monotonic()
+        with self._cache_lock:
+            seen = self._face_stamp
+            if seen is None or seen[0] != float(stamp):
+                self._face_stamp = (float(stamp), now)
+                return True
+            first_seen = seen[1]
+        return now - first_seen <= _FACE_FRESH_S
+
     def _doa_blocked(self) -> str | None:
         """Why a DoA turn must not happen right now, or ``None``. Two GETs, only when a turn is armed."""
         face = self._daemon_get(_PATH_TRACKING_FACE)
         target = face.get("face_target") if isinstance(face, dict) else None
         if isinstance(target, dict) and target.get("detected"):
-            seen = target.get("ts")
-            if not isinstance(seen, int | float) or time.time() - float(seen) <= _FACE_FRESH_S:
+            if self._face_lock_is_fresh(target.get("ts")):
                 return "face tracker has a lock"
         running = self._daemon_get_list(_PATH_MOVES_RUNNING)
         if isinstance(running, list) and running:
@@ -2511,7 +2572,12 @@ def _act_list_moves(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, A
 
 
 def _act_motors(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    # No mode is the question, not a malformed command: one verb reads the
+    # torque state and writes it, as volume/set_volume and
+    # tracking_status/track_face pair a read with its write.
     mode = params.get("mode")
+    if mode is None:
+        return driver.read_motors()
     if not isinstance(mode, str):
         return _refuse(f"motors: mode must be one of {list(_MOTOR_MODES)}, got {mode!r}")
     return driver.set_motors(mode)

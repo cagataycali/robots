@@ -27,6 +27,7 @@ import asyncio
 import importlib
 import math
 import sys
+import time
 from typing import Any
 
 import pytest
@@ -108,8 +109,13 @@ class _DaemonDouble:
         path: str,
         method: str = "GET",
         data: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Answer one REST call, recording it first. A list body is passed through as a list."""
+    ) -> Any:
+        """Answer one REST call, recording it first.
+
+        Returns whatever the table holds, unreshaped, because this stands in for
+        :func:`~strands_robots.device_connect.reachy_transport.api` - a list body
+        stays a list, so the driver's own shape judgement is what the tests grade.
+        """
         self.calls.append((host, port, path, method))
         if method == "POST":
             self.posted.append((path, data))
@@ -121,6 +127,8 @@ def _install(
     monkeypatch: pytest.MonkeyPatch,
     *,
     status: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
+    face: dict[str, Any] | None = None,
     stop_result: dict[str, Any] | None = None,
     running_moves: list[dict[str, Any]] | None = None,
     link: _RecordingLink | None = None,
@@ -132,6 +140,8 @@ def _install(
     Args:
         monkeypatch: pytest's patcher.
         status: Body for ``/api/daemon/status``; defaults to a Lite.
+        state: Body for ``/api/state/full``; defaults to torque enabled.
+        face: Body for ``/api/media/tracking/face``; defaults to no detection.
         stop_result: Body for ``/api/move/stop``; defaults to success.
         running_moves: Body for ``/api/move/running``; defaults to one move in
             flight (``move-1``), so a stop has something to halt.
@@ -146,6 +156,8 @@ def _install(
     daemon = _DaemonDouble(
         {
             reachy_mod._PATH_STATUS: _LITE_STATUS if status is None else status,
+            reachy_mod._PATH_STATE: {"control_mode": "enabled"} if state is None else state,
+            reachy_mod._PATH_TRACKING_FACE: {"face_target": {"detected": False}} if face is None else face,
             reachy_mod._PATH_STOP: {"ok": True} if stop_result is None else stop_result,
             reachy_mod._PATH_MOVES_RUNNING: [{"uuid": "move-1"}] if running_moves is None else running_moves,
         }
@@ -892,12 +904,13 @@ class TestTheLerobotPathIsUnaffected:
             assert shipped_robot_names(module, robot_names), f"{class_name} is registered for no robot"
 
 
-def _run_tool(driver: ReachyDriver, action: str) -> dict[str, Any]:
+def _run_tool(driver: ReachyDriver, action: str, **params: Any) -> dict[str, Any]:
     """Drive one agent tool call to completion and return the single result.
 
     Args:
         driver: The driver to invoke.
         action: The ``action`` verb to request.
+        **params: The rest of the tool input, as a model would send it.
 
     Returns:
         The one envelope the driver yields.
@@ -907,7 +920,7 @@ def _run_tool(driver: ReachyDriver, action: str) -> dict[str, Any]:
         results = [
             event
             async for event in driver.stream(
-                {"name": driver.tool_name, "toolUseId": "t1", "input": {"action": action}}, {}
+                {"name": driver.tool_name, "toolUseId": "t1", "input": {"action": action, **params}}, {}
             )
         ]
         assert len(results) == 1, f"expected exactly one tool result, got {len(results)}"
@@ -1021,3 +1034,79 @@ class TestAnUnimportableTransportIsRefusedByNameRatherThanCrashing:
         assert get_native_driver_class("reachy_mini") is ReachyDriver
         driver = ReachyDriver(tool_name="reachy_mini", port="reachy-a.local")
         assert isinstance(driver, HardwareDriver)
+
+
+class TestTheTorqueModeIsReadableNotOnlyWritable:
+    """``motors`` answers the question it can command.
+
+    The daemon accepts a ``goto`` in every control mode: with torque off it
+    returns a move uuid and the head does not move. A vocabulary that could set
+    the mode but never report it left an agent whose ``look`` reported success
+    and changed no pose with nothing to read, so the mode is the one fact that
+    tells acceptance apart from motion.
+    """
+
+    @pytest.mark.parametrize(
+        ("mode", "holds"),
+        [("enabled", True), ("disabled", False), ("gravity_compensation", False)],
+    )
+    def test_the_verb_reports_the_daemons_mode_without_writing(
+        self, monkeypatch: pytest.MonkeyPatch, mode: str, holds: bool
+    ) -> None:
+        driver, daemon, _ = _connected(monkeypatch, state={"control_mode": mode})
+        envelope = _run_tool(driver, "motors")
+        assert envelope["status"] == "success"
+        assert envelope["content"][0]["json"] == {"motors": mode, "holds_a_pose": holds}
+        assert daemon.posted == [], f"a read must not write: {daemon.posted}"
+
+    def test_a_daemon_body_with_no_mode_is_refused_by_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, _, _ = _connected(monkeypatch, state={"head_pose": {}})
+        envelope = _run_tool(driver, "motors")
+        assert envelope["status"] == "error"
+        assert "control_mode" in _text(envelope)
+
+    def test_a_mode_still_commands_the_torque(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The read is reached by omitting the mode, so the write must be
+        # untouched by it - and a non-string mode is still refused by name.
+        driver, _, link = _connected(monkeypatch)
+        assert _run_tool(driver, "motors", mode="disabled")["content"][0]["json"] == {"motors": "disabled"}
+        assert link.commands[-1] == {"torque": False, "ids": None}
+        assert "mode must be one of" in _text(_run_tool(driver, "motors", mode=7))
+
+
+class TestAFaceLockVetoesATurnOnTheOnlyClockBothEndsShare:
+    """A tracker lock must veto a direction-of-arrival turn.
+
+    The daemon stamps ``face_target.ts`` on the robot's own clock - a Wireless
+    Mini sends an uptime (71708.0 against this host's 1.79e9 epoch) - so
+    subtracting it from a local clock makes every lock look ancient and the veto
+    never fires. The age this driver can measure is how long ago it first saw
+    that stamp.
+    """
+
+    _UPTIME_STAMP = 71708.044975882
+
+    def _detected(self, stamp: Any) -> dict[str, Any]:
+        return {"face_target": {"detected": True, "x": 0.1, "y": 0.0, "ts": stamp}}
+
+    @pytest.mark.parametrize("stamp", [_UPTIME_STAMP, 0.0, None, "recently"])
+    def test_a_detection_the_daemon_stamped_its_own_way_still_vetoes(
+        self, monkeypatch: pytest.MonkeyPatch, stamp: Any
+    ) -> None:
+        driver, _, _ = _connected(monkeypatch, face=self._detected(stamp))
+        assert driver._doa_blocked() == "face tracker has a lock"
+
+    def test_a_stamp_that_stopped_advancing_stops_vetoing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The same stamp on every read is a lock nobody refreshed, so once it is
+        # older than the window it must not hold the turn back any more.
+        driver, _, _ = _connected(monkeypatch, face=self._detected(self._UPTIME_STAMP), running_moves=[])
+        assert driver._doa_blocked() == "face tracker has a lock"
+        driver._face_stamp = (self._UPTIME_STAMP, time.monotonic() - 10 * reachy_mod._FACE_FRESH_S)
+        assert driver._doa_blocked() is None
+
+    def test_a_fresh_stamp_re_arms_the_veto(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, daemon, _ = _connected(monkeypatch, face=self._detected(self._UPTIME_STAMP), running_moves=[])
+        driver._face_stamp = (self._UPTIME_STAMP, time.monotonic() - 10 * reachy_mod._FACE_FRESH_S)
+        assert driver._doa_blocked() is None
+        daemon._responses[reachy_mod._PATH_TRACKING_FACE] = self._detected(self._UPTIME_STAMP + 0.5)
+        assert driver._doa_blocked() == "face tracker has a lock"

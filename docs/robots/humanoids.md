@@ -364,3 +364,16 @@ declares `status`, `sensors`/`get_state`, `stop`, `camera`, `record_audio`,
 as well as library names, from the emotions and dances libraries. `stop`
 enumerates the daemon's running moves and stops each by uuid. Every write
 returns the daemon's acceptance and says `motion_verified=false`.
+
+The daemon accepts a move in every torque mode: commanded with torque off it
+answers with a move uuid and the head does not move. `motors` with no `mode`
+reports the mode the robot is actually in, so an accepted move that changed no
+pose has an answer:
+
+```python
+agent("are your motors on?")   # motors -> {"motors": "disabled", "holds_a_pose": false}
+agent("enable your motors and look up")
+```
+
+`motors(mode=...)` still sets it - `enabled`, `disabled` or
+`gravity_compensation`.

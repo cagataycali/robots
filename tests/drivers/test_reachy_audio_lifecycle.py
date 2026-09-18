@@ -1,5 +1,6 @@
 """Native microphone recording preserves sample duration and refuses discontinuities."""
 
+import itertools
 from unittest.mock import MagicMock
 
 import pytest
@@ -97,7 +98,11 @@ def test_audio_refuses_bad_packets_or_pipeline_and_closes(audio, monkeypatch, fa
         msg.parse_error.return_value = (type("Error", (), {"message": "stream failed"})(), "debug")
         pipe.get_bus.return_value.pop_filtered.return_value = msg
     elif fault == "timeout":
-        clock = iter([0.0, 20.0])
+        # ``reachy_media.time`` is the stdlib module, so this clock answers
+        # every thread in the process, not just the capture under test. It must
+        # therefore never run out: an exhausting iterator raised StopIteration
+        # inside an unrelated asyncio loop thread.
+        clock = itertools.chain([0.0], itertools.repeat(20.0))
         monkeypatch.setattr(reachy_media.time, "monotonic", lambda: next(clock))
     with pytest.raises((RuntimeError, TimeoutError)):
         reachy_media._capture_pcm("reachy-a.local", 8443, 0.1)

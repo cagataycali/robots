@@ -56,6 +56,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from strands_robots.mesh.pacing import Ticker
+
 logger = logging.getLogger(__name__)
 
 #: Consecutive speech frames whose bearings must agree before a turn.
@@ -374,6 +376,8 @@ class DoaLoop:
         self._name = name
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        #: The running loop's pacer, so :meth:`stop` can interrupt its wait.
+        self._ticker: Ticker | None = None
         self._lock = threading.Lock()
         self.read_errors = 0
         self.last_error: str | None = None
@@ -401,6 +405,11 @@ class DoaLoop:
             self._stop_event.set()
             thread = self._thread
             self._thread = None
+            ticker = self._ticker
+        if ticker is not None:
+            # Ring the doorbell so shutdown is immediate rather than within a
+            # slice; wake() never raises, including after the ticker closed.
+            ticker.wake()
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=timeout)
             if thread.is_alive():
@@ -419,16 +428,27 @@ class DoaLoop:
         }
 
     def _run(self) -> None:
-        while not self._stop_event.is_set():
+        # Paced by Ticker, not by ``stop_event.wait(poll_s)``: every tick reads a
+        # daemon state frame over the network, and a delay adds that read to the
+        # period, so the nominal 10 Hz poll would run at 1 / (poll_s + read) and
+        # the speech window would be sampled by fewer frames than the turner's
+        # consecutive-frame rule counts on. A deadline subtracts the read instead.
+        with Ticker(self._poll_s, self._stop_event) as ticker:
+            self._ticker = ticker
             try:
-                frame = self._read_frame()
-            except Exception as exc:  # noqa: BLE001 - a frame source can fail in any way; the loop must outlive it
-                self.read_errors += 1
-                self.last_error = f"read_frame: {exc}"[:200]
-                frame = None
-            if frame is not None:
-                self.step(frame)
-            self._stop_event.wait(self._poll_s)
+                while not self._stop_event.is_set():
+                    try:
+                        frame = self._read_frame()
+                    except Exception as exc:  # noqa: BLE001 - a frame source can fail in any way; the loop must outlive it
+                        self.read_errors += 1
+                        self.last_error = f"read_frame: {exc}"[:200]
+                        frame = None
+                    if frame is not None:
+                        self.step(frame)
+                    if ticker.wait():
+                        break
+            finally:
+                self._ticker = None
 
     def step(self, frame: dict[str, Any], *, now: float | None = None) -> TurnPlan | None:
         """Process one frame and send the turn it warrants, if any.
