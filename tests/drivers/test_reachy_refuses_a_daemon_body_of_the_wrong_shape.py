@@ -86,16 +86,36 @@ class _Daemon:
         calls: ``(path, method)`` for every call, in order.
     """
 
-    def __init__(self, body: Any, *, status: Any = _KEEP_LITE) -> None:
+    def __init__(self, body: Any, *, status: Any = _KEEP_LITE, lists: dict[str, Any] | None = None) -> None:
         self._body = body
         self._status = _LITE_STATUS if status is _KEEP_LITE else status
+        #: Per-path overrides for the two GET doors that legitimately read an
+        #: ARRAY (the move catalogue, the running-move list); a test that grades
+        #: an object door hands healthy arrays here so those doors stay out of
+        #: the way, while a test that grades the array door leaves them unset.
+        self._lists = lists or {}
         self.calls: list[tuple[str, str]] = []
 
     def __call__(self, host: str, port: int, path: str, method: str = "GET", data: Any = None) -> Any:
         """Answer one REST call: the status body for the probe, else the body."""
         del host, port, data
         self.calls.append((path, method))
-        return self._status if path == reachy_mod._PATH_STATUS else self._body
+        if path == reachy_mod._PATH_STATUS:
+            return self._status
+        if path in self._lists:
+            return list(self._lists[path])
+        return self._body
+
+
+def _object_door_daemon(body: Any) -> _Daemon:
+    """A daemon whose array doors are healthy, so ``body`` is graded at the object doors alone."""
+    return _Daemon(
+        body,
+        lists={
+            reachy_mod._PATH_MOVES_RUNNING: [{"uuid": "move-1"}],
+            reachy_mod._PATH_MOVE_LIST.format(dataset=reachy_mod._MOVE_LIBRARIES["emotions"]): ["happy", "sad"],
+        },
+    )
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, daemon: _Daemon) -> ReachyDriver:
@@ -215,7 +235,7 @@ class TestACallerThatNeedsAnObjectRefusesEveryOtherShape:
         kind: str,
         preview: str,
     ) -> None:
-        driver = _connected(monkeypatch, _Daemon(body))
+        driver = _connected(monkeypatch, _object_door_daemon(body))
 
         text = _text(call(driver))
 
@@ -230,7 +250,7 @@ class TestACallerThatNeedsAnObjectRefusesEveryOtherShape:
     ) -> None:
         # ``stop`` answers ``None`` either way, so the log is the only place its
         # refusal can be read - and a stop it never got must not be recorded.
-        driver = _connected(monkeypatch, _Daemon(body))
+        driver = _connected(monkeypatch, _object_door_daemon(body))
 
         with caplog.at_level("WARNING"):
             assert asyncio.run(driver.stop()) is None
@@ -303,6 +323,6 @@ class TestTheHealthyPathIsUnchanged:
         self, monkeypatch: pytest.MonkeyPatch, label: str, method: str, path: str, call: Any
     ) -> None:
         del label, method, path
-        driver = _connected(monkeypatch, _Daemon({"ok": True}))
+        driver = _connected(monkeypatch, _object_door_daemon({"ok": True}))
 
         assert call(driver)["status"] == "success"

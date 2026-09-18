@@ -132,7 +132,11 @@ _MINI_DAEMON_MOVES: tuple[tuple[str, Any, str], ...] = (
     (
         "play_move",
         lambda d: d.play_move("happy"),
-        reachy_mod._PATH_MOVE_PLAY.format(dataset=reachy_mod._MOVE_LIBRARIES["emotions"], move="happy"),
+        # ``happy`` is a plain word the driver resolves to the library's own
+        # name before posting; the daemon sees the resolved segment.
+        reachy_mod._PATH_MOVE_PLAY.format(
+            dataset=reachy_mod._MOVE_LIBRARIES["emotions"], move=reachy_mod.resolve_move_name("happy", [])
+        ),
     ),
     ("wake_up", lambda d: d.wake_up(), reachy_mod._PATH_WAKE),
     ("goto_sleep", lambda d: d.goto_sleep(), reachy_mod._PATH_SLEEP),

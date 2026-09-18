@@ -294,21 +294,24 @@ policy as camera captures. Neither recording nor camera capture implies that
 speaker playback or pixel look-at is implemented.
 
 
-### Read-only pixel look-at planning
+### Pixel look-at
 
-`mini.plan_look_at(u, v, frame_width, frame_height)` also has a JSON agent action,
-`plan_look_at`, with those four integer parameters. It reads daemon calibration,
-resolves the stream's crop factor, undistorts the pixel, and uses a fresh head
-pose to compute a target. Only known full-sensor camera models (`wireless`,
-`lite`, `older_rpi`) and advertised, unambiguous resolutions are accepted.
-Pixels must come from an **unmodified camera frame**, not a resized preview.
+`mini.look_at(u, v, frame_width, frame_height, duration=1.0)` - agent action
+`look_at` with the same parameters - turns the head toward a camera pixel. It
+is one verb with one meaning: the pixel is resolved privately (daemon
+calibration, the stream's crop factor, lens undistortion and a fresh head pose,
+GETs only) into a head target, that target's roll/pitch/yaw are put through the
+shared motion envelope, and a single smooth `goto` is sent. A pixel that asks
+for more pitch than the platform has is refused, not clamped. Only known
+full-sensor camera models (`wireless`, `lite`, `older_rpi`) and advertised,
+unambiguous resolutions are accepted, and pixels must come from an
+**unmodified camera frame**, not a resized preview.
 
-This is geometry, **not head control**. Results state `motion_executed=false`,
-`safety_validated=false` and `frame_pose_synchronized=false`. Like the vendor
-geometry, the proposed target recenters translation at the origin; it must not
-be executed blindly. Small numerical FK rotation errors are reported, while
-grossly invalid transforms refuse. There is no automatic fallback or actuator
-alias: `look_at_image`/the motion-oriented `reachy_look_at` remain unimplemented.
+The result carries the resolved geometry under `plan` (`safety_validated=false`,
+`frame_pose_synchronized=false` - the head pose was sampled separately from the
+frame) and the bounded target under `target_deg`. `motion_verified` stays
+`false`: the daemon accepted the move; nothing in the reply proves the head
+arrived. There is no read-only planning verb and no `dry_run` switch.
 
 ### Acknowledged antenna targets
 
@@ -328,9 +331,36 @@ adds no motion permission or per-call excursion bound; supervision and encoder
 readback remain necessary. The daemon's HTTP job list alone cannot establish
 exclusive control.
 
-Speaker playback and volume mutation remain unavailable in the native driver.
-The daemon's volume setter also plays a test sound, and playback can drive
-configured audio-reactive head wobbling. Its playback endpoint can even return
-`ok` when no media server exists, so acceptance is not evidence of audible
-output. These controls need separate supervised validation; microphone capture
-does not enable them or change their settings.
+### Sound, speech and volume
+
+`play_sound(file)` posts the daemon's own playback endpoint; `say(text)` first
+asks a TTS sidecar (`tts_url=` or `REACHY_TTS_URL`, refused by name when neither
+is set) for a WAV the daemon can reach, then plays it. Both keep the head
+still unless `wobble=true` asks for the daemon's audio-reactive head wobbling.
+`volume` reads the level; `set_volume(level, allow_test_sound=true)`
+changes it - the opt-in is required because the daemon plays a test sound on
+every level change. The daemon's playback endpoint can return `ok` when no media
+server exists, so acceptance is not evidence of audible output.
+
+### The whole vocabulary, out of the box
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+agent = Agent(tools=[Robot("reachy_mini", mode="real")])
+agent("look at me, then say hello and turn toward whoever talks")
+```
+
+`mode="real"` with no port discovers the daemon (`$REACHY_HOST`, then
+`localhost`, then `reachy-mini.local`; a desktop daemon that reports its own
+start-up error is skipped), `mode="auto"` asks the same probe before falling
+back to sim, and the first verb that needs the daemon connects. The tool
+declares `status`, `sensors`/`get_state`, `stop`, `camera`, `record_audio`,
+`look`, `antennas`, `body_turn`, `home`, `wake`, `sleep`, `express`,
+`list_moves`, `motors`, `say`, `play_sound`, `volume`, `set_volume`,
+`track_face`, `tracking_status`, `look_at`, `turn_to_sound` and
+`turn_to_sound_status`. `express` takes plain words (`happy`, `curious`, `no`)
+as well as library names, from the emotions and dances libraries. `stop`
+enumerates the daemon's running moves and stops each by uuid. Every write
+returns the daemon's acceptance and says `motion_verified=false`.

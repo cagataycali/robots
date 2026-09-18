@@ -9,7 +9,18 @@ def test_audio_is_declared_without_a_live_handle_parameter():
     schema = ReachyDriver().tool_spec["inputSchema"]["json"]
     assert "record_audio" in schema["properties"]["action"]["enum"]
     assert "driver" not in schema["properties"]
-    assert schema["properties"]["duration"]["maximum"] == 5
+    # ``duration`` is shared with the motion verbs (up to 10 s); the 5 s
+    # microphone ceiling is the accessor's own, graded below.
+    assert schema["properties"]["duration"]["minimum"] == 0.1
+    assert schema["properties"]["duration"]["maximum"] == 10
+
+
+def test_a_recording_longer_than_five_seconds_is_refused_by_the_accessor():
+    driver = ReachyDriver()
+    driver._connected = True  # past the connection gate, so the ceiling itself is graded
+    result = driver.record_audio(duration=6.0)
+    assert result["status"] == "error"
+    assert "between 0.1 and 5 seconds" in result["content"][0]["text"]
 
 
 def test_audio_requires_a_connection():

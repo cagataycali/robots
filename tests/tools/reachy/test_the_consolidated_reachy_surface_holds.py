@@ -60,9 +60,9 @@ VERB_ARGS: dict[str, dict[str, Any]] = {
     "reachy_express": {"emotion": "happy"},
     "reachy_motors": {"mode": "enabled"},
     "reachy_play_sound": {"sound_file": "wake_up.wav"},
-    "reachy_volume": {"level": 40},
+    "reachy_volume": {"level": 40, "allow_test_sound": True},
     "reachy_camera": {},
-    "reachy_look_at": {"u": 320, "v": 240},
+    "reachy_look_at": {"u": 320, "v": 240, "frame_width": 1280, "frame_height": 720},
     "reachy_get_state": {},
     "reachy_list_emotions": {},
 }
@@ -185,14 +185,15 @@ PARAM_REFUSALS: list[tuple[str, dict[str, Any], str]] = [
     ("reachy_express", {}, "`emotion` is required"),
     ("reachy_motors", {}, "`mode` is required"),
     ("reachy_play_sound", {}, "`sound_file` is required"),
-    ("reachy_volume", {}, "`level` is required"),
+    ("reachy_play_sound", {"sound_file": "x.wav", "wobble": "yes"}, "wobble must be a boolean"),
     ("reachy_volume", {"level": True}, "got 'bool'"),
-    ("reachy_volume", {"level": 101}, "within 0-100"),
-    ("reachy_volume", {"level": -1}, "within 0-100"),
-    ("reachy_look_at", {"v": 4}, "`u` is required"),
-    ("reachy_look_at", {"u": 4}, "`v` is required"),
-    ("reachy_look_at", {"u": 4.5, "v": 4}, "got 'float'"),
-    ("reachy_look_at", {"u": True, "v": 4}, "got 'bool'"),
+    ("reachy_volume", {"level": 4.5}, "got 'float'"),
+    ("reachy_volume", {"level": 40, "allow_test_sound": "yes"}, "allow_test_sound must be a boolean"),
+    ("reachy_look_at", {"v": 4, "frame_width": 8, "frame_height": 8}, "`u` is required"),
+    ("reachy_look_at", {"u": 4, "frame_width": 8, "frame_height": 8}, "`v` is required"),
+    ("reachy_look_at", {"u": 4, "v": 4, "frame_height": 8}, "`frame_width` is required"),
+    ("reachy_look_at", {"u": 4.5, "v": 4, "frame_width": 8, "frame_height": 8}, "got 'float'"),
+    ("reachy_look_at", {"u": True, "v": 4, "frame_width": 8, "frame_height": 8}, "got 'bool'"),
     ("reachy_wake", {"sleep": "false"}, "sleep must be a boolean"),
     ("reachy_wake", {"sleep": 1}, "sleep must be a boolean"),
 ]
@@ -476,8 +477,11 @@ class TestARefusedMoveNameBuildsNoRequest:
         driver, transport = self._driver_recording(monkeypatch)
         result = driver.play_move("happy_wiggle")
         assert result["status"] == "success"
+        # The catalogue is read first so a plain word can be resolved; the
+        # bare name then reaches exactly the move it names.
         assert transport.paths == [
-            "/api/move/play/recorded-move-dataset/pollen-robotics/reachy-mini-emotions-library/happy_wiggle"
+            "/api/move/recorded-move-datasets/list/pollen-robotics/reachy-mini-emotions-library",
+            "/api/move/play/recorded-move-dataset/pollen-robotics/reachy-mini-emotions-library/happy_wiggle",
         ]
 
 

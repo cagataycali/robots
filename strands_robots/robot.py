@@ -89,7 +89,11 @@ def _auto_detect_mode(canonical: str) -> str:
     Priority:
         1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
         2. Robot-specific USB detection (Feetech/Dynamixel servo controllers)
-        3. Default to sim (safest - never accidentally send commands to hardware)
+        3. The native driver's own ``probe_hardware()``, for a robot reached over
+           the network rather than a serial bus (a Reachy Mini's daemon answers
+           ``GET /api/daemon/status``; no USB scan can see it). Opt-in per
+           driver: a class that declares no such classmethod is not asked.
+        4. Default to sim (safest - never accidentally send commands to hardware)
     """
     env_mode = os.getenv("STRANDS_ROBOT_MODE", "").lower().strip()
     if env_mode in ("sim", "real"):
@@ -113,6 +117,24 @@ def _auto_detect_mode(canonical: str) -> str:
         servo_ports = [device.port for device in scan_serial_devices() if device.likely_servo_bus]
         if servo_ports:
             logger.info("Auto-detected robot hardware: %s", servo_ports)
+            return "real"
+
+    # A network-addressed robot has no serial bus to find. Its native driver
+    # knows how to ask whether the hardware is there (read-only, bounded), so
+    # ``auto`` asks it - and only a driver that declares the probe is asked, so
+    # the arms and the drivers that have no cheap read-only check are unchanged.
+    driver_cls = get_native_driver_class(canonical)
+    probe = getattr(driver_cls, "probe_hardware", None)
+    if callable(probe):
+        try:
+            answered = bool(probe())
+        except Exception as exc:  # noqa: BLE001 - a probe that raises is "not found", never a failed factory
+            logger.debug(
+                "%s.probe_hardware() raised (%s: %s); treating as no hardware", canonical, type(exc).__name__, exc
+            )
+            answered = False
+        if answered:
+            logger.info("Auto-detected %s hardware through its native driver's probe", canonical)
             return "real"
 
     return "sim"

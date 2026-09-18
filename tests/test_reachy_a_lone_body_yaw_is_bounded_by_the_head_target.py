@@ -81,6 +81,9 @@ def _native() -> tuple[ReachyDriver, list[dict[str, Any]]]:
 
     driver._send_cmd = _send  # type: ignore[method-assign]
     driver._daemon_post = lambda *a, **k: {}  # type: ignore[method-assign]
+    # ``play_move`` reads the catalogue first; an unreadable one leaves the
+    # alias table to resolve the name, which is all this skeleton needs.
+    driver._daemon_get_list = lambda *a, **k: {"error": "no catalogue in this skeleton"}  # type: ignore[method-assign]
     return driver, sent
 
 

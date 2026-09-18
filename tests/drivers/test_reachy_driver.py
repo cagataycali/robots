@@ -24,6 +24,7 @@ than mocked away.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import math
 import sys
 from typing import Any
@@ -94,9 +95,11 @@ class _DaemonDouble:
         calls: ``(host, port, path, method)`` for every call, in order.
     """
 
-    def __init__(self, responses: dict[str, dict[str, Any]]) -> None:
+    def __init__(self, responses: dict[str, Any]) -> None:
         self._responses = responses
         self.calls: list[tuple[str, int, str, str]] = []
+        #: ``(path, body)`` for every POST, so a test can grade what was sent.
+        self.posted: list[tuple[str, dict[str, Any] | None]] = []
 
     def __call__(
         self,
@@ -106,10 +109,12 @@ class _DaemonDouble:
         method: str = "GET",
         data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Answer one REST call, recording it first."""
-        del data
+        """Answer one REST call, recording it first. A list body is passed through as a list."""
         self.calls.append((host, port, path, method))
-        return dict(self._responses.get(path, {}))
+        if method == "POST":
+            self.posted.append((path, data))
+        body = self._responses.get(path, {})
+        return list(body) if isinstance(body, list) else dict(body)
 
 
 def _install(
@@ -117,6 +122,7 @@ def _install(
     *,
     status: dict[str, Any] | None = None,
     stop_result: dict[str, Any] | None = None,
+    running_moves: list[dict[str, Any]] | None = None,
     link: _RecordingLink | None = None,
     tool_name: str = "reachy_mini",
     **driver_kwargs: Any,
@@ -127,6 +133,8 @@ def _install(
         monkeypatch: pytest's patcher.
         status: Body for ``/api/daemon/status``; defaults to a Lite.
         stop_result: Body for ``/api/move/stop``; defaults to success.
+        running_moves: Body for ``/api/move/running``; defaults to one move in
+            flight (``move-1``), so a stop has something to halt.
         link: Link double to install; a fresh one is made when omitted.
         tool_name: Driver's tool name and mesh peer id.
         **driver_kwargs: Forwarded to :class:`ReachyDriver`.
@@ -139,9 +147,15 @@ def _install(
         {
             reachy_mod._PATH_STATUS: _LITE_STATUS if status is None else status,
             reachy_mod._PATH_STOP: {"ok": True} if stop_result is None else stop_result,
+            reachy_mod._PATH_MOVES_RUNNING: [{"uuid": "move-1"}] if running_moves is None else running_moves,
         }
     )
-    monkeypatch.setattr("strands_robots.device_connect.reachy_transport.api", daemon)
+    # Patched on the module object the driver resolves (``importlib.import_module``),
+    # not through the dotted string: the suite's Device Connect module swap can
+    # leave the package attribute pointing at a stale module object, and a
+    # string path resolves through that attribute - the double then lands on a
+    # module the driver never reads, and the probe reaches the real network.
+    monkeypatch.setattr(importlib.import_module(reachy_mod._TRANSPORT_MODULE), "api", daemon)
     installed = _RecordingLink() if link is None else link
 
     def _build(self: ReachyDriver, *, is_lite: bool) -> Any:
@@ -201,8 +215,13 @@ class TestTheDriverSatisfiesTheSeam:
         assert driver.tool_spec["name"] == "tiny-a"
 
     def test_the_tool_spec_declares_only_verbs_the_driver_implements(self) -> None:
+        # The enum IS the dispatch table: a verb in one and not the other is
+        # either undiscoverable or a promise the driver cannot keep.
         enum = ReachyDriver().tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
-        assert sorted(enum) == ["camera", "plan_look_at", "record_audio", "sensors", "status", "stop"]
+        assert enum == list(reachy_mod._ACTIONS)
+        assert all(callable(handler) for handler in reachy_mod._ACTIONS.values())
+        for verb in ("sensors", "status", "stop", "camera", "record_audio", "look", "express", "say", "set_volume"):
+            assert verb in enum
 
     def test_the_constructor_takes_the_three_factory_keywords(self) -> None:
         # The factory builds every native driver this way; see
@@ -723,10 +742,30 @@ class TestAnActionCarryingAKeyNoAxisAnswersIsRefused:
 class TestTheStopPathReachesTheDaemon:
     """A Mini has a real stop: a recorded move can be halted mid-play."""
 
-    def test_stop_posts_the_documented_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        driver, daemon, _ = _connected(monkeypatch, port="reachy-a.local:8000")
+    def test_stop_lists_the_running_moves_then_stops_each_by_uuid(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The daemon's ``/api/move/stop`` takes ONE uuid (a bare POST is a 422),
+        # so a halt is the running list followed by one stop per entry.
+        driver, daemon, _ = _connected(
+            monkeypatch, port="reachy-a.local:8000", running_moves=[{"uuid": "move-1"}, {"uuid": "move-2"}]
+        )
         asyncio.run(driver.stop())
-        assert ("reachy-a.local", 8000, "/api/move/stop", "POST") in daemon.calls
+        assert ("reachy-a.local", 8000, "/api/move/running", "GET") in daemon.calls
+        assert daemon.posted == [("/api/move/stop", {"uuid": "move-1"}), ("/api/move/stop", {"uuid": "move-2"})]
+
+    def test_stop_with_nothing_running_posts_nothing_and_still_reports_halted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        driver, daemon, _ = _connected(monkeypatch, running_moves=[])
+        asyncio.run(driver.stop())
+        assert daemon.posted == []
+        assert asyncio.run(driver.get_status())["content"][0]["json"]["motion_stopped"] is True
+
+    def test_a_running_list_that_cannot_be_read_does_not_report_a_halt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, daemon, _ = _connected(monkeypatch)
+        daemon._responses[reachy_mod._PATH_MOVES_RUNNING] = {"error": "daemon away"}
+        asyncio.run(driver.stop())
+        assert daemon.posted == []
+        assert asyncio.run(driver.get_status())["content"][0]["json"]["motion_stopped"] is False
 
     def test_stop_records_that_motion_was_halted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         driver, _, _ = _connected(monkeypatch)
@@ -750,8 +789,10 @@ class TestTheStopPathReachesTheDaemon:
 
     def test_stop_task_halts_a_recorded_move(self, monkeypatch: pytest.MonkeyPatch) -> None:
         driver, daemon, _ = _connected(monkeypatch)
-        assert driver.stop_task()["status"] == "success"
-        assert any(call[2] == "/api/move/stop" for call in daemon.calls)
+        result = driver.stop_task()
+        assert result["status"] == "success"
+        assert daemon.posted == [("/api/move/stop", {"uuid": "move-1"})]
+        assert result["content"][0]["json"]["stopped"] == ["move-1"]
 
     def test_stop_task_reports_a_daemon_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         driver, _, _ = _connected(monkeypatch, stop_result={"error": "busy"})

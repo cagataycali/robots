@@ -57,8 +57,10 @@ mocked daemon.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -68,7 +70,20 @@ from typing import TYPE_CHECKING, Any, cast
 from strands.tools.tools import AgentTool
 
 from strands_robots.drivers.base import undeclared_verb_error
+from strands_robots.drivers.reachy_doa import DoaLoop, DoaTurner
 from strands_robots.drivers.reachy_envelope import envelope_error
+from strands_robots.drivers.reachy_vocabulary import (
+    DEFAULT_TTS_PORT,
+    ENV_HOST,
+    ENV_PORT,
+    ENV_TTS_URL,
+    daemon_answers,
+    discovery_candidates,
+    goto_body,
+    goto_body_error,
+    resolve_move_name,
+    resolve_volume_level,
+)
 from strands_robots.utils import finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
@@ -89,11 +104,31 @@ DEFAULT_API_PORT: int = 8000
 #: the same constants the driver sends.
 _PATH_STATUS = "/api/daemon/status"
 _PATH_STOP = "/api/move/stop"
+_PATH_MOVES_RUNNING = "/api/move/running"
 _PATH_SET_TARGET = "/api/move/set_target"
 _PATH_WAKE = "/api/move/play/wake_up"
 _PATH_SLEEP = "/api/move/play/goto_sleep"
 _PATH_MOVE_PLAY = "/api/move/play/recorded-move-dataset/{dataset}/{move}"
 _PATH_MOVE_LIST = "/api/move/recorded-move-datasets/list/{dataset}"
+_PATH_GOTO = "/api/move/goto"
+_PATH_MOTORS_MODE = "/api/motors/set_mode/{mode}"
+_PATH_VOLUME_GET = "/api/volume/current"
+_PATH_VOLUME_SET = "/api/volume/set"
+_PATH_PLAY_SOUND = "/api/media/play_sound"
+_PATH_WOBBLE_ENABLE = "/api/media/wobbling/enable"
+_PATH_WOBBLE_DISABLE = "/api/media/wobbling/disable"
+_PATH_TRACKING_ENABLE = "/api/media/tracking/enable"
+_PATH_TRACKING_DISABLE = "/api/media/tracking/disable"
+_PATH_TRACKING_FACE = "/api/media/tracking/face"
+_PATH_STATE_DOA = "/api/state/full?with_doa=true&with_head_pose=true&with_body_yaw=true"
+#: A tracked face older than this no longer vetoes a DoA turn.
+_FACE_FRESH_S = 1.5
+
+#: The three torque modes the daemon's ``/api/motors/set_mode/{mode}`` accepts.
+#: ``enabled`` and ``disabled`` also have a real-time link command (``torque``),
+#: which :meth:`ReachyDriver.set_motors` keeps using for them; the third has
+#: only this REST path.
+_MOTOR_MODES: tuple[str, ...] = ("enabled", "disabled", "gravity_compensation")
 
 #: A recorded move's name goes into a URL path, so the admitted alphabet is the
 #: same one :mod:`strands_robots.device_connect.reachy_mini_driver` enforces -
@@ -214,6 +249,7 @@ class ReachyDriver(AgentTool):
         media_port: int = 8443,
         zenoh_prefix: str | None = None,
         transport: Any = None,
+        tts_url: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Record configuration; :meth:`connect_eagerly` talks to the daemon.
@@ -235,8 +271,13 @@ class ReachyDriver(AgentTool):
             port: The daemon host, optionally with a port -
                 ``"reachy-a.local"`` or ``"reachy-a.local:8000"``. ``port`` is
                 polymorphic across drivers by contract; here it names a host,
-                because that is what addresses a Mini. ``None`` means
-                ``localhost``, which is where a Lite's daemon runs.
+                because that is what addresses a Mini. ``None`` reads
+                ``REACHY_HOST``/``REACHY_PORT`` from the environment, and when
+                those are unset too :meth:`connect_eagerly` discovers the daemon:
+                ``localhost`` (a Lite, or a process on the robot) and then
+                ``reachy-mini.local`` (a Wireless's factory mDNS name), taking
+                the first that answers ``/api/daemon/status`` without an error.
+                Until then ``_host`` reads ``localhost``.
             api_port: Daemon port to use when ``port`` carries no ``:port``
                 suffix. An explicit suffix in ``port`` wins.
             media_port: Native GStreamer LAN signaling port used for camera capture.
@@ -246,6 +287,11 @@ class ReachyDriver(AgentTool):
                 :class:`~strands_robots.device_connect.reachy_transport.ZenohLink`.
                 ``None`` selects the daemon WebSocket on either hardware variant;
                 supplying a transport keeps the Wireless Zenoh bridge path.
+            tts_url: Base URL of a Piper/``tiny-tts`` speech service for
+                :meth:`say`. ``None`` reads ``REACHY_TTS_URL`` and otherwise
+                combines the daemon host with port 5002 at call time (where
+                ``tiny-the-reachy`` installs its ``tiny-tts.service``). Speech
+                synthesis is not part of the Reachy daemon.
             **kwargs: Ignored; accepted so the factory can forward extras
                 without the driver knowing what they are.
 
@@ -261,7 +307,26 @@ class ReachyDriver(AgentTool):
             logger.debug("ReachyDriver ignoring extra kwargs: %s", sorted(kwargs))
 
         self._tool_name = tool_name
+        # ``port=None`` with ``REACHY_HOST`` set reads as if the caller had passed
+        # that host, so an operator who exported it for the Pollen SDK or for
+        # tiny-the-reachy has configured this driver too. ``REACHY_PORT`` is the
+        # matching port when the host carries no ``:port`` suffix; a value that
+        # is not a usable port is refused here by the same domain as ``api_port``.
+        if port is None and (env_host := (os.getenv(ENV_HOST) or "").strip()):
+            port = env_host
+            if env_port := (os.getenv(ENV_PORT) or "").strip():
+                if reason := tcp_port_error(
+                    int(env_port) if env_port.isdigit() else env_port, ENV_PORT, "ReachyDriver"
+                ):
+                    raise ValueError(reason)
+                api_port = int(env_port)
+        #: Whether :meth:`connect_eagerly` may look for the daemon rather than
+        #: dial one address. Only a bring-up that named no host at all (no
+        #: ``port=``, no ``REACHY_HOST``) discovers; ``_host`` holds the first
+        #: candidate meanwhile so a status read before connecting names it.
+        self._discover_host: bool = port is None
         self._host, self._api_port = _split_host_port(port, api_port)
+        self._tts_url: str | None = tts_url
         self._zenoh_prefix = zenoh_prefix or tool_name
         self._transport = transport
         if reason := tcp_port_error(media_port, "media_port", "ReachyDriver"):
@@ -305,6 +370,11 @@ class ReachyDriver(AgentTool):
         # refused command leaves the halt standing.
         self._stopped: bool = False
 
+        #: The turn-toward-a-voice loop, built by :meth:`turn_to_sound` and
+        #: stopped by it, by :meth:`stop` and by :meth:`cleanup`. ``None`` until
+        #: first enabled; kept afterwards so its status survives a disable.
+        self._doa: DoaLoop | None = None
+
     # ------------------------------------------------------------------ #
     # Agent tool surface (matches AgentTool's abstract members).         #
     # ------------------------------------------------------------------ #
@@ -321,23 +391,31 @@ class ReachyDriver(AgentTool):
 
     @property
     def tool_spec(self) -> ToolSpec:
-        """JSON-callable status, sensors, stop, camera and microphone capture.
+        """The Mini's whole vocabulary as one JSON-callable tool.
 
-        The expressive verb set (``look``, ``antennas``, ``express``, ``say``)
-        arrives as ``reachy_*`` agent tools built on the same daemon and the
-        same shared envelope; they are a separate change. Here we ship the
-        universal ``status``/``stop`` verbs, a ``sensors`` read-out and native
-        ``camera``/``record_audio`` capture, so an
-        agent can introspect a Mini the day the driver merges.
+        Universal verbs (``status``, ``sensors``, ``stop``), native capture
+        (``camera``, ``record_audio``), a pixel-to-head turn (``look_at``),
+        turning toward a voice (``turn_to_sound``) and
+        the expressive verbs a desk robot is actually asked for - ``look``,
+        ``antennas``, ``body_turn``, ``home``, ``wake``/``sleep``, ``express``,
+        ``say``, ``play_sound``, ``volume``, ``track_face`` - each mapping onto
+        exactly one daemon path. The description tells the agent the one thing
+        every write shares: the daemon accepting a command is not the head
+        having moved or a sound having been heard.
         """
         return cast(
             "ToolSpec",
             {
                 "name": self._tool_name,
                 "description": (
-                    "Pollen Reachy Mini native driver: reads the Reachy daemon for head "
-                    "IMU, head orientation and battery, captures native camera/microphone data, and stops motion on request. "
-                    "Expressive motion verbs arrive with the reachy_* tool bundle."
+                    "Pollen Reachy Mini native driver (6-DOF head on a rotating body, two antennas, "
+                    "speaker, camera, microphone, a recorded-emotion library). Reads IMU/joints/pose, "
+                    "captures camera/microphone, and drives smooth interpolated head, body and antenna "
+                    "moves, recorded emotions, wake/sleep, speech (needs a TTS sidecar), sound playback, "
+                    "speaker volume, daemon face tracking and turning toward a voice (turn_to_sound, "
+                    "microphone-array direction of arrival). Angles are degrees, translations millimetres, "
+                    "durations seconds. Every write returns the daemon's acceptance: it is NOT proof the "
+                    "head reached the pose or that audio was heard - read `sensors` afterwards."
                 ),
                 "inputSchema": {
                     "json": {
@@ -346,37 +424,134 @@ class ReachyDriver(AgentTool):
                             "action": {
                                 "type": "string",
                                 "description": (
-                                    "sensors: return the latest cached IMU/pose/battery/joints; "
-                                    "status: report daemon reachability and hardware variant; "
-                                    "stop: ask the daemon to stop any motion in progress; "
+                                    "sensors/get_state: latest cached IMU, head pose, battery and joints (6 head legs, "
+                                    "body_yaw, antennas, degrees); "
+                                    "status: daemon reachability, hardware variant, connection error; "
+                                    "stop: stop every running move (by uuid) and the turn_to_sound loop; "
+                                    "look: smooth head pose (pitch/roll/yaw deg, x/y/z mm, optional body_yaw and "
+                                    "antenna_right/antenna_left) over duration; "
+                                    "antennas: move just the ears (antenna_right/antenna_left deg); "
+                                    "body_turn: rotate the body (body_yaw deg, +/-160); "
+                                    "home: neutral pose, antennas level, body centred; "
+                                    "wake / sleep: the daemon's built-in wake-up / go-to-sleep choreography; "
+                                    "express: play a recorded emotion or dance by name (emotion, library) - plain words "
+                                    "like happy/curious/yes/no resolve to library moves; "
+                                    "list_moves: the library's move names (library=emotions|dances); "
+                                    "motors: torque mode (mode=enabled|disabled|gravity_compensation); "
+                                    "say: speak text through the robot's TTS sidecar + speaker (text, wobble); "
+                                    "play_sound: play a WAV the daemon can read (sound_file, wobble); "
+                                    "volume: read the speaker level; "
+                                    "set_volume: set it (level 0-100 or a word) - the daemon ALSO plays a short test "
+                                    "sound, so allow_test_sound=true is required; "
+                                    "track_face: daemon face tracking on/off (enabled, weight) - while it is on at "
+                                    "weight 1 it overrides look/express; "
+                                    "tracking_status: whether a face is detected and where; "
                                     "camera: save a fresh native camera JPEG locally; "
                                     "record_audio: record a bounded microphone WAV locally (both require GStreamer); "
-                                    "plan_look_at: compute pixel look-at geometry without any motion"
+                                    "look_at: turn the head toward a camera pixel (u, v, frame_width, frame_height, "
+                                    "duration); "
+                                    "turn_to_sound: face whoever is talking using the microphone array's direction of "
+                                    "arrival (enabled, sign) - one smooth turn per utterance, face tracking outranks it; "
+                                    "turn_to_sound_status: bearing, speech flag, turns and why the last frame did not turn"
                                 ),
-                                "enum": ["sensors", "status", "stop", "camera", "record_audio", "plan_look_at"],
+                                "enum": list(_ACTIONS),
                                 "default": "sensors",
                             },
-                            "u": {"type": "integer", "description": "Pixel column for read-only plan_look_at."},
-                            "v": {"type": "integer", "description": "Pixel row for read-only plan_look_at."},
-                            "frame_width": {
-                                "type": "integer",
-                                "description": "Unmodified source frame width for plan_look_at.",
+                            "pitch": {"type": "number", "description": "Head pitch, degrees, +/-40 (look)."},
+                            "roll": {"type": "number", "description": "Head roll, degrees, +/-40 (look)."},
+                            "yaw": {"type": "number", "description": "Head yaw, degrees, +/-180 (look)."},
+                            "x": {
+                                "type": "number",
+                                "description": "Head forward translation, millimetres, +/-25 (look).",
                             },
-                            "frame_height": {
-                                "type": "integer",
-                                "description": "Unmodified source frame height for plan_look_at.",
+                            "y": {"type": "number", "description": "Head left translation, millimetres, +/-25 (look)."},
+                            "z": {"type": "number", "description": "Head up translation, millimetres, +/-25 (look)."},
+                            "body_yaw": {
+                                "type": "number",
+                                "description": (
+                                    "Body yaw, degrees, +/-160 (body_turn; optional in look, within 65 deg of the head yaw)."
+                                ),
+                            },
+                            "antenna_right": {
+                                "type": "number",
+                                "description": "Right antenna angle, degrees, +/-150 (antennas; optional in look).",
+                            },
+                            "antenna_left": {
+                                "type": "number",
+                                "description": "Left antenna angle, degrees, +/-150 (antennas; optional in look).",
                             },
                             "duration": {
                                 "type": "number",
-                                "description": "Microphone recording duration in seconds (record_audio only).",
+                                "description": (
+                                    "Seconds: the interpolation time for look, antennas, body_turn, home and look_at "
+                                    "(0.1-10, default 0.8), or the microphone recording length for record_audio (0.1-5, default 1)."
+                                ),
                                 "minimum": 0.1,
-                                "maximum": 5,
-                                "default": 1,
+                                "maximum": 10,
+                            },
+                            "interpolation": {
+                                "type": "string",
+                                "description": "Interpolation for a move: minjerk (default), linear, ease_in_out or cartoon.",
+                            },
+                            "emotion": {
+                                "type": "string",
+                                "description": "Move name or plain emotion word for express (happy, curious, yes, no, sad, dance1 ...).",
+                            },
+                            "library": {
+                                "type": "string",
+                                "description": "Recorded-move library for express/list_moves: emotions (default) or dances.",
+                            },
+                            "mode": {
+                                "type": "string",
+                                "description": "Torque mode for motors: enabled, disabled or gravity_compensation.",
+                            },
+                            "text": {"type": "string", "description": "What to say (say), up to 500 characters."},
+                            "sound_file": {
+                                "type": "string",
+                                "description": "WAV for play_sound: an absolute path on the robot, a built-in asset name or an uploaded name.",
+                            },
+                            "wobble": {
+                                "type": "boolean",
+                                "description": "say/play_sound: bob the head in sync with the audio (moves the head). Default false.",
+                            },
+                            "level": {
+                                "type": "string",
+                                "description": "set_volume: 0-100, or silent/low/normal/loud/max/quieter/louder.",
+                            },
+                            "allow_test_sound": {
+                                "type": "boolean",
+                                "description": "set_volume: acknowledge that the daemon plays a short test sound when the level changes. Required true.",
+                            },
+                            "enabled": {
+                                "type": "boolean",
+                                "description": "track_face / turn_to_sound: true to start, false to stop.",
+                            },
+                            "weight": {
+                                "type": "number",
+                                "description": "track_face: 0-1 blend; 1 lets tracking own the head (default), 0 pauses it without stopping the detector.",
+                            },
+                            "u": {
+                                "type": "integer",
+                                "description": "Pixel column for look_at.",
+                            },
+                            "v": {"type": "integer", "description": "Pixel row for look_at."},
+                            "frame_width": {
+                                "type": "integer",
+                                "description": "Unmodified source frame width for look_at.",
+                            },
+                            "frame_height": {
+                                "type": "integer",
+                                "description": "Unmodified source frame height for look_at.",
                             },
                             "save_path": {
                                 "type": "string",
                                 "description": "Camera JPEG or audio WAV output path; empty creates a private temporary file. Never overwrites.",
                                 "default": "",
+                            },
+                            "sign": {
+                                "type": "number",
+                                "description": "turn_to_sound: +1 (default) when +yaw is the array's 0-rad side, -1 for a mirrored mount.",
+                                "default": 1.0,
                             },
                         },
                         "required": ["action"],
@@ -393,6 +568,14 @@ class ReachyDriver(AgentTool):
     ) -> AsyncGenerator[Any, None]:
         """Handle one agent invocation and yield exactly one tool result.
 
+        A driver the factory built but nobody connected is connected here on
+        the first verb that needs the daemon, so
+        ``Agent(tools=[Robot("reachy_mini", mode="real")])`` works without a
+        separate :meth:`connect_eagerly` line; a connect that fails is reported
+        as the verb's refusal, naming the reason. ``status`` never connects -
+        it is the question "are we connected", and answering it by connecting
+        would make it unable to say no.
+
         Args:
             tool_use: The agent's request, carrying the tool id and parameters.
             invocation_state: Caller-provided state; unused here.
@@ -403,48 +586,24 @@ class ReachyDriver(AgentTool):
         """
         del kwargs, invocation_state
         tool_use_id = tool_use.get("toolUseId", "")
-        action = (tool_use.get("input") or {}).get("action", "sensors")
-        if action == "sensors":
-            envelope: dict[str, Any] = {
-                "status": "success",
-                "content": [
-                    {
-                        "json": {
-                            "imu": self._snapshot("_imu"),
-                            "pose": self._snapshot("_pose"),
-                            "battery": self._snapshot("_battery"),
-                            "joints": self._snapshot("_joints"),
-                        }
-                    }
-                ],
-            }
-        elif action == "status":
-            envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
-        elif action == "plan_look_at":
-            params = tool_use.get("input") or {}
-            envelope = await asyncio.to_thread(
-                self.plan_look_at,
-                params.get("u", -1),
-                params.get("v", -1),
-                params.get("frame_width", 0),
-                params.get("frame_height", 0),
-            )
-        elif action == "record_audio":
-            params = tool_use.get("input") or {}
-            envelope = await asyncio.to_thread(
-                self.record_audio, params.get("duration", 1.0), params.get("save_path", "")
-            )
-        elif action == "camera":
-            envelope = await asyncio.to_thread(self.capture_frame, (tool_use.get("input") or {}).get("save_path", ""))
-        elif action == "stop":
-            # Report the halt outcome rather than assert one.  ``stop`` is the
-            # protocol's shutdown hook and returns ``None``: a daemon that
-            # refuses the stop is logged and swallowed, so an envelope built
-            # beside it can only restate the intent - and its text named a
-            # daemon that had just declined.  ``stop_task`` posts the same
-            # ``/api/move/stop`` and already decides the verdict, so the verb
-            # returns that envelope rather than re-deriving one.
+        params: dict[str, Any] = dict(tool_use.get("input") or {})
+        action = params.pop("action", "sensors")
+        # One dispatch decision. The halt has a branch of its own so the verb
+        # returns ``stop_task``'s verdict (a daemon that declines the stop is
+        # reported, never restated as success) and so it never waits on a
+        # connect. Every other declared verb runs its handler from the table
+        # the schema enum is generated from; anything else - a typo, a
+        # non-string, a verb borrowed from a sibling driver - is refused by
+        # name and never reaches a write. The terminal ``else`` refuses.
+        if action == "stop":
             envelope = self.stop_task()
+        elif isinstance(action, str) and action in _ACTIONS:
+            if action != "status" and not self._connected and (reason := self.connect_eagerly()) is not None:
+                envelope = _refuse(f"{action}: {reason}")
+            elif inspect.iscoroutinefunction(_ACTIONS[action]):
+                envelope = await _ACTIONS[action](self, params)
+            else:
+                envelope = await asyncio.to_thread(_ACTIONS[action], self, params)
         else:
             envelope = undeclared_verb_error(self, action)
         yield {"toolUseId": tool_use_id, **envelope}
@@ -484,11 +643,18 @@ class ReachyDriver(AgentTool):
             self._connect_error = transport
             return transport
 
-        status = self._daemon_get(_PATH_STATUS)
-        if (error := status.get("error")) is not None:
-            reason = f"daemon unreachable ({self._host}:{self._api_port}): {error}"
-            self._connect_error = reason
-            return reason
+        if self._discover_host:
+            found = self._discover_daemon()
+            if isinstance(found, str):
+                self._connect_error = found
+                return found
+            self._host, self._api_port, status = found
+        else:
+            status = self._daemon_get(_PATH_STATUS)
+            if (error := status.get("error")) is not None:
+                reason = f"daemon unreachable ({self._host}:{self._api_port}): {error}"
+                self._connect_error = reason
+                return reason
 
         # The daemon reports the variant; a payload without the flag is treated
         # as a Wireless because that is the shipped default, matching the
@@ -512,6 +678,57 @@ class ReachyDriver(AgentTool):
         self._connect_error = None
         self._stopped = False
         return None
+
+    def _discover_daemon(self) -> tuple[str, int, dict[str, Any]] | str:
+        """Find the daemon a zero-argument bring-up should talk to.
+
+        Probes :func:`~strands_robots.drivers.reachy_vocabulary.discovery_candidates`
+        in order - ``REACHY_HOST`` when set, else ``localhost`` then
+        ``reachy-mini.local`` - and takes the first whose
+        ``/api/daemon/status`` :func:`~strands_robots.drivers.reachy_vocabulary.daemon_answers`.
+        A daemon that answers with its own start-up error (a desktop Lite daemon
+        that found no robot) is skipped, not connected to: it serves no robot,
+        and taking it would hide the Wireless one further down the list.
+
+        Returns:
+            ``(host, port, status)`` for the daemon found, or a reason listing
+            every candidate and what each one said.
+        """
+        tried: list[str] = []
+        for host, port in discovery_candidates(self._api_port):
+            status = self._daemon_get_at(host, port, _PATH_STATUS)
+            if daemon_answers(status):
+                return host, port, status
+            said = status.get("error") if isinstance(status, dict) else status
+            tried.append(f"{host}:{port} -> {said if said is not None else 'daemon reports state=error'}")
+        return (
+            "daemon unreachable ("
+            + ", ".join(t.split(" -> ")[0] for t in tried)
+            + "): "
+            + "; ".join(tried)
+            + f'. Pass port="host[:port]" to Robot(...) or export {ENV_HOST}'
+        )
+
+    @classmethod
+    def probe_hardware(cls) -> bool:
+        """Whether a Reachy daemon answers at any discovery address right now.
+
+        The hook :func:`strands_robots.robot.Robot` ``mode="auto"`` consults for
+        a robot whose hardware is reached over the network rather than a serial
+        bus: the USB scan that decides ``auto`` for a servo arm cannot see a
+        daemon. Read-only - one ``GET /api/daemon/status`` per candidate - and
+        it builds no driver.
+
+        Returns:
+            ``True`` when a usable daemon answered.
+        """
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return False
+        for host, port in discovery_candidates():
+            if daemon_answers(transport.api(host, port, _PATH_STATUS)):
+                return True
+        return False
 
     def _build_link(self, *, is_lite: bool) -> Any:
         """Return the link for this hardware variant, or a reason string.
@@ -682,26 +899,38 @@ class ReachyDriver(AgentTool):
                         "host": self._host,
                         "api_port": self._api_port,
                         "variant": self._variant,
+                        # The halt an operator reads; cleared by the next
+                        # motion this driver commits.
                         "motion_stopped": self._stopped,
                         "battery_pct": (self._battery or {}).get("pct"),
+                        "discovery": self._discover_host,
                     }
                 }
             ],
         }
 
     async def stop(self) -> None:
-        """Ask the daemon to stop any motion in progress.
+        """Ask the daemon to stop every move in progress.
 
-        Unlike a robot with no motion path, the Mini has a real stop:
-        ``POST /api/move/stop`` halts a recorded move mid-play. The link stays
-        up, so sensors keep arriving - a stopped Mini is still observable, which
-        is what an operator wants after halting it.
+        Unlike a robot with no motion path, the Mini has a real stop - but the
+        daemon's ``POST /api/move/stop`` takes the ``uuid`` of ONE running move
+        (a bare post is a 422), so a halt is ``GET /api/move/running`` followed
+        by one stop per uuid. The link stays up, so sensors keep arriving - a
+        stopped Mini is still observable, which is what an operator wants after
+        halting it. A DoA turner, if one is running, is stopped first so it
+        cannot queue a fresh turn behind the halt.
+
+        This is the protocol's verdict-free shutdown hook: the halt itself, and
+        the verdict, live in :meth:`stop_task` - one owner - and a daemon that
+        declines is logged here rather than swallowed silently.
         """
-        result = self._daemon_post(_PATH_STOP)
-        if (error := result.get("error")) is not None:
-            logger.warning("%s.stop(): daemon refused the stop: %s", self._tool_name, error)
-            return
-        self._stopped = True
+        outcome = self.stop_task()
+        if outcome.get("status") != "success":
+            logger.warning(
+                "%s.stop(): %s",
+                self._tool_name,
+                " ".join(str(block.get("text", "")) for block in outcome.get("content", []) if isinstance(block, dict)),
+            )
 
     def cleanup(self) -> None:
         """Stop the link, then stop and close the loop it ran on. Idempotent.
@@ -712,6 +941,7 @@ class ReachyDriver(AgentTool):
         :meth:`_start_link` and cleared together here, so one being set is the
         same condition as both.
         """
+        self._stop_doa()
         if self._link is not None and self._loop is not None:
             try:
                 asyncio.run_coroutine_threadsafe(self._link.stop(), self._loop).result(timeout=5)
@@ -942,14 +1172,45 @@ class ReachyDriver(AgentTool):
     def stop_task(self) -> dict[str, Any]:
         """Stop motion, since a Mini's closest thing to a task is a recorded move.
 
+        The one place the halt is issued and recorded: the DoA turner is
+        stopped first so it cannot queue a turn behind the halt, then every
+        running move is listed and stopped by uuid (the daemon's stop takes ONE
+        uuid; a bare post is a 422, which is why an earlier bare post never
+        halted anything). ``motion_stopped`` is recorded only once every stop
+        was accepted; a daemon that declines one is reported, not restated.
+
         Returns:
-            A success envelope describing the stop that was attempted.
+            A success envelope naming the uuids stopped (an empty list when
+            nothing was running - a no-op halt), or a refusal naming what the
+            daemon declined.
         """
-        result = self._daemon_post(_PATH_STOP)
-        if (error := result.get("error")) is not None:
-            return _refuse(f"stop_task: daemon refused the stop: {error}")
+        self._stop_doa()
+        running = self._daemon_get_list(_PATH_MOVES_RUNNING)
+        if isinstance(running, dict):
+            return _refuse(f"stop_task: could not list running moves: {running.get('error')}")
+        uuids = [entry.get("uuid") for entry in running if isinstance(entry, dict) and entry.get("uuid")]
+        stopped: list[str] = []
+        for uuid in uuids:
+            result = self._daemon_post(_PATH_STOP, {"uuid": uuid})
+            if (error := result.get("error")) is not None:
+                return _refuse(
+                    f"stop_task: daemon refused the stop of move {uuid}: {error} "
+                    f"(stopped before the refusal: {stopped or 'none'})"
+                )
+            stopped.append(str(uuid))
         self._stopped = True
-        return {"status": "success", "content": [{"text": "asked the daemon to stop any recorded move in progress"}]}
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "stopped": stopped,
+                        "running_before": len(uuids),
+                        "note": "each running move was stopped by uuid; nothing running is a no-op halt",
+                    }
+                }
+            ],
+        }
 
     # ------------------------------------------------------------------ #
     # Recorded-move and motor paths the reachy_* tools call.             #
@@ -966,30 +1227,59 @@ class ReachyDriver(AgentTool):
         request at the daemon's parent path.
 
         Args:
-            move_name: The move's name in the library, e.g. ``'happy'``.
+            move_name: The move's library name (``'cheerful1'``) or a plain
+                emotion word (``'happy'``, ``'curious'``, ``'no'``) resolved
+                through :func:`~strands_robots.drivers.reachy_vocabulary.resolve_move_name`.
             library: Which library, one of ``'emotions'`` or ``'dances'``.
 
         Returns:
-            A success envelope naming the move, or an error envelope naming the
-            first gate that refused.
+            A success envelope naming the move actually sent (and the word it
+            was resolved from), or an error envelope naming the first gate that
+            refused. Success is the daemon accepting the move: while daemon face
+            tracking holds the head at weight 1 the choreography is overridden.
         """
         if not self._connected:
             return _refuse("play_move: not connected - call connect_eagerly() first")
         dataset = _MOVE_LIBRARIES.get(library)
         if dataset is None:
             return _refuse(f"play_move: unknown library {library!r}; expected one of {sorted(_MOVE_LIBRARIES)}")
-        if not _MOVE_NAME_RE.fullmatch(move_name or ""):
+        # A plain word ("happy", "go away") becomes the library's own name
+        # ("cheerful1", "go_away1") against the live catalogue; a catalogue
+        # that cannot be read leaves the alias table to answer alone. The
+        # resolved name still has to pass the path-segment gate below, so the
+        # translation cannot manufacture a name the gate would have refused.
+        # The path-segment gate runs BEFORE the catalogue read, on the
+        # normalised request: a dot segment must build no request at all, not
+        # one GET and then a refusal. ``resolve_move_name`` only ever returns a
+        # catalogue entry, an alias-table value or ``key + "1"``, all of which
+        # pass the same gate when ``key`` does, so the chosen name needs no
+        # second check.
+        key = (move_name or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if not _MOVE_NAME_RE.fullmatch(key):
             return _refuse(
                 f"play_move: invalid move_name {move_name!r}; expected 1-128 chars of [A-Za-z0-9._-] "
                 "starting with a letter or digit (one bare path segment, so no '.' or '..') - "
                 "list_moves() names the library's catalogue"
             )
-        result = self._daemon_post(_PATH_MOVE_PLAY.format(dataset=dataset, move=move_name))
+        catalogue = self._daemon_get_list(_PATH_MOVE_LIST.format(dataset=dataset))
+        names = catalogue if isinstance(catalogue, list) else []
+        resolved = resolve_move_name(key, names)
+        if resolved is None and names:
+            sample = ", ".join(sorted(str(n) for n in names)[:12])
+            return _refuse(
+                f"play_move: {move_name!r} names no move in the {library} library and matches no alias; "
+                f"list_moves() has the catalogue (starts: {sample} ...)"
+            )
+        chosen = resolved if resolved is not None else key
+        result = self._daemon_post(_PATH_MOVE_PLAY.format(dataset=dataset, move=chosen))
         if (error := result.get("error")) is not None:
-            return _refuse(f"play_move: daemon refused {move_name!r}: {error}")
+            return _refuse(f"play_move: daemon refused {chosen!r}: {error}")
         self._remember_head_yaw_target(None)
         self._stopped = False
-        return {"status": "success", "content": [{"json": {"played": move_name, "library": library}}]}
+        payload: dict[str, Any] = {"played": chosen, "library": library, "motion_verified": False}
+        if chosen != move_name:
+            payload["requested"] = move_name
+        return {"status": "success", "content": [{"json": payload}]}
 
     def list_moves(self, library: str = "emotions") -> dict[str, Any]:
         """List the recorded moves one library serves.
@@ -1045,16 +1335,18 @@ class ReachyDriver(AgentTool):
         return {"status": "success", "content": [{"text": "asked the daemon to play the go-to-sleep move"}]}
 
     def set_motors(self, mode: str) -> dict[str, Any]:
-        """Set motor torque for all joints: ``'enabled'`` holds, ``'disabled'`` goes limp.
+        """Set motor torque: ``'enabled'`` holds, ``'disabled'`` goes limp, ``'gravity_compensation'`` floats.
 
-        Sent on the real-time command link, the same rail
-        :meth:`send_action` writes. The SDK's third mode
-        (``gravity_compensation``) has no daemon-link command, so it is refused
-        by name rather than silently mapped to one of the two that do.
+        The first two are sent on the real-time command link, the same rail
+        :meth:`send_action` writes. The third has no link command, so it goes
+        through the daemon's own ``POST /api/motors/set_mode/{mode}`` - the path
+        the Pollen SDK's ``enable_gravity_compensation()`` takes. Disabling
+        torque on a head that is not resting lets it drop; the caller is the one
+        holding it.
 
         Args:
-            mode: ``'enabled'`` (torque on) or ``'disabled'`` (safe to move by
-                hand).
+            mode: ``'enabled'`` (torque on), ``'disabled'`` (safe to move by
+                hand) or ``'gravity_compensation'`` (marionette mode).
 
         Returns:
             A success envelope naming the mode, or an error envelope naming
@@ -1062,16 +1354,562 @@ class ReachyDriver(AgentTool):
         """
         if not self._connected:
             return _refuse("set_motors: not connected - call connect_eagerly() first")
-        torque = {"enabled": True, "disabled": False}.get(mode)
-        if torque is None:
-            return _refuse(
-                f"set_motors: unknown mode {mode!r}; expected 'enabled' or 'disabled' "
-                "(the SDK's gravity_compensation mode has no daemon-link command)"
-            )
-        if (error := self._send_cmd({"torque": torque, "ids": None})) is not None:
-            return _refuse(f"set_motors: {error}")
+        if mode not in _MOTOR_MODES:
+            return _refuse(f"set_motors: unknown mode {mode!r}; expected one of {list(_MOTOR_MODES)}")
+        if mode == "gravity_compensation":
+            result = self._daemon_post(_PATH_MOTORS_MODE.format(mode=mode))
+            if (error := result.get("error")) is not None:
+                return _refuse(f"set_motors: daemon refused {mode!r}: {error}")
+        else:
+            torque = mode == "enabled"
+            if (error := self._send_cmd({"torque": torque, "ids": None})) is not None:
+                return _refuse(f"set_motors: {error}")
         self._remember_head_yaw_target(None)
         return {"status": "success", "content": [{"json": {"motors": mode}}]}
+
+    # ------------------------------------------------------------------ #
+    # Expressive verbs: smooth moves, speech, sound, volume, tracking.   #
+    # ------------------------------------------------------------------ #
+
+    def goto(
+        self,
+        *,
+        head: dict[str, float] | None = None,
+        body_yaw: float | None = None,
+        antennas: tuple[float, float] | None = None,
+        duration: float = 0.8,
+        interpolation: str = "minjerk",
+    ) -> dict[str, Any]:
+        """Ask the daemon for one smooth interpolated move - the gesture rail.
+
+        ``POST /api/move/goto`` is what the Pollen SDK's ``goto_target`` and
+        every desk app use for a gesture: the daemon interpolates from where the
+        head is to the target over ``duration``. :meth:`send_action` is the
+        other rail - the real-time ``set_target`` stream with no interpolation,
+        meant for a 10 Hz+ control loop - and a single agent call on it is a
+        step, not a gesture.
+
+        Gates, in order: connected; the rotational envelope
+        (:func:`~strands_robots.drivers.reachy_envelope.envelope_error`, with the
+        head-body coupling checked against this driver's last commanded head
+        yaw when only ``body_yaw`` is given); translation, antenna, duration and
+        interpolation domains
+        (:func:`~strands_robots.drivers.reachy_vocabulary.goto_body_error`).
+
+        Args:
+            head: Head pose with any of ``pitch``, ``roll``, ``yaw`` (degrees)
+                and ``x``, ``y``, ``z`` (millimetres). Absent axes are zero -
+                the daemon's head command is a whole pose, so ``{"pitch": 15}``
+                is "look up, otherwise level". ``None`` leaves the head alone.
+            body_yaw: Body yaw in degrees, or ``None`` to leave the body alone.
+            antennas: ``(right, left)`` in degrees, or ``None`` to leave them.
+            duration: Seconds, 0.1-10.
+            interpolation: ``minjerk`` (default), ``linear``, ``ease_in_out`` or
+                ``cartoon``.
+
+        Returns:
+            A success envelope carrying the daemon's move uuid and the body
+            sent, or a refusal naming the first gate. Success means the daemon
+            accepted and started the move; ``motion_verified`` is ``False``
+            because nothing here reads the head back - and while daemon face
+            tracking holds the head (weight 1) the move is overridden.
+        """
+        if not self._connected:
+            return _refuse("goto: not connected - call connect_eagerly() first")
+        values: dict[str, Any] = {}
+        if head is not None:
+            values.update(
+                {
+                    "head_pitch": head.get("pitch", 0.0),
+                    "head_roll": head.get("roll", 0.0),
+                    "head_yaw": head.get("yaw", 0.0),
+                }
+            )
+        if body_yaw is not None:
+            values["body_yaw"] = body_yaw
+        held = float(values["head_yaw"]) if "head_yaw" in values else self._read_head_yaw_target()
+        if (reason := envelope_error(values, "goto", head_yaw_target=held)) is not None:
+            return _refuse(reason)
+        if (
+            reason := goto_body_error(
+                head=head,
+                body_yaw=body_yaw,
+                antennas=antennas,
+                duration=duration,
+                interpolation=interpolation,
+                context="goto",
+            )
+        ) is not None:
+            return _refuse(reason)
+        body = goto_body(
+            head=head, body_yaw=body_yaw, antennas=antennas, duration=duration, interpolation=interpolation
+        )
+        result = self._daemon_post(_PATH_GOTO, body)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"goto: daemon refused the move: {error}")
+        if head is not None:
+            self._remember_head_yaw_target(float(values["head_yaw"]))
+        self._stopped = False
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "move": result,
+                        "sent": body,
+                        "duration_s": float(duration),
+                        "robot": self._tool_name,
+                        "motion_verified": False,
+                    }
+                }
+            ],
+        }
+
+    def home(self, duration: float = 1.0) -> dict[str, Any]:
+        """Return to the neutral pose: head level and centred, antennas level, body centred.
+
+        Args:
+            duration: Seconds for the interpolation.
+
+        Returns:
+            :meth:`goto`'s envelope.
+        """
+        return self.goto(
+            head={"pitch": 0.0, "roll": 0.0, "yaw": 0.0, "x": 0.0, "y": 0.0, "z": 0.0},
+            body_yaw=0.0,
+            antennas=(0.0, 0.0),
+            duration=duration,
+        )
+
+    def get_volume(self) -> dict[str, Any]:
+        """Read the speaker volume - ``GET /api/volume/current``. Read-only.
+
+        Returns:
+            A success envelope with ``volume`` (0-100) and the daemon's payload,
+            or a refusal.
+        """
+        if not self._connected:
+            return _refuse("get_volume: not connected - call connect_eagerly() first")
+        result = self._daemon_get(_PATH_VOLUME_GET)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"get_volume: daemon refused: {error}")
+        return {"status": "success", "content": [{"json": {"volume": result.get("volume"), "daemon": result}}]}
+
+    def set_volume(self, level: Any, *, allow_test_sound: bool = False) -> dict[str, Any]:
+        """Set the speaker volume - and know that the daemon plays a sound doing it.
+
+        Daemon 1.10.0's ``POST /api/volume/set`` handler also calls
+        ``backend.play_sound("impatient1.wav")`` after writing the level
+        (``daemon/app/routers/volume.py``). That is audible, and when head
+        wobbling is enabled it moves the head. A volume change is therefore not
+        a silent write, so this method refuses unless the caller says
+        ``allow_test_sound=True`` - the same posture as every other
+        side-effecting verb here: the caller names the consequence, the driver
+        does not hide it.
+
+        Args:
+            level: 0-100, a numeric string (``"40%"``), one of the words in
+                :data:`~strands_robots.drivers.reachy_vocabulary.VOLUME_WORDS`
+                (``silent``, ``low``, ``normal``, ``loud``, ``max`` ...), or
+                ``quieter``/``louder`` relative to the current level.
+            allow_test_sound: Must be ``True``; acknowledges the test sound.
+
+        Returns:
+            A success envelope with ``previous`` and ``volume``, or a refusal.
+            ``volume`` is what the daemon reported after the write, which is
+            the mixer level - not proof of anything heard.
+        """
+        if not self._connected:
+            return _refuse("set_volume: not connected - call connect_eagerly() first")
+        if allow_test_sound is not True:
+            return _refuse(
+                "set_volume: the daemon plays a short test sound (impatient1.wav) whenever the level is set, and "
+                "with wobbling enabled that moves the head; pass allow_test_sound=True to accept that, or use "
+                "get_volume() to read without touching it"
+            )
+        current_result = self._daemon_get(_PATH_VOLUME_GET)
+        current = current_result.get("volume") if current_result.get("error") is None else None
+        target = resolve_volume_level(level, current if isinstance(current, int) else None)
+        if isinstance(target, str):
+            return _refuse(f"set_volume: {target}")
+        result = self._daemon_post(_PATH_VOLUME_SET, {"volume": target})
+        if (error := result.get("error")) is not None:
+            return _refuse(f"set_volume: daemon refused {target}: {error}")
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "previous": current,
+                        "volume": result.get("volume", target),
+                        "test_sound_played_by_daemon": True,
+                        "audible_verified": False,
+                    }
+                }
+            ],
+        }
+
+    def play_sound(self, sound_file: str, *, wobble: bool = False) -> dict[str, Any]:
+        """Play a WAV on the robot's speaker - ``POST /api/media/play_sound``.
+
+        The daemon resolves ``sound_file`` as an absolute path on ITS
+        filesystem, a built-in asset name (``wake_up.wav``) or a name uploaded
+        through ``/api/media/sounds/upload``; a path on the calling machine is
+        not one of those. The handler answers ``{"status": "ok"}`` as soon as
+        the backend accepted the file - including on a backend with no media
+        server, where playback is a no-op - so acceptance is not audibility.
+
+        Args:
+            sound_file: The daemon-side file, as above.
+            wobble: Enable audio-reactive head wobbling first
+                (``/api/media/wobbling/enable``). This MOVES THE HEAD for the
+                length of the audio, so it is off by default; nothing here
+                disables it again, because the driver does not know when the
+                sound ends - call ``set_wobbling(False)`` afterwards, or let
+                :meth:`say` do it, which knows the WAV's length.
+
+        Returns:
+            A success envelope carrying the daemon's reply, or a refusal.
+        """
+        if not self._connected:
+            return _refuse("play_sound: not connected - call connect_eagerly() first")
+        if not isinstance(sound_file, str) or not sound_file.strip():
+            return _refuse(
+                f"play_sound: sound_file must be a non-empty daemon-side path or asset name, got {sound_file!r}"
+            )
+        if not isinstance(wobble, bool):
+            return _refuse(f"play_sound: wobble must be a boolean, got {wobble!r}")
+        if wobble and (reason := self.set_wobbling(True).get("status")) != "success":
+            return _refuse(f"play_sound: could not enable wobbling before playback ({reason})")
+        result = self._daemon_post(_PATH_PLAY_SOUND, {"file": sound_file})
+        if (error := result.get("error")) is not None:
+            return _refuse(f"play_sound: daemon refused {sound_file!r}: {error}")
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "played": sound_file,
+                        "wobble": wobble,
+                        "daemon": result,
+                        "audible_verified": False,
+                    }
+                }
+            ],
+        }
+
+    def set_wobbling(self, enabled: bool) -> dict[str, Any]:
+        """Enable or disable audio-reactive head wobbling on the daemon.
+
+        Args:
+            enabled: ``True`` for ``/api/media/wobbling/enable``, ``False`` for
+                ``/disable`` (which also resets the speech offsets to zero).
+
+        Returns:
+            A success envelope, or a refusal.
+        """
+        if not self._connected:
+            return _refuse("set_wobbling: not connected - call connect_eagerly() first")
+        if not isinstance(enabled, bool):
+            return _refuse(f"set_wobbling: enabled must be a boolean, got {enabled!r}")
+        result = self._daemon_post(_PATH_WOBBLE_ENABLE if enabled else _PATH_WOBBLE_DISABLE)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"set_wobbling: daemon refused: {error}")
+        return {"status": "success", "content": [{"json": {"wobbling": enabled}}]}
+
+    def tts_url(self) -> str:
+        """The speech service URL :meth:`say` posts to.
+
+        Returns:
+            The constructor's ``tts_url``, else ``REACHY_TTS_URL``, else
+            ``http://<daemon host>:5002`` - the daemon's host because the
+            service has to write a WAV the DAEMON can read, so it lives on the
+            robot.
+        """
+        if self._tts_url:
+            return self._tts_url.rstrip("/")
+        if env := (os.getenv(ENV_TTS_URL) or "").strip():
+            return env.rstrip("/")
+        return f"http://{self._host}:{DEFAULT_TTS_PORT}"
+
+    def say(self, text: str, *, wobble: bool = False, timeout_s: float = 30.0) -> dict[str, Any]:
+        """Speak ``text`` through the robot's speaker.
+
+        Two hops, both on the robot: ``POST <tts_url>/tts {"text", "as": "path"}``
+        asks a Piper/``tiny-tts`` service for a WAV and gets back the path it
+        wrote, then :meth:`play_sound` hands that path to the daemon. The
+        speech service is a sidecar ``tiny-the-reachy`` installs as
+        ``tiny-tts.service``; it is NOT part of the Reachy daemon, so a robot
+        without it refuses here by name - nothing is spoken through a cloud
+        fallback the operator did not configure.
+
+        With ``wobble`` the head bobs for the WAV's duration (read from the
+        service's ``seconds`` field when present) and wobbling is disabled
+        afterwards on a timer, so the head is handed back.
+
+        Args:
+            text: What to say, 1-500 characters.
+            wobble: Bob the head while speaking. Moves the head; off by default.
+            timeout_s: How long to wait for synthesis.
+
+        Returns:
+            A success envelope with the WAV path, its length when known and the
+            daemon's playback reply, or a refusal. ``audible_verified`` is
+            ``False``: the daemon accepting a file is not sound in the room.
+        """
+        if not self._connected:
+            return _refuse("say: not connected - call connect_eagerly() first")
+        if not isinstance(text, str) or not text.strip():
+            return _refuse(f"say: text must be a non-empty string, got {text!r}")
+        text = text.strip()
+        if len(text) > 500:
+            return _refuse(f"say: text is {len(text)} characters; the limit is 500 per call")
+        if not isinstance(wobble, bool):
+            return _refuse(f"say: wobble must be a boolean, got {wobble!r}")
+        url = self.tts_url()
+        synth = _post_json(f"{url}/tts", {"text": text, "as": "path"}, timeout_s)
+        if (error := synth.get("error")) is not None:
+            return _refuse(
+                f"say: no speech service at {url} ({error}). Speech is a sidecar (tiny-tts / Piper) on the robot, "
+                f"not part of the Reachy daemon; install it, or pass tts_url= / export {ENV_TTS_URL}"
+            )
+        path = synth.get("path")
+        if not isinstance(path, str) or not path:
+            return _refuse(f"say: speech service answered without a wav path: {synth!r}")
+        seconds = synth.get("seconds")
+        seconds_f = float(seconds) if isinstance(seconds, int | float) and math.isfinite(seconds) else None
+        played = self.play_sound(path, wobble=wobble)
+        if played.get("status") != "success":
+            return played
+        if wobble:
+            tail = min((seconds_f if seconds_f is not None else max(1.5, len(text) * 0.06)) + 0.3, 30.0)
+            timer = threading.Timer(tail, self.set_wobbling, args=(False,))
+            timer.daemon = True
+            timer.start()
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "said": text,
+                        "wav": path,
+                        "seconds": seconds_f,
+                        "tts_url": url,
+                        "wobble": wobble,
+                        "audible_verified": False,
+                    }
+                }
+            ],
+        }
+
+    def set_tracking(self, enabled: bool, weight: float = 1.0) -> dict[str, Any]:
+        """Turn the daemon's own face tracking on or off.
+
+        Daemon 1.10 runs a YuNet face detector on its camera pipeline and blends
+        the head toward the nearest face every control tick
+        (``POST /api/media/tracking/enable {"weight"}`` / ``/disable``). Two
+        facts a caller has to know: the DAEMON must own the camera (a client
+        that released media stops tracking), and while tracking holds the head
+        at weight 1 the daemon IGNORES ``goto``/``set_target`` - a ``look`` or
+        an ``express`` sent meanwhile is overridden. Pollen's own conversation
+        app pauses tracking (weight 0) while it speaks or gestures and restores
+        it after; that choreography is a long-lived controller's job and is not
+        done here - set ``weight=0.0`` before a gesture and ``1.0`` after it.
+
+        Args:
+            enabled: ``True`` to start following, ``False`` to stop the detector.
+            weight: 0-1 blend when enabling; 1 lets tracking own the head.
+
+        Returns:
+            A success envelope with the daemon's ``enabled`` verdict (``False``
+            with ``status: unavailable`` when the daemon has no camera), or a
+            refusal.
+        """
+        if not self._connected:
+            return _refuse("set_tracking: not connected - call connect_eagerly() first")
+        if not isinstance(enabled, bool):
+            return _refuse(f"set_tracking: enabled must be a boolean, got {enabled!r}")
+        if (reason := finite_number_error(weight, "weight", "set_tracking")) is not None:
+            return _refuse(reason)
+        if not 0.0 <= float(weight) <= 1.0:
+            return _refuse(f"set_tracking: weight {weight:g} is outside [0, 1]")
+        if enabled:
+            result = self._daemon_post(_PATH_TRACKING_ENABLE, {"weight": float(weight)})
+        else:
+            result = self._daemon_post(_PATH_TRACKING_DISABLE)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"set_tracking: daemon refused: {error}")
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "json": {
+                        "requested": enabled,
+                        "weight": float(weight) if enabled else None,
+                        "enabled": bool(result.get("enabled", False)),
+                        "daemon": result,
+                    }
+                }
+            ],
+        }
+
+    def tracked_face(self) -> dict[str, Any]:
+        """The latest face the daemon's tracker saw - ``GET /api/media/tracking/face``. Read-only.
+
+        Returns:
+            A success envelope with ``face_target`` (``detected``, ``x``, ``y``
+            in [-1, 1], ``roll``, ``ts``), or a refusal.
+        """
+        if not self._connected:
+            return _refuse("tracked_face: not connected - call connect_eagerly() first")
+        result = self._daemon_get(_PATH_TRACKING_FACE)
+        if (error := result.get("error")) is not None:
+            return _refuse(f"tracked_face: daemon refused: {error}")
+        return {
+            "status": "success",
+            "content": [{"json": {"face_target": result.get("face_target"), "daemon": result}}],
+        }
+
+    def turn_to_sound(self, enabled: bool = True, *, sign: float = 1.0) -> dict[str, Any]:
+        """Turn toward whoever is talking, or stop doing so.
+
+        The Wireless Mini's microphone array reports a Direction of Arrival
+        (``GET /api/state/full?with_doa=true``: ``angle`` in radians, ``0`` =
+        the robot's left, ``pi/2`` = ahead, plus ``speech_detected``). Enabling
+        starts a driver-owned thread that polls it at 10 Hz and, per utterance,
+        commits ONE smooth :meth:`goto` toward the speaker - head first, the
+        body carrying what the head cannot. The judgement lives in
+        :class:`~strands_robots.drivers.reachy_doa.DoaTurner`: six agreeing
+        speech frames, no rail readings, at least a 10 degree change, one turn
+        per three seconds, and a windup guard against chasing the robot's own
+        speaker. A face the tracker saw within the last 1.5 s, or a recorded
+        move in flight, vetoes a turn - both outrank a bearing.
+
+        The loop is stopped by ``turn_to_sound(False)``, by :meth:`stop` and by
+        :meth:`cleanup`; it never outlives the driver. A Lite has no array: the
+        daemon's frames then carry no ``doa`` and the loop simply never turns,
+        which :meth:`turn_to_sound_status` shows as ``angle_deg: None``.
+
+        Args:
+            enabled: ``True`` to start (a no-op when already running), ``False``
+                to stop.
+            sign: ``+1`` (default) when ``+yaw`` is the side the array reports
+                as ``0`` rad - the SDK convention - or ``-1`` for a mirrored
+                mount. Empirical: confirm by speaking from the robot's left.
+
+        Returns:
+            A success envelope carrying the loop's status, or a refusal when the
+            driver is disconnected or an argument is out of domain.
+        """
+        if not self._connected:
+            return _refuse("turn_to_sound: not connected - call connect_eagerly() first")
+        if not isinstance(enabled, bool):
+            return _refuse(f"turn_to_sound: enabled must be a boolean, not {enabled!r}")
+        if (reason := finite_number_error(sign, "sign", "turn_to_sound")) is not None:
+            return _refuse(reason)
+        if enabled:
+            if self._doa is None or not self._doa.running:
+                self._doa = DoaLoop(
+                    read_frame=self._doa_frame,
+                    look=self._doa_look,
+                    blocked=self._doa_blocked,
+                    turner=DoaTurner(sign=sign),
+                    name=f"{self._tool_name}-doa",
+                )
+                self._doa.start()
+        else:
+            self._stop_doa()
+        return self.turn_to_sound_status()
+
+    def turn_to_sound_status(self) -> dict[str, Any]:
+        """What the DoA turner hears and last did. Read-only.
+
+        Returns:
+            A success envelope: ``running``, ``enabled``, ``speech``,
+            ``angle_deg``/``delta_deg`` of the last bearing, ``turns``,
+            ``windups``, ``why`` the last frame did not turn, ``last_sent``
+            (plan + the daemon's goto answer), and the rule constants.
+        """
+        if self._doa is None:
+            payload: dict[str, Any] = {"running": False, "enabled": False, "why": "never enabled"}
+        else:
+            payload = self._doa.status()
+        return {"status": "success", "content": [{"json": payload}]}
+
+    def _stop_doa(self) -> None:
+        """Stop the DoA loop if one is running. Idempotent; never raises."""
+        if self._doa is not None:
+            self._doa.stop()
+
+    def _doa_frame(self) -> dict[str, Any] | None:
+        """One daemon state frame with DoA, head pose and body yaw, or ``None`` on a failed read."""
+        frame = self._daemon_get(_PATH_STATE_DOA)
+        if frame.get("error") is not None:
+            return None
+        return frame
+
+    def _doa_look(
+        self, *, yaw: float, body_yaw: float | None, pitch: float, roll: float, duration: float
+    ) -> dict[str, Any]:
+        """The turner's motion sink: one bounded :meth:`goto` in degrees."""
+        return self.goto(head={"pitch": pitch, "roll": roll, "yaw": yaw}, body_yaw=body_yaw, duration=duration)
+
+    def _doa_blocked(self) -> str | None:
+        """Why a DoA turn must not happen right now, or ``None``. Two GETs, only when a turn is armed."""
+        face = self._daemon_get(_PATH_TRACKING_FACE)
+        target = face.get("face_target") if isinstance(face, dict) else None
+        if isinstance(target, dict) and target.get("detected"):
+            seen = target.get("ts")
+            if not isinstance(seen, int | float) or time.time() - float(seen) <= _FACE_FRESH_S:
+                return "face tracker has a lock"
+        running = self._daemon_get_list(_PATH_MOVES_RUNNING)
+        if isinstance(running, list) and running:
+            return "move in flight"
+        return None
+
+    def look_at(self, u: int, v: int, frame_width: int, frame_height: int, duration: float = 1.0) -> dict[str, Any]:
+        """Turn the head toward a camera pixel.
+
+        One verb, one meaning: the pixel is resolved through the daemon's own
+        camera calibration and a fresh head pose (:meth:`_look_at_pose`, GETs
+        only) into a 4x4 target with translation recentred at the origin, and
+        that target is sent as a :meth:`goto`. The head pose is sampled
+        separately from the frame the pixel came from. The move is bounded
+        here the way every head move is: the
+        target's yaw/pitch/roll are extracted and put through the shared
+        envelope, so a pixel that asks for more pitch than the platform has is
+        refused, not clamped. The move goes out as ``head_pose`` in
+        ``roll/pitch/yaw`` form, so the daemon's IK solves it like any ``look``.
+
+        Args:
+            u: Pixel column in the unmodified camera frame.
+            v: Pixel row.
+            frame_width: Width of that frame.
+            frame_height: Height of that frame.
+            duration: Seconds for the interpolation.
+
+        Returns:
+            :meth:`goto`'s envelope, with the resolved geometry attached under
+            ``plan`` and the bounded target in degrees under ``target_deg``, or
+            a refusal from either step. ``motion_verified`` stays ``False``:
+            the daemon accepted the move; nothing here proves the head arrived.
+        """
+        plan = self._look_at_pose(u, v, frame_width, frame_height)
+        if plan.get("status") != "success":
+            return plan
+        geometry = plan["content"][0]["json"]
+        matrix = geometry.get("head_pose")
+        try:
+            roll, pitch, yaw = _rpy_from_matrix(matrix)
+        except (TypeError, ValueError, IndexError) as exc:
+            return _refuse(f"look_at: the plan's head pose is not a usable 4x4 matrix: {exc}")
+        sent = self.goto(head={"pitch": pitch, "roll": roll, "yaw": yaw}, duration=duration)
+        if sent.get("status") != "success":
+            return sent
+        payload = dict(sent["content"][0]["json"])
+        payload["plan"] = geometry
+        payload["target_deg"] = {"roll": roll, "pitch": pitch, "yaw": yaw}
+        return {"status": "success", "content": [{"json": payload}]}
 
     def state_snapshot(self) -> dict[str, Any]:
         """Return the cached sensor state: joints, pose, IMU, battery.
@@ -1215,11 +2053,25 @@ class ReachyDriver(AgentTool):
             states for this transport: the callers that require an object are
             the ones that judge it.
         """
+        return self._daemon_get_at(self._host, self._api_port, path)
+
+    def _daemon_get_at(self, host: str, port: int, path: str) -> dict[str, Any]:
+        """GET ``path`` from an explicit daemon address - :meth:`_daemon_get` for a candidate.
+
+        Args:
+            host: Daemon host to dial.
+            port: Daemon REST port.
+            path: Request path, one of this module's ``_PATH_*`` constants.
+
+        Returns:
+            The decoded object, or ``{"error": ...}`` on the reasoning
+            :meth:`_daemon_get` gives.
+        """
         transport = _resolve_transport()
         if isinstance(transport, str):
             return {"error": transport}
 
-        result = transport.api(self._host, self._api_port, path)
+        result = transport.api(host, port, path)
         if not isinstance(result, dict):
             return _body_shape_error("GET", path, "an object", result)
         return result
@@ -1368,14 +2220,15 @@ class ReachyDriver(AgentTool):
             return _refuse(f"record_audio: {exc}")
         return {"status": "success", "content": [{"json": result}]}
 
-    def plan_look_at(self, u: int, v: int, frame_width: int, frame_height: int) -> dict[str, Any]:
-        """Compute native pixel look-at geometry using GETs only; never command the head.
+    def _look_at_pose(self, u: int, v: int, frame_width: int, frame_height: int) -> dict[str, Any]:
+        """Resolve a camera pixel to a head-pose target using GETs only; never command the head.
 
-        Uses daemon calibration/crop metadata and a fresh head pose, but the
-        frame and pose are not time-synchronized. The returned target recenters
-        translation, like the vendor geometry, and is NOT safety-validated.
-        Unknown camera models/resolutions or invalid geometry refuse rather than
-        guessing. This is deliberately not the motion accessor ``look_at_image``.
+        The private half of :meth:`look_at`. Uses daemon calibration/crop
+        metadata and a fresh head pose, but the frame and pose are not
+        time-synchronized. The returned target recenters translation, like the
+        vendor geometry, and is NOT safety-validated here - :meth:`look_at`
+        puts it through the shared envelope before sending. Unknown camera
+        models/resolutions or invalid geometry refuse rather than guessing.
 
         Args:
             u: Pixel column, starting at zero on the left.
@@ -1384,25 +2237,26 @@ class ReachyDriver(AgentTool):
             frame_height: Height of the unmodified source camera frame.
 
         Returns:
-            A geometry-only plan explicitly marked motion_executed=false,
-            or a refusal. Never sends a motor, stop or media-ownership command.
+            The geometry-only plan (``head_pose`` 4x4, calibration facts,
+            ``safety_validated: false``), or a refusal. Never sends a motor,
+            stop or media-ownership command.
         """
         if not self._connected:
-            return _refuse("plan_look_at: not connected - call connect_eagerly() first")
+            return _refuse("look_at: not connected - call connect_eagerly() first")
         from strands_robots.drivers.reachy_look_at import _coordinates_error, _pixel_plan
 
         if reason := _coordinates_error(u, v, frame_width, frame_height):
             return _refuse(reason)
         specs = self._daemon_get("/api/camera/specs")
         if "error" in specs:
-            return _refuse(f"plan_look_at: {specs['error']}")
+            return _refuse(f"look_at: {specs['error']}")
         pose = self._daemon_get("/api/state/present_head_pose?use_pose_matrix=true")
         if "error" in pose:
-            return _refuse(f"plan_look_at: {pose['error']}")
+            return _refuse(f"look_at: {pose['error']}")
         try:
             plan = _pixel_plan(specs, pose, u, v, frame_width, frame_height)
         except Exception as exc:  # noqa: BLE001 - geometry and OpenCV failures become explicit refusals
-            return _refuse(f"plan_look_at: {exc}")
+            return _refuse(f"look_at: {exc}")
         return {"status": "success", "content": [{"json": plan}]}
 
     def _send_cmd(self, command: dict[str, Any]) -> str | None:
@@ -1462,6 +2316,294 @@ class ReachyDriver(AgentTool):
 
 #: Every key :func:`_wire_commands` understands. Surfaced so a refusal can name
 #: the accepted set rather than leaving a caller to read the source.
+def _post_json(url: str, data: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    """POST ``data`` as JSON to ``url`` and decode the object it answers with.
+
+    The one HTTP call in this module that does not go through the daemon
+    transport, because the speech service is not the daemon: it has no token,
+    no TLS switch and no variant, so the transport's headers would be wrong for
+    it. Same no-raise contract as the transport's ``api`` - every failure comes
+    back as ``{"error": ...}``.
+
+    Args:
+        url: Full URL.
+        data: JSON body.
+        timeout_s: Socket timeout.
+
+    Returns:
+        The decoded object, or ``{"error": ...}``.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, data=json.dumps(data).encode(), method="POST")
+    request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310 - caller-configured http(s) URL
+            body = json.loads(response.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        return {"error": f"HTTP {exc.code}: {exc.read().decode(errors='replace')[:200]}"}
+    except Exception as exc:  # noqa: BLE001 - every transport failure is one reason
+        return {"error": str(exc)}
+    if not isinstance(body, dict):
+        return _body_shape_error("POST", url, "an object", body)
+    return body
+
+
+def _rpy_from_matrix(matrix: Any) -> tuple[float, float, float]:
+    """Roll, pitch, yaw in degrees from a 4x4 (or 3x3) rotation, ZYX convention.
+
+    The convention the daemon's ``XYZRPYPose.from_pose_array`` uses, so a
+    matrix the planner produced round-trips to the ``roll/pitch/yaw`` form the
+    ``goto`` endpoint accepts.
+
+    Args:
+        matrix: Nested lists, at least 3x3.
+
+    Returns:
+        ``(roll, pitch, yaw)`` in degrees.
+
+    Raises:
+        TypeError, ValueError, IndexError: For anything that is not a numeric
+            3x3-or-larger nested list.
+    """
+    r00, r01, r02 = (float(matrix[0][i]) for i in range(3))
+    r10, r11, r12 = (float(matrix[1][i]) for i in range(3))
+    r20, r21, r22 = (float(matrix[2][i]) for i in range(3))
+    del r01, r02, r12
+    sy = math.hypot(r00, r10)
+    if sy < 1e-9:
+        # Gimbal lock: pitch is +/-90 deg; roll is taken as zero and yaw
+        # absorbs the remaining rotation, the standard convention.
+        pitch = math.degrees(math.atan2(-r20, sy))
+        roll = 0.0
+        yaw = math.degrees(math.atan2(-r11, r21)) if r20 < 0 else math.degrees(math.atan2(r11, -r21))
+    else:
+        roll = math.degrees(math.atan2(r21, r22))
+        pitch = math.degrees(math.atan2(-r20, sy))
+        yaw = math.degrees(math.atan2(r10, r00))
+    for value in (roll, pitch, yaw):
+        if not math.isfinite(value):
+            raise ValueError("rotation produced a non-finite angle")
+    return roll, pitch, yaw
+
+
+def _optional_pair(params: dict[str, Any], right: str, left: str, context: str) -> tuple[float, float] | None | str:
+    """Read an antenna pair: both keys, neither, or a reason.
+
+    Args:
+        params: The agent's parameters.
+        right: Key of the right antenna.
+        left: Key of the left antenna.
+        context: Verb to quote.
+
+    Returns:
+        ``(right, left)``, ``None`` when neither is present, or a reason when
+        only one is - the daemon moves both antennas as a pair, so one value
+        alone would command the other to zero without the caller asking.
+    """
+    has_right, has_left = right in params, left in params
+    if has_right != has_left:
+        return f"{context}: {right} and {left} go together - pass both or neither"
+    if not has_right:
+        return None
+    return params[right], params[left]
+
+
+def _act_sensors(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return {
+        "status": "success",
+        "content": [
+            {
+                "json": {
+                    "imu": driver._snapshot("_imu"),
+                    "pose": driver._snapshot("_pose"),
+                    "battery": driver._snapshot("_battery"),
+                    "joints": driver._snapshot("_joints"),
+                }
+            }
+        ],
+    }
+
+
+async def _act_status(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    # The ``status`` verb carries the whole ``get_status`` envelope - the
+    # shape the mesh publishes - inside one json block, as every native
+    # driver's status verb does.
+    del params
+    return {"status": "success", "content": [{"json": await driver.get_status()}]}
+
+
+def _act_stop(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    # Kept in the table so ``enum == list(_ACTIONS)`` holds; ``stream``
+    # dispatches the halt on its own branch (before any connect) and returns
+    # ``stop_task``'s verdict directly.
+    del params
+    return driver.stop_task()
+
+
+def _act_look(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    pair = _optional_pair(params, "antenna_right", "antenna_left", "look")
+    if isinstance(pair, str):
+        return _refuse(pair)
+    head = {axis: params.get(axis, 0.0) for axis in ("pitch", "roll", "yaw", "x", "y", "z")}
+    return driver.goto(
+        head=head,
+        body_yaw=params.get("body_yaw"),
+        antennas=pair,
+        duration=params.get("duration", 0.8),
+        interpolation=params.get("interpolation", "minjerk"),
+    )
+
+
+def _act_antennas(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    pair = _optional_pair(params, "antenna_right", "antenna_left", "antennas")
+    if isinstance(pair, str):
+        return _refuse(pair)
+    if pair is None:
+        return _refuse("antennas: antenna_right and antenna_left (degrees) are required")
+    return driver.goto(
+        antennas=pair, duration=params.get("duration", 0.5), interpolation=params.get("interpolation", "minjerk")
+    )
+
+
+def _act_body_turn(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    if "body_yaw" not in params:
+        return _refuse("body_turn: body_yaw (degrees, +/-160) is required")
+    return driver.goto(
+        body_yaw=params["body_yaw"],
+        duration=params.get("duration", 1.0),
+        interpolation=params.get("interpolation", "minjerk"),
+    )
+
+
+def _act_home(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.home(duration=params.get("duration", 1.0))
+
+
+def _act_wake(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return driver.wake_up()
+
+
+def _act_sleep(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return driver.goto_sleep()
+
+
+def _act_express(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    emotion = params.get("emotion")
+    if not isinstance(emotion, str) or not emotion.strip():
+        return _refuse("express: emotion (a move name or a plain word such as happy, curious, yes, no) is required")
+    library = params.get("library", "emotions")
+    if not isinstance(library, str):
+        return _refuse(f"express: library must be a string, got {library!r}")
+    return driver.play_move(emotion, library)
+
+
+def _act_list_moves(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    library = params.get("library", "emotions")
+    if not isinstance(library, str):
+        return _refuse(f"list_moves: library must be a string, got {library!r}")
+    return driver.list_moves(library)
+
+
+def _act_motors(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    mode = params.get("mode")
+    if not isinstance(mode, str):
+        return _refuse(f"motors: mode must be one of {list(_MOTOR_MODES)}, got {mode!r}")
+    return driver.set_motors(mode)
+
+
+def _act_say(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.say(params.get("text", ""), wobble=params.get("wobble", False))
+
+
+def _act_play_sound(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.play_sound(params.get("sound_file", ""), wobble=params.get("wobble", False))
+
+
+def _act_volume(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return driver.get_volume()
+
+
+def _act_set_volume(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    if "level" not in params:
+        return _refuse("set_volume: level (0-100, or silent/low/normal/loud/max/quieter/louder) is required")
+    return driver.set_volume(params["level"], allow_test_sound=params.get("allow_test_sound", False))
+
+
+def _act_track_face(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.set_tracking(params.get("enabled", True), weight=params.get("weight", 1.0))
+
+
+def _act_tracking_status(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return driver.tracked_face()
+
+
+def _act_camera(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.capture_frame(params.get("save_path", ""))
+
+
+def _act_record_audio(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.record_audio(params.get("duration", 1.0), params.get("save_path", ""))
+
+
+def _act_look_at(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.look_at(
+        params.get("u", -1),
+        params.get("v", -1),
+        params.get("frame_width", 0),
+        params.get("frame_height", 0),
+        duration=params.get("duration", 1.0),
+    )
+
+
+def _act_turn_to_sound(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    return driver.turn_to_sound(params.get("enabled", True), sign=params.get("sign", 1.0))
+
+
+def _act_turn_to_sound_status(driver: ReachyDriver, params: dict[str, Any]) -> dict[str, Any]:
+    del params
+    return driver.turn_to_sound_status()
+
+
+#: Agent verb -> handler. Order is the order the ``enum`` lists them; every
+#: handler takes the driver and the agent's remaining parameters and returns
+#: one envelope, so :meth:`ReachyDriver.stream` is a table lookup and the
+#: table is what a test grades against the spec.
+_ACTIONS: dict[str, Any] = {
+    "sensors": _act_sensors,
+    "get_state": _act_sensors,
+    "status": _act_status,
+    "stop": _act_stop,
+    "look": _act_look,
+    "antennas": _act_antennas,
+    "body_turn": _act_body_turn,
+    "home": _act_home,
+    "wake": _act_wake,
+    "sleep": _act_sleep,
+    "express": _act_express,
+    "list_moves": _act_list_moves,
+    "motors": _act_motors,
+    "say": _act_say,
+    "play_sound": _act_play_sound,
+    "volume": _act_volume,
+    "set_volume": _act_set_volume,
+    "track_face": _act_track_face,
+    "tracking_status": _act_tracking_status,
+    "camera": _act_camera,
+    "record_audio": _act_record_audio,
+    "look_at": _act_look_at,
+    "turn_to_sound": _act_turn_to_sound,
+    "turn_to_sound_status": _act_turn_to_sound_status,
+}
+
+
 _ACTION_KEYS: frozenset[str] = frozenset(
     {
         "head_pitch",

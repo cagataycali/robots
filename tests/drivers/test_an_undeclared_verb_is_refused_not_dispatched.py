@@ -125,7 +125,11 @@ def test_an_undeclared_verb_is_refused_and_names_the_declared_ones(name: str, cl
     """The refusal has to be actionable: a caller cannot guess the vocabulary."""
     driver = _build(cls)
     verbs = declared_verbs(driver.tool_spec)
-    assert action not in verbs, f"premise: {action!r} must be outside {name}'s schema"
+    if action in verbs:
+        # A driver that deliberately declares this verb (the Reachy Mini has a
+        # real ``home``) is graded on its dispatch elsewhere; there is no
+        # undeclared-verb premise for this cell.
+        pytest.skip(f"{name} declares {action!r}")
 
     envelope = _invoke(driver, action)
 
@@ -145,6 +149,8 @@ def test_an_undeclared_verb_does_not_reach_the_halt(name: str, cls: type[Any], a
     stopped the robot.
     """
     driver = _build(cls)
+    if action in declared_verbs(driver.tool_spec):
+        pytest.skip(f"{name} declares {action!r}")
     called: list[str] = []
     patched = [member for member in _HALT_MEMBERS if hasattr(driver, member)]
     assert patched, f"{name} exposes none of {_HALT_MEMBERS}, so no halt could be observed"
@@ -202,7 +208,10 @@ def test_the_refusal_reads_its_verb_list_off_the_schema(name: str, cls: type[Any
 
     driver = _build(_WiderSchema)
     assert "wiggle" in declared_verbs(driver.tool_spec)
-    text = _text(_invoke(driver, "home"))
+    # Probe with the first verb this driver does NOT declare (``home`` on most
+    # of the fleet; a driver with a real ``home`` is probed with ``halt``).
+    probe = next(v for v in _UNDECLARED if isinstance(v, str) and v not in declared_verbs(driver.tool_spec))
+    text = _text(_invoke(driver, probe))
     assert "wiggle" in text, f"{name} restated a verb list instead of reading its schema: {text}"
 
 
