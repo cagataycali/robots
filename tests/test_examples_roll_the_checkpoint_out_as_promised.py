@@ -24,6 +24,13 @@ fences - ``RLCheckpointPolicy`` binds ``actor_obs_keys`` by name, so a
 checkpoint trained on the SO-100's ``Elbow`` cannot be rolled out on a robot
 whose joints are ``1``..``6``.
 
+The rollout's verdict is the third half of the pair. ``run_policy`` does not
+raise - every failure comes back as a ``{"status": "error", ...}`` envelope, a
+policy that will not construct included - so an example that discards the return
+and indexes its trace turns every rollout failure into ``IndexError: list index
+out of range`` with the runner's message gone. :func:`_status_is_read` pins that
+the return is bound to a name and that name's ``["status"]`` is compared.
+
 An example that stops promising a rollout has to leave :data:`_PROMISE_MAKERS`
 in the same change, which is what keeps the rewording from silencing the rule;
 :func:`test_no_other_example_promises_a_rollout_unwatched` is the other
@@ -87,6 +94,33 @@ def _first_string_arg(call: ast.Call) -> str | None:
     return None
 
 
+def _bound_to(tree: ast.Module, call: ast.Call) -> str | None:
+    """The name a call's return is assigned to, or ``None`` when it is discarded."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and node.value is call:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                return target.id
+    return None
+
+
+def _status_is_read(tree: ast.Module, name: str) -> bool:
+    """``name["status"]`` appears as one side of a comparison."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        for side in (node.left, *node.comparators):
+            if (
+                isinstance(side, ast.Subscript)
+                and isinstance(side.value, ast.Name)
+                and side.value.id == name
+                and isinstance(side.slice, ast.Constant)
+                and side.slice.value == "status"
+            ):
+                return True
+    return False
+
+
 def _trained_robot(tree: ast.Module) -> str:
     """The robot ``make_env`` constructs - the only one the checkpoint fits."""
     for node in ast.walk(tree):
@@ -120,6 +154,15 @@ def test_the_example_rolls_out_the_checkpoint_it_promises(path: str) -> None:
         assert _string_keyword(call, "robot_name") == trained, (
             f"{path} rolls the {trained}-trained checkpoint out on another robot; "
             "RLCheckpointPolicy binds actor_obs_keys by name and refuses an observation missing one"
+        )
+        bound = _bound_to(tree, call)
+        assert bound is not None, (
+            f"{path} discards run_policy's return; it does not raise, so a failed rollout "
+            "is only visible in the status envelope it hands back"
+        )
+        assert _status_is_read(tree, bound), (
+            f'{path} never compares {bound}["status"]; a rollout that fails leaves an empty '
+            "trace and the example would surface an IndexError instead of the runner's message"
         )
     assert f'Robot("{trained}"' in source, f"{path} constructs the robot it rolls the checkpoint out on"
 
