@@ -27,15 +27,16 @@ pip install "strands-robots[wbc,sim-mujoco]" # + MuJoCo to drive the G1 in sim
 
 No weights are bundled and there is no default download: a bare
 `create_policy("wbc")` raises instead of fetching the wrong model family. The
-decoupled-WBC G1 policies live in the
-[`NVlabs/GR00T-WholeBodyControl`](https://github.com/NVlabs/GR00T-WholeBodyControl)
-git-LFS tree:
+two decoupled-WBC G1 controllers are 1.8 MB each inside the 4.6 GB git-LFS tree
+of [`NVlabs/GR00T-WholeBodyControl`](https://github.com/NVlabs/GR00T-WholeBodyControl).
+`media.githubusercontent.com` serves the LFS content of a public repository, so
+fetch the two files (3.6 MB of ONNX) instead of cloning everything around them:
 
 ```bash
-git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git   # 4.6G LFS
-mkdir -p /path/to/grootwbc-g1
-cp GR00T-WholeBodyControl/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/\
-GR00T-WholeBodyControl-{Balance,Walk}.onnx /path/to/grootwbc-g1/
+mkdir -p /path/to/grootwbc-g1 && cd /path/to/grootwbc-g1
+url=https://media.githubusercontent.com/media/NVlabs/GR00T-WholeBodyControl/main/decoupled_wbc/sim2mujoco/resources/robots/g1/policy
+curl -LO "$url/GR00T-WholeBodyControl-Balance.onnx"   # main (Balance) policy
+curl -LO "$url/GR00T-WholeBodyControl-Walk.onnx"      # optional walk policy
 ```
 
 The canonical `GR00T-WholeBodyControl-Balance.onnx` / `-Walk.onnx` filenames are
