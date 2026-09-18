@@ -60,8 +60,8 @@ ALLOWED_FILES = {
     "tests/test_no_host_paths.py",
     # Path validation logic *contains* Windows system paths as blocklist entries;
     # those are C:\Windows\, C:\Program Files\ - not user profiles.
-    "strands_robots/tools/_path_validation.py",
-    "tests/tools/test_path_validation.py",
+    "strands_robots/_path_validation.py",
+    "tests/test_path_validation.py",
     # Container volume-safety tests contain protected host paths as test data
     # (the test asserts that the production code REJECTS these paths).
     "tests/tools/test_gr00t_container_hardening.py",

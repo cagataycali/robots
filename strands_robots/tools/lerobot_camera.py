@@ -63,7 +63,7 @@ except ImportError as e:
 
 from strands import tool
 
-from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
+from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.utils import (
     boolean_flag_error,
     positive_finite_number_error,

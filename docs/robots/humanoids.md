@@ -215,13 +215,15 @@ ends at the wrists - `pelvis` to hips/knees/ankles, and `waist_yaw_link` to
 feet. Mount on the torso with a local offset instead:
 
 ```python
-sim.add_camera(name="head", parent_body="g1/torso_link",
+sim = Robot("unitree_g1")
+sim.add_camera(name="head", parent_body="unitree_g1/torso_link",
                position=[0.08, 0.0, 0.35], target=[1.0, 0.0, 0.2])
 ```
 
 That puts the camera 0.35 m above the torso frame, roughly head height, and it
 rides with the torso through waist yaw and roll. An arm camera mounts the same
-way on a wrist link (`g1/left_wrist_yaw_link`).
+way on a wrist link (`unitree_g1/left_wrist_yaw_link`). Bodies are namespaced by
+the name passed to `Robot(...)`, so `Robot("g1")` would report `g1/torso_link`.
 
 ## See also
 

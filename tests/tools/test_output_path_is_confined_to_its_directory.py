@@ -44,7 +44,7 @@ import numpy as np
 import pytest
 
 import strands_robots.tools.lerobot_camera as cam_mod
-from strands_robots.tools._path_validation import resolve_output_path, validate_save_path
+from strands_robots._path_validation import resolve_output_path, validate_save_path
 
 # Names that resolve outside the directory they are joined onto. The first two are
 # the realistic shapes - a traversal in the name, and a traversal reached through
