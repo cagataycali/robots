@@ -2921,7 +2921,7 @@ class SimEngine(ABC):
                 behind a successful-looking rollout. Two classes are exempt from
                 the count rather than tolerated by it: ``CooperativeStop`` is the
                 documented graceful stop, and
-                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                :class:`~strands_robots.recording_errors.RecordingFrameError` is
                 data loss rather than telemetry, so a lost dataset frame aborts on
                 the FIRST occurrence whatever this is set to. ``None`` (default)
                 uses the runner's own limit (currently ``5``); non-consecutive
@@ -4994,7 +4994,7 @@ class SimEngine(ABC):
         (e.g. paired with ``start_cameras_recording_synchronous``) so a
         daemon-thread recorder does not race ``mjData`` mutations. A hook
         exception other than ``CooperativeStop`` or
-        :class:`~strands_robots.dataset_recorder.RecordingFrameError` is logged
+        :class:`~strands_robots.recording_errors.RecordingFrameError` is logged
         at WARN and never aborts the eval; a ``RecordingFrameError`` is data loss
         rather than telemetry and propagates on the first occurrence, so the
         caller learns the episode is incomplete instead of reading a successful
@@ -5437,7 +5437,7 @@ class SimEngine(ABC):
                 episode's partial video is closed cleanly and is NOT listed
                 in ``video_paths``. A hook exception other than
                 ``CooperativeStop`` or
-                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                :class:`~strands_robots.recording_errors.RecordingFrameError` is
                 logged at WARN and never aborts the eval; a
                 ``RecordingFrameError`` is data loss rather than telemetry and
                 propagates on the first occurrence. A value that is not callable

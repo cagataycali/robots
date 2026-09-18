@@ -44,10 +44,15 @@ PACKAGE = "strands_robots"
 #: module's layer is its first path component under the package, so a subpackage
 #: never disagrees with its parent.
 #:
-#: The two placements that are a judgement rather than a reading of the tree:
+#: The placements that are a judgement rather than a reading of the tree:
 #: ``assets`` sits with ``registry`` because it resolves the asset paths the
-#: registry declares, and ``streaming_dataset`` sits with ``dataset_recorder``
-#: in ``app`` because it is the same recording concern written incrementally.
+#: registry declares; ``streaming_dataset`` sits with ``dataset_recorder`` in
+#: ``app`` because it is the same recording concern written incrementally; and
+#: ``teleop_mixin`` sits with ``drivers|mesh`` because it is an input-device
+#: concern shared by three hosts in three layers - the hardware ``Robot``, the
+#: MuJoCo ``Simulation`` and the Device Connect sim driver - so it belongs under
+#: the lowest of them, which is where its own module-scope imports already put
+#: it (``utils`` alone).
 LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "core",
@@ -63,13 +68,14 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "bus_access",
             "episode_labels",
             "locomotion_envelope",
+            "recording_errors",
             "refusal_codes",
             "rendering",
             "utils",
         ),
     ),
     ("registry", ("assets", "registry")),
-    ("drivers|mesh", ("device_connect", "drivers", "mesh", "ros_telemetry", "rtps")),
+    ("drivers|mesh", ("device_connect", "drivers", "mesh", "ros_telemetry", "rtps", "teleop_mixin")),
     ("sim|policies", ("inference", "policies", "simulation", "training")),
     (
         "app",
@@ -83,7 +89,6 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "hardware_rtps_bridge",
             "robot",
             "streaming_dataset",
-            "teleop_mixin",
             "teleoperator",
             "verify_dataset",
         ),
@@ -109,12 +114,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.mesh.ros_bridge", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),
     ("strands_robots.mesh.rtps_robot", "strands_robots.tools.use_rtps"),
-    # drivers|mesh -> app. Device Connect is scheduled for removal, which takes
-    # this edge with it.
-    ("strands_robots.device_connect.sim_driver", "strands_robots.teleop_mixin"),
-    # sim|policies -> app.
-    ("strands_robots.simulation.mujoco.simulation", "strands_robots.teleop_mixin"),
-    ("strands_robots.simulation.policy_runner", "strands_robots.dataset_recorder"),
 )
 
 

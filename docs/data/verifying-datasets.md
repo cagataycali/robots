@@ -90,7 +90,7 @@ reported in `unreadable_files`.
 ## Incomplete recordings report themselves
 
 `DatasetRecorder` is fail-fast by default (`strict=True`): a failed `LeRobotDataset` write raises
-`strands_robots.dataset_recorder.RecordingFrameError`, and under `run_policy` that ends the rollout
+`strands_robots.recording_errors.RecordingFrameError`, and under `run_policy` that ends the rollout
 with `status="error"` naming the frame the recording stopped being complete at. Continuing past a
 lost frame is not a smaller failure - timestamps are positional, so the survivors are re-stamped into
 a shorter span than they were captured over, and a rollout losing every other frame at 50 Hz yields

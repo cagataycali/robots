@@ -51,8 +51,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
-from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import collect_required_bodies, instruction_not_read_notice, resolve_chunk_length
+from strands_robots.recording_errors import RecordingFrameError
 from strands_robots.rendering.video import require_clip_encoder
 from strands_robots.simulation.observers import (
     SCHEMA_VERSION as _OBSERVER_SCHEMA_VERSION,
@@ -1100,7 +1100,7 @@ class _RolloutVideoWriter:
 # The counter resets on every success, so this bounds an ALWAYS-failing hook and
 # nothing else: a hook failing every other step never reaches the limit. That is
 # the right trade for caller telemetry, which is why
-# :class:`~strands_robots.dataset_recorder.RecordingFrameError` is excluded from
+# :class:`~strands_robots.recording_errors.RecordingFrameError` is excluded from
 # the tolerance entirely - a lost dataset frame is data loss, not telemetry, and
 # tolerating it writes a short, re-timestamped episode under a successful
 # rollout.
@@ -2039,7 +2039,7 @@ class PolicyRunner:
             max_onframe_failures: Maximum *consecutive* exceptions from the
                 ``on_frame`` hook before the runner aborts the episode.
                 ``CooperativeStop`` and
-                :class:`~strands_robots.dataset_recorder.RecordingFrameError` are
+                :class:`~strands_robots.recording_errors.RecordingFrameError` are
                 exempt from the count rather than tolerated by it: the first is
                 the documented graceful stop and the second is data loss, so a
                 lost dataset frame aborts on the FIRST occurrence whatever this
@@ -3959,7 +3959,7 @@ class PolicyRunner:
                 legacy ``success_fn`` paths; ``step`` is a monotonic index
                 that continues across episode boundaries. A hook exception
                 other than ``CooperativeStop`` or
-                :class:`~strands_robots.dataset_recorder.RecordingFrameError` is
+                :class:`~strands_robots.recording_errors.RecordingFrameError` is
                 logged at WARN and never aborts the eval; a
                 ``RecordingFrameError`` is data loss rather than telemetry and
                 propagates on the first occurrence. Raising

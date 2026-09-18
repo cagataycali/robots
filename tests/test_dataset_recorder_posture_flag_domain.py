@@ -50,7 +50,7 @@ measured on ``51cbede7`` against a dataset whose every fourth write fails,
 ``strict=None`` (also ``0``, ``0.0``, ``""``, ``[]``, ``{}``) wrote 75 of 100
 attempted frames, counted the other 25 in ``dropped_frame_count`` and let
 ``save_episode`` complete - the short episode with re-timestamped frames that
-:class:`~strands_robots.dataset_recorder.RecordingFrameError`'s own docstring
+:class:`~strands_robots.recording_errors.RecordingFrameError`'s own docstring
 exists to prevent. The truthy half is not clean either: it selected fail-fast and
 then reported ``strict=True`` in the refusal text whatever the caller wrote, so
 ``strict="false"`` raised a message naming the opposite of the value it was given.

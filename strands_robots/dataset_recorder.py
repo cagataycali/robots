@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots._dyld import quiet_video_backend
+from strands_robots.recording_errors import RecordingFrameError
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
@@ -970,25 +971,6 @@ def _frame_shape_error(
             if text := positive_count_error(value, f"camera_dims[{name!r}] {axis}", context):
                 return text
     return None
-
-
-class RecordingFrameError(RuntimeError):
-    """A frame the dataset recorder could not write, in fail-fast mode.
-
-    Raised by :meth:`DatasetRecorder.add_frame` when the underlying
-    ``LeRobotDataset`` write fails and the recorder was constructed with
-    ``strict=True`` (the default). The frame is already gone at that point, so
-    the episode on disk is shorter than the rollout that produced it and every
-    surviving frame is re-timestamped from the declared ``fps`` - the caller has
-    to be told.
-
-    A distinct type, rather than the underlying error, so a rollout driver can
-    tell a lost recording frame apart from a failure in a caller's telemetry
-    hook. The drivers deliberately tolerate a few consecutive telemetry
-    failures; granting that tolerance to a lost recording frame truncates the
-    dataset while the rollout still reports success. The originating error is
-    chained and its text preserved.
-    """
 
 
 class DatasetRecorder:

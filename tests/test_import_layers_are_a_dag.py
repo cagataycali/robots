@@ -260,6 +260,72 @@ class TestTheContract:
         }
         assert {"app", "tools"} <= callers, f"only {sorted(callers)} ask a human, so the rule above is vacuous"
 
+    def test_no_layer_below_app_reaches_into_it(self, graph: Any) -> None:
+        """The ``app`` layer is a consumer of the package, not a dependency of it.
+
+        ``app`` is where the hosts live - the hardware ``Robot``, the rollout
+        runner, teleoperation, recording - so every layer under it exists to be
+        composed by one. Three runtime edges pointed the other way, and each was
+        a contract stored with its first host rather than under all of them: the
+        teleoperation mixin (read by the Device Connect sim driver and the MuJoCo
+        ``Simulation`` as well as by ``Robot``) and the recording frame error
+        (raised in ``app``, caught by the rollout drivers a layer down).
+        """
+        app = mod.LAYER_NAMES.index("app")
+        offenders = sorted(edge for edge in mod.upward_edges(graph) if mod.layer_of(edge[1]) == app)
+        assert offenders == [], f"a layer below app imports one of its modules: {offenders}"
+
+    @pytest.mark.parametrize(
+        ("name", "layer", "deferred_above", "caller_layers"),
+        [
+            (
+                "strands_robots.recording_errors",
+                "core",
+                frozenset(),
+                frozenset({"sim|policies", "app"}),
+            ),
+            (
+                "strands_robots.teleop_mixin",
+                "drivers|mesh",
+                frozenset({"strands_robots.teleoperator"}),
+                frozenset({"drivers|mesh", "sim|policies", "app"}),
+            ),
+        ],
+    )
+    def test_a_contract_several_layers_share_sits_under_all_of_them(
+        self,
+        graph: Any,
+        name: str,
+        layer: str,
+        deferred_above: frozenset[str],
+        caller_layers: frozenset[str],
+    ) -> None:
+        """Placement, the reads that justify it, and the callers that need it.
+
+        Each row states the same three things the ``_command_gate`` pin above
+        states for the operator decision. The module sits in the named layer; it
+        reads nothing above that layer at import time, which is what lets it sit
+        there; and its callers span more than one layer, which is why it has to.
+        A deferred read above the layer is listed explicitly rather than allowed
+        in general - the mixin's ``teleoperator`` read is late because that module
+        imports lerobot, and promoting it to module scope has to fail here.
+        """
+        assert name in graph.modules
+        assert mod.LAYER_NAMES[mod.layer_of(name)] == layer
+        index = mod.LAYER_NAMES.index(layer)
+        for kind in ("runtime", "typing_only"):
+            above = sorted(t for t in getattr(graph, kind).get(name, frozenset()) if mod.layer_of(t) > index)
+            assert above == [], f"{name} has a {kind} import above {layer}: {above}"
+        late = {t for t in graph.late.get(name, frozenset()) if mod.layer_of(t) > index}
+        assert late == set(deferred_above), f"{name} defers to {sorted(late)}, not {sorted(deferred_above)}"
+        callers = {
+            mod.LAYER_NAMES[mod.layer_of(importer)]
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            if name in targets
+        }
+        assert callers == set(caller_layers), f"{name} is read from {sorted(callers)}, not {sorted(caller_layers)}"
+
     def test_the_script_reports_the_tree_as_conforming(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert mod.main([]) == 0
         assert "OK: no runtime cycle, no undeclared inversion" in capsys.readouterr().out
