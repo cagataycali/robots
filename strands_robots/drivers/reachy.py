@@ -1457,8 +1457,18 @@ class ReachyDriver(AgentTool):
             )
         if body_yaw is not None:
             values["body_yaw"] = body_yaw
-        held = float(values["head_yaw"]) if "head_yaw" in values else self._read_head_yaw_target()
-        if (reason := envelope_error(values, "goto", head_yaw_target=held)) is not None:
+        # Validate BEFORE any float(): ``envelope_error`` runs
+        # ``finite_number_error`` over every value, so a string ``yaw`` from
+        # the model ("left") is refused here instead of raising through
+        # ``stream``. ``head_yaw_target`` is only consulted when the action
+        # names no head yaw, so it is only read in that case.
+        if (
+            reason := envelope_error(
+                values,
+                "goto",
+                head_yaw_target=None if "head_yaw" in values else self._read_head_yaw_target(),
+            )
+        ) is not None:
             return _refuse(reason)
         if (
             reason := goto_body_error(

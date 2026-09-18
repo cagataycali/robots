@@ -581,6 +581,48 @@ class TestTheEnvelopeRefusesWhatTheNeckCannotDo:
             assert limit not in source, f"{limit} is restated in the driver instead of imported"
 
 
+class TestALookWithAValueThatIsNotANumberIsRefusedNotRaised:
+    """Regression for PR #3867 review: ``goto`` read ``float(values["head_yaw"])``
+    before the envelope had validated it, so ``{"action": "look", "yaw": "left"}``
+    - realistic model output - raised ``ValueError`` through ``stream`` instead
+    of returning a refusal envelope (AGENTS.md: return error dicts, never raise).
+    """
+
+    @pytest.mark.parametrize("axis", ["yaw", "pitch", "roll"])
+    @pytest.mark.parametrize("bad", ["left", "", None, [20.0], {"deg": 20}, True])
+    def test_look_with_a_non_numeric_head_axis_returns_a_refusal(
+        self, monkeypatch: pytest.MonkeyPatch, axis: str, bad: Any
+    ) -> None:
+        driver, daemon, link = _connected(monkeypatch)
+        result = _run_tool(driver, "look", **{axis: bad})
+        assert result["status"] == "error"
+        assert f"head_{axis}" in _text(result)
+        assert daemon.posted == [], "a refused look must not reach the daemon"
+        assert link.commands == []
+
+    def test_body_turn_with_a_non_numeric_yaw_returns_a_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, daemon, _ = _connected(monkeypatch)
+        result = _run_tool(driver, "body_turn", body_yaw="around")
+        assert result["status"] == "error"
+        assert "body_yaw" in _text(result)
+        assert daemon.posted == []
+
+    def test_goto_with_a_string_yaw_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        driver, daemon, _ = _connected(monkeypatch)
+        result = driver.goto(head={"yaw": "left"})
+        assert result["status"] == "error"
+        assert daemon.posted == []
+
+    def test_a_look_without_a_head_yaw_still_reads_the_held_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The reorder must not lose the coupling check: a lone body_yaw is
+        # still judged against the head yaw this driver last commanded.
+        driver, daemon, _ = _connected(monkeypatch)
+        assert driver.goto(head={"yaw": 60.0})["status"] == "success"
+        result = driver.goto(body_yaw=-60.0)
+        assert result["status"] == "error"
+        assert "body_yaw" in _text(result)
+
+
 class TestActionsReachTheWireInTheDaemonsUnits:
     """Degrees and millimetres in; radians and a 4x4 pose out."""
 
