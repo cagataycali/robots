@@ -3417,6 +3417,12 @@ class MuJoCoSimEngine(
         carries no prefix -- the ``"<robot>_act_<joint>"`` position servos
         :meth:`actuate_robot` injects -- is reported verbatim, so an actuated
         URDF arm advertises the keys that drive it rather than none.
+
+        The ORDER is the robot's joint order, not the MJCF's actuator
+        declaration order (see
+        :func:`~strands_robots.simulation.mujoco.rendering._keys_in_joint_order`):
+        this list orders the ``observation.state`` vector a policy reads, and a
+        recording writes those columns in joint order.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
             return []

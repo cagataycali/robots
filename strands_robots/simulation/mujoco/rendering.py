@@ -143,6 +143,39 @@ def no_gl_context_message(*, depth: bool = False, platform: str | None = None) -
     return head + ("Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev")
 
 
+def _keys_in_joint_order(pairs: list[tuple[str, int | None]]) -> list[str]:
+    """Order actuator keys by the joint each one drives.
+
+    A model is free to declare its actuators in any order, and several ship
+    them out of joint order (``dynamixel_2r`` declares ``R2`` before ``R1``).
+    The keys this produces are the ones a policy binds through
+    ``set_robot_state_keys``, and they order the ``observation.state`` vector
+    the policy reads - while a dataset records that vector in the robot's JOINT
+    order. Where the two rosters are the same names in a different order, a
+    checkpoint was evaluated on a transposed state vector with no warning, so
+    the keys follow the joint order the recording uses.
+
+    An actuator that drives no single joint (a tendon gripper, a motor on a
+    body or a site) has no joint to be ordered by, so it keeps the slot the
+    model declared it in and the joint-driving actuators are ranked among the
+    remaining slots.
+
+    Args:
+        pairs: ``(key, joint index)`` per owned actuator in model declaration
+            order, where the index is that actuator's driven joint position in
+            ``SimRobot.joint_names`` and ``None`` means it drives no one joint.
+
+    Returns:
+        The keys, joint-driving ones in joint order.
+    """
+    slots = [i for i, (_, joint) in enumerate(pairs) if joint is not None]
+    ranked = sorted((pairs[i] for i in slots), key=lambda pair: pair[1] if pair[1] is not None else 0)
+    out = list(pairs)
+    for slot, entry in zip(slots, ranked, strict=True):
+        out[slot] = entry
+    return [key for key, _ in out]
+
+
 def _is_pixel_count(value: Any) -> bool:
     """True when ``value`` is usable as a pixel dimension (an int, not a bool)."""
     return isinstance(value, int) and not isinstance(value, bool)
@@ -1188,13 +1221,44 @@ class RenderingMixin:
         mj = _ensure_mujoco()
         model = world._model
         pfx = robot.namespace or ""
-        keys: list[str] = []
+        joint_order = {jn: i for i, jn in enumerate(robot.joint_names)}
+        pairs: list[tuple[str, int | None]] = []
         for act_id in robot.actuator_ids:
             raw = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id)
             if not raw:
                 continue
-            keys.append(raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw)
-        return keys
+            key = raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw
+            pairs.append((key, joint_order.get(self._driven_joint_name(model, act_id, mj, pfx))))
+        return _keys_in_joint_order(pairs)
+
+    @staticmethod
+    def _driven_joint_name(model: Any, act_id: int, mj: Any, pfx: str) -> str | None:
+        """Return the joint an actuator drives directly, in the robot's spelling.
+
+        The inverse of :meth:`_actuator_for_joint`, and deliberately only the
+        direct joint transmissions: a tendon actuator wraps several joints, so
+        no single joint names it. ``None`` means "drives no one joint" - a
+        tendon gripper, a motor on a body or a site.
+
+        Args:
+            model: The compiled ``MjModel`` the actuator belongs to.
+            act_id: Actuator id inside ``model``.
+            mj: The imported ``mujoco`` module.
+            pfx: The robot's namespace prefix, stripped from the joint name so
+                the answer is spelled the way ``SimRobot.joint_names`` is.
+
+        Returns:
+            The driven joint's short name, or ``None``.
+        """
+        joint_trn = {int(mj.mjtTrn.mjTRN_JOINT)}
+        if hasattr(mj.mjtTrn, "mjTRN_JOINTINPARENT"):
+            joint_trn.add(int(mj.mjtTrn.mjTRN_JOINTINPARENT))
+        if int(model.actuator_trntype[act_id]) not in joint_trn:
+            return None
+        raw = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, int(model.actuator_trnid[act_id, 0]))
+        if not raw:
+            return None
+        return raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw
 
     @staticmethod
     def _actuator_for_joint(model: Any, jnt_id: int, mj: Any) -> int:

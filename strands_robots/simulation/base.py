@@ -1124,11 +1124,14 @@ class SimEngine(ABC):
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered joint names for ``robot_name``.
 
-        Used by ``Policy.set_robot_state_keys`` to name the
-        ``observation.state`` vector. Action-vector binding (``send_action``
-        with a numeric vector, ``PolicyRunner.replay``) uses
-        :meth:`robot_action_keys` instead - a robot's actuators are not always
-        its joints. Order must match the backend's joint ordering.
+        This order is the one a LeRobotDataset recording writes the
+        ``observation.state`` columns in, so it is the order a policy must read
+        that vector back in. The rollout binds :meth:`robot_action_keys`
+        (``Policy.set_robot_state_keys``, ``send_action`` with a numeric vector,
+        ``PolicyRunner.replay``) because a robot's actuators are not always its
+        joints - and those keys are themselves ordered by this roster, so the
+        two cannot be a transposition of each other. Order must match the
+        backend's joint ordering.
         """
         ...
 
@@ -1152,6 +1155,12 @@ class SimEngine(ABC):
         action keys are the joint names minus that one. An override may
         therefore rename or narrow this list, and a caller must not assume it
         has the same width as :meth:`robot_joint_names`.
+
+        An override orders the keys by the joint each actuator drives, because
+        this list also orders the ``observation.state`` vector a policy reads
+        (``Policy.set_robot_state_keys``) and a recording writes those columns in
+        joint order. An actuator that drives no single joint has no joint to be
+        ordered by and keeps its backend-declared position.
         """
         return self.robot_joint_names(robot_name)
 
@@ -1601,7 +1610,7 @@ class SimEngine(ABC):
         mapping. To keep :meth:`send_action` usable directly with such a vector -
         and consistent with :meth:`replay_episode`, which binds a recorded action
         vector positionally to :meth:`robot_action_keys` - a sequence is zipped
-        against ``robot_action_keys(robot_name)`` in declaration order. Those are
+        against ``robot_action_keys(robot_name)`` in joint order. Those are
         the robot's *actuator* keys (what ``send_action`` resolves and what the
         LeRobotDataset recorder writes the ``action`` column in); they diverge
         from ``robot_joint_names`` whenever a robot has passive/mimic joints with
