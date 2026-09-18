@@ -237,8 +237,9 @@ these options. An unset `motor_id` / `position` is still reported by the action'
 own "required" message rather than as an unusable value.
 
 `pose_tool` writes the same `Goal_Position` register through the same mask and
-needs no bound of its own - it clamps to each motor's declared range before
-encoding, so the mask only ever sees a value that fits.
+needs no bound of its own: it converts a target through `FeetechBus.to_counts`,
+which refuses one the encoder cannot hold, so the mask only ever sees a value
+that fits.
 
 Both bounds and the reported angle are STS/SMS-series properties, not properties
 of the register or of Feetech generally, and so is the two-byte order the value
@@ -339,10 +340,19 @@ lerobot-calibrate    --robot.type=so101_follower --robot.port=/dev/ttyACM0 \
 
 The result is JSON under `HF_LEROBOT_CALIBRATION` (by default
 `~/.cache/huggingface/lerobot/calibration/`). `lerobot_teleoperate` and
-`lerobot_train` read it through LeRobot, so nothing here needs to parse it; code
-that does should import `lerobot.motors.MotorCalibration` rather than restate
-the schema. `lerobot-find-joint-limits` reports the travel a recorded
-calibration allows.
+`lerobot_train` read it through LeRobot; `lerobot-find-joint-limits` reports the
+travel a recorded calibration allows.
+
+Two surfaces here read that file directly, and both take the same argument:
+`FeetechDriver(calibration=...)` and `pose_tool(calibration=...)`, each the path
+of the JSON that run wrote. It is the scale, not a refinement - a degree is
+`360/resolution` counts from the middle of the *measured* travel, and percent
+open spans the gripper's measured travel - so the number a calibrated arm quotes
+through either surface is the number LeRobot quotes for the same servo. Omitting
+it reads and commands the servo's whole rotation, which is off by however far
+that arm's stops sit inside it, and bounds a target by the encoder rather than by
+where the joint stops. A per-joint degree range is deliberately not declared
+anywhere in the package: an SO arm's reachable span is measured per arm.
 
 ## Examples
 

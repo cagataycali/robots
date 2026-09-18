@@ -2,16 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Contract tests for the degree-valued targets ``load_pose`` drives from disk.
 
-A stored pose reaches a servo through the same
-``MotorController.degrees_to_position`` as an argument target: the value is
-clamped into the joint's configured ``range`` and scaled onto the 12-bit
-``Goal_Position`` register. That clamp is why an off-domain stored target is
-dangerous rather than merely wrong, and it is what this module measures the
-refusals against:
+A stored pose reaches a servo through the same ``FeetechBus.to_counts`` as an
+argument target: the value is scaled onto the 12-bit ``Goal_Position`` register
+against the travel this arm's calibration measured. That conversion is on the
+far side of the open port, and it is what this module measures the refusals
+against:
 
-* **A stored target outside the travel shared an encoding with an end stop.**
-  ``TestWhyAStoredTargetIsRefused`` shows ``999`` and ``nan`` both converting to
-  ``Goal_Position`` 4095 - a full-travel command to the mechanical limit.
+* **A stored target outside the travel has no encoding at all.**
+  ``TestWhyAStoredTargetIsRefused`` shows ``999`` and ``nan`` each refused by
+  the conversion, so the whole pose is abandoned mid-trajectory instead.
 
 * **And the caller was told the arm went where the file said.** ``load_pose``
   reports ``"Moved to pose '<name>'"`` and echoes ``target_positions`` straight
@@ -73,6 +72,10 @@ _POSE = "bench"
 # obviously not the whole float line.
 _JOINT = "shoulder_pan"
 _JOINT_RANGE = (-180, 180)
+
+# The travel the guards read for an arm with no calibration on disk, built from
+# the bus the tool itself builds so no bound is restated here.
+_TRAVEL = {name: pose_tool_module._units(_PORT).value_bounds(name) for name in pose_tool_module.SO_ARM_MOTORS}
 
 # A pose every joint of which is inside its travel: the reading the tool itself
 # would have persisted, and the control this change must not refuse.
@@ -168,17 +171,20 @@ class TestWhyAStoredTargetIsRefused:
     """The domain is justified by what the conversion does with the value."""
 
     @pytest.mark.parametrize("stored", [999.0, 5000, math.inf, math.nan])
-    def test_a_stored_target_over_the_travel_encodes_as_the_end_stop(self, stored: Any) -> None:
-        """Each shares one encoding with a full-travel command to the limit."""
-        assert MotorController(_PORT).degrees_to_position(_JOINT, stored) == 4095
+    def test_a_stored_target_over_the_travel_has_no_encoding(self, stored: Any) -> None:
+        """Each is refused by the conversion, part-way through the pose."""
+        with pytest.raises((ValueError, OverflowError, TypeError)):
+            MotorController(_PORT).units.to_counts(_JOINT, stored)
 
-    def test_nan_reaches_the_limit_through_the_clamp_itself(self) -> None:
-        """``min(max_deg, nan)`` returns ``max_deg``, so the guard fabricates it."""
-        assert min(_JOINT_RANGE[1], math.nan) == _JOINT_RANGE[1]
+    def test_nan_passes_every_comparison_a_bound_could_make(self) -> None:
+        """So a stored ``nan`` needs the same explicit check as an argument."""
+        assert not _JOINT_RANGE[0] <= math.nan <= _JOINT_RANGE[1]
+        assert not math.nan > _JOINT_RANGE[1]
 
-    def test_the_end_stop_encoding_is_indistinguishable_from_a_deliberate_limit(self) -> None:
+    def test_a_target_on_the_bound_is_the_one_that_does_encode(self) -> None:
+        """The contrast: the end of the travel is a position, not a refusal."""
         controller = MotorController(_PORT)
-        assert controller.degrees_to_position(_JOINT, 999.0) == controller.degrees_to_position(_JOINT, _JOINT_RANGE[1])
+        assert controller.units.to_counts(_JOINT, _JOINT_RANGE[1]) == controller.units.motors[_JOINT].resolution
 
 
 class TestAStoredTargetOutsideTheTravelIsRefused:
@@ -261,8 +267,8 @@ class TestTheBoundsHaveOneAuthority:
 
     def test_the_two_surfaces_agree_on_the_same_value(self) -> None:
         """An argument target and a stored target are one domain."""
-        stored = _stored_pose_target_error(RobotPose(name=_POSE, positions={_JOINT: 999.0}, timestamp=0.0))
-        argument = _joint_target_error("load_pose", "position", _JOINT, 999.0)
+        stored = _stored_pose_target_error(RobotPose(name=_POSE, positions={_JOINT: 999.0}, timestamp=0.0), _TRAVEL)
+        argument = _joint_target_error("load_pose", "position", _JOINT, 999.0, _TRAVEL)
         assert (stored is None) == (argument is None) is False
 
 
@@ -310,7 +316,7 @@ class TestUsableStoredPosesStillLoad:
     def test_a_stored_motor_with_no_configured_travel_has_no_bound_to_check(self) -> None:
         """No configured range means no travel to hold a target against."""
         pose = RobotPose(name=_POSE, positions={"no_such_joint": 5000.0}, timestamp=0.0)
-        assert _stored_pose_target_error(pose) is None
+        assert _stored_pose_target_error(pose, _TRAVEL) is None
 
     def test_an_unknown_motor_is_left_to_the_mover_that_cannot_address_it(self, reading_serial, cwd_tmp) -> None:
         """Still refused, but for having no motor id rather than for its value."""
@@ -341,5 +347,5 @@ class TestReachingHomeStaysOutOfScope:
         literals = ast.literal_eval(assignments[0].value)
         assert literals, "the home pose is empty"
         for name, value in literals.items():
-            low, high = pose_tool_module._DEFAULT_MOTOR_CONFIGS[name]["range"]
+            low, high = pose_tool_module._units(_PORT).value_bounds(name)
             assert low <= value <= high, (name, value)

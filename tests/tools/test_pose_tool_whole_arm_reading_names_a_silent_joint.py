@@ -1,7 +1,7 @@
 """A whole-arm reading answers for every configured joint, or names the gap.
 
 ``MotorController.read_all_positions`` skips a motor whose reply did not
-verify, so it returns a subset of ``motor_configs`` carrying no record of what
+verify, so it returns a subset of the arm's motors carrying no record of what
 fell out. Both tool actions that consume it guarded only the all-empty case, so
 a bus with one dead servo reported a five-of-six reading as the arm's positions
 and persisted it as a named pose.
@@ -102,13 +102,13 @@ class TestThePremisesTheMixedBusRestsOn:
     def test_the_arm_configures_more_joints_than_the_silent_one(self, one_silent_motor) -> None:
         """A partial reading is only distinguishable if several joints answer."""
         controller = pose_tool_module.MotorController("/dev/ttyTEST")
-        assert SILENT_JOINT in controller.motor_configs
-        assert len(controller.motor_configs) > 2
+        assert SILENT_JOINT in controller.units.motors
+        assert len(controller.units.motors) > 2
 
     def test_the_silent_id_is_the_one_the_named_joint_uses(self, one_silent_motor) -> None:
         """The fixture silences the joint the assertions below name."""
         controller = pose_tool_module.MotorController("/dev/ttyTEST")
-        assert controller.motor_configs[SILENT_JOINT]["id"] == SILENT_ID
+        assert controller.units.motors[SILENT_JOINT].motor_id == SILENT_ID
 
     def test_the_reading_really_loses_exactly_that_joint(self, cwd_tmp, one_silent_motor) -> None:
         """Every other joint still answers, so the gap is one dead servo."""
@@ -116,7 +116,7 @@ class TestThePremisesTheMixedBusRestsOn:
         connected, _ = controller.connect()
         assert connected
         positions = controller.read_all_positions()
-        assert set(controller.motor_configs) - set(positions) == {SILENT_JOINT}
+        assert set(controller.units.motors) - set(positions) == {SILENT_JOINT}
 
 
 class TestAnIncompleteReadingIsReportedAsOne:
@@ -133,7 +133,7 @@ class TestAnIncompleteReadingIsReportedAsOne:
     def test_read_all_reports_how_much_of_the_arm_it_covered(self, cwd_tmp, one_silent_motor) -> None:
         result = pose_tool(action="read_all", robot_id="hw_arm", port="/dev/ttyTEST")
         controller = pose_tool_module.MotorController("/dev/ttyTEST")
-        assert f"5 of {len(controller.motor_configs)}" in _text(result)
+        assert f"5 of {len(controller.units.motors)}" in _text(result)
 
     def test_several_silent_joints_are_named_in_a_stable_order(self, cwd_tmp, two_silent_motors) -> None:
         """Sorted, so the report does not reorder between two runs of one fault."""
@@ -199,7 +199,7 @@ class TestAHealthyArmIsUnchanged:
         assert result["status"] == "success"
         stored = PoseManager("hw_arm").get_pose("home")
         assert stored is not None
-        assert set(stored.positions) == set(controller.motor_configs)
+        assert set(stored.positions) == set(controller.units.motors)
 
 
 class TestTheAllSilentBusKeepsItsOwnDiagnosis:

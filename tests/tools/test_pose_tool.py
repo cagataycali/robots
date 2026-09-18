@@ -142,33 +142,34 @@ def test_pose_manager_validate_within_and_outside_bounds() -> None:
 # --------------------------------------------------------------------------- #
 def test_degrees_position_round_trip_joint() -> None:
     ctrl = MotorController("/dev/null")
-    # Mid-range degree maps near mid-resolution and back.
-    pos = ctrl.degrees_to_position("shoulder_pan", 0.0)
+    # Mid-travel degree maps near mid-resolution and back.
+    pos = ctrl.units.to_counts("shoulder_pan", 0.0)
     assert pos == pytest.approx(4095 // 2, abs=2)
-    deg = ctrl.position_to_degrees("shoulder_pan", pos)
+    deg = ctrl.units.to_value("shoulder_pan", pos)
     assert deg == pytest.approx(0.0, abs=0.2)
 
 
-def test_degrees_to_position_clamps_out_of_range() -> None:
+def test_a_target_the_encoder_cannot_hold_is_refused_not_clamped() -> None:
     ctrl = MotorController("/dev/null")
-    # shoulder_lift range is (-90, 90); 999 deg clamps to the max position.
-    assert ctrl.degrees_to_position("shoulder_lift", 999.0) == 4095
-    assert ctrl.degrees_to_position("shoulder_lift", -999.0) == 0
+    # An uncalibrated arm spans the servo's turn, so 999 deg is off the encoder.
+    for target in (999.0, -999.0):
+        with pytest.raises(ValueError, match="outside the travel the encoder can hold"):
+            ctrl.units.to_counts("shoulder_lift", target)
 
 
 def test_gripper_uses_percentage_units() -> None:
     ctrl = MotorController("/dev/null")
-    half = ctrl.degrees_to_position("gripper", 50.0)
+    half = ctrl.units.to_counts("gripper", 50.0)
     assert half == pytest.approx(4095 * 0.5, abs=1)
-    assert ctrl.position_to_degrees("gripper", half) == pytest.approx(50.0, abs=0.1)
+    assert ctrl.units.to_value("gripper", half) == pytest.approx(50.0, abs=0.1)
 
 
 def test_unknown_motor_raises() -> None:
     ctrl = MotorController("/dev/null")
-    with pytest.raises(ValueError, match="Unknown motor"):
-        ctrl.degrees_to_position("not_a_motor", 0.0)
-    with pytest.raises(ValueError, match="Unknown motor"):
-        ctrl.position_to_degrees("not_a_motor", 0)
+    with pytest.raises(ValueError, match="unknown motor"):
+        ctrl.units.to_counts("not_a_motor", 0.0)
+    with pytest.raises(ValueError, match="unknown motor"):
+        ctrl.units.to_value("not_a_motor", 0)
 
 
 def test_connect_disconnect_and_move(fake_serial) -> None:

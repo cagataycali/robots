@@ -111,7 +111,7 @@ def test_the_pose_branch_answers_in_the_same_words(monkeypatch, kwargs, expected
 
 def test_the_unknown_motor_refusal_names_the_table():
     out = _call(pose_mod.pose_tool, action="move_motor", motor_name="elbow", position=10, port=PORT)
-    for name in pose_mod._DEFAULT_MOTOR_CONFIGS:
+    for name in pose_mod.SO_ARM_MOTORS:
         assert name in out
 
 
