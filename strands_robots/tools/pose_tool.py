@@ -1325,10 +1325,10 @@ def pose_tool(
     # part-way through a motion.
     try:
         records = load_calibration(calibration) if calibration is not None else None
+        units = _units(port, records)
+        travel = {name: units.value_bounds(name) for name in units.motors}
     except (OSError, ValueError) as e:
         return {"status": "error", "content": [{"text": f"{action}: {e}"}]}
-    units = _units(port, records)
-    travel = {name: units.value_bounds(name) for name in units.motors}
 
     # A target outside that travel is one the joint cannot hold: the arm goes to
     # its end stop while the success text echoes the value asked for. It is
