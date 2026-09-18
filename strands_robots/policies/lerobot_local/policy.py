@@ -30,6 +30,7 @@ from ...utils import (
 )
 from .. import Policy, align_action_values, chunk_count_error
 from .._log_safety import sanitize_log_value
+from .._rng import reseed_client_rngs
 from .._state_keys import drop_velocity_siblings
 from .embodiment import (
     ZeroActionMonitor,
@@ -930,14 +931,30 @@ class LerobotLocalPolicy(Policy):
         history) to prevent cross-episode contamination.
 
         Args:
-            seed: Per-episode master seed (added in #187 for the
-                ``Policy.reset(seed=...)`` contract). Currently
-                unused - LeRobot policies don't expose RNG state via a
-                seed kwarg, and reproducibility is handled by
-                ``set_eval_seed`` upstream of the call. Reserved for
-                future per-policy RNG plumbing.
+            seed: Per-episode master seed (the ``Policy.reset(seed=...)``
+                contract, #187). Applied through
+                :func:`~strands_robots.policies._rng.reseed_client_rngs`, the
+                same reseed ``set_eval_seed`` performs, because the process
+                that runs ``reset`` is the one holding the sampler: a lerobot
+                policy draws its flow-matching / diffusion noise from the
+                process-global torch RNG, which no seed kwarg of its own
+                reaches. In-process that reseed is redundant with the runner's
+                own ``set_eval_seed(episode_seed)``, and applying the same
+                value twice lands on the same state. Over a
+                :class:`~strands_robots.inference.server.PolicyServer` it is
+                the only seeding the inference process gets - the client's
+                ``set_eval_seed`` cannot reach it - so without this a seeded
+                episode was reproducible locally and not remotely, the same
+                failure #187 fixed for the ZMQ service policies.
+
+        Raises:
+            ValueError: If *seed* is neither ``None`` nor an integer in
+                ``[0, MAX_EVAL_SEED]``, per
+                :func:`~strands_robots.policies._rng.reseed_client_rngs` - a
+                seed that cannot be applied is refused rather than leaving the
+                caller believing the episode is reproducible.
         """
-        del seed  # explicit no-op, not silently ignored
+        reseed_client_rngs(seed)
         if self._policy is not None and hasattr(self._policy, "reset"):
             self._policy.reset()
             logger.debug("Policy internal state reset")
