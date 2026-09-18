@@ -44,9 +44,9 @@ from strands.types.interrupt import Interrupt  # noqa: E402
 from strands.types.tools import ToolUse  # noqa: E402
 
 import strands_robots  # noqa: E402
+import strands_robots._command_gate as gate_mod  # noqa: E402
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod  # noqa: E402
 import strands_robots.hardware_robot as hw_mod  # noqa: E402
-import strands_robots.tools._command_gate as gate_mod  # noqa: E402
 import strands_robots.tools.g1.use_unitree as unitree_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 import strands_robots.tools.pose_tool as pose_mod  # noqa: E402

@@ -2,7 +2,7 @@
 
 The sibling of ``tests/mesh/test_ros_bridge_command_gate.py``, for the other
 transport that reaches a ROS 2 graph. ``use_rtps`` gained the shared
-operator-approval gate of :mod:`strands_robots.tools._command_gate`, so an
+operator-approval gate of :mod:`strands_robots._command_gate`, so an
 :class:`RtpsRobot` whose transport dropped the injected context would turn its
 whole command surface - including the ``stop`` halt and the trailing zero of a
 timed drive - into a per-call refusal whose only offered remedy is the blanket

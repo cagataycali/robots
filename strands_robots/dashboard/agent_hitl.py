@@ -336,7 +336,7 @@ class MotionInterruptHook(HookProvider):
         # Record the operator's reply in the local audit log for both outcomes.
         # The reply itself never reaches the model (cancel_sentence returns a
         # flat sentinel); the audit row is the only place it survives.
-        from strands_robots.tools._hitl_audit import log_operator_response
+        from strands_robots._hitl_audit import log_operator_response
 
         log_operator_response(
             "dashboard_agent_hitl",

@@ -687,7 +687,7 @@ def test_every_shipped_transport_onto_a_ros2_graph_gates_its_commands() -> None:
     ``use_ros`` and ``use_rtps`` reach the same physical ``/cmd_vel`` over two
     different wires, so a gate on one but not the other makes the tool name the
     whole difference - the defect
-    :mod:`strands_robots.tools._command_gate` exists to prevent, and one it
+    :mod:`strands_robots._command_gate` exists to prevent, and one it
     already shipped once. Stated as the positive security claim rather than as a
     count of the two sides of a split, because the ungated side is empty and a
     check that it is non-empty is not something to want.

@@ -53,8 +53,8 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import gate_command
 from strands_robots.rtps.mangling import dds_type_name, ros_topic_error
-from strands_robots.tools._command_gate import gate_command
 from strands_robots.tools._numeric_options import numeric_option_error
 
 logger = logging.getLogger(__name__)

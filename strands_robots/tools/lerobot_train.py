@@ -28,7 +28,7 @@ import psutil
 from strands import tool
 from strands.types.tools import ToolContext
 
-from strands_robots.tools._hitl_audit import log_operator_response
+from strands_robots._hitl_audit import log_operator_response
 from strands_robots.tools._process_stop import (
     PID_STARTED_SINCE_BOOT,
     SIGKILL_CONFIRM_S,

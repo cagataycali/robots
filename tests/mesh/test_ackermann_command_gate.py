@@ -29,7 +29,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools._command_gate as gate_mod
+import strands_robots._command_gate as gate_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots.mesh import AckermannRosRobot
 

@@ -20,9 +20,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools._command_gate as gate_mod
+import strands_robots._command_gate as gate_mod
 import strands_robots.tools.use_ros as ros_mod
-from strands_robots.tools._command_gate import (
+from strands_robots._command_gate import (
     approve_response,
     canonical_command_name,
     command_block_message,
@@ -557,7 +557,7 @@ def _command_surface_docs() -> list[str]:
 
     A page qualifies when it names one of the blocklisted surfaces by its final
     path segment, which is the same rule the gate matches on (see
-    :func:`~strands_robots.tools._command_gate.match_blocklist`): a page that
+    :func:`~strands_robots._command_gate.match_blocklist`): a page that
     talks about a surface the gate blocks is a page whose gating claims an
     operator will act on.
 

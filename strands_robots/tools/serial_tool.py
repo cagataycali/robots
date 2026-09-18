@@ -45,7 +45,7 @@ that already fits.
 Operator approval: the four actions that write to the bus - ``send``,
 ``send_read``, ``feetech_position`` and ``feetech_velocity`` - stop for a human
 BEFORE the port is opened, through the same decision path the ROS transports
-use (:func:`~strands_robots.tools._command_gate.gate_motion`).
+use (:func:`~strands_robots._command_gate.gate_motion`).
 ``STRANDS_SERIAL_COMMAND_ALLOW`` (comma-separated action names, or ``*``)
 pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
 otherwise the operator is prompted through the tool context and, with none
@@ -66,6 +66,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import gate_motion
 from strands_robots.drivers.feetech.protocol import (
     BROADCAST_ID,
     MAX_GOAL_POSITION,
@@ -75,7 +76,6 @@ from strands_robots.drivers.feetech.protocol import (
     encode_word,
     max_magnitude,
 )
-from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     finite_number_error,
     non_negative_count_error,

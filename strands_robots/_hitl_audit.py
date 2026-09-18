@@ -36,6 +36,10 @@ third gate wrote nothing at all.
 The audit module is imported inside the call rather than at module scope because
 ``strands_robots.mesh`` pulls in the transport stack, and a tool that gates a ROS
 graph or a training run must not pay for that on import.
+
+It sits beside :mod:`~strands_robots._command_gate` at the package root, which is
+the one caller that reads it at module scope: the row and the decision that
+writes it cannot be on two sides of a layer boundary.
 """
 
 from __future__ import annotations

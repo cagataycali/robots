@@ -68,7 +68,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
-from strands_robots.tools._command_gate import gate_command
+from strands_robots._command_gate import gate_command
 from strands_robots.tools._numeric_options import numeric_option_error
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def _gate_command(kind: str, name: str, tool_context: ToolContext | None) -> dic
     is reachable through more than one of them. The read-only actions
     (``echo``, ``info``, the ``list_*`` queries) are never gated.
 
-    The decision itself lives in :mod:`~strands_robots.tools._command_gate`,
+    The decision itself lives in :mod:`~strands_robots._command_gate`,
     shared with the other two transports onto the same graph: an approval that
     differed between them would let a declined command through on the second try
     under another tool name. This wrapper only turns its refusal into this tool's

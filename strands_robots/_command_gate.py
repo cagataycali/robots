@@ -37,6 +37,12 @@ matching it; the interrupt, the
 fail-closed rule and the audit row are the one copy here, so an operator's "no"
 means the same thing whichever tool asked. :func:`gate_command` is now a thin
 blocklist front on that path.
+
+Which is why the module sits at the package root rather than under
+:mod:`strands_robots.tools`, where it was first written: its callers are six tool
+modules *and* :mod:`~strands_robots.hardware_robot`, so the layer it belongs to
+is the lowest of them. A safety decision one caller has to reach upward for is a
+decision the next caller copies.
 """
 
 from __future__ import annotations
@@ -48,7 +54,7 @@ from typing import Any
 
 from strands.types.tools import ToolContext
 
-from strands_robots.tools._hitl_audit import log_operator_response
+from strands_robots._hitl_audit import log_operator_response
 
 logger = logging.getLogger(__name__)
 

@@ -223,6 +223,43 @@ class TestTheContract:
         }
         assert len(importers) >= 4, f"only {sorted(importers)} read the sandbox, so the rule above is vacuous"
 
+    def test_the_operator_gate_sits_below_every_caller_that_asks_a_human(self, graph: Any) -> None:
+        """The approval decision is core, not a helper of the package that wrote it.
+
+        ``_command_gate`` is the one owner of the blocklist, the operator
+        interrupt and the fail-closed rule; ``_hitl_audit`` is the one owner of
+        the row that records the answer. Six tool modules and ``hardware_robot``
+        share them, so the pair belongs under the lowest of those callers: a gate
+        that lives above one of its callers is a safety decision that caller
+        reaches up for, or copies.
+
+        Neither reads anything above ``core`` at import time. The audit row's one
+        upward read - the mesh safety log it writes through - is deferred to the
+        call and pinned here as exactly that, so a second upward dependency
+        cannot join it unnoticed, and moving it to module scope fails.
+        """
+        core = mod.LAYER_NAMES.index("core")
+        deferred = {
+            "strands_robots._command_gate": set(),
+            "strands_robots._hitl_audit": {"strands_robots.mesh.audit"},
+        }
+        for name, allowed_late in deferred.items():
+            assert name in graph.modules
+            assert mod.layer_of(name) == core, f"{name} is not in core"
+            for kind in ("runtime", "typing_only"):
+                above = sorted(t for t in getattr(graph, kind).get(name, frozenset()) if mod.layer_of(t) != core)
+                assert above == [], f"{name} has a {kind} import above core: {above}"
+            late = {t for t in graph.late.get(name, frozenset()) if mod.layer_of(t) != core}
+            assert late == allowed_late, f"{name} defers to {sorted(late)}, not {sorted(allowed_late)}"
+        callers = {
+            mod.LAYER_NAMES[mod.layer_of(importer)]
+            for kind in ("runtime", "typing_only", "late")
+            for importer, targets in getattr(graph, kind).items()
+            for name in deferred
+            if name in targets
+        }
+        assert {"app", "tools"} <= callers, f"only {sorted(callers)} ask a human, so the rule above is vacuous"
+
     def test_the_script_reports_the_tree_as_conforming(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert mod.main([]) == 0
         assert "OK: no runtime cycle, no undeclared inversion" in capsys.readouterr().out

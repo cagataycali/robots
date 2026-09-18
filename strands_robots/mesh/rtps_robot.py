@@ -66,7 +66,7 @@ class _UseRtpsTransport:
     caller wire an ``init_services`` handshake that could never run.
 
     ``use_rtps`` gates its commanding actions behind the operator approval in
-    ``strands_robots.tools._command_gate``, so :meth:`publish` forwards the
+    ``strands_robots._command_gate``, so :meth:`publish` forwards the
     ``tool_context`` the protocol carries. A transport that silently dropped an
     operator decision would be the same class of defect as one that declared a
     capability it does not have: the prompt would be unreachable and the command

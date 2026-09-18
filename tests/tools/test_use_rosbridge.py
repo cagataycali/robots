@@ -206,7 +206,7 @@ def test_an_invalid_service_name_is_refused_before_the_bridge_is_dialed(
 
 # A topic that is not a safety-critical command surface. The tests below exercise
 # publish plumbing; aiming them at a drive topic would route them through the
-# operator gate in :mod:`strands_robots.tools._command_gate`, which is a different
+# operator gate in :mod:`strands_robots._command_gate`, which is a different
 # subject with its own suite.
 _PLUMBING_TOPIC = "/demo/twist"
 

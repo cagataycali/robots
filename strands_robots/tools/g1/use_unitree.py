@@ -50,7 +50,7 @@ Safety rails:
       naming what they command, so no operator could approve one knowingly.
     * Every mutative or high-danger op stops for operator approval BEFORE
       the SDK RPC is dispatched, through the same decision path the ROS
-      transports use (:func:`~strands_robots.tools._command_gate.gate_motion`):
+      transports use (:func:`~strands_robots._command_gate.gate_motion`):
       ``STRANDS_UNITREE_COMMAND_ALLOW`` (comma-separated ``service.operation``
       entries, or ``*``) pre-approves; ``BYPASS_TOOL_CONSENT=true`` lifts the
       gate with a WARNING; otherwise the operator is prompted through the
@@ -77,8 +77,8 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import gate_motion
 from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, ensure_dds
-from strands_robots.tools._command_gate import gate_motion
 
 logger = logging.getLogger(__name__)
 

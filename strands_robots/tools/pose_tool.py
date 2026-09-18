@@ -14,7 +14,7 @@ Operator approval: the five actions that move the arm - ``move_motor``,
 ``move_multiple``, ``incremental_move``, ``load_pose`` and ``reset_to_home`` -
 stop for a human BEFORE the :class:`MotorController` is built, through the same
 decision path the ROS transports, ``use_unitree`` and ``serial_tool`` use
-(:func:`~strands_robots.tools._command_gate.gate_motion`).
+(:func:`~strands_robots._command_gate.gate_motion`).
 ``STRANDS_POSE_COMMAND_ALLOW`` (comma-separated action names, or ``*``)
 pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
 otherwise the operator is prompted through the tool context and, with none
@@ -41,9 +41,9 @@ from typing import Any, TypedDict
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._command_gate import gate_motion
 from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION, decode_word, encode_word
-from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,

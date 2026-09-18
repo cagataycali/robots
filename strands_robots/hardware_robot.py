@@ -16,7 +16,7 @@ Operator approval: this class is the ``mode="real"`` half of
 :func:`strands_robots.Robot`, so every ``execute`` or ``start`` the agent tool
 dispatches drives real actuators. Both stop for a human BEFORE the rollout is
 dispatched, through the same decision path the ROS transports and the serial
-tool use (:func:`~strands_robots.tools._command_gate.gate_motion`):
+tool use (:func:`~strands_robots._command_gate.gate_motion`):
 ``STRANDS_ROBOT_COMMAND_ALLOW`` (comma-separated ``execute``/``start``, or
 ``*``) pre-approves, ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING,
 otherwise the operator is asked through the agent's interrupt and, with no
@@ -57,13 +57,13 @@ from strands.types._events import ToolInterruptEvent, ToolResultEvent
 from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 
 from strands_robots import hardware_observe
+from strands_robots._command_gate import gate_motion
 from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
 from strands_robots.bus_access import bus_lock, read_observation, write_action
 from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.registry.policies import policy_requires_error
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
-from strands_robots.tools._command_gate import gate_motion
 from strands_robots.utils import (
     boolean_flag_error,
     camera_token_error,

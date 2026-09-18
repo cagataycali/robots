@@ -24,9 +24,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from strands_robots import _command_gate as gate_mod
+from strands_robots._command_gate import gate_command, gate_motion, how_to_answer
 from strands_robots.hardware_robot import COMMAND_ALLOW_ENV as ROBOT_ALLOW_ENV
-from strands_robots.tools import _command_gate as gate_mod
-from strands_robots.tools._command_gate import gate_command, gate_motion, how_to_answer
 from strands_robots.tools.g1.use_unitree import COMMAND_ALLOW_ENV as UNITREE_ALLOW_ENV
 from strands_robots.tools.g1.use_unitree import _gate as unitree_gate
 from strands_robots.tools.pose_tool import COMMAND_ALLOW_ENV as POSE_ALLOW_ENV

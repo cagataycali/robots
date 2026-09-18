@@ -46,9 +46,9 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots._hitl_audit import log_operator_response
 from strands_robots.mesh import security as _security
 from strands_robots.mesh.core import _reports_failure_to_stop, mesh_disabled_by_env
-from strands_robots.tools._hitl_audit import log_operator_response
 from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable

@@ -2787,7 +2787,7 @@ From the `robot_mesh` human-in-the-loop review trail (#227). Apply to the
   reply carrying a reason is always a decline and that row is the ONLY place the
   reason survives; record the approval too, because "did a human authorise this"
   is the first question an incident asks. One owner writes the row
-  (`strands_robots.tools._hitl_audit.log_operator_response`) so its wording
+  (`strands_robots._hitl_audit.log_operator_response`) so its wording
   cannot differ between two gates writing to the same log - a reader greps one
   phrasing, and a gate that spelled the row itself could drift to another and
   become invisible to that search.

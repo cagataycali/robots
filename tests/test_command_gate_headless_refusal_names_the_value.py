@@ -30,9 +30,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands_robots.tools import _command_gate as gate_mod
-from strands_robots.tools._command_gate import gate_motion, preapproval_setting
-from tests.tools.test_command_gate_interrupt_carries_its_own_remedy import (  # noqa: F401
+from strands_robots import _command_gate as gate_mod
+from strands_robots._command_gate import gate_motion, preapproval_setting
+from tests.test_command_gate_interrupt_carries_its_own_remedy import (  # noqa: F401
     IDS,
     SITES,
     TEST_ALLOW_ENV,

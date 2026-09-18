@@ -218,7 +218,7 @@ class TestPreApprovalIsSilent:
     def test_bypass_tool_consent_lifts_the_gate_with_a_warning(self, dispatched, monkeypatch, caplog) -> None:
         hw, calls = dispatched
         monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
-        with caplog.at_level("WARNING", logger="strands_robots.tools._command_gate"):
+        with caplog.at_level("WARNING", logger="strands_robots._command_gate"):
             events = _stream(hw, "execute", {})
 
         assert events[-1].tool_result["status"] == "success"

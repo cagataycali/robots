@@ -10,7 +10,7 @@ human's ``y``.
 These tests grade the observable: whether the SDK method was called. The stand-in
 client records every call, so "the robot did not move" is a measured claim and
 not a reading of which branch the tool took. The gate itself is the shared one in
-:mod:`~strands_robots.tools._command_gate`; its audit row is graded beside the
+:mod:`~strands_robots._command_gate`; its audit row is graded beside the
 other gates in ``tests/tools/test_hitl_operator_response_audit.py``.
 """
 

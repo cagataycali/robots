@@ -53,7 +53,9 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "core",
         (
             "_async_utils",
+            "_command_gate",
             "_dyld",
+            "_hitl_audit",
             "_mesh_switch",
             "_mujoco_gl",
             "_path_validation",
@@ -113,10 +115,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     # sim|policies -> app.
     ("strands_robots.simulation.mujoco.simulation", "strands_robots.teleop_mixin"),
     ("strands_robots.simulation.policy_runner", "strands_robots.dataset_recorder"),
-    # app -> tools. The motion gate is a private helper of the agent-tool
-    # package that the app layer needs, so the package that first wrote it owns
-    # a guard six tool modules and one robot share.
-    ("strands_robots.hardware_robot", "strands_robots.tools._command_gate"),
 )
 
 

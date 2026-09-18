@@ -177,7 +177,7 @@ consulted from every **transport** that reaches the graph, not just this one:
 `use_rtps` publishes over raw RTPS and `use_rosbridge` over a WebSocket, and a
 `Twist` on `/cmd_vel` moves the same base whichever of the three wrote it. The
 blocklist and the approval decision therefore have a single owner
-(`strands_robots.tools._command_gate`) rather than a copy per tool, so a surface
+(`strands_robots._command_gate`) rather than a copy per tool, so a surface
 refused on one transport cannot be sent on another under a different tool name. An agent
 asked to "drive forward" reaches for whichever verb fits the interface it found
 on the graph, so gating `publish` alone would leave `/navigate_to_pose` (a ROS 2

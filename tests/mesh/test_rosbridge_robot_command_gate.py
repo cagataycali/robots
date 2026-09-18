@@ -4,7 +4,7 @@ The fourth of four. ``tests/mesh/test_ros_bridge_command_gate.py``,
 ``tests/mesh/test_rtps_robot_command_gate.py`` and
 ``tests/mesh/test_ackermann_command_gate.py`` each pin that their bridge's
 commands reach the shared operator gate of
-:mod:`strands_robots.tools._command_gate`; the rosbridge bridge had no such
+:mod:`strands_robots._command_gate`; the rosbridge bridge had no such
 suite, and it was the one class that could not carry an operator's decision at
 all. Measured against the real ``use_rosbridge`` with an operator standing by to
 approve, on the same blocklisted ``/cmd_vel`` surface::

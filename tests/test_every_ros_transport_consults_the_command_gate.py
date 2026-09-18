@@ -66,6 +66,10 @@ _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
 )
 
 _TOOLS_DIR = Path(ros_mod.__file__).resolve().parent
+#: The package root, so the single-owner pin below reads every module rather
+#: than one directory: the gate itself sits in ``core``, and a second copy
+#: anywhere would make two transports disagree just as surely.
+_PACKAGE_DIR = _TOOLS_DIR.parent
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -282,8 +286,8 @@ class TestEveryCommandingTransportConsultsTheGate:
     def test_the_gate_has_exactly_one_owner(self) -> None:
         """One blocklist. A second copy is how two transports come to disagree."""
         owners = [
-            path.stem
-            for path in sorted(_TOOLS_DIR.glob("*.py"))
+            str(path.relative_to(_PACKAGE_DIR))
+            for path in sorted(_PACKAGE_DIR.rglob("*.py"))
             if "COMMAND_BLOCKLIST = frozenset(" in path.read_text(encoding="utf-8")
         ]
-        assert owners == ["_command_gate"], f"the command blocklist is defined in {owners}"
+        assert owners == ["_command_gate.py"], f"the command blocklist is defined in {owners}"

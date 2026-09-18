@@ -52,7 +52,7 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
-from strands_robots.tools._command_gate import gate_command
+from strands_robots._command_gate import gate_command
 from strands_robots.tools._numeric_options import numeric_option_error
 from strands_robots.utils import dial_host_error, tcp_port_error
 
