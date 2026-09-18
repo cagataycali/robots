@@ -43,7 +43,17 @@ from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_motion
 from strands_robots._path_validation import resolve_output_path, validate_save_path
-from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION, decode_word, encode_word
+from strands_robots.drivers.feetech.protocol import (
+    MAX_GOAL_POSITION,
+    SIGN_BIT,
+    WORD_LENGTH,
+    Register,
+    decode_sign_magnitude,
+    decode_word,
+    encode_word,
+    read_packet,
+    write_packet,
+)
 from strands_robots.utils import (
     boolean_flag_error,
     finite_number_error,
@@ -633,7 +643,8 @@ def _stored_pose_target_error(pose: RobotPose) -> str | None:
 # A servo answers a read with ``FF FF ID LEN ERR <params> CHK``. ``LEN`` counts
 # the error byte, the parameters and the checksum, so a whole frame is
 # ``LEN + 4`` bytes and its checksum is ``~sum(frame[2:-1]) & 0xFF`` -- the same
-# sum :meth:`MotorController.build_feetech_packet` writes on the way out.
+# sum :func:`~strands_robots.drivers.feetech.protocol.build_packet` writes on the
+# way out, which is the builder every frame this tool sends comes from.
 #
 # The reply cannot be read at fixed offsets. The bus is half-duplex and shared by
 # every servo on the arm, so what comes back may carry a leading byte the host's
@@ -643,7 +654,11 @@ def _stored_pose_target_error(pose: RobotPose) -> str | None:
 # shifts the two position bytes by one, which reports a joint ninety degrees from
 # where it is and offers nothing to say the number is not a measurement.
 #
-# So the frame is located and verified instead. This mirrors the vendor SDK,
+# So the frame is located and verified instead. The codec's
+# :func:`~strands_robots.drivers.feetech.protocol.parse_status_packet` is the
+# strict sibling of this scan: it refuses a frame that arrives with anything
+# behind it, because the bus module it serves frames the stream itself and a
+# trailing byte there belongs to the next reply. This scan mirrors the vendor SDK,
 # which is the authority for the wire format: ``scservo_sdk``'s ``rxPacket``
 # searches for the header, re-derives the frame length from ``LEN`` and verifies
 # the checksum, and its ``txRxPacket`` keeps reading until the responding ID
@@ -751,13 +766,6 @@ class MotorController:
         if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()
 
-    def build_feetech_packet(self, motor_id: int, instruction: int, params: list[int]) -> bytes:
-        """Build Feetech servo protocol packet."""
-        packet = [0xFF, 0xFF, motor_id, len(params) + 2, instruction] + params
-        checksum = ~sum(packet[2:]) & 0xFF
-        packet.append(checksum)
-        return bytes(packet)
-
     def degrees_to_position(self, motor_name: str, degrees: float) -> int:
         """Convert a target in the motor's own unit to a ``Goal_Position`` count.
 
@@ -828,9 +836,7 @@ class MotorController:
             motor_id = self.motor_configs[motor_name]["id"]
             position = self.degrees_to_position(motor_name, position_degrees)
 
-            # Feetech position command: INST_WRITE (0x03), Goal_Position address (0x2A)
-            params = [0x2A, *encode_word(position)]
-            packet = self.build_feetech_packet(motor_id, 0x03, params)
+            packet = write_packet(motor_id, Register.GOAL_POSITION, encode_word(position))
             self.serial_conn.write(packet)
             return True
         except Exception as e:
@@ -840,10 +846,12 @@ class MotorController:
     def disable_torque(self) -> list[str]:
         """De-energize every configured motor, returning the ones that failed.
 
-        Writes ``Torque_Enable = 0`` to each motor. That register is address 40
-        (1 byte) on the Feetech STS/SMS control table -- the authority is
-        ``lerobot.motors.feetech.tables``, the same table that gives
-        ``Goal_Position`` address 42 used by :meth:`move_motor`.
+        Writes ``Torque_Enable = 0`` to each motor. The register is named from
+        :class:`~strands_robots.drivers.feetech.protocol.Register` and the frame
+        built by
+        :func:`~strands_robots.drivers.feetech.protocol.write_packet`, so this
+        tool and the driver address the control table through one authority
+        instead of each spelling an address of its own.
 
         Every motor is attempted even after one fails: a stop that gave up on
         the remaining joints would be worse than no stop at all, because the
@@ -860,8 +868,7 @@ class MotorController:
         failed: list[str] = []
         for motor_name, config in self.motor_configs.items():
             try:
-                # INST_WRITE (0x03), Torque_Enable address (0x28), value 0.
-                packet = self.build_feetech_packet(config["id"], 0x03, [0x28, 0x00])
+                packet = write_packet(config["id"], Register.TORQUE_ENABLE, b"\x00")
                 self.serial_conn.write(packet)
             except OSError as e:
                 # Narrow to the transport: ``serial.SerialException`` subclasses
@@ -873,6 +880,13 @@ class MotorController:
 
     def read_motor_position(self, motor_name: str) -> float | None:
         """Read current motor position in degrees.
+
+        ``Present_Position`` is sign-magnitude on the STS/SMS series: bit 15
+        carries the direction rather than more magnitude. Which bit that is
+        comes from
+        :data:`~strands_robots.drivers.feetech.protocol.SIGN_BIT` instead of
+        from this method, because reading the field as unsigned reported a joint
+        just past its homing zero as more than a full turn away from it.
 
         Args:
             motor_name: Which configured motor to read.
@@ -892,9 +906,7 @@ class MotorController:
         try:
             motor_id = self.motor_configs[motor_name]["id"]
 
-            # Feetech read command: INST_READ (0x02), Present_Position address (0x38), 2 bytes
-            params = [0x38, 0x02]
-            packet = self.build_feetech_packet(motor_id, 0x02, params)
+            packet = read_packet(motor_id, Register.PRESENT_POSITION, WORD_LENGTH)
             self.serial_conn.write(packet)
 
             time.sleep(0.01)  # Small delay for response
@@ -902,7 +914,7 @@ class MotorController:
             # the half-duplex bus puts in front of it, which the parse then skips.
             response = self.serial_conn.read(10)
 
-            reply = _parse_status_packet(response, motor_id, 2)
+            reply = _parse_status_packet(response, motor_id, WORD_LENGTH)
             if reply is None:
                 logger.warning(
                     "No verified reply from motor %s (id %d); discarding %s",
@@ -911,8 +923,8 @@ class MotorController:
                     response.hex(" ") if response else "an empty read",
                 )
                 return None
-            position = decode_word(bytes(reply))
-            return self.position_to_degrees(motor_name, position)
+            counts = decode_sign_magnitude(decode_word(bytes(reply)), SIGN_BIT[Register.PRESENT_POSITION])
+            return self.position_to_degrees(motor_name, counts)
         except Exception as e:
             logger.error(f"Failed to read motor {motor_name}: {e}")
 
