@@ -61,6 +61,10 @@ from strands_robots.simulation.models import (
     registered,
     registry_entry,
 )
+from strands_robots.simulation.newton.actuator_gains import (
+    apply_joint_servos,
+    mjcf_joint_servos,
+)
 from strands_robots.simulation.newton.backend import (
     articulated_solver_error,
     articulated_solvers,
@@ -2907,6 +2911,36 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 tgt[idx] = value
         self._control.joint_target_q = self._wp.array(tgt, dtype=self._wp.float32, device=self._model.device)
 
+    def _apply_mjcf_servo_gains(self, builder: Any, model_path: str, first_joint: int) -> None:
+        """Carry the MJCF's compiled servo damping and torque ceiling onto DOFs.
+
+        Newton's MJCF importer reads a ``<position>`` actuator's ``kp`` into
+        ``joint_target_ke`` but not the ``dampratio`` MuJoCo compiles into a
+        velocity gain, nor its ``forcerange``. The joint then arrives with
+        ``joint_target_kd == 0`` and a 1e6 torque ceiling, and a constant
+        position command oscillates instead of settling - the same command the
+        MuJoCo backend tracks to its target, which breaks the cross-backend
+        equivalence ``add_robot`` advertises. Applied to the builder before
+        ``finalize``, so the solver is built from the corrected gains.
+
+        A model MuJoCo cannot read is not fatal: the robot is already imported,
+        so the gains Newton did carry are kept and the reason is logged rather
+        than aborting the world.
+
+        Args:
+            builder: Newton ``ModelBuilder`` holding the just-imported robot.
+            model_path: The MJCF that was imported.
+            first_joint: Index of this robot's first joint in
+                ``builder.joint_label``.
+        """
+        try:
+            servos = mjcf_joint_servos(model_path)
+        except Exception as exc:  # noqa: BLE001 - fidelity gain, never fatal
+            logger.warning("Newton: MJCF servo gains unread for %s: %s", model_path, exc)
+            return
+        applied = apply_joint_servos(builder, servos, list(builder.joint_label), first_joint, _short_joint_name)
+        logger.debug("Newton: applied MJCF servo gains to %d joints", len(applied))
+
     def _rebuild(self) -> None:
         """(Re)build the Newton model from the current world state.
 
@@ -2943,6 +2977,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 builder.add_urdf(model_path, xform=xform, collapse_fixed_joints=True)
             else:
                 builder.add_mjcf(model_path, xform=xform, collapse_fixed_joints=True)
+                self._apply_mjcf_servo_gains(builder, model_path, label_before)
             new_labels = builder.joint_label[label_before:]
             # Map each joint to its coordinate index in joint_q and its DOF index
             # in joint_qd. These are NOT the joint's ordinal position: a floating

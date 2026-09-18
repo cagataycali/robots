@@ -96,6 +96,14 @@ no-op until then.
   names use the short trailing segment (`Rotation`, `Pitch`, ...), matching the
   MuJoCo backend exactly so policies and observation mappings transfer
   unchanged.
+- MJCF **position-servo gains** are carried onto the model. Newton's importer
+  reads a `<position>` actuator's `kp` and drops the rest of the servo: the
+  `dampratio` MuJoCo compiles into a velocity gain and the `forcerange` that
+  caps the torque. A P-only servo with a 1e6 torque ceiling does not track - a
+  constant `Rotation = 0.5` on the shipped `so100` oscillated between 0.05 and
+  0.96 rad indefinitely - so both are read off the compiled model and written
+  onto the builder before `finalize`. A model MuJoCo cannot compile keeps the
+  gains Newton did carry and logs the reason.
 - `render()` returns the same agent-tool image block (`{"image": {"format":
   "png", ...}}`) as MuJoCo, so the shared `PolicyRunner` video pipeline works
   without modification.
