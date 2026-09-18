@@ -1138,6 +1138,28 @@ def _extract_result_json(result: object) -> dict[str, Any] | None:
     return None
 
 
+def _recorded_action_names(ds: object) -> list[str] | None:
+    """The names a LeRobotDataset wrote for its ``action`` column, or ``None``.
+
+    Read from ``ds.meta.features["action"]["names"]`` - the field
+    ``DatasetRecorder.create`` writes from the backend's ``robot_action_keys``
+    at record time and the resume path already diffs against the live scene.
+    ``None`` when the dataset object carries no such schema (a column-only
+    dataset, the replay tests' fakes) or the field is not a list of strings,
+    so a caller can fall back rather than trust a malformed schema.
+    """
+    features = getattr(getattr(ds, "meta", None), "features", None)
+    if not isinstance(features, dict):
+        return None
+    action = features.get("action")
+    if not isinstance(action, dict):
+        return None
+    names = action.get("names")
+    if not isinstance(names, (list, tuple)) or not names or not all(isinstance(n, str) for n in names):
+        return None
+    return list(names)
+
+
 def _validate_action_key_map(action_key_map: Any) -> dict[str, Any] | None:
     """Reject a ``replay`` ``action_key_map`` no backend could honor.
 
@@ -3354,12 +3376,19 @@ class PolicyRunner:
                 non-finite or non-numeric value is rejected with a structured
                 error.
             action_key_map: Optional list of action keys, one per action
-                vector index. Required when dataset action ordering differs
-                from ``robot_action_keys(robot_name)``. If ``None``, positional
-                mapping to ``robot_action_keys`` is used - the robot's
-                *actuator* keys, which is the ordering the LeRobotDataset
-                recorder writes the ``action`` column in (a robot's actuators
-                are not always its joints; see :meth:`SimEngine.robot_action_keys`).
+                vector index. Required when the recording's action columns are
+                not this robot's actuators. If ``None``, the recorded column
+                is bound by the names the dataset wrote for it
+                (``features["action"]["names"]``) whenever those names are
+                exactly ``robot_action_keys(robot_name)`` in any order, so a
+                recording made before the keys were reordered still replays
+                onto the actuators it was recorded from. A dataset without
+                that schema, or one whose columns are another roster, falls
+                back to positional mapping onto ``robot_action_keys`` - the
+                robot's *actuator* keys, which is the ordering the
+                LeRobotDataset recorder writes the ``action`` column in (a
+                robot's actuators are not always its joints; see
+                :meth:`SimEngine.robot_action_keys`).
                 Must be a non-empty list/tuple of unique strings; a bare
                 string, a non-string entry or a duplicate key is rejected with
                 a structured error. Its length must equal the recorded action
@@ -3504,7 +3533,26 @@ class PolicyRunner:
         # (send_action cannot resolve passive-joint names) while replay still
         # reports success - a silent round-trip corruption. Bind to the same
         # actuator keys the recorder used so record -> replay round-trips.
-        action_keys = list(action_key_map) if action_key_map else self.sim.robot_action_keys(resolved_robot)
+        #
+        # The recorder wrote those keys into the dataset as the column names,
+        # so read them back rather than assuming today's ``robot_action_keys``
+        # order is the one the recording was made under: the order is a
+        # property of the backend at record time, and a backend that changes
+        # it (#3851 moved MuJoCo from declaration to joint order) would
+        # otherwise replay every earlier recording transposed, with the width
+        # guard below satisfied and ``send_action`` resolving every name.
+        # ``send_action`` binds a dict by name, so the recorded names are the
+        # right keys in whatever order they were written - when they are this
+        # robot's actuators. Another roster (a different robot, a multi-robot
+        # recording's prefixed columns) is not an ordering question and keeps
+        # the positional path; ``action_key_map`` is the explicit answer there.
+        if action_key_map:
+            action_keys = list(action_key_map)
+        else:
+            action_keys = self.sim.robot_action_keys(resolved_robot)
+            recorded_keys = _recorded_action_names(ds)
+            if recorded_keys is not None and sorted(recorded_keys) == sorted(action_keys):
+                action_keys = recorded_keys
 
         dataset_fps = getattr(ds, "fps", 30)
         frame_interval = 1.0 / (dataset_fps * speed)

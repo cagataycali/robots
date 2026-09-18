@@ -13,5 +13,12 @@ The keys now follow the robot's joint order; an actuator that drives no single
 joint (a tendon gripper) has no joint to be ordered by and keeps the slot the
 model declared it in. Of the 63 sim robots that build, 11 change key order and
 the one roster that was a permutation of the recorded columns is now identical
-to it. A dataset recorded before this change replays with
-`replay_episode(action_key_map=[...])`, which binds recorded indices by name.
+to it.
+
+A dataset recorded before this change still replays correctly: the recorder
+wrote the key order it used into the dataset as `features["action"]["names"]`,
+and `PolicyRunner.replay` now binds the recorded action vector by those names
+whenever they are the robot's actuators in any order, rather than assuming the
+backend's order today is the one the recording was made under. A dataset
+without that schema, or one whose columns are another roster, keeps positional
+binding; `replay_episode(action_key_map=[...])` remains the explicit answer.
