@@ -160,3 +160,26 @@ def test_a_failed_reader_does_not_prevent_socket_cleanup() -> None:
         socket.close.assert_awaited_once()
 
     asyncio.run(scenario())
+
+
+def test_native_action_reports_a_link_stopped_after_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The driver's cached connected flag cannot turn a missing socket into success."""
+    monkeypatch.setattr(reachy_transport, "api", lambda *a, **k: {"wireless_version": True})
+    socket = AsyncMock()
+
+    async def start(self, on_joints, on_imu):
+        self._ws = socket
+
+    monkeypatch.setattr(reachy_transport.WebSocketLink, "start", start)
+    driver = ReachyDriver(port="reachy-a.local")
+    try:
+        assert driver.connect_eagerly() is None
+        assert driver.send_action({"antenna_left": 1.0, "antenna_right": 1.0})["status"] == "success"
+        assert driver._link is not None and driver._loop is not None
+        asyncio.run_coroutine_threadsafe(driver._link.stop(), driver._loop).result(timeout=2)
+        result = driver.send_action({"antenna_left": 1.5, "antenna_right": 1.0})
+        assert result["status"] == "error"
+        assert "not connected" in result["content"][0]["text"]
+        socket.send.assert_awaited_once()
+    finally:
+        driver.cleanup()

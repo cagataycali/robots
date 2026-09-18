@@ -353,9 +353,8 @@ class WebSocketLink(HardwareLink):
         The handle is dropped before the close is awaited because
         :meth:`send_cmd` reads it as its "is the socket connected?" test. A
         closed socket left in ``_ws`` is still truthy, so that guard cannot see
-        a stop: the send goes ahead on a closed connection and surfaces as the
-        ``ConnectionClosed`` the socket raises, out of a method documented to
-        be a no-op when the socket is not connected.
+        a stop. Dropping the handle makes later sends report disconnection
+        rather than attempt a write on a closed socket.
 
         Clearing first also holds when the close itself fails - the socket is
         gone either way, so the link must stop offering it as connected.
@@ -374,11 +373,15 @@ class WebSocketLink(HardwareLink):
         """Translate the first recognised command key to the daemon wire format.
 
         Maps ``head_pose`` / ``antennas_joint_positions`` / ``body_yaw`` /
-        ``torque`` to their WebSocket message shape and sends it; a no-op when the
-        socket is not connected or no known key is present.
+        ``torque`` to their WebSocket message shape and sends it; a no-op when no
+        known key is present. A completed send means transport submission only:
+        the daemon's SDK WebSocket does not acknowledge target adoption or motion.
+
+        Raises:
+            ConnectionError: The link has not started or has already stopped.
         """
-        if not self._ws:
-            return
+        if self._ws is None:
+            raise ConnectionError("Reachy WebSocket is not connected; command was not sent")
         for key, fn in self._WS_CMD_MAP.items():
             if key in cmd:
                 await self._ws.send(json.dumps(fn(cmd)))
