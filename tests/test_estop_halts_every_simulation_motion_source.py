@@ -40,7 +40,7 @@ from strands_robots.simulation.models import SimRobot
 # and this helper restores the real ones. Importing the helper does NOT bring the
 # sibling's autouse fixture with it -- an autouse fixture is bound to the module
 # that declares it -- so this file declares its own.
-from tests.test_device_connect_hardening import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 
 _ESTOP_SOURCE = "safety-controller-1"
 
@@ -48,7 +48,7 @@ _ESTOP_SOURCE = "safety-controller-1"
 @pytest.fixture(autouse=True)
 def _real_device_connect(monkeypatch):
     """Restore the real extra, clear the allowlists, admit the estop source."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     for var in ("DEVICE_CONNECT_RPC_ALLOW", "DEVICE_CONNECT_ESTOP_ALLOW", "DEVICE_CONNECT_ALLOW_INSECURE"):
         monkeypatch.delenv(var, raising=False)
     import strands_robots.device_connect.sim_driver as sim_driver

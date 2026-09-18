@@ -66,7 +66,7 @@ from strands_robots.drivers.reachy_envelope import (
     MOTION_ENVELOPE_DEG,
     envelope_error,
 )
-from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 from tests.test_reachy_motion_domain import USABLE_MOTION_VALUES
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -87,7 +87,7 @@ def _inside(limit: float) -> float:
 @pytest.fixture
 def rmd() -> Any:
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     import strands_robots.device_connect.reachy_mini_driver as module
 
     return module

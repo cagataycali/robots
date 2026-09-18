@@ -21,47 +21,21 @@ files replace them with MagicMocks at import time.
 """
 
 import asyncio
-import importlib
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from tests._device_connect_real import use_the_real_edge
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
 # closed and is graded in test_device_connect_hardening.py, not here.
 pytestmark = pytest.mark.usefixtures("named_rpc_caller")
 
 
-def _force_real_device_connect_edge():
-    """Restore the genuine device_connect_edge modules and re-import the driver.
-
-    Sibling test modules install MagicMock stand-ins in ``sys.modules`` for
-    ``device_connect_edge`` at import time. A real module exposes ``__file__``;
-    a MagicMock does not, so we drop the fakes, re-import the real package from
-    disk, and purge ``strands_robots.device_connect.*`` so it re-binds to the
-    real ``@rpc`` / ``DeviceDriver``.
-    """
-    for key in (
-        "device_connect_edge.drivers",
-        "device_connect_edge.types",
-        "device_connect_edge.device",
-        "device_connect_edge",
-    ):
-        mod = sys.modules.get(key)
-        if mod is not None and not hasattr(mod, "__file__"):
-            sys.modules.pop(key, None)
-    importlib.import_module("device_connect_edge")
-    importlib.import_module("device_connect_edge.drivers")
-    importlib.import_module("device_connect_edge.types")
-    for key in list(sys.modules):
-        if key.startswith("strands_robots.device_connect"):
-            sys.modules.pop(key, None)
-
-
 @pytest.fixture
 def rmd():
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     from strands_robots.device_connect import reachy_mini_driver as module
 
     return module

@@ -20,36 +20,9 @@ import sys
 
 import pytest
 
+from tests._device_connect_real import use_the_real_edge
+
 pytest.importorskip("device_connect_edge", reason="needs the [device-connect] extra")
-
-
-def _force_real_device_connect_edge():
-    """Restore the REAL device_connect_edge submodules and purge our
-    integration modules so they re-bind to the real @rpc / DeviceDriver.
-
-    Sibling test files (e.g. test_device_connect_drivers.py) replace
-    device_connect_edge.drivers/types/device with MagicMocks at import time.
-    To run order-independently we reload the genuine modules from disk and
-    drop any strands_robots.device_connect.* cached against the mocks.
-    """
-    for key in (
-        "device_connect_edge.drivers",
-        "device_connect_edge.types",
-        "device_connect_edge.device",
-        "device_connect_edge",
-    ):
-        mod = sys.modules.get(key)
-        # A real module has __file__; a MagicMock stand-in does not.
-        if mod is not None and not hasattr(mod, "__file__"):
-            sys.modules.pop(key, None)
-    # Re-import genuine modules from disk.
-    importlib.import_module("device_connect_edge")
-    importlib.import_module("device_connect_edge.drivers")
-    importlib.import_module("device_connect_edge.types")
-    # Purge our integration so it re-imports against the real base classes.
-    for key in list(sys.modules):
-        if key.startswith("strands_robots.device_connect"):
-            sys.modules.pop(key, None)
 
 
 def _run(coro):
@@ -135,7 +108,7 @@ class _FakeSim:
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     for var in (
         "DEVICE_CONNECT_RPC_ALLOW",
         "DEVICE_CONNECT_ESTOP_ALLOW",

@@ -46,8 +46,8 @@ import pytest
 
 import strands_robots
 from strands_robots.utils import dial_host_error
+from tests._device_connect_real import use_the_real_edge
 from tests.test_reachy_api_port_domain import _exported_names
-from tests.test_reachy_mini_driver import _force_real_device_connect_edge
 
 # Values that cannot address the host half of the daemon URL, with what each one
 # does when interpolated into it anyway.
@@ -76,7 +76,7 @@ PORT_DISCARDING_HOSTS = [("127.0.0.1/foo", "127.0.0.1"), ("bot.local?x=1", "bot.
 @pytest.fixture
 def rmd():
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     import strands_robots.device_connect.reachy_mini_driver as module
 
     return module

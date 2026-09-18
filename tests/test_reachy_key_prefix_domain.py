@@ -45,7 +45,7 @@ import pytest
 
 import strands_robots
 from strands_robots.mesh.security import MAX_PEER_ID_LEN
-from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 
 # Prefixes that cannot address a single robot's key expressions. The four
 # wildcards are the dangerous half -- Zenoh accepts every one of them, so they
@@ -95,7 +95,7 @@ def _label(value: Any) -> str:
 @pytest.fixture
 def rmd():
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     import strands_robots.device_connect.reachy_mini_driver as module
 
     return module

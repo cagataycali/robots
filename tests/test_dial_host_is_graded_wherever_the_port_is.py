@@ -127,9 +127,9 @@ def _reachy_mini_refusal(host: Any) -> str | None:
     ``device_connect_edge`` stand-ins at import time; the shared helper restores
     the real package, which is what binds the driver to the real base class.
     """
-    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+    from tests._device_connect_real import use_the_real_edge
 
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
 
     try:
@@ -278,9 +278,9 @@ def test_the_domain_has_one_owner_and_no_consumer_restates_it() -> None:
 
 def _reachy_mini_driver_init_source() -> str:
     """Source of ``ReachyMiniDriver.__init__``, bound to the real base class."""
-    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+    from tests._device_connect_real import use_the_real_edge
 
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
 
     return inspect.getsource(ReachyMiniDriver.__init__)
@@ -431,9 +431,9 @@ def test_an_operation_the_read_never_makes_leaves_a_usable_host_usable(operation
 
 def _reachy_mini_both_halves(host: Any) -> None:
     """Construct the driver with both halves of its daemon address unusable."""
-    from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+    from tests._device_connect_real import use_the_real_edge
 
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     from strands_robots.device_connect.reachy_mini_driver import ReachyMiniDriver
 
     ReachyMiniDriver(host=host, api_port=65536)

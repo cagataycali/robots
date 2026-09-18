@@ -59,7 +59,7 @@ import strands_robots
 from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import finite_number_error
-from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
 # closed and is graded in test_device_connect_hardening.py, not here.
@@ -101,7 +101,7 @@ MOTION_SURFACES: dict[str, list[str]] = {
 @pytest.fixture
 def rmd():
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     import strands_robots.device_connect.reachy_mini_driver as module
 
     return module

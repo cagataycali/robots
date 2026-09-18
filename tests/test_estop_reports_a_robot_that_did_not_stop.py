@@ -33,7 +33,7 @@ import pytest
 # and this helper restores the real ones. Importing the helper does NOT bring
 # the sibling's autouse fixture with it -- an autouse fixture is bound to the
 # module that declares it -- so this file declares its own.
-from tests.test_device_connect_hardening import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 
 # The two shapes a real driver produces, stated here rather than imported so a
 # failure names the disagreement instead of inheriting it. The one cell that
@@ -71,7 +71,7 @@ _LOGGER = "strands_robots.device_connect.robot_driver"
 @pytest.fixture(autouse=True)
 def _real_device_connect(monkeypatch):
     """Restore the real device_connect_edge and clear the estop allowlist."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     for var in ("DEVICE_CONNECT_RPC_ALLOW", "DEVICE_CONNECT_ESTOP_ALLOW", "DEVICE_CONNECT_ALLOW_INSECURE"):
         monkeypatch.delenv(var, raising=False)
 

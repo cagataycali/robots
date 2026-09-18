@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from strands_robots.simulation.models import SimRobot
+from tests._device_connect_real import held_modules, restore
 from tests._sim_stop_policy_stand_in import stop_policy_stand_in
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -112,8 +113,12 @@ _mock_keys = (
 # Also track strands_robots.device_connect submodules that will be imported
 # with the mocked base class - they need to be purged so later tests re-import
 # with the real base class.
-_strands_dc_keys = [k for k in sys.modules if k.startswith("strands_robots.device_connect")]
-for _key in list(_mock_keys) + _strands_dc_keys:
+# The integration modules this file is about to re-import against the mocks.
+# They are handed back at teardown by the shared owner, which also re-binds
+# each one on its parent package - a purge alone orphans every reference a
+# sibling file already holds.
+_held_integration = held_modules()
+for _key in _mock_keys:
     _saved_modules[_key] = sys.modules.get(_key)
 
 sys.modules["device_connect_edge"] = mock_device_connect_edge
@@ -160,11 +165,10 @@ def teardown_module():
             sys.modules.pop(key, None)
         else:
             sys.modules[key] = original
-    # Purge ALL strands_robots.device_connect submodules - they were imported
-    # with the mock DeviceDriver base class and must be re-imported fresh.
-    for key in list(sys.modules):
-        if key.startswith("strands_robots.device_connect"):
-            sys.modules.pop(key, None)
+    # The integration modules were imported with the mock DeviceDriver base
+    # class, so they go; the ones the process already had come back, entry and
+    # parent attribute both.
+    restore(_held_integration)
 
 
 # ── Task state mocks ──────────────────────────────────────────────

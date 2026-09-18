@@ -73,9 +73,7 @@ pytest.importorskip("device_connect_edge")
 # ``tests.test_estop_halts_every_simulation_motion_source`` does over this same
 # driver. An autouse fixture is bound to the module that declares it, so
 # importing the helper does not bring the sibling's fixture along.
-from tests.test_device_connect_hardening import (  # noqa: E402 - after the extra check
-    _force_real_device_connect_edge,
-)
+from tests._device_connect_real import use_the_real_edge  # noqa: E402 - after the extra check
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
 # closed and is graded in test_device_connect_hardening.py, not here.
@@ -85,7 +83,7 @@ pytestmark = pytest.mark.usefixtures("named_rpc_caller")
 @pytest.fixture(autouse=True)
 def _real_device_connect(monkeypatch: pytest.MonkeyPatch) -> None:
     """Bind the driver to the real extra and leave the allowlists permissive."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     for var in ("DEVICE_CONNECT_RPC_ALLOW", "DEVICE_CONNECT_ESTOP_ALLOW", "DEVICE_CONNECT_ALLOW_INSECURE"):
         monkeypatch.delenv(var, raising=False)
 

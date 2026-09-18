@@ -18,11 +18,13 @@ has started says so instead of reporting counts that read as a total.
 
 import os
 import sys
+from collections.abc import Iterator
 
 import pytest
 
 # Neither import below touches strands_robots, so both are safe above the
 # environment defaults that the strands_robots imports further down depend on.
+from tests._device_connect_real import held_modules, restore
 from tests.session_truncation import register_truncation_reporter
 
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
@@ -112,3 +114,32 @@ def named_rpc_caller(monkeypatch: pytest.MonkeyPatch) -> str:
         if name.startswith("strands_robots.device_connect") and hasattr(module, "get_rpc_source_device"):
             monkeypatch.setattr(module, "get_rpc_source_device", _named)
     return caller
+
+
+@pytest.fixture(autouse=True)
+def _device_connect_modules_are_put_back() -> Iterator[None]:
+    """Undo any swap of the Device Connect integration this test performed.
+
+    Thirteen test modules run against the real ``device_connect_edge`` by
+    dropping ``strands_robots.device_connect.*`` from ``sys.modules`` so the
+    integration re-imports against the genuine ``@rpc`` / ``DeviceDriver``
+    (:func:`tests._device_connect_real.use_the_real_edge`). Dropping an entry is
+    not an undo: every reference a sibling module bound at collection time is
+    orphaned, and the next import hands out a different object - so a
+    ``monkeypatch.setattr`` on the sibling's binding lands on a module the code
+    under test no longer reads.
+
+    Measured, with ``tests/test_device_connect_hardening.py`` running ahead of
+    the reachy driver files (the ordering ``-p xdist --dist loadfile`` produces
+    and a serial run does not): four cells in
+    ``tests/drivers/test_reachy_wireless_daemon_protocol.py`` resolved
+    ``reachy-a.local`` for real and failed. Restoring here rather than in each
+    caller keeps the pair together - the swap is undone by the session, not by
+    thirteen callers remembering to.
+    """
+    held = held_modules()
+    try:
+        yield
+    finally:
+        if held_modules() != held:
+            restore(held)

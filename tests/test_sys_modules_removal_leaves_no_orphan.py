@@ -49,8 +49,17 @@ with ``KeyError`` on that entry. Both pass in isolation.
 
 It is deliberately one-directional and under-reports rather than over-reports:
 
-* Only a **literal** key is graded. A removal whose key is a variable (a loop
-  purging ``mujoco*``, say) is out of reach of a static read and is not claimed.
+* A removal keyed by a **literal** string is graded by name. A removal keyed by
+  a variable is graded when the function filters that variable through a literal
+  ``startswith`` - the prefix-purge idiom, which is how a whole package is
+  dropped in one loop - and is otherwise out of reach of a static read and not
+  claimed. The prefix half exists because the literal half could not see the
+  purge that orphaned ``strands_robots.device_connect.reachy_transport``: five
+  test modules dropped that package with
+  ``for key in list(sys.modules): if key.startswith("strands_robots.device_connect")``,
+  and four cells in ``tests/drivers/test_reachy_wireless_daemon_protocol.py``
+  then resolved ``reachy-a.local`` for real - passing serially, failing in the
+  file order ``--dist loadfile`` produces.
 * Every name bound to ``sys`` in the file is followed, so an aliased
   ``import sys as _sys`` is graded on both sides of the rule - four files use
   that spelling, all of them with the restoring idiom.
@@ -989,3 +998,214 @@ class TestTheReimportScanIsSpecific:
             ]
         )
         assert reimporting_cells(ast.parse(source)) == []
+
+
+def _literal_prefixes(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
+    """Every literal prefix *fn* tests a name against with ``startswith``.
+
+    An f-string or a parameter is not a literal, so a helper whose prefix is
+    handed in - :func:`tests._device_connect_real.purge` - is out of reach of a
+    static read and is not claimed, the same way a fully dynamic key is not.
+    """
+    return sorted(
+        {
+            node.args[0].value
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "startswith"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        }
+    )
+
+
+def _dynamic_removals(fn: ast.FunctionDef | ast.AsyncFunctionDef, registries: set[str]) -> list[int]:
+    """``lineno`` of each removal from *registries* whose key is not a literal.
+
+    Both spellings of the loop body count: ``registry.pop(key, None)`` and
+    ``del registry[key]``. The literal-key rule owns the rest.
+    """
+    lines: list[int] = []
+    for node in ast.walk(fn):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "pop"
+            and ast.unparse(node.func.value) in registries
+            and node.args
+            and not isinstance(node.args[0], ast.Constant)
+        ):
+            lines.append(node.lineno)
+        if isinstance(node, ast.Delete):
+            lines.extend(
+                node.lineno
+                for target in node.targets
+                if isinstance(target, ast.Subscript)
+                and ast.unparse(target.value) in registries
+                and not isinstance(target.slice, ast.Constant)
+            )
+    return sorted(lines)
+
+
+def _restores_a_prefix(scopes: Sequence[ast.AST], registries: set[str]) -> bool:
+    """Whether *scopes* put a whole displaced mapping back.
+
+    A prefix purge displaces a set of entries a static read cannot enumerate, so
+    restoration is judged by the spelling that returns a mapping rather than per
+    key: ``patch.dict``, ``monkeypatch.setitem``, or a ``registry.update`` of
+    what was captured. The same face value :func:`_restores` takes them at.
+    """
+    for scope in scopes:
+        source = ast.unparse(scope)
+        if "patch.dict" in source:
+            return True
+        if any(f"setitem({registry}" in source or f"{registry}.update" in source for registry in registries):
+            return True
+    return False
+
+
+def unrestored_prefix_purges(tree: ast.Module) -> list[tuple[int, str, str]]:
+    """``(lineno, function, prefix)`` for each prefix purge *tree* never undoes."""
+    registries = {f"{alias}.modules" for alias in _sys_aliases(tree)}
+    owners = _method_owners(tree)
+    reported: list[tuple[int, str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        removals = _dynamic_removals(node, registries)
+        if not removals:
+            continue
+        scopes: list[ast.AST] = [node]
+        owner = owners.get(id(node))
+        if owner is not None:
+            scopes.append(owner)
+        if _restores_a_prefix(scopes, registries):
+            continue
+        reported.extend((removals[0], node.name, prefix) for prefix in _literal_prefixes(node))
+    return reported
+
+
+def _protected_under(prefix: str, protected: dict[str, set[str]]) -> dict[str, set[str]]:
+    """The protected modules a purge of *prefix* would take with it."""
+    return {name: holders for name, holders in protected.items() if name == prefix or name.startswith(f"{prefix}.")}
+
+
+def orphaning_prefix_purges() -> list[str]:
+    """Every unrestored prefix purge that reaches a module a sibling patches."""
+    protected = protected_modules()
+    offenders: list[str] = []
+    for path in _graded_files():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        for lineno, function, prefix in unrestored_prefix_purges(tree):
+            for name, holders in sorted(_protected_under(prefix, protected).items()):
+                offenders.append(
+                    f"{rel}:{lineno} in {function}() purges {prefix!r}*, which takes "
+                    f"{name!r} - patched by {', '.join(sorted(holders))}"
+                )
+    return offenders
+
+
+class TestNoPrefixPurgeOrphansAPatchedModule:
+    """The same rule, for the loop that drops a whole package at once."""
+
+    def test_no_prefix_purge_takes_a_patched_module_with_it(self) -> None:
+        offenders = orphaning_prefix_purges()
+        assert offenders == [], (
+            "a test drops every sys.modules entry under a package prefix and does not put "
+            "them back, so a sibling module's binding under that prefix is orphaned and its "
+            "patch is invisible to the next import. Capture what the purge displaces and "
+            "update the registry with it - tests._device_connect_real is the owner of that "
+            "pair for the Device Connect integration:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_rule_reaches_a_protected_module_under_the_prefix(self) -> None:
+        """A purge is matched to protected modules by prefix, not by exact name."""
+        protected = {
+            "strands_robots.device_connect.reachy_transport": {"tests/drivers/x.py"},
+            "strands_robots.drivers.reachy": {"tests/drivers/y.py"},
+        }
+        assert sorted(_protected_under("strands_robots.device_connect", protected)) == [
+            "strands_robots.device_connect.reachy_transport"
+        ]
+        assert _protected_under("strands_robots.device", protected) == {}, "a prefix stops at a dot"
+
+
+class TestThePrefixScanIsSpecific:
+    """Planted sources, both outcomes, so a clean tree means the rule works."""
+
+    _PURGE_LOOP = (
+        "import sys",
+        "def teardown_module():",
+        "    for key in list(sys.modules):",
+        "        if key.startswith('pkg.sub'):",
+        "            sys.modules.pop(key, None)",
+    )
+
+    def test_an_unrestored_prefix_purge_is_reported(self) -> None:
+        assert unrestored_prefix_purges(ast.parse("\n".join(self._PURGE_LOOP))) == [(5, "teardown_module", "pkg.sub")]
+
+    def test_the_comprehension_spelling_is_reported_too(self) -> None:
+        """The filter and the removal need not share a variable name."""
+        source = "\n".join(
+            [
+                "import sys",
+                "def teardown_module():",
+                "    for name in [m for m in sys.modules if m.startswith('pkg.sub')]:",
+                "        del sys.modules[name]",
+            ]
+        )
+        assert unrestored_prefix_purges(ast.parse(source)) == [(4, "teardown_module", "pkg.sub")]
+
+    def test_a_purge_that_puts_the_mapping_back_is_accepted(self) -> None:
+        source = "\n".join(
+            [
+                "import sys",
+                "def teardown_module():",
+                "    held = {k: v for k, v in sys.modules.items() if k.startswith('pkg.sub')}",
+                "    for key in list(sys.modules):",
+                "        if key.startswith('pkg.sub'):",
+                "            sys.modules.pop(key, None)",
+                "    sys.modules.update(held)",
+            ]
+        )
+        assert unrestored_prefix_purges(ast.parse(source)) == []
+
+    def test_a_purge_with_no_literal_prefix_is_not_claimed(self) -> None:
+        """A prefix handed in as a parameter is out of reach of a static read."""
+        source = "\n".join(
+            [
+                "import sys",
+                "def purge(prefix):",
+                "    for name in [m for m in sys.modules if m.startswith(f'{prefix}.')]:",
+                "        del sys.modules[name]",
+            ]
+        )
+        assert unrestored_prefix_purges(ast.parse(source)) == []
+
+    def test_a_literal_key_removal_is_the_other_rule(self) -> None:
+        """This half grades the dynamic key; naming one entry is graded by name."""
+        source = "\n".join(["import sys", "def test_x():", "    sys.modules.pop('boto3', None)"])
+        assert unrestored_prefix_purges(ast.parse(source)) == []
+        assert unrestored_removals(ast.parse(source)) == [(3, "test_x", "boto3")]
+
+    def test_a_setup_teardown_pair_is_read_as_one_unit(self) -> None:
+        """The capture may live in the class rather than the purging method."""
+        source = "\n".join(
+            [
+                "import sys",
+                "class TestX:",
+                "    def setup_method(self):",
+                "        self.held = dict(sys.modules)",
+                "    def teardown_method(self):",
+                "        for key in list(sys.modules):",
+                "            if key.startswith('pkg.sub'):",
+                "                sys.modules.pop(key, None)",
+                "        sys.modules.update(self.held)",
+            ]
+        )
+        assert unrestored_prefix_purges(ast.parse(source)) == []

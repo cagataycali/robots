@@ -41,7 +41,7 @@ import pytest
 
 import strands_robots
 from strands_robots.utils import tcp_port_error
-from tests.test_reachy_mini_driver import _force_real_device_connect_edge
+from tests._device_connect_real import use_the_real_edge
 
 # Values that cannot address a TCP port. ``True`` is included because it is an
 # ``int`` subclass: a bare range test reads it as a silent port 1.
@@ -67,7 +67,7 @@ USABLE_PORTS = [1, 8000, 9001, 65535]
 @pytest.fixture
 def rmd():
     """The reachy_mini_driver module bound to the real device_connect_edge."""
-    _force_real_device_connect_edge()
+    use_the_real_edge()
     import strands_robots.device_connect.reachy_mini_driver as module
 
     return module
