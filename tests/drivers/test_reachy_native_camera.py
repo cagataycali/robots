@@ -21,18 +21,20 @@ def test_camera_requires_connection_before_loading_media() -> None:
     assert "not connected" in result["content"][0]["text"]
 
 
-def test_camera_dispatch_reaches_the_bound_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_camera_dispatch_reaches_the_bound_driver(connected, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Through the ``connected`` fixture's stubbed daemon, because the verb
+    # connects lazily before dispatching: left to discover one, this passed only
+    # on a host that happens to have a Mini on its network.
     from strands import Agent
 
-    driver = ReachyDriver()
     seen = []
 
     def capture(save_path=""):
         seen.append(save_path)
         return {"status": "success", "content": [{"json": {"path": save_path, "width": 16, "height": 8}}]}
 
-    monkeypatch.setattr(driver, "capture_frame", capture)
-    agent = Agent(tools=[driver], callback_handler=None)
+    monkeypatch.setattr(connected, "capture_frame", capture)
+    agent = Agent(tools=[connected], callback_handler=None)
     result = agent.tool.reachy_mini(action="camera", save_path="desk.jpg")
     assert result["status"] == "success"
     assert seen == ["desk.jpg"]
