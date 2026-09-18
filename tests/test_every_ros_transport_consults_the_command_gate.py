@@ -39,9 +39,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import strands_robots.rtps.participant as rtps_participant_mod
 import strands_robots.tools.use_ros as ros_mod
 import strands_robots.tools.use_rosbridge as rosbridge_mod
-import strands_robots.tools.use_rtps as rtps_mod
+from strands_robots.mesh import RtpsRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
@@ -58,10 +59,12 @@ _COMMAND_VERBS = frozenset({"publish", "service_call", "action_send_goal"})
 
 # Each agent-callable transport, with the module holding its backend probe and
 # the interface type spelling that transport accepts. rosbridge speaks ROS 1
-# two-segment types; the other two speak ROS 2 three-segment types.
+# two-segment types; the other two speak ROS 2 three-segment types. ``use_rtps``
+# is an envelope over a participant two layers down, which an ``RtpsRobot``
+# publishes through as well, so its probe is that participant's.
 _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
     ("use_ros", use_ros, ros_mod, "geometry_msgs/msg/Twist"),
-    ("use_rtps", use_rtps, rtps_mod, "geometry_msgs/msg/Twist"),
+    ("use_rtps", use_rtps, rtps_participant_mod, "geometry_msgs/msg/Twist"),
     ("use_rosbridge", use_rosbridge, rosbridge_mod, "geometry_msgs/Twist"),
 )
 
@@ -86,7 +89,7 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-    for module in (ros_mod, rtps_mod, rosbridge_mod):
+    for module in (ros_mod, rtps_participant_mod, rosbridge_mod):
         monkeypatch.setattr(module._backend, "available", lambda: True)
 
 
@@ -215,6 +218,48 @@ class TestTheGateRunsAfterArgumentValidation:
         result = tool(action="publish", topic=_BLOCKED, timeout=_DIAL_TIMEOUT, tool_context=ctx)
         assert result["status"] == "error"
         assert not ctx.interrupt.called, f"{label} asked the operator about an incomplete call"
+
+
+class TestEveryCallerOfOneParticipantAsksTheSameQuestion:
+    """A transport is not always a tool: the RTPS participant has two callers.
+
+    :mod:`strands_robots.rtps.participant` carries the DDS mechanics for the
+    ``use_rtps`` tool *and* for :class:`~strands_robots.mesh.RtpsRobot`, which
+    publishes a ``Twist`` to the same physical ``cmd_vel`` without going through
+    an agent tool at all. The structural pin above reads the tool package, so it
+    cannot see that second caller - these two cases are the same argument one
+    layer down: a participant nobody can publish through without deciding about
+    the operator, and one label for the decision however it was reached.
+    """
+
+    def test_the_participant_refuses_to_publish_without_a_gate_argument(self) -> None:
+        """The gate is a required argument, so a caller cannot omit it silently.
+
+        A default would be the un-gated sibling all over again: whichever value
+        it took, a new caller would inherit it by writing nothing.
+        """
+        gate = inspect.signature(rtps_participant_mod.rtps_action).parameters["gate"]
+        assert gate.default is inspect.Parameter.empty, "a defaulted gate is a gate a caller can forget"
+        assert gate.kind is inspect.Parameter.KEYWORD_ONLY
+
+    def test_a_robot_and_the_tool_prompt_the_operator_identically(self) -> None:
+        """One blocklisted topic, one question - whichever caller reached it.
+
+        The label keys the interrupt id ``<tool>-command-approval`` and the audit
+        source ``<tool>_tool``, so two spellings would file one incident's rows
+        under two names and an operator would be asked the same thing twice over.
+        Both callers decline here, so the assertion is made before any writer
+        joins a DDS graph.
+        """
+        tool_ctx, robot_ctx = MagicMock(), MagicMock()
+        tool_ctx.interrupt.return_value = "n"
+        robot_ctx.interrupt.return_value = "n"
+
+        assert _publish(use_rtps, "geometry_msgs/msg/Twist", tool_ctx)["status"] == "error"
+        robot = RtpsRobot.from_rtps(node_name="rover", cmd_vel_topic=_BLOCKED)
+        assert robot.drive(linear=1.0, tool_context=robot_ctx)["status"] == "error"
+
+        assert robot_ctx.interrupt.call_args == tool_ctx.interrupt.call_args
 
 
 def _commanding_transport_modules() -> dict[str, set[str]]:

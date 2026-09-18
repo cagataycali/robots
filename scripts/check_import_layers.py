@@ -113,7 +113,6 @@ KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
     ("strands_robots.mesh.ackermann_robot", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.ros_bridge", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),
-    ("strands_robots.mesh.rtps_robot", "strands_robots.tools.use_rtps"),
 )
 
 

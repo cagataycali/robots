@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rtps.participant as participant_mod
 import strands_robots.tools.use_ros as ros_mod
 import strands_robots.tools.use_rosbridge as rosbridge_mod
 import strands_robots.tools.use_rtps as rtps_mod
@@ -58,7 +59,7 @@ def _texts(result: dict[str, Any]) -> str:
 def _every_backend_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default every transport to a present backend; opt out where needed."""
     monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     monkeypatch.setattr(rosbridge_mod._backend, "available", lambda: True)
 
 

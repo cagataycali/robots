@@ -22,7 +22,7 @@ import pytest
 
 import strands_robots
 import strands_robots.mesh.rtps_robot as rtps_robot_module
-import strands_robots.tools.use_rtps as use_rtps_module
+import strands_robots.rtps.participant as participant_module
 from strands_robots.rtps.idl import REGISTRY, have_cyclonedds
 from strands_robots.rtps.mangling import (
     MAX_DDS_TOPIC_LENGTH,
@@ -279,7 +279,7 @@ def test_the_dds_length_bound_is_enforced_in_both_directions() -> None:
 def test_the_topic_rule_is_spelled_once_in_the_package() -> None:
     """Every seam that gates "is this a ROS 2 topic" reads the one pattern.
 
-    The rule was spelled three times - here, in the ``use_rtps`` tool, and in
+    The rule was spelled three times - here, in the RTPS participant, and in
     the RTPS mobile-base robot - as byte-identical copies, so tightening one
     left the other two admitting names the mangling refuses. Grading the source
     is what keeps a fourth seam from starting its own copy: a regex literal is
@@ -294,14 +294,16 @@ def test_the_topic_rule_is_spelled_once_in_the_package() -> None:
     )
     assert spellings == ["rtps/mangling.py"], spellings
 
-    # And the two seams that had a copy now read this one. ``use_rtps`` reads it
-    # through ``ros_topic_error`` - the rendering of this pattern's verdict, which
-    # early-returns on it - rather than by binding the pattern under a name of its
-    # own. That is the stronger form of the property this cell is here to hold:
-    # the tool cannot answer "is this a ROS 2 topic" differently from the mangling
-    # because it does not answer the question at all, and it keeps no topic-rule
-    # name that a later edit could quietly repoint. Asserting an alias no caller
-    # read would grade a vestige instead of the seam.
-    assert use_rtps_module.ros_topic_error is ros_topic_error
-    assert not any(name.endswith("_TOPIC_RE") for name in vars(use_rtps_module))
+    # And the two seams that had a copy now read this one. The participant every
+    # RTPS caller publishes through - the ``use_rtps`` tool and the robot below -
+    # reads it through ``ros_topic_error``, the rendering of this pattern's
+    # verdict, which early-returns on it, rather than by binding the pattern under
+    # a name of its own. That is the stronger form of the property this cell is
+    # here to hold: the participant cannot answer "is this a ROS 2 topic"
+    # differently from the mangling because it does not answer the question at
+    # all, and it keeps no topic-rule name that a later edit could quietly
+    # repoint. Asserting an alias no caller read would grade a vestige instead of
+    # the seam.
+    assert participant_module.ros_topic_error is ros_topic_error
+    assert not any(name.endswith("_TOPIC_RE") for name in vars(participant_module))
     assert rtps_robot_module.RtpsRobot._TOPIC_RE is ROS_TOPIC_RE

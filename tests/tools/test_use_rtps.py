@@ -1,11 +1,18 @@
-"""Behavior tests for the ``use_rtps`` tool.
+"""Behavior tests for the ``use_rtps`` tool and the participant it publishes through.
 
-``use_rtps`` is a pure-RTPS ROS 2 participant on cyclonedds. These tests are
-hermetic: they neither require nor reject an installed cyclonedds / ROS 2 -- the
-backend's ``available`` probe and its writer/reader factories are monkeypatched,
-so every action-dispatch branch, the agent-input validation, the no-backend
-error path, and the structured error-return contract are exercised middleware-
-free on any machine.
+``use_rtps`` is the agent envelope over a pure-RTPS ROS 2 participant on
+cyclonedds (:mod:`strands_robots.rtps.participant`, which
+:class:`~strands_robots.mesh.rtps_robot.RtpsRobot` publishes through as well).
+These tests are hermetic: they neither require nor reject an installed
+cyclonedds / ROS 2 -- the backend's ``available`` probe and its writer/reader
+factories are monkeypatched, so every action-dispatch branch, the agent-input
+validation, the no-backend error path, and the structured error-return contract
+are exercised middleware-free on any machine.
+
+The tool is driven end to end throughout: the dispatch, the DDS-entity caching
+and the pure sample helpers all belong to the participant, and reaching them
+through the tool grades the envelope and the participant together rather than
+one of them twice.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.rtps.participant as participant_mod
 import strands_robots.tools.use_rtps as rtps_mod
 
 use_rtps = rtps_mod.use_rtps
@@ -61,10 +69,10 @@ class _FakeWriter:
 def fake_backend(monkeypatch: pytest.MonkeyPatch) -> _FakeWriter:
     """Patch the backend to be available with a recording writer; no real DDS."""
     writer = _FakeWriter()
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rtps_mod._backend, "writer", lambda topic, type: writer)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "writer", lambda topic, type: writer)
     # publish sleeps for settle/rate; make it instant.
-    monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(participant_mod.time, "sleep", lambda *_: None)
     return writer
 
 
@@ -99,7 +107,7 @@ def test_service_and_action_types_are_refused_before_the_backend_probe(
     # type is refused with the types ROS 2 does generate quoted. The refusal is
     # the mangling's own (dds_type_name), so it reads the same with or without
     # cyclonedds and never reaches the install hint or the IDL bundle lookup.
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: False)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: False)
     result = use_rtps(action="advertise", topic="/x", type=kind_type)
     assert result["status"] == "error"
     text = _texts(result)
@@ -113,7 +121,7 @@ def test_service_and_action_types_are_refused_before_the_backend_probe(
 
 
 def test_status_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     result = use_rtps(action="status")
     assert result["status"] == "success"
     assert "cyclonedds" in _texts(result)
@@ -121,14 +129,14 @@ def test_status_available(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_status_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: False)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: False)
     result = use_rtps(action="status")
     assert result["status"] == "success"
     assert "backend: none" in _texts(result)
 
 
 def test_action_without_backend_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: False)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: False)
     result = use_rtps(action="publish", topic="/cmd_vel", type="geometry_msgs/msg/Twist")
     assert result["status"] == "error"
     assert "cyclonedds" in _texts(result)
@@ -139,7 +147,7 @@ def test_action_without_backend_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_types_lists_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     # REGISTRY is imported inside the function from the idl module; patch there.
     import strands_robots.rtps.idl as idl_mod
 
@@ -197,7 +205,7 @@ def test_publish_unknown_field_is_structured_error(fake_backend: _FakeWriter, mo
 
 
 def test_publish_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     assert use_rtps(action="publish", topic="/cmd_vel")["status"] == "error"
 
 
@@ -214,7 +222,7 @@ def test_advertise_creates_writer(fake_backend: _FakeWriter, monkeypatch: pytest
 
 
 def test_unknown_action_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     result = use_rtps(action="warp_drive")
     assert result["status"] == "error"
     assert "unknown action" in _texts(result)
@@ -240,12 +248,12 @@ class _FakeReader:
 @pytest.fixture
 def with_reader(monkeypatch: pytest.MonkeyPatch):
     """Patch the backend available + reader factory; return a setter for batches."""
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
-    monkeypatch.setattr(rtps_mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod.time, "sleep", lambda *_: None)
 
     def _install(batches: list[list[Any]]) -> _FakeReader:
         reader = _FakeReader(batches)
-        monkeypatch.setattr(rtps_mod._backend, "reader", lambda topic, type: reader)
+        monkeypatch.setattr(participant_mod._backend, "reader", lambda topic, type: reader)
         return reader
 
     return _install
@@ -300,14 +308,14 @@ def test_echo_times_out_with_empty_samples(with_reader) -> None:
 
 
 def test_echo_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     result = use_rtps(action="echo", topic="/cmd_vel")
     assert result["status"] == "error"
     assert "echo requires topic and type" in _texts(result)
 
 
 def test_advertise_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(rtps_mod._backend, "available", lambda: True)
+    monkeypatch.setattr(participant_mod._backend, "available", lambda: True)
     result = use_rtps(action="advertise", topic="/cmd_vel")
     assert result["status"] == "error"
     assert "advertise requires topic and type" in _texts(result)
@@ -318,7 +326,7 @@ def test_advertise_requires_topic_and_type(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_sample_to_dict_handles_nested_lists_and_scalars() -> None:
     sample = _Twist(linear=_Vec3(x=1.0, y=2.0), angular=_Vec3(z=3.0))
-    out = rtps_mod._sample_to_dict([sample, 7])
+    out = participant_mod._sample_to_dict([sample, 7])
     assert out[0]["linear"] == {"x": 1.0, "y": 2.0, "z": 0.0}
     assert out[0]["angular"]["z"] == 3.0
     assert out[1] == 7  # scalars pass through unchanged
@@ -328,8 +336,8 @@ def test_resolve_field_types_falls_back_when_hints_unresolvable(monkeypatch: pyt
     def _boom(_cls: Any) -> dict[str, Any]:
         raise NameError("unresolved forward ref")
 
-    monkeypatch.setattr(rtps_mod.typing, "get_type_hints", _boom)
-    resolved = rtps_mod._resolve_field_types(_Vec3)
+    monkeypatch.setattr(participant_mod.typing, "get_type_hints", _boom)
+    resolved = participant_mod._resolve_field_types(_Vec3)
     # Falls back to the raw dataclasses Field.type (a string under future-annotations).
     assert set(resolved) == {"x", "y", "z"}
 
@@ -344,7 +352,7 @@ def test_backend_available_true_when_cyclonedds_present(monkeypatch: pytest.Monk
     import strands_robots.rtps.idl as idl_mod
 
     monkeypatch.setattr(idl_mod, "have_cyclonedds", lambda: True)
-    assert rtps_mod._RtpsBackend().available() is True
+    assert participant_mod._RtpsBackend().available() is True
 
 
 def test_backend_available_false_without_cyclonedds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -356,7 +364,7 @@ def test_backend_available_false_without_cyclonedds(monkeypatch: pytest.MonkeyPa
     import strands_robots.rtps.idl as idl_mod
 
     monkeypatch.setattr(idl_mod, "have_cyclonedds", lambda: False)
-    assert rtps_mod._RtpsBackend().available() is False
+    assert participant_mod._RtpsBackend().available() is False
 
 
 def test_backend_available_import_error_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -370,7 +378,7 @@ def test_backend_available_import_error_returns_false(monkeypatch: pytest.Monkey
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", _fail)
-    assert rtps_mod._RtpsBackend().available() is False
+    assert participant_mod._RtpsBackend().available() is False
 
 
 # Backend DDS-entity caching contract --------------------------------------
@@ -452,14 +460,14 @@ def rtps_entities(monkeypatch: pytest.MonkeyPatch) -> _EntityRecorder:
 
 
 def test_participant_created_once_and_shared(rtps_entities: _EntityRecorder) -> None:
-    backend = rtps_mod._RtpsBackend()
+    backend = participant_mod._RtpsBackend()
     first = backend._participant_obj()
     second = backend._participant_obj()
     assert first is second  # one shared presence on the graph
 
 
 def test_writer_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecorder) -> None:
-    backend = rtps_mod._RtpsBackend()
+    backend = participant_mod._RtpsBackend()
 
     w1 = backend.writer("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
     w1_again = backend.writer("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
@@ -478,7 +486,7 @@ def test_writer_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecord
 
 
 def test_reader_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecorder) -> None:
-    backend = rtps_mod._RtpsBackend()
+    backend = participant_mod._RtpsBackend()
 
     r1 = backend.reader("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
     r1_again = backend.reader("/turtle1/cmd_vel", "geometry_msgs/msg/Twist")
@@ -492,7 +500,7 @@ def test_reader_get_or_create_caches_per_topic_type(rtps_entities: _EntityRecord
 
 
 def test_writer_and_reader_share_one_participant(rtps_entities: _EntityRecorder) -> None:
-    backend = rtps_mod._RtpsBackend()
+    backend = participant_mod._RtpsBackend()
     writer = backend.writer("/cmd_vel", "geometry_msgs/msg/Twist")
     reader = backend.reader("/cmd_vel", "geometry_msgs/msg/Twist")
     # A single DomainParticipant backs both directions of the participant.
