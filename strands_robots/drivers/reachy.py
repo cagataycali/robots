@@ -89,6 +89,7 @@ DEFAULT_API_PORT: int = 8000
 #: the same constants the driver sends.
 _PATH_STATUS = "/api/daemon/status"
 _PATH_STOP = "/api/move/stop"
+_PATH_SET_TARGET = "/api/move/set_target"
 _PATH_WAKE = "/api/move/play/wake_up"
 _PATH_SLEEP = "/api/move/play/goto_sleep"
 _PATH_MOVE_PLAY = "/api/move/play/recorded-move-dataset/{dataset}/{move}"
@@ -210,6 +211,7 @@ class ReachyDriver(AgentTool):
         *,
         port: str | None = None,
         api_port: int = DEFAULT_API_PORT,
+        media_port: int = 8443,
         zenoh_prefix: str | None = None,
         transport: Any = None,
         **kwargs: Any,
@@ -237,6 +239,7 @@ class ReachyDriver(AgentTool):
                 ``localhost``, which is where a Lite's daemon runs.
             api_port: Daemon port to use when ``port`` carries no ``:port``
                 suffix. An explicit suffix in ``port`` wins.
+            media_port: Native GStreamer LAN signaling port used for camera capture.
             zenoh_prefix: Zenoh key prefix for a Wireless Mini. Defaults to
                 ``tool_name``, so two Minis do not share a key space.
             transport: Zenoh transport for a Wireless Mini, passed through to
@@ -261,6 +264,9 @@ class ReachyDriver(AgentTool):
         self._host, self._api_port = _split_host_port(port, api_port)
         self._zenoh_prefix = zenoh_prefix or tool_name
         self._transport = transport
+        if reason := tcp_port_error(media_port, "media_port", "ReachyDriver"):
+            raise ValueError(reason)
+        self._media_port = int(media_port)
 
         # Sensor caches. Every one is optional per the mesh contract, so a
         # driver that has not connected is not broken. Written by link
@@ -270,6 +276,7 @@ class ReachyDriver(AgentTool):
         self._pose: dict[str, Any] | None = None
         self._battery: dict[str, Any] | None = None
         self._joints: dict[str, Any] | None = None
+        self._joints_received_at: float | None = None
 
         # The head yaw, in degrees, this driver last put on the wire, and so the
         # one the daemon is still targeting. Not a sensor reading: no telemetry
@@ -314,12 +321,13 @@ class ReachyDriver(AgentTool):
 
     @property
     def tool_spec(self) -> ToolSpec:
-        """A minimal agent-facing spec.
+        """JSON-callable status, sensors, stop, camera and microphone capture.
 
         The expressive verb set (``look``, ``antennas``, ``express``, ``say``)
         arrives as ``reachy_*`` agent tools built on the same daemon and the
         same shared envelope; they are a separate change. Here we ship the
-        universal ``status``/``stop`` verbs and a ``sensors`` read-out, so an
+        universal ``status``/``stop`` verbs, a ``sensors`` read-out and native
+        ``camera``/``record_audio`` capture, so an
         agent can introspect a Mini the day the driver merges.
         """
         return cast(
@@ -328,7 +336,7 @@ class ReachyDriver(AgentTool):
                 "name": self._tool_name,
                 "description": (
                     "Pollen Reachy Mini native driver: reads the Reachy daemon for head "
-                    "IMU, head orientation and battery, and stops motion on request. "
+                    "IMU, head orientation and battery, captures native camera/microphone data, and stops motion on request. "
                     "Expressive motion verbs arrive with the reachy_* tool bundle."
                 ),
                 "inputSchema": {
@@ -340,10 +348,35 @@ class ReachyDriver(AgentTool):
                                 "description": (
                                     "sensors: return the latest cached IMU/pose/battery/joints; "
                                     "status: report daemon reachability and hardware variant; "
-                                    "stop: ask the daemon to stop any motion in progress"
+                                    "stop: ask the daemon to stop any motion in progress; "
+                                    "camera: save a fresh native camera JPEG locally; "
+                                    "record_audio: record a bounded microphone WAV locally (both require GStreamer); "
+                                    "plan_look_at: compute pixel look-at geometry without any motion"
                                 ),
-                                "enum": ["sensors", "status", "stop"],
+                                "enum": ["sensors", "status", "stop", "camera", "record_audio", "plan_look_at"],
                                 "default": "sensors",
+                            },
+                            "u": {"type": "integer", "description": "Pixel column for read-only plan_look_at."},
+                            "v": {"type": "integer", "description": "Pixel row for read-only plan_look_at."},
+                            "frame_width": {
+                                "type": "integer",
+                                "description": "Unmodified source frame width for plan_look_at.",
+                            },
+                            "frame_height": {
+                                "type": "integer",
+                                "description": "Unmodified source frame height for plan_look_at.",
+                            },
+                            "duration": {
+                                "type": "number",
+                                "description": "Microphone recording duration in seconds (record_audio only).",
+                                "minimum": 0.1,
+                                "maximum": 5,
+                                "default": 1,
+                            },
+                            "save_path": {
+                                "type": "string",
+                                "description": "Camera JPEG or audio WAV output path; empty creates a private temporary file. Never overwrites.",
+                                "default": "",
                             },
                         },
                         "required": ["action"],
@@ -387,6 +420,22 @@ class ReachyDriver(AgentTool):
             }
         elif action == "status":
             envelope = {"status": "success", "content": [{"json": await self.get_status()}]}
+        elif action == "plan_look_at":
+            params = tool_use.get("input") or {}
+            envelope = await asyncio.to_thread(
+                self.plan_look_at,
+                params.get("u", -1),
+                params.get("v", -1),
+                params.get("frame_width", 0),
+                params.get("frame_height", 0),
+            )
+        elif action == "record_audio":
+            params = tool_use.get("input") or {}
+            envelope = await asyncio.to_thread(
+                self.record_audio, params.get("duration", 1.0), params.get("save_path", "")
+            )
+        elif action == "camera":
+            envelope = await asyncio.to_thread(self.capture_frame, (tool_use.get("input") or {}).get("save_path", ""))
         elif action == "stop":
             # Report the halt outcome rather than assert one.  ``stop`` is the
             # protocol's shutdown hook and returns ``None``: a daemon that
@@ -674,6 +723,8 @@ class ReachyDriver(AgentTool):
         self._loop = None
         self._loop_thread = None
         self._connected = False
+        with self._cache_lock:
+            self._joints_received_at = None
         self._remember_head_yaw_target(None)
 
     # ------------------------------------------------------------------ #
@@ -684,6 +735,8 @@ class ReachyDriver(AgentTool):
         self,
         action: dict[str, Any],
         robot_name: str | None = None,
+        *,
+        require_ack: bool = False,
     ) -> dict[str, Any]:
         """Command head pose, body yaw and antennas, refusing what cannot be met.
 
@@ -724,6 +777,14 @@ class ReachyDriver(AgentTool):
             robot_name: Accepted for contract parity. This driver fronts exactly
                 one Mini, so a name that is neither ``None`` nor this driver's
                 own is refused rather than silently applied to the wrong robot.
+            require_ack: Opt into a native REST acknowledgement for an explicit
+                antenna_right/antenna_left pair only. Requires telemetry received
+                within 0.5 monotonic seconds. Only complete, finite joint frames
+                refresh this receipt. All existing numeric/envelope gates still run.
+                Busy/unknown/failed replies refuse without a WebSocket fallback
+                or retry; a timeout leaves delivery uncertain. Default false
+                preserves the existing fire-and-forget link path. Neither path
+                verifies physical motion or grants exclusive controller ownership.
 
         Returns:
             A success envelope naming what was sent, or an error envelope naming
@@ -734,6 +795,8 @@ class ReachyDriver(AgentTool):
         if not self._connected:
             return _refuse("not connected - call connect_eagerly() first")
 
+        if not isinstance(require_ack, bool):
+            return _refuse("send_action: require_ack must be a boolean")
         for name, value in action.items():
             if (reason := finite_number_error(value, name, "send_action")) is not None:
                 return _refuse(reason)
@@ -759,6 +822,37 @@ class ReachyDriver(AgentTool):
                 "A dropped head axis is commanded to zero rather than left alone, because the daemon's "
                 "head command is a whole pose"
             )
+
+        if require_ack:
+            if set(action) != {"antenna_right", "antenna_left"}:
+                return _refuse("send_action: require_ack supports only an explicit antenna_right/antenna_left pair")
+            with self._cache_lock:
+                stamp = self._joints_received_at
+            if (
+                stamp is None
+                or finite_number_error(stamp, "telemetry timestamp", "send_action")
+                or not 0 <= time.monotonic() - stamp <= 0.5
+            ):
+                return _refuse("send_action: require_ack needs joint telemetry received within 0.5 seconds")
+            result = self._daemon_post(_PATH_SET_TARGET, {"target_antennas": commands[0]["antennas_joint_positions"]})
+            if "error" in result or result.get("status") != "ok":
+                return _refuse(
+                    f"send_action: target not acknowledged: {result!r}; delivery may be uncertain, no automatic retry"
+                )
+            self._stopped = False
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "json": {
+                            "sent": [sorted(c) for c in commands],
+                            "robot": self._tool_name,
+                            "acknowledgement": "daemon_target_handler_ok",
+                            "motion_verified": False,
+                        }
+                    }
+                ],
+            }
 
         for command in commands:
             if (error := self._send_cmd(command)) is not None:
@@ -1025,6 +1119,8 @@ class ReachyDriver(AgentTool):
             head = [math.degrees(float(j)) for j in payload.get("head_joint_positions", [])]
             antennas = [math.degrees(float(j)) for j in payload.get("antennas_joint_positions", [])]
             with self._cache_lock:
+                complete = len(head) in (6, 7) and len(antennas) == 2 and all(math.isfinite(v) for v in head + antennas)
+                self._joints_received_at = time.monotonic() if complete else None
                 self._joints = {
                     # The daemon's seven head motor values start with body yaw;
                     # only the remaining six are Stewart-platform legs. Older
@@ -1035,6 +1131,8 @@ class ReachyDriver(AgentTool):
                     "t": time.time(),
                 }
         except (TypeError, ValueError) as exc:
+            with self._cache_lock:
+                self._joints_received_at = None
             logger.debug("%s: joints decode failed: %s", self._tool_name, exc)
 
     def _on_imu(self, payload: dict[str, Any]) -> None:
@@ -1184,6 +1282,128 @@ class ReachyDriver(AgentTool):
         if not isinstance(result, dict):
             return _body_shape_error("POST", path, "an object", result)
         return result
+
+    def capture_frame(self, save_path: str = "") -> dict[str, Any]:
+        """Save one fresh camera JPEG through native LAN WebRTC, without taking media ownership.
+
+        The Python capture polling budget is ten seconds, followed by a
+        three-second teardown verification wait. Native calls are not preempted;
+        unconfirmed cleanup refuses data but may leave the receiver active.
+        Negotiated audio is discarded; nothing is played or commanded.
+        Requires PyGObject/GStreamer rswebrtc.
+        Authenticated/TLS daemon configurations are refused because this media
+        signaller cannot forward that authentication, never downgraded silently.
+
+        Args:
+            save_path: New JPEG path; empty creates a private temporary file.
+                Existing files and symlinks are never overwritten.
+
+        Returns:
+            A success envelope containing path, dimensions and source, or a refusal.
+        """
+        if not self._connected:
+            return _refuse("capture_frame: not connected - call connect_eagerly() first")
+        if not isinstance(save_path, str):
+            return _refuse("capture_frame: save_path must be a string")
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return _refuse(f"capture_frame: {transport}")
+        if transport._daemon_auth_token() or transport._daemon_use_tls():
+            return _refuse(
+                "capture_frame: authenticated/TLS media signaling is not supported; daemon credentials were not forwarded"
+            )
+        transport._warn_unauthenticated_once("media signaling")
+        try:
+            from strands_robots.drivers.reachy_media import _capture_jpeg, _save_jpeg
+
+            result = _save_jpeg(_capture_jpeg(self._host, self._media_port), save_path)
+        except Exception as exc:  # noqa: BLE001 - GI/plugins and image decoders expose vendor exception types
+            return _refuse(f"capture_frame: {exc}")
+        return {"status": "success", "content": [{"json": result}]}
+
+    def record_audio(self, duration: float = 1.0, save_path: str = "") -> dict[str, Any]:
+        """Record a bounded microphone WAV through native LAN WebRTC, without playback.
+
+        Receives mono 16 kHz signed 16-bit PCM after GStreamer conversion.
+        Decoder-reported damage, malformed buffers, stream errors and timeouts
+        refuse without saving. Receiver-clock adjustments are reported separately
+        from sample-derived duration; lossless transport is not verified.
+        Negotiated camera frames are discarded. The Python startup/capture
+        polling budget is ten seconds plus duration, followed by teardown
+        verification as in :meth:`capture_frame`; native calls are not preempted.
+        Requires the same trusted-LAN media setup as :meth:`capture_frame`.
+
+        Args:
+            duration: Seconds to record, finite and between 0.1 and 5 inclusive.
+            save_path: New WAV path; empty creates a private temporary file.
+
+        Returns:
+            Path and sample-derived recording metadata, or a refusal envelope.
+        """
+        if not self._connected:
+            return _refuse("record_audio: not connected - call connect_eagerly() first")
+        if reason := finite_number_error(duration, "duration", "record_audio"):
+            return _refuse(reason)
+        if not 0.1 <= duration <= 5:
+            return _refuse("record_audio: duration must be between 0.1 and 5 seconds")
+        if not isinstance(save_path, str):
+            return _refuse("record_audio: save_path must be a string")
+        transport = _resolve_transport()
+        if isinstance(transport, str):
+            return _refuse(f"record_audio: {transport}")
+        if transport._daemon_auth_token() or transport._daemon_use_tls():
+            return _refuse(
+                "record_audio: authenticated/TLS media signaling is not supported; daemon credentials were not forwarded"
+            )
+        transport._warn_unauthenticated_once("media signaling")
+        try:
+            from strands_robots.drivers.reachy_media import _capture_pcm, _save_wav
+
+            pcm, quality = _capture_pcm(self._host, self._media_port, duration)
+            if len(pcm) != round(duration * 16000) * 2:
+                return _refuse("record_audio: received sample count does not match the requested duration")
+            result = _save_wav(pcm, save_path)
+            result["quality"] = quality
+        except Exception as exc:  # noqa: BLE001 - GI/plugins expose vendor exception types
+            return _refuse(f"record_audio: {exc}")
+        return {"status": "success", "content": [{"json": result}]}
+
+    def plan_look_at(self, u: int, v: int, frame_width: int, frame_height: int) -> dict[str, Any]:
+        """Compute native pixel look-at geometry using GETs only; never command the head.
+
+        Uses daemon calibration/crop metadata and a fresh head pose, but the
+        frame and pose are not time-synchronized. The returned target recenters
+        translation, like the vendor geometry, and is NOT safety-validated.
+        Unknown camera models/resolutions or invalid geometry refuse rather than
+        guessing. This is deliberately not the motion accessor ``look_at_image``.
+
+        Args:
+            u: Pixel column, starting at zero on the left.
+            v: Pixel row, starting at zero at the top.
+            frame_width: Width of the unmodified source camera frame.
+            frame_height: Height of the unmodified source camera frame.
+
+        Returns:
+            A geometry-only plan explicitly marked motion_executed=false,
+            or a refusal. Never sends a motor, stop or media-ownership command.
+        """
+        if not self._connected:
+            return _refuse("plan_look_at: not connected - call connect_eagerly() first")
+        from strands_robots.drivers.reachy_look_at import _coordinates_error, _pixel_plan
+
+        if reason := _coordinates_error(u, v, frame_width, frame_height):
+            return _refuse(reason)
+        specs = self._daemon_get("/api/camera/specs")
+        if "error" in specs:
+            return _refuse(f"plan_look_at: {specs['error']}")
+        pose = self._daemon_get("/api/state/present_head_pose?use_pose_matrix=true")
+        if "error" in pose:
+            return _refuse(f"plan_look_at: {pose['error']}")
+        try:
+            plan = _pixel_plan(specs, pose, u, v, frame_width, frame_height)
+        except Exception as exc:  # noqa: BLE001 - geometry and OpenCV failures become explicit refusals
+            return _refuse(f"plan_look_at: {exc}")
+        return {"status": "success", "content": [{"json": plan}]}
 
     def _send_cmd(self, command: dict[str, Any]) -> str | None:
         """Put one real-time command on the link.

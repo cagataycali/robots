@@ -15,10 +15,8 @@ per verb from the ``_ACTIONS`` table. The ``driver`` parameter is typed
 :class:`~typing.Any` so no live-object type leaks into the generated tool
 schema.
 
-Four verbs (``reachy_play_sound``, ``reachy_volume``, ``reachy_camera``,
-``reachy_look_at``) name driver accessors that do not exist yet - the Mini's
-media rail is SDK-client-side and has no daemon REST path in this repository -
-so today they refuse by naming the accessor to plumb, exactly as
+Three verbs (``reachy_play_sound``, ``reachy_volume``, ``reachy_look_at``) name driver accessors that do not exist yet, so today they refuse by naming
+the accessor to plumb, exactly as
 ``g1_move_velocity`` did before ``G1Driver.move_velocity`` landed.
 """
 
@@ -105,34 +103,29 @@ _ACTIONS: dict[str, tuple[str, str, str]] = {
     ),
     "reachy_play_sound": (
         "play_sound",
-        "the verb plays one sound file through the driver's media path and reads back the envelope the driver produced",
+        "the verb requests speaker playback and may also drive configured head wobbling",
         "a callable ``play_sound(sound_file)`` returning the driver's "
-        "envelope - the Mini's media rail is not plumbed into ReachyDriver "
-        "yet, so this names the accessor to add",
+        "envelope - playback is not implemented; it may drive head wobbling, and acceptance cannot prove audible output",
     ),
     "reachy_volume": (
         "set_volume",
-        "the verb sets the speaker volume through the driver's media path "
-        "and reads back the envelope the driver produced",
+        "the verb sets speaker volume; the daemon REST setter also plays a test sound",
         "a callable ``set_volume(level)`` returning the driver's envelope - "
-        "the Mini's media rail is not plumbed into ReachyDriver yet, so this "
-        "names the accessor to add",
+        "speaker control is not implemented; the daemon setter also plays a test sound",
     ),
     "reachy_camera": (
         "capture_frame",
         "the verb captures one frame from the head camera through the "
         "driver's media path and reads back the envelope the driver produced",
         "a callable ``capture_frame(save_path)`` returning the driver's "
-        "envelope - the Mini's media rail is not plumbed into ReachyDriver "
-        "yet, so this names the accessor to add",
+        "envelope - the driver owns native capture, validation and session cleanup",
     ),
     "reachy_look_at": (
         "look_at_image",
         "the verb servos the head toward a camera pixel through the driver's "
         "media path and reads back the envelope the driver produced",
         "a callable ``look_at_image(u, v)`` returning the driver's envelope - "
-        "the Mini's media rail is not plumbed into ReachyDriver yet, so this "
-        "names the accessor to add",
+        "the motion accessor is not implemented; plan_look_at is read-only geometry",
     ),
 }
 
@@ -405,10 +398,9 @@ def reachy_motors(driver: Any, mode: str = "") -> dict[str, Any]:
 def reachy_play_sound(driver: Any, sound_file: str = "") -> dict[str, Any]:
     """Play a sound file through the Mini's speaker.
 
-    Calls ``ReachyDriver.play_sound(sound_file)`` once. The media rail is not
-    plumbed into the driver yet, so today this refuses by naming the accessor
-    to add - the same shape ``g1_move_velocity`` had before its driver method
-    landed.
+    Calls ``ReachyDriver.play_sound(sound_file)`` once. Playback is not
+    implemented, so this refuses. The daemon may also drive audio-reactive
+    head wobbling; an accepted request alone does not prove audible playback.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
@@ -429,9 +421,9 @@ def reachy_play_sound(driver: Any, sound_file: str = "") -> dict[str, Any]:
 def reachy_volume(driver: Any, level: int | None = None) -> dict[str, Any]:
     """Set the Mini's speaker volume, 0-100.
 
-    Calls ``ReachyDriver.set_volume(level)`` once. The media rail is not
-    plumbed into the driver yet, so today this refuses by naming the accessor
-    to add.
+    Calls ``ReachyDriver.set_volume(level)`` once. Speaker control is not
+    implemented, so this refuses. The daemon REST setter also plays a test
+    sound: changing volume must not be treated as a silent setting.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
@@ -456,9 +448,9 @@ def reachy_volume(driver: Any, level: int | None = None) -> dict[str, Any]:
 def reachy_camera(driver: Any, save_path: str = "") -> dict[str, Any]:
     """Capture a frame from the Mini's head camera and save it to disk.
 
-    Calls ``ReachyDriver.capture_frame(save_path)`` once. The media rail is
-    not plumbed into the driver yet, so today this refuses by naming the
-    accessor to add.
+    Calls ``ReachyDriver.capture_frame(save_path)`` once. Requires the native
+    GStreamer media service and local PyGObject/rswebrtc plugins. The driver
+    also exposes this as the JSON-callable ``camera`` action.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.
@@ -477,9 +469,9 @@ def reachy_camera(driver: Any, save_path: str = "") -> dict[str, Any]:
 def reachy_look_at(driver: Any, u: int | None = None, v: int | None = None) -> dict[str, Any]:
     """Servo the Mini's head toward pixel ``(u, v)`` in its camera frame.
 
-    Calls ``ReachyDriver.look_at_image(u, v)`` once. The media rail is not
-    plumbed into the driver yet, so today this refuses by naming the accessor
-    to add.
+    Calls ``ReachyDriver.look_at_image(u, v)`` once. That motion accessor is
+    not implemented yet, so this refuses. ``driver.plan_look_at`` is a separate
+    read-only geometry API; it must not masquerade as an executed movement.
 
     Args:
         driver: The live ReachyDriver handle the orchestrator constructed.

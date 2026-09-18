@@ -230,3 +230,107 @@ the name passed to `Robot(...)`, so `Robot("g1")` would report `g1/torso_link`.
 - [Mobile](mobile.md) - quadrupeds and wheeled bases.
 - [Bimanual](bimanual.md) - two-arm rigs without the legs.
 - [GR00T](../policies/groot.md) - many GR00T data_configs target humanoids.
+
+
+## Reachy Mini native camera
+
+`Robot("reachy_mini", mode="real", driver="strands")` speaks the daemon
+protocol directly. Its `camera` action captures a fresh JPEG through the daemon's
+GStreamer WebRTC service, not through a dashboard or the Reachy SDK:
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+mini = Robot("reachy_mini", mode="real", port="reachy-a.local:8000", mesh=False)
+try:
+    error = mini.connect_eagerly()
+    if error:
+        raise RuntimeError(error)
+    agent = Agent(tools=[mini], callback_handler=None)
+    result = agent.tool.reachy_mini(action="camera")
+finally:
+    mini.cleanup()
+```
+
+Install **PyGObject** and **GStreamer**, including the `rswebrtc`, JPEG and video
+conversion plugins, on the calling machine. These are optional system
+requirements; ordinary telemetry needs neither. Use an interpreter that can
+import both `gi.repository.Gst` and `gi.repository.GstApp`. On macOS, an isolated
+Python may need `DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib"` at launch to
+find Homebrew's native libraries; a pip-only install is not sufficient.
+Native signaling defaults to
+port **8443** (`media_port=` overrides it), selecting exactly one producer named
+`reachymini`. The caller and robot must share a trusted network. Authenticated
+or TLS daemon configurations currently refuse camera capture rather than
+silently bypassing those settings.
+
+`mini.capture_frame(save_path="")` is the direct equivalent. Empty paths create
+private temporary files; explicit paths must be new, and never overwrite a file
+or symlink. Results contain the path, decoded dimensions and source, **not image
+bytes**. The Python capture polling wait is limited to ten seconds. Each call
+requests teardown of its own receiver and waits up to three seconds to verify
+successful completion with no pending state transition. It refuses to return
+or save captured data if teardown cannot be confirmed; the receiver may still
+be active after that error. These waits do not impose a hard deadline on native
+GStreamer calls. Daemon media ownership is unchanged, negotiated microphone
+audio is discarded, and no speaker audio or motor commands are sent.
+
+
+### Bounded microphone capture
+
+`mini.record_audio(duration=0.5, save_path="")` and the `record_audio` agent
+action attempt a **0.1–5 second** local WAV recording. GStreamer converts incoming
+audio to mono, 16 kHz, signed 16-bit PCM. Video is discarded and nothing is played.
+One second of startup audio is discarded before recording, within the bounded
+capture budget. Decoder-reported discontinuities, gaps, corruption, short reads
+and cleanup failures refuse without saving a WAV. Duration comes from actual
+PCM samples, not wall-clock time. GStreamer's presentation timestamps include
+receive-clock corrections; those adjustments are returned under `quality`, not
+misreported as lost samples or hidden by inserting/removing audio. Network/Opus
+concealment is not fully observable at this boundary, so
+`transport_loss_verified` is always false. Files have the same exclusive/private
+policy as camera captures. Neither recording nor camera capture implies that
+speaker playback or pixel look-at is implemented.
+
+
+### Read-only pixel look-at planning
+
+`mini.plan_look_at(u, v, frame_width, frame_height)` also has a JSON agent action,
+`plan_look_at`, with those four integer parameters. It reads daemon calibration,
+resolves the stream's crop factor, undistorts the pixel, and uses a fresh head
+pose to compute a target. Only known full-sensor camera models (`wireless`,
+`lite`, `older_rpi`) and advertised, unambiguous resolutions are accepted.
+Pixels must come from an **unmodified camera frame**, not a resized preview.
+
+This is geometry, **not head control**. Results state `motion_executed=false`,
+`safety_validated=false` and `frame_pose_synchronized=false`. Like the vendor
+geometry, the proposed target recenters translation at the origin; it must not
+be executed blindly. Small numerical FK rotation errors are reported, while
+grossly invalid transforms refuse. There is no automatic fallback or actuator
+alias: `look_at_image`/the motion-oriented `reachy_look_at` remain unimplemented.
+
+### Acknowledged antenna targets
+
+For supervised diagnostics, `mini.send_action({"antenna_right": right_deg,
+"antenna_left": left_deg}, require_ack=True)` uses the native REST target handler
+instead of fire-and-forget WebSocket commands. It requires both antenna values,
+a connected driver, finite values and complete finite joint telemetry received
+within 0.5 monotonic seconds (wall-clock corrections do not change expiry).
+Other axes are refused in this opt-in mode; default `send_action` is unchanged.
+
+Only an explicit daemon `status=ok` is acknowledged. Busy, unknown and failed
+responses refuse, without retrying or falling back to another command path.
+A timeout leaves delivery uncertain. Success says `motion_verified=false`:
+an accepted target does not prove that a servo moved, that torque is enabled
+for that motor, or that another controller will not overwrite it. This option
+adds no motion permission or per-call excursion bound; supervision and encoder
+readback remain necessary. The daemon's HTTP job list alone cannot establish
+exclusive control.
+
+Speaker playback and volume mutation remain unavailable in the native driver.
+The daemon's volume setter also plays a test sound, and playback can drive
+configured audio-reactive head wobbling. Its playback endpoint can even return
+`ok` when no media server exists, so acceptance is not evidence of audible
+output. These controls need separate supervised validation; microphone capture
+does not enable them or change their settings.

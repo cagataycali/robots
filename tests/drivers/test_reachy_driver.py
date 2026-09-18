@@ -202,7 +202,7 @@ class TestTheDriverSatisfiesTheSeam:
 
     def test_the_tool_spec_declares_only_verbs_the_driver_implements(self) -> None:
         enum = ReachyDriver().tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
-        assert sorted(enum) == ["sensors", "status", "stop"]
+        assert sorted(enum) == ["camera", "plan_look_at", "record_audio", "sensors", "status", "stop"]
 
     def test_the_constructor_takes_the_three_factory_keywords(self) -> None:
         # The factory builds every native driver this way; see

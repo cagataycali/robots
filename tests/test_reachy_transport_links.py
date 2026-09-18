@@ -352,12 +352,13 @@ class TestWebSocketLink(unittest.TestCase):
         _run(link.send_cmd({"head_pose": [[1, 2], [3, 4]]}))
         self.assertEqual(json.loads(link._ws.sent[0])["head"], [1, 2, 3, 4])
 
-    def test_send_cmd_noop_when_not_connected(self):
+    def test_send_cmd_refuses_when_not_connected(self):
         link = WebSocketLink("h", 1)
-        # _ws is None -> must return silently, not raise.
-        _run(link.send_cmd({"body_yaw": 0.1}))
+        # A caller must not mistake a missing socket for a submitted command.
+        with self.assertRaisesRegex(ConnectionError, "not connected"):
+            _run(link.send_cmd({"body_yaw": 0.1}))
 
-    def test_send_cmd_after_stop_is_the_documented_noop(self):
+    def test_send_cmd_after_stop_reports_disconnection(self):
         """A stopped link refuses the send instead of using the closed socket.
 
         ``send_cmd`` reads ``_ws`` as its "is the socket connected?" test, so a
@@ -372,7 +373,8 @@ class TestWebSocketLink(unittest.TestCase):
             link._read_task = asyncio.create_task(asyncio.sleep(60))
             await asyncio.sleep(0)
             await link.stop()
-            await link.send_cmd({"body_yaw": 0.1})  # documented no-op
+            with self.assertRaisesRegex(ConnectionError, "not connected"):
+                await link.send_cmd({"body_yaw": 0.1})
 
         _run(scenario())
         self.assertEqual(fake_ws.sent, [])
@@ -396,7 +398,8 @@ class TestWebSocketLink(unittest.TestCase):
         async def scenario():
             with self.assertRaises(ConnectionError):
                 await link.stop()
-            await link.send_cmd({"body_yaw": 0.1})  # documented no-op
+            with self.assertRaisesRegex(ConnectionError, "not connected"):
+                await link.send_cmd({"body_yaw": 0.1})
 
         _run(scenario())
         self.assertEqual(fake_ws.sent, [])
