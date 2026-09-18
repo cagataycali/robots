@@ -43,9 +43,7 @@ def _write_json(path: Path, obj: Any) -> Path:
 class TestBadCalibrationReturnsStructuredError:
     """A calibration file the bus cannot resolve returns status=error."""
 
-    def test_missing_motor_in_calibration(
-        self, tmp_path: Path, _stub_serial: None
-    ) -> None:
+    def test_missing_motor_in_calibration(self, tmp_path: Path, _stub_serial: None) -> None:
         """A record set that is short one motor raises ValueError inside the bus."""
         # Only 5 of 6 motors - missing 'gripper'
         bad = {
@@ -63,13 +61,10 @@ class TestBadCalibrationReturnsStructuredError:
             calibration=str(cal_path),
         )
         assert result["status"] == "error", (
-            "A calibration missing a motor must return status=error, "
-            "not raise past the tool envelope"
+            "A calibration missing a motor must return status=error, not raise past the tool envelope"
         )
 
-    def test_inverted_range_in_calibration(
-        self, tmp_path: Path, _stub_serial: None
-    ) -> None:
+    def test_inverted_range_in_calibration(self, tmp_path: Path, _stub_serial: None) -> None:
         """range_min >= range_max in one motor's record raises ValueError."""
         bad = {
             "shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": 0, "range_min": 3000, "range_max": 100},
@@ -87,13 +82,10 @@ class TestBadCalibrationReturnsStructuredError:
             calibration=str(cal_path),
         )
         assert result["status"] == "error", (
-            "A calibration with range_min >= range_max must return "
-            "status=error, not raise past the tool envelope"
+            "A calibration with range_min >= range_max must return status=error, not raise past the tool envelope"
         )
 
-    def test_error_text_names_the_action(
-        self, tmp_path: Path, _stub_serial: None
-    ) -> None:
+    def test_error_text_names_the_action(self, tmp_path: Path, _stub_serial: None) -> None:
         """The structured error names the action the caller invoked."""
         bad = {
             "shoulder_pan": {"id": 1, "drive_mode": 0, "homing_offset": 0, "range_min": 100, "range_max": 3000},
@@ -107,7 +99,4 @@ class TestBadCalibrationReturnsStructuredError:
         )
         assert result["status"] == "error"
         error_text = result["content"][0]["text"]
-        assert "read_motor" in error_text, (
-            "The error text must name the action so the caller knows "
-            "which call failed"
-        )
+        assert "read_motor" in error_text, "The error text must name the action so the caller knows which call failed"
