@@ -608,8 +608,14 @@ class TestALookWithAValueThatIsNotANumberIsRefusedNotRaised:
         assert daemon.posted == []
 
     def test_goto_with_a_string_yaw_does_not_raise(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ``_act_look`` builds its head out of ``params: dict[str, Any]`` - model
+        # JSON - so the value reaching ``goto`` is only as typed as the caller
+        # was, and the refusal is the only thing standing between ``"left"`` and
+        # a ``float()``. The local carries that caller's type, not the annotated
+        # one, so this pins the runtime gate rather than the signature.
         driver, daemon, _ = _connected(monkeypatch)
-        result = driver.goto(head={"yaw": "left"})
+        head_as_the_action_builds_it: dict[str, Any] = {"yaw": "left"}
+        result = driver.goto(head=head_as_the_action_builds_it)
         assert result["status"] == "error"
         assert daemon.posted == []
 
