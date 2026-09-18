@@ -33,7 +33,7 @@ What the driver actually does:
   three with ``getattr(robot, name, None)``, so a Mini that has not connected
   publishes no sensor topic and is otherwise complete.
 * Refuses a motion write outside the envelope, naming the limit, via the shared
-  :func:`~strands_robots.tools.reachy.envelope_error`.
+  :func:`~strands_robots.drivers.reachy_envelope.envelope_error`.
 
 Deliberately absent, so a reader is not left guessing:
 
@@ -68,7 +68,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands.tools.tools import AgentTool
 
 from strands_robots.drivers.base import undeclared_verb_error
-from strands_robots.tools.reachy import envelope_error
+from strands_robots.drivers.reachy_envelope import envelope_error
 from strands_robots.utils import finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
@@ -693,7 +693,7 @@ class ReachyDriver(AgentTool):
            nowhere to go.
         2. Every numeric value is finite, and every bounded axis is inside the
            envelope - both from the shared
-           :func:`~strands_robots.tools.reachy.envelope_error`, so this driver
+           :func:`~strands_robots.drivers.reachy_envelope.envelope_error`, so this driver
            and the ``reachy_*`` tools cannot disagree about the same robot. An
            action carrying ``body_yaw`` and no head pose is checked against the
            head yaw this driver last commanded, so the head-body coupling limit

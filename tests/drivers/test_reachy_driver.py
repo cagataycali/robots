@@ -34,7 +34,7 @@ import strands_robots.drivers.reachy as reachy_mod
 from strands_robots.drivers import get_native_driver_class, resolve_driver
 from strands_robots.drivers.base import HardwareDriver, missing_driver_members
 from strands_robots.drivers.reachy import ReachyDriver
-from strands_robots.tools.reachy import HEAD_BODY_YAW_DELTA_LIMIT_DEG, MOTION_ENVELOPE_DEG
+from strands_robots.drivers.reachy_envelope import HEAD_BODY_YAW_DELTA_LIMIT_DEG, MOTION_ENVELOPE_DEG
 
 # A status body shaped like the daemon's: the variant flag the driver reads, plus
 # fields it passes over. ``wireless_version=False`` is a Lite, which is the
@@ -528,7 +528,7 @@ class TestTheEnvelopeRefusesWhatTheNeckCannotDo:
         # ``rpy_to_pose`` and puts a matrix of nans on the link, with the call
         # reported as a success.
         driver, _, link = _connected(monkeypatch)
-        from strands_robots.tools.reachy import envelope_error
+        from strands_robots.drivers.reachy_envelope import envelope_error
 
         assert envelope_error({key: value}, "send_action") is None, (
             f"{key} is bounded after all; this test no longer grades the driver's own pass"
@@ -545,7 +545,7 @@ class TestTheEnvelopeRefusesWhatTheNeckCannotDo:
         import inspect
 
         source = inspect.getsource(reachy_mod)
-        assert "from strands_robots.tools.reachy import envelope_error" in source
+        assert "from strands_robots.drivers.reachy_envelope import envelope_error" in source
         for limit in ("40.0", "160.0", "65.0"):
             assert limit not in source, f"{limit} is restated in the driver instead of imported"
 

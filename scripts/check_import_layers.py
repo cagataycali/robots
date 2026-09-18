@@ -101,11 +101,8 @@ LAYER_NAMES: tuple[str, ...] = tuple(name for name, _members in LAYERS)
 #: not here, and on an entry here that no longer exists, so the roster can only
 #: shrink deliberately.
 KNOWN_UPWARD_EDGES: tuple[tuple[str, str], ...] = (
-    # drivers|mesh -> tools. The Reachy envelope check is driver machinery that
-    # landed under the agent-tool package that first needed it; the mesh robots
-    # call the ``@tool`` entry point instead of a transport of their own.
-    ("strands_robots.device_connect.reachy_mini_driver", "strands_robots.tools.reachy"),
-    ("strands_robots.drivers.reachy", "strands_robots.tools.reachy"),
+    # drivers|mesh -> tools. The mesh robots call the ``@tool`` entry point
+    # instead of a transport of their own.
     ("strands_robots.mesh.ackermann_robot", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.ros_bridge", "strands_robots.tools.use_ros"),
     ("strands_robots.mesh.rosbridge_robot", "strands_robots.tools.use_rosbridge"),

@@ -1,10 +1,11 @@
 """Both Reachy consumers hold the same axis to the same travel envelope.
 
-:mod:`strands_robots.tools.reachy` exists for exactly one reason, which its own
-package docstring states: it "holds only what the *two* Reachy consumers must
-agree on and neither owns: the motion envelope". Only one of those two consumed
-it. :meth:`~strands_robots.drivers.reachy.ReachyDriver.send_action` ran
-:func:`~strands_robots.tools.reachy.envelope_error` over its action dict; the
+:mod:`strands_robots.drivers.reachy_envelope` exists for exactly one reason,
+which its own module docstring states: two drivers need the same answer and a
+second copy would let them disagree about the same robot. Only one of the two
+consumed it. :meth:`~strands_robots.drivers.reachy.ReachyDriver.send_action` ran
+:func:`~strands_robots.drivers.reachy_envelope.envelope_error` over its action
+dict; the
 Device Connect driver's three movement RPCs ran
 :func:`~strands_robots.utils.finite_number_error` and stopped there, so a value
 one driver refused the other put on the wire, for the same physical robot:
@@ -19,7 +20,7 @@ The exclusion was argued rather than overlooked. ``_motion_domain_error`` said
 the reachable workspace "is the daemon's to enforce -- it depends on hardware
 this library does not model", and that was true when it was written: the reason
 landed on 2026-08-07 and ``MOTION_ENVELOPE_DEG`` landed on 2026-08-26, nineteen
-days later, in a package that imports no transport and no driver and is
+days later, in a module that imports no transport and no driver and is
 importable with no Reachy attached. The reason is a claim about what the library
 can model, and a later change gave the library the model.
 
@@ -50,6 +51,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib
 import inspect
 import pathlib
 import textwrap
@@ -59,7 +61,7 @@ from typing import Any
 import pytest
 
 from strands_robots.drivers.reachy import ReachyDriver
-from strands_robots.tools.reachy import (
+from strands_robots.drivers.reachy_envelope import (
     HEAD_BODY_YAW_DELTA_LIMIT_DEG,
     MOTION_ENVELOPE_DEG,
     envelope_error,
@@ -390,11 +392,28 @@ class TestTheCouplingLimitIsNotReachableHere:
 class TestThePremisesThisRestsOn:
     """Measured rather than asserted in prose."""
 
-    def test_the_shared_package_names_both_consumers_as_its_purpose(self) -> None:
-        import strands_robots.tools.reachy as shared
+    @pytest.mark.parametrize(
+        "module_name",
+        ["strands_robots.drivers.reachy", "strands_robots.device_connect.reachy_mini_driver"],
+    )
+    def test_neither_driver_needs_the_agent_surface_to_bound_a_joint(self, module_name: str) -> None:
+        """The envelope sits with its two consumers, not above them.
 
-        doc = " ".join((shared.__doc__ or "").split())
-        assert "the *two* Reachy consumers must agree on and neither owns: the motion envelope" in doc
+        Both drivers read it, no ``reachy_*`` verb does, and a driver that has to
+        import the agent-tool package to bound a joint inverts the layering: the
+        verbs are built on the drivers. Graded on module-scope imports, since a
+        late import inside a function costs nothing at import time.
+        """
+        module = importlib.import_module(module_name)
+        tree = ast.parse(pathlib.Path(str(module.__file__)).read_text(encoding="utf-8"))
+        imported = {node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)} | {
+            alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
+        }
+        assert "strands_robots.drivers.reachy_envelope" in imported, (
+            f"{module_name} does not read the shared envelope at all; it imports {sorted(imported)}"
+        )
+        reached = sorted(name for name in imported if name.startswith("strands_robots.tools"))
+        assert not reached, f"{module_name} imports the agent-tool package: {reached}"
 
     def test_the_envelope_ignores_a_key_it_has_no_limit_for(self) -> None:
         """Why the mapping is needed: the RPC's own spelling bounds nothing."""
@@ -403,9 +422,9 @@ class TestThePremisesThisRestsOn:
 
     def test_the_shared_module_needs_no_reachy_and_no_daemon(self) -> None:
         """The reason the old exclusion gave is what this refutes."""
-        import strands_robots.tools.reachy._reachy_common as common
+        import strands_robots.drivers.reachy_envelope as shared
 
-        tree = ast.parse(pathlib.Path(str(common.__file__)).read_text(encoding="utf-8"))
+        tree = ast.parse(pathlib.Path(str(shared.__file__)).read_text(encoding="utf-8"))
         imported = {node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)} | {
             alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
         }

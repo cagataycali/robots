@@ -30,7 +30,7 @@ names the value, so it is the only point a caller can act on.
 
 ``TestWhyTheDriverOwnsTheDomain`` pins those premises rather than asserting
 them in prose. Per-axis travel is bounded too, through the shared
-:func:`~strands_robots.tools.reachy.envelope_error`: this file's original
+:func:`~strands_robots.drivers.reachy_envelope.envelope_error`: this file's original
 scope note excused it as depending on hardware the library does not model,
 which stopped being true when that envelope landed. What is still the
 daemon's is whatever the envelope declares no limit for - ``look``'s
