@@ -20,6 +20,7 @@ from __future__ import annotations
 import tempfile
 
 import strands_robots as sr
+from strands_robots.simulation.observers import RunPolicyEvent, RunPolicyStep
 from strands_robots.training import create_trainer
 from strands_robots.training.rl import RLTrainSpec, SimEnv
 
@@ -48,6 +49,31 @@ def make_env() -> SimEnv:
     )
 
 
+def rollout_and_report(checkpoint_dir: str) -> None:
+    """Roll the deterministic actor out on the trained robot, printing the trace.
+
+    ``run_policy(policy_provider="rl")`` presents the checkpoint's actor as an
+    ordinary policy, so it drives the robot ``make_env`` trained against. The
+    trace is what the reward bought: ``mean_reward`` does not say where the
+    joint ended up.
+    """
+    trace: list[float] = []
+
+    def record(event: RunPolicyEvent) -> None:
+        if isinstance(event, RunPolicyStep):
+            trace.append(float(event.observation["Elbow"]))
+
+    sr.Robot("so100", mode="sim").run_policy(
+        robot_name="so100",
+        policy_provider="rl",
+        policy_config={"checkpoint_dir": checkpoint_dir},
+        duration=4.0,
+        observer=record,
+    )
+    print(f"Elbow trace (target {TARGET_ELBOW}): {[round(v, 3) for v in trace[::20]]}")
+    print(f"Elbow final={trace[-1]:.4f} rad |error|={abs(trace[-1] - TARGET_ELBOW):.4f} rad")
+
+
 def main() -> None:
     trainer = create_trainer("ppo")
     output_dir = tempfile.mkdtemp(prefix="ppo_reach_")
@@ -72,6 +98,7 @@ def main() -> None:
     print(f"checkpoint={result.checkpoint_dir}")
     print(f"exported policy={result.exported_model}")
     print(f"final metrics={ {k: round(v, 4) if isinstance(v, float) else v for k, v in result.metrics.items()} }")
+    rollout_and_report(result.checkpoint_dir)
 
 
 if __name__ == "__main__":
