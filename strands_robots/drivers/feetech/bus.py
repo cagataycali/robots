@@ -684,6 +684,22 @@ class FeetechBus:
     def set_torque(self, enabled: bool) -> list[str]:
         """Energize or release every motor, returning the ones that failed.
 
+        Two registers per motor, because on this series they are one decision:
+        ``Torque_Enable`` and then ``Lock``, both carrying the same value. A
+        servo with ``Lock`` clear accepts writes to its EEPROM - the region
+        holding its ID, baud rate and position limits, which persist across
+        power - so an arm left unlocked spends the rollout one malformed frame
+        away from a change that outlives the session. ``lerobot-calibrate``
+        leaves the arm exactly there: LeRobot's ``disable_torque`` clears
+        ``Lock`` so calibration can be written, and only its ``enable_torque``
+        sets it again. An energize that wrote ``Torque_Enable`` alone drove that
+        arm with its EEPROM still open.
+
+        Clearing ``Lock`` on release is the other half of the same pairing, and
+        is what makes the arm writable for the calibration step that follows.
+        Register for register and value for value, this is LeRobot's
+        ``enable_torque`` / ``disable_torque`` on the same servo.
+
         A unicast ``WRITE`` is answered - the servo returns the empty status
         packet :func:`~strands_robots.drivers.feetech.protocol.write_packet`
         documents - and that reply is read back here, for two reasons.
@@ -716,37 +732,78 @@ class FeetechBus:
             enabled: ``True`` to energize, ``False`` to release.
 
         Returns:
-            Names of motors that did not acknowledge the write; empty when all
-            six answered. A non-empty list after ``enabled=False`` means the arm
-            is NOT fully de-energized.
+            Names of motors that did not acknowledge the torque write; empty
+            when all six answered. A non-empty list after ``enabled=False``
+            means the arm is NOT fully de-energized. A ``Lock`` write that went
+            unacknowledged is logged rather than named here: the joint is in the
+            energization state asked for, and only its write protection is
+            unknown.
 
         Raises:
             RuntimeError: When the bus is not open.
         """
         conn = self._require_open("setting torque")
+        value = 1 if enabled else 0
         failed: list[str] = []
         for name, spec in self.motors.items():
-            packet = write_packet(spec.motor_id, Register.TORQUE_ENABLE, bytes([1 if enabled else 0]))
-            try:
-                conn.write(packet)
-                time.sleep(_REPLY_SETTLE_S)
-                raw = bytes(conn.read(STATUS_OVERHEAD))
-                echoed = int(getattr(conn, "in_waiting", 0) or 0)
-                if echoed:
-                    raw += bytes(conn.read(echoed))
-            except OSError as e:
-                logger.error("failed to set torque on %s (id %d): %s", name, spec.motor_id, e)
+            if not self._write_acked(conn, name, spec, Register.TORQUE_ENABLE, value):
                 failed.append(name)
                 continue
-            # The stream framer rather than a lone packet parse, for the reason
-            # :meth:`_sync_read_once` uses it: it skips the host's own echo,
-            # which `parse_status_packet` refuses as bytes in front of a frame.
-            if spec.motor_id not in parse_sync_read_replies(raw, [spec.motor_id], _ACK_PARAM_COUNT):
+            if not self._write_acked(conn, name, spec, Register.LOCK, value):
+                # Not a `failed` entry: the torque write above was acknowledged,
+                # so this joint is in the energization state asked for and the
+                # return's promise about it holds. What is unconfirmed is the
+                # EEPROM's write protection, which is worth a line rather than a
+                # claim that the joint may still be driven.
                 logger.error(
-                    "no verified torque ack from %s (id %d); discarding %s",
+                    "torque on %s (id %d) is set but its Lock write was not confirmed; "
+                    "the servo's EEPROM write protection is now unknown",
                     name,
                     spec.motor_id,
-                    raw.hex(" ") if raw else "an empty read",
                 )
-                failed.append(name)
         return failed
+
+    def _write_acked(self, conn: Any, name: str, spec: MotorSpec, register: Register, value: int) -> bool:
+        """Write one byte to ``register`` on one servo and verify its ack.
+
+        The ack read is the whole reason a torque sweep is a per-servo unicast
+        rather than one ``SYNC_WRITE``: :meth:`set_torque` documents what the
+        empty status frame is evidence of, and why leaving it unread puts frames
+        in front of the next reader's own.
+
+        Args:
+            conn: The open port, already checked by :meth:`_require_open`.
+            name: Joint name, for the log line a caller reads.
+            spec: The motor to address.
+            register: Register to write. One byte wide - this is the ``WRITE``
+                path for the two flag registers, not for ``GOAL_POSITION``,
+                which goes out for the whole arm at once in
+                :meth:`write_goal_positions`.
+            value: The byte to write.
+
+        Returns:
+            ``True`` when the servo answered with a frame naming itself.
+        """
+        try:
+            conn.write(write_packet(spec.motor_id, register, bytes([value])))
+            time.sleep(_REPLY_SETTLE_S)
+            raw = bytes(conn.read(STATUS_OVERHEAD))
+            echoed = int(getattr(conn, "in_waiting", 0) or 0)
+            if echoed:
+                raw += bytes(conn.read(echoed))
+        except OSError as e:
+            logger.error("failed to write %s on %s (id %d): %s", register.name, name, spec.motor_id, e)
+            return False
+        # The stream framer rather than a lone packet parse, for the reason
+        # :meth:`_sync_read_once` uses it: it skips the host's own echo,
+        # which `parse_status_packet` refuses as bytes in front of a frame.
+        if spec.motor_id not in parse_sync_read_replies(raw, [spec.motor_id], _ACK_PARAM_COUNT):
+            logger.error(
+                "no verified %s ack from %s (id %d); discarding %s",
+                register.name,
+                name,
+                spec.motor_id,
+                raw.hex(" ") if raw else "an empty read",
+            )
+            return False
+        return True

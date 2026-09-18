@@ -188,14 +188,15 @@ class TestWrites:
             bus.write_goal_positions(targets)
 
     def test_torque_release_writes_every_motor(self, servo_port: FakeServoPort) -> None:
-        """Every joint is attempted, so a partial release cannot read as done."""
+        """Every joint is attempted, so a partial release cannot read as done.
+
+        Which registers each joint's release writes is graded in
+        :mod:`tests.drivers.test_feetech_torque_write_is_acknowledged`, against
+        LeRobot's own bus.
+        """
         bus = open_bus(servo_port)
         assert bus.set_torque(False) == []
-        assert len(servo_port.writes) == len(SO_ARM_MOTORS)
-        for frame in servo_port.writes:
-            assert frame[4] == 0x03  # WRITE
-            assert frame[5] == 0x28  # Torque_Enable
-            assert frame[6] == 0
+        assert {frame[2] for frame in servo_port.writes} == {spec.motor_id for spec in SO_ARM_MOTORS.values()}
 
 
 # ============================================================================

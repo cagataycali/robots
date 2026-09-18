@@ -395,10 +395,15 @@ class TestLifecycle:
         port = _port(driver)
         port.writes.clear()
         asyncio.run(driver.stop())
-        assert len(port.writes) == len(SO_ARM_MOTORS)
-        for frame in port.writes:
-            assert frame[5] == 0x28  # Torque_Enable
-            assert frame[6] == 0  # released
+        # Two registers per motor: released, and its EEPROM left writable for
+        # the calibration step that follows - the pairing graded in
+        # :mod:`tests.drivers.test_feetech_torque_write_is_acknowledged`.
+        assert len(port.writes) == 2 * len(SO_ARM_MOTORS)
+        assert [(frame[5], frame[6]) for frame in port.writes] == [
+            register_and_value
+            for _ in SO_ARM_MOTORS
+            for register_and_value in ((0x28, 0), (0x37, 0))  # Torque_Enable, Lock
+        ]
 
     def test_stop_on_a_driver_with_no_port_does_not_raise(self) -> None:
         """``stop`` runs on teardown paths that cannot handle an exception."""

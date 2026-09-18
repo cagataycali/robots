@@ -209,9 +209,11 @@ class Register(enum.IntEnum):
     12-15). Registers below 0x28 are EEPROM (persist across power); 0x28 and
     up are SRAM (volatile). Which of them carry a sign, and on which bit, is
     :data:`SIGN_BIT` - a property of the value rather than of the address, and
-    one no member here restates. The driver does not write EEPROM unless the
-    caller opts into it, so both regions are named here but the write-path
-    validators refuse EEPROM addresses by default (bus PR scope, not codec).
+    one no member here restates. Nothing in the package writes an EEPROM
+    address; what protects the region is the servo's own ``LOCK``, which
+    :meth:`~strands_robots.drivers.feetech.bus.FeetechBus.set_torque` sets
+    alongside ``TORQUE_ENABLE``. The codec frames whatever address it is given -
+    :func:`write_packet` grades the address's range, not its region.
     """
 
     # EEPROM

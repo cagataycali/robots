@@ -213,6 +213,15 @@ driven instead of an arm that is safe to approach, and reading it is also what
 keeps six unread acks from sitting in front of the next state read's reply
 stream.
 
+That sweep writes two registers per motor, `Torque_Enable` and then `Lock`, both
+carrying the same value - the pairing LeRobot's `enable_torque` /
+`disable_torque` use. `Lock` clear is what lets the servo's EEPROM (its ID, baud
+rate and position limits, all of which persist across power) be written, and
+`lerobot-calibrate` leaves the arm there, so energizing without it would drive
+the arm with that region open. A `Lock` write that went unacknowledged is logged
+rather than named in the return: the joint is in the state that was asked for,
+and only its write protection is unknown.
+
 | Option | Accepted | Why the bound is where it is |
 |--------|----------|------------------------------|
 | `motor_id` | integer in `[1, 254]`, or `[1, 253]` for an action that reads a reply | the frame carries the ID in one byte, of which `0xfd` is the highest a servo may hold and `0xfe` is the broadcast, while `0xff` is the header value |
