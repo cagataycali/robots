@@ -93,7 +93,10 @@ plain JSON dicts, exactly as rosbridge transmits them.
 For mobile bases that expose the standard `cmd_vel` / odometry / scan topic
 trio, `RosbridgeRobot` wraps that wiring so a remote ROS 1 or remote robot
 drives like any other strands robot - the same `Agent(tools=[robot])` pattern
-used for simulated and hardware arms.
+used for simulated and hardware arms. It forwards through the same transport
+`use_rosbridge` does (`strands_robots.rosbridge`), so a `cmd_vel` command reaches
+the shared operator gate whichever of the two asked, under one label: an approval
+or a refusal means the same thing on both.
 
 ### Constructor
 

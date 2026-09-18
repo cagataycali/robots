@@ -290,6 +290,12 @@ class TestTheContract:
                 frozenset({"strands_robots.teleoperator"}),
                 frozenset({"drivers|mesh", "sim|policies", "app"}),
             ),
+            (
+                "strands_robots.rosbridge",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "tools"}),
+            ),
         ],
     )
     def test_a_contract_several_layers_share_sits_under_all_of_them(
@@ -309,6 +315,14 @@ class TestTheContract:
         A deferred read above the layer is listed explicitly rather than allowed
         in general - the mixin's ``teleoperator`` read is late because that module
         imports lerobot, and promoting it to module scope has to fail here.
+
+        ``rosbridge`` is the WebSocket transport two surfaces share: the
+        ``use_rosbridge`` tool and the ``RosbridgeRobot`` that drives a ROS 1 or
+        remote base over the same bridge. It lived in the tool, so the robot
+        imported the ``@tool`` - and two of its private names - to dial a socket.
+        Its ``tools`` caller is what makes the placement load-bearing: moving it
+        back up would restore the inversion, and the equality above would refuse
+        it.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer

@@ -54,7 +54,7 @@ def _ros(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 def _rosbridge(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(rbr_mod, "use_rosbridge", rec)
+    monkeypatch.setattr(rbr_mod, "rosbridge_action", rec)
     return RosbridgeRobot(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom")
 
 
@@ -163,7 +163,7 @@ def test_the_ros2_pose_and_scan_tools_forward_to_the_instance(monkeypatch: pytes
 
 def test_the_rosbridge_stop_and_scan_tools_forward_to_the_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _Recorder()
-    monkeypatch.setattr(rbr_mod, "use_rosbridge", rec)
+    monkeypatch.setattr(rbr_mod, "rosbridge_action", rec)
     robot = RosbridgeRobot(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom", scan_topic="/scan")
     tools = _tools(robot)
 
