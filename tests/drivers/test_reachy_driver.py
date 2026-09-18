@@ -300,13 +300,11 @@ class TestTheDaemonProbeDecidesTheConnection:
         assert link.build_calls == 1
         assert driver._link is link
 
-    def test_a_wireless_without_a_transport_is_refused_by_name(self) -> None:
-        # Exercises the real _build_link rather than the double, because the
-        # refusal *is* the thing under test.
+    def test_a_wireless_without_a_transport_gets_the_websocket_link(self) -> None:
+        from strands_robots.device_connect.reachy_transport import WebSocketLink
+
         driver = ReachyDriver(port="reachy-a.local", transport=None)
-        link = driver._build_link(is_lite=False)
-        assert isinstance(link, str)
-        assert "Zenoh" in link and "transport=" in link
+        assert isinstance(driver._build_link(is_lite=False), WebSocketLink)
 
     def test_a_lite_gets_the_websocket_link(self) -> None:
         from strands_robots.device_connect.reachy_transport import WebSocketLink
@@ -564,7 +562,7 @@ class TestActionsReachTheWireInTheDaemonsUnits:
         driver, _, link = _connected(monkeypatch)
         assert driver.send_action({"antenna_left": 60.0, "antenna_right": -60.0})["status"] == "success"
         assert link.commands == [
-            {"antennas_joint_positions": [pytest.approx(math.radians(60)), pytest.approx(math.radians(-60))]}
+            {"antennas_joint_positions": [pytest.approx(math.radians(-60)), pytest.approx(math.radians(60))]}
         ]
 
     def test_one_antenna_still_sends_both_because_the_daemon_takes_a_pair(
@@ -572,7 +570,7 @@ class TestActionsReachTheWireInTheDaemonsUnits:
     ) -> None:
         driver, _, link = _connected(monkeypatch)
         driver.send_action({"antenna_left": 30.0})
-        assert link.commands[0]["antennas_joint_positions"][1] == pytest.approx(0.0)
+        assert link.commands[0]["antennas_joint_positions"] == pytest.approx([0.0, math.radians(30)])
 
     def test_a_head_axis_becomes_a_four_by_four_pose(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from strands_robots.device_connect.reachy_transport import rpy_to_pose

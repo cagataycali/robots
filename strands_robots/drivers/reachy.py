@@ -20,8 +20,9 @@ What the driver actually does:
 
 * Probes ``GET /api/daemon/status`` in :meth:`~ReachyDriver.connect_eagerly` -
   the reachability check, and the same call that reports which hardware variant
-  answered. A **Lite** (no onboard computer) is driven over a WebSocket to the
-  daemon; a **Wireless** (onboard CM4) over Zenoh. Both links come from
+  answered. The daemon WebSocket serves both **Lite** and **Wireless** hardware
+  (verified on daemon 1.10.0). An explicitly supplied Wireless bridge transport
+  retains the Zenoh path. Both links come from
   :mod:`strands_robots.device_connect.reachy_transport`, which the Device
   Connect driver already ships - this module reuses them rather than growing a
   second daemon client.
@@ -63,6 +64,8 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
+
+from strands.tools.tools import AgentTool
 
 from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.tools.reachy import envelope_error
@@ -189,7 +192,7 @@ _BATTERY_KEYS: tuple[str, ...] = ("battery_level", "battery_pct", "battery", "so
 _BODY_PREVIEW_CHARS = 60
 
 
-class ReachyDriver:
+class ReachyDriver(AgentTool):
     """Native driver for the Pollen Reachy Mini.
 
     Satisfies :class:`~strands_robots.drivers.base.HardwareDriver` structurally
@@ -238,8 +241,8 @@ class ReachyDriver:
                 ``tool_name``, so two Minis do not share a key space.
             transport: Zenoh transport for a Wireless Mini, passed through to
                 :class:`~strands_robots.device_connect.reachy_transport.ZenohLink`.
-                ``None`` is valid: a Lite does not need one, and a Wireless
-                without one reports a named connect failure rather than raising.
+                ``None`` selects the daemon WebSocket on either hardware variant;
+                supplying a transport keeps the Wireless Zenoh bridge path.
             **kwargs: Ignored; accepted so the factory can forward extras
                 without the driver knowing what they are.
 
@@ -249,6 +252,7 @@ class ReachyDriver:
                 refusing here means the mistake surfaces at construction rather
                 than as an unreachable host minutes later.
         """
+        super().__init__()
         del cameras, data_config  # accepted for parity; unused here
         if kwargs:
             logger.debug("ReachyDriver ignoring extra kwargs: %s", sorted(kwargs))
@@ -479,13 +483,8 @@ class ReachyDriver:
         if isinstance(transport, str):
             return transport
 
-        if is_lite:
+        if is_lite or self._transport is None:
             return transport.WebSocketLink(self._host, self._api_port)
-        if self._transport is None:
-            return (
-                f"daemon at {self._host}:{self._api_port} reports a Wireless Mini, which is driven over "
-                "Zenoh - pass transport= to reach it"
-            )
         return transport.ZenohLink(self._transport, self._zenoh_prefix)
 
     def _start_link(self, link: Any) -> str | None:
@@ -1019,14 +1018,19 @@ class ReachyDriver:
         Args:
             payload: The link's joints message, carrying
                 ``head_joint_positions`` and ``antennas_joint_positions`` in
-                radians.
+                radians. Seven head values mean body yaw followed by six
+                Stewart legs. Antennas are ordered [right, left].
         """
         try:
             head = [math.degrees(float(j)) for j in payload.get("head_joint_positions", [])]
             antennas = [math.degrees(float(j)) for j in payload.get("antennas_joint_positions", [])]
             with self._cache_lock:
                 self._joints = {
-                    "head_leg_deg": head,
+                    # The daemon's seven head motor values start with body yaw;
+                    # only the remaining six are Stewart-platform legs. Older
+                    # bridges carrying six legs have no body measurement.
+                    "head_leg_deg": head[1:] if len(head) == 7 else head,
+                    "body_yaw_deg": head[0] if len(head) == 7 else None,
                     "antennas_deg": antennas,
                     "t": time.time(),
                 }
@@ -1327,8 +1331,8 @@ def _wire_commands(action: dict[str, Any]) -> list[dict[str, Any]] | str:
         commands.append(
             {
                 "antennas_joint_positions": [
-                    math.radians(float(action.get("antenna_left", 0.0))),
                     math.radians(float(action.get("antenna_right", 0.0))),
+                    math.radians(float(action.get("antenna_left", 0.0))),
                 ]
             }
         )

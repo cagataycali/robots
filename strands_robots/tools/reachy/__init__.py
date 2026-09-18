@@ -1,12 +1,13 @@
 """Reachy Mini hardware layer - shared pieces for the native driver.
 
 The Reachy Mini speaks two protocols at once, and which one carries real-time
-data depends on the hardware variant the daemon reports:
+data can use the daemon socket or an explicitly supplied bridge:
 
 * REST on ``:8000`` (``/api/daemon/status``, ``/api/move/...``) for
   reachability, variant detection, recorded moves and the motion stop.
 * A real-time link for joints and IMU - a WebSocket straight to the daemon on a
-  **Lite** (no onboard computer), or Zenoh on a **Wireless** (onboard CM4).
+  **Lite** or **Wireless** (daemon 1.10.0), or an explicitly supplied Zenoh
+  bridge on Wireless hardware.
 
 Both live in :mod:`strands_robots.device_connect.reachy_transport`, which the
 Device Connect driver already ships and which

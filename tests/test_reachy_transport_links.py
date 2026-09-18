@@ -242,7 +242,7 @@ class TestWebSocketLink(unittest.TestCase):
         fake_ws = _FakeWS()
         seen: dict = {}
 
-        async def _connect(url, *, additional_headers=None, extra_headers=None, ssl=None):
+        async def _connect(url, *, additional_headers=None, extra_headers=None, ssl=None, close_timeout=None):
             seen["additional_headers"] = additional_headers
             seen["extra_headers"] = extra_headers
             return fake_ws
@@ -275,7 +275,7 @@ class TestWebSocketLink(unittest.TestCase):
         fake_ws = _FakeWS()
         seen: dict = {}
 
-        async def _connect(url, *, additional_headers=None, extra_headers=None, ssl=None):
+        async def _connect(url, *, additional_headers=None, extra_headers=None, ssl=None, close_timeout=None):
             seen["additional_headers"] = additional_headers
             seen["extra_headers"] = extra_headers
             return fake_ws

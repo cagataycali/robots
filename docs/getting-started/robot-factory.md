@@ -317,6 +317,70 @@ outcome is logged instead of reported as a teardown that finished.
 `hardware.driver` is optional and validated when the registry loads: a value that is not a
 driver name is refused there, naming the robot, rather than being read as "no preference".
 
+## Reachy Mini: native daemon connection
+
+Install `strands-robots` and `websockets>=17.0` in the client environment. The
+native driver uses the daemon's `/ws/sdk` endpoint on **both Lite and Wireless**
+hardware (verified against Wireless daemon **1.10.0**). It does not require
+LeRobot, a local Reachy SDK, or a Device Connect bridge. Existing Wireless
+callers supplying `transport=` still select their explicit Zenoh bridge.
+Older daemons without `/ws/sdk` need that legacy path; they are not covered by
+the 1.10.0 hardware proof.
+
+```python
+from strands import Agent
+from strands_robots import Robot
+
+mini = Robot("reachy_mini", mode="real", port="reachy-a.local:8000", mesh=False)
+try:
+    reason = mini.connect_eagerly()
+    if reason is not None:
+        raise RuntimeError(reason)
+    agent = Agent(tools=[mini])
+    # SDK tool dispatch without a model request. Reads only; no motion or STOP.
+    print(agent.tool.reachy_mini(action="sensors"))
+finally:
+    mini.cleanup()  # closes the client link, not the daemon or its motors
+```
+
+Streams arrive asynchronously: immediately after connecting, a cache can still
+be `None`. The seven daemon head-motor values are **body yaw followed by six
+Stewart legs**; `joints.body_yaw_deg` and `joints.head_leg_deg` separate them.
+`joints.antennas_deg` is **[right, left]**, matching the daemon wire protocol.
+A legacy bridge supplying only six legs has no measured body yaw (`None`).
+`pose` is the head IMU orientation, **not** the daemon's kinematic 4x4 head pose.
+Battery is `None` when the status payload supplies no percentage. Status reports
+this client's connection bookkeeping, not a fresh daemon health probe; caches
+are last-received samples, not a guarantee that the robot is still reachable.
+
+The registered native agent tool exposes only `sensors`, `status`, and `stop`.
+The separate `reachy_*` helpers require a **live Python driver handle**, not a
+handle an LLM can serialize. Native camera capture, audio playback, volume, and
+pixel-directed look are not implemented; their helper tools return explicit
+refusals. Recorded-move names must come from `mini.list_moves()`, not guessed
+labels such as "happy".
+
+For direct Python motion, `mini.send_action(...)` accepts degrees and millimetres.
+It does not prompt for operator approval itself: obtain approval and exclusive
+motion ownership first, and retain HITL gates in any agent-facing orchestration.
+Do not test against an active voice, tracking, or autonomous controller. An
+antenna command sends **both** antennas (an omitted side becomes zero); a head
+command similarly sends a whole pose, not a delta. Capture the starting state,
+use small bounded changes, and restore it after testing. `stop` requests a halt
+of recorded moves only: it does not disable every independent controller.
+
+The opt-in read-only hardware check never sends motion or STOP:
+
+```bash
+REACHY_TEST_READONLY=1 REACHY_TEST_HOST=reachy-a.local:8000 \
+  python -m pytest tests_integ/drivers/test_reachy_native_hardware.py -q
+```
+
+The daemon link defaults to plaintext on a trusted LAN. The shared transport
+honours `REACHY_DAEMON_TOKEN`, `REACHY_DAEMON_TLS`, and certificate verification;
+configure these only when the daemon or its authenticated TLS proxy supports
+them. Do not expose an unauthenticated actuator endpoint to the Internet.
+
 ## Mesh
 
 Mesh is opt-in, so a bare `Robot(...)` never starts Zenoh, ACL or e-stop machinery:

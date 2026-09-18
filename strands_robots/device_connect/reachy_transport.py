@@ -13,6 +13,7 @@ import os
 import socket
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -276,7 +277,7 @@ class ZenohLink(HardwareLink):
 
 
 class WebSocketLink(HardwareLink):
-    """Lite variant - real-time I/O via daemon's WebSocket."""
+    """Real-time I/O via the daemon WebSocket (Lite and Wireless on 1.10.0)."""
 
     _WS_CMD_MAP = {
         "head_pose": lambda c: {"type": "set_target", "head": [v for row in c["head_pose"] for v in row]},
@@ -313,7 +314,11 @@ class WebSocketLink(HardwareLink):
         _extra_headers = {"Authorization": f"Bearer {_token}"} if _token else None
         if not _token:
             _warn_unauthenticated_once("WebSocket")
-        _connect_kwargs: dict[str, Any] = {}
+        # Keep the socket close handshake inside the native driver's five-second
+        # cleanup budget. The websockets default is ten seconds: a daemon that
+        # never acknowledges close otherwise leaves keepalive/stop tasks on a
+        # loop the driver has already closed.
+        _connect_kwargs: dict[str, Any] = {"close_timeout": 1.0}
         if _extra_headers:
             # websockets >=12 uses additional_headers; older uses extra_headers.
             try:
@@ -355,11 +360,15 @@ class WebSocketLink(HardwareLink):
         Clearing first also holds when the close itself fails - the socket is
         gone either way, so the link must stop offering it as connected.
         """
-        if self._read_task:
-            self._read_task.cancel()
         ws, self._ws = self._ws, None
-        if ws:
-            await ws.close()
+        try:
+            if self._read_task:
+                self._read_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._read_task
+        finally:
+            if ws:
+                await ws.close()
 
     async def send_cmd(self, cmd: dict[str, Any]) -> None:
         """Translate the first recognised command key to the daemon wire format.
