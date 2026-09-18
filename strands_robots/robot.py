@@ -110,6 +110,22 @@ def _auto_detect_mode(canonical: str) -> str:
     # a host that cannot enumerate reports no devices and falls back to sim,
     # which is always safe.
     if has_hardware(canonical):
+        # A native driver whose robot is not a serial servo bus (the Microduck's
+        # robotd socket, reached locally or over an ssh forward) answers the
+        # question itself through an opt-in ``probe_hardware()`` classmethod.
+        # A probe that raises is a probe that found nothing: detection must
+        # never be the reason ``Robot()`` fails, and sim is the safe answer.
+        driver_cls = get_native_driver_class(canonical)
+        probe = getattr(driver_cls, "probe_hardware", None) if driver_cls is not None else None
+        if driver_cls is not None and callable(probe):
+            try:
+                found = bool(probe())
+            except Exception as exc:  # noqa: BLE001 - detection is best-effort by contract
+                logger.debug("%s.probe_hardware() failed; treating as no hardware: %s", canonical, exc)
+                found = False
+            if found:
+                logger.info("Auto-detected %s hardware via %s.probe_hardware()", canonical, driver_cls.__name__)
+                return "real"
         servo_ports = [device.port for device in scan_serial_devices() if device.likely_servo_bus]
         if servo_ports:
             logger.info("Auto-detected robot hardware: %s", servo_ports)
