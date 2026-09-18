@@ -6,9 +6,10 @@ without a robot attached:
 - ``RobotPose`` dataclass round-trips to and from dicts.
 - ``PoseManager`` persists, retrieves, lists, deletes, and validates poses
   against safety bounds, surviving a reload from disk.
-- ``MotorController`` builds correct Feetech protocol packets and converts
-  between degrees and raw servo positions (including gripper percentage units),
-  with the serial connection mocked.
+- ``MotorController`` converts between degrees and raw servo positions
+  (including gripper percentage units) with the serial connection mocked. The
+  frames it sends are the codec's, and are graded there:
+  ``tests/tools/test_feetech_tool_frames_come_from_the_codec.py``.
 - ``pose_tool`` dispatches every action branch and returns the
   ``{"status", "content"}`` contract on both success and error paths.
 
@@ -139,18 +140,6 @@ def test_pose_manager_validate_within_and_outside_bounds() -> None:
 # --------------------------------------------------------------------------- #
 # MotorController
 # --------------------------------------------------------------------------- #
-def test_feetech_packet_header_and_checksum() -> None:
-    ctrl = MotorController("/dev/null")
-    packet = ctrl.build_feetech_packet(1, 0x03, [0x2A, 0x00, 0x08])
-    assert packet[0] == 0xFF and packet[1] == 0xFF
-    assert packet[2] == 1  # motor id
-    assert packet[3] == len([0x2A, 0x00, 0x08]) + 2  # length
-    assert packet[4] == 0x03  # instruction
-    # Checksum is the bitwise inverse of the sum of bytes from index 2 onward.
-    expected = ~sum(packet[2:-1]) & 0xFF
-    assert packet[-1] == expected
-
-
 def test_degrees_position_round_trip_joint() -> None:
     ctrl = MotorController("/dev/null")
     # Mid-range degree maps near mid-resolution and back.

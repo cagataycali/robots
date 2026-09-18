@@ -255,6 +255,13 @@ tool, `pose_tool`, and the native `FeetechDriver` bus - reads both from there.
 Addressing an SCS-series servo needs a second word order and a second full scale
 rather than a scale option, so no surface here offers one.
 
+The read back is the same one authority. `Present_Position` is sign-magnitude on
+this series - bit 15 is the direction - so `pose_tool` decodes a reply through
+that module's `SIGN_BIT` table rather than deciding the bit itself. Read as an
+unsigned field, a servo reporting a joint just past its homing zero answers with
+an angle more than a full turn from where the joint is, and nothing on a read
+path bounds the number it quotes.
+
 ### A stored pose is stored whole, or the tool reports that it was not
 
 `store_pose` and `delete_pose` rewrite the *whole* pose library for a robot -
