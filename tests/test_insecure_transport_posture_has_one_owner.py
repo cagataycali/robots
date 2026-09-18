@@ -40,6 +40,8 @@ from typing import Any
 
 import pytest
 
+from tests._device_connect_real import use_the_real_edge
+
 #: ``(label, allow_insecure argument, environment value, the resolved posture)``.
 #: The two argument rows are where the advisory and the transport disagreed; the
 #: two environment-only rows are the controls the existing pins already cover.
@@ -140,6 +142,10 @@ class TestADriverCarriesItsOwnTransportToTheCheck:
     def test_an_rpc_reports_the_posture_of_the_runtime_it_is_attached_to(
         self, insecure: bool, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # ``set_device`` binding ``_device`` is the real ``DeviceDriver``'s
+        # behaviour; the fake two sibling modules install at collection time
+        # drops the runtime, and the module already registered may carry it.
+        use_the_real_edge()
         from strands_robots.device_connect import sim_driver as sd_mod
         from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 
@@ -296,6 +302,10 @@ class TestReadingTheRuntimeOffADriverDoesNotAssumeTheSetterRan:
         the advisory has to follow the environment variable because that is the
         only source of a posture available.
         """
+        # ``set_device`` binding ``_device`` is the real ``DeviceDriver``'s
+        # behaviour; the fake two sibling modules install at collection time
+        # drops the runtime, and the module already registered may carry it.
+        use_the_real_edge()
         from strands_robots.device_connect import sim_driver as sd_mod
         from strands_robots.device_connect.sim_driver import SimulationDeviceDriver
 
