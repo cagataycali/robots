@@ -95,10 +95,14 @@ ENV_TOF_SOCKET: str = "MICRODUCK_TOF_SOCKET"
 ENV_SSH_USER: str = "DUCK_BOARD_USER"
 DEFAULT_SSH_USER: str = "radxa"
 
-#: The API version this driver speaks, pinned to ``duck-ipc-proto`` ``API_VERSION``
-#: at microduck release 0.14.1. robotd's Hello never refuses a client - it just
-#: reports its own version - so the refusal on a mismatch is this driver's, and
-#: it refuses rather than mis-parse frames whose contract it has not read.
+#: The ``duck-ipc-proto`` ``API_VERSION`` this driver's frames were checked
+#: against (microduck release 0.14.1). Sent in Hello and compared with the
+#: daemon's answer; a difference is logged, not refused. duck-ipc-proto's own
+#: rule: "No daemon refuses a call because this number differs" - every frame is
+#: ``#[serde(default)]``-tolerant, a route that moved refuses itself by name
+#: (``METHOD_NOT_FOUND``/``INVALID_PARAMS``), and a gate on the handshake would
+#: refuse every serveable call along with it (which is exactly how the pin at 16
+#: refused every 0.14 duck).
 MICRODUCK_API_VERSION: int = 31
 
 #: ``[safety] deadman_ms`` default (robotd-params): a twist older than this is
@@ -986,9 +990,10 @@ class MicroduckDriver:
                 to have the driver forward the duck's sockets itself. ``None``
                 discovers it - see :func:`resolve_endpoint` (``$MICRODUCK_SOCKET``,
                 ``$MICRODUCK_HOST``, then :data:`DEFAULT_SOCKET`).
-            api_version: API version to send in the Hello handshake, pinned to
+            api_version: API version to send in the Hello handshake, defaults to
                 :data:`MICRODUCK_API_VERSION`. A robotd answering a different
-                version is refused, not mis-parsed.
+                version is connected and the skew logged; each call it cannot
+                serve refuses itself by name.
             timeout: Socket and request timeout in seconds. A positive, finite
                 number: it is handed to ``socket.settimeout`` and to the reply
                 wait, neither of which can report what it was given.
@@ -1030,6 +1035,10 @@ class MicroduckDriver:
         if subscribe_hz is not None and (
             reason := positive_count_error(subscribe_hz, "subscribe_hz", "MicroduckDriver")
         ):
+            raise ValueError(reason)
+        # ``api_version`` is the same shape on the same wire: ``HelloParams`` is
+        # a ``u32`` that robotd decodes with ``deny_unknown_fields``.
+        if reason := positive_count_error(api_version, "api_version", "MicroduckDriver"):
             raise ValueError(reason)
 
         self._tool_name = tool_name
@@ -1272,9 +1281,10 @@ class MicroduckDriver:
         every write refuses "not connected"). Idempotent: a second call on a live
         connection is a no-op success.
 
-        A version mismatch is a *refusal*, not a silent downgrade: the reason
-        names both versions, because a driver that mis-parsed a newer robotd's
-        frames would be worse than one that declined to talk to it.
+        A version mismatch is *reported*, not refused: robotd bumps
+        ``API_VERSION`` for additive methods too, and answers a call it cannot
+        serve with an error naming the method or parameter, so a gate here would
+        refuse a daemon every frame of which this driver reads.
         """
         if self.is_connected:
             return None
@@ -1313,12 +1323,12 @@ class MicroduckDriver:
 
         their_version = hello.get("api_version")
         if their_version != self._api_version:
-            client.close()
-            self._connect_error = (
-                f"robotd speaks api_version {their_version}, this driver speaks {self._api_version}; "
-                "refusing rather than mis-parsing its frames"
+            logger.warning(
+                "robotd speaks api_version %s, this driver was checked against %s; "
+                "a call whose shape moved will refuse itself by name",
+                their_version,
+                self._api_version,
             )
-            return self._connect_error
 
         client.start_reader(self._on_state)
         try:

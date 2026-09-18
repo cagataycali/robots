@@ -702,6 +702,23 @@ class TestOutOfTheBox:
         monkeypatch.setattr(robot_mod, "scan_serial_devices", lambda: [])
         assert robot_mod._auto_detect_mode("microduck") == "sim"
 
+    def test_a_newer_robotd_connects_and_the_skew_is_logged_not_refused(self, caplog: Any) -> None:
+        """The pin at 16 refused every 0.14 duck; a pin at 31 must not repeat that
+        against 0.15. duck-ipc-proto: no daemon refuses on this number, a moved
+        route refuses itself by name."""
+        with MockRobotd(api_version=MICRODUCK_API_VERSION + 1) as server:
+            driver = MicroduckDriver(port=server.path, timeout=2.0)
+            try:
+                with caplog.at_level("WARNING", logger="strands_robots.drivers.microduck"):
+                    assert driver.connect_eagerly() is None
+                assert driver.is_connected
+                assert any(str(MICRODUCK_API_VERSION + 1) in r.getMessage() for r in caplog.records)
+                assert _drive(driver, action="skills")["status"] == "success"
+                assert _drive(driver, action="mouth", open=0.5)["status"] == "success"
+                assert _drive(driver, action="version")["status"] == "success"
+            finally:
+                driver.cleanup()
+
     def test_a_probe_that_raises_is_no_hardware(self, monkeypatch: Any) -> None:
         import strands_robots.robot as robot_mod
 
