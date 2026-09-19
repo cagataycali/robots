@@ -54,6 +54,7 @@ import strands_robots.tools.pose_tool as pose_mod  # noqa: E402
 import strands_robots.tools.robot_mesh as mesh_mod  # noqa: E402
 import strands_robots.tools.serial_tool as serial_mod  # noqa: E402
 from strands_robots._command_gate import gate_command  # noqa: E402
+from strands_robots._motion_grants import consume_grant  # noqa: E402
 from strands_robots.mesh.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
 
@@ -220,7 +221,7 @@ def _drive_dashboard_agent_hitl(response: object) -> dict[str, Any] | None:
     finally:
         # A yes deposits a one-shot grant in process-global state; do not leak it
         # into another cell (or another file) that reads the same set.
-        dash_hitl_mod.consume_grant("fleet", tool_input)
+        consume_grant("fleet", tool_input)
 
     if not event.cancel_tool:
         return None

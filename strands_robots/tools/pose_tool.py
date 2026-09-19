@@ -43,6 +43,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_motion
+from strands_robots._motion_grants import consume_grant
 from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.drivers.feetech.bus import (
     SO_ARM_MOTORS,
@@ -1042,30 +1043,6 @@ MOTION_ACTIONS = frozenset({"move_motor", "move_multiple", "incremental_move", "
 COMMAND_ALLOW_ENV = "STRANDS_POSE_COMMAND_ALLOW"
 
 
-def _dashboard_grant(tool_input: dict[str, Any]) -> bool:
-    """Spend a grant the dashboard's motion hook deposited for this exact call.
-
-    The dashboard registers :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`
-    on its agent, which asks the operator before the tool runs and records a
-    one-shot grant keyed on what they were shown. Asking again here would be
-    the same question twice, so a grant is consumed and the call proceeds. The
-    dashboard extra may be absent, and a missing module must read as "no
-    grant", never as a crash: the gate below then asks the operator itself.
-
-    Args:
-        tool_input: The call as the hook saw it - the same field names, with
-            the unset ones omitted.
-
-    Returns:
-        True when a grant for this exact call existed and was spent.
-    """
-    try:
-        from strands_robots.dashboard import agent_hitl
-    except ImportError:
-        return False
-    return bool(agent_hitl.consume_grant("pose_tool", tool_input))
-
-
 def _unknown_motor_error(action: str, label: str, name: Any) -> str | None:
     """Refuse a motor name the arm's table does not carry.
 
@@ -1169,7 +1146,7 @@ def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolCont
     Returns:
         A refusal message, or None to let the motion proceed.
     """
-    if _dashboard_grant(tool_input):
+    if consume_grant("pose_tool", tool_input):
         return None
     port = str(tool_input.get("port") or "")
     detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))

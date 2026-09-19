@@ -23,6 +23,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots.tools.serial_tool as serial_mod
+from strands_robots._motion_grants import consume_grant, deposit_grant
 
 PORT = "/dev/ttyFAKE0"
 
@@ -183,7 +184,7 @@ class TestTheDashboardHookIsNotAskedTwice:
                 action="feetech_position", port=PORT, motor_id=2, position=512, tool_context=ctx
             )
         finally:
-            agent_hitl.consume_grant("serial_tool", tool_input)
+            consume_grant("serial_tool", tool_input)
 
         assert res["status"] == "success", res
         ctx.interrupt.assert_not_called()
@@ -213,14 +214,22 @@ class TestTheDashboardHookIsNotAskedTwice:
                 action="feetech_position", port=PORT, motor_id=2, position=512, tool_context=_ctx("n")
             )
         finally:
-            agent_hitl.consume_grant("serial_tool", other)
+            consume_grant("serial_tool", other)
 
         assert res["status"] == "error", res
         assert opened == []
 
-    def test_a_missing_dashboard_extra_means_no_grant_not_a_crash(
+    def test_a_grant_survives_the_dashboard_extra_being_absent(
         self, opened: list[_FakeSerial], monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The store is read where it lives, so the web extra is not on the motion path.
+
+        The grant used to be read out of ``strands_robots.dashboard``, whose
+        package ``__init__`` requires fastapi, uvicorn, webauthn and PyJWT. A
+        spend therefore imported a web server to look up a ``set`` -- and where
+        the extra was absent the import failed, so "has a human already said
+        yes?" was answered by an ImportError rather than by the store.
+        """
         import builtins
 
         real_import = builtins.__import__
@@ -231,14 +240,18 @@ class TestTheDashboardHookIsNotAskedTwice:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _no_dashboard)
+        tool_input = {"action": "feetech_position", "port": PORT, "motor_id": 2, "position": 512}
+        deposit_grant("serial_tool", tool_input)
+        ctx = _ctx("n")
+        try:
+            res = serial_mod.serial_tool(
+                action="feetech_position", port=PORT, motor_id=2, position=512, tool_context=ctx
+            )
+        finally:
+            consume_grant("serial_tool", tool_input)
 
-        res = serial_mod.serial_tool(
-            action="feetech_position", port=PORT, motor_id=1, position=1, tool_context=_ctx("n")
-        )
-
-        assert res["status"] == "error", res
-        assert "declined" in res["content"][0]["text"]
-        assert opened == []
+        assert res["status"] == "success", res
+        ctx.interrupt.assert_not_called()
 
 
 class TestReadsAreNeverGated:

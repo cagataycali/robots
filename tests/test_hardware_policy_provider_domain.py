@@ -42,6 +42,7 @@ from typing import Any
 
 import pytest
 
+import strands_robots.hardware_robot as hw_mod
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.registry.policies import (
     list_policy_aliases,
@@ -86,7 +87,8 @@ def gateable(monkeypatch: pytest.MonkeyPatch) -> Any:
     robot = HwRobot.__new__(HwRobot)
     robot.tool_name_str = "so101"
     robot._shutdown_event = threading.Event()
-    robot._dashboard_grant = lambda tool_input: False  # type: ignore[method-assign]
+    # No operator grant is on deposit, so the gate asks rather than spending one.
+    monkeypatch.setattr(hw_mod, "consume_grant", lambda tool, tool_input: False)
     return robot
 
 
