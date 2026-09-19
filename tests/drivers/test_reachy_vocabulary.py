@@ -245,3 +245,20 @@ class TestAVolumeRequestBecomesALevel:
     @pytest.mark.parametrize("level", [True, float("nan"), "loudish", 101, -1])
     def test_a_value_outside_the_domain_is_refused(self, level: object) -> None:
         assert isinstance(vocab.resolve_volume_level(level, 50), str)
+
+    @pytest.mark.parametrize(
+        "level",
+        ["inf", "infinity", "-inf", "1e999", "nan", "INF%", float("inf"), float("-inf")],
+    )
+    def test_a_non_finite_spelling_is_refused_not_raised(self, level: object) -> None:
+        """``float`` accepts every spelling here, and ``round`` raises on an infinity.
+
+        The string branch used to catch ``ValueError`` alone, so ``"infinity"``
+        escaped as ``OverflowError`` through the tool's no-raise contract; the
+        ``"nan"`` sibling was saved only because ``round(nan)`` happens to raise
+        ``ValueError``. Both spellings, and the numeric infinities the other
+        branch already refused, get the one finiteness reason.
+        """
+        result = vocab.resolve_volume_level(level, 50)
+        assert isinstance(result, str)
+        assert "finite" in result

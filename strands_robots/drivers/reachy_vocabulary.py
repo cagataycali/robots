@@ -369,9 +369,16 @@ def resolve_volume_level(level: Any, current: int | None) -> int | str:
             value = current // 2 if text == "quieter" else current + 20
         else:
             try:
-                value = int(round(float(text.rstrip("%"))))
+                parsed = float(text.rstrip("%"))
             except ValueError:
                 return f"volume: unknown level {refusal_repr(level)} - use 0-100, or one of {sorted(VOLUME_WORDS)} / quieter / louder"
+            # ``float`` accepts "inf", "infinity", "nan" and an overflowing
+            # "1e999", and ``round`` raises OverflowError on an infinity - so
+            # the finiteness check the numeric branch makes has to run here
+            # too, before anything rounds.
+            if not math.isfinite(parsed):
+                return f"volume: level must be a finite number, got {refusal_repr(level)}"
+            value = int(round(parsed))
     if not 0 <= value <= 100:
         return f"volume: level {value} is outside 0-100"
     return value
