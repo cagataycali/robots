@@ -333,6 +333,7 @@ class TestEverySurfaceTakingAConnectTimeoutRoutesThroughTheDomain:
 
     #: Every shipped surface taking the parameter, as of this change.
     EXPECTED = {
+        "drivers/microduck.py::ssh_forward_argv",
         "inference/client.py::RemotePolicy.__init__",
         "mesh/transport/iot_transport.py::IotMqttTransport.__init__",
         "policies/lerobot_async/policy.py::LerobotAsyncPolicy.__init__",

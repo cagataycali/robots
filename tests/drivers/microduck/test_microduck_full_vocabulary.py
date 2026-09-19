@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import socket
 import tempfile
@@ -50,6 +51,7 @@ from strands_robots.drivers.microduck import (
     twist_error,
     uyvy_to_jpeg,
 )
+from strands_robots.utils import positive_finite_number_error
 from tests.mocks.microduck_robotd import MockRobotd
 
 
@@ -174,6 +176,20 @@ class TestDiscovery:
         assert "ConnectTimeout=3" in argv
         assert argv[argv.index("-L") + 1] == f"/tmp/l.sock:{DEFAULT_SOCKET}"
         assert argv[-1] == "radxa@10.0.0.5"
+
+    @pytest.mark.parametrize("value", [0, -1, math.nan, math.inf, True, "15", None])
+    def test_a_connect_timeout_ssh_cannot_spend_is_refused_by_the_shared_domain(self, value: Any) -> None:
+        """Rounding to ssh's whole second used to hide the mistake or raise unnamed.
+
+        ``0``/``-1``/``True`` became a silent ``ConnectTimeout=1``, and ``nan``,
+        ``inf``, ``None`` and ``"15"`` raised ``ValueError``/``OverflowError``/
+        ``TypeError`` out of ``round`` naming no parameter. The knob is the same
+        one three other surfaces carry, so it takes the same domain.
+        """
+        assert positive_finite_number_error(value, "connect_timeout", "ssh_forward_argv") is not None
+        with pytest.raises(ValueError) as exc:
+            ssh_forward_argv("radxa", "h", [("/tmp/l.sock", DEFAULT_SOCKET)], connect_timeout=value)
+        assert "connect_timeout" in str(exc.value) and "must be > 0" in str(exc.value)
 
     def test_a_missing_socket_refusal_names_what_to_set(self) -> None:
         driver = MicroduckDriver(port=os.path.join(tempfile.mkdtemp(), "none.sock"))

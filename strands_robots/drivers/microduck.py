@@ -672,7 +672,22 @@ def ssh_forward_argv(
     ``StreamLocalBindUnlink`` lets a stale local socket from a crashed forward
     be reused. Each ``(local, remote)`` pair is one ``-L local:remote`` - OpenSSH
     forwards unix sockets with the same flag it forwards ports with.
+
+    Args:
+        user: Login on the board.
+        host: The duck's address.
+        forwards: ``(local, remote)`` socket pairs to forward.
+        connect_timeout: Seconds ssh may spend reaching the board, rounded to the
+            whole second ssh reads. The shared positive-finite domain, because
+            ``ssh`` cannot spend ``0``, a negative or a non-number, and the
+            rounding would otherwise turn each of those into a silent
+            ``ConnectTimeout=1`` or an exception naming no parameter.
+
+    Raises:
+        ValueError: If ``connect_timeout`` is not a positive finite number.
     """
+    if reason := positive_finite_number_error(connect_timeout, "connect_timeout", "ssh_forward_argv"):
+        raise ValueError(reason)
     argv = [
         "ssh",
         "-N",
