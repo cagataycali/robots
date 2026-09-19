@@ -400,9 +400,9 @@ def rosbridge_action(
             blocklisted drive surface with no prompt, which is the defect
             :mod:`strands_robots._command_gate` exists to prevent. The numeric
             domains of ``timeout`` / ``count`` / ``rate`` belong to the caller
-            too - an agent tool reports a malformed option, while a
-            :class:`~strands_robots.mesh._mobile_base.MobileBaseRobot` has
-            already refused one at its own seam.
+            too - an agent tool reports a malformed option, while a mesh bridge
+            such as :class:`~strands_robots.mesh.RosbridgeRobot` has already
+            refused one at its own seam, naming the verb its caller invoked.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.

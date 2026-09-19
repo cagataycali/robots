@@ -10,5 +10,10 @@ port / name domains and the action dispatch) now lives in
 `rosbridge_action` takes the operator gate as a required keyword argument, so no
 caller can command a blocklisted surface by forgetting one, and both callers key
 it with the same label, so a `cmd_vel` command reaching the same physical topic
-files one interrupt id and one audit source whichever surface asked. No
-behaviour a caller sees changes.
+files one interrupt id and one audit source whichever surface asked.
+
+One behaviour is restored rather than moved: every bridge's `get_pose` /
+`get_scan` now grades its own `timeout` on the shared positive-finite domain and
+names the verb the caller invoked (`get_pose: timeout must be > 0, got -1.0.`).
+A wait a transport cannot honor used to come back from an already-connected
+transport as a successful read of zero samples.

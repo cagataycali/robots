@@ -346,7 +346,14 @@ class RosbridgeRobot:
         return self._publish_twist(0.0, 0.0, count=1, tool_context=tool_context)
 
     def get_pose(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one odometry/pose sample from ``odom_topic``."""
+        """Read one odometry/pose sample from ``odom_topic``.
+
+        Refuses a ``timeout`` it cannot wait out before the bridge is dialed: on
+        an already-connected bridge a non-positive wait returns at once, so an
+        unchecked value would report success with no sample in it.
+        """
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_pose"):
+            return self._error(wait_err)
         return rosbridge_action(
             action="echo",
             host=self.host,
@@ -359,9 +366,14 @@ class RosbridgeRobot:
         )
 
     def get_scan(self, timeout: float = 5.0) -> dict[str, Any]:
-        """Read one laser-scan sample (error when no ``scan_topic`` configured)."""
+        """Read one laser-scan sample (error when no ``scan_topic`` configured).
+
+        Grades ``timeout`` on the same domain as :meth:`get_pose`.
+        """
         if not self.scan_topic:
             return self._error("get_scan: no scan_topic configured for this robot")
+        if wait_err := positive_finite_number_error(timeout, "timeout", "get_scan"):
+            return self._error(wait_err)
         return rosbridge_action(
             action="echo",
             host=self.host,
