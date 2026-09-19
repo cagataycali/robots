@@ -27,6 +27,7 @@ import asyncio
 import importlib
 import math
 import sys
+import threading
 import time
 from typing import Any
 
@@ -1158,3 +1159,73 @@ class TestAFaceLockVetoesATurnOnTheOnlyClockBothEndsShare:
         assert driver._doa_blocked() is None
         daemon._responses[reachy_mod._PATH_TRACKING_FACE] = self._detected(self._UPTIME_STAMP + 0.5)
         assert driver._doa_blocked() == "face tracker has a lock"
+
+
+class TestOneDoaLoopIsEverLiveAndReachable:
+    """Two concurrent ``turn_to_sound(True)`` calls start one loop, not two.
+
+    The tool surface dispatches sync handlers on worker threads, so a model
+    emitting duplicate parallel tool calls can enter ``turn_to_sound`` twice at
+    once. Without a lock both calls observe no running loop, both build one,
+    and the second assignment to the slot drops the only reference to the
+    first - a 10 Hz thread issuing head turns that ``stop``, ``turn_to_sound
+    (False)`` and ``cleanup`` can no longer reach, which defeats the halt the
+    rest of the driver promises.
+
+    The loop double parks inside ``start`` until a second caller arrives (or a
+    short timeout passes), which holds the first caller inside the
+    check-then-act window for as long as the race needs. Under the lock the
+    second caller cannot reach the check until the first has finished, so the
+    barrier times out and exactly one loop exists; without it both callers
+    reach the barrier and two are built.
+    """
+
+    class _ParkedLoop:
+        """A ``DoaLoop`` stand-in that records every instance and parks in ``start``."""
+
+        instances: list[TestOneDoaLoopIsEverLiveAndReachable._ParkedLoop] = []
+        gate = threading.Barrier(2, timeout=0.5)
+
+        def __init__(self, **_: Any) -> None:
+            self.running = False
+            self.stopped = False
+            type(self).instances.append(self)
+
+        def start(self) -> None:
+            """Wait for a second starter, or give up and run alone."""
+            try:
+                self.gate.wait()
+            except threading.BrokenBarrierError:
+                pass
+            self.running = True
+
+        def stop(self) -> None:
+            self.running = False
+            self.stopped = True
+
+        def status(self) -> dict[str, Any]:
+            return {"running": self.running, "enabled": True}
+
+    def test_concurrent_enables_build_one_loop_and_a_disable_reaches_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        loop_cls = self._ParkedLoop
+        loop_cls.instances = []
+        loop_cls.gate = threading.Barrier(2, timeout=0.5)
+        monkeypatch.setattr(reachy_mod, "DoaLoop", loop_cls)
+        driver, _daemon, _link = _install(monkeypatch)
+        driver._connected = True
+
+        results: list[dict[str, Any]] = []
+        workers = [threading.Thread(target=lambda: results.append(driver.turn_to_sound(True))) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5.0)
+        assert all(not worker.is_alive() for worker in workers)
+        assert [r["status"] for r in results] == ["success", "success"]
+
+        assert len(loop_cls.instances) == 1, "the second enable built a loop the first had already started"
+        assert driver._doa is loop_cls.instances[0]
+
+        driver.turn_to_sound(False)
+        assert all(loop.stopped for loop in loop_cls.instances)
+        assert not any(loop.running for loop in loop_cls.instances)

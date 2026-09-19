@@ -377,6 +377,16 @@ class ReachyDriver(AgentTool):
         #: The turn-toward-a-voice loop, built by :meth:`turn_to_sound` and
         #: stopped by it, by :meth:`stop` and by :meth:`cleanup`. ``None`` until
         #: first enabled; kept afterwards so its status survives a disable.
+        #: Every read-then-write of this slot holds ``_doa_lock``: the tool
+        #: surface dispatches handlers on worker threads, so two concurrent
+        #: ``turn_to_sound(True)`` calls would otherwise each see no running
+        #: loop, each start one, and the second assignment would drop the only
+        #: reference to the first - a 10 Hz thread issuing head turns that
+        #: ``stop``, ``turn_to_sound(False)`` and ``cleanup`` could no longer
+        #: reach. The lock is never held across a daemon call, and the loop
+        #: thread never takes it, so holding it across ``DoaLoop.stop`` (which
+        #: joins that thread) cannot deadlock.
+        self._doa_lock = threading.Lock()
         self._doa: DoaLoop | None = None
 
     # ------------------------------------------------------------------ #
@@ -1848,15 +1858,16 @@ class ReachyDriver(AgentTool):
         if (reason := finite_number_error(sign, "sign", "turn_to_sound")) is not None:
             return _refuse(reason)
         if enabled:
-            if self._doa is None or not self._doa.running:
-                self._doa = DoaLoop(
-                    read_frame=self._doa_frame,
-                    look=self._doa_look,
-                    blocked=self._doa_blocked,
-                    turner=DoaTurner(sign=sign),
-                    name=f"{self._tool_name}-doa",
-                )
-                self._doa.start()
+            with self._doa_lock:
+                if self._doa is None or not self._doa.running:
+                    self._doa = DoaLoop(
+                        read_frame=self._doa_frame,
+                        look=self._doa_look,
+                        blocked=self._doa_blocked,
+                        turner=DoaTurner(sign=sign),
+                        name=f"{self._tool_name}-doa",
+                    )
+                    self._doa.start()
         else:
             self._stop_doa()
         return self.turn_to_sound_status()
@@ -1877,9 +1888,15 @@ class ReachyDriver(AgentTool):
         return {"status": "success", "content": [{"json": payload}]}
 
     def _stop_doa(self) -> None:
-        """Stop the DoA loop if one is running. Idempotent; never raises."""
-        if self._doa is not None:
-            self._doa.stop()
+        """Stop the DoA loop if one is running. Idempotent; never raises.
+
+        Holds ``_doa_lock`` across the stop so a concurrent
+        :meth:`turn_to_sound` cannot install a fresh loop between this read of
+        the slot and the stop of what it found.
+        """
+        with self._doa_lock:
+            if self._doa is not None:
+                self._doa.stop()
 
     def _doa_frame(self) -> dict[str, Any] | None:
         """One daemon state frame with DoA, head pose and body yaw, or ``None`` on a failed read."""
