@@ -68,7 +68,6 @@ Examples:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from strands import tool
@@ -77,8 +76,6 @@ from strands.types.tools import ToolContext
 from strands_robots._command_gate import gate_command
 from strands_robots.ros import GATE_TOOL, _err, never_gated, ros_action
 from strands_robots.tools._numeric_options import numeric_option_error
-
-logger = logging.getLogger(__name__)
 
 # Which numeric options each action actually consumes. An action that reads none
 # of them (``status``, the ``list_*`` queries, ``info``) must not be refused for
