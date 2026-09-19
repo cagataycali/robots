@@ -161,6 +161,62 @@ class TestTheInstallSectionDoesNotPromiseAFetch:
         assert "local file" in install, install
 
 
+class TestTheInstallLineCarriesEveryExtraThePageUses:
+    """The page's own examples must run from the line it opens with.
+
+    ``[protomotions]`` declares no MuJoCo, and both halves of the page need one:
+    the ``Robot("unitree_g1", mode="sim")`` fence refuses with ``ImportError:
+    'mujoco' is required for MuJoCo simulation``, and ``qpos_to_motion_data``
+    parses the reference MJCF through it. The extras table is the independent
+    oracle here - these cells read it rather than restating the sentence.
+    """
+
+    @staticmethod
+    def _extras() -> dict[str, list[str]]:
+        with (_ROOT / "pyproject.toml").open("rb") as handle:
+            data = tomllib.load(handle)
+        return dict(data["project"]["optional-dependencies"])
+
+    def test_the_protomotions_extra_declares_no_mujoco(self) -> None:
+        """Why the install line needs a second extra at all."""
+        declared = " ".join(self._extras()["protomotions"])
+        assert "mujoco" not in declared, declared
+
+    def test_the_install_fence_names_the_simulation_extra(self) -> None:
+        """A reader who copies one line gets a runnable page."""
+        text = " ".join(_DOC.read_text(encoding="utf-8").split())
+        install = text.split("## Install", 1)[-1].split("##", 1)[0]
+        assert "sim-mujoco]" in install, install
+        assert 'pip install "strands-robots[protomotions,sim-mujoco]"' in install, install
+
+
+class TestTheReferenceMJCFIsNamed:
+    """``proto_mjcf_path`` has no default, so the page must name a file.
+
+    The parameter takes a 33-body ProtoMotions G1 model and this package bundles
+    none, so a page that states the requirement without naming a file leaves the
+    reader to guess among five upstream candidates - four of which need a Git LFS
+    mesh tree beside them, and one of which the bridge refuses outright.
+    """
+
+    @staticmethod
+    def _bridge_section() -> str:
+        text = " ".join(_DOC.read_text(encoding="utf-8").split())
+        return text.split("## Bridging a qpos clip", 1)[-1].split("## ", 1)[0]
+
+    @pytest.mark.parametrize(
+        "needle",
+        [
+            "g1_bm_no_mesh_box_feet.xml",  # the file that loads on its own
+            "NVlabs/ProtoMotions",  # where it comes from
+            "Git LFS",  # why the meshed siblings need more than a curl
+        ],
+    )
+    def test_the_bridge_section_names_the_asset(self, needle: str) -> None:
+        """Requirement plus source, not requirement alone."""
+        assert needle in self._bridge_section(), needle
+
+
 class TestWhatStillHolds:
     """Over-reach controls: nothing else about the guard may change."""
 
