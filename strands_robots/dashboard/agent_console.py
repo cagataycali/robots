@@ -157,6 +157,27 @@ def build_tools(safety: Any) -> list[Any]:
         except HTTPException as exc:
             raise PermissionError(str(exc.detail))
 
+    def _accepted(drop: str | None = None) -> None:
+        """Fold the proof this command was accepted, or report the e-stop that beat it.
+
+        Args:
+            drop: a session to forget when the e-stop landed. A session that was
+                admitted and then refused must not be left in the store: it holds
+                one of ``MAX_SESSIONS`` slots and thaws into a running robot on
+                resume - a robot the caller was told was refused.
+
+        Raises:
+            PermissionError: the lockout latched while this command was in flight.
+        """
+        from fastapi import HTTPException
+
+        try:
+            safety.accepted()
+        except HTTPException as exc:
+            if drop is not None:
+                safety.store.remove(drop)
+            raise PermissionError(str(exc.detail))
+
     @tool
     def robots() -> list[dict[str, Any]]:
         """Robots that can be simulated: name, dof, and whether a session already runs one."""
@@ -172,19 +193,29 @@ def build_tools(safety: Any) -> list[Any]:
 
     @tool
     def sim_start(robot: str) -> dict[str, Any]:
-        """Start a simulation of a registry robot and return its session (id, joints)."""
+        """Start a simulation of a registry robot and return its session (id, joints).
+
+        A start that does not finish is forgotten rather than handed back: the
+        state published before the first frame is ``running``, so a session that
+        never rendered would be reported as a robot the operator can watch while
+        it streams nothing and holds one of the store's slots.
+        """
         _gate("create")
+        from strands_robots.dashboard import routes_sim
         from strands_robots.registry.robots import get_robot, resolve_name
 
         entry = get_robot(robot)
         if entry is None or not entry.get("asset"):
             raise ValueError(f"{robot!r} is not a robot with a simulation asset")
         session = safety.store.create(resolve_name(robot))
-        session.wait_ready(60.0)
+        timeout = routes_sim.READY_TIMEOUT
+        if not session.wait_ready(timeout):
+            safety.store.remove(session.id)
+            raise RuntimeError(f"{robot} did not render a first frame within {timeout:.0f}s")
         if session.snapshot.state == "error":
             safety.store.remove(session.id)
             raise RuntimeError(f"could not start {robot}: {session.snapshot.error}")
-        safety.accepted()
+        _accepted(drop=session.id)
         return _snapshot(session)
 
     @tool
@@ -206,7 +237,7 @@ def build_tools(safety: Any) -> list[Any]:
         result = _session(session_id).command("set_joints", positions=dict(positions))
         if result.get("status") == "error":
             raise ValueError(str(result.get("content")))
-        safety.accepted()
+        _accepted()
         return dict(result)
 
     @tool
@@ -214,7 +245,7 @@ def build_tools(safety: Any) -> list[Any]:
         """Return a simulated robot to its home pose."""
         _gate("reset")
         result = _session(session_id).command("reset")
-        safety.accepted()
+        _accepted()
         return dict(result)
 
     @tool
