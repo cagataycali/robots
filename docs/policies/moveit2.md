@@ -138,15 +138,28 @@ request  = {"endpoint": "plan",
                      "target_joints": dict[str, float] | None,
                      "world_update": dict | None}}
 response = {"trajectory": list[list[float]],
+            "joint_names": list[str],        # on success
             "success": bool,
             "status": str}
 ```
 
-Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`. The client
-drops the leading time column when packing per-step action dicts and maps the
-remaining columns onto the keys from `set_robot_state_keys(...)`. A
-`success=False` response raises `RuntimeError`. The sidecar also exposes
-`ping` (health check) and `reset` (per-episode hook).
+Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`, and
+`joint_names` names the joint each of `q0 .. qN` belongs to, in column order -
+the planning group's own vocabulary, read from the trajectory message. The
+client drops the leading time column when packing per-step action dicts and
+keys the remaining columns, in order of preference, by the
+`set_robot_state_keys(...)` roster when the row is that wide, else by
+`joint_names` (each passed through the constructor's `joint_name_map`), else by
+positional `joint_<i>` labels when the sidecar returned no roster. A plan
+covers the planning group, which is narrower than the robot that carries it
+(`panda_arm` plans 7 joints; the Panda declares 8 action keys), so the second
+path is the one a simulation rollout takes: the planner is the only party that
+knows which joint a column commands, and its names are used as given rather
+than guessed from the robot's roster. A name the robot does not drive stays
+unresolved and the runner refuses it; a roster that is not as wide as the row,
+or not a list of distinct names, is refused by the client before it keys a
+command. A `success=False` response raises `RuntimeError`. The sidecar also
+exposes `ping` (health check) and `reset` (per-episode hook).
 
 A `success=True` response must carry at least one waypoint, and every row must
 carry at least one joint column - a plan that commands nothing is a planning
@@ -204,7 +217,15 @@ sim.run_policy(
     robot_name="panda",
     instruction="",               # ignored by the planner
     policy_provider="moveit2",
-    policy_config={"host": "127.0.0.1", "port": 5556, "planning_group": "panda_arm"},
+    policy_config={
+        "host": "127.0.0.1",
+        "port": 5556,
+        "planning_group": "panda_arm",
+        # MoveIt 2's panda config and the MuJoCo Panda are two descriptions of
+        # one arm with two vocabularies: the planner names panda_joint1..7,
+        # the simulated robot drives joint1..7.
+        "joint_name_map": {f"panda_joint{i}": f"joint{i}" for i in range(1, 8)},
+    },
     policy_kwargs={"target_pose": [0.3, 0.0, 0.5, 0.0, 1.0, 0.0, 0.0]},
     duration=10.0,
     control_frequency=50.0,
@@ -212,7 +233,12 @@ sim.run_policy(
 ```
 
 That rollout takes the Panda's flange from 283.3 mm away to 4.6 mm from the
-commanded `target_pose`. The start configuration is read from the observation -
+commanded `target_pose`. The planned columns are keyed by the joint names the
+sidecar returns, so without the `joint_name_map` the actions would name
+`panda_joint1..7`, which the MuJoCo Panda does not drive, and the runner would
+refuse the rollout as one that moved no joint - loudly, rather than commanding
+whichever joints happen to lead the robot's roster. The start configuration is
+read from the observation -
 the flat `observation.state` vector when a caller passes one, and the per-joint
 scalars a simulation publishes otherwise - and is read in order onto the joints
 the planning group plans over, so a robot that publishes joints the group does

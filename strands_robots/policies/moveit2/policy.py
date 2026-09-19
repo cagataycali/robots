@@ -42,7 +42,7 @@ import os
 from typing import Any
 
 from strands_robots.policies._log_safety import sanitize_log_value
-from strands_robots.policies._state_keys import joint_positions_from_observation, observation_joint_keys
+from strands_robots.policies._state_keys import joint_positions_from_observation
 from strands_robots.policies.base import Policy
 from strands_robots.utils import name_list_error, tcp_port_error
 
@@ -77,6 +77,14 @@ class MoveIt2Policy(Policy):
         api_token: Optional token included in every request. Falls back
             to the ``MOVEIT2_API_TOKEN`` environment variable if not
             provided.
+        joint_name_map: Optional ``{planner_joint_name: robot_action_key}``
+            map, applied to the joint names the sidecar returns with a plan
+            before they key the action dicts. Needed when the MoveIt config
+            and the robot being driven are two descriptions of one arm with
+            two vocabularies - MoveIt 2's own panda config plans
+            ``panda_joint1``, the MuJoCo Panda drives ``joint1``. A name the
+            map does not cover passes through unchanged. Keys and values are
+            held to the same charset as ``target_joints`` keys.
         **kwargs: Forward-compatibility absorber for the smart-string
             resolution path (e.g. ``zmq://host:port`` extras the factory
             adds). Per the #300 contract, providers MUST ignore unknown
@@ -105,6 +113,7 @@ class MoveIt2Policy(Policy):
         planning_group: str = "arm",
         timeout_ms: int = 15000,
         api_token: str | None = None,
+        joint_name_map: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         # ``port`` addresses the moveit_py sidecar this client dials, so a
@@ -118,8 +127,8 @@ class MoveIt2Policy(Policy):
         self.port = port
         self.planning_group = planning_group
         self._robot_state_keys: list[str] = []
-        #: Joint keys of the last observation read, in vector order.
-        self._observation_joint_keys: list[str] = []
+        self._validate_joint_name_map(joint_name_map)
+        self.joint_name_map: dict[str, str] = dict(joint_name_map) if joint_name_map else {}
 
         resolved_token = api_token or os.environ.get("MOVEIT2_API_TOKEN")
         self._client: MoveIt2InferenceClient = MoveIt2InferenceClient(
@@ -167,9 +176,10 @@ class MoveIt2Policy(Policy):
         """Configure the joint names this policy emits actions for.
 
         Used to map the ``trajectory`` rows the sidecar returns
-        (``[t, q0, q1, ...]``) onto per-joint action dicts. When unset,
-        ``get_actions`` falls back to ``observation.state`` length and
-        emits ``"joint_<i>"`` keys.
+        (``[t, q0, q1, ...]``) onto per-joint action dicts when the row is
+        as wide as this list. A row of another width is keyed by the
+        ``joint_names`` the sidecar returned with it; see
+        :meth:`_resolve_joint_keys`.
 
         Raises:
             ValueError: If ``robot_state_keys`` is not an ordered list of
@@ -325,7 +335,7 @@ class MoveIt2Policy(Policy):
                 f"status={status!r}, planning_group={planning_group!r}. "
                 "A plan that commands nothing is a planning failure, not a no-op plan."
             )
-        return self._unpack_trajectory(trajectory)
+        return self._unpack_trajectory(trajectory, response.get("joint_names"))
 
     # Helpers
 
@@ -341,7 +351,6 @@ class MoveIt2Policy(Policy):
         the wire; ``None`` (no state at all) lets the sidecar use its own state
         estimate from ``/joint_states``.
         """
-        self._observation_joint_keys = observation_joint_keys(observation_dict, self._robot_state_keys)
         try:
             return joint_positions_from_observation(observation_dict, self._robot_state_keys)
         except (TypeError, ValueError) as e:
@@ -353,17 +362,20 @@ class MoveIt2Policy(Policy):
             )
             return None
 
-    def _unpack_trajectory(self, trajectory: list[list[float]]) -> list[dict[str, Any]]:
+    def _unpack_trajectory(
+        self, trajectory: list[list[float]], joint_names: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """Convert ``[[t, q0, q1, ...], ...]`` rows into per-step action dicts.
 
         The leading time column is dropped - the runner schedules the
-        timing. If ``set_robot_state_keys`` was called, joint names come
-        from there; otherwise we emit ``"joint_<i>"`` keys derived from
-        the row width.
+        timing. The remaining columns are keyed by
+        :meth:`_resolve_joint_keys`, with ``joint_names`` the roster the
+        sidecar returned beside the rows (``None`` when it returned none).
 
         Raises:
             RuntimeError: If a row carries no joint position, which would
-                otherwise unpack into an action dict that commands nothing.
+                otherwise unpack into an action dict that commands nothing;
+                or if ``joint_names`` cannot key the rows it came with.
         """
         actions: list[dict[str, Any]] = []
         for index, row in enumerate(trajectory):
@@ -380,34 +392,73 @@ class MoveIt2Policy(Policy):
                 )
             # Drop the leading time column - the runner schedules the timing.
             joint_values = list(row[1:])
-            keys = self._resolve_joint_keys(len(joint_values))
-            actions.append({k: float(v) for k, v in zip(keys, joint_values)})
+            keys = self._resolve_joint_keys(len(joint_values), joint_names)
+            actions.append({k: float(v) for k, v in zip(keys, joint_values, strict=True)})
         return actions
 
-    def _resolve_joint_keys(self, n: int) -> list[str]:
+    def _resolve_joint_keys(self, n: int, joint_names: list[str] | None) -> list[str]:
         """Resolve the joint key names for an n-element trajectory row.
 
         Three candidates, in order:
 
-        1. ``set_robot_state_keys`` names, when the row is that wide.
-        2. The keys the observation published its own joint positions under -
-           whole when the row is that wide, else its leading ``n``. A plan
-           covers the planning group, which is narrower than the robot that
-           carries it (``panda_arm`` plans 7 joints; a Panda publishes 9 and
-           declares 8 action keys, the two fingers sharing one), so neither
-           roster is the plan's width. A robot accepts commands under the joint
-           names it reports state under, so this keys the row without inventing
-           a name, and a group that is not the leading joints is caught by the
-           runner's unresolved-key guard rather than silently mis-keyed.
+        1. ``set_robot_state_keys`` names, when the row is that wide - the
+           caller's own declaration of which key each column commands.
+        2. The ``joint_names`` the sidecar returned with the plan, each passed
+           through ``joint_name_map``. A plan covers the planning group, which
+           is narrower than the robot that carries it (``panda_arm`` plans 7
+           joints; a Panda publishes 9 and declares 8 action keys, the two
+           fingers sharing one), so the declared roster is not the plan's
+           width, and the only party that knows which joint a column belongs
+           to is the planner. Its names are used as given: a name the robot
+           does not drive stays unresolved and is refused by the runner's
+           unresolved-key guard, never re-keyed onto a joint it did not plan.
         3. Positional ``joint_<i>`` labels (consistent with :class:`MockPolicy`)
-           - a last resort, and one no robot resolves, which is why the named
-           rosters are tried first.
+           when the sidecar returned no roster - a last resort no robot
+           resolves, so a plan that reaches it fails loudly.
+
+        Raises:
+            RuntimeError: If ``joint_names`` is not a list of distinct
+                non-blank names as wide as the row. The roster arrives from a
+                peer process, so it is held to the same shape as
+                ``robot_state_keys`` before it keys a command.
         """
         if self._robot_state_keys and len(self._robot_state_keys) == n:
             return list(self._robot_state_keys)
-        if len(self._observation_joint_keys) >= n > 0:
-            return list(self._observation_joint_keys[:n])
+        if joint_names:
+            if error := name_list_error(joint_names, "joint_names", "MoveIt2 plan response"):
+                raise RuntimeError(error)
+            if len(joint_names) != n:
+                raise RuntimeError(
+                    f"MoveIt2 plan response names {len(joint_names)} joints {list(joint_names)!r} "
+                    f"for trajectory rows carrying {n} joint positions; a roster of another width "
+                    "cannot say which joint each column commands."
+                )
+            return [self.joint_name_map.get(name, name) for name in joint_names]
         return [f"joint_{i}" for i in range(n)]
+
+    @staticmethod
+    def _validate_joint_name_map(joint_name_map: Any) -> None:
+        """Validate ``joint_name_map`` is a str-to-str mapping of joint names."""
+        import re
+
+        if joint_name_map is None:
+            return
+        if not isinstance(joint_name_map, dict):
+            raise ValueError(
+                "joint_name_map must be a dict mapping each planner joint name to the robot's "
+                f"action key, got {type(joint_name_map).__name__}"
+            )
+        pattern = re.compile(_JOINT_NAME_PATTERN)
+        for k, v in joint_name_map.items():
+            if not isinstance(k, str) or not pattern.match(k):
+                raise ValueError(
+                    f"joint_name_map key {k!r} must match {_JOINT_NAME_PATTERN!r} (letters, digits, underscore, hyphen)"
+                )
+            if not isinstance(v, str) or not pattern.match(v):
+                raise ValueError(
+                    f"joint_name_map[{k!r}]={v!r} must match {_JOINT_NAME_PATTERN!r} "
+                    "(letters, digits, underscore, hyphen)"
+                )
 
     @staticmethod
     def _validate_target_pose(target_pose: Any) -> None:

@@ -51,12 +51,16 @@ request  = {"endpoint": "plan",
                      "target_joints": dict[str, float] | None,
                      "world_update": dict | None}}
 response = {"trajectory": list[list[float]],
+            "joint_names": list[str],        # on success
             "success": bool,
             "status": str}
 ```
 
-Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`. The
-client drops the time column when packing per-step action dicts —
+Trajectory rows are `[time_from_start_seconds, q0, q1, ..., qN]`, and
+`joint_names` names the joint each of `q0 .. qN` belongs to, in column order,
+read from the trajectory message. The client drops the time column when
+packing per-step action dicts and keys the columns by those names when the
+robot's declared roster is not the row's width —
 `MoveIt2Policy._unpack_trajectory` in `../policy.py`.
 
 The reference implementation also exposes `ping` (health check) and

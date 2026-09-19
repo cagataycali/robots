@@ -36,11 +36,15 @@ Wire protocol::
                          "target_joints": dict[str, float] | None,
                          "world_update": dict | None}}
     response = {"trajectory": list[list[float]],
+                "joint_names": list[str],        # on success
                 "success": bool,
                 "status": str}
 
 The trajectory rows are ``[time_from_start_seconds, q0, q1, ..., qN]`` -
 the time column lets the client / runner schedule waypoints precisely.
+``joint_names`` names the joint each of ``q0 .. qN`` belongs to, in column
+order: the planning group's own vocabulary, read from the trajectory message
+rather than guessed from the robot the client drives.
 
 Notes for forks:
 
@@ -396,6 +400,10 @@ def _plan(
     # ``time_from_start`` (Duration) + ``positions`` (list[float]).
     try:
         trajectory_msg = plan_result.trajectory.get_robot_trajectory_msg()
+        # The message names the joint each position column belongs to. Sent
+        # with the rows so the client keys them by name instead of by the
+        # position a column happens to hold in whatever roster it has.
+        joint_names = [str(name) for name in trajectory_msg.joint_trajectory.joint_names]
         rows: list[list[float]] = []
         for point in trajectory_msg.joint_trajectory.points:
             t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
@@ -415,7 +423,7 @@ def _plan(
         logger.warning("The plan serialised to nothing commandable (%s); reporting it as a planning failure.", detail)
         return {"trajectory": [], "success": False, "status": f"planner_returned_empty:{detail}"}
 
-    return {"trajectory": rows, "success": True, "status": "ok"}
+    return {"trajectory": rows, "joint_names": joint_names, "success": True, "status": "ok"}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -44,9 +44,19 @@ class _FakePoint:
 class _FakeComponent:
     """Stand-in for a moveit_py PlanningComponent."""
 
-    def __init__(self, *, plan_points: list[_FakePoint] | None, plan_raises: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        plan_points: list[_FakePoint] | None,
+        plan_raises: bool = False,
+        joint_names: list[str] | None = None,
+    ) -> None:
         self._plan_points = plan_points
         self._plan_raises = plan_raises
+        # A JointTrajectory names the joint each position column belongs to.
+        # Derived from the first point's width unless the test says otherwise.
+        width = len(plan_points[0].positions) if plan_points else 0
+        self.joint_names = list(joint_names) if joint_names is not None else [f"j{i}" for i in range(width)]
         self.goal: dict[str, Any] = {}
         self.start_state_set = False
         self.start_state: Any = None
@@ -68,7 +78,9 @@ class _FakeComponent:
         # ``plan_result.trajectory`` is a moveit.core RobotTrajectory, which
         # carries no joint_trajectory of its own: the ROS message (and with it
         # the waypoints) is reached through get_robot_trajectory_msg().
-        msg = types.SimpleNamespace(joint_trajectory=types.SimpleNamespace(points=self._plan_points))
+        msg = types.SimpleNamespace(
+            joint_trajectory=types.SimpleNamespace(joint_names=self.joint_names, points=self._plan_points)
+        )
         trajectory = types.SimpleNamespace(get_robot_trajectory_msg=lambda: msg)
         return types.SimpleNamespace(trajectory=trajectory)
 
@@ -243,6 +255,34 @@ def test_plan_with_target_joints_succeeds_and_serialises_rows() -> None:
     assert resp["trajectory"][0] == [0.0, 0.0, 0.0]
     assert resp["trajectory"][1][0] == pytest.approx(1.5)
     assert resp["trajectory"][1][1:] == [0.5, 0.6]
+
+
+def test_plan_names_the_joint_each_column_belongs_to() -> None:
+    """The response carries the trajectory message's ``joint_names`` in column order.
+
+    A plan covers the planning group, which is narrower than the robot that
+    carries it, so the client cannot know from the robot's roster which joint
+    a column commands - only the planner does. The names are the message's
+    own, so a client keying rows by them never re-keys a column onto a joint
+    the group did not plan.
+    """
+    component = _FakeComponent(
+        plan_points=[_FakePoint(sec=0, nanosec=0, positions=[0.5, 0.6, 0.7])],
+        joint_names=["shoulder", "elbow", "wrist"],
+    )
+    resp = zmq_node._plan(
+        _FakeMoveItPy(component=component),
+        planning_group="arm",
+        joint_state=None,
+        target_pose=None,
+        target_joints={"shoulder": 0.5},
+        world_update=None,
+    )
+    assert resp["success"] is True
+    assert resp["joint_names"] == ["shoulder", "elbow", "wrist"]
+    assert all(isinstance(name, str) for name in resp["joint_names"])
+    # One name per position column, in the column's order.
+    assert len(resp["joint_names"]) == len(resp["trajectory"][0]) - 1
 
 
 def test_plan_with_target_pose_builds_posestamped() -> None:
@@ -619,7 +659,8 @@ class _StageFailingComponent:
         if self._bad_trajectory:
             return types.SimpleNamespace(trajectory=None)
         point = _FakePoint(sec=0, nanosec=0, positions=self._positions)
-        msg = types.SimpleNamespace(joint_trajectory=types.SimpleNamespace(points=[point]))
+        names = [f"j{i}" for i in range(len(self._positions))]
+        msg = types.SimpleNamespace(joint_trajectory=types.SimpleNamespace(joint_names=names, points=[point]))
         return types.SimpleNamespace(trajectory=types.SimpleNamespace(get_robot_trajectory_msg=lambda: msg))
 
 
@@ -815,7 +856,7 @@ def test_plan_happy_path_still_serialises_rows() -> None:
 
     result = _plan_or_fail(_FakeMoveItPy(component=component), target_joints={"j0": 0.1})
 
-    assert result == {"trajectory": [[0.0, 0.1, 0.2]], "success": True, "status": "ok"}
+    assert result == {"trajectory": [[0.0, 0.1, 0.2]], "joint_names": ["j0", "j1"], "success": True, "status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -1039,5 +1080,5 @@ def test_a_well_formed_request_is_unaffected_by_the_map_check(monkeypatch: pytes
     assert rc == 0
     assert responses[0] == {"status": "ok"}
     assert responses[1] == {"status": "ok"}
-    assert responses[2] == {"trajectory": [[0.0, 0.1]], "success": True, "status": "ok"}
+    assert responses[2] == {"trajectory": [[0.0, 0.1]], "joint_names": ["j0"], "success": True, "status": "ok"}
     assert responses[3] == {"error": "unknown_endpoint:bogus"}
