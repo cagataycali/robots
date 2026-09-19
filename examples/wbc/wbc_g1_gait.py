@@ -75,6 +75,19 @@ def plot_clock(out_path: str, freq: float = 1.0, duration_s: float = 6.0) -> Non
     print(f"wrote {out_path}")
 
 
+def _check(result: object, what: str) -> None:
+    """Raise if a sim action returned an error dict - never claim a rollout it refused.
+
+    ``run_policy`` reports a refusal by RETURNING ``{"status": "error", ...}``
+    rather than raising, so a discarded result lets the demo print "gait rollout
+    complete" and exit 0 for a rollout that applied no action - a checkpoint of
+    the wrong input width reads as a successful run.
+    """
+    if isinstance(result, dict) and result.get("status") == "error":
+        msg = "; ".join(c.get("text", "") for c in result.get("content", []) if isinstance(c, dict) and "text" in c)
+        raise RuntimeError(f"{what} failed: {msg}")
+
+
 def run_policy(checkpoint: str, vx: float, freq: float, duration: float, mp4: str | None) -> None:
     """Run the gait policy in the MuJoCo torque-deploy loop (needs a gait checkpoint)."""
     from strands_robots import Robot
@@ -83,7 +96,7 @@ def run_policy(checkpoint: str, vx: float, freq: float, duration: float, mp4: st
     policy = WBCGaitPolicy(checkpoint=checkpoint, target_velocity=[vx, 0.0, 0.0], gait_frequency=freq)
     sim = Robot("unitree_g1")
     video = {"path": mp4, "fps": 30, "camera": "track", "width": 640, "height": 480} if mp4 else None
-    sim.run_policy(
+    result = sim.run_policy(
         robot_name="unitree_g1",
         policy_object=policy,
         policy_kwargs={"target_velocity": [vx, 0.0, 0.0], "gait_frequency": freq},
@@ -91,6 +104,7 @@ def run_policy(checkpoint: str, vx: float, freq: float, duration: float, mp4: st
         control_frequency=50.0,
         video=video,
     )
+    _check(result, "gait rollout")
     print("gait rollout complete")
 
 

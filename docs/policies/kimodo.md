@@ -11,8 +11,13 @@ sampler (~8 s for 100 steps, 120 frames on a Jetson AGX-class device).
 ## Install
 
 ```bash
-pip install "strands-robots[kimodo]"
+pip install "strands-robots[kimodo,sim-mujoco]"
 ```
+
+`[kimodo]` carries the sampler's own dependencies only; the Quick start below
+runs the motion in MuJoCo, so it needs `[sim-mujoco]` too - without it
+`Robot("g1")` raises `ImportError: 'mujoco' is required for MuJoCo simulation`
+before any motion is sampled.
 
 The extra installs the `diffusers` loader, which drives any checkpoint published
 in *diffusers pipeline layout*. Two independent opt-ins guard that loader, both
@@ -51,8 +56,11 @@ License; nothing is bundled with `strands_robots`.
     NVIDIA publishes the Kimodo weights bare — `config.yaml`,
     `model.safetensors` and `stats/`, `library_name: kimodo` on the Hub, no
     `model_index.json` — so `DiffusionPipeline.from_pretrained` cannot load it
-    and the default `model_id` is refused at construction. To run the NVIDIA
-    checkpoint, supply its sampler through `motion_agent=` — see
+    and the default `model_id` is refused on the first sample: the policy
+    constructs, and the refusal arrives when a motion is asked for, so
+    `run_policy` reports the rollout as an error having applied no action and
+    written no video. To run the NVIDIA checkpoint, supply its sampler through
+    `motion_agent=` — see
     [Driving the NVIDIA checkpoint](#driving-the-nvidia-checkpoint).
 
 ## Quick start
@@ -83,10 +91,17 @@ sim.run_policy(
 
 ## Tracking the reference under physics
 
-Run standalone (the example above) the 29 targets are applied directly, which is
-the faithful visualisation of the generated motion. Making the robot follow it
-under physics needs a controller that **tracks the reference**, in series over
-the same joints:
+Run standalone (the example above) the 29 joint targets are applied directly -
+with no tracker in between, but still to the G1's position actuators under
+gravity, and the clip's own 7 root values are not applied. So the motion plays in
+place and a standing G1 handed a walking clip topples: measured on
+`nvidia/Kimodo-G1-RP-v1`, a 120-frame "walking forward" sample whose own root
+travels 3.6 m put the pelvis on the floor within 4 s at 50 Hz (0.793 m -> 0.064 m),
+while the same clip replayed through `set_joint_positions` (the chaining snippet
+below, which holds the root) shows the generated motion with the pelvis steady at
+0.793 m. Use that route to *look* at a sample; making the robot follow it under
+physics needs a controller that **tracks the reference**, in series over the same
+joints:
 
 ```text
 prompt -> Kimodo -> 29 joint targets -> reference tracker -> torques -> robot

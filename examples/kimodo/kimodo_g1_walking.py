@@ -33,6 +33,20 @@ import os
 import sys
 
 
+def _check(result: object, what: str) -> None:
+    """Raise if a sim action returned an error dict - never claim a rollout it refused.
+
+    ``run_policy`` reports a refusal by RETURNING ``{"status": "error", ...}``
+    rather than raising, so a discarded result lets the demo print "Done. Video:"
+    and exit 0 for a rollout that applied no action and wrote no MP4 - which is
+    what the default ``model_id`` does here, since it is not a diffusers pipeline
+    and the refusal arrives on the first sample.
+    """
+    if isinstance(result, dict) and result.get("status") == "error":
+        msg = "; ".join(c.get("text", "") for c in result.get("content", []) if isinstance(c, dict) and "text" in c)
+        raise RuntimeError(f"{what} failed: {msg}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Kimodo -> G1 MuJoCo demo")
     parser.add_argument(
@@ -75,6 +89,7 @@ def main() -> int:
         control_frequency=args.control_hz,
         video={"path": args.out, "camera": "front", "fps": 25},
     )
+    _check(result, "rollout")
     print(f"Done. Video: {args.out}")
     print(f"Sim result: {result}")
     return 0
