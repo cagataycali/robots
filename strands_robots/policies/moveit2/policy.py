@@ -433,7 +433,22 @@ class MoveIt2Policy(Policy):
                     f"for trajectory rows carrying {n} joint positions; a roster of another width "
                     "cannot say which joint each column commands."
                 )
-            return [self.joint_name_map.get(name, name) for name in joint_names]
+            resolved = [self.joint_name_map.get(name, name) for name in joint_names]
+            # A map value that lands on another roster name's passthrough
+            # collapses two columns into one key - the same silent-drop class
+            # the construction-time injectivity check catches for duplicated
+            # values, but unreachable there because it depends on the roster.
+            if len(set(resolved)) != len(resolved):
+                seen: dict[str, str] = {}
+                for orig, mapped in zip(joint_names, resolved):
+                    if mapped in seen:
+                        raise RuntimeError(
+                            f"joint_name_map produces duplicate action key {mapped!r} "
+                            f"(from planner joints {seen[mapped]!r} and {orig!r}); "
+                            "each column must map to a distinct key"
+                        )
+                    seen[mapped] = orig
+            return resolved
         return [f"joint_{i}" for i in range(n)]
 
     @staticmethod
@@ -459,6 +474,18 @@ class MoveIt2Policy(Policy):
                     f"joint_name_map[{k!r}]={v!r} must match {_JOINT_NAME_PATTERN!r} "
                     "(letters, digits, underscore, hyphen)"
                 )
+        # A non-injective map silently collapses two planned joints into one
+        # action key, so the dict comprehension in _unpack_trajectory drops a
+        # column under a success status.  Refuse at construction so the
+        # collision is never silent.
+        seen_values: dict[str, str] = {}
+        for k, v in joint_name_map.items():
+            if v in seen_values:
+                raise ValueError(
+                    f"joint_name_map is not injective: both {seen_values[v]!r} and {k!r} "
+                    f"map to {v!r}; each planner joint must map to a distinct robot action key"
+                )
+            seen_values[v] = k
 
     @staticmethod
     def _validate_target_pose(target_pose: Any) -> None:

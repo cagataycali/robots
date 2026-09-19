@@ -938,3 +938,73 @@ class TestClientTeardownNonBlocking:
         worker.start()
         # Pre-fix (infinite linger) this blocks forever; post-fix it is instant.
         assert done.wait(timeout=10.0), "client teardown blocked on a queued request to a dead server"
+
+
+class TestJointNameMapDistinctness:
+    """A colliding joint_name_map must never silently drop a planned column.
+
+    Two collision paths, both must-fix before ``joint_name_map`` ships as a
+    public constructor argument:
+
+    1. A non-injective map (copy-paste typo): ``{"a": "x", "b": "x"}``.
+    2. A map value that lands on another roster name's passthrough:
+       roster ``["a", "b"]`` with map ``{"a": "b"}`` -> keys ``["b", "b"]``.
+    """
+
+    @pytest.mark.parametrize(
+        ("joint_name_map", "match"),
+        [
+            pytest.param(
+                {"panda_joint1": "joint2", "panda_joint2": "joint2"},
+                "not injective.*both.*map to.*joint2",
+                id="duplicate_value_copy_paste_typo",
+            ),
+            pytest.param(
+                {"a": "x", "b": "y", "c": "x"},
+                "not injective.*both.*map to.*x",
+                id="duplicate_value_three_entries",
+            ),
+        ],
+    )
+    def test_non_injective_map_is_refused_at_construction(self, joint_name_map, match):
+        """A non-injective map is caught before any plan is ever resolved."""
+        with pytest.raises(ValueError, match=match):
+            MoveIt2Policy(host="127.0.0.1", port=19999, joint_name_map=joint_name_map)
+
+    def test_map_value_colliding_with_passthrough_is_refused_at_resolve_time(self):
+        """roster ["a", "b"] + map {"a": "b"} -> keys ["b", "b"] is refused."""
+        p = MoveIt2Policy(
+            host="127.0.0.1",
+            port=19999,
+            joint_name_map={"a": "b"},
+        )
+        _capture_send_decode_recv(p, _ok_trajectory_response(horizon=1, ndof=2, joint_names=["a", "b"]))
+
+        with pytest.raises(RuntimeError, match="duplicate action key.*b"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 2},
+                    "",
+                    target_joints={"a": 0.5},
+                )
+            )
+
+    def test_injective_map_still_works(self):
+        """A well-formed injective map is unaffected by the new guard."""
+        p = MoveIt2Policy(
+            host="127.0.0.1",
+            port=19999,
+            joint_name_map={"panda_joint1": "joint1", "panda_joint2": "joint2"},
+        )
+        _capture_send_decode_recv(
+            p, _ok_trajectory_response(horizon=1, ndof=2, joint_names=["panda_joint1", "panda_joint2"])
+        )
+
+        actions = asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0] * 9},
+                "",
+                target_joints={"panda_joint1": 0.5},
+            )
+        )
+        assert list(actions[0].keys()) == ["joint1", "joint2"]
