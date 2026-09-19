@@ -29,7 +29,6 @@ domain the run-size knobs use, in one gate that every writer routes through.
 
 from __future__ import annotations
 
-import ast
 import inspect
 import json
 import pathlib
@@ -47,7 +46,6 @@ from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
 from strands_robots.training.groot import Gr00tTrainer  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
 from strands_robots.training.mock import MockTrainer  # noqa: E402
-from tests.training._spec_field_reads import reads_spec_field  # noqa: E402
 
 TOTAL_EPISODES = 10
 
@@ -429,89 +427,6 @@ class TestABackendThatIgnoresTheFieldsReportsNothing:
     ) -> None:
         setattr(spec, field, 0)
         assert _problems_of(trainer_cls(), spec, field) == []
-
-
-def _trainer_modules() -> list[pathlib.Path]:
-    """Every trainer module, minus the one that defines the shared gate.
-
-    Rooted at the module that defines :class:`Trainer` so the scan cannot
-    silently point at the wrong tree. The module that *defines* the gate is
-    excluded - derived from the gate itself rather than named, so the exclusion
-    cannot drift - because it reads the fields as their owner, not as a consumer.
-    """
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(lora_hyperparameter_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_a_hyperparameter(source: str) -> bool:
-    """Does *source* read either field, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, FIELDS)
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_lora_hyperparameter_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheAdapterHyperparameterDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* either field must route it through the shared gate, so a
-    third backend that starts building a LoRA adapter fails this test until it
-    does.
-    """
-
-    def test_the_scan_finds_the_backend_that_reads_the_fields(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        readers = {p.name for p in _trainer_modules() if _reads_a_hyperparameter(p.read_text())}
-        assert readers == {"lerobot.py", "sagemaker.py"}
-
-    def test_every_backend_that_reads_them_routes_through_the_shared_gate(self) -> None:
-        adrift = sorted(
-            p.name
-            for p in _trainer_modules()
-            if _reads_a_hyperparameter(source := p.read_text()) and not _calls_the_gate(source)
-        )
-        assert adrift == [], f"modules reading a LoRA hyperparameter without the shared gate: {adrift}"
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local sign or type test on either field is the hole this closed."""
-        offenders: list[str] = []
-        for path in _trainer_modules():
-            for line in path.read_text().splitlines():
-                if any(f"spec.{f}" in line for f in FIELDS) and ("< 1" in line or "<= 0" in line or "int(" in line):
-                    offenders.append(f"{path.name}: {line.strip()}")
-        assert offenders == [], f"local domain checks on a LoRA hyperparameter: {offenders}"
-
-    def test_the_scanners_detect_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def validate(self, spec):\n    return [] if spec.lora_alpha > 0 else ['bad']\n"
-        assert _reads_a_hyperparameter(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_the_scanners_detect_a_table_driven_defect(self) -> None:
-        """A backend that forwards either field by name is a reader too.
-
-        The form a transport-only provider takes: no attribute access mentions
-        either field, so a scan keyed on ``spec.lora_r`` alone reports a clean
-        sweep while this backend skips the gate.
-        """
-        planted = 'F = ("lora_alpha",)\ndef validate(self, spec):\n    return [getattr(spec, f) for f in F]\n'
-        assert _reads_a_hyperparameter(planted)
-        assert not _calls_the_gate(planted)
 
 
 def _peft_flag_writers() -> list[pathlib.Path]:

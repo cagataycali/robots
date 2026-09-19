@@ -27,18 +27,14 @@ entry point, so the wiring is covered as well as the domain.
 
 from __future__ import annotations
 
-import ast
 import inspect
-import pathlib
 from typing import Any
 
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
-from tests.training._spec_field_reads import reads_spec_field
 
 # The one backend that delays its policy updates.
 DELAYED_BACKEND = "fast_td3"
@@ -182,72 +178,3 @@ class TestTheModulusSilentlySkipsTheActor:
 
         update = inspect.getsource(FastTd3Trainer.update)
         assert "self._update_count % spec.policy_delay == 0" in update
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = (root / "_validate.py").resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_delay(source: str) -> bool:
-    """Does *source* read ``spec.policy_delay``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("policy_delay",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_policy_delay_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForThePolicyDelayDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.policy_delay`` must route it through the shared
-    gate, so a second backend that starts delaying its policy fails this test
-    until it does.
-    """
-
-    def test_every_module_that_reads_it_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_delay(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read spec.policy_delay without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_delay(p.read_text())}
-        assert readers == {"fast_td3.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def update(self):\n    return self.n % spec.policy_delay\n"
-        assert _reads_the_delay(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local comparison would drift from the shared rule."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if "spec.policy_delay <" in p.read_text() or "spec.policy_delay >" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare spec.policy_delay locally: {offenders}"

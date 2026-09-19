@@ -35,8 +35,6 @@ grounded in what the comparison and the real launcher do with them.
 
 from __future__ import annotations
 
-import ast
-import inspect
 import math
 import pathlib
 from typing import Any
@@ -49,7 +47,6 @@ from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
-from tests.training._spec_field_reads import reads_spec_field
 
 # The two fields, and the backends that launch from them.
 TOPOLOGY_FIELDS = ("num_gpus", "num_nodes")
@@ -224,96 +221,6 @@ class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
         """Which is why the old comparison raised rather than reporting."""
         with pytest.raises(TypeError):
             _ = value > 1  # type: ignore[operator]
-
-
-def _trainer_modules() -> list[pathlib.Path]:
-    """Every backend module, INCLUDING the ``rl`` subpackage.
-
-    Rooted at the module that defines :class:`Trainer` so the scan cannot
-    silently point at the wrong tree. The module that *defines* the shared gate
-    is excluded - derived from the gate itself rather than named, so the
-    exclusion cannot drift - because it reads both fields as their owner rather
-    than as a consumer of them.
-    """
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(launch_topology_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_a_topology_field(source: str) -> bool:
-    """Does *source* read either field, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, TOPOLOGY_FIELDS)
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_launch_topology_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheLaunchTopologyDomain:
-    """No backend may re-implement the domain, and none may skip it.
-
-    The set of backends in scope is derived from the tree rather than listed:
-    a module that *reads* either field must route it through the shared gate, so
-    a fifth backend that starts launching from ``num_gpus`` fails this test
-    until it does.
-    """
-
-    def test_the_scan_finds_the_launching_backends(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        readers = {p.name for p in _trainer_modules() if _reads_a_topology_field(p.read_text())}
-        assert readers == {"cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py"}
-
-    def test_every_backend_that_launches_routes_through_the_shared_gate(self) -> None:
-        adrift = sorted(
-            p.name
-            for p in _trainer_modules()
-            if _reads_a_topology_field(source := p.read_text()) and not _calls_the_gate(source)
-        )
-        assert adrift == [], f"modules reading a topology field without the shared gate: {adrift}"
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local ``<= 0`` / ``< 1`` test on either field is the hole this closed.
-
-        A ``> 1`` comparison is a different question - "is this topology one I
-        can launch" - and stays where it is.
-        """
-        offenders: list[str] = []
-        for path in _trainer_modules():
-            for line in path.read_text().splitlines():
-                if any(f"spec.{field}" in line for field in TOPOLOGY_FIELDS) and (
-                    "<= 0" in line or "< 1" in line or "!= int" in line
-                ):
-                    offenders.append(f"{path.name}: {line.strip()}")
-        assert offenders == [], f"local domain checks on a topology field: {offenders}"
-
-    def test_the_scanners_detect_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def validate(self, spec):\n    return [] if spec.num_gpus > 1 else []\n"
-        assert _reads_a_topology_field(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_the_scanners_detect_a_table_driven_defect(self) -> None:
-        """A backend that forwards either field by name is a reader too.
-
-        The form a transport-only provider takes: no attribute access mentions
-        either field, so a scan keyed on ``spec.num_gpus`` alone reports a clean
-        sweep while this backend skips the gate.
-        """
-        planted = 'F = ("num_gpus",)\ndef validate(self, spec):\n    return [getattr(spec, f) for f in F]\n'
-        assert _reads_a_topology_field(planted)
-        assert not _calls_the_gate(planted)
 
 
 class TestTheGateIsUsableOnItsOwn:

@@ -25,7 +25,6 @@ whose endpoint ``clip_grad_norm_`` itself settles.
 
 from __future__ import annotations
 
-import ast
 import inspect
 import math
 import pathlib
@@ -36,10 +35,8 @@ import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import loss_weight_problems
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import finite_number_error
-from tests.training._spec_field_reads import reads_spec_field
 
 # The backend that composes the weighted objective.
 ON_POLICY = "ppo"
@@ -245,74 +242,3 @@ class TestTheConsumerHonorsTheDomain:
         torch = pytest.importorskip("torch")
         loss = torch.tensor(1.0) + value * torch.tensor(2.0) - value * torch.tensor(0.5)
         assert bool(torch.isfinite(loss))
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(loss_weight_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_a_weight(source: str) -> bool:
-    """Does *source* read either ``spec.value_loss_coef`` or ``spec.entropy_coef``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("value_loss_coef", "entropy_coef"))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_loss_weight_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheLossWeightDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* either weight must route it through the shared gate, so a
-    second backend that starts composing a weighted objective with these fields
-    fails this test until it does.
-    """
-
-    def test_every_module_that_reads_one_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name for p in _training_modules() if _reads_a_weight(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read a loss weight without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_a_weight(p.read_text())}
-        assert readers == {"ppo.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading a weight without the gate is really reported."""
-        planted = "def validate(self, spec):\n    return [] if spec.entropy_coef else []\n"
-        assert _reads_a_weight(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A hand-rolled comparison agrees with the shared rule until it drifts."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if any(
-                f"{field} {op}" in p.read_text()
-                for field in ("value_loss_coef", "entropy_coef")
-                for op in ("<= 0", "< 0", "> 0", ">= 0")
-            )
-        ]
-        assert offenders == [], f"modules compare a loss weight themselves: {offenders}"

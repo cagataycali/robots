@@ -31,7 +31,6 @@ GR00T reads ``resume`` and ignores ``streaming``.
 
 from __future__ import annotations
 
-import ast
 import inspect
 import pathlib
 from typing import Any
@@ -289,59 +288,16 @@ def _trainer_modules() -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
 
 
-def _calls_the_gate(source: str, gate: str) -> bool:
-    """Does *source* route through ``self.<gate>(...)``?"""
-    return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == gate
-        for node in ast.walk(ast.parse(source))
-    )
+class TestTheListedReadersAgreeWithTheTree:
+    """The trainer classes this file exercises are the ones that read the fields.
 
-
-class TestOneOwnerForEachPostureFlag:
-    """No backend may skip a gate for a field it reads, and none may skip a read.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that reads ``spec.resume`` (by name or through a forwarding table)
-    must call ``_resume_problems``, and likewise for ``streaming``, so a backend
-    that starts reading either field fails this test until it does.
+    Which backends must route ``spec.resume`` through ``_resume_problems`` and
+    ``spec.streaming`` through ``_streaming_problems`` is graded for every shared
+    domain in ``tests/training/test_every_shared_domain_has_one_owner.py``. What
+    that table cannot see is this file's own hand-written class tuples, so a
+    backend that stops reading a flag would leave them exercising a case that no
+    longer exists: they are checked against the derived set here.
     """
-
-    @pytest.mark.parametrize(
-        ("field", "expected_readers"),
-        [
-            ("resume", {"groot.py", "lerobot.py", "sagemaker.py"}),
-            ("streaming", {"lerobot.py", "sagemaker.py"}),
-        ],
-    )
-    def test_the_scan_finds_the_readers(self, field: str, expected_readers: set[str]) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}
-        assert readers == expected_readers
-
-    @pytest.mark.parametrize(("field", "gate"), [("resume", "_resume_problems"), ("streaming", "_streaming_problems")])
-    def test_every_reader_routes_through_the_gate(self, field: str, gate: str) -> None:
-        adrift = sorted(
-            p.name
-            for p in _trainer_modules()
-            if reads_spec_field(source := p.read_text(), (field,)) and not _calls_the_gate(source, gate)
-        )
-        assert adrift == [], f"modules reading spec.{field} without {gate}: {adrift}"
-
-    @pytest.mark.parametrize(("field", "gate"), [("resume", "_resume_problems"), ("streaming", "_streaming_problems")])
-    def test_no_backend_gates_a_field_it_does_not_read(self, field: str, gate: str) -> None:
-        """The other half of the biconditional: a gate is not a free extra check."""
-        over_reaching = sorted(
-            p.name
-            for p in _trainer_modules()
-            if _calls_the_gate(source := p.read_text(), gate) and not reads_spec_field(source, (field,))
-        )
-        assert over_reaching == [], f"modules calling {gate} without reading spec.{field}: {over_reaching}"
-
-    def test_the_scanner_detects_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def validate(self, spec):\n    return ['--resume'] if spec.resume else []\n"
-        assert reads_spec_field(planted, ("resume",))
-        assert not _calls_the_gate(planted, "_resume_problems")
 
     def test_the_class_of_readers_reads_the_field_in_the_test_table(self) -> None:
         """The hand-written reader tuples above agree with the derived ones."""

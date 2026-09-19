@@ -35,8 +35,6 @@ grounded in what the real consumers do with them.
 
 from __future__ import annotations
 
-import ast
-import inspect
 import json
 import math
 import pathlib
@@ -51,7 +49,6 @@ from strands_robots.training.groot import Gr00tTrainer
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
-from tests.training._spec_field_reads import reads_spec_field
 
 # The backends that checkpoint from the field.
 CHECKPOINTING_BACKENDS = (LerobotTrainer, Gr00tTrainer, Cosmos3Trainer, SagemakerTrainer)
@@ -296,161 +293,6 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
 def _reject(constant: str) -> Any:
     """A strict-JSON hook: refuse the constants ``json.dumps`` emits for non-finites."""
     raise ValueError(constant)
-
-
-def _trainer_modules() -> list[pathlib.Path]:
-    """Every trainer module, minus the one that defines the shared gate.
-
-    Rooted at the module that defines :class:`Trainer` so the scan cannot
-    silently point at the wrong tree. The module that *defines* the gate is
-    excluded - derived from the gate itself rather than named, so the exclusion
-    cannot drift - because it reads the field as its owner, not as a consumer.
-    """
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(checkpoint_cadence_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_cadence(source: str) -> bool:
-    """Does *source* read ``spec.save_freq``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("save_freq",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_checkpoint_cadence_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheCheckpointCadenceDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.save_freq`` must route it through the shared gate,
-    so a fifth backend that starts checkpointing from the field fails this test
-    until it does.
-    """
-
-    def test_the_scan_finds_the_checkpointing_backends(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        readers = {p.name for p in _trainer_modules() if _reads_the_cadence(p.read_text())}
-        assert readers == {"cosmos3.py", "groot.py", "lerobot.py", "sagemaker.py"}
-
-    def test_every_backend_that_checkpoints_routes_through_the_shared_gate(self) -> None:
-        adrift = sorted(
-            p.name
-            for p in _trainer_modules()
-            if _reads_the_cadence(source := p.read_text()) and not _calls_the_gate(source)
-        )
-        assert adrift == [], f"modules reading spec.save_freq without the shared gate: {adrift}"
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local type or sign test on the field is the hole this closed.
-
-        The ``spec.save_freq > 0`` selectors that pick the ``eval_steps``
-        fallback are the *mode* test, not a domain check, and run after the gate
-        has established the value is an integer - so they are not offenders.
-        """
-        offenders: list[str] = []
-        for path in _trainer_modules():
-            for line in path.read_text().splitlines():
-                if "spec.save_freq" in line and ("int(" in line or "isinstance" in line):
-                    offenders.append(f"{path.name}: {line.strip()}")
-        assert offenders == [], f"local domain checks on spec.save_freq: {offenders}"
-
-    def test_the_scanners_detect_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def validate(self, spec):\n    return [f'--save_freq={spec.save_freq}']\n"
-        assert _reads_the_cadence(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_the_scanners_detect_a_table_driven_defect(self) -> None:
-        """A backend that forwards the field by name is a reader too.
-
-        The form a transport-only provider takes: no attribute access mentions
-        the field, so a scan keyed on ``spec.save_freq`` alone reports a clean
-        sweep while this backend skips the gate.
-        """
-        planted = 'FIELDS = ("save_freq",)\ndef validate(self, spec):\n    return [getattr(spec, f) for f in FIELDS]\n'
-        assert _reads_the_cadence(planted)
-        assert not _calls_the_gate(planted)
-
-
-class TestTheToolAndTheTrainerShareOneOwner:
-    """The two surfaces that reach the same lerobot field agree by construction.
-
-    ``lerobot_train`` builds the ``--save_freq=`` argv itself and the trainer
-    backends assign the same field in-process, so a cadence the tool refuses and
-    the trainer accepts (or the reverse) would mean the wrapper and the wrapped
-    pipeline disagree about the same number. They cannot: both consult
-    :func:`~strands_robots.utils.step_cadence_error`, and these tests hold them
-    to that rather than to two copies of one rule that could drift apart.
-    """
-
-    @staticmethod
-    def _tool_guard() -> Any:
-        from strands_robots.tools.lerobot_train import _save_freq_error
-
-        return _save_freq_error
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_both_surfaces_refuse_the_same_values(self, spec: TrainSpec, value: Any) -> None:
-        spec.save_freq = value
-        assert self._tool_guard()(value) is not None
-        assert checkpoint_cadence_problems(spec, context="lerobot") != []
-
-    @pytest.mark.parametrize("value", USABLE)
-    def test_both_surfaces_accept_the_same_values(self, spec: TrainSpec, value: int) -> None:
-        spec.save_freq = value
-        assert self._tool_guard()(value) is None
-        assert checkpoint_cadence_problems(spec, context="lerobot") == []
-
-    def test_they_differ_only_in_the_surface_they_name(self, spec: TrainSpec) -> None:
-        """One rule, one wording - the prefix is the only thing that may differ."""
-        spec.save_freq = A_FRACTIONAL_CADENCE
-        from_the_tool = self._tool_guard()(A_FRACTIONAL_CADENCE)
-        from_the_trainer = checkpoint_cadence_problems(spec, context="lerobot_train")[0]
-        assert from_the_tool == from_the_trainer
-
-    def test_the_tool_delegates_rather_than_carrying_a_copy(self) -> None:
-        """The structural half: a second implementation could drift silently.
-
-        Behaviourally identical today is not the property worth pinning - two
-        copies that agree now are exactly what diverges later, and the tests
-        above would keep passing right up to the edit that separates them.
-
-        The file is derived from the guard the tests above call, for the same
-        reason :func:`_trainer_modules` derives its exclusion from the gate: the
-        alternative resolves a *name*, and ``strands_robots.tools`` binds this
-        one twice. Its lazy ``__getattr__`` maps ``lerobot_train`` to the
-        ``@tool`` object inside the module of the same name and caches it on the
-        package, so ``from strands_robots.tools import lerobot_train`` yields the
-        module or the ``DecoratedFunctionTool`` depending only on which import
-        ran first anywhere in the session - and a tool object has no source file.
-        A function does, so this asks the guard itself.
-        """
-        source = pathlib.Path(inspect.getfile(self._tool_guard())).read_text()
-
-        guard = next(
-            node
-            for node in ast.parse(source).body
-            if isinstance(node, ast.FunctionDef) and node.name == "_save_freq_error"
-        )
-        statements = [n for n in guard.body if not isinstance(n, ast.Expr)]
-        assert len(statements) == 1, "the tool's guard should be a single delegation"
-        assert isinstance(statements[0], ast.Return)
-        call = statements[0].value
-        assert isinstance(call, ast.Call) and getattr(call.func, "id", None) == "step_cadence_error"
 
 
 class TestTheGateIsUsableOnItsOwn:

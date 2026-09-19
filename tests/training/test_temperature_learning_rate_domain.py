@@ -29,20 +29,15 @@ real ``validate`` entry point, so the wiring is covered as well as the domain.
 
 from __future__ import annotations
 
-import ast
 import inspect
-import pathlib
 from typing import Any
 
 import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training._validate import temperature_learning_rate_problems
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_finite_number_error
-from tests.training._spec_field_reads import reads_spec_field
 
 # The one backend that tunes an entropy temperature.
 OFF_POLICY = "fast_sac"
@@ -270,72 +265,3 @@ class TestGuardingTheFirstRateDoesNotGuardTheSecond:
         source = inspect.getsource(FastSacTrainer.setup)
         assert "lr=spec.learning_rate" in source
         assert "lr=spec.alpha_lr" in source
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(temperature_learning_rate_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_temperature_rate(source: str) -> bool:
-    """Does *source* read ``spec.alpha_lr``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("alpha_lr",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_temperature_learning_rate_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheTemperatureRateDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.alpha_lr`` must route it through the shared gate, so
-    a second off-policy backend that starts driving a temperature optimizer with
-    the field fails this test until it does.
-    """
-
-    def test_every_module_that_reads_it_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_temperature_rate(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read spec.alpha_lr without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_temperature_rate(p.read_text())}
-        assert readers == {"fast_sac.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def setup(self, spec):\n    return Adam([x], lr=spec.alpha_lr)\n"
-        assert _reads_the_temperature_rate(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local comparison would drift from the shared rule."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if "spec.alpha_lr <" in p.read_text() or "spec.alpha_lr >" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare spec.alpha_lr locally: {offenders}"

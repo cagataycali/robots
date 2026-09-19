@@ -56,7 +56,6 @@ from __future__ import annotations
 import ast
 import inspect
 import math
-import pathlib
 from typing import Any
 
 import numpy as np
@@ -68,10 +67,8 @@ from strands_robots.training._validate import (
     clip_range_problems,
     gradient_clip_problems,
 )
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_finite_number_error
-from tests.training._spec_field_reads import reads_spec_field
 
 # The one backend whose update clips a policy ratio.
 ON_POLICY = "ppo"
@@ -314,70 +311,3 @@ class TestTheRefusalPrecedesTheUpdate:
         assert result.status == "error"
         assert "clip_param" in (result.message or ""), result.message
         assert called == [], "the preflight must precede the environment"
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(clip_range_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_width(source: str) -> bool:
-    """Does *source* read ``spec.clip_param``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("clip_param",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_clip_range_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheClipRangeDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.clip_param`` must route it through the shared
-    gate, so a second backend that starts clipping with the field fails this
-    test until it does.
-    """
-
-    def test_every_module_that_reads_it_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_width(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read spec.clip_param without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_width(p.read_text())}
-        assert readers == {"ppo.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def validate(self, spec):\n    return [] if spec.clip_param else []\n"
-        assert _reads_the_width(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_bound(self) -> None:
-        """A hand-rolled comparison agrees with the shared rule until it drifts."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if "clip_param <= 0" in p.read_text() or "clip_param < 0" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare clip_param themselves: {offenders}"

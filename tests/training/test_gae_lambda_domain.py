@@ -24,9 +24,6 @@ entry point, so it covers the wiring as well as the domain.
 
 from __future__ import annotations
 
-import ast
-import inspect
-import pathlib
 from typing import Any
 
 import numpy as np
@@ -35,11 +32,8 @@ import pytest
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import (
     _closed_unit_interval_error,
-    gae_lambda_problems,
 )
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
-from tests.training._spec_field_reads import reads_spec_field
 
 # The one backend that estimates an advantage trace.
 ON_POLICY = "ppo"
@@ -232,68 +226,3 @@ class TestBoundingTheDiscountFactorAloneDoesNotBoundTheTrace:
     def test_both_endpoints_compute_a_finite_trace(self, endpoint: float) -> None:
         """Neither accepted endpoint is a degenerate spelling of "broken"."""
         assert 0.0 < self._largest_advantage(0.99, endpoint, 24) < float("inf")
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(gae_lambda_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_trace_decay(source: str) -> bool:
-    """Does *source* read ``spec.lam``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("lam",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "_gae_lambda_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheTraceDecayDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.lam`` must route it through the shared gate, so a
-    second on-policy backend that starts decaying a trace with the field fails
-    this test until it does.
-    """
-
-    def test_every_module_that_reads_it_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_trace_decay(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read spec.lam without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_trace_decay(p.read_text())}
-        assert readers == {"ppo.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def validate(self, spec):\n    return [] if spec.lam else []\n"
-        assert _reads_the_trace_decay(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_interval(self) -> None:
-        """A local copy of the bounds would drift from the shared rule."""
-        offenders = [
-            p.name for p in _training_modules() if "spec.lam <" in p.read_text() or "spec.lam >" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare spec.lam locally: {offenders}"

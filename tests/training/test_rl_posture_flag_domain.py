@@ -250,55 +250,15 @@ def _trainer_modules() -> list[pathlib.Path]:
     return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
 
 
-def _calls_the_gate(source: str, gate: str) -> bool:
-    """Does *source* route through ``self.<gate>(...)``?"""
-    return any(
-        isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == gate
-        for node in ast.walk(ast.parse(source))
-    )
+class TestTheGateOrderAndTheListedReaders:
+    """What the shared table cannot see: an ordering, and this file's own tuples.
 
-
-class TestOneOwnerForEachPostureFlag:
-    """No backend may skip a gate for a field it reads, and none may skip a read.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that reads ``spec.normalize_obs`` (by name or through a forwarding
-    table) must call ``_observation_normalization_problems``, and likewise for
-    the other two, so a backend that starts reading a field fails this test
-    until it does.
+    Which backends must route each flag through its gate is graded for every
+    shared domain in ``tests/training/test_every_shared_domain_has_one_owner.py``.
+    Two claims are local to these three flags: the rate gate is consulted only
+    after the flag gate it depends on, and the hand-written reader tuples this
+    file exercises are the backends that really read each field.
     """
-
-    @pytest.mark.parametrize(
-        ("field", "expected_readers"),
-        [
-            ("normalize_obs", {"ppo.py", "fast_sac.py", "fast_td3.py"}),
-            ("normalize_advantage", {"ppo.py"}),
-            ("autotune_alpha", {"fast_sac.py"}),
-        ],
-    )
-    def test_the_scan_finds_the_readers(self, field: str, expected_readers: set[str]) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep of nothing."""
-        readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}
-        assert readers == expected_readers
-
-    @pytest.mark.parametrize(("field", "gate"), sorted(GATES.items()))
-    def test_every_reader_routes_through_the_gate(self, field: str, gate: str) -> None:
-        adrift = sorted(
-            p.name
-            for p in _trainer_modules()
-            if reads_spec_field(source := p.read_text(), (field,)) and not _calls_the_gate(source, gate)
-        )
-        assert adrift == [], f"modules reading spec.{field} without {gate}: {adrift}"
-
-    @pytest.mark.parametrize(("field", "gate"), sorted(GATES.items()))
-    def test_no_backend_gates_a_field_it_does_not_read(self, field: str, gate: str) -> None:
-        """The other half of the biconditional: a gate is not a free extra check."""
-        over_reaching = sorted(
-            p.name
-            for p in _trainer_modules()
-            if _calls_the_gate(source := p.read_text(), gate) and not reads_spec_field(source, (field,))
-        )
-        assert over_reaching == [], f"modules calling {gate} without reading spec.{field}: {over_reaching}"
 
     def test_the_rate_gate_is_consulted_after_the_flag_gate_it_depends_on(self) -> None:
         """Ordering, pinned structurally on the one module that consults both."""
@@ -311,12 +271,6 @@ class TestOneOwnerForEachPostureFlag:
             and node.func.attr in ("_temperature_autotune_problems", "_temperature_learning_rate_problems")
         ]
         assert calls == ["_temperature_autotune_problems", "_temperature_learning_rate_problems"], calls
-
-    def test_the_scanner_detects_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def setup(self, spec):\n    self.norm = Norm() if spec.normalize_obs else None\n"
-        assert reads_spec_field(planted, ("normalize_obs",))
-        assert not _calls_the_gate(planted, "_observation_normalization_problems")
 
     def test_the_class_of_readers_reads_the_field_in_the_test_table(self) -> None:
         """The hand-written reader tuples above agree with the derived ones."""

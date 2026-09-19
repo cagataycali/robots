@@ -32,8 +32,6 @@ backend is covered as well as the domain.
 
 from __future__ import annotations
 
-import ast
-import inspect
 import json
 import pathlib
 from typing import Any
@@ -42,10 +40,8 @@ import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
-from tests.training._spec_field_reads import reads_spec_field
 
 # The one field this domain owns.
 WIDTH_FIELD = "hidden_dims"
@@ -266,65 +262,3 @@ class TestTheRefusalReachesTheRunEntryPoint:
         assert result.status == "error"
         assert "hidden_dims[1]" in result.message
         assert not list(tmp_path.rglob("policy.pt")), "a refused run must not export a checkpoint"
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = (root / "_validate.py").resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_widths(source: str) -> bool:
-    """Does *source* read ``hidden_dims`` off a spec, by name or through a table?"""
-    return reads_spec_field(source, (WIDTH_FIELD,))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_network_width_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheNetworkWidthDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed, so
-    a fourth from-scratch RL backend fails this test until it routes through the
-    shared gate.
-    """
-
-    def test_every_module_that_reads_them_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_widths(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules build networks from hidden_dims without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_widths(p.read_text())}
-        assert readers == {"ppo.py", "fast_sac.py", "fast_td3.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def build(self):\n    return spec.hidden_dims\n"
-        assert _reads_the_widths(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        """A local comparison would drift from the shared rule."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if f"len(spec.{WIDTH_FIELD})" in p.read_text() or f"spec.{WIDTH_FIELD} ==" in p.read_text()
-        ]
-        assert offenders == [], f"modules judge hidden_dims locally: {offenders}"

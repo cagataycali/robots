@@ -23,9 +23,6 @@ covers the wiring as well as the domain.
 
 from __future__ import annotations
 
-import ast
-import inspect
-import pathlib
 from typing import Any
 
 import numpy as np
@@ -34,11 +31,8 @@ import pytest
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import (
     _closed_unit_interval_error,
-    discount_factor_problems,
 )
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
-from tests.training._spec_field_reads import reads_spec_field
 
 # Every backend that discounts a return with the field.
 RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
@@ -218,70 +212,3 @@ class TestTheDivergenceTheDomainPrevents:
     def test_both_endpoints_compute_a_finite_return(self, endpoint: float) -> None:
         """Neither accepted endpoint is a degenerate spelling of "broken"."""
         assert 0.0 < self._largest_advantage(endpoint, 24) < float("inf")
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(discount_factor_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_discount_factor(source: str) -> bool:
-    """Does *source* read ``spec.gamma``, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none of them in an
-    attribute access.
-    """
-    return reads_spec_field(source, ("gamma",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_discount_factor_problems"
-        for node in ast.walk(ast.parse(source))
-    )
-
-
-class TestOneOwnerForTheDiscountDomain:
-    """No backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed: a
-    module that *reads* ``spec.gamma`` must route it through the shared gate, so
-    a third RL backend that starts discounting a return with the field fails
-    this test until it does.
-    """
-
-    def test_every_module_that_reads_it_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _reads_the_discount_factor(p.read_text()) and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"modules read spec.gamma without the shared gate: {adrift}"
-
-    def test_the_reader_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        readers = {p.name for p in _training_modules() if _reads_the_discount_factor(p.read_text())}
-        assert readers == {"ppo.py", "fast_sac.py", "fast_td3.py"}, readers
-
-    def test_the_scanner_detects_a_planted_reader(self) -> None:
-        """A module reading the field without the gate is really reported."""
-        planted = "def validate(self, spec):\n    return [] if spec.gamma else []\n"
-        assert _reads_the_discount_factor(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_no_backend_re_implements_the_interval(self) -> None:
-        """A local copy of the bounds would drift from the shared rule."""
-        offenders = [
-            p.name for p in _training_modules() if "spec.gamma <" in p.read_text() or "spec.gamma >" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare spec.gamma locally: {offenders}"
