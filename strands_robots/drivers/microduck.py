@@ -56,8 +56,10 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.drivers.base import undeclared_verb_error
 from strands_robots.utils import (
     boolean_flag_error,
@@ -920,6 +922,21 @@ def _one_shot_call(path: str, method: str, params: dict[str, Any], timeout: floa
         raise
 
 
+#: Where a captured frame lands. ``save_path`` is a tool parameter an agent
+#: fills in, and a JPEG written wherever it points is a write to any file this
+#: process can touch - a shell profile, a cron fragment - so the value names a
+#: file *inside this root* and nothing else, the same confinement
+#: ``Simulation.render(output_path=...)`` applies to a still. Point the variable
+#: elsewhere to collect frames elsewhere; the refusal quotes the root in force.
+FRAME_ROOT_ENV = "STRANDS_ROBOTS_MICRODUCK_FRAME_ROOT"
+
+
+def frame_root() -> Path:
+    """The directory a captured frame may be written into, read at call time."""
+    raw = os.getenv(FRAME_ROOT_ENV) or str(Path.home() / ".strands_robots" / "microduck" / "frames")
+    return Path(raw).expanduser()
+
+
 def uyvy_to_jpeg(width: int, height: int, rotate: int, raw: bytes, path: str) -> None:
     """Decode a ``media.frame`` UYVY tail to a JPEG on disk, the mount turn applied.
 
@@ -1211,7 +1228,10 @@ class MicroduckDriver:
                             },
                             "save_path": {
                                 "type": "string",
-                                "description": "camera: where to write the JPEG (default: a temp file)",
+                                "description": (
+                                    "camera: file name inside the frame root "
+                                    "(default: a temp name there); an absolute path or `..` is refused"
+                                ),
                             },
                         },
                         "required": ["action"],
@@ -2172,10 +2192,28 @@ def _act_monitor(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, A
 
 
 def _act_camera(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
-    """One raw frame from mediad (``media.frame``), decoded to a JPEG on disk."""
+    """One raw frame from mediad (``media.frame``), decoded to a JPEG on disk.
+
+    ``save_path`` names a file inside :func:`frame_root`; a value that leaves it
+    - absolute, or through ``..`` - is refused by name before mediad is dialed,
+    because the frame is written with this process's privileges. The guards are
+    the package's own path sandbox
+    (:mod:`strands_robots._path_validation`), so this write is confined on the
+    same terms as every other caller-named artifact.
+    """
     save_path = params.get("save_path")
     if save_path is not None and (not isinstance(save_path, str) or not save_path.strip()):
-        return _refuse(f"camera: save_path must be a file path, got {refusal_repr(save_path)}")
+        return _refuse(f"camera: save_path must be a file name, got {refusal_repr(save_path)}")
+    root = frame_root()
+    target: str | None = None
+    if isinstance(save_path, str):
+        try:
+            target = resolve_output_path(validate_save_path(str(root), label="frame root"), save_path.strip())
+        except ValueError as exc:
+            return _refuse(
+                f"camera: save_path must name a file inside {root} "
+                f"({refusal_str(exc)}); set {FRAME_ROOT_ENV} to collect frames elsewhere"
+            )
     try:
         (sock, reader), response = _one_shot_call(driver._media_socket, _M_MEDIA_FRAME, {}, driver._timeout)
     except (OSError, ValueError) as exc:
@@ -2196,8 +2234,14 @@ def _act_camera(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, An
     finally:
         reader.close()
         sock.close()
-    path = save_path.strip() if isinstance(save_path, str) else tempfile.mkstemp(prefix="microduck-", suffix=".jpg")[1]
     try:
+        if target is None:
+            root.mkdir(parents=True, exist_ok=True)
+            handle, path = tempfile.mkstemp(prefix="microduck-", suffix=".jpg", dir=root)
+            os.close(handle)
+        else:
+            path = target
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         uyvy_to_jpeg(width, height, int(header.get("rotate", 0) or 0), raw, path)
     except (OSError, ValueError) as exc:
         return _refuse(f"camera: could not decode/write the frame: {refusal_str(exc)}")

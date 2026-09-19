@@ -37,6 +37,7 @@ from strands_robots.drivers.microduck import (
     ENV_HOST,
     ENV_SOCKET,
     ENV_SSH_USER,
+    FRAME_ROOT_ENV,
     MICRODUCK_API_VERSION,
     MOVE_REFRESH_HZ,
     PLAYABLE_SOUND_TAGS,
@@ -45,6 +46,7 @@ from strands_robots.drivers.microduck import (
     WALK_MAX_LINEAR,
     MicroduckDriver,
     _SshForward,
+    frame_root,
     resolve_endpoint,
     ssh_forward_argv,
     summarise_tof,
@@ -582,7 +584,8 @@ def _serve_once(path: str, handler: Any) -> threading.Thread:
 
 
 class TestCameraAndTof:
-    def test_camera_decodes_a_uyvy_frame_to_a_jpeg(self, tmp_path: Path) -> None:
+    def test_camera_decodes_a_uyvy_frame_to_a_jpeg(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(FRAME_ROOT_ENV, str(tmp_path))
         width, height = 8, 4
         raw = bytes([128, 200, 128, 200] * (width * height // 2))  # grey-ish UYVY
 
@@ -604,12 +607,35 @@ class TestCameraAndTof:
         driver = MicroduckDriver(port="/nowhere.sock", timeout=2.0)
         driver._media_socket = media
         out = tmp_path / "frame.jpg"
-        envelope = _drive(driver, action="camera", save_path=str(out))
+        envelope = _drive(driver, action="camera", save_path="frame.jpg")
         assert envelope["status"] == "success", envelope
         payload = _payload(envelope)
         assert payload["path"] == str(out) and out.stat().st_size > 0
         assert out.read_bytes()[:2] == b"\xff\xd8"
         assert payload["rotate"] == 90
+
+    def test_camera_without_a_save_path_writes_into_the_frame_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The default temp name lands in the root too, not in the OS temp dir."""
+        monkeypatch.setenv(FRAME_ROOT_ENV, str(tmp_path / "frames"))
+        width, height = 8, 4
+        raw = bytes([128, 200, 128, 200] * (width * height // 2))
+
+        def handler(conn: socket.socket, request: dict[str, Any]) -> None:
+            header = {"width": width, "height": height, "bytes": len(raw), "format": "UYVY", "rotate": 0}
+            conn.sendall(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": header}).encode() + b"\n")
+            conn.sendall(raw)
+
+        media = os.path.join(tempfile.mkdtemp(), "media.sock")  # short: AF_UNIX path limit
+        _serve_once(media, handler)
+        driver = MicroduckDriver(port="/nowhere.sock", timeout=2.0)
+        driver._media_socket = media
+
+        envelope = _drive(driver, action="camera")
+        assert envelope["status"] == "success", envelope
+        written = Path(_payload(envelope)["path"])
+        assert written.parent == frame_root() and written.read_bytes()[:2] == b"\xff\xd8"
 
     def test_camera_refuses_when_mediad_is_absent(self, tmp_path: Path) -> None:
         driver = MicroduckDriver(port="/nowhere.sock", timeout=1.0)
