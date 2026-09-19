@@ -1196,6 +1196,9 @@ class TestOneDoaLoopIsEverLiveAndReachable:
             try:
                 self.gate.wait()
             except threading.BrokenBarrierError:
+                # Only one caller reached start(): the pre-fix race needs two
+                # threads in the window, and a lone starter must still run
+                # rather than fail the barrier, so the timeout is the signal.
                 pass
             self.running = True
 

@@ -258,6 +258,23 @@ class TestTheFactoryAutoModeAsksTheDriver:
         monkeypatch.setattr(robot_mod, "get_native_driver_class", lambda canonical: object)
         assert robot_mod._auto_detect_mode("reachy_mini") == "sim"
 
+    def test_a_daemon_that_does_not_answer_is_asked_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """One detection is one probe: a second ask doubles the wait for a silent daemon."""
+        from strands_robots import robot as robot_mod
+
+        calls = 0
+
+        def _counting() -> bool:
+            nonlocal calls
+            calls += 1
+            return False
+
+        monkeypatch.delenv("STRANDS_ROBOT_MODE", raising=False)
+        monkeypatch.setattr(robot_mod, "scan_serial_devices", list)
+        monkeypatch.setattr(ReachyDriver, "probe_hardware", staticmethod(_counting))
+        assert robot_mod._auto_detect_mode("reachy_mini") == "sim"
+        assert calls == 1
+
 
 def _run_tool(driver: ReachyDriver, **params: Any) -> dict[str, Any]:
     async def _drive() -> dict[str, Any]:
