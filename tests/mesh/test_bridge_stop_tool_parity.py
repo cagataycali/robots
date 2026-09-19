@@ -49,7 +49,7 @@ class _Recorder:
 
 
 def _ros(rec: _Recorder, monkeypatch: pytest.MonkeyPatch) -> Any:
-    monkeypatch.setattr(ros_mod, "use_ros", rec)
+    monkeypatch.setattr(ros_mod, "ros_action", rec)
     return RosBridgedRobot.from_ros(node_name="rover", cmd_vel_topic="/cmd_vel", odom_topic="/odom")
 
 
@@ -146,7 +146,7 @@ def test_the_ros2_stop_tool_forwards_to_the_instance_method(monkeypatch: pytest.
 
 def test_the_ros2_pose_and_scan_tools_forward_to_the_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _Recorder()
-    monkeypatch.setattr(ros_mod, "use_ros", rec)
+    monkeypatch.setattr(ros_mod, "ros_action", rec)
     robot = RosBridgedRobot("rover", "/cmd_vel", "/odom", scan_topic="/scan")
     tools = _tools(robot)
 

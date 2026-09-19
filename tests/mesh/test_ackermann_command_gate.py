@@ -1,6 +1,7 @@
 """The Ackermann bridge's commands must reach the ``use_ros`` operator gate.
 
-Every :class:`AckermannRosRobot` command forwards to ``use_ros``, whose command
+Every :class:`AckermannRosRobot` command forwards to the shared ROS 2
+transport, whose command
 gate refuses a safety-critical surface when no operator context is reachable.
 The surfaces this bridge drives are the DeepRacer's servo topic and the two mode
 services that arm the vehicle, and all three are blocklisted - so a bridge that
@@ -8,9 +9,9 @@ forwards no context turns its whole command surface, ``stop`` included, into a
 per-call refusal, while a bridge whose surfaces are *not* on the blocklist sends
 throttle commands with no prompt, no allowlist check and no audit row.
 ``tests/mesh/test_ackermann_robot.py`` can see neither: it patches the
-``use_ros`` symbol at the boundary the gate lives behind.
+transport symbol at the boundary the gate lives behind.
 
-These tests keep the real ``use_ros`` and substitute the rclpy transport
+These tests keep the real gate wiring and substitute the rclpy helpers
 instead (the same boundary ``tests/tools/test_use_ros.py`` doubles), so the gate
 and the bridge wiring under test both run unmodified while no message can reach
 a real DDS graph. They are the Ackermann half of
@@ -30,23 +31,45 @@ from unittest.mock import MagicMock
 import pytest
 
 import strands_robots._command_gate as gate_mod
-import strands_robots.tools.use_ros as ros_mod
+import strands_robots.ros as ros_mod
 from strands_robots.mesh import AckermannRosRobot
 
-_MESH_DIR = Path(ros_mod.__file__).parent.parent / "mesh"
+_MESH_DIR = Path(ros_mod.__file__).parent / "mesh"
 _BRIDGE_SOURCE = _MESH_DIR / "ackermann_robot.py"
 _TESTS_DIR = Path(__file__).parent
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "enable", "_publish_servo"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
 
-#: Every mesh bridge that sends a command through ``use_ros``, and the suite that
+#: Every mesh bridge that sends a command through the transport, and the suite that
 #: grades its gate wiring. Discovered modules are compared against these keys, so
 #: a new commanding bridge fails until it is triaged into a gate suite of its own.
 _GATE_SUITES: dict[str, str] = {
     "ros_bridge.py": "test_ros_bridge_command_gate.py",
     "ackermann_robot.py": "test_ackermann_command_gate.py",
 }
+
+
+#: The factory both ROS 2 mesh bridges build their operator gate with. The gate
+#: is an argument to the transport now, so "forwards the context" means "hands the
+#: transport a gate closed over it"; a scan keyed on the name is what keeps a new
+#: call site from passing a permissive gate instead.
+_GATE_FACTORY = "_operator_gate"
+
+
+def _builds_its_gate_from_the_context(node: ast.Call) -> bool:
+    """Does this transport call build its operator gate from ``tool_context``?
+
+    The failure this suite exists for, restated for a gate that travels as an
+    argument: a call site that hands the transport a gate with no context in it
+    fails closed for its whole method whatever an operator would have said.
+    """
+    gate = next((keyword.value for keyword in node.keywords if keyword.arg == "gate"), None)
+    return (
+        isinstance(gate, ast.Call)
+        and getattr(gate.func, "id", None) == _GATE_FACTORY
+        and any(isinstance(argument, ast.Name) and argument.id == "tool_context" for argument in gate.args)
+    )
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -237,7 +260,7 @@ class TestCommandToolsDeclareTheOperatorContext:
             context_kwarg = next((kw for kw in decorator.keywords if kw.arg == "context"), None)
             assert context_kwarg is not None and getattr(context_kwarg.value, "value", None) is True, (
                 f"bridge command tool {func.name!r} is not declared @tool(context=True), "
-                "so it can never reach the use_ros operator gate"
+                "so it can never reach the operator gate"
             )
             params = [a.arg for a in func.args.args] + [a.arg for a in func.args.kwonlyargs]
             assert "tool_context" in params, f"{func.name!r} does not receive the injected operator context"
@@ -258,23 +281,19 @@ class TestCommandToolsDeclareTheOperatorContext:
             params = [a.arg for a in func.args.args]
             assert "tool_context" not in params, f"read-only tool {func.name!r} should not require an operator context"
 
-    def test_every_bridge_command_call_forwards_the_context_to_use_ros(self, bridge_ast: ast.Module) -> None:
-        """A bridge method that carries a command must not drop the context.
-
-        This is the failure this suite exists for: the gate lives inside
-        ``use_ros``, so a call site that omits ``tool_context`` silently becomes
-        a fail-closed refusal for its whole method.
-        """
+    def test_every_bridge_command_call_builds_its_gate_from_the_context(self, bridge_ast: ast.Module) -> None:
+        """A bridge method that carries a command must not drop the context."""
         checked = 0
         for node in ast.walk(bridge_ast):
-            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "use_ros"):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                 continue
             action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
             if not (isinstance(action, ast.Constant) and action.value in _COMMAND_ACTIONS):
                 continue
             checked += 1
-            assert any(kw.arg == "tool_context" for kw in node.keywords), (
-                f"use_ros(action={action.value!r}) at ackermann_robot.py:{node.lineno} does not forward tool_context"
+            assert _builds_its_gate_from_the_context(node), (
+                f"ros_action(action={action.value!r}) at ackermann_robot.py:{node.lineno} "
+                f"does not build its gate from tool_context"
             )
         assert checked == 2, f"expected the servo publish and the handshake service_call, found {checked}"
 
@@ -310,7 +329,7 @@ class TestTheCommandedSurfacesAreBlocklisted:
 
 
 class TestEveryCommandingMeshBridgeHasAGateSuite:
-    """A mesh bridge that commands through ``use_ros`` owes a gate suite.
+    """A mesh bridge that commands through the ROS 2 transport owes a gate suite.
 
     Derived from the tree rather than from a list, because the defect this file
     fixes was a *new* bridge shipping with neither blocklist coverage nor context
@@ -325,7 +344,7 @@ class TestEveryCommandingMeshBridgeHasAGateSuite:
         for path in sorted(_MESH_DIR.glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "use_ros"):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                     continue
                 action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
                 if isinstance(action, ast.Constant) and action.value in _COMMAND_ACTIONS:
@@ -334,7 +353,7 @@ class TestEveryCommandingMeshBridgeHasAGateSuite:
 
     def test_the_inventory_names_every_bridge_that_sends_a_command(self) -> None:
         assert self._modules_sending_commands() == set(_GATE_SUITES), (
-            "a mesh module sends commands through use_ros without being triaged into "
+            "a mesh module sends commands through the ROS 2 transport without being triaged into "
             "_GATE_SUITES; add it with the suite that grades its gate wiring"
         )
 

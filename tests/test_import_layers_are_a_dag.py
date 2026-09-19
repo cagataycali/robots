@@ -290,6 +290,12 @@ class TestTheContract:
                 frozenset({"strands_robots.teleoperator"}),
                 frozenset({"drivers|mesh", "sim|policies", "app"}),
             ),
+            (
+                "strands_robots.ros",
+                "drivers|mesh",
+                frozenset(),
+                frozenset({"drivers|mesh", "tools"}),
+            ),
         ],
     )
     def test_a_contract_several_layers_share_sits_under_all_of_them(
@@ -309,6 +315,14 @@ class TestTheContract:
         A deferred read above the layer is listed explicitly rather than allowed
         in general - the mixin's ``teleoperator`` read is late because that module
         imports lerobot, and promoting it to module scope has to fail here.
+
+        ``ros`` is the in-process ``rclpy`` transport three surfaces share: the
+        ``use_ros`` tool, the ``RosBridgedRobot`` that drives a ROS 2 base and the
+        ``AckermannRosRobot`` that steers a car over the same node. It lived in
+        the tool, so both robots imported the ``@tool`` to publish a ``Twist`` -
+        two of the four ``drivers|mesh -> tools`` edges. Its ``tools`` caller is
+        what makes the placement load-bearing: moving it back up would restore
+        the inversion, and the equality above would refuse it.
         """
         assert name in graph.modules
         assert mod.LAYER_NAMES[mod.layer_of(name)] == layer

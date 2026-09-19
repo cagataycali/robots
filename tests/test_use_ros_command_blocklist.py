@@ -15,12 +15,13 @@ import os
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from unittest.mock import MagicMock
 
 import pytest
 
 import strands_robots._command_gate as gate_mod
+import strands_robots.ros as ros_transport_mod
 import strands_robots.tools.use_ros as ros_mod
 from strands_robots._command_gate import (
     approve_response,
@@ -28,7 +29,8 @@ from strands_robots._command_gate import (
     command_block_message,
     gate_command,
 )
-from strands_robots.tools.use_ros import _gate_command, use_ros
+from strands_robots.ros import GATE_TOOL, never_gated
+from strands_robots.tools.use_ros import use_ros
 
 # The verbs that carry a command to a robot, with the parameter naming the
 # surface and the module-level helper each one reaches once the gate allows it.
@@ -38,11 +40,29 @@ _COMMAND_VERBS: tuple[tuple[str, str, str], ...] = (
     ("action_send_goal", "action_name", "_action_send_goal"),
 )
 
+#: The name the tool binds its operator-reaching gate to. The structural guard
+#: below reads the dispatch for it, so a command verb handed anything else -
+#: ``never_gated``, or a gate of its own - is reported rather than trusted.
+_OPERATOR_GATE = "operator_gate"
+
 _TYPE_FOR_VERB = {
     "publish": "geometry_msgs/msg/Twist",
     "service_call": "std_srvs/srv/Trigger",
     "action_send_goal": "nav2_msgs/action/NavigateToPose",
 }
+
+
+def _refusal(kind: str, name: str, tool_context: Any) -> str | None:
+    """The shared gate's verdict for one command onto the ROS 2 graph.
+
+    The ``use_ros`` tool and both ROS 2 mesh bridges build exactly this call -
+    the verb, the surface and the transport's own
+    :data:`~strands_robots.ros.GATE_TOOL` label - and hand the result to
+    :func:`~strands_robots.ros.ros_action`, which reports it as this tool's error
+    dict. Grading the verdict here grades the decision every caller of that
+    transport reaches; the envelope around it is driven through the tool below.
+    """
+    return gate_command(kind, name, tool_context, tool=GATE_TOOL)
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -167,7 +187,7 @@ class TestCanonicalNameSpellings:
         """An operator allowlisting ``cmd_vel`` means the same surface as ``/cmd_vel``."""
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
         monkeypatch.setenv("STRANDS_ROS2_COMMAND_ALLOW", "cmd_vel")
-        assert _gate_command("publish", "/cmd_vel", None) is None
+        assert _refusal("publish", "/cmd_vel", None) is None
 
 
 class TestGateCommand:
@@ -190,43 +210,40 @@ class TestGateCommand:
 
     @pytest.mark.parametrize("kind", ["publish", "service_call", "action_send_goal"])
     def test_non_blocked_surface_passes(self, kind: str) -> None:
-        assert _gate_command(kind, "/my_topic", None) is None
+        assert _refusal(kind, "/my_topic", None) is None
 
     @pytest.mark.parametrize("kind", ["publish", "service_call", "action_send_goal"])
-    def test_blocked_surface_no_context_returns_error(self, kind: str) -> None:
-        result = _gate_command(kind, "/cmd_vel", None)
-        assert result is not None
-        assert result["status"] == "error"
-        assert "approval" in _texts(result).lower()
+    def test_blocked_surface_no_context_is_refused(self, kind: str) -> None:
+        refusal = _refusal(kind, "/cmd_vel", None)
+        assert refusal is not None
+        assert "approval" in refusal.lower()
 
-    def test_no_context_error_names_the_env_vars_that_lift_it(self) -> None:
-        text = _texts(_gate_command("publish", "/cmd_vel", None) or {"content": []})
+    def test_no_context_refusal_names_the_env_vars_that_lift_it(self) -> None:
+        text = _refusal("publish", "/cmd_vel", None) or ""
         assert "STRANDS_ROS2_COMMAND_ALLOW" in text
         assert "BYPASS_TOOL_CONSENT" in text
 
     def test_allowlist_skips_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_ROS2_COMMAND_ALLOW", "/cmd_vel")
-        assert _gate_command("publish", "/cmd_vel", None) is None
+        assert _refusal("publish", "/cmd_vel", None) is None
 
     def test_allowlist_namespaced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_ROS2_COMMAND_ALLOW", "/cmd_vel")
-        assert _gate_command("publish", "/my_robot/cmd_vel", None) is None
+        assert _refusal("publish", "/my_robot/cmd_vel", None) is None
 
     def test_allowlist_does_not_cover_other_surfaces(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_ROS2_COMMAND_ALLOW", "/cmd_vel")
-        result = _gate_command("publish", "/emergency_stop", None)
-        assert result is not None
-        assert result["status"] == "error"
+        assert _refusal("publish", "/emergency_stop", None) is not None
 
     def test_bypass_consent_allows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
-        assert _gate_command("publish", "/cmd_vel", None) is None
+        assert _refusal("publish", "/cmd_vel", None) is None
 
     @pytest.mark.parametrize("kind", ["publish", "service_call", "action_send_goal"])
     def test_interrupt_approved(self, kind: str) -> None:
         ctx = MagicMock()
         ctx.interrupt.return_value = "y"
-        assert _gate_command(kind, "/cmd_vel", ctx) is None
+        assert _refusal(kind, "/cmd_vel", ctx) is None
         ctx.interrupt.assert_called_once()
         reason = ctx.interrupt.call_args[1]["reason"]
         assert reason["action"] == kind
@@ -235,25 +252,22 @@ class TestGateCommand:
     def test_interrupt_declined(self) -> None:
         ctx = MagicMock()
         ctx.interrupt.return_value = "no"
-        result = _gate_command("publish", "/cmd_vel", ctx)
-        assert result is not None
-        assert result["status"] == "error"
-        assert "declined" in _texts(result)
+        refusal = _refusal("publish", "/cmd_vel", ctx)
+        assert refusal is not None
+        assert "declined" in refusal
 
     def test_interrupt_runtime_error_fails_closed(self) -> None:
         ctx = MagicMock()
         ctx.interrupt.side_effect = RuntimeError("no agent loop")
-        result = _gate_command("publish", "/cmd_vel", ctx)
-        assert result is not None
-        assert result["status"] == "error"
+        assert _refusal("publish", "/cmd_vel", ctx) is not None
 
     def test_operator_reply_is_never_echoed_back(self) -> None:
         """The refusal must not carry the operator's free-text reply."""
         ctx = MagicMock()
         ctx.interrupt.return_value = "no, and my token is hunter2"
-        result = _gate_command("publish", "/cmd_vel", ctx)
-        assert result is not None
-        assert "hunter2" not in _texts(result)
+        refusal = _refusal("publish", "/cmd_vel", ctx)
+        assert refusal is not None
+        assert "hunter2" not in refusal
 
     @pytest.mark.parametrize("response", ["y", "Y", "yes", "YES", "approve", "Approved"])
     def test_approve_response_affirmative(self, response: str) -> None:
@@ -284,7 +298,7 @@ class TestEveryCommandVerbConsultsTheGate:
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
         monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-        monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
+        monkeypatch.setattr(ros_transport_mod._backend, "available", lambda: True)
         self.calls = {name: [] for _, _, name in _COMMAND_VERBS}
 
         def _recorder(key: str, outcome: Any) -> Callable[..., Any]:
@@ -294,9 +308,11 @@ class TestEveryCommandVerbConsultsTheGate:
 
             return _fake
 
-        monkeypatch.setattr(ros_mod, "_publish", _recorder("_publish", None))
-        monkeypatch.setattr(ros_mod, "_service_call", _recorder("_service_call", {"ok": True}))
-        monkeypatch.setattr(ros_mod, "_action_send_goal", _recorder("_action_send_goal", {"goal_status": "SUCCEEDED"}))
+        monkeypatch.setattr(ros_transport_mod, "_publish", _recorder("_publish", None))
+        monkeypatch.setattr(ros_transport_mod, "_service_call", _recorder("_service_call", {"ok": True}))
+        monkeypatch.setattr(
+            ros_transport_mod, "_action_send_goal", _recorder("_action_send_goal", {"goal_status": "SUCCEEDED"})
+        )
 
     def _invoke(self, verb: str, param: str, name: str, ctx: MagicMock) -> dict[str, Any]:
         kwargs: dict[str, Any] = {param: name, "type": _TYPE_FOR_VERB[verb]}
@@ -343,14 +359,14 @@ class TestEveryCommandVerbConsultsTheGate:
 
     def test_reading_a_blocked_surface_is_never_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Telemetry must stay readable - over-blocking the read path is a defect."""
-        monkeypatch.setattr(ros_mod, "_echo", lambda *a: [{"linear": {"x": 0.0}}])
+        monkeypatch.setattr(ros_transport_mod, "_echo", lambda *a: [{"linear": {"x": 0.0}}])
         ctx = MagicMock()
         result = use_ros(action="echo", tool_context=ctx, topic="/cmd_vel", type="geometry_msgs/msg/Twist")
         assert not ctx.interrupt.called
         assert result["status"] == "success"
 
     def test_inspecting_a_blocked_surface_is_never_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(ros_mod, "_info", lambda target: f"topic info {target}")
+        monkeypatch.setattr(ros_transport_mod, "_info", lambda target: f"topic info {target}")
         ctx = MagicMock()
         result = use_ros(action="info", tool_context=ctx, topic="/cmd_vel")
         assert not ctx.interrupt.called
@@ -370,7 +386,7 @@ class TestGateRunsAfterArgumentValidation:
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
         monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-        monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
+        monkeypatch.setattr(ros_transport_mod._backend, "available", lambda: True)
 
     @pytest.mark.parametrize(
         ("verb", "param", "name"),
@@ -390,15 +406,20 @@ class TestGateRunsAfterArgumentValidation:
         assert not ctx.interrupt.called, "operator was asked to approve a command that cannot run"
 
 
-def test_every_command_verb_branch_calls_the_shared_gate() -> None:
+def test_every_command_verb_branch_hands_the_transport_the_operator_gate() -> None:
     """Structural guard: a verb added later must not ship without the gate.
 
     Reads the dispatch source rather than a behaviour, so a new command verb
-    wired straight to rclpy is reported even if no test drives it yet.
+    wired straight to the transport is reported even if no test drives it yet.
+    The tool routes each verb's arguments into
+    :func:`~strands_robots.ros.ros_action`, and the gate is one of them: a
+    command verb handed :func:`~strands_robots.ros.never_gated` - or handed
+    nothing, which the transport refuses outright - cannot reach an operator.
     """
     module = ast.parse(Path(ros_mod.__file__).read_text(encoding="utf-8"))
     dispatch = next(node for node in ast.walk(module) if isinstance(node, ast.FunctionDef) and node.name == "use_ros")
     gated: set[str] = set()
+    ungated: set[str] = set()
     for node in ast.walk(dispatch):
         if not isinstance(node, ast.If):
             continue
@@ -414,12 +435,20 @@ def test_every_command_verb_branch_calls_the_shared_gate() -> None:
         if not isinstance(verb, str):
             continue
         for inner in ast.walk(node):
-            if isinstance(inner, ast.Call) and getattr(inner.func, "id", None) == "_gate_command":
-                gated.add(verb)
+            if not isinstance(inner, ast.Call):
+                continue
+            for keyword in inner.keywords:
+                if keyword.arg == "gate" and isinstance(keyword.value, ast.Name):
+                    if keyword.value.id == _OPERATOR_GATE:
+                        gated.add(verb)
+                    else:
+                        ungated.add(verb)
     assert gated == {verb for verb, _, _ in _COMMAND_VERBS}, (
-        f"command verbs consulting _gate_command: {sorted(gated)}; "
+        f"command verbs handed {_OPERATOR_GATE}: {sorted(gated)}; "
         f"expected {sorted(verb for verb, _, _ in _COMMAND_VERBS)}"
     )
+    assert gated.isdisjoint(ungated), f"a command verb is also dispatched with a permissive gate: {sorted(ungated)}"
+    assert ungated, "no read verb is dispatched with a gate at all, so the check above proves nothing"
 
 
 def test_the_blocklist_is_documented_where_operators_look() -> None:
@@ -534,7 +563,7 @@ def _measured_allowlist_reach() -> tuple[str, list[str]]:
     os.environ[gate_mod.COMMAND_ALLOW_ENV] = "/cmd_vel"
     os.environ.pop("BYPASS_TOOL_CONSENT", None)
     try:
-        extra = [name for name in siblings if _gate_command("publish", name, None) is None]
+        extra = [name for name in siblings if _refusal("publish", name, None) is None]
     finally:
         if previous is None:
             os.environ.pop(gate_mod.COMMAND_ALLOW_ENV, None)
@@ -586,9 +615,8 @@ def _documented_halt_exemptions() -> list[tuple[str, int, str]]:
 class TestTheDocumentedExemptionsAreTheRealOnes:
     """An operator-facing document may only claim an exemption the gate makes.
 
-    ``_gate_command`` is handed the verb and the surface name and never the
-    payload, so an exemption that depends on what is being sent cannot be
-    implemented. An operator who believes the halt is exempt leaves ``cmd_vel``
+    The gate is handed the verb and the surface name and never the payload, so
+    an exemption that depends on what is being sent cannot be implemented. An operator who believes the halt is exempt leaves ``cmd_vel``
     out of ``STRANDS_ROS2_COMMAND_ALLOW`` and discovers in the field that
     ``stop()`` is refused - the unreachable-halt hazard, reintroduced through
     documentation rather than through code.
@@ -611,7 +639,7 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
     def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
         monkeypatch.delenv(gate_mod.COMMAND_ALLOW_ENV, raising=False)
-        monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
+        monkeypatch.setattr(ros_transport_mod._backend, "available", lambda: True)
         self.calls = {"_publish": [], "_action_send_goal": []}
 
         def _recorder(key: str, outcome: Any) -> Callable[..., Any]:
@@ -621,8 +649,10 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
 
             return _fake
 
-        monkeypatch.setattr(ros_mod, "_publish", _recorder("_publish", None))
-        monkeypatch.setattr(ros_mod, "_action_send_goal", _recorder("_action_send_goal", {"goal_status": "SUCCEEDED"}))
+        monkeypatch.setattr(ros_transport_mod, "_publish", _recorder("_publish", None))
+        monkeypatch.setattr(
+            ros_transport_mod, "_action_send_goal", _recorder("_action_send_goal", {"goal_status": "SUCCEEDED"})
+        )
 
     @staticmethod
     def _halt_fields() -> dict[str, Any]:
@@ -646,11 +676,12 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
 
     def test_the_gate_never_receives_the_payload(self) -> None:
         """The reason a payload-conditional exemption cannot be documented."""
-        params = tuple(inspect.signature(_gate_command).parameters)
-        assert params == ("kind", "name", "tool_context"), (
-            f"_gate_command takes {params}; a documented payload exemption is only "
-            "implementable if the payload is passed in"
+        arguments, _returns = get_args(ros_transport_mod.CommandGate)
+        assert arguments == [str, str], (
+            f"a command gate takes {arguments}; a documented payload exemption is "
+            "only implementable if the payload is passed in"
         )
+        assert tuple(inspect.signature(never_gated).parameters) == ("kind", "target")
 
     def test_a_halt_is_refused_exactly_like_a_full_speed_drive(self) -> None:
         """Same surface, same verb, same outcome - the payload changes nothing."""
@@ -714,7 +745,7 @@ class TestTheDocumentedExemptionsAreTheRealOnes:
         assert re.search(r"read[s]? are never gated", _readme_allow_row().lower()), (
             "the row no longer states the read exemption that does hold"
         )
-        monkeypatch.setattr(ros_mod, "_echo", lambda *a: [{"linear": {"x": 0.0}}])
+        monkeypatch.setattr(ros_transport_mod, "_echo", lambda *a: [{"linear": {"x": 0.0}}])
         ctx = MagicMock()
         result = use_ros(action="echo", tool_context=ctx, topic="/cmd_vel", type="geometry_msgs/msg/Twist")
         assert not ctx.interrupt.called
@@ -809,10 +840,9 @@ class TestTheDocumentedAllowlistReachIsTheRealReach:
         the only option, so it is pinned here rather than left to prose.
         """
         monkeypatch.setenv(gate_mod.COMMAND_ALLOW_ENV, "/robot_a/cmd_vel")
-        assert _gate_command("publish", "/robot_a/cmd_vel", None) is None
+        assert _refusal("publish", "/robot_a/cmd_vel", None) is None
         for other in ("/robot_b/cmd_vel", "/cmd_vel"):
-            result = _gate_command("publish", other, None)
-            assert result is not None and result["status"] == "error", (
+            assert _refusal("publish", other, None) is not None, (
                 f"a pre-approval naming /robot_a/cmd_vel also lifted the gate on {other}"
             )
 

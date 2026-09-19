@@ -2,7 +2,7 @@
 
 The bridge presents an Ackermann-steering ROS 2 car (reference platform: AWS
 DeepRacer) as a strands robot. Like ``test_ros_bridge.py``, every test runs
-rclpy-free: the module's ``use_ros`` reference is monkeypatched with a
+rclpy-free: the module's ``ros_action`` reference is monkeypatched with a
 recorder, so the forwarding contract, the bicycle-model conversion, the
 enable handshake, and the safety behaviors are all exercised with no ROS 2
 installed.
@@ -77,7 +77,7 @@ def test_model_reverse_steering_geometry() -> None:
 
 
 class _Recorder:
-    """Stand-in for use_ros: records calls, returns scripted results."""
+    """Stand-in for the transport: records calls, returns scripted results."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -93,7 +93,7 @@ class _Recorder:
 @pytest.fixture
 def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     recorder = _Recorder()
-    monkeypatch.setattr(ack_mod, "use_ros", recorder)
+    monkeypatch.setattr(ack_mod, "ros_action", recorder)
     return recorder
 
 

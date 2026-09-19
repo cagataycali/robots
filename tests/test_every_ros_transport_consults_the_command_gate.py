@@ -39,9 +39,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import strands_robots.ros as ros_transport_mod
 import strands_robots.tools.use_ros as ros_mod
 import strands_robots.tools.use_rosbridge as rosbridge_mod
 import strands_robots.tools.use_rtps as rtps_mod
+from strands_robots.mesh import RosBridgedRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
@@ -59,8 +61,10 @@ _COMMAND_VERBS = frozenset({"publish", "service_call", "action_send_goal"})
 # Each agent-callable transport, with the module holding its backend probe and
 # the interface type spelling that transport accepts. rosbridge speaks ROS 1
 # two-segment types; the other two speak ROS 2 three-segment types.
+# ``use_ros`` is an envelope over a transport two layers down, which both ROS 2
+# mesh robots forward through as well, so its probe is that transport's.
 _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
-    ("use_ros", use_ros, ros_mod, "geometry_msgs/msg/Twist"),
+    ("use_ros", use_ros, ros_transport_mod, "geometry_msgs/msg/Twist"),
     ("use_rtps", use_rtps, rtps_mod, "geometry_msgs/msg/Twist"),
     ("use_rosbridge", use_rosbridge, rosbridge_mod, "geometry_msgs/Twist"),
 )
@@ -86,7 +90,7 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
     monkeypatch.delenv("STRANDS_ROS2_COMMAND_ALLOW", raising=False)
-    for module in (ros_mod, rtps_mod, rosbridge_mod):
+    for module in (ros_transport_mod, rtps_mod, rosbridge_mod):
         monkeypatch.setattr(module._backend, "available", lambda: True)
 
 
@@ -215,6 +219,67 @@ class TestTheGateRunsAfterArgumentValidation:
         result = tool(action="publish", topic=_BLOCKED, timeout=_DIAL_TIMEOUT, tool_context=ctx)
         assert result["status"] == "error"
         assert not ctx.interrupt.called, f"{label} asked the operator about an incomplete call"
+
+
+#: A transport whose mechanics are shared by an agent tool and a library class,
+#: with the entry point both reach it through and a factory for the class. The
+#: structural pin below reads the tool package, so it cannot see the second
+#: caller at all - these rows are the same argument one layer down.
+_SHARED_TRANSPORTS: tuple[tuple[str, Any, Any], ...] = (
+    (
+        "ros",
+        ros_transport_mod.ros_action,
+        lambda: RosBridgedRobot("turtle", _BLOCKED, "/odom"),
+    ),
+)
+
+
+class TestEveryCallerOfOneTransportAsksTheSameQuestion:
+    """A transport is not always a tool: this one has two more callers.
+
+    :mod:`strands_robots.ros` carries the in-process ``rclpy`` mechanics for the
+    ``use_ros`` tool *and* for :class:`~strands_robots.mesh.RosBridgedRobot` and
+    :class:`~strands_robots.mesh.AckermannRosRobot`, which publish to the same
+    physical ``cmd_vel`` without going through an agent tool at all. Two pins per
+    shared transport: a transport nobody can command through without deciding
+    about the operator, and one label for the decision however it was reached.
+    """
+
+    @pytest.mark.parametrize(("label", "entry_point", "_factory"), _SHARED_TRANSPORTS)
+    def test_the_transport_refuses_to_command_without_a_gate_argument(
+        self, label: str, entry_point: Any, _factory: Any
+    ) -> None:
+        """The gate is a required argument, so a caller cannot omit it silently.
+
+        A default would be the un-gated sibling all over again: whichever value
+        it took, a new caller would inherit it by writing nothing.
+        """
+        gate = inspect.signature(entry_point).parameters["gate"]
+        assert gate.default is inspect.Parameter.empty, f"{label}: a defaulted gate is a gate a caller can forget"
+        assert gate.kind is inspect.Parameter.KEYWORD_ONLY
+
+    @pytest.mark.parametrize(("label", "_entry_point", "factory"), _SHARED_TRANSPORTS)
+    def test_a_robot_and_the_tool_prompt_the_operator_identically(
+        self, label: str, _entry_point: Any, factory: Any
+    ) -> None:
+        """One blocklisted topic, one question - whichever caller reached it.
+
+        The label keys the interrupt id ``<tool>-command-approval`` and the audit
+        source ``<tool>_tool``, so two spellings would file one incident's rows
+        under two names and an operator would be asked the same thing twice over.
+        Both callers decline here, so the assertion is made before any message
+        reaches a graph.
+        """
+        tool_ctx, robot_ctx = MagicMock(), MagicMock()
+        tool_ctx.interrupt.return_value = "n"
+        robot_ctx.interrupt.return_value = "n"
+
+        assert _publish(use_ros, "geometry_msgs/msg/Twist", tool_ctx)["status"] == "error"
+        assert factory().drive(linear=1.0, tool_context=robot_ctx)["status"] == "error"
+
+        assert robot_ctx.interrupt.call_args == tool_ctx.interrupt.call_args, (
+            f"{label}: the two callers ask the operator different questions about one surface"
+        )
 
 
 def _commanding_transport_modules() -> dict[str, set[str]]:

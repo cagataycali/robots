@@ -18,15 +18,17 @@ class absorbs:
 3. There is no odometry topic on the stock platform, so there is deliberately
    no ``get_pose`` here.
 
-All ROS 2 I/O forwards through :func:`strands_robots.tools.use_ros.use_ros`,
-so the bridge owns no rclpy state and is safe to construct without ROS 2.
+All ROS 2 I/O forwards through :func:`strands_robots.ros.ros_action` - the same
+transport the ``use_ros`` tool is an agent envelope over - so the bridge owns no
+rclpy state and is safe to construct without ROS 2.
 
-Commanding the car goes through ``use_ros``'s operator-approval gate, because a
+Commanding the car goes through the shared operator-approval gate, because a
 servo topic that moves a vehicle and the mode services that arm it are
 safety-critical surfaces. The bridge forwards an operator context to it: the
 ``drive_<node>`` / ``stop_<node>`` agent tools are declared ``@tool(context=True)``
-and hand the context to :func:`use_ros`, so an agent driving this car prompts the
-operator exactly as a direct ``use_ros`` call does. The read path
+and hand the context to the gate under the transport's own
+:data:`~strands_robots.ros.GATE_TOOL` label, so an agent driving this car prompts
+the operator exactly as a direct ``use_ros`` call does. The read path
 (:meth:`get_scan`) is never gated.
 
 A **programmatic** call carries no operator context, so it is refused unless the
@@ -66,8 +68,8 @@ from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
 from strands_robots.mesh._mobile_base import failed_halt_error
-from strands_robots.mesh.ros_bridge import _check_topic
-from strands_robots.tools.use_ros import use_ros
+from strands_robots.mesh.ros_bridge import _check_topic, _operator_gate
+from strands_robots.ros import never_gated, ros_action
 from strands_robots.utils import (
     finite_number_error,
     partial_construction_repr,
@@ -170,9 +172,10 @@ def _rest_command_error(linear: float, angular: float, context: str) -> str | No
 class AckermannRosRobot:
     """An Ackermann-steering ROS 2 car exposed as a strands-controllable robot.
 
-    The bridge owns no ROS 2 state; every method forwards to :func:`use_ros`.
-    Constructing it never needs a ROS 2 environment - errors surface as
-    structured results when a method actually runs.
+    The bridge owns no ROS 2 state; every method forwards to
+    :func:`~strands_robots.ros.ros_action`. Constructing it never needs a ROS 2
+    environment - errors surface as structured results when a method actually
+    runs.
 
     Args:
         node_name: Identifier used to name this robot's agent tools
@@ -287,7 +290,7 @@ class AckermannRosRobot:
         Stops at the first failing call and returns its structured error
         without latching, so a later attempt retries from the start.
 
-        ``tool_context`` is the operator context forwarded to ``use_ros``: the
+        ``tool_context`` is the operator context forwarded to the gate: the
         services that arm a vehicle are gated command surfaces, so a handshake
         that forwards nothing is refused rather than prompted (see :meth:`drive`).
         """
@@ -297,12 +300,12 @@ class AckermannRosRobot:
                 "content": [{"text": f"{self.node_name}: already enabled"}],
             }
         for item in self.init_services:
-            result = use_ros(
+            result = ros_action(
                 action="service_call",
                 service=item["service"],
                 type=item["type"],
                 fields=item.get("fields", {}),
-                tool_context=tool_context,
+                gate=_operator_gate(tool_context),
             )
             if result.get("status") != "success":
                 return result
@@ -340,9 +343,9 @@ class AckermannRosRobot:
         bare single-shot command (no ``duration``, ``count=1``) latches like a
         raw servo command until :meth:`stop`.
 
-        ``tool_context`` is the operator context forwarded to ``use_ros``, whose
-        command gate prompts for approval on a safety-critical surface such as
-        this vehicle's servo topic and mode services. The ``drive_<node_name>``
+        ``tool_context`` is the operator context forwarded to the command gate,
+        which prompts for approval on a safety-critical surface such as this
+        vehicle's servo topic and mode services. The ``drive_<node_name>``
         agent tool passes the one the framework injects; a programmatic call has
         none, and the gate then refuses unless the surface is pre-approved via
         ``STRANDS_ROS2_COMMAND_ALLOW`` / ``BYPASS_TOOL_CONSENT``.
@@ -390,7 +393,7 @@ class AckermannRosRobot:
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         # The trailing halt runs from ``finally`` so it goes out even if the
         # main publish raised, but its verdict is kept rather than dropped:
-        # ``use_ros`` reports a transport failure as an error dict rather than
+        # The transport reports a failure as an error dict rather than
         # raising, so returning the main publish's success after a failed halt
         # would report a car still holding the commanded throttle as a drive
         # that stopped itself - and an agent reading ``success`` never issues
@@ -419,14 +422,14 @@ class AckermannRosRobot:
         count: int,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        return use_ros(
+        return ros_action(
             action="publish",
             topic=self.servo_topic,
             type=self.servo_type,
             fields={"angle": float(angle), "throttle": float(throttle)},
             count=count,
             rate=self.publish_rate,
-            tool_context=tool_context,
+            gate=_operator_gate(tool_context),
         )
 
     def stop(self, tool_context: ToolContext | None = None) -> dict[str, Any]:
@@ -442,12 +445,13 @@ class AckermannRosRobot:
         """Read one sample from the laser-scan topic (error when unconfigured)."""
         if not self.scan_topic:
             return self._error("get_scan: no scan_topic configured for this robot")
-        return use_ros(
+        return ros_action(
             action="echo",
             topic=self.scan_topic,
             type=self.scan_type,
             count=1,
             timeout=timeout,
+            gate=never_gated,
         )
 
     @property
@@ -460,10 +464,9 @@ class AckermannRosRobot:
         turning radius) so the agent can plan paths the platform can follow.
 
         Every tool that carries a command (``drive``, ``stop``) is declared
-        ``@tool(context=True)`` and forwards the injected context into
-        ``use_ros``, so its operator-approval gate prompts rather than failing
-        closed. ``get_scan`` takes no context because ``use_ros`` never gates
-        ``echo``.
+        ``@tool(context=True)`` and forwards the injected context into the
+        operator gate, so it prompts rather than failing closed. ``get_scan``
+        takes no context because a read is never gated.
         """
         suffix = self.node_name.strip("/").replace("/", "_")
         min_radius = self.wheelbase_m / math.tan(self.max_steering_rad)

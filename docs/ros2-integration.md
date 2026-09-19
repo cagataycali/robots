@@ -37,8 +37,8 @@ have and what you want to do:
 | **`use_ros`** tool | client / observer + commander | in-process `rclpy` | yes | List/echo/publish topics, call services on any ROS 2 graph - full type coverage |
 | **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Linux x86_64 from the wheel, all distros; Linux aarch64 (Jetson) builds from source - see [rtps integration](rtps-integration.md#linux-aarch64-jetson) |
 | **`use_rosbridge`** tool + **`RosbridgeRobot`** | ROS1 / remote robots over a rosbridge WebSocket | pure-pip `roslibpy` | **no** | Drive ROS1 robots (e.g. the NASA Curiosity Gazebo sim) or any remote rosbridge robot from a machine with no ROS install - see [rosbridge integration](rosbridge-integration.md) |
-| **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
-| **`AckermannRosRobot`** | an Ackermann ROS 2 car as a strands `Robot` | `use_ros` | yes | `drive()`/`get_scan()` a steering-geometry car (AWS DeepRacer servo stack) with bicycle-model conversion and an automatic enable handshake |
+| **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | in-process `rclpy` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
+| **`AckermannRosRobot`** | an Ackermann ROS 2 car as a strands `Robot` | in-process `rclpy` | yes | `drive()`/`get_scan()` a steering-geometry car (AWS DeepRacer servo stack) with bicycle-model conversion and an automatic enable handshake |
 | **`SimEngine(ros2_bridge=True)`** | the **simulation as a ROS node** | `rclpy` | yes | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe |
 | **`Robot(ros2_bridge=True)`** | a **real robot as a ROS node** (full duplex) | `rclpy` | yes | Publish a physical arm's live `joint_states` + camera `image_raw` so rviz/nav2/agents subscribe to the hardware, **and** subscribe to `joint_command` to drive the arm - symmetric to the sim bridge, plus an inbound command path the sim does not need |
 
@@ -517,9 +517,12 @@ agent = Agent(tools=turtle.tools)
 agent("drive forward for two seconds, then tell me the pose")
 ```
 
-The bridge is intentionally thin: every method forwards to `use_ros`, so it
-inherits the same in-process rclpy backend and its topic/type validation. The
-parameters `use_ros` never sees are checked by the bridge itself - `drive`
+The bridge is intentionally thin: every method forwards through the same
+transport `use_ros` does (`strands_robots.ros`), so it inherits the same
+in-process rclpy backend and its topic/type validation - and a `cmd_vel` command
+reaches the shared operator gate whichever of the two asked, under one label: an
+approval or a refusal means the same thing on both. The parameters the transport
+never sees are checked by the bridge itself - `drive`
 reports an error result without publishing when a velocity is not finite, a
 `duration` is not positive and finite, or a message `count` is not a positive
 whole number, and `publish_rate` is refused at construction. Construct it freely

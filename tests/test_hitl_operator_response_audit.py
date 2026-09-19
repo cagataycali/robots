@@ -52,8 +52,9 @@ import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 import strands_robots.tools.pose_tool as pose_mod  # noqa: E402
 import strands_robots.tools.robot_mesh as mesh_mod  # noqa: E402
 import strands_robots.tools.serial_tool as serial_mod  # noqa: E402
-import strands_robots.tools.use_ros as ros_mod  # noqa: E402
+from strands_robots._command_gate import gate_command  # noqa: E402
 from strands_robots.mesh.audit import audit_log_path, read_audit_log  # noqa: E402
+from strands_robots.ros import GATE_TOOL  # noqa: E402
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only
@@ -72,8 +73,15 @@ def _ctx(response: object) -> MagicMock:
 
 
 def _drive_use_ros(response: object) -> dict[str, Any] | None:
-    """A publish aimed at a blocklisted drive topic."""
-    return ros_mod._gate_command("publish", "/cmd_vel", _ctx(response))
+    """A publish aimed at a blocklisted drive topic.
+
+    The gate travels to the ROS 2 transport as an argument, so this builds the
+    same call the ``use_ros`` tool and both ROS 2 mesh bridges build - the verb,
+    the surface and the transport's own label - and wraps its verdict the way the
+    transport does, which is the shape the shared cells below grade.
+    """
+    refusal = gate_command("publish", "/cmd_vel", _ctx(response), tool=GATE_TOOL)
+    return None if refusal is None else {"status": "error", "content": [{"text": f"{GATE_TOOL}: {refusal}"}]}
 
 
 def _drive_use_unitree(response: object) -> dict[str, Any] | None:

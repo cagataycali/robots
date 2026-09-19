@@ -3,30 +3,33 @@
 A :class:`RosBridgedRobot` wraps a ROS 2 mobile base (or any robot exposing a
 ``cmd_vel`` / odometry / scan topic trio) so that an agent can drive it and read
 its state with the same ``Agent(tools=[robot])`` pattern used for simulated and
-hardware robots. All ROS 2 I/O is forwarded through the
-:func:`strands_robots.tools.use_ros.use_ros` tool, so the bridge stays thin and
-inherits ``use_ros``'s in-process ``rclpy`` backend and its topic/type
-validation. The parameters ``use_ros`` never sees are validated here: a
+hardware robots. All ROS 2 I/O is forwarded through
+:func:`strands_robots.ros.ros_action` - the same transport the ``use_ros`` tool
+is an agent envelope over - so the bridge stays thin and inherits the in-process
+``rclpy`` backend and its topic/type validation. The parameters the transport
+never sees are validated here: a
 :meth:`RosBridgedRobot.drive` command whose velocity, hold duration or message
 count cannot be honored is refused without publishing anything, and a
 :meth:`RosBridgedRobot.navigate_to` goal whose pose cannot be honored is refused
 without sending anything - the goal coordinates travel inside the request body,
-which ``use_ros`` forwards verbatim.
+which the transport forwards verbatim.
 
 The drive contract, its safety semantics, and the ``tools`` property live in
 :class:`~strands_robots.mesh._mobile_base.MobileBaseRobot`; this module supplies
-the ``use_ros`` transport and the ROS 2-specific Nav2 goal surface.
+the ``rclpy`` transport and the ROS 2-specific Nav2 goal surface.
 
-Commanding a robot goes through ``use_ros``'s operator-approval gate, because
+Commanding a robot goes through the shared operator-approval gate, because
 ``/turtle1/cmd_vel`` and a Nav2 ``/navigate_to_pose`` are safety-critical
 surfaces. The bridge therefore forwards an operator context to it: the
 ``drive_<node>`` / ``stop_<node>`` / ``navigate_<node>`` agent tools are declared
-``@tool(context=True)`` and hand the context to :func:`use_ros`, so an agent
-driving this robot prompts the operator exactly as a direct ``use_ros`` call
-does. ``drive`` and ``stop`` are declared by the shared base and reach this
-module's transport, which is the single place the context is handed to
-``use_ros``; ``navigate`` is declared here because the Nav2 goal is ROS 2-only.
-The read paths (:meth:`get_pose`, :meth:`get_scan`) are never gated.
+``@tool(context=True)`` and hand the context to the gate, so an agent driving
+this robot prompts the operator exactly as a direct ``use_ros`` call does - the
+label is the transport's own :data:`~strands_robots.ros.GATE_TOOL`, so the same
+physical topic files one interrupt id and one audit source whichever surface
+reached it. ``drive`` and ``stop`` are declared by the shared base and reach this
+module's transport, which is the single place the context is handed to the gate;
+``navigate`` is declared here because the Nav2 goal is ROS 2-only. The read paths
+(:meth:`get_pose`, :meth:`get_scan`) are never gated.
 
 A **programmatic** call carries no operator context, so it is refused unless the
 surface is pre-approved with ``STRANDS_ROS2_COMMAND_ALLOW`` (or the gate is
@@ -72,8 +75,9 @@ from typing import Any, cast
 from strands import tool
 from strands.types.tools import AgentTool, ToolContext
 
+from strands_robots._command_gate import gate_command
 from strands_robots.mesh._mobile_base import ActionCapable, MobileBaseRobot
-from strands_robots.tools.use_ros import use_ros
+from strands_robots.ros import GATE_TOOL, CommandGate, never_gated, ros_action
 from strands_robots.utils import (
     finite_number_error,
 )
@@ -83,7 +87,7 @@ _NAV_ACTION_TYPE = "nav2_msgs/action/NavigateToPose"
 
 # ROS 2 graph names: leading slash plus alnum / _ / ~ segments. Reject anything
 # else early so a malformed topic fails at construction with a clear message
-# rather than deep inside a forwarded ``use_ros`` call.
+# rather than deep inside a forwarded transport call.
 _ROS2_GRAPH_NAME_RE = re.compile(r"^[A-Za-z0-9_/~]+\Z")
 
 
@@ -99,21 +103,40 @@ def _check_topic(label: str, value: str) -> str:
     return value
 
 
+def _operator_gate(tool_context: ToolContext | None) -> CommandGate:
+    """Return the gate a command verb consults, keyed on the shared tool label.
+
+    The label builds the interrupt id ``<tool>-command-approval`` and the audit
+    source ``<tool>_tool``, so a bridge that spelled it differently from the
+    ``use_ros`` tool would file one incident's rows under two names and ask an
+    operator the same question twice. Both ROS 2 mesh bridges call this.
+
+    Args:
+        tool_context: The operator context an agent tool was invoked with, or
+            ``None`` for a programmatic caller - which the gate then refuses
+            unless the surface is pre-approved.
+
+    Returns:
+        A :data:`~strands_robots.ros.CommandGate` closure over the context.
+    """
+    return lambda kind, target: gate_command(kind, target, tool_context=tool_context, tool=GATE_TOOL)
+
+
 class _UseRosTransport:
-    """Transport that forwards to the in-process ``rclpy`` ``use_ros`` tool.
+    """Transport that forwards to the in-process ``rclpy`` ROS 2 transport.
 
-    Every method resolves ``use_ros`` through this module's globals rather than
-    capturing it at import, so tests (and any operator patching the tool) can
-    monkeypatch ``strands_robots.mesh.ros_bridge.use_ros`` and have the bridge
-    honor it. Implements the full optional surface: ROS 2 has services and
-    actions.
+    Every method resolves :func:`~strands_robots.ros.ros_action` through this
+    module's globals rather than capturing it at import, so tests (and any
+    operator patching the transport) can monkeypatch
+    ``strands_robots.mesh.ros_bridge.ros_action`` and have the bridge honor it.
+    Implements the full optional surface: ROS 2 has services and actions.
 
-    Every command verb forwards ``tool_context`` to ``use_ros``, whose gate
-    refuses a safety-critical surface it cannot get an operator decision for.
-    This class is the one place that hand-off happens for the ROS 2 bridge - the
-    base carries the context down to the transport and no further, because the
-    gate is the tool's, not the base's. ``echo`` takes no context: a read is
-    never gated.
+    Every command verb hands the transport an operator gate built from
+    ``tool_context``, which refuses a safety-critical surface it cannot get a
+    decision for. This class is the one place that hand-off happens for the ROS 2
+    bridge - the base carries the context down to the transport and no further.
+    ``echo`` is handed :func:`~strands_robots.ros.never_gated`: a read is never
+    gated.
     """
 
     twist_type = _TWIST_TYPE
@@ -128,18 +151,18 @@ class _UseRosTransport:
         rate: float,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        return use_ros(
+        return ros_action(
             action="publish",
             topic=topic,
             type=type,
             fields=fields,
             count=count,
             rate=rate,
-            tool_context=tool_context,
+            gate=_operator_gate(tool_context),
         )
 
     def echo(self, *, topic: str, type: str | None, count: int, timeout: float) -> dict[str, Any]:
-        return use_ros(action="echo", topic=topic, type=type, count=count, timeout=timeout)
+        return ros_action(action="echo", topic=topic, type=type, count=count, timeout=timeout, gate=never_gated)
 
     def service_call(
         self,
@@ -149,7 +172,9 @@ class _UseRosTransport:
         fields: dict[str, Any],
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        return use_ros(action="service_call", service=service, type=type, fields=fields, tool_context=tool_context)
+        return ros_action(
+            action="service_call", service=service, type=type, fields=fields, gate=_operator_gate(tool_context)
+        )
 
     def action_send_goal(
         self,
@@ -160,13 +185,13 @@ class _UseRosTransport:
         timeout: float,
         tool_context: ToolContext | None = None,
     ) -> dict[str, Any]:
-        return use_ros(
+        return ros_action(
             action="action_send_goal",
             action_name=action_name,
             type=type,
             fields=fields,
             timeout=timeout,
-            tool_context=tool_context,
+            gate=_operator_gate(tool_context),
         )
 
 
@@ -174,7 +199,8 @@ class RosBridgedRobot(MobileBaseRobot):
     """A remote ROS 2 robot exposed as a strands-controllable robot.
 
     The bridge owns no ROS 2 state of its own; every method forwards to
-    :func:`use_ros`. It is therefore safe to construct without a ROS 2
+    :func:`~strands_robots.ros.ros_action`. It is therefore safe to construct
+    without a ROS 2
     environment present - errors surface only when a method is actually called
     and no backend is available.
 
@@ -191,12 +217,12 @@ class RosBridgedRobot(MobileBaseRobot):
         cmd_vel_type: Interface type published to ``cmd_vel_topic``. Defaults to
             ``geometry_msgs/msg/Twist``.
         odom_type: Interface type of ``odom_topic``. Optional - when omitted,
-            ``use_ros`` resolves it from the live graph.
+            the transport resolves it from the live graph.
         scan_type: Interface type of ``scan_topic``. Optional - resolved from
             the live graph when omitted.
         publish_rate: Default rate (Hz) for multi-message :meth:`drive` calls.
             Must be > 0 and finite: :meth:`drive` multiplies it by ``duration``
-            to size the message burst and ``use_ros`` publishes at ``1 / rate``,
+            to size the message burst and the transport publishes at ``1 / rate``,
             so a non-positive rate removes the pacing entirely rather than
             slowing it. Raises ``ValueError`` at construction otherwise.
         max_linear: Optional linear-velocity clamp (m/s). Unset by default: a
@@ -293,7 +319,7 @@ class RosBridgedRobot(MobileBaseRobot):
         Unlike :meth:`drive`, which streams raw velocity, this delegates
         obstacle avoidance, path planning, and recovery to the robot's own
         navigation stack (Nav2 by default) and blocks until the goal reaches a
-        terminal state or ``timeout`` expires - at which point ``use_ros``
+        terminal state or ``timeout`` expires - at which point the transport
         cancels the goal so the robot does not keep navigating unattended.
 
         Args:
@@ -306,21 +332,21 @@ class RosBridgedRobot(MobileBaseRobot):
                 other way).
             frame_id: Frame the goal pose is expressed in (default ``map``).
             timeout: End-to-end budget in seconds for the navigation goal.
-                Forwarded to ``use_ros``, which refuses a non-positive or
+                Forwarded to the transport, which refuses a non-positive or
                 non-finite budget.
-            tool_context: Operator context forwarded to ``use_ros``, whose
-                command gate covers a Nav2-style ``/navigate_to_pose`` action
-                goal as well as a ``cmd_vel`` publish (see :meth:`drive`).
+            tool_context: Operator context forwarded to the command gate, which
+                covers a Nav2-style ``/navigate_to_pose`` action goal as well as
+                a ``cmd_vel`` publish (see :meth:`drive`).
 
         Returns:
-            The ``use_ros`` action result dict (goal status, result, feedback
+            The transport's action result dict (goal status, result, feedback
             samples), or an ``{"status": "error"}`` result when no
             ``nav_action`` was configured or when a pose component cannot be
             honored - in which case no goal is sent.
         """
         if not self.nav_action:
             return self._error("navigate_to: no nav_action configured for this robot")
-        # The goal pose is the part of this call ``use_ros`` never validates: it
+        # The goal pose is the part of this call the transport never validates: it
         # checks the action name and interface type, but the coordinates travel
         # inside ``fields`` and are serialized into the request verbatim. A
         # non-finite coordinate is a valid IEEE-754 float64 on the wire, so the
@@ -328,7 +354,7 @@ class RosBridgedRobot(MobileBaseRobot):
         # ``yaw`` additionally reaches ``math.sin``/``math.cos``, which raise a
         # bare ``ValueError`` for an infinite angle - out of a method whose
         # contract is a result dict, and out of the bound ``navigate_*`` tool.
-        # ``timeout`` does reach ``use_ros`` and is guarded there. This stays on
+        # ``timeout`` does reach the transport and is guarded there. This stays on
         # the subclass because ``nav_action`` is a ROS 2 concept: no other
         # transport has a goal-level navigation surface to guard.
         pose_error = (

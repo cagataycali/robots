@@ -1,13 +1,14 @@
 """The mesh ROS 2 bridge must reach the ``use_ros`` operator gate, not fail closed.
 
-Every :class:`RosBridgedRobot` command forwards to ``use_ros``, whose command
+Every :class:`RosBridgedRobot` command forwards to the shared ROS 2 transport,
+whose command
 gate refuses a safety-critical surface when no operator context is reachable.
 A bridge that never forwards a context therefore turns its whole command
 surface - including the ``stop`` halt - into a per-call refusal, and
 ``tests/mesh/test_ros_bridge.py`` cannot see it because it patches the
-``use_ros`` symbol at the boundary the gate lives behind.
+transport symbol at the boundary the gate lives behind.
 
-These tests keep the real ``use_ros`` and substitute the rclpy transport
+These tests keep the real gate wiring and substitute the rclpy helpers
 instead (the same boundary ``tests/tools/test_use_ros.py`` doubles), so the gate
 and the bridge wiring under test both run unmodified while no message can reach
 a real DDS graph.
@@ -23,12 +24,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools.use_ros as ros_mod
+import strands_robots.ros as ros_mod
 from strands_robots.mesh import RosBridgedRobot
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "navigate_to"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
-_MESH_DIR = Path(ros_mod.__file__).parent.parent / "mesh"
+_MESH_DIR = Path(ros_mod.__file__).parent / "mesh"
 
 
 def _bridge_sources() -> list[Path]:
@@ -51,6 +52,28 @@ def _bridge_sources() -> list[Path]:
         if source and Path(source).parent == _MESH_DIR and Path(source) not in sources:
             sources.append(Path(source))
     return sources
+
+
+#: The factory both ROS 2 mesh bridges build their operator gate with. The gate
+#: is an argument to the transport now, so "forwards the context" means "hands the
+#: transport a gate closed over it"; a scan keyed on the name is what keeps a new
+#: call site from passing a permissive gate instead.
+_GATE_FACTORY = "_operator_gate"
+
+
+def _builds_its_gate_from_the_context(node: ast.Call) -> bool:
+    """Does this transport call build its operator gate from ``tool_context``?
+
+    The failure this suite exists for, restated for a gate that travels as an
+    argument: a call site that hands the transport a gate with no context in it
+    fails closed for its whole method whatever an operator would have said.
+    """
+    gate = next((keyword.value for keyword in node.keywords if keyword.arg == "gate"), None)
+    return (
+        isinstance(gate, ast.Call)
+        and getattr(gate.func, "id", None) == _GATE_FACTORY
+        and any(isinstance(argument, ast.Name) and argument.id == "tool_context" for argument in gate.args)
+    )
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -239,7 +262,7 @@ class TestCommandToolsDeclareTheOperatorContext:
             context_kwarg = next((kw for kw in decorator.keywords if kw.arg == "context"), None)
             assert context_kwarg is not None and getattr(context_kwarg.value, "value", None) is True, (
                 f"bridge command tool {func.name!r} is not declared @tool(context=True), "
-                "so it can never reach the use_ros operator gate"
+                "so it can never reach the operator gate"
             )
             params = [a.arg for a in func.args.args] + [a.arg for a in func.args.kwonlyargs]
             assert "tool_context" in params, f"{func.name!r} does not receive the injected operator context"
@@ -265,33 +288,30 @@ class TestCommandToolsDeclareTheOperatorContext:
             params = [a.arg for a in func.args.args]
             assert "tool_context" not in params, f"read-only tool {func.name!r} should not require an operator context"
 
-    def test_every_bridge_command_call_forwards_the_context_to_use_ros(
+    def test_every_bridge_command_call_builds_its_gate_from_the_context(
         self, bridge_asts: list[tuple[Path, ast.Module]]
     ) -> None:
         """A bridge call site that carries a command must not drop the context.
 
-        This is the failure this suite exists for: the gate lives inside
-        ``use_ros``, so a call site that omits ``tool_context`` silently becomes
-        a fail-closed refusal for its whole method.
-
-        All three live on the transport, which is the only thing in the MRO that
-        talks to ``use_ros`` - the base carries the context down to it and no
-        further, because the gate is the tool's rather than the base's.
+        All three live on the transport class, which is the only thing in the MRO
+        that talks to the transport function - the base carries the context down
+        to it and no further.
         """
         found: list[str] = []
         for path, tree in bridge_asts:
             for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "use_ros"):
+                if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                     continue
                 action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
                 if not (isinstance(action, ast.Constant) and action.value in _COMMAND_ACTIONS):
                     continue
                 found.append(str(action.value))
-                assert any(kw.arg == "tool_context" for kw in node.keywords), (
-                    f"use_ros(action={action.value!r}) at {path.name}:{node.lineno} does not forward tool_context"
+                assert _builds_its_gate_from_the_context(node), (
+                    f"ros_action(action={action.value!r}) at {path.name}:{node.lineno} "
+                    f"does not build its gate from tool_context"
                 )
         assert sorted(found) == ["action_send_goal", "publish", "service_call"], (
-            f"expected one command call site per gated use_ros verb, found {sorted(found)}"
+            f"expected one command call site per gated verb, found {sorted(found)}"
         )
 
     def test_command_tools_do_not_expose_the_context_in_their_input_schema(self) -> None:

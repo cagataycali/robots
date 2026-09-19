@@ -1,9 +1,10 @@
 """Behavior tests for the ROS 2 mesh bridge (:class:`RosBridgedRobot`).
 
-The bridge owns no ROS 2 state - every method forwards to ``use_ros``. These
-tests patch the forwarded ``use_ros`` symbol so they run with NO ROS 2 present,
-asserting the bridge builds the right ``use_ros`` calls (correct topic, type,
-Twist field mapping, message count) and exposes correctly-named agent tools.
+The bridge owns no ROS 2 state - every method forwards to
+:func:`strands_robots.ros.ros_action`. These tests patch the forwarded
+``ros_action`` symbol so they run with NO ROS 2 present, asserting the bridge
+builds the right transport calls (correct topic, type, Twist field mapping,
+message count) and exposes correctly-named agent tools.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from strands_robots.mesh import RosBridgedRobot
 
 
 class _Recorder:
-    """Records the kwargs of each forwarded ``use_ros`` call."""
+    """Records the kwargs of each forwarded ``ros_action`` call."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -30,7 +31,7 @@ class _Recorder:
 @pytest.fixture
 def rec(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     recorder = _Recorder()
-    monkeypatch.setattr(bridge_mod, "use_ros", recorder)
+    monkeypatch.setattr(bridge_mod, "ros_action", recorder)
     return recorder
 
 

@@ -4,7 +4,9 @@ The tool bridges a Strands agent to a ROS 2 graph **entirely in-process through
 ``rclpy``** - there is no ``ros2`` CLI shelling and no generated-code snippets.
 These tests run with NO ROS 2 installed: the rclpy-facing helpers
 (``_list_topics`` / ``_echo`` / ``_publish`` / ``_service_call`` / ...) and the
-backend-availability probe are monkeypatched, so every action-dispatch branch,
+backend-availability probe are monkeypatched in
+:mod:`strands_robots.ros`, the transport this tool is the agent envelope over, so
+every action-dispatch branch,
 the agent-input validation, the no-backend error path, and the structured
 error-return contract are exercised hardware- and ROS-free.
 
@@ -26,12 +28,14 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.use_ros as ros_mod
+import strands_robots.ros as ros_mod
+from strands_robots.tools.use_ros import use_ros
 
-# Reference the tool via a module-local alias rather than a second `from`
-# import: the tests monkeypatch module internals through `ros_mod`, so the
-# module object is the single source of truth and a dual import is avoided.
-use_ros = ros_mod.use_ros
+# ``ros_mod`` is the transport the tool is an agent envelope over, which is where
+# every rclpy-facing helper and the backend probe live: the tool owns the
+# numeric-option domains, the operator gate and the model-facing docstring, and
+# routes each verb's arguments into ``ros_action``. Patching the transport's
+# helpers through one module object is what keeps these tests ROS-free.
 
 
 def _texts(result: dict[str, Any]) -> str:

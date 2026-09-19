@@ -37,8 +37,8 @@ from typing import Any
 
 import pytest
 
+import strands_robots.ros as ros_mod
 import strands_robots.tools.serial_tool as serial_mod
-import strands_robots.tools.use_ros as ros_mod
 
 
 def test_every_deadline_in_the_ros_tool_is_built_on_one_clock() -> None:
@@ -53,7 +53,7 @@ def test_every_deadline_in_the_ros_tool_is_built_on_one_clock() -> None:
     """
     source = pathlib.Path(ros_mod.__file__).read_text(encoding="utf-8")
     built = [line.strip() for line in source.splitlines() if "deadline = time." in line]
-    assert built, "premise: no deadline construction found in the use_ros module"
+    assert built, "premise: no deadline construction found in the ROS 2 transport module"
     wall = [line for line in built if "time.monotonic()" not in line]
     assert not wall, f"these deadlines are not on the clock the callers measure their budget with: {wall}"
 

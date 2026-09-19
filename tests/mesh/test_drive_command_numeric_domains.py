@@ -74,7 +74,7 @@ _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any], dict[str, Any]]] = [
     (
         "ros_bridge",
         ros_bridge_mod,
-        "use_ros",
+        "ros_action",
         lambda **kw: ros_bridge_mod.RosBridgedRobot("rover", "/cmd_vel", "/odom", **kw),
         _TWIST_FIELDS,
     ),
@@ -89,7 +89,7 @@ _TRANSPORTS: list[tuple[str, Any, str, Callable[..., Any], dict[str, Any]]] = [
     (
         "ackermann",
         ackermann_mod,
-        "use_ros",
+        "ros_action",
         lambda **kw: ackermann_mod.AckermannRosRobot("car", "/servo", **kw),
         _SERVO_FIELDS,
     ),

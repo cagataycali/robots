@@ -2,7 +2,7 @@
 
 :meth:`RosBridgedRobot.navigate_to` hands a goal pose to the robot's own
 navigation stack, so the coordinates are the whole command. They travel inside
-the action request body, which ``use_ros`` forwards verbatim - it validates the
+the action request body, which the transport forwards verbatim - it validates the
 action name and interface type, and it guards ``timeout``, but it never inspects
 the pose. Without a guard on the bridge a pose that cannot be honored has two
 silent outcomes: a non-finite coordinate serializes as a valid IEEE-754 float64
@@ -37,7 +37,7 @@ _BAD_POSE_VALUES = [math.nan, math.inf, -math.inf, "1.0", None, [1.0], True, Fal
 
 
 class _Wire:
-    """Stands in for ``use_ros``, recording every forwarded request."""
+    """Stands in for the ROS 2 transport, recording every forwarded request."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -51,7 +51,7 @@ class _Wire:
 def bridge(monkeypatch: pytest.MonkeyPatch) -> tuple[RosBridgedRobot, _Wire]:
     """A nav-capable bridge plus the wire recorder it forwards goals to."""
     wire = _Wire()
-    monkeypatch.setattr(ros_mod, "use_ros", wire)
+    monkeypatch.setattr(ros_mod, "ros_action", wire)
     return RosBridgedRobot("tb", "/cmd_vel", "/odom", nav_action=_NAV_ACTION), wire
 
 
