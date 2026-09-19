@@ -80,6 +80,7 @@ from strands_robots.mesh._mobile_base import ActionCapable, MobileBaseRobot
 from strands_robots.ros import GATE_TOOL, CommandGate, never_gated, ros_action
 from strands_robots.utils import (
     finite_number_error,
+    positive_finite_number_error,
 )
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
@@ -332,8 +333,9 @@ class RosBridgedRobot(MobileBaseRobot):
                 other way).
             frame_id: Frame the goal pose is expressed in (default ``map``).
             timeout: End-to-end budget in seconds for the navigation goal.
-                Forwarded to the transport, which refuses a non-positive or
-                non-finite budget.
+                Graded here, on the domain :meth:`drive` grades ``duration``
+                against: a non-positive or non-finite budget is refused and no
+                goal is sent.
             tool_context: Operator context forwarded to the command gate, which
                 covers a Nav2-style ``/navigate_to_pose`` action goal as well as
                 a ``cmd_vel`` publish (see :meth:`drive`).
@@ -354,16 +356,21 @@ class RosBridgedRobot(MobileBaseRobot):
         # ``yaw`` additionally reaches ``math.sin``/``math.cos``, which raise a
         # bare ``ValueError`` for an infinite angle - out of a method whose
         # contract is a result dict, and out of the bound ``navigate_*`` tool.
-        # ``timeout`` does reach the transport and is guarded there. This stays on
-        # the subclass because ``nav_action`` is a ROS 2 concept: no other
-        # transport has a goal-level navigation surface to guard.
-        pose_error = (
+        # ``timeout`` is graded here for the same reason ``get_pose`` grades its
+        # wait: a transport reached by more than one surface honors the budget it
+        # is handed and states no domain of its own, and an ungraded ``inf``
+        # becomes an unbounded ``wait_for_server`` held inside the backend's
+        # process-wide lock. This stays on the subclass because ``nav_action`` is
+        # a ROS 2 concept: no other transport has a goal-level navigation
+        # surface to guard.
+        goal_error = (
             finite_number_error(x, "x", "navigate_to")
             or finite_number_error(y, "y", "navigate_to")
             or finite_number_error(yaw, "yaw", "navigate_to")
+            or positive_finite_number_error(timeout, "timeout", "navigate_to")
         )
-        if pose_error:
-            return self._error(pose_error)
+        if goal_error:
+            return self._error(goal_error)
         half = 0.5 * float(yaw)
         fields = {
             "pose": {

@@ -3,8 +3,9 @@
 :meth:`RosBridgedRobot.navigate_to` hands a goal pose to the robot's own
 navigation stack, so the coordinates are the whole command. They travel inside
 the action request body, which the transport forwards verbatim - it validates the
-action name and interface type, and it guards ``timeout``, but it never inspects
-the pose. Without a guard on the bridge a pose that cannot be honored has two
+action name and interface type, but it never inspects the pose and states no
+domain for the budget. Without a guard on the bridge a pose that cannot be
+honored has two
 silent outcomes: a non-finite coordinate serializes as a valid IEEE-754 float64
 and the goal is accepted by the transport and handed to a planner that cannot
 resolve it, or the planar-quaternion encoding raises a bare
@@ -14,7 +15,11 @@ resolve it, or the planar-quaternion encoding raises a bare
 
 The pose components are signed physical quantities, so they share the accepted
 domain of :meth:`RosBridgedRobot.drive`'s velocity components; the parity test
-here pins that one rule rather than two.
+here pins that one rule rather than two. ``timeout`` is the goal's other knob and
+takes ``duration``'s domain for the reason ``get_pose`` grades its own wait: an
+``inf`` budget makes the transport's ``wait_for_server`` and every spin unbounded,
+inside the backend's process-wide lock, so every later ROS call in the process
+waits behind a goal that can never time out.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ import pytest
 
 import strands_robots.mesh.ros_bridge as ros_mod
 from strands_robots.mesh import RosBridgedRobot
+from strands_robots.utils import finite_number_error, positive_finite_number_error
+from tests.mesh.test_bridge_read_timeout_domain import UNUSABLE_TIMEOUTS
 
 _NAV_ACTION = "/navigate_to_pose"
 
@@ -152,6 +159,43 @@ class TestAgentToolContract:
         navigate_tool: Any = next(t for t in robot.tools if t.tool_name.startswith("navigate_"))
         result = navigate_tool(**goal)
         assert result["status"] == "error"
+        assert wire.calls == []
+
+
+class TestTheGoalBudgetIsGradedBeforeTheGoalIsSent:
+    """A budget no wait can express is refused by name, and no goal is sent."""
+
+    @pytest.mark.parametrize("value", UNUSABLE_TIMEOUTS, ids=repr)
+    def test_an_unusable_budget_is_refused_and_reaches_no_transport(
+        self, bridge: tuple[RosBridgedRobot, _Wire], value: Any
+    ) -> None:
+        robot, wire = bridge
+        expected = positive_finite_number_error(value, "timeout", "navigate_to")
+        assert expected is not None, "probe value must be outside the domain"
+
+        result = robot.navigate_to(x=1.0, y=2.0, timeout=value)
+
+        assert result["status"] == "error"
+        assert _text(result) == expected
+        assert wire.calls == [], f"a goal was sent for timeout={value!r}"
+
+    def test_the_bound_navigate_tool_reports_an_unusable_budget(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+        """The agent-reachable spelling: JSON ``1e999`` parses to ``inf``."""
+        robot, wire = bridge
+        navigate_tool: Any = next(t for t in robot.tools if t.tool_name.startswith("navigate_"))
+
+        result = navigate_tool(x=1.0, y=2.0, timeout=float("1e999"))
+
+        assert result["status"] == "error"
+        assert wire.calls == []
+
+    def test_the_pose_is_named_before_the_budget(self, bridge: tuple[RosBridgedRobot, _Wire]) -> None:
+        """Both unusable: the goal itself is the first thing reported, as ``drive`` reports its velocity."""
+        robot, wire = bridge
+
+        result = robot.navigate_to(x=math.nan, y=2.0, timeout=0)
+
+        assert _text(result) == finite_number_error(math.nan, "x", "navigate_to")
         assert wire.calls == []
 
 
